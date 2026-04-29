@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, sql, gte } from "drizzle-orm";
+import { eq, and, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { runSubAgent } from "./subagents";
@@ -10,6 +10,7 @@ import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
 import { notifyUser, getChannel } from "../channels/registry";
 import { postToDiscordChannelById, sendToDiscordUser } from "../discord/manager";
+import type { ChannelSendOpts } from "../channels/types";
 import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "./errorLogger";
@@ -17,6 +18,8 @@ import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJo
 import { runAgent } from "./harness";
 import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./tools/selfEditTools";
 import { researchHasSourceUrls } from "./researchUtils";
+import { markdownToPdfBuffer } from "./tools/exportPdf";
+import { createDriveBinaryFile } from "../integrations/googleDrive";
 
 // Re-export from the shared client so existing callers don't break.
 export type AgentJobType = _AgentJobType;
@@ -31,6 +34,7 @@ async function notifyJobComplete(
   body: string,
   originChannel?: string,
   originDiscordChannelId?: string,
+  opts: ChannelSendOpts = {},
 ): Promise<void> {
   const text = `Jarvis (${agentType}): ${title}\n\n${body}`;
   // Normalise for comparison — ctx.channel values like "Discord #general",
@@ -56,10 +60,10 @@ async function notifyJobComplete(
         const dmSent = await sendToDiscordUser(userId, text);
         if (dmSent) notified.push("discord:dm");
       }
-      // Always surface the result in the in-app inbox as well.
+      // Always surface the result in the in-app inbox as well (with attachments if any).
       const inAppCh = getChannel("in_app");
       if (inAppCh) {
-        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request", ...opts }).catch(() => {});
         notified.push("in_app");
       }
       console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
@@ -73,12 +77,12 @@ async function notifyJobComplete(
       const notified: string[] = [];
       const telegramCh = getChannel("telegram");
       if (telegramCh) {
-        const r = await telegramCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => ({ ok: false as const }));
+        const r = await telegramCh.sendMessage(userId, text, { notificationType: "approval_request", ...opts }).catch(() => ({ ok: false as const }));
         if (r.ok) notified.push("telegram");
       }
       const inAppCh = getChannel("in_app");
       if (inAppCh) {
-        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request", ...opts }).catch(() => {});
         notified.push("in_app");
       }
       console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
@@ -89,7 +93,7 @@ async function notifyJobComplete(
       // In-app (or voice) only — no external channel notification.
       const inAppCh = getChannel("in_app");
       if (inAppCh) {
-        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request", ...opts }).catch(() => {});
       }
       console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [in_app]`);
       return;
@@ -97,7 +101,7 @@ async function notifyJobComplete(
 
     // Absent or unrecognised origin (proactive/scheduled jobs such as weekly_pattern,
     // morning brief, heartbeat) → use the user's configured channel preferences as before.
-    const results = await notifyUser(userId, "approval_request", text);
+    const results = await notifyUser(userId, "approval_request", text, opts);
     const delivered = results.filter((r) => r.result.ok).map((r) => r.channel).join(", ");
     console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel || "none"} → [${delivered || "none"}]`);
   } catch (err) {
@@ -122,12 +126,25 @@ async function notifyJobComplete(
 // Safety guarantee: the timer always fires (even if siblings fail/cancel),
 // so no completed research job is ever left without a notification.
 
+interface BatchedResearchJob {
+  title: string;
+  body: string;
+  /** DB agent_jobs.id — used to locate the deliverable for consolidation. */
+  jobId?: string;
+  /** Whether this job's prompt explicitly requested a PDF or Word document. */
+  promptedPdf?: boolean;
+  /** Originating channel (e.g. "Discord #general") for most-common-origin routing. */
+  originChannel?: string;
+  /** Discord channel ID for direct-channel routing when origin is Discord. */
+  originDiscordChannelId?: string;
+}
+
 interface BatchedResearchNotification {
   userId: string;
   /** createdAt of the first job in this batch (ms since epoch). Used for window matching. */
   anchorTime: number;
-  /** Each job's content plus its originating channel info (for most-common-origin resolution). */
-  jobs: Array<{ title: string; body: string; originChannel?: string; originDiscordChannelId?: string }>;
+  /** Each job's content, origin info (for routing), and PDF metadata (for consolidation). */
+  jobs: BatchedResearchJob[];
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -168,11 +185,12 @@ async function flushResearchBatch(key: string): Promise<void> {
   // coordinator (e.g. processed in a parallel worker tick or a prior restart).
   // Merge any extras into the total count so the combined notification is
   // accurate. This is best-effort — failures fall through safely.
+  let allSiblingJobIds: string[] = jobs.filter((j) => j.jobId).map((j) => j.jobId!);
   try {
     const windowStart = new Date(anchorTime - SIBLING_WINDOW_MS);
     const windowEnd   = new Date(anchorTime + SIBLING_WINDOW_MS);
     const allSiblings = await db
-      .select({ title: schema.agentJobs.title })
+      .select({ id: schema.agentJobs.id, title: schema.agentJobs.title })
       .from(schema.agentJobs)
       .where(
         and(
@@ -183,12 +201,17 @@ async function flushResearchBatch(key: string): Promise<void> {
           sql`${schema.agentJobs.createdAt} <= ${windowEnd}`,
         ),
       );
+    const knownIds = new Set(allSiblingJobIds);
     const knownTitles = new Set(jobs.map((j) => j.title));
     for (const row of allSiblings) {
       const t = row.title ?? "";
       if (!knownTitles.has(t)) {
-        jobs.push({ title: t, body: "" });
+        jobs.push({ title: t, body: "", jobId: row.id });
         knownTitles.add(t);
+      }
+      if (row.id && !knownIds.has(row.id)) {
+        allSiblingJobIds.push(row.id);
+        knownIds.add(row.id);
       }
     }
   } catch {
@@ -203,14 +226,14 @@ async function flushResearchBatch(key: string): Promise<void> {
   fresh.push({ anchorTime, flushedAt: now });
   flushedResearchBatches.set(userId, fresh);
 
-  // Resolve the most-common originating channel across all batch jobs so that
-  // the single batched notification goes to the right place even if a few
-  // sibling jobs somehow came from a different channel.
+  // ── Resolve most-common originating channel for routing ──────────────────
+  // Ensures the single batched notification goes to the right channel even if
+  // a few sibling jobs somehow came from a different channel.
   const originCounts = new Map<string, number>();
   for (const j of jobs) {
     if (j.originChannel) {
-      const key = j.originChannel.toLowerCase();
-      originCounts.set(key, (originCounts.get(key) ?? 0) + 1);
+      const originKey = j.originChannel.toLowerCase();
+      originCounts.set(originKey, (originCounts.get(originKey) ?? 0) + 1);
     }
   }
   let batchOriginChannel: string | undefined;
@@ -220,24 +243,145 @@ async function flushResearchBatch(key: string): Promise<void> {
     for (const [ch, count] of originCounts.entries()) {
       if (count > maxCount) { maxCount = count; batchOriginChannel = ch; }
     }
-    // When the winning origin is Discord, find the Discord channel ID from the first
-    // matching job (or union if there are multiple distinct IDs in this batch).
+    // When the winning origin is Discord, find the Discord channel ID from the
+    // first matching job (most common when there are multiple distinct IDs).
     if (batchOriginChannel?.startsWith("discord")) {
       const discordJobs = jobs.filter(j => j.originChannel?.toLowerCase().startsWith("discord") && j.originDiscordChannelId);
       batchOriginDiscordChannelId = discordJobs[0]?.originDiscordChannelId;
     }
   }
 
-  if (jobs.length === 1) {
-    await notifyJobComplete(userId, "research", jobs[0].title, jobs[0].body, batchOriginChannel, batchOriginDiscordChannelId);
-  } else {
-    // Only count jobs with a body (real completions, not extra DB-only siblings).
-    const bodiedJobs = jobs.filter((j) => j.body);
-    const notifyBody = bodiedJobs[0]?.body ?? jobs[0].body;
-    const combinedTitle = `Research complete (${jobs.length} results) — ${jobs[0].title}`;
-    console.log(`[JobQueue] flushing batched research notification: ${jobs.length} job(s) → userId=${userId} batchOriginChannel=${batchOriginChannel || "none"}`);
-    await notifyJobComplete(userId, "research", combinedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId);
+  // ── Consolidate sibling deliverables into ONE ────────────────────────────
+  // When multiple research jobs were queued for the same request, each one
+  // inserted its own deliverable. Merge them into a single deliverable so
+  // the inbox shows one item, not N.
+  let mergedDeliverableId: string | null = null;
+  let mergedTitle = jobs[0].title;
+  let mergedBody = "";
+  const wantsPdf = jobs.some((j) => j.promptedPdf);
+
+  if (allSiblingJobIds.length > 0) {
+    try {
+      const siblingDeliverables = await db
+        .select()
+        .from(schema.deliverables)
+        .where(
+          and(
+            eq(schema.deliverables.userId, userId),
+            sql`${schema.deliverables.jobId} = ANY(${allSiblingJobIds})`,
+          ),
+        )
+        .orderBy(asc(schema.deliverables.createdAt));
+
+      if (siblingDeliverables.length > 1) {
+        // Merge all bodies into one consolidated report
+        const sections = siblingDeliverables.map((d, i) => {
+          const heading = d.title && d.title !== siblingDeliverables[0].title
+            ? `\n\n---\n\n## ${d.title}\n\n`
+            : i === 0 ? "" : "\n\n---\n\n";
+          return `${heading}${d.body || ""}`;
+        });
+        mergedBody = sections.join("").trim();
+        mergedTitle = `Research: ${siblingDeliverables[0].title}`;
+        // Update the first deliverable with merged content
+        const firstId = siblingDeliverables[0].id;
+        await db
+          .update(schema.deliverables)
+          .set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${siblingDeliverables.length} research threads.` })
+          .where(eq(schema.deliverables.id, firstId));
+        mergedDeliverableId = firstId;
+        // Point all sibling jobs' result.deliverableId to the merged deliverable
+        // so job-level views don't end up with stale / deleted IDs.
+        for (const d of siblingDeliverables.slice(1)) {
+          try {
+            const [sibJob] = await db
+              .select()
+              .from(schema.agentJobs)
+              .where(eq(schema.agentJobs.id, d.jobId ?? ""))
+              .limit(1);
+            if (sibJob) {
+              const currentResult = (sibJob.result as Record<string, unknown>) ?? {};
+              await db
+                .update(schema.agentJobs)
+                .set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } })
+                .where(eq(schema.agentJobs.id, sibJob.id));
+            }
+          } catch {
+            // Non-fatal — stale pointer is cosmetic
+          }
+          await db.delete(schema.deliverables).where(eq(schema.deliverables.id, d.id));
+        }
+        console.log(`[JobQueue] consolidated ${siblingDeliverables.length} research deliverables → ${firstId}`);
+      } else if (siblingDeliverables.length === 1) {
+        mergedDeliverableId = siblingDeliverables[0].id;
+        mergedBody = siblingDeliverables[0].body || "";
+        mergedTitle = siblingDeliverables[0].title || mergedTitle;
+      }
+    } catch (mergeErr) {
+      console.error("[JobQueue] deliverable merge failed (non-fatal):", mergeErr);
+    }
   }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // ── Optional PDF generation from merged body ──────────────────────────────
+  // If any sibling job's prompt requested a PDF, generate ONE PDF from the
+  // consolidated body and deliver it as a channel attachment.
+  const notifyOpts: ChannelSendOpts = {};
+  let pdfNote = "";
+
+  if (wantsPdf && mergedBody) {
+    try {
+      const pdfBuffer = await markdownToPdfBuffer(mergedTitle, mergedBody);
+      const filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
+      notifyOpts.attachments = [
+        {
+          kind: "document",
+          filename,
+          content: pdfBuffer,
+          caption: mergedTitle,
+          mimeType: "application/pdf",
+        },
+      ];
+      pdfNote = `\n\n📄 PDF attached (${filename}).`;
+      console.log(`[JobQueue] generated consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
+    } catch (pdfErr) {
+      const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+      console.error("[JobQueue] batch PDF generation failed:", pdfMsg);
+      pdfNote = `\n\n⚠️ PDF generation failed — here is the markdown version instead.`;
+      // Attach the merged markdown as a .md file so the user still receives
+      // the full content in the channel even when PDF rendering fails.
+      if (mergedBody) {
+        const mdFilename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".md";
+        notifyOpts.attachments = [
+          {
+            kind: "document",
+            filename: mdFilename,
+            content: mergedBody,
+            caption: `${mergedTitle} (PDF failed — markdown fallback)`,
+            mimeType: "text/markdown",
+          },
+        ];
+      }
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const bodiedJobs = jobs.filter((j) => j.body);
+  const notifyBody = (bodiedJobs[0]?.body ?? jobs[0].body) + pdfNote;
+
+  const hasPdfAttachment = (notifyOpts.attachments?.length ?? 0) > 0;
+  console.log(
+    `[JobQueue] research batch flush: ${jobs.length} job(s), deliverable=${mergedDeliverableId ?? "none"}, pdf=${hasPdfAttachment} → userId=${userId}`,
+  );
+
+  if (jobs.length === 1) {
+    await notifyJobComplete(userId, "research", mergedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId, notifyOpts);
+  } else {
+    const combinedTitle = `Research complete (${jobs.length} results) — ${mergedTitle}`;
+    console.log(`[JobQueue] flushing batched research notification: ${jobs.length} job(s) → userId=${userId} batchOriginChannel=${batchOriginChannel || "none"}`);
+    await notifyJobComplete(userId, "research", combinedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId, notifyOpts);
+  }
+  void mergedDeliverableId; // referenced for logging above; suppress unused-var warning
 }
 
 /**
@@ -256,6 +400,8 @@ function scheduleResearchNotification(
   notifyBody: string,
   originChannel?: string,
   originDiscordChannelId?: string,
+  jobId?: string,
+  promptedPdf?: boolean,
 ): void {
   const newTime = createdAt.getTime();
   const now = Date.now();
@@ -278,7 +424,7 @@ function scheduleResearchNotification(
   for (const [key, batch] of researchNotificationBatches.entries()) {
     if (batch.userId !== userId) continue;
     if (Math.abs(batch.anchorTime - newTime) <= SIBLING_WINDOW_MS) {
-      batch.jobs.push({ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId });
+      batch.jobs.push({ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf });
       // Debounce: extend the flush timer so it fires after the last arrival.
       clearTimeout(batch.timer);
       batch.timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
@@ -297,7 +443,7 @@ function scheduleResearchNotification(
   researchNotificationBatches.set(key, {
     userId,
     anchorTime: newTime,
-    jobs: [{ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId }],
+    jobs: [{ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf }],
     timer,
   });
 }
@@ -314,16 +460,19 @@ async function notifySubAgentJobComplete(
   job: typeof schema.agentJobs.$inferSelect,
   deliverableTitle: string,
   notifyBody: string,
+  jobId?: string,
+  promptedPdf?: boolean,
+  opts: ChannelSendOpts = {},
 ): Promise<void> {
   const jobInput = (job.input as Record<string, unknown>) ?? {};
   const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
   const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
 
   if (job.agentType !== "research" || !job.createdAt) {
-    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody, originChannel, originDiscordChannelId);
+    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody, originChannel, originDiscordChannelId, opts);
     return;
   }
-  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody, originChannel, originDiscordChannelId);
+  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -623,6 +772,65 @@ writing a clear inbox message explaining what is broken and what the user should
       sub.summary = "⚠️ No cited sources — " + sub.summary;
     }
 
+    // ── Format request detection ──────────────────────────────────────────────
+    // Detect whether the user explicitly asked for a PDF or Word document.
+    // "word"/"docx" requests are also mapped to PDF (best available format).
+    // For research jobs: the batch coordinator (flushResearchBatch) generates
+    // ONE consolidated PDF from all sibling results — no per-job PDF here.
+    // For writing jobs: generate immediately since they are not batched.
+    const promptLower = (job.prompt || "").toLowerCase();
+    const wantsPdf = /\b(pdf|word|docx|as pdf|in pdf|export pdf|save pdf|generate pdf|as word|in word)\b/.test(promptLower);
+
+    let pdfNote = "";
+
+    if (wantsPdf && job.agentType === "writing") {
+      // Writing jobs are individual — generate PDF right here.
+      try {
+        const pdfBuffer = await markdownToPdfBuffer(sub.title, sub.body);
+        const filename = sub.title.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
+        sub.meta.pdfGenerated = true;
+        sub.meta.pdfFilename = filename;
+
+        // Attach PDF for channel delivery
+        ctx.state.pendingAttachments.push({
+          kind: "document",
+          filename,
+          content: pdfBuffer,
+          caption: sub.title,
+          mimeType: "application/pdf",
+        });
+
+        if (googleAccessToken) {
+          try {
+            const driveFile = await createDriveBinaryFile(
+              googleAccessToken,
+              filename,
+              pdfBuffer,
+              "application/pdf",
+            );
+            const driveLink = driveFile.webViewLink || null;
+            sub.meta.pdfDriveLink = driveLink;
+            pdfNote = `\n\n📄 PDF attached and saved to Google Drive: ${driveLink}`;
+            console.log(`[JobQueue] writing job ${job.id} PDF → Drive: ${driveLink}`);
+          } catch (driveErr) {
+            const driveMsg = driveErr instanceof Error ? driveErr.message : String(driveErr);
+            console.error(`[JobQueue] writing PDF Drive upload failed for job ${job.id}:`, driveMsg);
+            pdfNote = `\n\n📄 PDF attached (Drive upload failed: ${driveMsg}).`;
+          }
+        } else {
+          pdfNote = `\n\n📄 PDF attached.`;
+        }
+      } catch (pdfErr) {
+        const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+        console.error(`[JobQueue] writing PDF generation failed for job ${job.id}:`, pdfMsg);
+        pdfNote = `\n\n⚠️ PDF generation failed — here is the markdown version instead. (${pdfMsg})`;
+        sub.meta.pdfError = pdfMsg;
+      }
+    }
+    // Research jobs: wantsPdf is passed to the batch coordinator, which
+    // generates ONE consolidated PDF from all sibling deliverables.
+    // ─────────────────────────────────────────────────────────────────────────
+
     const inserted = await db
       .insert(schema.deliverables)
       .values({
@@ -651,10 +859,18 @@ writing a clear inbox message explaining what is broken and what the user should
       metadata: { jobId: job.id, agentType: job.agentType, recovery: true },
     }).catch(() => {});
     console.log(`[JobQueue] complete ${job.agentType} job ${job.id} → deliverable ${deliverableId}`);
-    const subNotifyMsg = `${sub.summary || "Ready for review"} — open Inbox to approve, edit, or discard.`;
+    const subNotifyMsg = `${sub.summary || "Ready for review"} — open Inbox to approve, edit, or discard.${pdfNote}`;
+
+    // For writing jobs with PDF attachments, forward those attachments in the notification.
+    // Research jobs: the batch coordinator handles attachments at flush time.
+    const subNotifyOpts: ChannelSendOpts = {};
+    if (job.agentType !== "research" && ctx.state.pendingAttachments && ctx.state.pendingAttachments.length > 0) {
+      subNotifyOpts.attachments = ctx.state.pendingAttachments as ChannelSendOpts["attachments"];
+    }
+
     // Use sibling-aware notification: if another job from the same batch is
     // still running, defer so the last one to finish sends one notification.
-    await notifySubAgentJobComplete(job, sub.title, subNotifyMsg);
+    await notifySubAgentJobComplete(job, sub.title, subNotifyMsg, job.id, wantsPdf && job.agentType === "research", subNotifyOpts);
     if (hasWorkflow) {
       const wfOutput = `${sub.title}\n\n${sub.summary || ""}\n\n${sub.body?.slice(0, 1200) || ""}`.trim();
       await onWorkflowJobComplete(wfId!, wfStep!, job.id, wfOutput).catch((e) =>

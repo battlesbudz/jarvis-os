@@ -15,7 +15,7 @@ import { createDriveBinaryFile } from "../../integrations/googleDrive";
  *   - item / * item — bullet list
  *   blank line — paragraph break
  */
-async function markdownToPdfBuffer(title: string, markdown: string): Promise<Buffer> {
+export async function markdownToPdfBuffer(title: string, markdown: string): Promise<Buffer> {
   const PDFDocument = (await import("pdfkit")).default;
 
   return new Promise((resolve, reject) => {
@@ -257,7 +257,12 @@ export const exportDocumentPdfTool: AgentTool = {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[export_document_pdf] PDF generation failed:", msg);
-      return { ok: false, content: `PDF generation failed: ${msg}`, label: "PDF generation failed" };
+      const fallbackContent = `⚠️ PDF generation failed — here is the markdown version:\n\n${markdown}`;
+      return {
+        ok: false,
+        content: fallbackContent,
+        label: "PDF generation failed — markdown fallback",
+      };
     }
 
     const filename = safeFilename(docTitle, ".pdf");
