@@ -343,6 +343,99 @@ assert(
   "BF-MX2: pure refinement without wrap-up phrase → true",
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+// classifyBuildFollowUp — unrelated-intent exit (email / calendar / tasks)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Email requests must exit build mode even when an active ack is present
+assert(
+  !classifyBuildFollowUp("check my email", historyWithAck()),
+  "UI-1: 'check my email' in build session → false (exits to orchestrator)",
+);
+assert(
+  !classifyBuildFollowUp("show me my inbox", historyWithAck()),
+  "UI-2: 'show me my inbox' in build session → false",
+);
+assert(
+  !classifyBuildFollowUp("send an email to Alice about the meeting", historyWithAck()),
+  "UI-3: 'send an email' in build session → false",
+);
+assert(
+  !classifyBuildFollowUp("do I have any unread emails?", historyWithAck()),
+  "UI-4: 'unread emails' in build session → false",
+);
+
+// Calendar requests must exit build mode
+assert(
+  !classifyBuildFollowUp("what meetings do I have today", historyWithAck()),
+  "UI-5: 'what meetings do I have today' in build session → false",
+);
+assert(
+  !classifyBuildFollowUp("schedule a meeting for tomorrow at 2pm", historyWithAck()),
+  "UI-6: 'schedule a meeting' in build session → false",
+);
+assert(
+  !classifyBuildFollowUp("what's on my calendar this week", historyWithAck()),
+  "UI-7: 'what's on my calendar' in build session → false",
+);
+assert(
+  !classifyBuildFollowUp("any calls this afternoon?", historyWithAck()),
+  "UI-8: 'any calls this afternoon' in build session → false",
+);
+assert(
+  !classifyBuildFollowUp("cancel my meeting with Bob", historyWithAck()),
+  "UI-9: 'cancel my meeting' in build session → false",
+);
+
+// Task / reminder requests must exit build mode
+assert(
+  !classifyBuildFollowUp("add a task to review the PR", historyWithAck()),
+  "UI-10: 'add a task' in build session → false",
+);
+assert(
+  !classifyBuildFollowUp("remind me to call the dentist at 5pm", historyWithAck()),
+  "UI-11: 'remind me to call' in build session → false",
+);
+assert(
+  !classifyBuildFollowUp("what are my tasks for today?", historyWithAck()),
+  "UI-12: 'what are my tasks' in build session → false",
+);
+
+// Unrelated request in a PRIOR user turn resets the session for the next turn
+assert(
+  !classifyBuildFollowUp("now add retry logic", [
+    { role: "assistant", content: "Your next meeting is at 3pm." },
+    { role: "user", content: "schedule a meeting for tomorrow" },
+    { role: "assistant", content: `I've ${BUILD_ACK_MARKER} for you.` },
+    { role: "user", content: "build a weather tool" },
+  ]),
+  "UI-RS1: 'schedule a meeting' in prior user turn resets session → false",
+);
+assert(
+  !classifyBuildFollowUp("also add caching", [
+    { role: "assistant", content: "Here are your emails." },
+    { role: "user", content: "check my email" },
+    { role: "assistant", content: `I've ${BUILD_ACK_MARKER} for you.` },
+    { role: "user", content: "build a weather tool" },
+  ]),
+  "UI-RS2: 'check my email' in prior user turn resets session → false",
+);
+
+// Genuine build refinements must NOT be blocked by UNRELATED_INTENT_PATTERNS
+// (regression guard — phrasing about email/calendar in a build context must not trip)
+assert(
+  classifyBuildFollowUp("now add validation", historyWithAck()),
+  "UI-NM1: 'now add validation' still routes to build (control) → true",
+);
+assert(
+  classifyBuildFollowUp("also add error handling", historyWithAck()),
+  "UI-NM2: 'also add error handling' still routes to build (control) → true",
+);
+assert(
+  classifyBuildFollowUp("add retry logic", historyWithAck()),
+  "UI-NM3: 'add retry logic' still routes to build (control) → true",
+);
+
 // ── Print summary ─────────────────────────────────────────────────────────────
 console.log(`\nResults: ${passed} passed, ${failed} failed`);
 if (failed === 0) {
