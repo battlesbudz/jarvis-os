@@ -1895,6 +1895,7 @@ interface ClickableElement {
   y: number;
   resourceId?: string;
   contentDesc?: string;
+  className?: string;
 }
 
 function matchStringScore(field: string, query: string): number {
@@ -1922,11 +1923,16 @@ function findBestElement(
     const resourceIdLocal = el.resourceId?.includes("/")
       ? (el.resourceId.split("/").pop() ?? "")
       : (el.resourceId ?? "");
+    const classNameLocal = el.className?.includes(".")
+      ? (el.className.split(".").pop() ?? "")
+      : (el.className ?? "");
     const score = Math.max(
       matchStringScore(el.label, targetDescription),
       el.resourceId ? matchStringScore(el.resourceId, targetDescription) : 0,
       matchStringScore(resourceIdLocal, targetDescription),
       el.contentDesc ? matchStringScore(el.contentDesc, targetDescription) : 0,
+      el.className ? matchStringScore(el.className, targetDescription) : 0,
+      classNameLocal ? matchStringScore(classNameLocal, targetDescription) : 0,
     );
     if (score > bestScore) {
       bestScore = score;
@@ -1969,6 +1975,7 @@ async function readScreen(userId: string): Promise<ClickableElement[]> {
     y: el.y as number,
     resourceId: typeof el.resource_id === "string" && el.resource_id ? el.resource_id : undefined,
     contentDesc: typeof el.content_desc === "string" && el.content_desc ? el.content_desc : undefined,
+    className: typeof el.class_name === "string" && el.class_name ? el.class_name : undefined,
   }));
 }
 
