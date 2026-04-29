@@ -33,6 +33,8 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_sms_send",
   "android_screen_record",
   "android_view_hierarchy",
+  "android_paste_text",
+  "android_get_focused_field",
 ] as const;
 
 function isDesktopAction(value: string): value is DaemonAction {
@@ -61,6 +63,8 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_sms_send") return "android_sms";
   if (action === "android_screen_record") return "android_screen_record";
   if (action === "android_view_hierarchy") return "android_read_screen";
+  if (action === "android_paste_text") return "android_tap_type";
+  if (action === "android_get_focused_field") return "android_tap_type";
   return null;
 }
 
@@ -100,6 +104,8 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_sms_send: send an SMS text message on behalf of the user — requires to (phone number), message (text body); REQUIRES explicit user confirmation showing exact recipient and message text before sending; approved must be true
 - android_screen_record: record the phone screen as an MP4 clip — specify durationMs (max 60000 ms, default 10000), fps (default 15), audio (boolean); returns base64 MP4; REQUIRES explicit user confirmation; app must be foregrounded
 - android_view_hierarchy: dump the full UI Automator view hierarchy via ADB; returns a JSON array of every on-screen element with resource-id, content-desc, text, bounds ([x1,y1][x2,y2] pixel coordinates), and clickable/focusable/scrollable flags; use this when android_read_screen doesn't expose element coordinates or when you need to find unlabeled UI elements like icon-only buttons
+- android_paste_text: paste text into the currently focused field using clipboard paste as primary method and adb shell input text as fallback — requires text; optional fieldDescription for logging; returns { ok, verified, method_used, field_text }. Use this when android_type fails silently or when the field uses a custom input method (e.g. Facebook search bar)
+- android_get_focused_field: lightweight accessibility check that returns the currently focused input field's text, hint, and resource-id without doing a full hierarchy dump — use before typing to confirm focus
 
 VISUAL BROWSING WORKFLOW — follow this for any task that involves reading or screenshotting content in an app or browser:
 1. Navigate: android_browse or android_open_app
@@ -132,6 +138,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           "android_camera_snap", "android_camera_clip",
           "android_location_get", "android_sms_send", "android_screen_record",
           "android_view_hierarchy",
+          "android_paste_text", "android_get_focused_field",
         ],
       },
       cmd: { type: "string", description: "Shell command (when action is 'shell')" },
@@ -151,7 +158,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       x2: { type: "number", description: "Swipe end X (when action is 'android_swipe')" },
       y2: { type: "number", description: "Swipe end Y (when action is 'android_swipe')" },
       durationMs: { type: "number", description: "Swipe duration in ms (when action is 'android_swipe', default 300)" },
-      key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down"], description: "System key (when action is 'android_press_key')" },
+      key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down", "enter"], description: "System key (when action is 'android_press_key'). 'enter' presses the IME action key (Search/Go/Done)." },
       query: { type: "string", description: "Search term — substring match against filename (when action is 'android_file_search')" },
       root: { type: "string", description: "Root path to start search from (when action is 'android_file_search', defaults to external storage root)" },
       fileType: { type: "string", enum: ["image", "video", "audio", "document", "any"], description: "File type filter (when action is 'android_file_search', default 'any')" },
@@ -166,6 +173,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       to: { type: "string", description: "Phone number to send SMS to (when action is 'android_sms_send')" },
       message: { type: "string", description: "SMS message body (when action is 'android_sms_send')" },
       fps: { type: "number", description: "Frames per second for screen recording (when action is 'android_screen_record', default 15)" },
+      fieldDescription: { type: "string", description: "Human-readable label for the target field — used for logging only (when action is 'android_paste_text')" },
     },
     required: ["action"],
   },
@@ -211,10 +219,10 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         }
         op = { type: "android_swipe", x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, durationMs: typeof args.durationMs === "number" ? args.durationMs : 300 };
       } else if (rawAction === "android_press_key") {
-        const validKeys = ["back", "home", "recents", "volume_up", "volume_down"] as const;
+        const validKeys = ["back", "home", "recents", "volume_up", "volume_down", "enter"] as const;
         const key = String(args.key || "back") as typeof validKeys[number];
         if (!validKeys.includes(key)) return { ok: false, content: JSON.stringify({ ok: false, error: "invalid key" }) };
-        op = { type: "android_press_key", key };
+        op = { type: "android_press_key", key: key as "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" };
       } else if (rawAction === "android_file_list") {
         if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
         op = { type: "android_file_list", path: String(args.path) };
@@ -274,6 +282,15 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         op = { type: "android_screen_record", durationMs, fps: typeof args.fps === "number" ? args.fps : 15, audio: !!args.audio };
       } else if (rawAction === "android_view_hierarchy") {
         op = { type: "android_view_hierarchy" };
+      } else if (rawAction === "android_paste_text") {
+        if (!args.text) return { ok: false, content: JSON.stringify({ ok: false, error: "text required" }) };
+        op = {
+          type: "android_paste_text",
+          text: String(args.text),
+          fieldDescription: args.fieldDescription ? String(args.fieldDescription) : undefined,
+        };
+      } else if (rawAction === "android_get_focused_field") {
+        op = { type: "android_get_focused_field" };
       } else {
         return { ok: false, content: JSON.stringify({ ok: false, error: `unknown android action ${rawAction}` }) };
       }

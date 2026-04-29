@@ -28,6 +28,7 @@ export type DaemonOp =
   | { type: "android_type"; text: string; submit?: boolean }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
   | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" }
+
   | { type: "android_file_list"; path: string }
   | { type: "android_file_read"; path: string }
   | { type: "android_notifications_list"; limit?: number }
@@ -48,7 +49,9 @@ export type DaemonOp =
   | { type: "android_location_get"; accuracy?: "coarse" | "precise"; maxAgeMs?: number }
   | { type: "android_sms_send"; to: string; message: string }
   | { type: "android_screen_record"; durationMs?: number; fps?: number; audio?: boolean }
-  | { type: "android_view_hierarchy" };
+  | { type: "android_view_hierarchy" }
+  | { type: "android_paste_text"; text: string; fieldDescription?: string }
+  | { type: "android_get_focused_field" };
 
 export interface PhoneNotification {
   pkg: string;

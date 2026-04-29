@@ -69,6 +69,8 @@ object OpHandler {
                 "android_sms_send" -> handleSmsSend(context, op)
                 "android_screen_record" -> ScreenRecordHandler.handleScreenRecord(context, op)
                 "android_view_hierarchy" -> handleViewHierarchy()
+                "android_paste_text" -> handlePasteText(context, op)
+                "android_get_focused_field" -> handleGetFocusedField()
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs
@@ -411,6 +413,143 @@ object OpHandler {
                 .put("submitted", submit && ok),
             error = if (!ok) "No editable field found — tap a text input first, then type" else null
         )
+    }
+
+    // ── android_paste_text ───────────────────────────────────────────────────
+    // Inputs text into the currently-focused field using a two-step fallback
+    // chain specifically designed for custom-IME fields (Facebook search bar,
+    // Instagram, etc.) where ACTION_SET_TEXT fails silently:
+    //
+    //   Step 1 (primary)  — adb-style `input text` via Runtime.exec()
+    //                        Proper %s/%% escaping, no shell involvement.
+    //                        Works reliably on most Android versions when the
+    //                        field accepts direct key injection.
+    //
+    //   Step 2 (fallback) — ClipboardManager + ACTION_PASTE via accessibility
+    //                        Sets clipboard on main thread (required Android 10+),
+    //                        then sends ACTION_PASTE to the focused/first editable node.
+    //
+    // After whichever step succeeds, reads back the field text via accessibility
+    // to verify the text actually appeared.
+    //
+    // Returns {ok, verified, method_used, field_text, is_password} so the
+    // server can decide whether to retry with a different approach.
+    private fun handlePasteText(context: Context, op: JSONObject): OpResult {
+        val text = op.optString("text").ifEmpty {
+            return OpResult(false, error = "text required")
+        }
+        val fieldDescription = op.optString("fieldDescription", "input field")
+
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
+
+        // ── Step 1 (primary): adb-style input text via Runtime.exec ──────────
+        // `input text` accepts %s for space and %% for literal percent.
+        // We pass tokens directly (no sh -c) so shell metacharacters in the text
+        // are never interpreted by a shell — only the `input` binary sees them.
+        var methodUsed: String? = null
+        try {
+            val encoded = text.replace("%", "%%").replace(" ", "%s")
+            val proc = Runtime.getRuntime().exec(arrayOf("input", "text", encoded))
+            val exited = proc.waitFor(5, TimeUnit.SECONDS)
+            val exitCode = if (exited) proc.exitValue() else -1
+            if (exitCode == 0) {
+                methodUsed = "input_text_exec"
+                Log.i(TAG, "paste_text: input text exec succeeded for '$fieldDescription'")
+            } else {
+                Log.w(TAG, "paste_text: input text exec exit=$exitCode — trying clipboard fallback")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "paste_text: input text exec exception: ${e.message} — trying clipboard fallback")
+        }
+
+        // ── Step 2 (fallback): ClipboardManager + ACTION_PASTE ───────────────
+        if (methodUsed == null) {
+            try {
+                val pasteOk = svc.pasteFromClipboard(text)
+                if (pasteOk) {
+                    methodUsed = "clipboard_paste"
+                    Log.i(TAG, "paste_text: clipboard paste succeeded for '$fieldDescription'")
+                } else {
+                    Log.w(TAG, "paste_text: clipboard paste returned false for '$fieldDescription'")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "paste_text: clipboard paste exception: ${e.message}")
+            }
+        }
+
+        if (methodUsed == null) {
+            return OpResult(
+                ok = false,
+                error = "Both input methods failed for '$fieldDescription' (input text exec + clipboard paste). " +
+                    "Ensure the field is focused — tap it first, then retry."
+            )
+        }
+
+        // ── Verify: read field text back via accessibility ────────────────────
+        Thread.sleep(200)
+        val fieldInfo = svc.getFocusedFieldInfo()
+        val fieldText = fieldInfo.text
+        // Password fields hide their content — treat as verified if the field is focused and active
+        val verified = when {
+            fieldInfo.isPassword -> fieldInfo.focused
+            fieldText != null -> fieldText == text || fieldText.trim() == text.trim() || fieldText.contains(text)
+            else -> false
+        }
+
+        val resultData = JSONObject()
+            .put("ok", true)
+            .put("verified", verified)
+            .put("method_used", methodUsed)
+            .put("field_text", fieldText ?: JSONObject.NULL)
+            .put("is_password", fieldInfo.isPassword)
+            .put("field", fieldDescription)
+
+        Log.i(TAG, "paste_text: method=$methodUsed verified=$verified fieldText='${fieldText?.take(30)}'")
+        return OpResult(ok = true, data = resultData)
+    }
+
+    // Find the focused editable node starting from the given root.
+    // This is an OpHandler-local helper (the service's version is private).
+    private fun findFocusedEditable(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable && node.isFocused) return node
+        for (i in 0 until node.childCount) {
+            val result = findFocusedEditable(node.getChild(i))
+            if (result != null) return result
+        }
+        return null
+    }
+
+    private fun findFirstEditable(node: android.view.accessibility.AccessibilityNodeInfo?): android.view.accessibility.AccessibilityNodeInfo? {
+        if (node == null) return null
+        if (node.isEditable) return node
+        for (i in 0 until node.childCount) {
+            val result = findFirstEditable(node.getChild(i))
+            if (result != null) return result
+        }
+        return null
+    }
+
+    // ── android_get_focused_field ────────────────────────────────────────────
+    // Lightweight accessibility query that returns the focused editable field's
+    // text, hint, resource-id, and class — without a full hierarchy dump.
+    // The server uses this to confirm focus before typing and to verify text
+    // appeared in the field after input.
+    private fun handleGetFocusedField(): OpResult {
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
+
+        val info = svc.getFocusedFieldInfo()
+        val data = JSONObject()
+            .put("focused", info.focused)
+            .put("text", info.text ?: JSONObject.NULL)
+            .put("hint", info.hint ?: JSONObject.NULL)
+            .put("resourceId", info.resourceId ?: JSONObject.NULL)
+            .put("className", info.className ?: JSONObject.NULL)
+            .put("isPassword", info.isPassword)
+
+        return OpResult(ok = true, data = data)
     }
 
     private fun handleSwipe(op: JSONObject): OpResult {
