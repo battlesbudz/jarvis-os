@@ -118,15 +118,49 @@ export function classifyBuildIntent(text: string): boolean {
 export const BUILD_ACK_MARKER = "queued that build job";
 
 /**
+ * How many messages back (newest-first) to scan when deciding whether an
+ * active build session is in progress.  A window of 20 covers roughly 10
+ * user/assistant turns, which is more than enough for a typical multi-step
+ * build conversation without risking false-positives from very old sessions.
+ */
+const BUILD_SESSION_WINDOW = 20;
+
+/**
+ * Patterns that indicate the user is explicitly ending the build session and
+ * moving to a completely different topic.  Any match causes classifyBuildFollowUp
+ * to return false even if a recent build ack exists in history.
+ */
+const BUILD_SESSION_END_PATTERNS = [
+  // Explicit cancellation
+  /\b(forget|never mind|nevermind|stop|cancel|abort|ignore)\s+(that|the\s+build|it)\b/i,
+  // Switching topics
+  /\b(let'?s|i\s+want\s+to)\s+(do\s+something\s+else|talk\s+about\s+something\s+else|switch\s+topics?|move\s+on|change\s+the\s+subject)\b/i,
+  // Wrapping up
+  /\b(that'?s?\s+(all|enough|good|done|great|it)|we'?r?e?\s+done\s+with\s+that)\b/i,
+];
+
+/**
+ * Short phrases that are trivial acknowledgements and should NOT reset the
+ * build session — they carry no topic signal.
+ */
+const TRIVIAL_ACK_PATTERN = /^(ok|okay|thanks|thank you|got it|sounds good|great|cool|nice|perfect|awesome|alright|sure|yep|yeah|yes|no|nope)\b/i;
+
+/**
  * Returns true when the current message is a follow-up refinement to an
  * ongoing build conversation.
  *
- * Two conditions must both be true:
- *   1. The most-recent assistant message in chatHistory contains the build-ack
- *      marker (i.e. Jarvis already acknowledged a build request this session).
- *   2. The current message matches at least one BUILD_REFINEMENT_PATTERN OR
- *      one of the regular BUILD_PATTERNS (the user may rephrase the original
- *      request entirely).
+ * Keeps Jarvis in "build session" mode for the full conversation, not just
+ * the immediately-following message.  The session stays active as long as:
+ *   1. At least one assistant message within the last BUILD_SESSION_WINDOW
+ *      entries contains the build-ack marker (i.e. a build was queued at some
+ *      point in the recent conversation).
+ *   2. No substantive user message between that ack and the current turn
+ *      (newest-first positions 0..ackIndex-1) is a "general" turn — meaning
+ *      it carries no build/refinement signal.  A general turn signals a topic
+ *      change and ends the build session for all subsequent messages.
+ *   3. The current message is not an explicit session-end phrase.
+ *   4. The current message matches at least one BUILD_REFINEMENT_PATTERN or
+ *      one of the regular BUILD_PATTERNS.
  *
  * chatHistory is stored newest-first (as per coachAgent convention).
  */
@@ -136,13 +170,54 @@ export function classifyBuildFollowUp(
 ): boolean {
   if (!text || text.trim().length === 0) return false;
 
-  // Find the most-recent assistant message
-  const lastAssistant = chatHistory.find((m) => m.role === "assistant");
-  if (!lastAssistant || !lastAssistant.content.includes(BUILD_ACK_MARKER)) {
+  // Explicit session-end check — bail out before scanning history
+  if (BUILD_SESSION_END_PATTERNS.some((re) => re.test(text))) {
     return false;
   }
 
-  // The prior turn was a build ack — any refinement pattern now qualifies
+  // Locate the most-recent build ack within the sliding window.
+  // Using findIndex preserves the exact position so we can inspect the turns
+  // that occurred *after* the ack (smaller indices = more recent in history).
+  const window = chatHistory.slice(0, BUILD_SESSION_WINDOW);
+  const ackIndex = window.findIndex(
+    (m) => m.role === "assistant" && m.content.includes(BUILD_ACK_MARKER),
+  );
+  if (ackIndex === -1) {
+    return false; // No build ack in recent history — not in a build session
+  }
+
+  // Check for a user-driven topic change between the ack and now.
+  // In newest-first order, indices 0..ackIndex-1 are more recent than the ack.
+  // Only USER messages are considered — intermediate assistant replies (which may
+  // vary in wording and may not contain the marker) are intentionally ignored so
+  // that the build session persists across the full conversation until the user
+  // explicitly changes topic.
+  //
+  // A topic change is signalled by a substantive user message (≥10 chars, not a
+  // trivial ack) that carries no build or refinement signal — including explicit
+  // session-end phrases ("never mind that", "cancel it", etc.).
+  const userTurnsAfterAck = window
+    .slice(0, ackIndex)
+    .filter((m) => m.role === "user");
+  const hasTopicChange = userTurnsAfterAck.some((m) => {
+    const t = m.content.trim();
+    // Trivial one-liners carry no topic signal — don't reset the session
+    if (t.length < 10 || TRIVIAL_ACK_PATTERN.test(t)) return false;
+    // Explicit session-end phrase in a prior turn → definitive topic change
+    if (BUILD_SESSION_END_PATTERNS.some((re) => re.test(t))) return true;
+    // Any build or refinement signal keeps the session alive
+    if (BUILD_PATTERNS.some((re) => re.test(t))) return false;
+    if (BUILD_REFINEMENT_PATTERNS.some((re) => re.test(t))) return false;
+    // Substantive message with no build signal → general topic change
+    return true;
+  });
+
+  if (hasTopicChange) {
+    return false; // User changed topic after the last ack — session is over
+  }
+
+  // Build session is active — check if current message is a refinement or
+  // a fresh build request (user may fully rephrase the original requirement)
   return (
     BUILD_REFINEMENT_PATTERNS.some((re) => re.test(text)) ||
     BUILD_PATTERNS.some((re) => re.test(text))
