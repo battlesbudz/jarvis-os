@@ -18,6 +18,7 @@ import { screenshotDiff } from "../../lib/screenshotDiff";
 import { db } from "../../db";
 import { buttonLocations } from "@shared/schema";
 import { eq, and, desc } from "drizzle-orm";
+import { notifyUser } from "../../channels/registry";
 
 //        Shell safety: server-side preflight for early UX feedback                                                    
 // Mirrors the daemon-side commandEscapesRoot strategy so the agent gets a fast
@@ -757,6 +758,20 @@ export const androidSearchInAppTool: AgentTool = {
     const label = `android_search_in_app: ${appName}     "${searchQuery.slice(0, 40)}"`;
     console.log(`[${label}] starting${resumeFromStep ? ` (resume from step ${resumeFromStep})` : ""}`);
 
+    // Emit real-time progress to the user.
+    //   • If the request arrived via the in-app SSE session (ctx.state.onProgress is set),
+    //     use onProgress exclusively — calling notifyUser would create a duplicate inbox
+    //     message on top of the streaming SSE indicator, which would be noisy.
+    //   • Otherwise (Telegram, Discord, etc.) use notifyUser so the message reaches the
+    //     correct external channel. Fire-and-forget so it never blocks execution.
+    function emitProgress(message: string): void {
+      if (ctx.state.onProgress) {
+        ctx.state.onProgress(message);
+      } else {
+        notifyUser(ctx.userId, "general", message).catch(() => {});
+      }
+    }
+
     // Per-step outcome log     included in every response so Jarvis and the user can
     // understand what happened at each stage and which step to retry.
     const stepLog: Array<{ step: number; outcome: string; detail?: string }> = [];
@@ -855,8 +870,10 @@ export const androidSearchInAppTool: AgentTool = {
 
     //        Step 1: Open app + wait for load                                                                                                    
     if (!resumeFromStep || resumeFromStep <= 1) {
+      emitProgress(`Opening ${appName}…`);
       const openResult = await sendDaemonOp(ctx.userId, { type: "android_open_app", packageName: appPackage }, 20000);
       if (!openResult.ok) {
+        emitProgress(`Failed to open ${appName} ✗`);
         return {
           ok: false,
           content: JSON.stringify({
@@ -888,6 +905,7 @@ export const androidSearchInAppTool: AgentTool = {
         if (finalRead.ok) { screenRaw = JSON.stringify(finalRead.data || ""); loaded = screenRaw.length > 50; }
       }
       if (!loaded) {
+        emitProgress(`${appName} load timed out ✗`);
         return {
           ok: false,
           content: JSON.stringify({
@@ -902,11 +920,13 @@ export const androidSearchInAppTool: AgentTool = {
 
       stepLog.push({ step: 1, outcome: "app_loaded" });
       console.log(`[${label}] step 1 complete     app loaded`);
+      emitProgress(`${appName} opened ✓`);
 
       //        Login-wall detection                                                                                                                               
       const loginWallKeywords = ["log in", "login", "sign in", "sign up", "continue as", "create account", "register"];
       if (screenContains(screenRaw, loginWallKeywords)) {
         stepLog.push({ step: 1, outcome: "blocked_by_login_wall" });
+        emitProgress(`${appName} requires login — search blocked ✗`);
         return {
           ok: false,
           content: JSON.stringify({
@@ -945,6 +965,8 @@ export const androidSearchInAppTool: AgentTool = {
     if (!resumeFromStep || resumeFromStep <= 2) {
       let searchElementFound = false;
 
+      emitProgress(`Locating search bar in ${appName}…`);
+
       // ── Cache fast-path (skip discovery on repeat calls) ─────────────────────
       // Applied only on fresh invocations (resumeFromStep is null/undefined).
       // When the agent retries step 2 it means the cached coords failed step 3
@@ -973,6 +995,9 @@ export const androidSearchInAppTool: AgentTool = {
       // ── Full 3-attempt discovery loop (cache miss or retry) ──────────────────
       if (!searchElementFound) {
         for (let attempt = 1; attempt <= 3; attempt++) {
+          if (attempt > 1) {
+            emitProgress(`Search bar not found, trying strategy ${attempt}/3…`);
+          }
           // Always re-read the screen on each attempt so coordinates are fresh
           const located = await relocateSearchElement();
           screenRaw = located.screenRaw || screenRaw;
@@ -1003,6 +1028,7 @@ export const androidSearchInAppTool: AgentTool = {
       // Claude Vision (android_screen_understand internally) to locate the magnifying-
       // glass icon visually. This avoids asking the user to intervene manually.
       if (!searchElementFound && APP_SEARCH_HINTS[appPackage]?.iconOnly) {
+        emitProgress(`Trying vision-based search button detection…`);
         stepLog.push({ step: 2, outcome: "vision_fallback_attempt", detail: "resource IDs not found; trying vision-based detection for icon-only search button" });
         console.log(`[${label}] step 2 — iconOnly app: resource IDs exhausted, attempting vision fallback via buildScreenMapElements`);
 
@@ -1053,6 +1079,7 @@ export const androidSearchInAppTool: AgentTool = {
           ? "3 accessibility-tree strategies (current screen, home+reopen, swipe-reveal) and a vision-based fallback"
           : "3 location strategies (current screen, home+reopen, swipe-reveal)";
         stepLog.push({ step: 2, outcome: "failed", detail: `search element not found after ${locationSummary}` });
+        emitProgress(`Search bar not found in ${appName} after 3 attempts ✗`);
         return {
           ok: false,
           content: JSON.stringify({
@@ -1084,6 +1111,7 @@ export const androidSearchInAppTool: AgentTool = {
 
       stepLog.push({ step: 2, outcome: "success", detail: `found at (${searchX}, ${searchY})` });
       console.log(`[${label}] step 2 complete — search element found at (${searchX}, ${searchY})`);
+      emitProgress(`Search bar found ✓`);
     }
 
     // ── Step 3: Tap search bar with locate-then-act loop ──────────────────
@@ -1096,6 +1124,12 @@ export const androidSearchInAppTool: AgentTool = {
     if (!resumeFromStep || resumeFromStep <= 3) {
       let tapVerified = false;
       for (let attempt = 1; attempt <= 4; attempt++) {
+        emitProgress(
+          attempt === 1
+            ? `Tapping search bar, verifying focus…`
+            : `Retrying tap (attempt ${attempt}/4)…`,
+        );
+
         let tapX: number | null = null;
         let tapY: number | null = null;
 
@@ -1145,6 +1179,7 @@ export const androidSearchInAppTool: AgentTool = {
 
       if (!tapVerified) {
         stepLog.push({ step: 3, outcome: "failed", detail: "4 tap attempts, no focus confirmed" });
+        emitProgress(`Could not focus search bar after 4 taps ✗`);
         return {
           ok: false,
           content: JSON.stringify({
@@ -1160,6 +1195,7 @@ export const androidSearchInAppTool: AgentTool = {
 
       stepLog.push({ step: 3, outcome: "success" });
       console.log(`[${label}] step 3 complete     search bar focused`);
+      emitProgress(`Search bar tapped, keyboard open ✓`);
     }
 
     //        Step 4: Focus-verify     type     confirm text appeared                                              
@@ -1172,6 +1208,7 @@ export const androidSearchInAppTool: AgentTool = {
           const isFocused = screenContains(fcRaw, ["focused", "edittext", "cursor", "inputmethod", "keyboard"]);
           screenRaw = fcRaw;
           if (!isFocused) {
+            emitProgress(`Search field lost focus — cannot type ✗`);
             return {
               ok: false,
               content: JSON.stringify({
@@ -1186,6 +1223,7 @@ export const androidSearchInAppTool: AgentTool = {
         }
       }
 
+      emitProgress(`Typing "${searchQuery.slice(0, 40)}${searchQuery.length > 40 ? "…" : ""}"…`);
       await sendDaemonOp(ctx.userId, { type: "android_type", text: searchQuery }, 15000);
       await sleep(800);
 
@@ -1202,6 +1240,7 @@ export const androidSearchInAppTool: AgentTool = {
 
       if (!typeVerified) {
         stepLog.push({ step: 4, outcome: "failed", detail: "query text not found in screen after android_type" });
+        emitProgress(`Text did not appear in search field ✗`);
         return {
           ok: false,
           content: JSON.stringify({
@@ -1217,10 +1256,12 @@ export const androidSearchInAppTool: AgentTool = {
 
       stepLog.push({ step: 4, outcome: "success", detail: `query confirmed in accessibility tree` });
       console.log(`[${label}] step 4 complete     query typed and confirmed`);
+      emitProgress(`Query entered ✓`);
     }
 
     //        Step 5: Submit search and verify results loaded                                                             
     if (!resumeFromStep || resumeFromStep <= 5) {
+      emitProgress(`Submitting search…`);
       // Capture pre-submit screen fingerprint: length + node count for change detection
       const preSubmitLen = screenRaw.length;
       const preSubmitNodeCount = (screenRaw.match(/"type"|"className"|"contentDesc"/g) || []).length;
@@ -1253,6 +1294,7 @@ export const androidSearchInAppTool: AgentTool = {
 
       // Fallback: locate and tap a visible search/go button
       if (!resultsLoaded) {
+        emitProgress(`Retrying submission via search button…`);
         const btnLocated = await relocateSearchElement();
         if (btnLocated.found && btnLocated.x !== null && btnLocated.y !== null) {
           await sendDaemonOp(ctx.userId, { type: "android_tap", x: btnLocated.x, y: btnLocated.y }, 10000);
@@ -1270,6 +1312,7 @@ export const androidSearchInAppTool: AgentTool = {
       // Step 5 is strict     if results did not load after both attempts, return a structured failure
       if (!resultsLoaded) {
         stepLog.push({ step: 5, outcome: "failed", detail: "results screen not detected after Enter + button tap" });
+        emitProgress(`Search results did not load ✗`);
         return {
           ok: false,
           content: JSON.stringify({
@@ -1285,6 +1328,7 @@ export const androidSearchInAppTool: AgentTool = {
 
       stepLog.push({ step: 5, outcome: "success" });
       console.log(`[${label}] step 5 complete     results loaded`);
+      emitProgress(`Search results loaded ✓`);
     }
 
     //        Step 6: Optional result action                                                                                                             
