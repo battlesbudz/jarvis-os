@@ -2032,6 +2032,12 @@ export default function InsightsScreen() {
                   setIsWorkingOnPhone(true);
                   setPhoneWorkingMessage(progressMsg);
                 }
+              } else if (parsed.type === 'progress') {
+                const progressMsg = String(parsed.message || '');
+                if (progressMsg) {
+                  setIsWorkingOnPhone(true);
+                  setPhoneWorkingMessage(progressMsg);
+                }
               } else if (parsed.type === 'working') {
                 gotPhoneWorking = true;
                 setIsWorkingOnPhone(true);

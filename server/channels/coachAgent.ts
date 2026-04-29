@@ -31,6 +31,10 @@ export interface CoachReplyInput {
    *  reply so callers can progressively update an external message (e.g. Discord
    *  message edits). Not called for intermediate tool-call turns. */
   onToken?: (chunk: string) => void;
+  /** Optional heartbeat callback fired during long Android automation runs
+   *  (turn 15+, every 5 turns). Callers use this to keep the user informed
+   *  without consuming an extra model turn. */
+  onProgressMessage?: (message: string) => void;
   /** Discord guild (server) ID — set when the request originates from a Discord guild channel.
    *  Surfaced in ToolContext so Discord-specific tools (e.g. deleteDiscordChannel) can
    *  identify the server without requiring a pre-configured workspace. */
@@ -91,7 +95,7 @@ function getMaxTokensForChannel(channelName: string): number {
 const COACH_AGENT_ID = "coach";
 
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
-  const { userId, userText, channelName, imageUrl, onToken, discordGuildId, discordChannelId } = input;
+  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, discordGuildId, discordChannelId } = input;
   const channelLower = channelName.toLowerCase();
 
   // ── Native session resumption (mirrors runNamedAgent pattern) ────────────────
@@ -693,6 +697,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       tools: scopedTools,
       toolContext: agentCtx,
       maxCompletionTokens: getMaxTokensForChannel(channelName),
+      onProgressMessage,
     });
     rawReply = orchResult.finalAnswer;
     console.log(
@@ -708,6 +713,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       maxTurns: 6,
       maxCompletionTokens: getMaxTokensForChannel(channelName),
       onToken,
+      onProgressMessage,
       activationPlan: channelActivationPlan,
     });
     rawReply = fallback.reply;
