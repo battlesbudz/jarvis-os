@@ -4810,6 +4810,81 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         }
       }
 
+      // ── Scroll-to-find loop for destination ───────────────────────────────────
+      if ((!toElement || toScore === 0) && maxScrollAttempts > 0) {
+        for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
+          console.log(`[android_drag_element] destination element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
+
+          const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+          const preScrollFingerprint: string = screenElements
+            .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+            .sort()
+            .join("|");
+
+          const screenMidX = 540;
+          const swipeY1 = 1400;
+          const swipeY2 = Math.max(100, swipeY1 - scrollDistance);
+          const swipeResult = await sendDaemonOp(
+            ctx.userId,
+            { type: "android_swipe", x1: screenMidX, y1: swipeY1, x2: screenMidX, y2: swipeY2, durationMs: 400 },
+            10000,
+          );
+          if (!swipeResult.ok) {
+            console.log(`[android_drag_element] destination swipe failed on pass ${scroll + 1}: ${swipeResult.error}`);
+            break;
+          }
+
+          scrollsPerformed = scrollsPerformed + 1;
+          await new Promise((resolve) => setTimeout(resolve, 500));
+
+          // No-op scroll detection via screenshot
+          let screenshotCheckConclusive = false;
+          if (preScrollScreenshot) {
+            try {
+              const postScrollScreenshot = await captureScreenshot(ctx.userId);
+              if (postScrollScreenshot) {
+                const preHash = await computeScreenshotHash(preScrollScreenshot);
+                const postHash = await computeScreenshotHash(postScrollScreenshot);
+                const dist = hammingDistance(preHash, postHash);
+                screenshotCheckConclusive = true;
+                if (dist <= 3) {
+                  console.log(`[android_drag_element] destination scroll no-op detected (hash_dist=${dist}), stopping`);
+                  break;
+                }
+              }
+            } catch { /* best-effort */ }
+          }
+
+          const freshResult = await buildScreenMapElements(ctx.userId);
+          if (!freshResult.ok) break;
+          screenElements = freshResult.elements;
+
+          // No-op detection via fingerprint fallback
+          if (!screenshotCheckConclusive) {
+            const postScrollFingerprint: string = screenElements
+              .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
+              .sort()
+              .join("|");
+            if (postScrollFingerprint === preScrollFingerprint) {
+              console.log(`[android_drag_element] destination scroll no-op detected (fingerprint unchanged), stopping`);
+              break;
+            }
+          }
+
+          toElement = null;
+          toScore = 0;
+          for (const el of screenElements) {
+            const score = scoreElement(el, toLabel);
+            if (score > toScore) { toScore = score; toElement = el; }
+          }
+
+          if (toElement && toScore > 0) {
+            console.log(`[android_drag_element] found destination "${toLabel}" after ${scrollsPerformed} total scroll(s), score=${toScore}`);
+            break;
+          }
+        }
+      }
+
       if (!toElement || toScore === 0) {
         const elementList = screenElements
           .map((el) => `  • ${el.label}${el.description ? ` — ${el.description}` : ""}`)
@@ -4824,6 +4899,76 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       x2 = toElement.center_x;
       y2 = toElement.center_y;
       toElementLabel = toElement.label;
+
+      // ── Re-verify source position after destination scrolling ─────────────────
+      // Destination scrolling shifts the viewport; x1/y1 may now point to the
+      // wrong pixels. Re-score fromLabel on the current screen. If found,
+      // update x1/y1. If not (source scrolled off-screen), scroll to top and
+      // re-locate before proceeding.
+      {
+        let updatedFromScore = 0;
+        let updatedFromElement: ScreenElement | null = null;
+        for (const el of screenElements) {
+          const score = scoreElement(el, fromLabel);
+          if (score > updatedFromScore) { updatedFromScore = score; updatedFromElement = el; }
+        }
+
+        if (updatedFromElement && updatedFromScore > 0) {
+          // Source still visible — update coordinates to current screen position
+          x1 = updatedFromElement.center_x;
+          y1 = updatedFromElement.center_y;
+          console.log(`[android_drag_element] re-confirmed source "${fromLabel}" at (${x1},${y1}) after destination scroll`);
+        } else {
+          // Source scrolled off-screen — reset to top and re-locate
+          console.log(`[android_drag_element] source "${fromLabel}" no longer visible after destination scroll — resetting to top`);
+          await scrollToTop(ctx.userId, 5);
+          await new Promise((resolve) => setTimeout(resolve, 400));
+
+          const afterResetResult = await buildScreenMapElements(ctx.userId);
+          if (afterResetResult.ok) {
+            screenElements = afterResetResult.elements;
+            updatedFromScore = 0;
+            updatedFromElement = null;
+            for (const el of screenElements) {
+              const score = scoreElement(el, fromLabel);
+              if (score > updatedFromScore) { updatedFromScore = score; updatedFromElement = el; }
+            }
+          }
+
+          if (!updatedFromElement || updatedFromScore === 0) {
+            return {
+              ok: false,
+              content: `Found destination "${toLabel}" but could not re-locate source "${fromLabel}" after scrolling. The drag cannot proceed safely.`,
+              label: `android_drag_element: source "${fromLabel}" lost after destination scroll`,
+            };
+          }
+
+          x1 = updatedFromElement.center_x;
+          y1 = updatedFromElement.center_y;
+          console.log(`[android_drag_element] re-located source "${fromLabel}" at (${x1},${y1}) after scroll-to-top reset`);
+
+          // Re-resolve destination on current screen after scroll-to-top
+          toScore = 0;
+          let refreshedToElement: ScreenElement | null = null;
+          for (const el of screenElements) {
+            const score = scoreElement(el, toLabel);
+            if (score > toScore) { toScore = score; refreshedToElement = el; }
+          }
+          if (refreshedToElement && toScore > 0) {
+            x2 = refreshedToElement.center_x;
+            y2 = refreshedToElement.center_y;
+            console.log(`[android_drag_element] re-confirmed destination "${toLabel}" at (${x2},${y2}) after scroll-to-top`);
+          } else {
+            // Destination no longer visible after scroll-to-top; stale
+            // screen-relative coordinates cannot be used safely — fail.
+            return {
+              ok: false,
+              content: `Located source "${fromLabel}" but destination "${toLabel}" is no longer visible after scrolling back. The drag cannot proceed safely.`,
+              label: `android_drag_element: destination "${toLabel}" lost after source recovery scroll`,
+            };
+          }
+        }
+      }
     } else {
       // Direction + distance mode
       const distance = typeof args.distance_px === "number" && args.distance_px > 0 ? args.distance_px : 400;
