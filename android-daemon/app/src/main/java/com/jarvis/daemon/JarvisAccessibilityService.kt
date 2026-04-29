@@ -470,15 +470,17 @@ class JarvisAccessibilityService : AccessibilityService() {
         if (label != null && label.length > 1 && !texts.contains(label)) {
             texts.add(label)
         }
-        if (node.isClickable && label != null) {
+        val resourceId = node.viewIdResourceName?.toString()?.trim() ?: ""
+        if (node.isClickable && (label != null || resourceId.isNotEmpty())) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
-            clickable.put(
-                JSONObject()
-                    .put("label", label)
-                    .put("x", bounds.centerX())
-                    .put("y", bounds.centerY())
-            )
+            val obj = JSONObject()
+                .put("label", label ?: "")
+                .put("x", bounds.centerX())
+                .put("y", bounds.centerY())
+                .put("resource_id", resourceId)
+                .put("content_desc", desc ?: "")
+            clickable.put(obj)
         }
         for (i in 0 until node.childCount) {
             collectNodes(node.getChild(i), texts, clickable, depth + 1)
