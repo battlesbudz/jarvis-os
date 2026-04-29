@@ -8,7 +8,8 @@ import { runNamedAgent } from "./runNamedAgent";
 import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
-import { notifyUser } from "../channels/registry";
+import { notifyUser, getChannel } from "../channels/registry";
+import { postToDiscordChannelById, sendToDiscordUser } from "../discord/manager";
 import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "./errorLogger";
@@ -28,16 +29,77 @@ async function notifyJobComplete(
   agentType: AgentJobType,
   title: string,
   body: string,
+  originChannel?: string,
+  originDiscordChannelId?: string,
 ): Promise<void> {
+  const text = `Jarvis (${agentType}): ${title}\n\n${body}`;
+  // Normalise for comparison — ctx.channel values like "Discord #general",
+  // "Discord", "Telegram" must all be matched case-insensitively.
+  const origin = (originChannel ?? "").toLowerCase();
+
   try {
-    // Sub-agent deliverables (decompositions, drafts, etc.) typically need a
-    // human approval before they take effect — route through the user's
-    // configured channel for "approval_request".
-    await notifyUser(
-      userId,
-      "approval_request",
-      `Jarvis (${agentType}): ${title}\n\n${body}`,
-    );
+    if (origin.startsWith("discord")) {
+      // Route back to the originating Discord channel + in_app inbox.
+      // Telegram (and any other external channel) is intentionally NOT notified.
+      const notified: string[] = [];
+      if (originDiscordChannelId) {
+        const sent = await postToDiscordChannelById(userId, originDiscordChannelId, text);
+        if (sent) {
+          notified.push(`discord:channel:${originDiscordChannelId}`);
+        } else {
+          // Channel post failed (bot lost access etc.) — fall back to DM.
+          const dmSent = await sendToDiscordUser(userId, text);
+          if (dmSent) notified.push("discord:dm");
+        }
+      } else {
+        // No specific channel ID stored — deliver via user's Discord DM.
+        const dmSent = await sendToDiscordUser(userId, text);
+        if (dmSent) notified.push("discord:dm");
+      }
+      // Always surface the result in the in-app inbox as well.
+      const inAppCh = getChannel("in_app");
+      if (inAppCh) {
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+        notified.push("in_app");
+      }
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
+      return;
+    }
+
+    if (origin === "telegram") {
+      // Telegram-originated jobs go to Telegram + in_app only.
+      // We call the channels directly rather than notifyUser to avoid the
+      // registry's cross-channel fallback routing (which could reach Discord).
+      const notified: string[] = [];
+      const telegramCh = getChannel("telegram");
+      if (telegramCh) {
+        const r = await telegramCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => ({ ok: false as const }));
+        if (r.ok) notified.push("telegram");
+      }
+      const inAppCh = getChannel("in_app");
+      if (inAppCh) {
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+        notified.push("in_app");
+      }
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
+      return;
+    }
+
+    if (origin === "app" || origin === "coach" || origin === "appchat" || origin === "voice") {
+      // In-app (or voice) only — no external channel notification.
+      const inAppCh = getChannel("in_app");
+      if (inAppCh) {
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+      }
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [in_app]`);
+      return;
+    }
+
+    // Absent or unrecognised origin (proactive/scheduled jobs such as weekly_pattern,
+    // morning brief, heartbeat) → use the user's configured channel preferences as before.
+    const results = await notifyUser(userId, "approval_request", text);
+    const delivered = results.filter((r) => r.result.ok).map((r) => r.channel).join(", ");
+    console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel || "none"} → [${delivered || "none"}]`);
   } catch (err) {
     console.error("[JobQueue] notify failed:", err);
   }
@@ -64,7 +126,8 @@ interface BatchedResearchNotification {
   userId: string;
   /** createdAt of the first job in this batch (ms since epoch). Used for window matching. */
   anchorTime: number;
-  jobs: Array<{ title: string; body: string }>;
+  /** Each job's content plus its originating channel info (for most-common-origin resolution). */
+  jobs: Array<{ title: string; body: string; originChannel?: string; originDiscordChannelId?: string }>;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -140,15 +203,40 @@ async function flushResearchBatch(key: string): Promise<void> {
   fresh.push({ anchorTime, flushedAt: now });
   flushedResearchBatches.set(userId, fresh);
 
+  // Resolve the most-common originating channel across all batch jobs so that
+  // the single batched notification goes to the right place even if a few
+  // sibling jobs somehow came from a different channel.
+  const originCounts = new Map<string, number>();
+  for (const j of jobs) {
+    if (j.originChannel) {
+      const key = j.originChannel.toLowerCase();
+      originCounts.set(key, (originCounts.get(key) ?? 0) + 1);
+    }
+  }
+  let batchOriginChannel: string | undefined;
+  let batchOriginDiscordChannelId: string | undefined;
+  if (originCounts.size > 0) {
+    let maxCount = 0;
+    for (const [ch, count] of originCounts.entries()) {
+      if (count > maxCount) { maxCount = count; batchOriginChannel = ch; }
+    }
+    // When the winning origin is Discord, find the Discord channel ID from the first
+    // matching job (or union if there are multiple distinct IDs in this batch).
+    if (batchOriginChannel?.startsWith("discord")) {
+      const discordJobs = jobs.filter(j => j.originChannel?.toLowerCase().startsWith("discord") && j.originDiscordChannelId);
+      batchOriginDiscordChannelId = discordJobs[0]?.originDiscordChannelId;
+    }
+  }
+
   if (jobs.length === 1) {
-    await notifyJobComplete(userId, "research", jobs[0].title, jobs[0].body);
+    await notifyJobComplete(userId, "research", jobs[0].title, jobs[0].body, batchOriginChannel, batchOriginDiscordChannelId);
   } else {
     // Only count jobs with a body (real completions, not extra DB-only siblings).
     const bodiedJobs = jobs.filter((j) => j.body);
     const notifyBody = bodiedJobs[0]?.body ?? jobs[0].body;
     const combinedTitle = `Research complete (${jobs.length} results) — ${jobs[0].title}`;
-    console.log(`[JobQueue] flushing batched research notification: ${jobs.length} job(s) → userId=${userId}`);
-    await notifyJobComplete(userId, "research", combinedTitle, notifyBody);
+    console.log(`[JobQueue] flushing batched research notification: ${jobs.length} job(s) → userId=${userId} batchOriginChannel=${batchOriginChannel || "none"}`);
+    await notifyJobComplete(userId, "research", combinedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId);
   }
 }
 
@@ -166,6 +254,8 @@ function scheduleResearchNotification(
   createdAt: Date,
   deliverableTitle: string,
   notifyBody: string,
+  originChannel?: string,
+  originDiscordChannelId?: string,
 ): void {
   const newTime = createdAt.getTime();
   const now = Date.now();
@@ -188,7 +278,7 @@ function scheduleResearchNotification(
   for (const [key, batch] of researchNotificationBatches.entries()) {
     if (batch.userId !== userId) continue;
     if (Math.abs(batch.anchorTime - newTime) <= SIBLING_WINDOW_MS) {
-      batch.jobs.push({ title: deliverableTitle, body: notifyBody });
+      batch.jobs.push({ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId });
       // Debounce: extend the flush timer so it fires after the last arrival.
       clearTimeout(batch.timer);
       batch.timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
@@ -198,7 +288,8 @@ function scheduleResearchNotification(
     }
   }
 
-  // No matching batch — start a new one.
+  // No matching batch — start a new one. Per-job origin is tracked so that
+  // flushResearchBatch can compute the most-common origin across all siblings.
   const key = `${userId}:research:${newTime}`;
   const timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
     console.error("[JobQueue] flushResearchBatch failed:", e),
@@ -206,7 +297,7 @@ function scheduleResearchNotification(
   researchNotificationBatches.set(key, {
     userId,
     anchorTime: newTime,
-    jobs: [{ title: deliverableTitle, body: notifyBody }],
+    jobs: [{ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId }],
     timer,
   });
 }
@@ -214,19 +305,25 @@ function scheduleResearchNotification(
 /**
  * Notify the user that a sub-agent job completed.
  * Research jobs are batched within a 60-second sibling window — exactly one
- * Telegram/inbox notification is sent per batch via a debounced coordinator.
+ * notification is sent per batch via a debounced coordinator.
  * All other agent types receive an immediate individual notification.
+ * Both paths respect the originChannel stored in job.input to avoid
+ * cross-channel leakage (e.g. Discord research should not notify Telegram).
  */
 async function notifySubAgentJobComplete(
   job: typeof schema.agentJobs.$inferSelect,
   deliverableTitle: string,
   notifyBody: string,
 ): Promise<void> {
+  const jobInput = (job.input as Record<string, unknown>) ?? {};
+  const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
+  const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
+
   if (job.agentType !== "research" || !job.createdAt) {
-    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody);
+    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody, originChannel, originDiscordChannelId);
     return;
   }
-  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody);
+  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody, originChannel, originDiscordChannelId);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -312,9 +409,15 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
   }, MAX_JOB_DURATION_MS);
 
   try {
+    // Extract origin channel stored at queue time — used to route the completion
+    // notification back to the right channel rather than spamming all channels.
+    const jobInput = (job.input as Record<string, unknown>) ?? {};
+    const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
+    const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
+
     // Helper: fire the workflow hook if this job belongs to a workflow step.
-    const wfId    = (job.input as Record<string, unknown>)?.workflowId    as string | undefined;
-    const wfStep  = (job.input as Record<string, unknown>)?.workflowStepIndex as number | undefined;
+    const wfId    = jobInput.workflowId    as string | undefined;
+    const wfStep  = jobInput.workflowStepIndex as number | undefined;
     const hasWorkflow = !!wfId && wfStep !== undefined;
 
     if (job.agentType === "weekly_pattern") {
@@ -395,6 +498,8 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         "named_agent_task",
         `${agentName} — ${job.title}`,
         `Iteration ${iterationCount + 1} complete. Review output and approve or request a revision.\n\n${snippet}${result.reply.length > 280 ? "…" : ""}`,
+        originChannel,
+        originDiscordChannelId,
       );
 
       if (hasWorkflow) {
@@ -421,7 +526,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       }).catch(() => {});
       console.log(`[JobQueue] complete goal_decompose job ${job.id} → tree ${result.goalTreeId}`);
       const goalMsg = `Goal broken into ${result.phaseCount} phase(s). Open the Goals tab to review.`;
-      await notifyJobComplete(job.userId, "goal_decompose", job.title, goalMsg);
+      await notifyJobComplete(job.userId, "goal_decompose", job.title, goalMsg, originChannel, originDiscordChannelId);
       if (hasWorkflow) {
         await onWorkflowJobComplete(wfId!, wfStep!, job.id, goalMsg).catch((e) =>
           console.error("[JobQueue] workflow hook failed:", e),
@@ -475,7 +580,7 @@ writing a clear inbox message explaining what is broken and what the user should
       const generalReply = result.reply?.trim()
         ? result.reply.slice(0, 3000)
         : "Auto-debug ran but produced no summary. Please check the Proposals tab or review recent error logs for details.";
-      await notifyJobComplete(job.userId, "general", job.title, generalReply);
+      await notifyJobComplete(job.userId, "general", job.title, generalReply, originChannel, originDiscordChannelId);
 
       if (hasWorkflow) {
         await onWorkflowJobComplete(wfId!, wfStep!, job.id, generalReply).catch((e) =>
@@ -499,7 +604,6 @@ writing a clear inbox message explaining what is broken and what the user should
     // (queue_background_job, spawn_subagent) via getModelForJobType(). The model
     // arrives here via job.input.model. Other callers that omit input.model
     // preserve the original resolution path inside runSubAgent.
-    const jobInput = (job.input as Record<string, unknown>) ?? {};
     const subAgentModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
 
     const sub = await runSubAgent({

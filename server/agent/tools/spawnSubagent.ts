@@ -73,12 +73,15 @@ export const spawnSubagentTool: AgentTool = {
     try {
       // Inject per-type model routing at the orchestrator spawn point.
       const routedModel = getModelForJobType(agentType as AgentJobType);
+      const spawnInput: Record<string, unknown> = routedModel ? { model: routedModel } : {};
+      if (ctx.channel) spawnInput.originChannel = ctx.channel;
+      if (ctx.discordChannelId) spawnInput.originDiscordChannelId = ctx.discordChannelId;
       const jobId = await submitAgentJob({
         userId: ctx.userId,
         agentType: agentType as AgentJobType,
         title,
         prompt,
-        input: routedModel ? { model: routedModel } : undefined,
+        input: spawnInput,
       });
       console.log(`[${ctx.channel || "Agent"}] spawn_subagent type=${agentType} job=${jobId} title="${title.slice(0, 60)}"`);
       return {
