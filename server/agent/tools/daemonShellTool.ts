@@ -2390,8 +2390,9 @@ Parameters:
   - direction: one of "up", "down", "left", "right"
   - distance_px: how far to swipe in pixels (default 400)
   - max_age_ms: max age of cached ScreenMap to reuse (default 500, 0 = always fresh)
+  - reset_scroll: when true (default), scroll to top first if the element is not visible, then search downward
   - max_scroll_attempts: how many downward scroll passes to perform when the element is off-screen (default 5, 0 to disable)
-  - scroll_distance: pixel distance for each scroll swipe used during the scroll-to-find loop (default 600)
+  - scroll_distance: pixel distance for each search-scroll swipe (default 600, clamped 100–1800). Only affects the search loop, not the actual swipe gesture (which uses distance_px).
 
 Returns the matched element details, the swipe coordinates used, a screen_changed field (true/false) indicating whether the screen visually changed after the swipe (based on perceptual hash comparison), hash_distance (the raw Hamming distance between hashes, or null if screenshot was unavailable), and scrolls_performed (number of scroll passes needed to locate the element). If screen_changed is false the element may already be at the scroll boundary, or the swipe may not have landed on a scrollable region.
 
@@ -2420,13 +2421,13 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         type: "number",
         description: "Maximum number of downward scroll passes to perform when the element is not visible on the initial screen (default 5). Set to 0 to disable automatic scrolling.",
       },
-      scroll_distance: {
-        type: "number",
-        description: "Pixel distance for each scroll swipe used during the scroll-to-find loop (default 600). Larger values scroll further per swipe.",
-      },
       reset_scroll: {
         type: "boolean",
         description: "When true (default), scroll back to the top of the page if the element is not found on the initial screen, then re-read and re-score elements so targets above the current scroll position are never missed. Set to false to skip the reset and only match against the initial viewport.",
+      },
+      scroll_distance: {
+        type: "number",
+        description: "Pixel distance for each search-scroll swipe (default 600, clamped 100–1800). Only affects the search loop, not the actual swipe gesture (which uses distance_px). Larger values scroll further per pass.",
       },
     },
     required: ["label", "direction"],
