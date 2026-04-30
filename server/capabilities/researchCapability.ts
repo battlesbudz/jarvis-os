@@ -3,13 +3,14 @@ import { webSearchTool, researchTopicTool } from "../agent/tools/webSearch";
 import { webFetchTool } from "../agent/tools/webFetch";
 import { youtubeSearchTool } from "../agent/tools/youtubeSearch";
 import { youtubeTranscriptTool } from "../agent/tools/youtubeTranscript";
+import { videoTranscriptTool } from "../agent/tools/videoTranscript";
 import { xSearchTool } from "../agent/tools/xSearch";
 
 export const researchCapability: Capability = {
   id: "research",
   label: "Research & Web",
   toolGroups: ["research"],
-  tools: [webSearchTool, researchTopicTool, webFetchTool, youtubeSearchTool, youtubeTranscriptTool, xSearchTool],
+  tools: [webSearchTool, researchTopicTool, webFetchTool, youtubeSearchTool, youtubeTranscriptTool, videoTranscriptTool, xSearchTool],
   configRequirements: [
     { key: "TAVILY_API_KEY", label: "Tavily Search API Key", optional: true },
     { key: "X_BEARER_TOKEN", label: "X (Twitter) API Bearer Token", optional: true },
