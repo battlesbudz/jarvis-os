@@ -1448,7 +1448,7 @@ export async function fetchTranscriptCached(
           return { segments, noCaptionsDetected: false };
         }
       } else {
-        console.log("[transcriptCache] Phase 0 skipped — AI_INTEGRATIONS_GEMINI_API_KEY not set");
+        console.warn("[transcriptCache] Phase 0 skipped — AI_INTEGRATIONS_GEMINI_API_KEY not set");
       }
     } catch (geminiErr) {
       console.warn(
