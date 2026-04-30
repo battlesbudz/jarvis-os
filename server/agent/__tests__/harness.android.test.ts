@@ -258,8 +258,16 @@ async function run(): Promise<void> {
       "HA-3: screen-reading carve-out present ('android_read_screen after every navigation')",
     );
     assert(
-      capturedSystemContent?.includes("When the user provides a direct URL to a specific video or page") ?? false,
-      "HA-3: direct-URL instruction present ('When the user provides a direct URL to a specific video or page')",
+      capturedSystemContent?.includes("When the user provides a YouTube URL") ?? false,
+      "HA-3: YouTube URL instruction present ('When the user provides a YouTube URL')",
+    );
+    assert(
+      capturedSystemContent?.includes("android_read_screen` is your first choice") ?? false,
+      "HA-3: android_read_screen first-choice guidance present",
+    );
+    assert(
+      capturedSystemContent?.includes("Hard limit: 4 screenshots per task") ?? false,
+      "HA-3: screenshot hard limit (4 per task) guidance present",
     );
     assert(
       capturedSystemContent?.includes("do not open the app manually and search for it") ?? false,
