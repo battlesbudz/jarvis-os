@@ -69,8 +69,9 @@ function loadCrewReinforcement(crewRole: string): string {
     const content = fs.readFileSync(filePath, "utf8");
     _reinforcementCache.set(crewRole, content);
     return content;
-  } catch {
-    console.warn(`[runNamedAgent] crew reinforcement file not found: ${filePath} — using empty string`);
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[runNamedAgent] crew reinforcement file unavailable: ${filePath} — ${reason} — using empty string`);
     _reinforcementCache.set(crewRole, "");
     return "";
   }
