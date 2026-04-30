@@ -56,6 +56,7 @@ import {
 } from "./scheduleChannelReport";
 import { youtubeSearchTool } from "./youtubeSearch";
 import { youtubeTranscriptTool } from "./youtubeTranscript";
+import { videoTranscriptTool } from "./videoTranscript";
 import { xSearchTool } from "./xSearch";
 import { registerApprovalTool } from "./registerApproval";
 import { discordPinMessageTool } from "./discordPinMessage";
@@ -287,6 +288,7 @@ export {
   setupNamedAgentTool,
   youtubeSearchTool,
   youtubeTranscriptTool,
+  videoTranscriptTool,
   xSearchTool,
   queueBackgroundJobTool,
   setupContentPipelineTool,

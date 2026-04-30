@@ -660,7 +660,14 @@ async function processUpdate(update: any): Promise<void> {
     }
     if (videoFileId && !text) {
       if (videoFileSize && videoFileSize > MAX_VIDEO_BYTES) {
-        await sendMessage(chatId, "This video is too large for me to download via Telegram (max 20 MB). Share the YouTube URL directly and I'll download just the audio — it's much faster.");
+        await sendMessage(
+          chatId,
+          "This video is too large for me to download via Telegram (max 20 MB). " +
+          "Here are two ways I can still transcribe it:\n\n" +
+          "1. **YouTube link** — if it's on YouTube, share the URL and I'll handle it natively.\n" +
+          "2. **Direct download link** — upload the file to Google Drive (or Dropbox) and share the link with me. " +
+          "I'll download and transcribe it using Google's File API (up to 500 MB)."
+        );
         return;
       }
       try {
