@@ -343,6 +343,26 @@ const searchBarCoordCache = new Map<string, SearchBarCacheEntry>();
 // the learned resource ID can be tried again even after coordinate invalidation.
 export const learnedResourceIds = new Map<string, string>();
 
+// ── Per-turn screenshot budget ────────────────────────────────────────────────
+// Caps android_screenshot to MAX_SCREENSHOTS_PER_TURN per agent turn.
+// After the cap, callers should switch to android_read_screen.
+// Keyed by ToolContext (unique object per request, GC'd when the turn ends).
+const MAX_SCREENSHOTS_PER_TURN = 4;
+const screenshotCountPerCtx = new WeakMap<object, number>();
+
+/**
+ * Returns true and increments the count if screenshots are still available this turn.
+ * Pass the ToolContext object (ctx) from the tool's execute function.
+ * Returns true unconditionally when ctx is not provided (no-op for internal callers).
+ */
+function checkAndIncrementScreenshotBudget(ctx: object | undefined): boolean {
+  if (!ctx) return true;
+  const current = screenshotCountPerCtx.get(ctx) ?? 0;
+  if (current >= MAX_SCREENSHOTS_PER_TURN) return false;
+  screenshotCountPerCtx.set(ctx, current + 1);
+  return true;
+}
+
 // Seed the in-memory cache from the DB immediately when this module is first loaded.
 // The promise is awaited before the first cache read in android_search_in_app so that
 // the very first search after a restart already benefits from persisted coordinates.
@@ -436,7 +456,16 @@ type BuildScreenMapResult =
   | { ok: true; elements: ScreenElement[] }
   | { ok: false; content: string; label: string };
 
-async function buildScreenMapElements(userId: string): Promise<BuildScreenMapResult> {
+async function buildScreenMapElements(userId: string, ctx?: object): Promise<BuildScreenMapResult> {
+  if (!checkAndIncrementScreenshotBudget(ctx)) {
+    return {
+      ok: false,
+      content:
+        "Screenshot limit reached for this turn (max 4). Use `android_read_screen` to read the " +
+        "current screen content as text — it returns the accessibility tree without requiring a screenshot.",
+      label: "buildScreenMap: turn screenshot limit reached",
+    };
+  }
   const [screenshotResult, hierarchyResult] = await Promise.all([
     sendDaemonOp(userId, { type: "android_screenshot" }, 30000),
     sendDaemonOp(userId, { type: "android_view_hierarchy" }, 30000),
@@ -700,7 +729,7 @@ Results are cached for 500 ms, so two rapid calls will not double-count API usag
     }
 
     // ── Build ScreenMap via shared helper ────────────────────────────────────
-    const buildResult = await buildScreenMapElements(ctx.userId);
+    const buildResult = await buildScreenMapElements(ctx.userId, ctx);
     if (!buildResult.ok) {
       return { ok: false, content: buildResult.content, label: `android_screen_understand: ${buildResult.label}` };
     }
@@ -1564,7 +1593,7 @@ export const androidSearchInAppTool: AgentTool = {
 
         const canScreenshot = await isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot");
         if (canScreenshot) {
-          const visionResult = await buildScreenMapElements(ctx.userId);
+          const visionResult = await buildScreenMapElements(ctx.userId, ctx);
           if (visionResult.ok) {
             // Prefer elements with strong search semantics before falling back to
             // generic terms ("find", "lookup") that could match unrelated UI.
@@ -1900,7 +1929,7 @@ export const androidSearchInAppTool: AgentTool = {
 
     if (actionAfterSearch === "screenshot") {
       const canScreenshot = await isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot");
-      if (canScreenshot) {
+      if (canScreenshot && checkAndIncrementScreenshotBudget(ctx)) {
         const ssResult = await sendDaemonOp(ctx.userId, { type: "android_screenshot" }, 20000);
         if (ssResult.ok && ssResult.data) {
           const ssData = ssResult.data as Record<string, unknown>;
@@ -2329,8 +2358,15 @@ function findBestElement(
   return bestScore > 0 ? best : null;
 }
 
-/** Capture a screenshot and return base64 string, or null on failure. */
-async function captureScreenshot(userId: string): Promise<string | null> {
+/** Capture a screenshot and return base64 string, or null on failure.
+ *  Pass ctx to enforce the per-turn screenshot budget. Returns null (soft fail)
+ *  when the cap is reached so callers can fall back to the hierarchy check path.
+ */
+async function captureScreenshot(userId: string, ctx?: object): Promise<string | null> {
+  if (!checkAndIncrementScreenshotBudget(ctx)) {
+    console.warn(`[captureScreenshot] userId=${userId} screenshot budget exhausted — returning null`);
+    return null;
+  }
   const res = await sendDaemonOp(userId, { type: "android_screenshot" }, 15000);
   if (!res.ok) return null;
   const d = res.data as Record<string, unknown> | undefined;
@@ -2497,7 +2533,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId);
+      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
       if (!buildResult.ok) {
         return { ok: false, content: buildResult.content, label: `android_swipe_element: ${buildResult.label}` };
       }
@@ -2529,7 +2565,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // Brief pause so the page settles after scrolling to top
       await new Promise((resolve) => setTimeout(resolve, 400));
 
-      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
       if (afterResetResult.ok) {
         bestElement = null;
         bestScore = 0;
@@ -2559,7 +2595,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Screenshot path: capture before the swipe so we can diff after.
         // Hierarchy path (FLAG_SECURE / no screenshot): fingerprint the current
         // element set by label + center coordinates.
-        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId, ctx);
         const preScrollFingerprint: string = screenElements
           .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
           .sort()
@@ -2591,7 +2627,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Vision/Claude call) so we can skip it when the list is exhausted.
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
           if (postScrollScreenshot) {
             screenshotCheckConclusive = true;
             const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
@@ -2604,7 +2640,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           }
         }
 
-        const refreshed = await buildScreenMapElements(ctx.userId);
+        const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
 
         // ── No-op scroll detection — hierarchy fallback ────────────────────
@@ -2693,7 +2729,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     y2 = Math.max(0, Math.round(y2));
 
     // ── Capture pre-swipe state (perceptual hash fast-path + hierarchy fallback) ─
-    const preSwipeScreenshot: string | null = await captureScreenshot(ctx.userId);
+    const preSwipeScreenshot: string | null = await captureScreenshot(ctx.userId, ctx);
     let preSwipeHash: string | null = null;
     if (preSwipeScreenshot) {
       try { preSwipeHash = await computeScreenshotHash(preSwipeScreenshot); } catch { /* best-effort */ }
@@ -2728,7 +2764,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // apps where captureScreenshot returns null.
     if (preSwipeHash !== null) {
       try {
-        const postSwipeScreenshot = await captureScreenshot(ctx.userId);
+        const postSwipeScreenshot = await captureScreenshot(ctx.userId, ctx);
         if (postSwipeScreenshot) {
           const postSwipeHash = await computeScreenshotHash(postSwipeScreenshot);
           hashDistance = hammingDistance(preSwipeHash, postSwipeHash);
@@ -2921,7 +2957,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId);
+      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
       if (!buildResult.ok) {
         return { ok: false, content: buildResult.content, label: `android_pinch_element: ${buildResult.label}` };
       }
@@ -3009,7 +3045,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     let screenChanged = false;
     let hashDistance: number | null = null;
     try {
-      const prePinchScreenshot = await captureScreenshot(ctx.userId);
+      const prePinchScreenshot = await captureScreenshot(ctx.userId, ctx);
       if (prePinchScreenshot) {
         prePinchHash = await computeScreenshotHash(prePinchScreenshot);
       }
@@ -3043,7 +3079,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // ── Post-pinch perceptual hash comparison ─────────────────────────────────
     if (prePinchHash !== null) {
       try {
-        const postPinchScreenshot = await captureScreenshot(ctx.userId);
+        const postPinchScreenshot = await captureScreenshot(ctx.userId, ctx);
         if (postPinchScreenshot) {
           const postPinchHash = await computeScreenshotHash(postPinchScreenshot);
           hashDistance = hammingDistance(prePinchHash, postPinchHash);
@@ -3355,7 +3391,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId);
+      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
       if (!buildResult.ok) {
         return { ok: false, content: buildResult.content, label: `android_tap_element: ${buildResult.label}` };
       }
@@ -3395,7 +3431,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // Brief pause so the page settles after scrolling to top
       await new Promise((resolve) => setTimeout(resolve, 400));
 
-      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
       if (afterResetResult.ok) {
         bestElement = null;
         bestScore = 0;
@@ -3418,7 +3454,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Screenshot path: capture before the swipe so we can diff after.
         // Hierarchy path (FLAG_SECURE / no screenshot): fingerprint the current
         // element set by label + center coordinates.
-        const preScrollScreenshot: string | null = useScreenshot ? await captureScreenshot(ctx.userId) : null;
+        const preScrollScreenshot: string | null = useScreenshot ? await captureScreenshot(ctx.userId, ctx) : null;
         const preScrollFingerprint: string = screenElements
           .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
           .sort()
@@ -3452,7 +3488,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // can fall through to the hierarchy fallback when capture fails.
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
           if (postScrollScreenshot) {
             screenshotCheckConclusive = true;
             const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
@@ -3465,7 +3501,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           }
         }
 
-        const refreshed = await buildScreenMapElements(ctx.userId);
+        const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
 
         // ── No-op scroll detection — hierarchy fallback ────────────────────
@@ -3522,7 +3558,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     // ── Capture pre-tap baselines (once, before any tap) ─────────────────────
-    const preScreenshot: string | null = useScreenshot ? await captureScreenshot(ctx.userId) : null;
+    const preScreenshot: string | null = useScreenshot ? await captureScreenshot(ctx.userId, ctx) : null;
     let preTapHash: string | null = null;
     if (preScreenshot) {
       try { preTapHash = await computeScreenshotHash(preScreenshot); } catch { /* best-effort */ }
@@ -3566,7 +3602,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         tapY = Math.round(locatedY + dy);
       } else {
         // Attempt 4: fresh Vision re-locate
-        const freshBuild = await buildScreenMapElements(ctx.userId);
+        const freshBuild = await buildScreenMapElements(ctx.userId, ctx);
         if (!freshBuild.ok) break;
         let freshBest: ScreenElement | null = null;
         let freshBestScore = 0;
@@ -3593,7 +3629,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // Primary: perceptual hash verification
       if (preTapHash !== null) {
         try {
-          const postScreenshot = await captureScreenshot(ctx.userId);
+          const postScreenshot = await captureScreenshot(ctx.userId, ctx);
           if (postScreenshot) {
             const postHash = await computeScreenshotHash(postScreenshot);
             const dist = hammingDistance(preTapHash, postHash);
@@ -3809,7 +3845,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId);
+      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
       if (!buildResult.ok) {
         return { ok: false, content: buildResult.content, label: `android_long_press_element: ${buildResult.label}` };
       }
@@ -3839,7 +3875,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // Brief pause so the page settles after scrolling to top
       await new Promise((resolve) => setTimeout(resolve, 400));
 
-      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
       if (afterResetResult.ok) {
         bestElement = null;
         bestScore = 0;
@@ -3859,7 +3895,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         console.log(`[android_long_press_element] element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
 
         // ── Pre-scroll state capture for no-op detection ──────────────────
-        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId, ctx);
         const preScrollFingerprint: string = screenElements
           .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
           .sort()
@@ -3887,7 +3923,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // ── No-op scroll detection — screenshot path ──────────────────────
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
           if (postScrollScreenshot) {
             screenshotCheckConclusive = true;
             const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
@@ -3900,7 +3936,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           }
         }
 
-        const refreshed = await buildScreenMapElements(ctx.userId);
+        const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
 
         // ── No-op scroll detection — hierarchy fallback ────────────────────
@@ -3954,7 +3990,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // ── Capture pre-press screenshot hash (best-effort) ──────────────────────
     let prePressHash: string | null = null;
     try {
-      const prePressScreenshot = await captureScreenshot(ctx.userId);
+      const prePressScreenshot = await captureScreenshot(ctx.userId, ctx);
       if (prePressScreenshot) {
         prePressHash = await computeScreenshotHash(prePressScreenshot);
       }
@@ -3987,7 +4023,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     let screenChanged = false;
     let hashDistance: number | null = null;
     try {
-      const postPressScreenshot = await captureScreenshot(ctx.userId);
+      const postPressScreenshot = await captureScreenshot(ctx.userId, ctx);
       if (postPressScreenshot && prePressHash !== null) {
         const postPressHash = await computeScreenshotHash(postPressScreenshot);
         hashDistance = hammingDistance(prePressHash, postPressHash);
@@ -4125,7 +4161,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     const resetScroll = args.reset_scroll === false ? false : true;
 
     // ── Step 1: Resolve ScreenMap, fuzzy-match the dropdown, scroll if needed ──
-    const buildResult = await buildScreenMapElements(ctx.userId);
+    const buildResult = await buildScreenMapElements(ctx.userId, ctx);
     if (!buildResult.ok) {
       return { ok: false, content: buildResult.content, label: `android_select_option: ${buildResult.label}` };
     }
@@ -4151,7 +4187,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // Brief pause so the page settles after scrolling to top
       await new Promise((resolve) => setTimeout(resolve, 400));
 
-      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
       if (afterResetResult.ok) {
         dropdownBest = null;
         dropdownScore = 0;
@@ -4178,7 +4214,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           .join("|");
 
         // Pre-scroll screenshot for no-op detection (screenshot path)
-        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId, ctx);
 
         // Swipe upward (y1 > y2) to scroll the page down
         const screenMidX = 540;
@@ -4202,7 +4238,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // ── No-op scroll detection — screenshot path ──────────────────────
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
           if (postScrollScreenshot) {
             screenshotCheckConclusive = true;
             const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
@@ -4215,7 +4251,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           }
         }
 
-        const refreshed = await buildScreenMapElements(ctx.userId);
+        const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
 
         // ── No-op scroll detection — hierarchy fallback ────────────────────
@@ -4292,7 +4328,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       : 500;
     await sleep(waitMs);
 
-    const freshBuild = await buildScreenMapElements(ctx.userId);
+    const freshBuild = await buildScreenMapElements(ctx.userId, ctx);
     if (!freshBuild.ok) {
       return {
         ok: false,
@@ -4333,7 +4369,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           .join("|");
 
         // Pre-scroll screenshot for no-op detection (screenshot path)
-        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId, ctx);
 
         // Swipe upward (y1 > y2) to scroll the dropdown list down
         const screenMidX = 540;
@@ -4357,7 +4393,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // ── No-op scroll detection — screenshot path ──────────────────────
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId);
+          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
           if (postScrollScreenshot) {
             screenshotCheckConclusive = true;
             const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
@@ -4370,7 +4406,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           }
         }
 
-        const refreshed = await buildScreenMapElements(ctx.userId);
+        const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
 
         // ── No-op scroll detection — hierarchy fallback ────────────────────
@@ -4667,7 +4703,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId);
+      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
       if (!buildResult.ok) {
         return { ok: false, content: buildResult.content, label: `android_drag_element: ${buildResult.label}` };
       }
@@ -4692,7 +4728,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       await scrollToTop(ctx.userId, 5);
       await new Promise((resolve) => setTimeout(resolve, 400));
 
-      const afterResetResult = await buildScreenMapElements(ctx.userId);
+      const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
       if (afterResetResult.ok) {
         fromElement = null;
         fromScore = 0;
@@ -4712,7 +4748,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
         console.log(`[android_drag_element] source element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
 
-        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+        const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId, ctx);
         const preScrollFingerprint: string = screenElements
           .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
           .sort()
@@ -4738,7 +4774,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
           try {
-            const postScrollScreenshot = await captureScreenshot(ctx.userId);
+            const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
             if (postScrollScreenshot) {
               const preHash = await computeScreenshotHash(preScrollScreenshot);
               const postHash = await computeScreenshotHash(postScrollScreenshot);
@@ -4752,7 +4788,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           } catch { /* best-effort */ }
         }
 
-        const freshResult = await buildScreenMapElements(ctx.userId);
+        const freshResult = await buildScreenMapElements(ctx.userId, ctx);
         if (!freshResult.ok) break;
         screenElements = freshResult.elements;
 
@@ -4817,7 +4853,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
           console.log(`[android_drag_element] destination element not found, scrolling down (pass ${scroll + 1}/${maxScrollAttempts})`);
 
-          const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+          const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId, ctx);
           const preScrollFingerprint: string = screenElements
             .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
             .sort()
@@ -4843,7 +4879,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           let screenshotCheckConclusive = false;
           if (preScrollScreenshot) {
             try {
-              const postScrollScreenshot = await captureScreenshot(ctx.userId);
+              const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
               if (postScrollScreenshot) {
                 const preHash = await computeScreenshotHash(preScrollScreenshot);
                 const postHash = await computeScreenshotHash(postScrollScreenshot);
@@ -4857,7 +4893,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
             } catch { /* best-effort */ }
           }
 
-          const freshResult = await buildScreenMapElements(ctx.userId);
+          const freshResult = await buildScreenMapElements(ctx.userId, ctx);
           if (!freshResult.ok) break;
           screenElements = freshResult.elements;
 
@@ -4897,7 +4933,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         await scrollToTop(ctx.userId, 5);
         await new Promise((resolve) => setTimeout(resolve, 400));
 
-        const afterResetResult = await buildScreenMapElements(ctx.userId);
+        const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
         if (afterResetResult.ok) {
           screenElements = afterResetResult.elements;
           toElement = null;
@@ -4916,7 +4952,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           for (let scroll = 0; scroll < maxScrollAttempts; scroll++) {
             console.log(`[android_drag_element] destination element not found, re-scanning downward from top (pass ${scroll + 1}/${maxScrollAttempts})`);
 
-            const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId);
+            const preScrollScreenshot: string | null = await captureScreenshot(ctx.userId, ctx);
             const preScrollFingerprint: string = screenElements
               .map((el) => `${el.label}:${el.center_x}:${el.center_y}`)
               .sort()
@@ -4942,7 +4978,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               try {
-                const postScrollScreenshot = await captureScreenshot(ctx.userId);
+                const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
                 if (postScrollScreenshot) {
                   const preHash = await computeScreenshotHash(preScrollScreenshot);
                   const postHash = await computeScreenshotHash(postScrollScreenshot);
@@ -4956,7 +4992,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               } catch { /* best-effort */ }
             }
 
-            const freshResult = await buildScreenMapElements(ctx.userId);
+            const freshResult = await buildScreenMapElements(ctx.userId, ctx);
             if (!freshResult.ok) break;
             screenElements = freshResult.elements;
 
@@ -5026,7 +5062,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
           await scrollToTop(ctx.userId, 5);
           await new Promise((resolve) => setTimeout(resolve, 400));
 
-          const afterResetResult = await buildScreenMapElements(ctx.userId);
+          const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             screenElements = afterResetResult.elements;
             updatedFromScore = 0;
@@ -5113,7 +5149,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // ── Capture pre-drag screenshot hash (best-effort) ─────────────────────
       let preDragHash: string | null = null;
       try {
-        const preDragScreenshot = await captureScreenshot(ctx.userId);
+        const preDragScreenshot = await captureScreenshot(ctx.userId, ctx);
         if (preDragScreenshot) {
           preDragHash = await computeScreenshotHash(preDragScreenshot);
         }
@@ -5141,7 +5177,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       screenChanged = false;
       hashDistance = null;
       try {
-        const postDragScreenshot = await captureScreenshot(ctx.userId);
+        const postDragScreenshot = await captureScreenshot(ctx.userId, ctx);
         if (postDragScreenshot && preDragHash !== null) {
           const postDragHash = await computeScreenshotHash(postDragScreenshot);
           hashDistance = hammingDistance(preDragHash, postDragHash);
@@ -5267,7 +5303,7 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
     // ── Capture pre-drag screenshot hash and hierarchy snapshot (best-effort) ──
     let preDragHash: string | null = null;
     try {
-      const preDragScreenshot = await captureScreenshot(ctx.userId);
+      const preDragScreenshot = await captureScreenshot(ctx.userId, ctx);
       if (preDragScreenshot) {
         preDragHash = await computeScreenshotHash(preDragScreenshot);
       }
@@ -5305,7 +5341,7 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
     // Skipped on FLAG_SECURE apps where captureScreenshot returns null.
     if (preDragHash !== null) {
       try {
-        const postDragScreenshot = await captureScreenshot(ctx.userId);
+        const postDragScreenshot = await captureScreenshot(ctx.userId, ctx);
         if (postDragScreenshot) {
           const postDragHash = await computeScreenshotHash(postDragScreenshot);
           hashDistance = hammingDistance(preDragHash, postDragHash);
@@ -5470,7 +5506,7 @@ Note: screen_changed verification uses screenshot hashing and accessibility hier
     let screenChanged = false;
     let hashDistance: number | null = null;
     try {
-      const prePinchScreenshot = await captureScreenshot(ctx.userId);
+      const prePinchScreenshot = await captureScreenshot(ctx.userId, ctx);
       if (prePinchScreenshot) {
         prePinchHash = await computeScreenshotHash(prePinchScreenshot);
       }
@@ -5504,7 +5540,7 @@ Note: screen_changed verification uses screenshot hashing and accessibility hier
     // ── Post-pinch perceptual hash comparison ─────────────────────────────────
     if (prePinchHash !== null) {
       try {
-        const postPinchScreenshot = await captureScreenshot(ctx.userId);
+        const postPinchScreenshot = await captureScreenshot(ctx.userId, ctx);
         if (postPinchScreenshot) {
           const postPinchHash = await computeScreenshotHash(postPinchScreenshot);
           hashDistance = hammingDistance(prePinchHash, postPinchHash);
@@ -5964,7 +6000,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
 
     // ── Screenshot hash check (stale detection before tapping) ─────────────────
     if (best.screenshotHash) {
-      const currentScreenshot = await captureScreenshot(ctx.userId);
+      const currentScreenshot = await captureScreenshot(ctx.userId, ctx);
       if (currentScreenshot) {
         try {
           const currentHash = await computeScreenshotHash(currentScreenshot);
@@ -6002,7 +6038,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
 
     // Capture pre-tap state — accessibility tree + screenshot — BEFORE tap
     const preTapElements = await readScreen(ctx.userId);
-    const preTapScreenshot = await captureScreenshot(ctx.userId);
+    const preTapScreenshot = await captureScreenshot(ctx.userId, ctx);
     const COORD_RADIUS = 60; // px — element centre must be within this radius of trained coords
     // ClickableElement uses .x/.y (not .center_x/.center_y)
     const preTapNear = preTapElements.filter(
@@ -6086,7 +6122,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
     // Fallback: screenshot diff using the true pre-tap screenshot captured before the tap
     let verified = elementGone || labelChanged || resourceIdLabelChanged;
     if (!verified) {
-      const postTapScreenshot = await captureScreenshot(ctx.userId);
+      const postTapScreenshot = await captureScreenshot(ctx.userId, ctx);
       if (preTapScreenshot && postTapScreenshot) {
         try {
           const changeRatio = await screenshotDiff(preTapScreenshot, postTapScreenshot);
@@ -6258,7 +6294,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     }
 
     if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId);
+      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
       if (!buildResult.ok) {
         return { ok: false, content: buildResult.content, label: `android_type_into_element: ${buildResult.label}` };
       }
@@ -6627,7 +6663,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
 
     // ── Step 1: Capture a fresh ScreenMap at the start ─────────────────────────
     let screenElements: ScreenElement[] = [];
-    const initialBuild = await buildScreenMapElements(ctx.userId);
+    const initialBuild = await buildScreenMapElements(ctx.userId, ctx);
     if (!initialBuild.ok) {
       return { ok: false, content: initialBuild.content, label: `android_fill_form: ${initialBuild.label}` };
     }
@@ -6698,7 +6734,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       if (!bestElement || bestScore === 0) {
         result.steps.push(`No match for "${fieldLabel}" in current ScreenMap (${screenElements.length} elements). Refreshing...`);
         console.log(`[android_fill_form] userId=${ctx.userId} field="${fieldLabel}" not found — refreshing ScreenMap`);
-        const refreshed = await buildScreenMapElements(ctx.userId);
+        const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (refreshed.ok) {
           screenElements = refreshed.elements;
           result.steps.push(`ScreenMap refreshed: ${screenElements.length} elements.`);
@@ -6911,7 +6947,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       // ── Optional submit_last ───────────────────────────────────────────────────
       if (submitLast && inputOk) {
         // Capture a pre-submit screenshot so we can detect navigation afterwards.
-        const preSubmitScreenshot = await captureScreenshot(ctx.userId).catch(() => null);
+        const preSubmitScreenshot = await captureScreenshot(ctx.userId, ctx).catch(() => null);
 
         await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 6000);
         result.steps.push("Submitted (IME Enter/Go key pressed).");
@@ -6920,7 +6956,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         await sleep(1500);
 
         // Capture a post-submit screenshot and compare.
-        const postSubmitScreenshot = await captureScreenshot(ctx.userId).catch(() => null);
+        const postSubmitScreenshot = await captureScreenshot(ctx.userId, ctx).catch(() => null);
 
         // null = unknown (capture or diff failed); true/false = confirmed outcome.
         let navigationDetected: boolean | null = null;
@@ -6948,7 +6984,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         if (navigationDetected === true) {
           // Capture the new screen's elements so the agent can act on them immediately.
           result.steps.push("Navigation detected — capturing new screen elements...");
-          const newScreenBuild = await buildScreenMapElements(ctx.userId);
+          const newScreenBuild = await buildScreenMapElements(ctx.userId, ctx);
           if (newScreenBuild.ok) {
             result.new_screen_elements = newScreenBuild.elements;
             screenElements = newScreenBuild.elements;

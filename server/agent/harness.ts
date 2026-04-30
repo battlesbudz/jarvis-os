@@ -815,6 +815,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       "standalone reply like 'I will now tap...' or 'Proceeding now...' — just call the " +
       "next tool. This rule does NOT override screen-reading: you must still call " +
       "android_read_screen after every navigation before tapping anything.\n\n" +
+      "**Screen reading vs screenshots — always prefer text:**\n" +
+      "- **`android_read_screen` is your first choice** for reading what is on screen. " +
+      "It returns all visible text, UI labels, and element coordinates from the accessibility " +
+      "tree instantly, without taking a photo. Use it to confirm navigation, check page content, " +
+      "find elements to tap, or verify that an action worked.\n" +
+      "- **`android_screenshot` (via android_screen_understand) is last resort only** — use it " +
+      "exclusively when you need pixel-level visual information the accessibility tree cannot " +
+      "provide: reading a QR code, verifying an image loaded correctly, or debugging a UI with " +
+      "no text labels. Do NOT use screenshots just to 'see what the screen looks like' — " +
+      "android_read_screen gives you that information faster and without extra cost.\n" +
+      "- **Hard limit: 4 screenshots per task.** After 4, the tool returns an error and you " +
+      "must switch to android_read_screen. Plan accordingly — never take a screenshot when " +
+      "reading the accessibility tree would answer your question.\n\n" +
       "When the user provides a YouTube URL (youtube.com/watch?v=… or youtu.be/…), " +
       "ALWAYS call the `get_youtube_transcript` tool first — do NOT open the YouTube app, " +
       "do NOT use android_browse to navigate to YouTube, and do NOT search YouTube manually. " +
