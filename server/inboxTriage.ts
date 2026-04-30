@@ -90,20 +90,94 @@ async function promoteToMemory(
   markSoulStale(userId).catch(() => {});
 }
 
+/**
+ * Classify a single inbox_items row and decide whether it should be
+ * auto-dismissed (hidden without user interaction) or kept for the user.
+ *
+ * EXPECTED INPUT TYPES (keep this comment in sync with heartbeat.ts write-path audit):
+ *   • google_calendar / outlook_calendar / calendar
+ *       Calendar surface-rule hits from curiosityScanner.ts.
+ *       The user created a rule to be notified about these events so they can
+ *       prep or act. Bias strongly toward KEEP — only auto-dismiss if the item
+ *       is clearly a past event or an obvious duplicate already handled.
+ *
+ *   • nervous_system
+ *       News/web watch hits from nervous-system/scanner.ts.
+ *       The user configured a watch topic so these signals match their stated
+ *       interests. Bias toward KEEP — only auto-dismiss if the hit is clearly
+ *       off-topic, a false positive, or has no genuine relevance to the watch.
+ *
+ *   • other / heartbeat_telegram / task_guidance
+ *       General Jarvis notifications (in-app channel, agent self-edit
+ *       confirmations, plan completions, etc.). Use general judgment:
+ *       auto-dismiss routine background status updates with no follow-up needed;
+ *       keep anything that involves a pending decision or next step.
+ *
+ * NOTE: Email items (sourceType "email" / "gmail" / "outlook_email") no longer
+ * flow through inbox_items — email triage was migrated to Telegram delivery.
+ * If an email-sourced item appears here it is legacy/manual and should default
+ * to KEEP (escalate = safe fallback).
+ *
+ * CLASSIFICATION EXAMPLES (expected outcomes; update if prompt changes):
+ *
+ *   CALENDAR — should be KEPT (autoDismiss: false):
+ *     subject="Q2 Planning", snippet="2:00 PM at HQ — agenda TBD",
+ *       jarvisReason="Matched your surface rule"
+ *     → KEEP: User created a prep rule; action/prep may be needed.
+ *
+ *     subject="Client Demo", snippet="10:00 AM — slides needed",
+ *       jarvisReason="Matched your surface rule"
+ *     → KEEP: Upcoming event with clear prep implications.
+ *
+ *   CALENDAR — auto-dismiss acceptable:
+ *     subject="Team Standup (yesterday)", snippet="9:00 AM — already ended",
+ *       jarvisReason="Matched your surface rule"
+ *     → DISMISS: Event is in the past; prep is no longer useful.
+ *
+ *   NERVOUS SYSTEM — should be KEPT (autoDismiss: false):
+ *     subject="Senate passes AI regulation bill",
+ *       sender="Nervous System — AI Policy", snippet="...regulatory framework..."
+ *     → KEEP: Directly relevant to the user's configured watch topic.
+ *
+ *   NERVOUS SYSTEM — auto-dismiss acceptable:
+ *     subject="10 tips to sleep better",
+ *       sender="Nervous System — Productivity", snippet="generic wellness listicle"
+ *     → DISMISS: Off-topic false positive; no genuine relevance to the watch.
+ *
+ *   GENERAL (other) — auto-dismiss acceptable:
+ *     subject="Code change applied", snippet="3 lines updated in utils.ts",
+ *       jarvisReason="Agent self-edit completed"
+ *     → DISMISS: Routine background status; no follow-up needed.
+ *
+ *   GENERAL (other) — should be KEPT:
+ *     subject="Your weekly plan is ready", snippet="Review and approve to activate",
+ *       jarvisReason="Plan awaiting approval"
+ *     → KEEP: Pending user decision.
+ */
 async function classifyInboxItem(
   item: typeof schema.inboxItems.$inferSelect
 ): Promise<{ autoDismiss: boolean; reason: string }> {
   const prompt = `You are an inbox triage assistant for Jarvis, a personal AI assistant.
 
-Decide if this inbox notification should be AUTO-DISMISSED (it needs no action from the user) or KEPT for the user to see.
+Email triage has moved to Telegram, so the in-app inbox now only contains these item types:
 
-Auto-dismiss when ALL of these are true:
-- Purely informational / FYI (no decision or action needed)
-- Not time-sensitive
-- No personal reply required
-- Not related to money, health, legal, or security
+1. CALENDAR surface hits (sourceType: google_calendar / outlook_calendar / calendar)
+   The user created a surface rule to be notified about these events — they want to prep or take action.
+   Default: KEEP. Auto-dismiss ONLY if the event is clearly a past event already handled, an obvious
+   irrelevant duplicate, or so far in the future with zero prep implications that no attention is needed now.
 
-Keep (return false) when the item might need a reply, approval, scheduling decision, or follow-up.
+2. NERVOUS-SYSTEM signals (sourceType: nervous_system)
+   News/web watch hits on topics the user told Jarvis to monitor.
+   Default: KEEP. Auto-dismiss ONLY if the hit is clearly a false positive — the snippet is off-topic,
+   generic clickbait, or has no genuine relevance to the watch topic despite a keyword match.
+
+3. GENERAL notifications (sourceType: other / heartbeat_telegram / task_guidance / etc.)
+   In-app channel messages, agent-action confirmations, plan completions.
+   Auto-dismiss only if it is a routine background status update with no pending decision or follow-up.
+   Keep if the user may want to confirm, review, or take any next step.
+
+When in doubt, KEEP — it is always better to show an item the user can dismiss themselves than to
+silently auto-dismiss something they wanted to see.
 
 Return JSON only: {"autoDismiss": true/false, "reason": "one sentence"}
 
