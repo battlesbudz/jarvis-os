@@ -1465,13 +1465,16 @@ export async function fetchTranscriptCached(
       }
     } catch (geminiErr) {
       const geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-      const geminCause = geminiErr instanceof Error && geminiErr.cause
+      const geminiCause = geminiErr instanceof Error && geminiErr.cause
         ? ` (cause: ${geminiErr.cause instanceof Error ? geminiErr.cause.message : String(geminiErr.cause)})`
         : "";
       console.warn(
         `[transcriptCache] Phase 0 Gemini failed for ${resolvedId} — falling through to Phase 1: ` +
-        geminiErrMsg + geminCause
+        geminiErrMsg + geminiCause
       );
+      if (geminiErr instanceof Error && geminiErr.stack) {
+        console.warn(`[transcriptCache] Phase 0 stack: ${geminiErr.stack}`);
+      }
     }
   }
 
