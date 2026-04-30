@@ -137,6 +137,43 @@ function isPrimaryModelRejection(err: unknown): boolean {
 
 // ── Path 1: YouTube native transcription ──────────────────────────────────────
 
+/**
+ * Patterns that indicate Gemini returned an inability/refusal message rather than
+ * an actual transcript.  When these match, we throw so the caller falls through to
+ * Phase 1 (caption lookup) → Phase 3 (audio transcription) rather than treating a
+ * refusal as a successful transcript.
+ *
+ * Covers the known Gemini response phrasings for "I can't transcribe this video":
+ *   - Explicit inability: "I cannot", "I'm unable", "I can't", "I am unable"
+ *   - Access failures: "cannot access the audio", "unable to access"
+ *   - Caption references: "no official transcript", "no official captions",
+ *     "official captions are not available", "doesn't have captions"
+ *   - Transcription failure: "automatic transcription.*failed",
+ *     "transcription is not available"
+ *   - Content/model limits: "I do not have access to the actual audio"
+ */
+const GEMINI_REFUSAL_PATTERNS = [
+  /\bI (cannot|can't|am unable to|don't have access to)\b/i,
+  /\bI'?m unable to\b/i,
+  /cannot (access|provide|retrieve) (the|a) (audio|transcript|captions)/i,
+  /unable to (access|provide|retrieve) (the|a) (audio|transcript|captions)/i,
+  /no official (transcript|captions)/i,
+  /official (transcript|captions) (is|are) not available/i,
+  /official (transcript|captions) (could not|cannot) be retrieved/i,
+  /does not have (official )?(captions|a transcript)/i,
+  /doesn't have (official )?(captions|a transcript)/i,
+  /automatic transcription.*failed/i,
+  /transcription is not available/i,
+  /do not have access to the (actual |real )?(audio|video content)/i,
+];
+
+function isTranscriptRefusal(text: string): boolean {
+  // Only check the opening portion — genuine transcripts may occasionally mention
+  // "no official captions" in passing, but refusals lead with the explanation.
+  const opening = text.slice(0, 600);
+  return GEMINI_REFUSAL_PATTERNS.some((p) => p.test(opening));
+}
+
 async function callGemini(model: string, videoUrl: string): Promise<string> {
   const client = getClient();
   const response = await client.models.generateContent({
@@ -154,7 +191,14 @@ async function callGemini(model: string, videoUrl: string): Promise<string> {
   if (!text || !text.trim()) {
     throw new Error(`Gemini model ${model} returned an empty transcript for this video`);
   }
-  return text.trim();
+  const trimmed = text.trim();
+  if (isTranscriptRefusal(trimmed)) {
+    throw new Error(
+      `Gemini model ${model} declined to transcribe this video (refusal detected). ` +
+      `Response started with: "${trimmed.slice(0, 120).replace(/\n/g, " ")}"`
+    );
+  }
+  return trimmed;
 }
 
 /**
