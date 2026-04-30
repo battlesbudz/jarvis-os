@@ -1764,3 +1764,21 @@ export const knowledgeVaultPages = pgTable("knowledge_vault_pages", {
 ]);
 
 export type KnowledgeVaultPage = typeof knowledgeVaultPages.$inferSelect;
+
+// ── Transcript Jobs ────────────────────────────────────────────────────────────
+// Tracks async Supadata transcript jobs for long videos (3+ hours) where the
+// cloud AI generation takes 5–10 minutes. Rows are created when Supadata returns
+// a 202 async job response. The background poller updates them when complete.
+
+export const transcriptJobs = pgTable("transcript_jobs", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  videoId: text("video_id").notNull(),
+  supadataJobId: text("supadata_job_id").notNull(),
+  status: text("status").notNull().default("pending"),
+  result: text("result"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type TranscriptJob = typeof transcriptJobs.$inferSelect;

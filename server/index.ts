@@ -463,6 +463,14 @@ function setupErrorHandler(app: express.Application) {
 
   startScheduler();
   startTriageRunner();
+
+  // Async Supadata transcript job poller — tracks long-video (3+ hour) transcript
+  // generation jobs in the background, notifying users when ready.
+  import("./lib/transcriptJobTracker").then(({ runBackgroundPoller }) => {
+    runBackgroundPoller();
+  }).catch(err => {
+    console.warn("[Startup] transcriptJobTracker poller failed to start (non-fatal):", err);
+  });
   // Run one immediate triage pass 5s after startup to clear untriaged backlog
   setTimeout(() => runStartupTriagePass().catch(() => {}), 5000);
   // Sub-agent background worker — runs queued goal_decompose / research /

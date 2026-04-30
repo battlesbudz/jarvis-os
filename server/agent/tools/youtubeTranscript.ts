@@ -476,13 +476,31 @@ export const youtubeTranscriptTool: AgentTool = {
     }
 
     try {
-      const { segments: rawSegments, noCaptionsDetected, source: fetchedSource } = await fetchTranscriptCached(input, {
+      const { segments: rawSegments, noCaptionsDetected, source: fetchedSource, asyncJobPending, jobId } = await fetchTranscriptCached(input, {
         bypassCache,
         audioOnly: forceAudio,
+        userId: ctx.userId,
         onFetchStart: () => {
           ctx.state.onProgressMessage?.("📝 Fetching transcript…");
         },
       });
+
+      // ── Async Supadata job started for long video ─────────────────────────
+      // Supadata has begun generating the transcript for this 3+ hour video.
+      // It takes 5–10 minutes. We return a friendly message now and notify
+      // the user when the background job finishes.
+      if (asyncJobPending) {
+        const videoIdLabel = videoId ?? "this video";
+        return {
+          ok: true,
+          content:
+            `I've started generating the transcript for this video using Supadata AI. ` +
+            `This typically takes **5–10 minutes** for long videos. ` +
+            `I'll send you a notification when it's ready — you can then ask me to summarize it or answer questions about it.` +
+            (jobId ? ` (job: ${jobId})` : ""),
+          label: `get_youtube_transcript: supadata-async-job-started (${videoIdLabel})`,
+        };
+      }
       let segments = rawSegments;
 
       // ── Strategy 5: browser fallback if server-side got nothing ──────────────

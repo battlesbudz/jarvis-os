@@ -6,7 +6,9 @@
  *
  * Uses mode='auto': tries native captions first, falls back to AI-generated
  * transcription when no captions exist. Async jobs (large videos) are polled
- * until complete or timeout.
+ * until complete or timeout. When a userId is provided and Supadata returns an
+ * async job ID, the job is tracked in the DB and a SupadataJobPendingError is
+ * thrown so the caller can respond to the user immediately.
  *
  * Requires the SUPADATA_API_KEY environment variable.
  */
@@ -14,9 +16,20 @@
 import type { TranscriptResponse } from "youtube-transcript";
 import type { Supadata, Transcript } from "@supadata/js";
 
-/** Max time to wait for an async Supadata job (large video transcription). */
+/** Max time to wait for an async Supadata job when polling synchronously (short videos). */
 const JOB_POLL_TIMEOUT_MS = 120_000;
 const JOB_POLL_INTERVAL_MS = 2_000;
+
+/**
+ * Thrown when Supadata returns an async job ID and a userId is available.
+ * The job is being tracked in the DB and will complete in the background.
+ */
+export class SupadataJobPendingError extends Error {
+  constructor(public readonly jobId: string) {
+    super(`SUPADATA_JOB_PENDING:${jobId}`);
+    this.name = "SupadataJobPendingError";
+  }
+}
 
 /** Returns true when a Supadata API key is configured. */
 export function isSupadataAvailable(): boolean {
@@ -30,12 +43,24 @@ export function isSupadataAvailable(): boolean {
  * AI-generated transcription if no captions are available. This handles the
  * case where Phase 0 (Gemini) also fails due to no available captions.
  *
+ * When userId is provided and Supadata returns a 202 async job response
+ * (indicating a long video that takes minutes to process):
+ *   - The job is saved to the DB via startSupadataJob()
+ *   - A SupadataJobPendingError is thrown (caught in transcriptCache Phase 0.5)
+ *
+ * When no userId is provided (e.g. direct CLI test), synchronous polling is used.
+ *
  * @param videoId - The 11-character YouTube video ID
+ * @param userId - Optional user ID for async job tracking on long videos
  * @returns Array of transcript segments matching TranscriptResponse shape
+ * @throws SupadataJobPendingError when an async job was started (userId required)
  * @throws If Supadata returns an error, the video is private/unavailable, or
  *         the async job times out.
  */
-export async function fetchTranscriptViaSupadata(videoId: string): Promise<TranscriptResponse[]> {
+export async function fetchTranscriptViaSupadata(
+  videoId: string,
+  userId?: string
+): Promise<TranscriptResponse[]> {
   const apiKey = process.env.SUPADATA_API_KEY;
   if (!apiKey) throw new Error("SUPADATA_API_KEY is not set");
 
@@ -57,11 +82,21 @@ export async function fetchTranscriptViaSupadata(videoId: string): Promise<Trans
     if (result && "jobId" in result) {
       const jobId = (result as { jobId: string }).jobId;
       console.log(`[supadataTranscript] Async job started: ${jobId} for ${videoId}`);
-      transcript = await pollSupadataJob(client, jobId);
+
+      if (userId) {
+        // Save to DB and throw so the caller can tell the user it's in progress
+        const { startSupadataJob } = await import("./transcriptJobTracker");
+        await startSupadataJob(userId, videoId, jobId);
+        throw new SupadataJobPendingError(jobId);
+      } else {
+        // No userId — fall back to synchronous polling (e.g. CLI tests)
+        transcript = await pollSupadataJob(client, jobId);
+      }
     } else {
       transcript = result;
     }
   } catch (err) {
+    if (err instanceof SupadataJobPendingError) throw err;
     if (err instanceof SupadataError) {
       throw new Error(
         `Supadata error for ${videoId}: ${err.error} — ${err.message}${err.details ? ` (${err.details})` : ""}`
