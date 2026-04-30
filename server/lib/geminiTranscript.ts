@@ -13,8 +13,10 @@
  *    then transcribes it with the same Gemini model. This path handles videos
  *    that can't be shared as YouTube links.
  *
- * Both paths use gemini-1.5-flash first, falling back to gemini-1.5-pro when
- * Flash explicitly rejects the content (content policy, context length, etc.).
+ * Path 1 uses gemini-2.0-flash (YouTube URL processing requires Gemini 2.0+);
+ * Path 2 uses gemini-1.5-flash for file uploads (File API works with 1.5).
+ * Both paths fall back to gemini-1.5-pro when the primary model explicitly
+ * rejects the content (content policy, context length, etc.).
  */
 
 import { GoogleGenAI } from "@google/genai";

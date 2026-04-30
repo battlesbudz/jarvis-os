@@ -569,7 +569,9 @@ export const youtubeTranscriptTool: AgentTool = {
       if (lower.includes("disabled") || lower.includes("no transcript") || lower === "transcript is disabled on this video") {
         return {
           ok: false,
-          content: "This video doesn't have captions available. The creator may have disabled transcripts, or it may be a live stream.",
+          content:
+            "This video doesn't have captions available. The creator may have disabled transcripts, or it may be a live stream. " +
+            "To attempt audio transcription directly via Whisper, call `get_youtube_transcript` again with `force_audio=true`.",
           label: "get_youtube_transcript: no captions",
         };
       }
