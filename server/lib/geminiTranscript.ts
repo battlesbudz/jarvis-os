@@ -13,9 +13,9 @@
  *    then transcribes it with the same Gemini model. This path handles videos
  *    that can't be shared as YouTube links.
  *
- * Path 1 uses gemini-2.0-flash (YouTube URL processing requires Gemini 2.0+);
- * Path 2 uses gemini-1.5-flash for file uploads (File API works with 1.5).
- * Both paths fall back to gemini-1.5-pro when the primary model explicitly
+ * Path 1 uses gemini-2.5-flash (YouTube URL processing supported by Gemini 2.0+);
+ * Path 2 also uses gemini-2.5-flash for file uploads.
+ * Both paths fall back to gemini-2.5-pro when the primary model explicitly
  * rejects the content (content policy, context length, etc.).
  */
 
@@ -80,9 +80,10 @@ function isGatewayEndpointError(err: unknown): boolean {
 }
 
 const TRANSCRIPT_PROMPT =
-  "Provide a complete, verbatim transcript of every word spoken in this video. " +
-  "Plain text only. Use natural paragraph breaks to separate topics or speakers. " +
-  "Do not include timestamps, speaker labels, or any other formatting — just the spoken words.";
+  "Transcribe all the speech in this video. Write out everything that is spoken, " +
+  "capturing every word said by each speaker. Plain text only. Use natural paragraph " +
+  "breaks to separate topics or speakers. Do not include timestamps, speaker labels, " +
+  "or any other formatting — just the spoken words.";
 
 /**
  * Patterns in Gemini error messages that indicate the primary model explicitly
@@ -167,7 +168,7 @@ const GEMINI_REFUSAL_PATTERNS = [
   /do not have access to the (actual |real )?(audio|video content)/i,
 ];
 
-function isTranscriptRefusal(text: string): boolean {
+export function isTranscriptRefusal(text: string): boolean {
   // Only check the opening portion — genuine transcripts may occasionally mention
   // "no official captions" in passing, but refusals lead with the explanation.
   const opening = text.slice(0, 600);
@@ -207,15 +208,14 @@ async function callGemini(model: string, videoUrl: string): Promise<string> {
  * Strategy:
  *   1. If a previous call established that the current gateway/key config does
  *      not support multimodal endpoints, fail fast with GATEWAY_UNSUPPORTED.
- *   2. Try gemini-2.0-flash — the only Gemini model that supports YouTube URL
- *      processing natively via fileData.fileUri (Gemini 1.5 models do NOT support
- *      YouTube URLs in fileData; they silently fail or return empty responses).
+ *   2. Try gemini-2.5-flash — supports YouTube URL processing natively via
+ *      fileData.fileUri (Gemini 2.0+ models support YouTube URLs in fileData).
  *   3. If the response is INVALID_ENDPOINT (proxy rejects this endpoint), mark
  *      the gateway as unsupported for the lifetime of this process and throw so
  *      the caller falls through.  Do NOT retry with a second model — both will
  *      get the same INVALID_ENDPOINT response from the proxy.
- *   4. If 2.0-flash explicitly rejects the video for a content/policy/quota
- *      reason, retry once with gemini-1.5-pro as a conservative fallback.
+ *   4. If 2.5-flash explicitly rejects the video for a content/policy/quota
+ *      reason, retry once with gemini-2.5-pro as a conservative fallback.
  *   5. Any other error is rethrown so the caller can fall through to Phase 1.
  *
  * @param videoUrl - Full YouTube URL (e.g. https://www.youtube.com/watch?v=...)
@@ -232,7 +232,7 @@ export async function fetchTranscriptViaGemini(videoUrl: string): Promise<string
     );
   }
   try {
-    return await callGemini("gemini-2.0-flash", videoUrl);
+    return await callGemini("gemini-2.5-flash", videoUrl);
   } catch (flashErr) {
     // Gateway-level rejection: the proxy doesn't forward this endpoint at all.
     // Both models will get the same error — mark permanently unsupported and throw.
@@ -247,7 +247,7 @@ export async function fetchTranscriptViaGemini(videoUrl: string): Promise<string
         );
       }
       throw Object.assign(
-        new Error(`gemini-2.0-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
+        new Error(`gemini-2.5-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
         { cause: flashErr }
       );
     }
@@ -255,12 +255,12 @@ export async function fetchTranscriptViaGemini(videoUrl: string): Promise<string
     if (isPrimaryModelRejection(flashErr)) {
       const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
       console.warn(
-        `[geminiTranscript] gemini-2.0-flash rejected video (${flashMsg}) — retrying with gemini-1.5-pro`
+        `[geminiTranscript] gemini-2.5-flash rejected video (${flashMsg}) — retrying with gemini-2.5-pro`
       );
-      return await callGemini("gemini-1.5-pro", videoUrl);
+      return await callGemini("gemini-2.5-pro", videoUrl);
     }
     throw Object.assign(
-      new Error(`gemini-2.0-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
+      new Error(`gemini-2.5-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
       { cause: flashErr }
     );
   }
@@ -542,7 +542,14 @@ async function callGeminiWithFile(
   if (!text || !text.trim()) {
     throw new Error(`Gemini model ${model} returned an empty transcript for this video file`);
   }
-  return text.trim();
+  const trimmed = text.trim();
+  if (isTranscriptRefusal(trimmed)) {
+    throw new Error(
+      `Gemini model ${model} declined to transcribe this video file (refusal detected). ` +
+      `Response started with: "${trimmed.slice(0, 120).replace(/\n/g, " ")}"`
+    );
+  }
+  return trimmed;
 }
 
 /**
@@ -666,14 +673,14 @@ export async function transcribeVideoFromUrl(
 
     // ── Transcribe (Flash → Pro fallback) ──────────────────────────────────
     try {
-      return await callGeminiWithFile("gemini-1.5-flash", fileUri, resolvedMime);
+      return await callGeminiWithFile("gemini-2.5-flash", fileUri, resolvedMime);
     } catch (flashErr) {
       if (isPrimaryModelRejection(flashErr)) {
         const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
         console.warn(
-          `[geminiTranscript] gemini-1.5-flash rejected uploaded file (${flashMsg}) — retrying with gemini-1.5-pro`
+          `[geminiTranscript] gemini-2.5-flash rejected uploaded file (${flashMsg}) — retrying with gemini-2.5-pro`
         );
-        return await callGeminiWithFile("gemini-1.5-pro", fileUri, resolvedMime);
+        return await callGeminiWithFile("gemini-2.5-pro", fileUri, resolvedMime);
       }
       throw Object.assign(
         new Error(
