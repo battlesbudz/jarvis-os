@@ -10,6 +10,10 @@ build = ["sh", "-c", "npm run expo:static:build && npm run server:build"]
 run = ["npm", "run", "server:prod"]
 
 [[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
 localPort = 5000
 externalPort = 5000
 
@@ -47,6 +51,10 @@ args = "test"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "Start Backend"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start Dashboard"
 
 [[workflows.workflow]]
 name = "Start App"
@@ -96,6 +104,18 @@ outputType = "console"
 task = "shell.exec"
 args = "tsx server/agent/__tests__/manifestFilter.assert.ts && tsx server/agent/__tests__/integrationError.assert.ts && tsx server/agent/__tests__/selfHeal.assert.ts && tsx server/agent/__tests__/writeBudget.assert.ts && tsx server/agent/__tests__/mcp.assert.ts && tsx server/agent/__tests__/browserTabTools.test.ts && tsx server/agent/__tests__/toolCallHooks.test.ts && tsx server/agent/__tests__/outboundMiddleware.test.ts && tsx server/agent/__tests__/responseQuality.test.ts && tsx server/agent/__tests__/jobQueue.notifyJobComplete.test.ts && tsx server/agent/__tests__/buildFeatureJob.test.ts && tsx server/agent/__tests__/queryClassifier.test.ts && tsx server/agent/__tests__/coachBuildRouting.test.ts && tsx server/agent/__tests__/harnessAndroidRevision.test.ts && tsx server/agent/__tests__/harness.android.test.ts && tsx server/agent/__tests__/screenshotBudget.test.ts"
 
+[[workflows.workflow]]
+name = "Start Dashboard"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd dashboard && npm run dev"
+waitForPort = 3001
+
+[workflows.workflow.metadata]
+outputType = "console"
+
 [userenv]
 
 [userenv.shared]
@@ -103,6 +123,8 @@ EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vp
 GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = "your-google-client-secret"
 ANDROID_APK_URL = "https://github.com/battlesbudz/JarvisAi/releases/download/android-daemon-latest/jarvis-daemon.apk"
+DASHBOARD_SECRET = "your-dashboard-secret"
+JARVIS_API = "http://localhost:5000"
 
 [userenv.production]
 EXPO_PUBLIC_DOMAIN = "GameplanAI.replit.app"

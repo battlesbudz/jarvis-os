@@ -305,3 +305,43 @@ Jarvis can now auto-detect habits from orchestration traces and interaction logs
   - **Suggested** — pending candidates with Accept / Edit / Dismiss buttons. Edit opens an inline form to tweak name and instructions before accepting.
   - **Active Custom Skills** — all non-built-in user_skills with a toggle (active/inactive) and delete button.
   - Mirrors the Memory Review card design (`memoryRow` / `memoryEmptyCard` styles).
+
+## JARVIS COMMAND — Next.js Mission Control Dashboard
+
+A separate **Next.js 16 + Tailwind v4** web dashboard running on **port 3001**, providing a desktop-class Mission Control interface alongside the Expo mobile app.
+
+### Access
+- Development: `http://localhost:3001` (or the Replit port-3001 URL)
+- Workflow: **Start Dashboard** (`cd dashboard && npm run dev`)
+
+### Architecture
+- **Framework**: Next.js 16 (App Router, Turbopack)
+- **Styling**: Tailwind CSS v4 (CSS-based config, no tailwind.config.js)
+- **No external UI libraries** — all components built from scratch using inline styles + Tailwind classes
+- **Auth**: All pages are client components that proxy to Jarvis backend via internal Next.js API route
+- **Proxy**: `dashboard/app/api/proxy/[...path]/route.ts` — forwards requests to `http://localhost:5000/api/*` with `DASHBOARD_SECRET` header
+- **DASHBOARD_SECRET**: Env var (`your-dashboard-secret`) set in shared env + `dashboard/.env.local`. Bypass in `server/auth.ts → authMiddleware` allows requests with this token.
+
+### Screens
+1. **Tasks** (`/tasks`) — Kanban board: Backlog / In Progress / Completed columns with mark-complete action
+2. **Calendar** (`/calendar`) — Two-panel: upcoming user tasks grouped by day + all system cron jobs
+3. **Projects** (`/projects`) — Goal cards grid, reads from `GET /api/goals` (data from `goals.data` JSONB array)
+4. **Memory** (`/memory`) — Split-panel: filterable memory list (left) + full detail viewer (right) with search + category filter
+5. **Visual Office** (`/visual`) — Agent room grid with Vision pixel-art sprite (tinted per role), status badges, heartbeat info
+
+### Design Language
+- Background: `#09090f` (deep void), Surface: `#111219`, Border: `#1e2035`
+- Primary accent: `#22c55e` (green — active/online)
+- Selection/highlight: `#a855f7` (purple)
+- Gold: `#eab308` (Vision's eyes)
+- Font: JetBrains Mono / monospace
+
+### Key Files
+- `dashboard/` — Next.js project root
+- `dashboard/app/` — Next.js App Router pages
+- `dashboard/components/Sidebar.tsx` — nav sidebar (client component with `usePathname`)
+- `dashboard/components/VisionSprite.tsx` — pixel-art SVG Vision character (tintable)
+- `dashboard/app/api/proxy/[...path]/route.ts` — catch-all proxy to Jarvis backend
+- `dashboard/.env.local` — `DASHBOARD_SECRET` + `JARVIS_API`
+- `server/auth.ts` — `authMiddleware` (async, DASHBOARD_SECRET bypass at line ~292)
+- `server/routes.ts` — `GET /api/goals` added (returns `goals.data` JSONB array)
