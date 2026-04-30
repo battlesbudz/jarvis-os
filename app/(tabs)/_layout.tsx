@@ -8,14 +8,6 @@ import React from "react";
 import Colors from "@/constants/colors";
 import { useQuery } from "@tanstack/react-query";
 
-function useInboxBadge(): number {
-  const { data } = useQuery<{ id: string }[]>({
-    queryKey: ["/api/inbox/items"],
-    refetchInterval: 30000,
-  });
-  return data?.length ?? 0;
-}
-
 function usePendingMemoryBadge(): number {
   const { data } = useQuery<{ memories: { id: string }[] }>({
     queryKey: ["/api/memory/pending-review"],
@@ -25,19 +17,13 @@ function usePendingMemoryBadge(): number {
 }
 
 function NativeTabLayout() {
-  const count = useInboxBadge();
   const pendingMemoryCount = usePendingMemoryBadge();
-  const inboxLabel = count > 0 ? `Inbox (${count})` : "Inbox";
   const profileLabel = pendingMemoryCount > 0 ? `Profile (${pendingMemoryCount})` : "Profile";
   return (
     <NativeTabs>
       <NativeTabs.Trigger name="index">
         <Icon sf={{ default: "square.grid.2x2", selected: "square.grid.2x2.fill" }} />
         <Label>Mission Control</Label>
-      </NativeTabs.Trigger>
-      <NativeTabs.Trigger name="inbox">
-        <Icon sf={{ default: "tray", selected: "tray.fill" }} />
-        <Label>{inboxLabel}</Label>
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="insights">
         <Icon sf={{ default: "sparkles", selected: "sparkles" }} />
@@ -62,7 +48,6 @@ function NativeTabLayout() {
 function ClassicTabLayout() {
   const isWeb = Platform.OS === "web";
   const isIOS = Platform.OS === "ios";
-  const count = useInboxBadge();
   const pendingMemoryCount = usePendingMemoryBadge();
 
   return (
@@ -104,21 +89,7 @@ function ClassicTabLayout() {
           ),
         }}
       />
-      <Tabs.Screen
-        name="inbox"
-        options={{
-          title: "Inbox",
-          tabBarBadge: count > 0 ? count : undefined,
-          tabBarBadgeStyle: { backgroundColor: Colors.error, color: '#fff', fontSize: 10 },
-          tabBarIcon: ({ color, focused }) => (
-            <Ionicons
-              name={focused ? "file-tray-full" : "file-tray-outline"}
-              size={24}
-              color={color}
-            />
-          ),
-        }}
-      />
+      <Tabs.Screen name="inbox" options={{ href: null }} />
       <Tabs.Screen
         name="insights"
         options={{
