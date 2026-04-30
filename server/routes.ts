@@ -129,6 +129,7 @@ function loadPrimeSections(): PrimeSections {
   let content: string;
   try {
     content = fs.readFileSync(filePath, "utf8");
+    console.log('[routes] agents/PRIME.md loaded — sections: coachingFrameworks, personas (5), coachingRules, emailFormat');
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(`[routes] agents/PRIME.md unavailable: ${reason} — using built-in defaults`);
@@ -161,7 +162,6 @@ function loadPrimeSections(): PrimeSections {
 }
 
 const PRIME = loadPrimeSections();
-console.log('[routes] agents/PRIME.md loaded — sections: coachingFrameworks, personas (5), coachingRules, emailFormat');
 
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
