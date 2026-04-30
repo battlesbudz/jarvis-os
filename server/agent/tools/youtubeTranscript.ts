@@ -480,6 +480,7 @@ export const youtubeTranscriptTool: AgentTool = {
         bypassCache,
         audioOnly: forceAudio,
         userId: ctx.userId,
+        signal: ctx.signal,
         onFetchStart: () => {
           ctx.state.onProgressMessage?.("📝 Fetching transcript…");
         },
@@ -496,7 +497,8 @@ export const youtubeTranscriptTool: AgentTool = {
           content:
             `I've started generating the transcript for this video using Supadata AI. ` +
             `This typically takes **5–10 minutes** for long videos. ` +
-            `I'll send you a notification when it's ready — you can then ask me to summarize it or answer questions about it.` +
+            `I'll send you a notification when it's ready — you can then ask me to summarize it or answer questions about it. ` +
+            `Press the ⬛ stop button to cancel transcript generation at any time.` +
             (jobId ? ` (job: ${jobId})` : ""),
           label: `get_youtube_transcript: supadata-async-job-started (${videoIdLabel})`,
         };
@@ -588,6 +590,11 @@ export const youtubeTranscriptTool: AgentTool = {
       return withVisuals(buildResult(segments, fetchedSource));
 
     } catch (err: unknown) {
+      // ── User cancelled via Stop button — stop immediately, no fallbacks ─────
+      if (err instanceof Error && (err.name === 'AbortError' || err.message?.includes('aborted'))) {
+        throw err;
+      }
+
       const msg = err instanceof Error ? err.message : String(err);
       const lower = msg.toLowerCase();
 

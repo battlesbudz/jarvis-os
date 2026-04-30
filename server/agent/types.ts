@@ -52,6 +52,8 @@ export interface ToolContext {
   state: AgentState;
   /** Optional logger label, e.g. "Telegram" or "AppChat" */
   channel?: string;
+  /** AbortSignal that fires when the user presses Stop. Tools should propagate it to long-running operations. */
+  signal?: AbortSignal;
   /** Discord guild (server) ID — set when the message originates from a Discord guild channel */
   discordGuildId?: string;
   /** Discord text channel ID — set when the message originates from a Discord channel (DM or guild) */

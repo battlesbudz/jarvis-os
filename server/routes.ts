@@ -1758,7 +1758,8 @@ Rules:
   async function executeCoachTool(
     toolName: string,
     args: any,
-    userId: string
+    userId: string,
+    signal?: AbortSignal
   ): Promise<{ result: 'success' | 'error'; label: string; detail: string }> {
     const todayKey = new Date().toISOString().slice(0, 10);
     try {
@@ -2564,7 +2565,7 @@ Rules:
           const { extractVideoId } = await import('./lib/transcriptCache');
           const videoId = extractVideoId(rawInput) ?? rawInput;
           try {
-            const segs = await fetchTranscriptViaSupadata(videoId);
+            const segs = await fetchTranscriptViaSupadata(videoId, { signal });
             if (!segs || segs.length === 0) {
               return { result: 'error', label: 'No transcript returned', detail: `Supadata returned an empty transcript for video '${videoId}'. The video may have no speech content, or AI generation produced no output.` };
             }
@@ -2591,7 +2592,7 @@ Rules:
           }
           const videoId = extractVideoId(rawInput) ?? rawInput;
           try {
-            const { segments, source } = await fetchTranscriptCached(videoId, { audioOnly: true, bypassCache: true });
+            const { segments, source } = await fetchTranscriptCached(videoId, { audioOnly: true, bypassCache: true, signal });
             if (segments.length === 0) {
               return { result: 'error', label: 'Audio transcription failed', detail: 'Audio transcription returned no segments — the video may be too long, blocked, or Whisper is unavailable.' };
             }
@@ -2614,7 +2615,7 @@ Rules:
           const CAPTION_SOURCES = ['innertube', 'yt-dlp', 'timedtext', 'youtube-transcript'];
           const isCaptionSource = (s: string) => CAPTION_SOURCES.some(cs => s.startsWith(cs));
           try {
-            const { segments, source } = await fetchTranscriptCached(videoId, { captionsOnly: true, bypassCache: true });
+            const { segments, source } = await fetchTranscriptCached(videoId, { captionsOnly: true, bypassCache: true, signal });
             if (segments.length === 0 || !isCaptionSource(source)) {
               return { result: 'error', label: 'No captions found', detail: 'No captions available for this video — try fetch_transcript_gemini or fetch_transcript_supadata for AI-generated transcript.' };
             }
@@ -2712,6 +2713,10 @@ Rules:
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
       }
     } catch (error) {
+      // Rethrow AbortError so the route-level abort handler can terminate the run cleanly
+      if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted'))) {
+        throw error;
+      }
       console.error(`Error executing tool ${toolName}:`, error);
       return { result: 'error', label: 'Action failed', detail: String(error) };
     }
@@ -3119,6 +3124,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         const mcpToolCtx: import("./agent/types").ToolContext = {
           userId,
           channel: originChannel,
+          signal,
           state: {
             pendingAttachments: [],
             onProgress: (msg: string) => {
@@ -3417,7 +3423,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 };
               }
             } else {
-              execResult = await executeCoachTool(tc.function.name, args, userId);
+              execResult = await executeCoachTool(tc.function.name, args, userId, signal);
             }
 
             // Detect integration connectivity errors in the primary chat and emit
@@ -3717,6 +3723,19 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     if (run.userId !== callerId) return res.status(403).json({ error: "Forbidden" });
     run.controller.abort();
     activeCoachRuns.delete(runId);
+
+    // Cancel any pending transcript jobs for this user so the background
+    // poller does not complete and notify them after they pressed Stop.
+    try {
+      const { cancelUserTranscriptJobs } = await import('./lib/transcriptJobTracker');
+      const cancelled = await cancelUserTranscriptJobs(run.userId);
+      if (cancelled > 0) {
+        console.log(`[abort] Cancelled ${cancelled} pending transcript job(s) for user ${run.userId}`);
+      }
+    } catch (err) {
+      console.warn(`[abort] Failed to cancel transcript jobs: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     return res.json({ ok: true });
   });
 
