@@ -210,7 +210,14 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         op = { type: "android_browse", url: String(args.url) };
       } else if (rawAction === "android_screenshot") {
         if (!checkAndIncrementScreenshotBudget(ctx)) {
-          return { ok: false, content: JSON.stringify({ ok: false, error: "Screenshot budget exhausted (4/4 used this turn). Use android_read_screen to inspect the screen instead — it reads the accessibility tree without using screenshot budget." }) };
+          return {
+            ok: false,
+            content: JSON.stringify({
+              ok: false,
+              label: "daemon_action: turn screenshot limit reached",
+              error: "Screenshot limit reached for this turn (max 4). Use android_read_screen to read the current screen content as text — it returns the accessibility tree without requiring a screenshot.",
+            }),
+          };
         }
         op = { type: "android_screenshot" };
       } else if (rawAction === "android_read_screen") {
