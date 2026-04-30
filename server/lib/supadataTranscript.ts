@@ -15,7 +15,7 @@ import type { TranscriptResponse } from "youtube-transcript";
 import type { Supadata, Transcript } from "@supadata/js";
 
 /** Max time to wait for an async Supadata job (large video transcription). */
-const JOB_POLL_TIMEOUT_MS = 30_000;
+const JOB_POLL_TIMEOUT_MS = 120_000;
 const JOB_POLL_INTERVAL_MS = 2_000;
 
 /** Returns true when a Supadata API key is configured. */
