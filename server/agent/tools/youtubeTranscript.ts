@@ -24,6 +24,7 @@ import {
   isPlaylistUrl,
   getYtdlpStatus,
 } from "../../lib/transcriptCache";
+import { humanReadableSource } from "../../lib/transcriptSourceLabel";
 import { buildVisualSummary } from "../../lib/videoFrames";
 import { callBrowserTool } from "../mcp/playwrightMcpClient";
 import {
@@ -34,34 +35,6 @@ import {
 
 /** Maximum characters returned before truncation (≈ ~150k tokens safe limit). */
 const MAX_CHARS = 120_000;
-
-/**
- * Map internal transcript source keys (from fetchTranscriptCached) to concise
- * user-facing labels that appear in the transcript header.
- *
- * Returns null when the source is already implicit in the transcript body
- * (e.g. Gemini outputs "[AI-generated transcript via Gemini]") or when the
- * source is unknown/a plain cache hit with no stored origin.
- *
- * @example
- * humanReadableSource("supadata")            // → "Supadata"
- * humanReadableSource("innertube/ANDROID")   // → "YouTube captions"
- * humanReadableSource("yt-dlp")              // → "YouTube captions"
- * humanReadableSource("audio-transcription") // → "Whisper (audio)"
- * humanReadableSource("gemini")              // → null  (already shown in body)
- * humanReadableSource("cache")               // → null  (origin unknown)
- */
-export function humanReadableSource(src: string | undefined): string | null {
-  if (!src || src === "unknown" || src === "cache") return null;
-  // "gemini" is always surfaced via the "[AI-generated transcript via Gemini]" text — skip the sourceTag to avoid redundancy
-  if (src === "gemini") return null;
-  if (src === "supadata") return "Supadata";
-  if (src.startsWith("innertube/") || src === "yt-dlp" || src === "timedtext" || src === "youtube-transcript") return "YouTube captions";
-  if (src === "audio-transcription" || src.startsWith("audio-transcription")) return "Whisper (audio)";
-  if (src === "browser") return "browser";
-  if (src === "local-worker") return "local worker";
-  return src;
-}
 
 /** Format milliseconds → "H:MM:SS" or "M:SS". */
 function formatTimestamp(ms: number): string {
