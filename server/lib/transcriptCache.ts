@@ -330,6 +330,7 @@ const MAX_ENTRIES = 500;
 interface CacheEntry {
   segments: TranscriptResponse[];
   cachedAt: number;
+  source?: string;
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -1412,7 +1413,7 @@ export interface FetchTranscriptOptions {
 export async function fetchTranscriptCached(
   input: string,
   options: FetchTranscriptOptions = {}
-): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean }> {
+): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean; source: string }> {
   const { bypassCache = false, config, audioOnly = false, onFetchStart } = options;
   const videoId = extractVideoId(input);
 
@@ -1439,12 +1440,12 @@ export async function fetchTranscriptCached(
         } else {
           const age = Math.round((Date.now() - hit.cachedAt) / 1000);
           console.log(`[transcriptCache] HIT  ${videoId} — ${hit.segments.length} segs, cached ${age}s ago`);
-          return { segments: hit.segments, noCaptionsDetected: false };
+          return { segments: hit.segments, noCaptionsDetected: false, source: hit.source ?? "cache" };
         }
       } else {
         const age = Math.round((Date.now() - hit.cachedAt) / 1000);
         console.log(`[transcriptCache] HIT  ${videoId} — ${hit.segments.length} segs, cached ${age}s ago`);
-        return { segments: hit.segments, noCaptionsDetected: false };
+        return { segments: hit.segments, noCaptionsDetected: false, source: hit.source ?? "cache" };
       }
     }
   }
@@ -1482,10 +1483,10 @@ export async function fetchTranscriptCached(
           console.log(`[transcriptCache] Phase 0 Gemini OK ${resolvedId} — ${geminiText.length} chars`);
           evictExpired();
           if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
-          cache.set(videoId, { segments, cachedAt: Date.now() });
+          cache.set(videoId, { segments, cachedAt: Date.now(), source });
           const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
           console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache.size})`);
-          return { segments, noCaptionsDetected: false };
+          return { segments, noCaptionsDetected: false, source };
         }
       } else {
         console.warn("[transcriptCache] Phase 0 skipped — no Gemini key configured (set GOOGLE_GEMINI_API_KEY for direct access, or AI_INTEGRATIONS_GEMINI_API_KEY for proxy)");
@@ -1527,10 +1528,10 @@ export async function fetchTranscriptCached(
           );
           evictExpired();
           if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
-          cache.set(videoId, { segments, cachedAt: Date.now() });
+          cache.set(videoId, { segments, cachedAt: Date.now(), source });
           const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
           console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache.size})`);
-          return { segments, noCaptionsDetected: false };
+          return { segments, noCaptionsDetected: false, source };
         }
       } else {
         console.log(
@@ -1590,14 +1591,14 @@ export async function fetchTranscriptCached(
     if (videoId && segments.length > 0) {
       evictExpired();
       if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
-      cache.set(videoId, { segments, cachedAt: Date.now() });
+      cache.set(videoId, { segments, cachedAt: Date.now(), source });
       const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
       console.log(
         `[transcriptCache] ${reason} ${videoId} via ${source} — ${segments.length} segs (cache size: ${cache.size})`
       );
     }
 
-    return { segments, noCaptionsDetected: false };
+    return { segments, noCaptionsDetected: false, source };
   }
 
   // ── Phase 1: InnerTube metadata check ────────────────────────────────────
@@ -1757,14 +1758,14 @@ export async function fetchTranscriptCached(
   if (videoId && segments && segments.length > 0) {
     evictExpired();
     if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
-    cache.set(videoId, { segments, cachedAt: Date.now() });
+    cache.set(videoId, { segments, cachedAt: Date.now(), source });
     const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
     console.log(
       `[transcriptCache] ${reason} ${videoId} via ${source} — ${segments.length} segs (cache size: ${cache.size})`
     );
   }
 
-  return { segments, noCaptionsDetected: noCaptions };
+  return { segments, noCaptionsDetected: noCaptions, source };
 }
 
 /** Manually invalidate a single video's cache entry (e.g. on explicit user request). */
