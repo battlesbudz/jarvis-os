@@ -395,6 +395,7 @@ async function runDueScheduledTasks(now: Date): Promise<void> {
           lte(schema.jarvisScheduledTasks.scheduledAt, now),
           isNull(schema.jarvisScheduledTasks.completedAt),
           eq(schema.jarvisScheduledTasks.active, true),
+          eq(schema.jarvisScheduledTasks.needsAttention, false),
           or(
             isNull(schema.jarvisScheduledTasks.inProgressAt),
             lt(schema.jarvisScheduledTasks.inProgressAt, staleThreshold),
@@ -457,6 +458,23 @@ async function handleDueTask(
 
   const isRecurring = !!task.recurrence;
 
+  // Query past guidance memories for this task before executing either path.
+  let pastGuidance = '';
+  try {
+    const { retrieveRelevantMemories } = await import('./memory/retrieve');
+    const memories = await retrieveRelevantMemories(task.userId, `task guidance: ${task.title}`, 4);
+    const relevant = memories.filter(m =>
+      m.sourceType === 'task_guidance' ||
+      (m.content && m.content.toLowerCase().includes(task.title.toLowerCase()))
+    );
+    if (relevant.length > 0) {
+      pastGuidance = `Past guidance for this task:\n${relevant.map(m => `- ${m.content}`).join('\n')}\n\n`;
+      console.log(`[Scheduler] Injecting ${relevant.length} guidance memory(ies) for task "${task.title}"`);
+    }
+  } catch (err) {
+    console.error(`[Scheduler] Memory lookup failed for task ${task.id}:`, err);
+  }
+
   if (task.shellCommand) {
     // ── Shell-command path ────────────────────────────────────────────────────
     const result = await executeScheduledShellCommand(task.userId, task.shellCommand);
@@ -515,7 +533,8 @@ async function handleDueTask(
     console.log(`[Scheduler] Shell task id=${task.id} exit=${result.exitCode} dur=${result.durationMs}ms`);
   } else {
     // ── Agent-prompt path ─────────────────────────────────────────────────────
-    // Re-run the agent with the task's description as a prompt
+    // Re-run the agent with the task's description as a prompt.
+    // pastGuidance was retrieved above and is injected here.
     const { runCoachAgent } = await import('./channels/coachAgent');
 
     const prompt = task.description || `You have a scheduled task: "${task.title}". Please complete this action now and summarise what you did.`;
@@ -523,7 +542,7 @@ async function handleDueTask(
     try {
       const agentResult = await runCoachAgent({
         userId: task.userId,
-        userText: `[Scheduled task: ${task.title}]\n\n${prompt}`,
+        userText: `[Scheduled task: ${task.title}]\n\n${pastGuidance}${prompt}`,
         channelName: 'Scheduled Task',
       });
       agentReply = agentResult.reply || '';

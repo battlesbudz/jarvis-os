@@ -5981,6 +5981,97 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.post("/api/jarvis/scheduled-tasks/:id/attention", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = _p(req.params.id);
+      const { attentionQuestion } = req.body;
+      if (!attentionQuestion) return res.status(400).json({ error: "attentionQuestion is required" });
+
+      const [task] = await db
+        .select()
+        .from(schema.jarvisScheduledTasks)
+        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)))
+        .limit(1);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+
+      await db
+        .update(schema.jarvisScheduledTasks)
+        .set({ needsAttention: true, attentionQuestion })
+        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)));
+
+      try {
+        const [link] = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.userId, userId));
+        if (link?.chatId) {
+          const { sendLongMessage } = await import("./integrations/telegram");
+          await sendLongMessage(
+            link.chatId,
+            `⚠️ Your task *"${task.title}"* needs your guidance:\n\n${attentionQuestion}\n\nReply here or tap the task in Mission Control to answer.`
+          );
+        }
+      } catch (err) {
+        console.error("[Routes] attention telegram notify failed:", err);
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error setting task attention:", err);
+      res.status(500).json({ error: "Failed to set attention" });
+    }
+  });
+
+  app.post("/api/jarvis/scheduled-tasks/:id/resolve", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = _p(req.params.id);
+      const { userAnswer } = req.body;
+      if (!userAnswer) return res.status(400).json({ error: "userAnswer is required" });
+
+      const [task] = await db
+        .select()
+        .from(schema.jarvisScheduledTasks)
+        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)))
+        .limit(1);
+      if (!task) return res.status(404).json({ error: "Task not found" });
+
+      const memoryContent = `Task guidance for "${task.title}": ${task.attentionQuestion ? `Q: ${task.attentionQuestion} ` : ""}A: ${userAnswer}`;
+      await db.insert(schema.userMemories).values({
+        userId,
+        content: memoryContent,
+        category: "Task Guidance",
+        confidence: 90,
+        relevanceScore: 80,
+        sourceType: "task_guidance",
+        sourceRef: task.id,
+      });
+
+      await db
+        .update(schema.jarvisScheduledTasks)
+        .set({ needsAttention: false, attentionQuestion: null })
+        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)));
+
+      try {
+        const [link] = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.userId, userId));
+        if (link?.chatId) {
+          const { sendLongMessage } = await import("./integrations/telegram");
+          await sendLongMessage(
+            link.chatId,
+            `✅ Got it. I've saved your guidance for *"${task.title}"* and will apply it next time.`
+          );
+        }
+      } catch (err) {
+        console.error("[Routes] resolve telegram ack failed:", err);
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error resolving task attention:", err);
+      res.status(500).json({ error: "Failed to resolve attention" });
+    }
+  });
+
   app.delete("/api/jarvis/scheduled-tasks/:id", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;

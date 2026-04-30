@@ -376,21 +376,6 @@ export async function runCuriosityScan(): Promise<void> {
 
           if (ruleResult.verdict === "surface") {
             try {
-              await db.insert(schema.inboxItems).values({
-                userId,
-                sourceType: "email",
-                sourceId: emailId,
-                subject: email.subject || "(no subject)",
-                sender: email.from || null,
-                snippet: email.snippet || null,
-                jarvisReason: "Matched your surface rule",
-                suggestedActions: [
-                  { label: "Reply", actionType: "reply" },
-                  { label: "Archive", actionType: "archive" },
-                  { label: "Dismiss", actionType: "dismiss" },
-                ],
-                matchedRuleId: ruleResult.matchedRuleId || null,
-              }).onConflictDoNothing();
               alreadyAsked.add(emailId);
               if (senderKey) recentlySurfacedSenders.add(senderKey);
               await db.insert(schema.proactiveQuestionsSent).values({
@@ -402,9 +387,13 @@ export async function runCuriosityScan(): Promise<void> {
                 target: [schema.proactiveQuestionsSent.userId, schema.proactiveQuestionsSent.sourceId],
                 set: { sentAt: new Date(), question: "Surfaced by inbox rule" },
               });
-              console.log(`[Curiosity] Surfaced email for user ${userId}: ${email.subject}`);
+              const subject = email.subject || "(no subject)";
+              const sender = email.from || "unknown sender";
+              const snippet = email.snippet ? ` — "${email.snippet.slice(0, 120)}"` : "";
+              await notifyUser(userId, "email_alert", `📧 I spotted an email that might need your attention:\n\nFrom: ${sender}\nSubject: ${subject}${snippet}\n\nReply here to tell me what to do with it.`);
+              console.log(`[Curiosity] Sent Telegram alert for Gmail email for user ${userId}: ${email.subject}`);
             } catch (err) {
-              console.error(`[Curiosity] inbox_items insert failed for email ${emailId}:`, err);
+              console.error(`[Curiosity] Telegram email alert failed for ${emailId}:`, err);
             }
             continue;
           }
@@ -438,21 +427,6 @@ export async function runCuriosityScan(): Promise<void> {
 
           if (ruleResult.verdict === "surface") {
             try {
-              await db.insert(schema.inboxItems).values({
-                userId,
-                sourceType: "outlook_email",
-                sourceId: emailId,
-                subject: email.subject || "(no subject)",
-                sender: email.from || null,
-                snippet: email.snippet || null,
-                jarvisReason: "Matched your surface rule",
-                suggestedActions: [
-                  { label: "Reply", actionType: "reply" },
-                  { label: "Archive", actionType: "archive" },
-                  { label: "Dismiss", actionType: "dismiss" },
-                ],
-                matchedRuleId: ruleResult.matchedRuleId || null,
-              }).onConflictDoNothing();
               alreadyAsked.add(emailId);
               if (senderKey) recentlySurfacedSenders.add(senderKey);
               await db.insert(schema.proactiveQuestionsSent).values({
@@ -464,9 +438,13 @@ export async function runCuriosityScan(): Promise<void> {
                 target: [schema.proactiveQuestionsSent.userId, schema.proactiveQuestionsSent.sourceId],
                 set: { sentAt: new Date(), question: "Surfaced by inbox rule" },
               });
-              console.log(`[Curiosity] Surfaced Outlook email for user ${userId}: ${email.subject}`);
+              const subject = email.subject || "(no subject)";
+              const sender = email.from || "unknown sender";
+              const snippet = email.snippet ? ` — "${email.snippet.slice(0, 120)}"` : "";
+              await notifyUser(userId, "email_alert", `📧 I spotted an Outlook email that might need your attention:\n\nFrom: ${sender}\nSubject: ${subject}${snippet}\n\nReply here to tell me what to do with it.`);
+              console.log(`[Curiosity] Sent Telegram alert for Outlook email for user ${userId}: ${email.subject}`);
             } catch (err) {
-              console.error(`[Curiosity] inbox_items insert failed for Outlook email ${emailId}:`, err);
+              console.error(`[Curiosity] Telegram Outlook email alert failed for ${emailId}:`, err);
             }
             continue;
           }
@@ -539,27 +517,32 @@ export async function runCuriosityScan(): Promise<void> {
             continue;
           }
 
+          // Email triage items go directly to Telegram — never written to inbox_items.
+          // Calendar-derived items may still use inbox_items as a fallback surface.
+          const isEmailType = canonicalSourceType === "email" || canonicalSourceType === "gmail" || canonicalSourceType === "outlook_email";
           let inboxInserted = false;
-          try {
-            const result = await db.insert(schema.inboxItems).values({
-              userId,
-              sourceType: canonicalSourceType as "google_calendar" | "outlook_calendar" | "outlook_email" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
-              sourceId: q.sourceId,
-              subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
-              sender: srcItem?.senderKey ?? null,
-              snippet: q.question,
-              jarvisReason: "Jarvis noticed something worth your attention",
-              suggestedActions: [
-                { label: "Reply", actionType: "reply" },
-                { label: "Dismiss", actionType: "dismiss" },
-              ],
-            }).onConflictDoNothing().returning({ id: schema.inboxItems.id });
-            inboxInserted = result.length > 0;
-          } catch (inboxErr) {
-            console.error(`[Curiosity] inbox_items insert failed for ${q.sourceId}:`, inboxErr);
+          if (!isEmailType) {
+            try {
+              const result = await db.insert(schema.inboxItems).values({
+                userId,
+                sourceType: canonicalSourceType as "google_calendar" | "outlook_calendar" | "outlook_email" | "email" | "telegram" | "slack" | "discord" | "whatsapp" | "other",
+                sourceId: q.sourceId,
+                subject: srcItem?.summary?.slice(0, 200) ?? q.question.slice(0, 200),
+                sender: srcItem?.senderKey ?? null,
+                snippet: q.question,
+                jarvisReason: "Jarvis noticed something worth your attention",
+                suggestedActions: [
+                  { label: "Reply", actionType: "reply" },
+                  { label: "Dismiss", actionType: "dismiss" },
+                ],
+              }).onConflictDoNothing().returning({ id: schema.inboxItems.id });
+              inboxInserted = result.length > 0;
+            } catch (inboxErr) {
+              console.error(`[Curiosity] inbox_items insert failed for ${q.sourceId}:`, inboxErr);
+            }
           }
 
-          if (inboxInserted) {
+          if (inboxInserted || isEmailType) {
             logAction(userId, "proactive_message", { type: "curiosity_question", sourceId: q.sourceId }).catch(() => {});
           }
 
