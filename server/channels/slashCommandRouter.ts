@@ -9,7 +9,7 @@
  * acknowledgement instead of waiting for the LLM coach to interpret intent.
  */
 
-import { submitAgentJob, type AgentJobType } from "../agent/jobClient";
+import { submitAgentJob, cancelAllForUser, type AgentJobType } from "../agent/jobClient";
 
 export interface SlashCommandDef {
   name: string;
@@ -71,6 +71,11 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   {
     name: "help",
     description: "Show all available slash commands",
+    agentType: null,
+  },
+  {
+    name: "stop",
+    description: "Stop all Jarvis activity",
     agentType: null,
   },
 ];
@@ -169,6 +174,26 @@ export async function routeSlashCommand(
   }
 
   if (def.agentType === null) {
+    if (command === "stop") {
+      try {
+        const { jobsCancelled, jobsCancelling, workflowsPaused } = await cancelAllForUser(userId);
+        const total = jobsCancelled + jobsCancelling;
+        if (total === 0 && workflowsPaused === 0) {
+          return "✅ Nothing was running — Jarvis was already idle.";
+        }
+        const parts: string[] = [];
+        if (jobsCancelled > 0)
+          parts.push(`${jobsCancelled} queued job${jobsCancelled === 1 ? "" : "s"} cancelled`);
+        if (jobsCancelling > 0)
+          parts.push(`${jobsCancelling} running job${jobsCancelling === 1 ? "" : "s"} signalled to stop`);
+        if (workflowsPaused > 0)
+          parts.push(`${workflowsPaused} workflow${workflowsPaused === 1 ? "" : "s"} paused`);
+        return `🛑 Stopped: ${parts.join(", ")}.`;
+      } catch (err) {
+        console.error("[SlashCommandRouter] /stop error:", err);
+        return "Sorry, I couldn't cancel all jobs right now — please try again.";
+      }
+    }
     return getHelpText(channel);
   }
 
