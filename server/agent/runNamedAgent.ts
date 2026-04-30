@@ -65,6 +65,12 @@ const CREW_DIR = path.resolve(process.cwd(), "agents/crew");
 // ── Crew specialist tool allowlist ──────────────────────────────────────────
 // Loaded once from agents/crew/tools.json. Maps crewRole → Set of allowed
 // tool names. Absent role = no filtering (full manifest kept).
+//
+// Note: tool names in tools.json use canonical runtime names (the `name` field
+// on each AgentTool object, e.g. "create_gmail_draft", "create_calendar_event",
+// "export_document_pdf") — these differ from the human-readable role descriptions
+// in the task spec which used shorthand placeholders ("gmail_draft", "calendar_create",
+// "export_pdf"). Non-existent names in the allowlist are silently skipped.
 
 let _crewToolAllowlists: Record<string, Set<string>> | null = null;
 
