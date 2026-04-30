@@ -1,5 +1,6 @@
 import { db } from "../db";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import * as schema from "@shared/schema";
 import { getSoulPromptBlock } from "./soul";
 import { retrieveRelevantMemories } from "./retrieve";
 import { getEmotionalState, buildEmotionalStatePromptBlock } from "../intelligence/emotional-state";
@@ -19,6 +20,7 @@ export interface AiContextSections {
   patternSection: string;
   memorySection: string;
   emotionalStateSection: string;
+  vaultSection: string;
 }
 
 export const EMPTY_AI_CONTEXT: AiContextSections = {
@@ -26,6 +28,7 @@ export const EMPTY_AI_CONTEXT: AiContextSections = {
   patternSection: "",
   memorySection: "",
   emotionalStateSection: "",
+  vaultSection: "",
 };
 
 export async function buildAiContextSections(
@@ -113,6 +116,28 @@ export async function buildAiContextSections(
     }
   } catch (err) {
     console.error("[promptContext] emotional state load failed", err);
+  }
+
+  try {
+    const vaultPages = await db
+      .select({ slug: schema.knowledgeVaultPages.slug, content: schema.knowledgeVaultPages.content })
+      .from(schema.knowledgeVaultPages)
+      .where(eq(schema.knowledgeVaultPages.userId, userId));
+
+    const aboutYou = vaultPages.find((p) => p.slug === "about-you");
+    const patterns = vaultPages.find((p) => p.slug === "patterns");
+
+    const parts: string[] = [];
+    if (aboutYou?.content) parts.push(`### About You\n${aboutYou.content}`);
+    if (patterns?.content) parts.push(`### Patterns Jarvis Has Noticed\n${patterns.content}`);
+
+    if (parts.length > 0) {
+      const combined = parts.join("\n\n");
+      const truncated = combined.length > 1500 ? combined.slice(0, 1497) + "…" : combined;
+      out.vaultSection = `\n\n## Knowledge Vault\n${truncated}\n`;
+    }
+  } catch (err) {
+    console.error("[promptContext] vault load failed", err);
   }
 
   return out;

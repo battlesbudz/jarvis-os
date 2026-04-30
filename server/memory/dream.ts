@@ -869,6 +869,9 @@ async function seedSoulFromDream(userId: string, insights: DreamInsightRaw[]): P
     });
 
     await markSoulStale(userId);
+    import("./vaultWriter").then(({ maybeRegenerateVault }) => {
+      maybeRegenerateVault(userId).catch((err) => console.error("[Dream] maybeRegenerateVault:", err));
+    }).catch((err) => console.error("[Dream] vaultWriter import failed:", err));
     console.log(`[Dream] soul seeded and marked stale for ${userId}`);
   } catch (err) {
     console.error(`[Dream] soul seeding failed:`, err);

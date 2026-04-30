@@ -41,6 +41,7 @@ import { registerCodeProposalsRoutes } from "./agent/codeProposalsRoutes";
 import { registerProjectRoutes } from "./projectRoutes";
 import { registerDoctorRoutes } from "./doctor/doctorRoutes";
 import { registerDownloadRoutes } from "./downloadRoutes";
+import { registerVaultRoutes } from "./vaultRoutes";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { driveRouter } from "./driveRoutes";
@@ -428,12 +429,12 @@ export async function buildPlanFromInputs(body: any): Promise<{
     ...(Array.isArray(goals) ? goals.slice(0, 3).map((g: any) => g?.title).filter(Boolean) : []),
     ...(Array.isArray(brainDump) ? brainDump.slice(0, 3).map((b: any) => b?.text || b).filter(Boolean) : []),
   ].join(" • ");
-  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories, emotionalStateSection: planEmotionalState } =
+  const { soulSection: planSoul, patternSection: planPatterns, memorySection: planMemories, emotionalStateSection: planEmotionalState, vaultSection: planVault } =
     await buildAiContextSections(typeof userId === "string" ? userId : undefined, planSeed);
 
   const prompt = `You are Jarvis, an autonomous planning AI. Build a realistic, prioritized daily plan for this person.
 
-Today is ${dayOfWeek}, ${dateStr}.${planSoul}${planPatterns}${planMemories}${planEmotionalState}
+Today is ${dayOfWeek}, ${dateStr}.${planSoul}${planPatterns}${planMemories}${planEmotionalState}${planVault}
 
 ## Calendar
 ${calendarText}
@@ -993,6 +994,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerCodeProposalsRoutes(app);
   registerProjectRoutes(app);
   registerDoctorRoutes(app);
+  registerVaultRoutes(app);
   app.use("/api/drive", driveRouter);
 
   // ── Jarvis Ego — Dashboard API ─────────────────────────────────────────────

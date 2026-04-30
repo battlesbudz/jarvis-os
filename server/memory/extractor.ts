@@ -260,6 +260,9 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
 
   if (stored.length > 0) {
     markSoulStale(userId).catch((err) => console.error("[Memory] markSoulStale:", err));
+    import("./vaultWriter").then(({ maybeRegenerateVault }) => {
+      maybeRegenerateVault(userId).catch((err) => console.error("[Memory] maybeRegenerateVault:", err));
+    }).catch((err) => console.error("[Memory] vaultWriter import failed:", err));
   }
 
   if (!hadAnyError) {
