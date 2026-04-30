@@ -666,7 +666,7 @@ async function processUpdate(update: any): Promise<void> {
           "Here are two ways I can still transcribe it:\n\n" +
           "1. **YouTube link** — if it's on YouTube, share the URL and I'll handle it natively.\n" +
           "2. **Direct download link** — upload the file to Google Drive (or Dropbox) and share the link with me. " +
-          "I'll download and transcribe it using Google's File API (up to 500 MB)."
+          "I'll stream and transcribe it using Google's File API (up to 2 GB)."
         );
         return;
       }

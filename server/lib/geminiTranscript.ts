@@ -110,8 +110,126 @@ export async function fetchTranscriptViaGemini(videoUrl: string): Promise<string
 
 // ── Path 2: File API upload + transcription ────────────────────────────────────
 
-/** Max video size we are willing to download into memory (500 MB). */
-const MAX_DOWNLOAD_BYTES = 500 * 1024 * 1024;
+/**
+ * Maximum video size for streaming uploads where the Content-Length is known
+ * upfront (matches Google File API's 2 GB hard limit).
+ */
+const MAX_STREAM_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
+
+/**
+ * Maximum video size when we must fall back to buffering because the
+ * Content-Length header is absent.  Kept lower than MAX_STREAM_BYTES to
+ * bound peak server RAM usage in the unknown-length case.
+ */
+const MAX_BUFFER_BYTES = 1 * 1024 * 1024 * 1024; // 1 GB
+
+/**
+ * Initiates a Google File API resumable upload and—where possible—pipes the
+ * download response body directly into the upload without holding the full
+ * file in RAM.
+ *
+ * When `contentLength` is known the response body is streamed straight to
+ * Google (no full-file buffer).  When it is null we fall back to buffering up
+ * to MAX_BUFFER_BYTES, because Google's resumable protocol requires knowing
+ * the total size in the single-shot `upload, finalize` command.
+ *
+ * @returns The File API `file.name` (e.g. "files/abc123") needed for polling.
+ */
+async function uploadVideoStream(
+  downloadResponse: Response,
+  mimeType: string,
+  contentLength: number | null,
+  apiKey: string
+): Promise<string> {
+  // ── Step 1: Initiate the resumable upload session ─────────────────────────
+  const initiateHeaders: Record<string, string> = {
+    "X-Goog-Upload-Protocol": "resumable",
+    "X-Goog-Upload-Command": "start",
+    "X-Goog-Upload-Header-Content-Type": mimeType,
+    "Content-Type": "application/json",
+  };
+  if (contentLength !== null) {
+    initiateHeaders["X-Goog-Upload-Header-Content-Length"] = String(contentLength);
+  }
+
+  const initiateRes = await fetch(
+    `https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=resumable&key=${apiKey}`,
+    {
+      method: "POST",
+      headers: initiateHeaders,
+      body: JSON.stringify({ file: { display_name: "jarvis-video-upload" } }),
+    }
+  );
+  if (!initiateRes.ok) {
+    const errText = await initiateRes.text().catch(() => "(no body)");
+    throw new Error(
+      `Resumable upload initiation failed: HTTP ${initiateRes.status} — ${errText}`
+    );
+  }
+
+  const uploadUrl =
+    initiateRes.headers.get("x-goog-upload-url") ??
+    initiateRes.headers.get("X-Goog-Upload-URL");
+  if (!uploadUrl) {
+    throw new Error("Google File API did not return a resumable upload URL");
+  }
+
+  // ── Step 2: Upload the video bytes ───────────────────────────────────────
+  let uploadBody: BodyInit;
+  let uploadContentLength: number;
+
+  if (contentLength !== null) {
+    // True streaming path: pipe the download body directly — no full buffer.
+    if (!downloadResponse.body) {
+      throw new Error(
+        "Download response has no readable body stream — cannot stream to Google File API"
+      );
+    }
+    uploadBody = downloadResponse.body as BodyInit;
+    uploadContentLength = contentLength;
+  } else {
+    // Buffered fallback: read everything, then upload.
+    const arrayBuffer = await downloadResponse.arrayBuffer();
+    const bytes = arrayBuffer.byteLength;
+    if (bytes > MAX_BUFFER_BYTES) {
+      throw new Error(
+        `Video is too large (${Math.round(bytes / 1024 / 1024)} MB). ` +
+        `Maximum supported size for videos without a Content-Length header is ` +
+        `${Math.round(MAX_BUFFER_BYTES / 1024 / 1024)} MB.`
+      );
+    }
+    uploadBody = arrayBuffer;
+    uploadContentLength = bytes;
+  }
+
+  const uploadHeaders: Record<string, string> = {
+    "Content-Type": mimeType,
+    "Content-Length": String(uploadContentLength),
+    "X-Goog-Upload-Offset": "0",
+    "X-Goog-Upload-Command": "upload, finalize",
+  };
+
+  const uploadRes = await fetch(uploadUrl, {
+    method: "POST",
+    headers: uploadHeaders,
+    body: uploadBody,
+    // Required for Node.js 18+ streaming request bodies
+    // @ts-ignore
+    duplex: "half",
+  });
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text().catch(() => "(no body)");
+    throw new Error(`Resumable upload failed: HTTP ${uploadRes.status} — ${errText}`);
+  }
+
+  const data = (await uploadRes.json()) as { file?: { name?: string } };
+  const fileName = data?.file?.name;
+  if (!fileName) {
+    throw new Error("Google File API upload response is missing file.name");
+  }
+  return fileName;
+}
 
 /**
  * Convert common share-link formats to a direct download URL.
@@ -270,12 +388,13 @@ async function callGeminiWithFile(
 }
 
 /**
- * Downloads a publicly accessible video, uploads it to Google's File API,
- * transcribes it with Gemini, and cleans up the uploaded file.
+ * Downloads a publicly accessible video, uploads it to Google's File API via
+ * resumable streaming upload, transcribes it with Gemini, and cleans up.
  *
  * Supports Google Drive share links, Dropbox links, and any direct video URL.
- * Videos up to 500 MB are supported (Google File API allows up to 2 GB, but
- * we cap downloads at 500 MB to stay within server memory constraints).
+ * When the server receives a Content-Length header the download body is piped
+ * directly to Google without buffering the full file in RAM (up to 2 GB).
+ * When Content-Length is absent a buffered fallback is used (up to 1 GB).
  *
  * @param videoUrl - Public URL to the video file (or Google Drive share link)
  * @param mimeType - Optional MIME type override; inferred from URL if omitted
@@ -323,62 +442,43 @@ export async function transcribeVideoFromUrl(
   // ── Content-type guard: reject HTML warning/login pages ──────────────────
   assertVideoContentType(response.headers.get("content-type"), downloadUrl);
 
-  const contentLength = response.headers.get("content-length");
-  if (contentLength) {
-    const bytes = parseInt(contentLength, 10);
-    if (bytes > MAX_DOWNLOAD_BYTES) {
-      throw new Error(
-        `Video is too large to download (${Math.round(bytes / 1024 / 1024)} MB). ` +
-        `Maximum supported size is ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)} MB.`
-      );
-    }
-  }
+  const rawContentLength = response.headers.get("content-length");
+  const parsedLength = rawContentLength ? parseInt(rawContentLength, 10) : NaN;
+  // Treat malformed / negative / non-finite values as unknown length so we
+  // fall back to the buffered path rather than sending Content-Length: NaN.
+  const contentLength =
+    Number.isFinite(parsedLength) && parsedLength > 0 ? parsedLength : null;
 
-  let buffer: Buffer;
-  try {
-    const arrayBuffer = await response.arrayBuffer();
-    buffer = Buffer.from(arrayBuffer);
-  } catch (readErr) {
+  if (contentLength !== null && contentLength > MAX_STREAM_BYTES) {
     throw new Error(
-      `Failed to read video data: ${readErr instanceof Error ? readErr.message : String(readErr)}`
+      `Video is too large (${Math.round(contentLength / 1024 / 1024)} MB). ` +
+      `Maximum supported size is ${Math.round(MAX_STREAM_BYTES / 1024 / 1024 / 1024)} GB.`
     );
   }
 
-  if (buffer.length > MAX_DOWNLOAD_BYTES) {
-    throw new Error(
-      `Video is too large to process (${Math.round(buffer.length / 1024 / 1024)} MB). ` +
-      `Maximum supported size is ${Math.round(MAX_DOWNLOAD_BYTES / 1024 / 1024)} MB.`
-    );
-  }
-
+  const streamMode = contentLength !== null;
   console.log(
-    `[geminiTranscript] Downloaded ${Math.round(buffer.length / 1024 / 1024)} MB — uploading to File API`
+    `[geminiTranscript] Starting ${streamMode ? "streaming" : "buffered"} upload to File API` +
+    (contentLength !== null ? ` (${Math.round(contentLength / 1024 / 1024)} MB)` : " (size unknown)")
   );
 
-  // ── Upload to Google File API ─────────────────────────────────────────────
-  const client = getClient();
-  const blob = new Blob([new Uint8Array(buffer)], { type: resolvedMime });
+  // ── Stream or buffer-then-upload to Google File API ───────────────────────
+  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("AI_INTEGRATIONS_GEMINI_API_KEY is not set");
 
-  let uploadedFile: Awaited<ReturnType<typeof client.files.upload>>;
+  let fileName: string;
   try {
-    uploadedFile = await client.files.upload({
-      file: blob,
-      config: { mimeType: resolvedMime, displayName: "jarvis-video-upload" },
-    });
+    fileName = await uploadVideoStream(response, resolvedMime, contentLength, apiKey);
   } catch (uploadErr) {
     throw new Error(
       `File API upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`
     );
   }
 
-  const fileName = uploadedFile.name;
-  if (!fileName) {
-    throw new Error("File API upload did not return a file name");
-  }
-
   console.log(`[geminiTranscript] Uploaded — file name: ${fileName}, polling for ACTIVE state`);
 
   // ── Poll until ACTIVE (or FAILED) ─────────────────────────────────────────
+  const client = getClient();
   // Google typically processes video files in under a minute; we allow up to 5 min.
   const POLL_INTERVAL_MS = 5_000;
   const MAX_POLL_ATTEMPTS = 60; // 5 min max
