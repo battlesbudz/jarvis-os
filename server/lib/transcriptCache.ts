@@ -558,8 +558,9 @@ function isRateLimitCircuitOpen(): boolean {
   return true;
 }
 
-/** Max audio file size we'll attempt to transcribe (~30-40 min at typical bitrate). */
-const AUDIO_MAX_BYTES = 80 * 1024 * 1024;
+/** Max audio file size we'll attempt to transcribe. Raised to 200 MB to support 3-hour videos
+ * downloaded at 32 kbps mono (~43 MB for 3 hours). The old 80 MB cap silently blocked long videos. */
+const AUDIO_MAX_BYTES = 200 * 1024 * 1024;
 /** Whisper API file size limit with headroom. */
 const WHISPER_MAX_BYTES = 23 * 1024 * 1024;
 /** Length of each WAV chunk sent to Whisper (10 minutes). */
@@ -713,9 +714,15 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
         const buildCmd = (withImpersonate: boolean) => {
           const impersonateFlag = withImpersonate ? "--impersonate chrome " : "";
           return (
-            `${ytdlpCmd} -f "bestaudio[filesize<80M]/bestaudio" --extract-audio --audio-format mp3 ` +
+            // Use worstaudio quality (32 kbps) so 3-hour videos fit in ~43 MB.
+            // --audio-quality 9 = worst (smallest file, fine for speech).
+            // --postprocessor-args forces mono + 16 kHz (matches Whisper's expected rate).
+            // Raised filesize cap to 200M to match AUDIO_MAX_BYTES.
+            `${ytdlpCmd} -f "bestaudio[filesize<200M]/worstaudio" --extract-audio --audio-format mp3 ` +
+            `--audio-quality 9 ` +
+            `--postprocessor-args "ffmpeg:-ac 1 -ar 16000" ` +
             `--no-playlist --no-warnings --quiet --no-progress ` +
-            `--max-filesize 80M ` +
+            `--max-filesize 200M ` +
             `--retries 3 ` +
             `${impersonateFlag}` +
             `--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" ` +
@@ -1388,6 +1395,13 @@ export interface FetchTranscriptOptions {
    * Use this to surface a "Fetching transcript…" progress indicator to the user.
    */
   onFetchStart?: () => void;
+  /**
+   * User ID of the requesting user. Used by Phase 0.5 (Supadata) to track
+   * async jobs for long videos (3+ hours) that take 5–10 minutes to process.
+   * When provided and Supadata starts an async job, the result is fetched in
+   * the background and the user is notified via the normal channel.
+   */
+  userId?: string;
 }
 
 /**
@@ -1419,8 +1433,8 @@ export interface FetchTranscriptOptions {
 export async function fetchTranscriptCached(
   input: string,
   options: FetchTranscriptOptions = {}
-): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean; source: string }> {
-  const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart } = options;
+): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean; source: string; asyncJobPending?: boolean; jobId?: string }> {
+  const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart, userId } = options;
   const videoId = extractVideoId(input);
 
   // audioOnly=true skips the cache read so audio transcription always runs,
@@ -1521,13 +1535,33 @@ export async function fetchTranscriptCached(
   // Skipped when SUPADATA_API_KEY is not set or segments were already found.
   // Also skipped when captionsOnly=true or audioOnly=true (caller has
   // specified a different method and AI phases should not interfere).
+  //
+  // For long videos (3+ hours), Supadata returns a 202 async job response.
+  // When userId is set: the job is saved to DB, we throw SupadataJobPendingError,
+  // and the tool layer returns a "started, will notify when ready" message.
+  // When userId is absent: synchronous polling is used (up to 120 s).
   if (videoId && segments.length === 0 && !captionsOnly && !audioOnly) {
     try {
-      const { fetchTranscriptViaSupadata, isSupadataAvailable } = await import("./supadataTranscript");
+      const { fetchTranscriptViaSupadata, isSupadataAvailable, SupadataJobPendingError } = await import("./supadataTranscript");
       if (isSupadataAvailable()) {
+        // Check if a previous async job for this user+video already completed
+        if (userId) {
+          const { getCompletedTranscript } = await import("./transcriptJobTracker");
+          const cached = await getCompletedTranscript(userId, videoId);
+          if (cached && cached.length > 0) {
+            segments = cached;
+            source = "supadata";
+            console.log(`[transcriptCache] Phase 0.5 async job result loaded for ${resolvedId} — ${cached.length} segs`);
+            evictExpired();
+            if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
+            cache.set(videoId, { segments, cachedAt: Date.now(), source });
+            return { segments, noCaptionsDetected: false, source };
+          }
+        }
+
         const refreshTag = bypassCache ? " (bypass/refresh)" : "";
         console.log(`[transcriptCache] Phase 0.5: trying Supadata for ${resolvedId}${refreshTag}`);
-        const supadataSegs = await fetchTranscriptViaSupadata(resolvedId);
+        const supadataSegs = await fetchTranscriptViaSupadata(resolvedId, userId);
         if (supadataSegs.length > 0) {
           segments = supadataSegs;
           source = "supadata";
@@ -1550,6 +1584,22 @@ export async function fetchTranscriptCached(
         );
       }
     } catch (supadataErr) {
+      // Long video: Supadata started an async job — tell the caller to wait
+      const { SupadataJobPendingError } = await import("./supadataTranscript");
+      if (supadataErr instanceof SupadataJobPendingError) {
+        const jobId = supadataErr.jobId;
+        console.log(
+          `[transcriptCache] Phase 0.5 async job pending for ${resolvedId} — jobId=${jobId}. ` +
+          `3-hour video: Supadata AI generation started, transcript will arrive via notification.`
+        );
+        return {
+          segments: [],
+          noCaptionsDetected: true,
+          source: "supadata",
+          asyncJobPending: true,
+          jobId,
+        };
+      }
       const msg = supadataErr instanceof Error ? supadataErr.message : String(supadataErr);
       console.warn(
         `[transcriptCache] Phase 0.5 Supadata failed for ${resolvedId} — falling through to Phase 1: ${msg}`
@@ -1792,4 +1842,19 @@ export function invalidateTranscript(input: string): boolean {
 export function transcriptCacheSize(): number {
   evictExpired();
   return cache.size;
+}
+
+/**
+ * Directly store transcript segments for a video ID into the cache.
+ * Used by the async Supadata job tracker when a background job completes.
+ */
+export function storeCachedTranscript(
+  videoId: string,
+  segments: TranscriptResponse[],
+  source = "supadata"
+): void {
+  evictExpired();
+  if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
+  cache.set(videoId, { segments, cachedAt: Date.now(), source });
+  console.log(`[transcriptCache] STORED async result for ${videoId} via ${source} — ${segments.length} segs`);
 }
