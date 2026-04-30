@@ -252,7 +252,64 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
       // ── Compose system prompt ──────────────────────────────────────────────
       const persona = agent.persona ?? `You are ${agent.name}, a ${agent.role} assistant.`;
-      const systemPromptBase = `${persona}${soulBlock}${memoryBlock}`;
+
+      // ── Specialist reinforcement block ────────────────────────────────────
+      // Each crew specialist gets a concise runtime reminder of their mandatory
+      // first tool calls and output contract. This runs in addition to the
+      // detailed operational protocol already baked into their persona so the
+      // model can't "forget" the most important behaviour constraints mid-run.
+      const SPECIALIST_REINFORCEMENT: Record<string, string> = {
+        research: `
+## Active Task Reminder (ATLAS)
+- Your FIRST two actions MUST be search_web calls with different query angles.
+- Fetch the top result(s) with web_fetch before drawing conclusions.
+- Your final reply MUST contain a ## Sources section listing every URL you used.
+- Label claims [VERIFIED] or [INFERRED].`,
+
+        communications: `
+## Active Task Reminder (HERALD)
+- Your FIRST action MUST be fetch_emails — never triage or draft without reading the live inbox.
+- Cluster messages by urgency: URGENT / WATCHING / FYI.
+- Reference specific subject lines, sender names, and content in every draft.
+- Save every draft with gmail_draft before reporting it.`,
+
+        planning: `
+## Active Task Reminder (ORACLE)
+- Your FIRST action MUST be fetch_calendar (days=7) — never plan without seeing the schedule.
+- Your SECOND action MUST be manage_tasks (action: list_tasks) — surface existing commitments.
+- Every plan must have: Goal, Timeline, Numbered Steps (with owners), Risks, First Move.
+- Create tasks for each actionable step via manage_tasks.`,
+
+        monitoring: `
+## Active Task Reminder (SCOUT)
+- Your FIRST action MUST be fetch_calendar (days=3) to check deadlines and conflicts.
+- Your SECOND action MUST be fetch_emails to check for urgent or anomalous messages.
+- Tier every finding: 🔴 URGENT / 🟡 WATCH / 🟢 FYI.
+- One sentence each: what it is, why it matters, suggested action.`,
+
+        creation: `
+## Active Task Reminder (FORGE)
+- You MUST produce the full, complete document — outlines are not acceptable.
+- Call memory_search first to check for style preferences or past templates.
+- Save the final output using drive_create_file or create_document.
+- Documents > 400 words must open with a TL;DR paragraph.`,
+
+        memory: `
+## Active Task Reminder (ECHO)
+- Your FIRST action MUST be memory_search — never answer personal-context questions from memory alone.
+- Quote or paraphrase specific memory entries in your answer.
+- Attribute: "Based on your memory from [context]..."
+- If no memories match, say so explicitly — do not fill gaps with generic advice.`,
+      };
+
+      const configJsonForPrompt = (agent.configJson ?? {}) as Record<string, unknown>;
+      const crewRoleForPrompt = typeof configJsonForPrompt.crewRole === "string" ? configJsonForPrompt.crewRole : null;
+      const isCrewMemberForPrompt = configJsonForPrompt.isCrewMember === true;
+      const reinforcementBlock = (isCrewMemberForPrompt && crewRoleForPrompt && SPECIALIST_REINFORCEMENT[crewRoleForPrompt])
+        ? SPECIALIST_REINFORCEMENT[crewRoleForPrompt]
+        : "";
+
+      const systemPromptBase = `${persona}${reinforcementBlock}${soulBlock}${memoryBlock}`;
 
       // ── Context registry: inject registered provider context ───────────────
       const registryCtx = await contextRegistry.build({
@@ -359,13 +416,22 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       return { allowed: result.allowed, reason: result.reason, params: result.params };
     };
 
+    // Crew specialists need more turns: they must call at least 2 tools before
+    // composing a response (fetch_calendar + manage_tasks, or two search_web
+    // calls, etc.). Allow up to 12 turns for specialists, 6 for regular agents.
+    const isCrewSpecialist = isCrewMember && crewRole && crewRole !== "orchestrator";
+    const effectiveMaxTurns = isCrewSpecialist ? 12 : 6;
+    // Specialists also need more output tokens to produce complete documents,
+    // full research reports, and properly structured plans.
+    const effectiveMaxTokens = isCrewSpecialist ? 4000 : 2000;
+
     const result = await runAgent({
       model,
       messages,
       tools: permittedTools,
       context: ctx,
-      maxTurns: 6,
-      maxCompletionTokens: 2000,
+      maxTurns: effectiveMaxTurns,
+      maxCompletionTokens: effectiveMaxTokens,
       onToken: opts.onToken,
       onBeforeTool,
       signal,

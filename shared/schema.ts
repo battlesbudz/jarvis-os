@@ -704,6 +704,7 @@ export interface AgentPermissions {
   can_create_other_agents: boolean;
   can_access_global_memory: boolean;
   can_run_code: boolean;
+  can_access_calendar: boolean;
 }
 
 export const DEFAULT_AGENT_PERMISSIONS: AgentPermissions = {
@@ -722,6 +723,7 @@ export const DEFAULT_AGENT_PERMISSIONS: AgentPermissions = {
   can_create_other_agents: false,
   can_access_global_memory: false,
   can_run_code: false,
+  can_access_calendar: false,
 };
 
 export type AgentMemoryScope = "agent_private" | "shared" | "global";
