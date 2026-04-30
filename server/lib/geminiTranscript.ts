@@ -27,7 +27,11 @@ function getClient(): GoogleGenAI {
   if (_client) return _client;
   const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
   if (!apiKey) throw new Error("AI_INTEGRATIONS_GEMINI_API_KEY is not set");
-  _client = new GoogleGenAI({ apiKey });
+  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  _client = new GoogleGenAI({
+    apiKey,
+    ...(baseUrl ? { httpOptions: { baseUrl } } : {}),
+  });
   return _client;
 }
 
