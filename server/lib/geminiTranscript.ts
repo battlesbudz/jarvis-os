@@ -82,8 +82,9 @@ function isGatewayEndpointError(err: unknown): boolean {
 const TRANSCRIPT_PROMPT =
   "Transcribe all the speech in this video. Write out everything that is spoken, " +
   "capturing every word said by each speaker. Plain text only. Use natural paragraph " +
-  "breaks to separate topics or speakers. Do not include timestamps, speaker labels, " +
-  "or any other formatting — just the spoken words.";
+  "breaks to separate topics or speakers. At the start of each new paragraph, " +
+  "insert a timestamp in [HH:MM:SS] format indicating when that paragraph begins in the video. " +
+  "Do not include speaker labels or any other formatting — just timestamps and the spoken words.";
 
 /**
  * Patterns in Gemini error messages that indicate the primary model explicitly
