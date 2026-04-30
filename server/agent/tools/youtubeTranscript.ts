@@ -35,6 +35,34 @@ import {
 /** Maximum characters returned before truncation (≈ ~150k tokens safe limit). */
 const MAX_CHARS = 120_000;
 
+/**
+ * Map internal transcript source keys (from fetchTranscriptCached) to concise
+ * user-facing labels that appear in the transcript header.
+ *
+ * Returns null when the source is already implicit in the transcript body
+ * (e.g. Gemini outputs "[AI-generated transcript via Gemini]") or when the
+ * source is unknown/a plain cache hit with no stored origin.
+ *
+ * @example
+ * humanReadableSource("supadata")            // → "Supadata"
+ * humanReadableSource("innertube/ANDROID")   // → "YouTube captions"
+ * humanReadableSource("yt-dlp")              // → "YouTube captions"
+ * humanReadableSource("audio-transcription") // → "Whisper (audio)"
+ * humanReadableSource("gemini")              // → null  (already shown in body)
+ * humanReadableSource("cache")               // → null  (origin unknown)
+ */
+export function humanReadableSource(src: string | undefined): string | null {
+  if (!src || src === "unknown" || src === "cache") return null;
+  // "gemini" is always surfaced via the "[AI-generated transcript via Gemini]" text — skip the sourceTag to avoid redundancy
+  if (src === "gemini") return null;
+  if (src === "supadata") return "Supadata";
+  if (src.startsWith("innertube/") || src === "yt-dlp" || src === "timedtext" || src === "youtube-transcript") return "YouTube captions";
+  if (src === "audio-transcription" || src.startsWith("audio-transcription")) return "Whisper (audio)";
+  if (src === "browser") return "browser";
+  if (src === "local-worker") return "local worker";
+  return src;
+}
+
 /** Format milliseconds → "H:MM:SS" or "M:SS". */
 function formatTimestamp(ms: number): string {
   const totalSecs = Math.floor(ms / 1000);
@@ -282,7 +310,8 @@ export const youtubeTranscriptTool: AgentTool = {
       rawSegments: Array<{ text: string; offset: number; duration?: number | null }>,
       source?: string
     ): ToolResult => {
-      const sourceTag = source ? ` · via ${source}` : "";
+      const readableSource = humanReadableSource(source);
+      const sourceTag = readableSource ? ` · via ${readableSource}` : "";
 
       // ── AI-generated transcript (audio transcription, no timestamps) ──────
       // Audio-transcribed segments have offset=0 and duration=0, with a
@@ -447,7 +476,7 @@ export const youtubeTranscriptTool: AgentTool = {
     }
 
     try {
-      const { segments: rawSegments, noCaptionsDetected } = await fetchTranscriptCached(input, {
+      const { segments: rawSegments, noCaptionsDetected, source: fetchedSource } = await fetchTranscriptCached(input, {
         bypassCache,
         audioOnly: forceAudio,
         onFetchStart: () => {
@@ -488,9 +517,9 @@ export const youtubeTranscriptTool: AgentTool = {
           } else {
             console.log(`[get_youtube_transcript] noCaptionsDetected — auto-retrying with audioOnly=true`);
             try {
-              const { segments: audioSegs } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
+              const { segments: audioSegs, source: audioRetrySource } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
               if (audioSegs.length > 0) {
-                return withVisuals(buildResult(audioSegs, "audio-transcription (auto-retry)"));
+                return withVisuals(buildResult(audioSegs, audioRetrySource));
               }
             } catch (audioRetryErr) {
               const retryMsg = audioRetryErr instanceof Error ? audioRetryErr.message : String(audioRetryErr);
@@ -538,7 +567,7 @@ export const youtubeTranscriptTool: AgentTool = {
         };
       }
 
-      return withVisuals(buildResult(segments));
+      return withVisuals(buildResult(segments, fetchedSource));
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
