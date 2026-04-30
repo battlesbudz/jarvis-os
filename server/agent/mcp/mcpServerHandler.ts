@@ -79,6 +79,7 @@ const ALL_PERMISSIONS: AgentPermissions = {
   can_create_tasks: true,
   can_create_other_agents: true,
   can_access_global_memory: true,
+  can_access_calendar: true,
 };
 
 /**

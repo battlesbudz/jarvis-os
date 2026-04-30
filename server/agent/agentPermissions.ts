@@ -76,6 +76,7 @@ const PERMISSION_TOOL_MAP: Record<keyof AgentPermissions, string[]> = {
   can_create_other_agents: ["setup_named_agent"],
   can_access_global_memory: ["memory_search", "memory_get"],
   can_run_code: ["run_python"],
+  can_access_calendar: ["fetch_calendar", "create_calendar_event"],
 };
 
 // Reverse map: tool name → permission flag(s) that guard it
