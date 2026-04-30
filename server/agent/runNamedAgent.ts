@@ -62,6 +62,29 @@ function depthKey(userId: string, agentId: string): string {
 const _reinforcementCache = new Map<string, string>();
 const CREW_DIR = path.resolve(process.cwd(), "agents/crew");
 
+// ── Crew specialist tool allowlist ──────────────────────────────────────────
+// Loaded once from agents/crew/tools.json. Maps crewRole → Set of allowed
+// tool names. Absent role = no filtering (full manifest kept).
+
+let _crewToolAllowlists: Record<string, Set<string>> | null = null;
+
+function getCrewToolAllowlists(): Record<string, Set<string>> {
+  if (_crewToolAllowlists) return _crewToolAllowlists;
+  const filePath = path.join(CREW_DIR, "tools.json");
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, "utf8")) as Record<string, string[]>;
+    _crewToolAllowlists = Object.fromEntries(
+      Object.entries(raw).map(([role, names]) => [role, new Set(names)])
+    );
+    return _crewToolAllowlists;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[runNamedAgent] crew tools.json unavailable: ${filePath} — ${reason} — tool filtering disabled`);
+    _crewToolAllowlists = {};
+    return _crewToolAllowlists;
+  }
+}
+
 function loadCrewReinforcement(crewRole: string): string {
   if (_reinforcementCache.has(crewRole)) return _reinforcementCache.get(crewRole)!;
   const filePath = path.join(CREW_DIR, `${crewRole}.md`);
@@ -198,7 +221,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
   try {
     // ── Load tools with permission wrapping ──────────────────────────────────
     const { ALL_TOOLS } = await import("./tools/index");
-    const permittedTools = wrapToolsForAgent(ALL_TOOLS, agent);
+    let permittedTools = wrapToolsForAgent(ALL_TOOLS, agent);
 
     // ── Build context ────────────────────────────────────────────────────────
     const ctx: ToolContext = {
@@ -369,6 +392,25 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
           `Crew specialists must use gpt-4o-mini or gpt-4.1-mini. Gemini is not permitted in this path.`,
         );
         model = "gpt-4o-mini";
+      }
+    }
+
+    // ── Crew specialist tool scoping ─────────────────────────────────────────
+    // When the agent is a non-orchestrator crew specialist, filter permittedTools
+    // to only the tools listed in agents/crew/tools.json for its role. This keeps
+    // each specialist focused on the tools it actually needs and reduces model
+    // confusion from seeing irrelevant options. Unknown roles (no entry in the
+    // JSON) fall through unchanged. PRIME (orchestrator) is never filtered.
+    if (isCrewMember && crewRole && crewRole !== "orchestrator") {
+      const allowlists = getCrewToolAllowlists();
+      const allowSet = allowlists[crewRole];
+      if (allowSet && allowSet.size > 0) {
+        const before = permittedTools.length;
+        permittedTools = permittedTools.filter((t) => allowSet.has(t.name));
+        console.log(
+          `[runNamedAgent] crew tool scope applied: ${agent.name} (${crewRole}) ` +
+          `${before} → ${permittedTools.length} tools`
+        );
       }
     }
 
