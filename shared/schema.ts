@@ -1742,3 +1742,25 @@ export const tournamentRuns = pgTable("tournament_runs", {
 });
 
 export type TournamentRun = typeof tournamentRuns.$inferSelect;
+
+// ── Knowledge Vault ────────────────────────────────────────────────────────────
+// Structured wiki pages that Jarvis writes and updates automatically.
+// Pages are organized by category and regenerated on a schedule or after
+// new memories arrive. The user never writes these — Jarvis is the author.
+
+export const VAULT_SLUGS = ["about-you", "projects", "people", "patterns", "decisions"] as const;
+export type VaultSlug = typeof VAULT_SLUGS[number];
+
+export const knowledgeVaultPages = pgTable("knowledge_vault_pages", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  slug: text("slug").notNull(),
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  generatedAt: timestamp("generated_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("vault_user_slug_idx").on(table.userId, table.slug),
+]);
+
+export type KnowledgeVaultPage = typeof knowledgeVaultPages.$inferSelect;
