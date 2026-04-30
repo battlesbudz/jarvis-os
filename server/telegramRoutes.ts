@@ -27,6 +27,7 @@ import { completePairing as completeDiscordPairing } from "./discord/manager";
 import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
 import OpenAI from "openai";
 import { claimAndMark } from "./lib/proactiveDedup";
+import { resolveScheduledTaskAttention } from "./lib/taskResolver";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
 import { getActiveRunForUser, activeCoachRuns } from "./runRegistry";
 
@@ -606,6 +607,35 @@ async function processUpdate(update: any): Promise<void> {
     // Inject context when the user replies to a specific Jarvis message, so the
     // agent knows what the reply is referring to without needing conversation history.
     const repliedToText = (message.reply_to_message as { text?: string } | undefined)?.text?.trim();
+
+    // Detect replies to "Needs You" task notifications and resolve them directly.
+    // The notification message includes a [task:<uuid>] marker at the end.
+    // Only attempt resolution for valid UUID-shaped markers to skip accidental matches.
+    const taskTagMatch = repliedToText ? /\[task:([0-9a-f-]{36})\]/.exec(repliedToText) : null;
+    if (taskTagMatch && text) {
+      const taskId = taskTagMatch[1];
+      try {
+        const links = await db
+          .select()
+          .from(schema.telegramLinks)
+          .where(eq(schema.telegramLinks.chatId, chatId))
+          .limit(1);
+        if (links[0]) {
+          const resolveUserId = links[0].userId;
+          const result = await resolveScheduledTaskAttention(resolveUserId, taskId, text);
+          if (result.ok) {
+            await sendMessage(
+              chatId,
+              `✅ Got it. I've saved your guidance for *"${result.taskTitle}"* and will apply it next time.`
+            );
+            return;
+          }
+        }
+      } catch (err) {
+        console.error("[Telegram] Task reply resolution failed:", err);
+      }
+    }
+
     if (repliedToText && text) {
       const preview = repliedToText.length > 600 ? repliedToText.slice(0, 600) + '…' : repliedToText;
       text = `[Replying to Jarvis's message: "${preview}"]\n\n${text}`;
