@@ -51,6 +51,12 @@ export interface CoachReplyInput {
    * should be forwarded to the caller so it can resume on the next turn.
    */
   sdkSessionId?: string;
+  /**
+   * Optional additional tools injected for a specific run (e.g. scheduler
+   * injects `flag_task_needs_attention` scoped to the running task).
+   * Merged into the channel's normal tool set before passing to the agent.
+   */
+  extraTools?: import("../agent/types").AgentTool[];
 }
 
 export interface CoachReplyResult {
@@ -542,7 +548,11 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   // toolGroups to build the pre-filtered list that is passed to runAgent.
   // The harness applies the same filter again as the authoritative safety gate,
   // so the two reinforce each other without either being solely relied upon.
-  const scopedTools = await resolveChannelTools(channelName, !!googleAccessToken);
+  let scopedTools = await resolveChannelTools(channelName, !!googleAccessToken);
+  if (input.extraTools && input.extraTools.length > 0) {
+    const extraNames = new Set(input.extraTools.map(t => t.name));
+    scopedTools = [...scopedTools.filter(t => !extraNames.has(t.name)), ...input.extraTools];
+  }
   const canonicalKey = parseChannelKey(channelName);
   const registeredChannel = canonicalKey ? getChannel(canonicalKey) : undefined;
   console.log(

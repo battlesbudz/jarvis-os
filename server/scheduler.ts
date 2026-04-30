@@ -536,44 +536,65 @@ async function handleDueTask(
     // Re-run the agent with the task's description as a prompt.
     // pastGuidance was retrieved above and is injected here.
     const { runCoachAgent } = await import('./channels/coachAgent');
+    const { buildFlagTaskNeedsAttentionTool } = await import('./agent/tools/flagTaskNeedsAttention');
+
+    const flagTool = buildFlagTaskNeedsAttentionTool(task.id);
 
     const prompt = task.description || `You have a scheduled task: "${task.title}". Please complete this action now and summarise what you did.`;
     let agentReply = '';
     try {
       const agentResult = await runCoachAgent({
         userId: task.userId,
-        userText: `[Scheduled task: ${task.title}]\n\n${pastGuidance}${prompt}`,
+        userText: `[Scheduled task id=${task.id}: ${task.title}]\n\n${pastGuidance}${prompt}\n\nIf you encounter a blocker or need the user's input to proceed, call the flag_task_needs_attention tool with a clear question and stop.`,
         channelName: 'Scheduled Task',
+        extraTools: [flagTool],
       });
       agentReply = agentResult.reply || '';
     } catch (err) {
       agentReply = `⚠️ Scheduled task "${task.title}" encountered an error: ${err instanceof Error ? err.message : String(err)}`;
     }
 
-    // Advance or complete the task — always clear inProgressAt.
-    if (isRecurring) {
-      const nextRun = computeNextRun(task.recurrence!, firedAt);
-      if (nextRun) {
-        await db.update(schema.jarvisScheduledTasks)
-          .set({ scheduledAt: nextRun, inProgressAt: null })
-          .where(eq(schema.jarvisScheduledTasks.id, task.id));
+    // Re-read the task row to check whether the agent flagged it as 'Needs You'
+    // during its run. If so, do NOT advance or complete it — only clear
+    // inProgressAt so the stale-claim guard stays accurate.
+    const [freshTask] = await db
+      .select({ needsAttention: schema.jarvisScheduledTasks.needsAttention })
+      .from(schema.jarvisScheduledTasks)
+      .where(eq(schema.jarvisScheduledTasks.id, task.id))
+      .limit(1);
+
+    if (freshTask?.needsAttention) {
+      await db.update(schema.jarvisScheduledTasks)
+        .set({ inProgressAt: null })
+        .where(eq(schema.jarvisScheduledTasks.id, task.id));
+      console.log(`[Scheduler] Agent task id=${task.id} paused — needsAttention=true, skipping completion`);
+      // The Telegram notification was already sent by flag_task_needs_attention.
+    } else {
+      // Advance or complete the task — always clear inProgressAt.
+      if (isRecurring) {
+        const nextRun = computeNextRun(task.recurrence!, firedAt);
+        if (nextRun) {
+          await db.update(schema.jarvisScheduledTasks)
+            .set({ scheduledAt: nextRun, inProgressAt: null })
+            .where(eq(schema.jarvisScheduledTasks.id, task.id));
+        } else {
+          await db.update(schema.jarvisScheduledTasks)
+            .set({ completedAt: firedAt, inProgressAt: null })
+            .where(eq(schema.jarvisScheduledTasks.id, task.id));
+        }
       } else {
         await db.update(schema.jarvisScheduledTasks)
           .set({ completedAt: firedAt, inProgressAt: null })
           .where(eq(schema.jarvisScheduledTasks.id, task.id));
       }
-    } else {
-      await db.update(schema.jarvisScheduledTasks)
-        .set({ completedAt: firedAt, inProgressAt: null })
-        .where(eq(schema.jarvisScheduledTasks.id, task.id));
-    }
 
-    if (agentReply) {
-      try {
-        await notifyUser(task.userId, 'scheduled_task_result', agentReply);
-        await appendVoiceCallKeyboardOnTelegram(task.userId, 'scheduled_task_result');
-      } catch (err) {
-        console.error(`[Scheduler] notifyUser (agent) failed for task ${task.id}:`, err);
+      if (agentReply) {
+        try {
+          await notifyUser(task.userId, 'scheduled_task_result', agentReply);
+          await appendVoiceCallKeyboardOnTelegram(task.userId, 'scheduled_task_result');
+        } catch (err) {
+          console.error(`[Scheduler] notifyUser (agent) failed for task ${task.id}:`, err);
+        }
       }
     }
 

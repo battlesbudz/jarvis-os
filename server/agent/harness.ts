@@ -704,6 +704,20 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
       }
 
+      // Step 3b: Always allow tools that are not registered in the capability
+      // registry — these are "injected" tools explicitly added by the caller
+      // (e.g. flag_task_needs_attention injected by the scheduler). They are
+      // safe to pass through because the caller already made a deliberate
+      // scoping decision to include them.
+      if (hasAnyScope) {
+        const registeredNames = new Set(capabilityRegistry.getAllTools().map((t) => t.name));
+        for (const t of tools) {
+          if (!registeredNames.has(t.name)) {
+            allowedToolNames.add(t.name);
+          }
+        }
+      }
+
       // Step 4: Apply the allowed set to the tool list.
       if (hasAnyScope) {
         const before = tools.length;
