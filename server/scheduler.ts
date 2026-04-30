@@ -27,6 +27,7 @@ const ACTION_LOG_RETENTION_DAYS = 90;
 let schedulerRunning = false;
 let lastWeeklyRunKey = '';
 let lastSynthesisRunKey = '';
+let lastPrimeAuditRunKey = '';
 
 function sundayKey(d: Date): string {
   // Identify the Sunday-of-week so we only run weekly_pattern once per week
@@ -741,6 +742,31 @@ export function startScheduler() {
           console.error('[Scheduler] Ego reports failed:', err),
         );
       }).catch((err) => console.error('[Scheduler] Ego import failed:', err));
+    }
+
+    // First Sunday of each month 01:00 — PRIME.md identity audit for all users.
+    // Detects behavioral drift between Jarvis's actual messages and its soul document,
+    // then queues targeted proposals in the Inbox for user review.
+    if (dow === 0 && now.getDate() <= 7 && h === 1 && m === 0) {
+      const monthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      if (monthKey !== lastPrimeAuditRunKey) {
+        import('./agent/primeIdentityAudit').then(async ({ runPrimeIdentityAudit }) => {
+          // Mark only after successful import so a transient import failure can
+          // be retried on the next scheduler tick within the same minute window.
+          lastPrimeAuditRunKey = monthKey;
+          console.log(`[Scheduler] Running PRIME.md identity audit for ${monthKey}...`);
+          const allUsers = await db.select({ id: schema.users.id }).from(schema.users).catch(() => []);
+          for (const user of allUsers) {
+            try {
+              const result = await runPrimeIdentityAudit(user.id);
+              console.log(`[Scheduler] PrimeAudit user=${user.id} drifts=${result.driftsFound} proposals=${result.proposalsQueued}`);
+            } catch (err) {
+              console.error(`[Scheduler] PrimeAudit failed for user ${user.id}:`, err);
+            }
+          }
+          console.log('[Scheduler] PRIME.md identity audit complete');
+        }).catch((err) => console.error('[Scheduler] PrimeAudit import failed:', err));
+      }
     }
 
     // Daily digest — 9pm every day
