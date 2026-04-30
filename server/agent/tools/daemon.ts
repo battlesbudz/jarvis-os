@@ -10,6 +10,7 @@ import {
   type AndroidDaemonAction,
   type DaemonOp,
 } from "../../daemon/bridge";
+import { checkAndIncrementScreenshotBudget } from "./daemonShellTool";
 
 const DESKTOP_ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen"] as const;
 const ANDROID_ACTIONS: readonly string[] = [
@@ -208,6 +209,9 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         if (!args.url) return { ok: false, content: JSON.stringify({ ok: false, error: "url required" }) };
         op = { type: "android_browse", url: String(args.url) };
       } else if (rawAction === "android_screenshot") {
+        if (!checkAndIncrementScreenshotBudget(ctx)) {
+          return { ok: false, content: JSON.stringify({ ok: false, error: "Screenshot budget exhausted (4/4 used this turn). Use android_read_screen to inspect the screen instead — it reads the accessibility tree without using screenshot budget." }) };
+        }
         op = { type: "android_screenshot" };
       } else if (rawAction === "android_read_screen") {
         op = { type: "android_read_screen" };
