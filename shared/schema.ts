@@ -1808,3 +1808,23 @@ export const transcriptJobs = pgTable("transcript_jobs", {
 });
 
 export type TranscriptJob = typeof transcriptJobs.$inferSelect;
+
+// ── Capability Gaps ────────────────────────────────────────────────────────────
+// Records interactions where Jarvis deflected or apologised without completing
+// the user's request — indicating a genuine capability gap. Accumulated during
+// the week and analysed by the Sunday self-improvement cycle.
+
+export const capabilityGaps = pgTable("capability_gaps", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  userMessage: text("user_message").notNull(),
+  agentReplySnippet: text("agent_reply_snippet"),
+  // "deflection" | "apology_only" | "no_tool_for_request"
+  detectedReason: varchar("detected_reason").notNull(),
+  channel: varchar("channel"),
+  addressed: boolean("addressed").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type CapabilityGap = typeof capabilityGaps.$inferSelect;
+export type InsertCapabilityGap = typeof capabilityGaps.$inferInsert;

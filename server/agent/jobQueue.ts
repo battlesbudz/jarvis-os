@@ -1588,6 +1588,26 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           console.error("[JobQueue] workflow hook failed:", e),
         );
       }
+
+      // If this build was submitted by the capability gap analyzer, mark the
+      // source gap rows as addressed — but ONLY when the build actually passed.
+      // (Gaps are NOT marked at submission time to preserve them for re-analysis
+      // if the build later fails.)
+      if (allPassed) {
+        const capGapEntries = Array.isArray(jobInput.capabilityGapEntries)
+          ? (jobInput.capabilityGapEntries as Array<{ userMessage: string; detectedReason: string }>)
+          : [];
+        if (capGapEntries.length > 0) {
+          import("./capabilityGapAnalyzer")
+            .then(({ markCapabilityGapEntriesAddressed }) => {
+              markCapabilityGapEntriesAddressed(job.userId, capGapEntries);
+            })
+            .catch((err) => {
+              console.warn("[JobQueue] build_feature: gap-marking import failed (non-fatal):", err);
+            });
+        }
+      }
+
       return;
     }
 

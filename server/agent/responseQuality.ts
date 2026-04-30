@@ -45,7 +45,7 @@ const ACTION_VERBS = [
 ];
 
 // Phrases that dominate an apology-only response.
-const APOLOGY_PHRASES = [
+export const APOLOGY_PHRASES = [
   "i apologize",
   "i'm sorry",
   "i cannot",

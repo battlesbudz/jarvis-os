@@ -5,7 +5,7 @@ import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
 import type { ProviderName, FallbackChainEntry } from "./providers";
-import { checkResponseQuality } from "./responseQuality";
+import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
 
 /**
  * Resolve the provider name from a model string.
@@ -147,6 +147,14 @@ export interface RunAgentOptions {
    * capability registry is used as normal.
    */
   _testOnlyIntegrationDeps?: Record<string, { label: string; toolNames: string[] }>;
+  /**
+   * When true, harness-level capability-gap detection is skipped.
+   * Set by callers (e.g. runNamedAgent) that perform their own gap detection
+   * at a higher level to avoid double-recording the same interaction.
+   * Coach/chat paths that call runAgent directly should NOT set this flag —
+   * harness-level detection is their only gap-capture path.
+   */
+  _skipCapabilityGapDetection?: boolean;
 }
 
 export interface AgentRunResult {
@@ -1328,6 +1336,84 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           content: `[QUALITY REMINDER] ${qc.reason}`,
         });
         continue; // loop — model will attempt the action again
+      }
+    }
+
+    // ── Capability-gap detection on the TRUE final reply ─────────────
+    // Runs AFTER the inline quality check so we only record gaps for the
+    // reply that actually reaches the caller (never for intermediate replies
+    // that get corrected by the inline revision loop above).
+    //
+    // Skipped when the caller (e.g. runNamedAgent) handles gap detection at
+    // a higher level to avoid double-recording (_skipCapabilityGapDetection).
+    if (reply && context.userId && !opts._skipCapabilityGapDetection) {
+      // Prefer inlineUserMessageText (captured before any quality-reminder turns
+      // are appended) for Android sessions. For non-Android sessions, search
+      // history but skip [QUALITY REMINDER] injections so the stored message
+      // always reflects the original user request, not a system directive.
+      const userMsg: string = inlineUserMessageText || (() => {
+        for (let mi = conversationMessages.length - 1; mi >= 0; mi--) {
+          const m = conversationMessages[mi];
+          if (
+            m.role === "user" &&
+            typeof m.content === "string" &&
+            !m.content.startsWith("[QUALITY REMINDER]")
+          ) {
+            return m.content;
+          }
+        }
+        return "";
+      })();
+
+      let gapReason: string | null = null;
+
+      // Persistent-failure detection: Android session exhausted 2 inline
+      // revisions AND the final reply still triggers the quality checker.
+      // This is a genuine capability gap — Jarvis tried twice and still
+      // couldn't complete the task.
+      if (hasAndroidTools && inlineRevisionCount >= 2 && inlineUserMessageText && !onToken) {
+        const qcFinal = checkResponseQuality({
+          userMessage: inlineUserMessageText,
+          agentReply: reply,
+          toolsUsed: toolCalls.map((tc) => tc.name),
+          androidToolsAvailable: true,
+        });
+        if (qcFinal.action === "revise") {
+          gapReason = "deflection";
+          console.log(
+            `[${channel}/Harness] inline revision exhausted and reply still fails quality — recording deflection gap`,
+          );
+        }
+      }
+
+      // Apology-phrase detection: reply contains a clear "I can't do that"
+      // signal regardless of revision count or Android session status.
+      if (!gapReason) {
+        const lowerReply = reply.toLowerCase();
+        if (APOLOGY_PHRASES.some((p) => lowerReply.includes(p))) {
+          gapReason = "apology_only";
+        }
+      }
+
+      if (gapReason) {
+        // Capture primitives before the async boundary for closure safety.
+        const capturedUserId = context.userId!;
+        const capturedReply = reply;
+        const capturedChannel = context.channel ?? channel;
+        const capturedReason = gapReason;
+        setImmediate(() => {
+          import("../db").then(({ db }) =>
+            import("@shared/schema").then(({ capabilityGaps }) =>
+              db.insert(capabilityGaps).values({
+                userId: capturedUserId,
+                userMessage: userMsg.slice(0, 500),
+                agentReplySnippet: capturedReply.slice(0, 300),
+                detectedReason: capturedReason,
+                channel: capturedChannel,
+              }).catch(() => {})
+            )
+          ).catch(() => {});
+        });
       }
     }
 

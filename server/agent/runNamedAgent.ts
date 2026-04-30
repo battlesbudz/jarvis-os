@@ -24,10 +24,10 @@ import { toolCallHooks } from "./toolCallHooks";
 // Side-effect import: ensures the built-in approval hook is registered before
 // any agent run. agentApproval registers itself into toolCallHooks at module load.
 import "./agentApproval";
-import { checkResponseQuality } from "./responseQuality";
+import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
 import { contextRegistry } from "./contextRegistry";
 import { db } from "../db";
-import { userPreferences } from "@shared/schema";
+import { userPreferences, capabilityGaps } from "@shared/schema";
 import fs from "fs";
 import path from "path";
 import { eq } from "drizzle-orm";
@@ -204,6 +204,36 @@ export interface NamedAgentResult {
    * agent can resume without re-injecting the full history.
    */
   sdkSessionId?: string;
+}
+
+/**
+ * Fire-and-forget capability gap recorder.
+ * Wraps in setImmediate + try/catch so it never blocks or throws in the
+ * critical response path. Called when Jarvis persistently fails quality or
+ * produces an apology-only reply, signalling a genuine capability gap.
+ */
+function recordCapabilityGap(
+  userId: string,
+  userMessage: string,
+  replySnippet: string,
+  reason: 'deflection' | 'apology_only' | 'no_tool_for_request',
+  channel: string,
+): void {
+  setImmediate(() => {
+    try {
+      db.insert(capabilityGaps).values({
+        userId,
+        userMessage: userMessage.slice(0, 500),
+        agentReplySnippet: replySnippet.slice(0, 300),
+        detectedReason: reason,
+        channel,
+      }).catch((err: unknown) => {
+        console.error('[RunNamedAgent] capabilityGap insert failed (non-blocking):', err);
+      });
+    } catch {
+      // Never let this block the response path
+    }
+  });
 }
 
 export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAgentResult> {
@@ -466,6 +496,10 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       onIntegrationError: opts.onIntegrationError,
       onToolError: opts.onToolError,
       onProgressMessage: opts.onProgressMessage,
+      // Named agents handle their own gap detection at runNamedAgent level
+      // (covering both revision-pass persistent failures and apology replies).
+      // This flag prevents harness from double-recording the same interaction.
+      _skipCapabilityGapDetection: true,
     });
 
     // ── Session management — update or initialise after successful run ─────────
@@ -548,11 +582,50 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
             durationMs: Date.now() - revisionStart,
             detail: `reply_words=${revised.reply.trim().split(/\s+/).length}`,
           });
+
+          // Condition 1: persistent failure — revision pass also triggers a quality
+          // flag. This means Jarvis genuinely lacks the capability, not a one-off stumble.
+          // Also run Condition 2 on the revised reply here, because the function
+          // returns revised immediately after this block (so the outer apology check
+          // on result.reply never runs for this path).
+          if (userId) {
+            const qc2 = checkResponseQuality({
+              userMessage,
+              agentReply: revised.reply,
+              toolsUsed: revised.toolCalls.map((tc) => tc.name),
+              androidToolsAvailable,
+            });
+            if (qc2.action === 'revise') {
+              // Persistent failure — both first pass and revision triggered quality flag
+              recordCapabilityGap(userId, userMessage, revised.reply, 'deflection', platform);
+            } else {
+              // Revision passed quality but may still be an apology-only reply
+              const revisedLower = revised.reply.toLowerCase();
+              if (APOLOGY_PHRASES.some((p) => revisedLower.includes(p))) {
+                recordCapabilityGap(userId, userMessage, revised.reply, 'apology_only', platform);
+              }
+            }
+          }
+
           return revised;
         } catch (revErr) {
           // If the revision pass fails, fall through and return the original reply.
           console.warn("[RunNamedAgent] quality revision pass failed, using original reply:", revErr);
         }
+      }
+
+    }
+
+    // Condition 2 (ungated from qualityCheckEnabled): if the final reply on the
+    // non-revision path contains apology phrases, record a capability gap. This
+    // runs even when the user has disabled response quality checks so that
+    // capability telemetry is always collected independently of quality prefs.
+    // Skip on revision passes (isRevisionPass) — the revised reply is checked
+    // inside the revision block above (before `return revised`).
+    if (!opts.isRevisionPass && userId) {
+      const finalLower = result.reply.toLowerCase();
+      if (APOLOGY_PHRASES.some((p) => finalLower.includes(p))) {
+        recordCapabilityGap(userId, userMessage, result.reply, 'apology_only', platform);
       }
     }
 
