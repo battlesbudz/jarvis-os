@@ -1368,6 +1368,12 @@ export interface FetchTranscriptOptions {
    * captions are known to be unavailable or previous runs returned empty results.
    */
   audioOnly?: boolean;
+  /**
+   * Called once when a live fetch is about to begin (i.e. after confirming
+   * there is no usable cache entry). Never called on cache hits.
+   * Use this to surface a "Fetching transcript…" progress indicator to the user.
+   */
+  onFetchStart?: () => void;
 }
 
 /**
@@ -1400,7 +1406,7 @@ export async function fetchTranscriptCached(
   input: string,
   options: FetchTranscriptOptions = {}
 ): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean }> {
-  const { bypassCache = false, config, audioOnly = false } = options;
+  const { bypassCache = false, config, audioOnly = false, onFetchStart } = options;
   const videoId = extractVideoId(input);
 
   // audioOnly=true skips the cache read so audio transcription always runs,
@@ -1418,6 +1424,10 @@ export async function fetchTranscriptCached(
   if (videoId && bypassCache) {
     console.log(`[transcriptCache] BYPASS ${videoId} — fetching live and overwriting cache`);
   }
+
+  // Notify the caller that a live fetch is starting (cache miss confirmed).
+  // Callers use this to surface a progress indicator to the user.
+  onFetchStart?.();
 
   const resolvedId = videoId ?? input.trim();
   let segments: TranscriptResponse[] = [];

@@ -443,7 +443,13 @@ export const youtubeTranscriptTool: AgentTool = {
     }
 
     try {
-      const { segments: rawSegments, noCaptionsDetected } = await fetchTranscriptCached(input, { bypassCache, audioOnly: forceAudio });
+      const { segments: rawSegments, noCaptionsDetected } = await fetchTranscriptCached(input, {
+        bypassCache,
+        audioOnly: forceAudio,
+        onFetchStart: () => {
+          ctx.state.onProgressMessage?.("📝 Fetching transcript…");
+        },
+      });
       let segments = rawSegments;
 
       // ── Strategy 5: browser fallback if server-side got nothing ──────────────

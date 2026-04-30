@@ -35,6 +35,13 @@ export interface AgentState {
   lastCalendarFetch?: { startDate: string; days: number; totalEvents: number; fetchedAt: number };
   /** Optional callback for streaming progress messages from long-running tools (e.g. MCP progress notifications). */
   onProgress?: (message: string) => void;
+  /**
+   * Optional callback for sending heartbeat status messages during long tool calls.
+   * Edits the channel's placeholder message with an ⏳ prefix (Telegram, Discord).
+   * Prefer this over onProgress for user-visible status updates — it does not
+   * pollute the streaming token buffer.
+   */
+  onProgressMessage?: (message: string) => void;
   [k: string]: unknown;
 }
 

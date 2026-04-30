@@ -531,6 +531,8 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       pendingAttachments: [],
       // Forward MCP progress notifications as streaming tokens so channels show live progress
       onProgress: onToken ? (msg: string) => onToken(`[progress] ${msg}`) : undefined,
+      // Heartbeat-style status edits (edit the placeholder; does not pollute stream buffer)
+      onProgressMessage,
     },
   };
 
