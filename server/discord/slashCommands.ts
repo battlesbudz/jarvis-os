@@ -15,6 +15,7 @@ import * as schema from "@shared/schema";
 import { channelLinks } from "@shared/schema";
 import { runCoachAgent } from "../channels/coachAgent";
 import { routeSlashCommand, getHelpText, SLASH_COMMANDS } from "../channels/slashCommandRouter";
+import { cancelAllForUser } from "../agent/jobClient";
 
 import { generateSlashCommandPairingCode } from "./manager";
 
@@ -136,6 +137,11 @@ const JARVIS_COMMAND = {
           required: true,
         },
       ],
+    },
+    {
+      type: 1,
+      name: "stop",
+      description: "Cancel all active Jarvis jobs and pause workflows",
     },
     {
       type: 1,
@@ -630,6 +636,39 @@ async function handleStatus(
       appId,
       interaction.token,
       "Sorry, I couldn't fetch your job status right now.",
+      EPHEMERAL,
+    );
+  }
+}
+
+async function handleStop(
+  appId: string,
+  interaction: any,
+  userId: string,
+): Promise<void> {
+  try {
+    const { jobsCancelled, jobsCancelling, workflowsPaused } = await cancelAllForUser(userId);
+    const total = jobsCancelled + jobsCancelling;
+    let summary: string;
+    if (total === 0 && workflowsPaused === 0) {
+      summary = "✅ Nothing was running — Jarvis was already idle.";
+    } else {
+      const parts: string[] = [];
+      if (jobsCancelled > 0)
+        parts.push(`${jobsCancelled} queued job${jobsCancelled === 1 ? "" : "s"} cancelled`);
+      if (jobsCancelling > 0)
+        parts.push(`${jobsCancelling} running job${jobsCancelling === 1 ? "" : "s"} signalled to stop`);
+      if (workflowsPaused > 0)
+        parts.push(`${workflowsPaused} workflow${workflowsPaused === 1 ? "" : "s"} paused`);
+      summary = `🛑 Stopped: ${parts.join(", ")}.`;
+    }
+    await editInteractionReply(appId, interaction.token, summary, EPHEMERAL);
+  } catch (err) {
+    console.error("[SlashCommands] stop handler error:", err);
+    await editInteractionReply(
+      appId,
+      interaction.token,
+      "Sorry, I couldn't cancel all jobs right now — please try again.",
       EPHEMERAL,
     );
   }
@@ -1402,6 +1441,15 @@ export async function handleInteraction(interaction: any): Promise<object> {
         setImmediate(() => {
           handleAgentStatus(appId, interaction, userId).catch((err) =>
             console.error("[SlashCommands] handleAgentStatus background error:", err),
+          );
+        });
+        return deferredEphemeral();
+      }
+
+      if (subcommand === "stop") {
+        setImmediate(() => {
+          handleStop(appId, interaction, userId).catch((err) =>
+            console.error("[SlashCommands] handleStop background error:", err),
           );
         });
         return deferredEphemeral();

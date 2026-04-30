@@ -4,6 +4,7 @@
  * without creating a circular dependency.
  */
 import { db } from "../db";
+import { eq, and, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { findDuplicateJob } from "./tools/jobDuplicateGuard";
@@ -169,4 +170,55 @@ export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps 
     `[JobQueue] queued job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`,
   );
   return { id, isDuplicate: false };
+}
+
+// ── Cancel-all helper ─────────────────────────────────────────────────────────
+
+export interface CancelAllResult {
+  jobsCancelled: number;
+  jobsCancelling: number;
+  workflowsPaused: number;
+}
+
+/**
+ * Cancel every queued and running job for the given user, and pause any active
+ * or paused_waiting workflows. Used by the /stop slash command.
+ *
+ * - `queued` jobs → `cancelled` immediately (no worker has picked them up yet)
+ * - `running` jobs → `cancelling`  (the worker loop honours this flag and aborts)
+ * - `active` / `paused_waiting` workflows → `paused`
+ */
+export async function cancelAllForUser(userId: string): Promise<CancelAllResult> {
+  const cancelled = await db
+    .update(schema.agentJobs)
+    .set({ status: "cancelled", completedAt: new Date() })
+    .where(and(eq(schema.agentJobs.userId, userId), eq(schema.agentJobs.status, "queued")))
+    .returning({ id: schema.agentJobs.id });
+
+  const cancelling = await db
+    .update(schema.agentJobs)
+    .set({ status: "cancelling" })
+    .where(and(eq(schema.agentJobs.userId, userId), eq(schema.agentJobs.status, "running")))
+    .returning({ id: schema.agentJobs.id });
+
+  const paused = await db
+    .update(schema.agentWorkflows)
+    .set({ status: "paused", updatedAt: new Date() })
+    .where(
+      and(
+        eq(schema.agentWorkflows.userId, userId),
+        inArray(schema.agentWorkflows.status, ["active", "paused_waiting"]),
+      ),
+    )
+    .returning({ id: schema.agentWorkflows.id });
+
+  console.log(
+    `[JobQueue] cancelAllForUser userId=${userId} — cancelled=${cancelled.length} cancelling=${cancelling.length} workflowsPaused=${paused.length}`,
+  );
+
+  return {
+    jobsCancelled: cancelled.length,
+    jobsCancelling: cancelling.length,
+    workflowsPaused: paused.length,
+  };
 }
