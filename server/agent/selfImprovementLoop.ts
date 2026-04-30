@@ -35,6 +35,7 @@ import { anthropic } from '../lib/anthropicClient';
 import { getChannel } from '../channels/registry';
 import { isIntegrationOwner } from '../integrationOwner';
 import { claimAndMark } from '../lib/proactiveDedup';
+import { runCapabilityGapAnalysis } from './capabilityGapAnalyzer';
 import fs from 'fs/promises';
 import path from 'path';
 
@@ -497,6 +498,21 @@ Cap at ${MAX_IMPROVEMENTS} improvements. Output JSON only — no markdown wrappe
 
   if (signal.aborted) return { applied, queued };
 
+  // ── Step 4b: Capability gap analysis ──────────────────────────────────────
+  // Clusters recurring deflection/apology gaps from the week and auto-builds
+  // low-risk tools or queues higher-risk proposals as inbox items.
+  // Failure is fully isolated — never affects the rest of the cycle.
+  let gapBuilt = 0;
+  let gapQueued = 0;
+  try {
+    const gapResult = await runCapabilityGapAnalysis(userId);
+    gapBuilt = gapResult.submitted;
+    gapQueued = gapResult.queued;
+  } catch (err) {
+    // runCapabilityGapAnalysis already catches internally, but guard here too
+    console.error(`[SelfImprovement] Gap analysis step threw unexpectedly for user=${userId}:`, err);
+  }
+
   // ── Step 5: Notify via Telegram — strict Telegram-only delivery ──────────
   // Origin channel = the channel of the user's most recent inbound interaction
   // (7-day window). Only sends if Telegram was the exact origin; no fallback to
@@ -514,8 +530,8 @@ Cap at ${MAX_IMPROVEMENTS} improvements. Output JSON only — no markdown wrappe
       if (telegramCh) {
         const msg = [
           'Self-improvement cycle complete.',
-          `Applied: ${applied} low-risk improvement${applied !== 1 ? 's' : ''}`,
-          `Queued for your review: ${queued} proposal${queued !== 1 ? 's' : ''} in Inbox`,
+          `Behavior fixes applied: ${applied} | queued: ${queued}`,
+          `New capabilities submitted for build: ${gapBuilt} | in review: ${gapQueued}`,
           assessment.cycleAssessment,
         ].join('\n');
         await telegramCh.sendMessage(userId, msg, {}).catch((err: unknown) => {
@@ -528,7 +544,7 @@ Cap at ${MAX_IMPROVEMENTS} improvements. Output JSON only — no markdown wrappe
   }
 
   console.log(
-    `[SelfImprovement] Cycle complete for user=${userId} week=${isoWeek} — applied=${applied} queued=${queued}`,
+    `[SelfImprovement] Cycle complete for user=${userId} week=${isoWeek} — applied=${applied} queued=${queued} gapSubmitted=${gapBuilt} gapInReview=${gapQueued}`,
   );
   return { applied, queued };
 }
