@@ -310,6 +310,8 @@ export async function runCuriosityScan(): Promise<void> {
           );
           if (ruleResult.verdict === "suppress") continue;
 
+          // Calendar surface-rule hits write to inbox_items (intentional — unlike
+          // email hits which go to Telegram only). See heartbeat.ts write-path audit.
           if (ruleResult.verdict === "surface") {
             try {
               await db.insert(schema.inboxItems).values({
@@ -517,8 +519,18 @@ export async function runCuriosityScan(): Promise<void> {
             continue;
           }
 
-          // Email triage items go directly to Telegram — never written to inbox_items.
-          // Calendar-derived items may still use inbox_items as a fallback surface.
+          // INBOX_ITEMS WRITE GATE — email triage is Telegram-only.
+          // Email surface-rule hits (gmail / outlook_email) are already handled above:
+          // they call notifyUser(..., "email_alert", ...) and record the dedup entry in
+          // proactive_questions_sent, then `continue` past this block.  No email-sourced
+          // item should ever reach this point, but the isEmailType guard below is kept as
+          // a safety net to prevent any regression from accidentally writing emails to
+          // inbox_items.
+          //
+          // Calendar-derived items (google_calendar / outlook_calendar) DO write to
+          // inbox_items — that is intentional so they appear in the in-app inbox.
+          //
+          // See heartbeat.ts enqueueNewInboxItemsForPrime for the full write-path audit.
           const isEmailType = canonicalSourceType === "email" || canonicalSourceType === "gmail" || canonicalSourceType === "outlook_email";
           let inboxInserted = false;
           if (!isEmailType) {

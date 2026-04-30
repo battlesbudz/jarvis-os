@@ -683,6 +683,37 @@ Return JSON:
  * rather than one orchestration call per item.
  *
  * This is the primary internal call site for enqueueCrewTask within the heartbeat.
+ *
+ * INBOX_ITEMS WRITE PATH AUDIT (keep this comment up to date):
+ *   Legitimate write paths to the inbox_items table:
+ *   1. curiosityScanner.ts  — calendar surface-rule hits (google_calendar /
+ *      outlook_calendar). These are intentional: calendar events that match a
+ *      user surface rule appear in the in-app inbox so the user can prep or
+ *      dismiss them.
+ *   2. nervous-system/scanner.ts — gut/news watch hits (sourceType
+ *      "nervous_system"). Intentional: surfaced signals the user asked Jarvis
+ *      to monitor appear in the inbox.
+ *   3. channels/inAppChannel.ts — "In-App" notification channel writes
+ *      general Jarvis notifications directly to inbox_items so users who prefer
+ *      in-app delivery see them there.
+ *   4. routes.ts / telegramRoutes.ts — manual inbox item creation via API
+ *      (user-triggered or agent-triggered from conversation).
+ *   5. agent/tools/applyCodeChangeTool.ts — agent self-edit tool surfaces a
+ *      confirmation item after applying a code change.
+ *   6. index.ts — initial seed / setup flows.
+ *
+ *   RETIRED write path (email triage):
+ *   Email surface-rule hits (Gmail + Outlook) previously wrote to inbox_items.
+ *   This path was retired after email rules were migrated to Telegram delivery.
+ *   Email hits now call notifyUser(..., "email_alert", ...) and are recorded in
+ *   proactive_questions_sent for dedup — they are NEVER written to inbox_items.
+ *   See curiosityScanner.ts (isEmailType guard) for the authoritative check.
+ *
+ *   Because the email write path is retired, email-sourced items will no longer
+ *   appear in this queue. Remaining sources include calendar surface rules,
+ *   nervous-system hits, in-app channel writes, and any other path that inserts
+ *   a pending inbox_items row — the query does not filter by sourceType so all
+ *   pending items within the time window are eligible for PRIME triage.
  */
 const CREW_INBOX_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
 
