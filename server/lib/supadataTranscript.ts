@@ -1,24 +1,20 @@
 /**
  * Supadata YouTube Transcript
  *
- * Uses the Supadata API (supadata.ai) to fetch YouTube transcripts via their
- * cloud infrastructure — bypassing YouTube's IP blocks on datacenter servers.
+ * Uses the Supadata API to fetch YouTube transcripts via their cloud
+ * infrastructure — bypassing YouTube's IP blocks on datacenter servers.
  *
- * Key features:
- *   - No IP blocks: Supadata uses residential IPs, not blocked by YouTube
- *   - AI fallback (mode='auto'): generates a transcript even when YouTube has
- *     no official or auto-generated captions
- *   - Async job support: large videos return a jobId; we poll until complete
- *   - Returns the same TranscriptResponse shape used by transcriptCache
+ * Uses mode='auto': tries native captions first, falls back to AI-generated
+ * transcription when no captions exist. Async jobs (large videos) are polled
+ * until complete or timeout.
  *
  * Requires the SUPADATA_API_KEY environment variable.
- * Get a free key (100 credits, no credit card) at https://dash.supadata.ai
  */
 
 import type { TranscriptResponse } from "youtube-transcript";
 
 /** Max time to wait for an async Supadata job (large video transcription). */
-const JOB_POLL_TIMEOUT_MS = 45_000;
+const JOB_POLL_TIMEOUT_MS = 30_000;
 const JOB_POLL_INTERVAL_MS = 2_000;
 
 /** Returns true when a Supadata API key is configured. */
