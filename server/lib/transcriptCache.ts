@@ -1505,6 +1505,47 @@ export async function fetchTranscriptCached(
     }
   }
 
+  // ── Phase 0.5: Supadata cloud transcript API ──────────────────────────────
+  // Supadata runs its own infrastructure (residential IPs) so YouTube's
+  // datacenter IP blocks don't apply.  It also has an AI fallback (mode=auto)
+  // that generates a transcript even when YouTube has no captions at all.
+  // Skipped when SUPADATA_API_KEY is not set or segments were already found.
+  if (videoId && segments.length === 0) {
+    try {
+      const { fetchTranscriptViaSupadata, isSupadataAvailable } = await import("./supadataTranscript");
+      if (isSupadataAvailable()) {
+        const refreshTag = bypassCache ? " (bypass/refresh)" : "";
+        console.log(`[transcriptCache] Phase 0.5: trying Supadata for ${resolvedId}${refreshTag}`);
+        const supadataSegs = await fetchTranscriptViaSupadata(resolvedId);
+        if (supadataSegs.length > 0) {
+          segments = supadataSegs;
+          source = "supadata";
+          const totalChars = supadataSegs.reduce((n, s) => n + s.text.length, 0);
+          console.log(
+            `[transcriptCache] Phase 0.5 Supadata OK ${resolvedId} — ` +
+            `${supadataSegs.length} segs, ${totalChars} chars`
+          );
+          evictExpired();
+          if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
+          cache.set(videoId, { segments, cachedAt: Date.now() });
+          const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
+          console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache.size})`);
+          return { segments, noCaptionsDetected: false };
+        }
+      } else {
+        console.log(
+          "[transcriptCache] Phase 0.5 skipped — SUPADATA_API_KEY not set " +
+          "(get a free key at https://dash.supadata.ai)"
+        );
+      }
+    } catch (supadataErr) {
+      const msg = supadataErr instanceof Error ? supadataErr.message : String(supadataErr);
+      console.warn(
+        `[transcriptCache] Phase 0.5 Supadata failed for ${resolvedId} — falling through to Phase 1: ${msg}`
+      );
+    }
+  }
+
   // ── audioOnly fast-path: skip Phases 1 & 2 entirely ──────────────────────
   if (audioOnly) {
     console.log(`[transcriptCache] audioOnly=true for ${resolvedId} — going straight to audio transcription`);
