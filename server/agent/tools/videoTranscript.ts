@@ -26,13 +26,14 @@ const MAX_CHARS = 120_000;
 export const videoTranscriptTool: AgentTool = {
   name: "transcribe_video_url",
   description:
-    "Transcribe any publicly accessible video file — Google Drive share links, Dropbox links, " +
-    "direct mp4/mov/webm URLs, or any other publicly reachable video up to 2 GB. " +
-    "The video is streamed directly to Google's File API and transcribed by Gemini. " +
-    "Use this when the user shares a direct video file link (NOT a YouTube URL — use " +
-    "get_youtube_transcript for YouTube). " +
-    "This is also the correct tool when a user says they sent a large video they want " +
-    "transcribed and you need to handle it from a link they share.",
+    "Transcribe any publicly accessible video file using Google Gemini AI — " +
+    "Google Drive share links, Dropbox links, direct mp4/mov/webm URLs, or any other " +
+    "publicly reachable video up to 2 GB. The video is streamed directly to Google's " +
+    "File API and transcribed by Gemini natively. " +
+    "Use this when the user shares a direct video file link and asks for a transcript, " +
+    "summary, or mentions Gemini transcription for a non-YouTube video file. " +
+    "Do NOT use this for YouTube URLs — use get_youtube_transcript for those instead " +
+    "(it handles YouTube natively without downloading the video).",
   parameters: {
     type: "object",
     properties: {

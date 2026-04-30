@@ -471,6 +471,79 @@ function applyUnifiedFilter(
   console.log(`✓ H3: Telegram general query: ${tools.length} tools (browser suppressed by Rule 8c)`);
 }
 
+// ── H3b: Transcript tools survive Rule 8c research suppression ────────────────
+// get_youtube_transcript and transcribe_video_url live in the `media` capability
+// (not `research`) after #1082. Even when research+browser are suppressed for a
+// general Telegram query, transcript tools must remain available because the
+// Telegram channel includes "media" in its toolGroups and media is never
+// suppressed by Rule 8c.
+{
+  const TRANSCRIPT_TOOLS = ["get_youtube_transcript", "transcribe_video_url"];
+  const H3B_MEDIA_TOOLS = [...TRANSCRIPT_TOOLS, "speak", "image_generate"];
+  const H3B_RESEARCH_TOOLS = ["web_search", "web_fetch", "youtube_search"];
+  const H3B_BROWSER_TOOLS = ["browse_web", "browser_click"];
+  const H3B_COACHING_TOOLS = ["set_reminder", "log_reflection"];
+
+  // Telegram's scope includes all media + research + browser + coaching tools
+  // (reflecting the real telegramChannel.toolGroups which includes "media").
+  const h3bTelegramScope = [
+    ...H3B_MEDIA_TOOLS,
+    ...H3B_RESEARCH_TOOLS,
+    ...H3B_BROWSER_TOOLS,
+    ...H3B_COACHING_TOOLS,
+  ];
+
+  const h3bAllTools = h3bTelegramScope.map(makeTool);
+
+  const h3bCapToolMap: Record<string, string[]> = {
+    media: H3B_MEDIA_TOOLS,
+    research: H3B_RESEARCH_TOOLS,
+    browser: H3B_BROWSER_TOOLS,
+    coaching: H3B_COACHING_TOOLS,
+  };
+
+  const plan: ActivationPlan = {
+    capabilityManifest: {
+      activeCapabilityIds: ["coaching"],
+      suppressedCapabilityIds: ["browser", "research"], // Rule 8c: general query
+      activatedToolGroups: [],
+      reasons: {
+        coaching: "morning context",
+        browser: "Suppressed: general query on Telegram",
+        research: "Suppressed: general query on Telegram",
+      },
+    },
+    sessionContext: makeSessionContext("morning"),
+    shouldRun: true,
+    reason: "Telegram — general query (transcript test)",
+  };
+
+  const { tools } = applyUnifiedFilter(h3bAllTools, plan, h3bCapToolMap, h3bTelegramScope);
+  const toolNames = tools.map((t) => t.name);
+
+  // Transcript tools are in `media` — must survive research suppression
+  assert.equal(toolNames.includes("get_youtube_transcript"), true,
+    "H3b: get_youtube_transcript must be present even when research is suppressed (media is never Rule 8c suppressed)");
+  assert.equal(toolNames.includes("transcribe_video_url"), true,
+    "H3b: transcribe_video_url must be present even when research is suppressed");
+
+  // Research tools removed (were in researchCapability — correctly suppressed)
+  assert.equal(toolNames.includes("web_search"), false,
+    "H3b: web_search is correctly removed by research suppression");
+  assert.equal(toolNames.includes("web_fetch"), false,
+    "H3b: web_fetch is correctly removed by research suppression");
+
+  // Browser tools removed
+  assert.equal(toolNames.includes("browse_web"), false,
+    "H3b: browse_web is correctly removed by browser suppression");
+
+  // Coaching tools present (activated)
+  assert.equal(toolNames.includes("set_reminder"), true,
+    "H3b: set_reminder from coaching activation is present");
+
+  console.log(`✓ H3b: transcript tools (get_youtube_transcript, transcribe_video_url) survive Rule 8c research suppression (${tools.length} tools total)`);
+}
+
 // ─── Test I: Backward compat — no plan, no channel → all tools pass ───────────
 
 {

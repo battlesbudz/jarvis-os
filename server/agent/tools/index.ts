@@ -137,13 +137,13 @@ export type ToolGroup =
   | "email"       // gmail_action, gmail_draft (Google-gated), send_email, fetch_emails
   | "memory"      // memory_search, memory_get
   | "documents"   // create/list/read_document, drive_* (Google-gated)
-  | "research"    // web_search, research_topic, web_fetch, youtube_search, youtube_transcript, x_search
+  | "research"    // web_search, research_topic, web_fetch, youtube_search, x_search
   | "discord"     // discord_post, discord_manage, schedule_channel_report, setup_content_pipeline
   | "scheduling"  // schedule_jarvis_task, cron_*, workflow_*
   | "browser"     // browser_navigate, browser_click, …
   | "system"      // spawn_subagent, sessions_*, register_approval, build_feature, test_tool
   | "self_edit"   // list_source_files, read_source_file, propose_code_change
-  | "media"       // speak, image_generate, generate_video
+  | "media"       // speak, image_generate, generate_video, get_youtube_transcript, transcribe_video_url
   | "connections" // check_connections, generate_reconnect_link, connect_channel
   | "mcp"         // auto-discovered tools from connected MCP servers
   | "compute"     // run_python — sandboxed code execution
