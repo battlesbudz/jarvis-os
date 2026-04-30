@@ -508,7 +508,7 @@ export const youtubeTranscriptTool: AgentTool = {
         const audioHint =
           noCaptionsDetected && !forceAudio
             ? ytdlpOkForHint
-              ? "\n\n💡 **This video has no official captions and the automatic audio transcription also failed.** You can still try asking me explicitly to transcribe it in audio mode — retrying via a different network path may succeed."
+              ? "\n\n💡 **This video has no official captions and the automatic audio transcription also failed.** To retry via direct audio transcription, call `get_youtube_transcript` again with `force_audio=true` — this downloads and transcribes the audio using Whisper and bypasses caption lookups entirely."
               : "\n\n⚠️ **This video has no official captions, and audio transcription is currently unavailable** because the yt-dlp dependency is not installed on this server. Please try again later."
             : "";
 
