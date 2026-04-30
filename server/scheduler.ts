@@ -641,6 +641,28 @@ export function startScheduler() {
       }).catch((err) => console.error('[Scheduler] Gut calibration import failed:', err));
     }
 
+    // Every minute — self-improvement cycle. Per-user local Sunday 02:xx gating
+    // is enforced inside runSelfImprovementForAllUsers via localDowAndHour().
+    // Weekly per-user idempotency is guaranteed by the DB-level claimAndMark
+    // (INSERT ON CONFLICT DO NOTHING) at the start of each user's cycle.
+    // Running every tick ensures users in any timezone are checked at their local
+    // Sunday 02:xx, not only those whose timezone aligns with the server clock.
+    //
+    // Design note — no in-memory lastSelfImprovementRunKey guard:
+    // Unlike the weekly-pattern or learning-synthesis jobs (which run for all users
+    // simultaneously at a single server-local moment), the self-improvement cycle
+    // must trigger at each user's LOCAL Sunday 02:xx.  A global Sunday-key guard
+    // would block the function for the entire week after the first user is served,
+    // preventing users in other timezones from ever running.  The per-user DB claim
+    // (claimAndMark INSERT ON CONFLICT DO NOTHING keyed by userId + isoWeek)
+    // provides strictly stronger idempotency than an in-memory key and is also
+    // restart-safe, so no in-memory dedup is needed at the scheduler level.
+    import('./agent/selfImprovementLoop').then(({ runSelfImprovementForAllUsers }) => {
+      runSelfImprovementForAllUsers(now).catch((err) =>
+        console.error('[Scheduler] runSelfImprovementForAllUsers failed:', err),
+      );
+    }).catch((err) => console.error('[Scheduler] selfImprovementLoop import failed:', err));
+
     // Sunday 00:00 — wiki lint for all users (contradictions, cross-links, archiving).
     if (dow === 0 && h === 0 && m === 0) {
       import('./memory/vaultWriter').then(({ lintWikiForAllUsers }) => {
@@ -792,7 +814,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, wiki lint Sunday 0:00 AM, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, build session cleanup 5:30 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute, autonomous project sessions every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, self-improvement cycle every minute (per-user local Sunday 02:xx), wiki lint Sunday 0:00 AM, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, build session cleanup 5:30 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute, autonomous project sessions every minute');
 }
 
 /**
