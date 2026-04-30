@@ -189,6 +189,10 @@ export const youtubeTranscriptTool: AgentTool = {
   name: "get_youtube_transcript",
   description:
     "Retrieve the full spoken transcript AND visual context from a YouTube video. " +
+    "Uses Google Gemini AI natively as the primary transcription method (Phase 0) — " +
+    "call this tool whenever the user shares a YouTube URL, asks to 'use Gemini' for a video, " +
+    "or mentions AI transcription / Gemini transcripts. You do NOT need any separate Gemini tool; " +
+    "Gemini is already built into this tool and runs automatically. " +
     "Returns timestamped transcript segments so you can cite specific moments, " +
     "plus a Visual Summary describing what is shown on screen at key moments — " +
     "diagrams, code, slides, people, text on screen, settings, and visual demonstrations. " +
