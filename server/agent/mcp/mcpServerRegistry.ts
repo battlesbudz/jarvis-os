@@ -219,13 +219,21 @@ class McpServerRegistry {
             };
           }
 
-          // Wire up progress notifications through the context's onProgress callback
-          const progressCallback = ctx.state.onProgress
-            ? (message: string, progress?: number, total?: number) => {
-                const fullMsg = `[MCP ${serverName}] ${message}`;
-                ctx.state.onProgress!(fullMsg);
-              }
-            : undefined;
+          // Wire up progress notifications through the context's onProgressMessage
+          // callback when available (edits the placeholder without polluting the
+          // stream buffer), falling back to onProgress for channels that only
+          // provide the token-based path.
+          const progressCallback =
+            ctx.state.onProgressMessage || ctx.state.onProgress
+              ? (message: string, _progress?: number, _total?: number) => {
+                  const fullMsg = `[MCP ${serverName}] ${message}`;
+                  if (ctx.state.onProgressMessage) {
+                    ctx.state.onProgressMessage(fullMsg);
+                  } else {
+                    ctx.state.onProgress!(fullMsg);
+                  }
+                }
+              : undefined;
 
           const result = await client.callTool(
             def.name,
