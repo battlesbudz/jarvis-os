@@ -35,6 +35,33 @@ const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const CHECKLIST_PATH = path.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
 const VALIDATION_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
 
+/**
+ * Maximum number of pending crew tasks to batch into a single PRIME routing
+ * call per heartbeat tick. Configurable via CREW_BATCH_MAX env var.
+ */
+const CREW_BATCH_MAX = (() => {
+  const v = parseInt(process.env.CREW_BATCH_MAX ?? "", 10);
+  return Number.isFinite(v) && v > 0 ? v : 5;
+})();
+
+/**
+ * In-process queue of pending crew-routable tasks per userId.
+ * Tasks are enqueued via `enqueueCrewTask` and flushed once per tick
+ * via `flushCrewBatch`. The queue is intentionally in-memory; tasks
+ * are not persisted — they are ephemeral routing signals only.
+ */
+const crewTaskQueue = new Map<string, string[]>();
+
+/**
+ * Enqueue a task string for PRIME routing during the next heartbeat tick.
+ * Thread-safe (single-process Node.js event loop).
+ */
+export function enqueueCrewTask(userId: string, task: string): void {
+  const queue = crewTaskQueue.get(userId) ?? [];
+  queue.push(task);
+  crewTaskQueue.set(userId, queue);
+}
+
 // Tracks the last time the integration validator ran so each heartbeat tick
 // can gate the (expensive) validation cycle to once per 30 minutes.
 let lastValidationRunAt = 0;
@@ -637,6 +664,105 @@ Return JSON:
 // and runDreamDeliveryForAllUsers (7-10am local).
 
 // ============================================================
+// Crew batch flush — PRIME routing (one call per user per tick)
+// ============================================================
+
+/**
+ * Flush up to CREW_BATCH_MAX pending crew tasks for a user into a single
+ * PRIME orchestrator call. Returns the number of tasks processed.
+ *
+ * All pending tasks are concatenated into one batched request string so PRIME
+ * decomposes them together and routes sub-tasks to the correct specialists.
+ * This avoids one Anthropic call per task and ensures PRIME has the full
+ * picture when deciding specialist assignments.
+ */
+/**
+ * Collect inbox items surfaced in the past CREW_INBOX_WINDOW_MS that are still
+ * pending (no actedAt) and enqueue them for PRIME triage.  Up to CREW_BATCH_MAX
+ * items are enqueued so the batch flush can route them in a single PRIME call
+ * rather than one orchestration call per item.
+ *
+ * This is the primary internal call site for enqueueCrewTask within the heartbeat.
+ */
+const CREW_INBOX_WINDOW_MS = 30 * 60 * 1000; // 30 minutes
+
+async function enqueueNewInboxItemsForPrime(userId: string): Promise<number> {
+  const windowStart = new Date(Date.now() - CREW_INBOX_WINDOW_MS);
+  let items: typeof schema.inboxItems.$inferSelect[] = [];
+  try {
+    items = await db
+      .select()
+      .from(schema.inboxItems)
+      .where(
+        and(
+          eq(schema.inboxItems.userId, userId),
+          eq(schema.inboxItems.status, "pending"),
+          sql`${schema.inboxItems.actedAt} IS NULL`,
+          sql`${schema.inboxItems.surfacedAt} >= ${windowStart.toISOString()}`,
+        ),
+      )
+      .limit(CREW_BATCH_MAX);
+  } catch (err) {
+    console.error(`[Heartbeat/crew] inbox query failed for ${userId}:`, err);
+    return 0;
+  }
+  if (items.length === 0) return 0;
+  for (const item of items) {
+    const taskDescription = [
+      `Triage inbox item: "${item.subject ?? "(no subject)"}"`,
+      item.sender ? `from ${item.sender}` : null,
+      item.snippet ? `— ${item.snippet.slice(0, 120)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+    enqueueCrewTask(userId, taskDescription);
+  }
+  console.log(`[Heartbeat/crew] enqueued ${items.length} inbox item(s) for PRIME triage (user ${userId})`);
+  return items.length;
+}
+
+async function flushCrewBatch(
+  userId: string,
+  tools: import("./agent/types").AgentTool[],
+  toolContext: import("./agent/types").ToolContext,
+  systemContext: string,
+): Promise<number> {
+  const queue = crewTaskQueue.get(userId);
+  if (!queue || queue.length === 0) return 0;
+
+  // Drain up to CREW_BATCH_MAX tasks from the queue
+  const batch = queue.splice(0, CREW_BATCH_MAX);
+  if (queue.length === 0) {
+    crewTaskQueue.delete(userId);
+  } else {
+    crewTaskQueue.set(userId, queue);
+  }
+
+  const batchedRequest = batch.length === 1
+    ? batch[0]
+    : `Process the following ${batch.length} tasks:\n${batch.map((t, i) => `${i + 1}. ${t}`).join("\n")}`;
+
+  console.log(`[Heartbeat/crew] flushing ${batch.length} task(s) for user ${userId} via PRIME`);
+
+  try {
+    const { runOrchestrator } = await import("./agent/orchestrator");
+    const result = await runOrchestrator({
+      userId,
+      userRequest: batchedRequest,
+      systemContext,
+      tools,
+      toolContext,
+      maxRetries: 1,
+    });
+    console.log(`[Heartbeat/crew] PRIME batch complete — traceId=${result.traceId} subtasks=${result.subtaskCount}`);
+    return batch.length;
+  } catch (err) {
+    console.error(`[Heartbeat/crew] batch orchestration failed for user ${userId}:`, err);
+    return 0;
+  }
+}
+
+// ============================================================
 // Tick — walk the checklist for every linked user
 // ============================================================
 export async function runHeartbeatTick(): Promise<void> {
@@ -852,6 +978,41 @@ export async function runHeartbeatTick(): Promise<void> {
       await runHeartbeatMemoryPass(link.userId, token, now);
     } catch (err) {
       console.error(`[Heartbeat] memory pass failed for ${link.userId}:`, err);
+    }
+
+    // ── Crew inbox enqueue — collect freshly surfaced items for PRIME ───────
+    // Find inbox items surfaced in the last 30 min that haven't been actioned.
+    // Enqueues them so the flush below can route all of them in one PRIME call.
+    try {
+      await enqueueNewInboxItemsForPrime(link.userId);
+    } catch (err) {
+      console.error(`[Heartbeat] crew inbox enqueue failed for ${link.userId}:`, err);
+    }
+
+    // ── Crew batch flush (one PRIME call per user per tick) ────────────────
+    // Drain any pending crew-routable tasks for this user into a single PRIME
+    // orchestration call. Populated above by enqueueNewInboxItemsForPrime or
+    // by any external caller using enqueueCrewTask().
+    // Runs only when there are pending tasks — no-op otherwise.
+    if (crewTaskQueue.has(link.userId)) {
+      try {
+        const { ALL_TOOLS } = await import("./agent/tools/index");
+        const crewToolContext: import("./agent/types").ToolContext = {
+          userId: link.userId,
+          channel: "heartbeat/crew",
+          state: { pendingAttachments: [] },
+        };
+        const crewSystemContext = `You are Jarvis, an AI assistant. The user is ${link.userId}. Timezone: ${tz}.`;
+        const batchCount = await flushCrewBatch(
+          link.userId,
+          ALL_TOOLS,
+          crewToolContext,
+          crewSystemContext,
+        );
+        if (batchCount > 0) actionsFired += batchCount;
+      } catch (err) {
+        console.error(`[Heartbeat] crew batch flush failed for ${link.userId}:`, err);
+      }
     }
 
     if (actionsFired > 0) {

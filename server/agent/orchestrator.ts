@@ -19,6 +19,8 @@
 import { anthropic, ORCHESTRATOR_MAX_TOKENS } from "../lib/anthropicClient";
 import { getModel } from "../lib/modelPrefs";
 import { runAgent } from "./harness";
+import { runNamedAgent } from "./runNamedAgent";
+import { resolveSpecialist, getCrewManifest } from "./crewRouter";
 import { db } from "../db";
 import { orchestrationTraces } from "@shared/schema";
 import type { ToolContext } from "./types";
@@ -68,6 +70,8 @@ interface SubTask {
   instruction: string;
   acceptanceCriteria: string;
   dependsOn: string[];
+  /** Optional specialist name (ATLAS, HERALD, ORACLE, SCOUT, FORGE, ECHO) */
+  assignTo?: string;
 }
 
 interface SubTaskResult {
@@ -93,6 +97,7 @@ function normalizeSubTask(raw: unknown, index: number): SubTask {
       ? obj.acceptanceCriteria
       : "Provides a helpful and complete response",
     dependsOn: Array.isArray(obj.dependsOn) ? obj.dependsOn.filter((d): d is string => typeof d === "string") : [],
+    assignTo: typeof obj.assignTo === "string" && obj.assignTo ? obj.assignTo : undefined,
   };
 }
 
@@ -121,21 +126,36 @@ function parseSubTasks(text: string): SubTask[] {
 
 /**
  * Ask Claude Opus to decompose the user request into sub-tasks.
+ * Includes the crew manifest so PRIME can assign each sub-task to a specialist.
  */
 async function decomposeRequest(
   userRequest: string,
   systemContext: string,
   orchestratorModel: string,
+  userId: string,
 ): Promise<SubTask[]> {
+  // Load crew manifest from DB (falls back to static if DB unavailable)
+  let crewManifest = "";
+  try {
+    crewManifest = await getCrewManifest(userId);
+  } catch {
+    // Non-fatal — decompose without crew routing if manifest load fails
+  }
+
+  const crewSection = crewManifest
+    ? `\n\n${crewManifest}\n\nInclude an optional "assignTo" field on each sub-task naming the best specialist from the crew manifest. Omit or null "assignTo" only for truly generic tasks.`
+    : "";
+
   const response = await anthropic.messages.create({
     model: orchestratorModel,
     max_tokens: ORCHESTRATOR_MAX_TOKENS,
-    system: `You are an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
+    system: `You are PRIME, an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
 2. Have a short label (5-8 words)
 3. Have a clear instruction for a sub-agent to execute
 4. Have a measurable acceptance criterion
 5. List any task ids it depends on (can be empty)
+6. Include an "assignTo" field naming the specialist who should handle it (from the crew manifest)${crewSection}
 
 Return ONLY a JSON array in a \`\`\`json block. No other text.
 
@@ -144,17 +164,19 @@ Example:
 [
   {
     "id": "task-1",
-    "label": "Check calendar for tomorrow",
-    "instruction": "Look up the user's calendar events for tomorrow and summarize them",
-    "acceptanceCriteria": "Lists at least the count of events and the first event time if any exist",
-    "dependsOn": []
+    "label": "Research meeting attendees",
+    "instruction": "Search for background information on the meeting attendees",
+    "acceptanceCriteria": "Returns key facts about each attendee with sources",
+    "dependsOn": [],
+    "assignTo": "ATLAS"
   },
   {
     "id": "task-2",
-    "label": "Suggest morning plan",
-    "instruction": "Based on the calendar results, suggest an optimized morning routine",
-    "acceptanceCriteria": "Provides a concrete schedule with time slots",
-    "dependsOn": ["task-1"]
+    "label": "Suggest agenda based on research",
+    "instruction": "Using the research, draft a meeting agenda with time slots",
+    "acceptanceCriteria": "Provides a concrete agenda with time allocations",
+    "dependsOn": ["task-1"],
+    "assignTo": "FORGE"
   }
 ]
 \`\`\`
@@ -255,7 +277,11 @@ ${systemContext}`,
 }
 
 /**
- * Execute a single sub-task via the GPT harness.
+ * Execute a single sub-task, routing through a specialist agent when available.
+ *
+ * If `task.assignTo` resolves to a live crew specialist via crewRouter, the task
+ * is executed inside that agent's memory namespace and permission scope via
+ * runNamedAgent. Otherwise falls back to the bare GPT harness.
  */
 async function executeSubTask(
   task: SubTask,
@@ -275,6 +301,29 @@ async function executeSubTask(
     ? `${task.instruction}\n\nPrevious attempt was rejected: ${correctionContext}\nPlease try again with this feedback.${depContext}`
     : `${task.instruction}${depContext}`;
 
+  // ── Crew routing: try to resolve a specialist agent ──────────────────────
+  const userId = toolContext.userId;
+  if (userId && task.assignTo) {
+    try {
+      const specialist = await resolveSpecialist(task.assignTo, userId);
+      if (specialist) {
+        console.log(`[orchestrator] routing sub-task "${task.label}" → specialist ${specialist.name} (${specialist.id})`);
+        const result = await runNamedAgent({
+          agentId: specialist.id,
+          userId,
+          userMessage: instruction,
+          platform: "orchestrator",
+          initiatedBy: "jarvis",
+          onProgressMessage,
+        });
+        return result.reply || "(no result)";
+      }
+    } catch (err) {
+      console.warn(`[orchestrator] specialist routing failed for "${task.label}", falling back to harness:`, err);
+    }
+  }
+
+  // ── Fallback: bare GPT harness ─────────────────────────────────────────
   const result = await runAgent({
     model: "gpt-4o-mini",
     messages: [
@@ -391,10 +440,10 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   const orchestratorModel = await getModel(userId, "orchestrator");
   console.log(`[orchestrator] ${traceId} — model=${orchestratorModel}`);
 
-  // Step 1: Decompose
+  // Step 1: Decompose (crew manifest injected into prompt for specialist routing)
   let rawSubTasks: SubTask[];
   try {
-    rawSubTasks = await decomposeRequest(userRequest, systemContext, orchestratorModel);
+    rawSubTasks = await decomposeRequest(userRequest, systemContext, orchestratorModel, userId);
   } catch (err) {
     console.error("[orchestrator] decomposition failed:", err);
     // Fall back to single task
