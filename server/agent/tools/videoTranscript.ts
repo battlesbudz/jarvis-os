@@ -4,7 +4,7 @@
  * Transcribes any publicly accessible video file using Google's File API +
  * Gemini — supporting Google Drive share links, Dropbox links, direct video
  * URLs (mp4, mov, webm, …), and any other publicly reachable video file up
- * to 500 MB.
+ * to 2 GB (streamed directly to Google, no full-file buffer on the server).
  *
  * This is the complement to get_youtube_transcript (which handles YouTube URLs
  * natively without downloading anything). Use this tool when the user sends a
@@ -27,8 +27,8 @@ export const videoTranscriptTool: AgentTool = {
   name: "transcribe_video_url",
   description:
     "Transcribe any publicly accessible video file — Google Drive share links, Dropbox links, " +
-    "direct mp4/mov/webm URLs, or any other publicly reachable video up to 500 MB. " +
-    "The video is uploaded to Google's File API and transcribed by Gemini. " +
+    "direct mp4/mov/webm URLs, or any other publicly reachable video up to 2 GB. " +
+    "The video is streamed directly to Google's File API and transcribed by Gemini. " +
     "Use this when the user shares a direct video file link (NOT a YouTube URL — use " +
     "get_youtube_transcript for YouTube). " +
     "This is also the correct tool when a user says they sent a large video they want " +
