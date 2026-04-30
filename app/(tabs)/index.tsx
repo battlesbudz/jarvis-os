@@ -14,6 +14,8 @@ import TasksScreen from '@/components/missionControl/TasksScreen';
 import CalendarScreen from '@/components/missionControl/CalendarScreen';
 import MemoryScreen from '@/components/missionControl/MemoryScreen';
 import PlaceholderScreen from '@/components/missionControl/PlaceholderScreen';
+import ProjectsScreen from '@/components/missionControl/ProjectsScreen';
+import VisualOfficeScreen from '@/components/missionControl/VisualOfficeScreen';
 import { apiRequest } from '@/lib/query-client';
 
 const TABS = ['Tasks', 'Calendar', 'Projects', 'Memory', 'Visual'] as const;
@@ -82,11 +84,11 @@ function TabContent({ tab }: { tab: TabName }) {
     case 'Calendar':
       return <CalendarScreen />;
     case 'Projects':
-      return <PlaceholderScreen label="Projects" />;
+      return <ProjectsScreen />;
     case 'Memory':
       return <MemoryScreen />;
     case 'Visual':
-      return <PlaceholderScreen label="Visual Office" />;
+      return <VisualOfficeScreen />;
   }
 }
 
