@@ -1499,11 +1499,67 @@ Rules:
       type: "function" as const,
       function: {
         name: "fetch_youtube_transcript",
-        description: "Fetch the COMPLETE transcript/captions of a YouTube video server-side — returns the full text with no truncation. Use this INSTEAD of navigating YouTube's transcript UI on the phone.\n\nINTERNAL PIPELINE — this tool automatically tries multiple methods in order:\n  Phase 0:   Gemini multimodal — feeds the video URL directly to Gemini AI\n  Phase 0.5: Supadata — a cloud transcript API (supadata.ai) that bypasses YouTube's IP blocks. Uses mode=auto: tries native captions first, then AI-generates a transcript if no captions exist. This costs Supadata credits for AI generation.\n  Phase 1-4: YouTube InnerTube API, yt-dlp subtitles, timedtext, youtube-transcript library\n  Phase 5:   Whisper audio transcription (downloads audio via yt-dlp, then transcribes)\n  Phase 6:   Tavily web search fallback (last resort — summaries, not a real transcript)\n\nThe 'via X' label in the result (e.g. 'via Supadata', 'via YouTube captions', 'via Whisper (audio)') tells you which phase succeeded. Supadata and Gemini are NOT separate tools you can call — they run automatically inside this tool. Never attempt to call them directly. If this tool returns an error, it means ALL phases failed — do not suggest calling Supadata separately.",
+        description: "Fetch the COMPLETE transcript/captions of a YouTube video server-side — returns the full text with no truncation. Use this INSTEAD of navigating YouTube's transcript UI on the phone.\n\nINTERNAL PIPELINE — this tool automatically tries multiple methods in order:\n  Phase 0:   Gemini multimodal — feeds the video URL directly to Gemini AI\n  Phase 0.5: Supadata — a cloud transcript API (supadata.ai) that bypasses YouTube's IP blocks. Uses mode=auto: tries native captions first, then AI-generates a transcript if no captions exist. This costs Supadata credits for AI generation.\n  Phase 1-4: YouTube InnerTube API, yt-dlp subtitles, timedtext, youtube-transcript library\n  Phase 5:   Whisper audio transcription (downloads audio via yt-dlp, then transcribes)\n  Phase 6:   Tavily web search fallback (last resort — summaries, not a real transcript)\n\nThe 'via X' label in the result (e.g. 'via Supadata', 'via YouTube captions', 'via Whisper (audio)') tells you which phase succeeded.\n\nTo call a specific method directly, use: fetch_transcript_gemini, fetch_transcript_supadata, fetch_transcript_audio, or fetch_transcript_captions.",
         parameters: {
           type: "object",
           properties: {
             videoId: { type: "string", description: "YouTube video ID (e.g. 'dQw4w9WgXcQ') or full YouTube URL (https://youtube.com/watch?v=dQw4w9WgXcQ). Extract the video ID from the URL visible on screen via android_read_screen." },
+          },
+          required: ["videoId"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "fetch_transcript_gemini",
+        description: "Fetch a YouTube transcript by feeding the video URL directly to Gemini's multimodal API (gemini-2.5-flash/pro). No captions required — Gemini transcribes the audio from Google's own infrastructure. Use when the video has no captions, or when the user explicitly asks to use Gemini. Requires GOOGLE_GEMINI_API_KEY to be configured.",
+        parameters: {
+          type: "object",
+          properties: {
+            videoId: { type: "string", description: "YouTube video ID (11 characters, e.g. 'dQw4w9WgXcQ') or full YouTube URL." },
+          },
+          required: ["videoId"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "fetch_transcript_supadata",
+        description: "Fetch a YouTube transcript via the Supadata API (supadata.ai) using mode=auto. Tries YouTube's native captions first; if none exist, AI-generates a transcript (uses Supadata credits). Use when the user explicitly asks for Supadata, or when native captions are unavailable. Requires SUPADATA_API_KEY.",
+        parameters: {
+          type: "object",
+          properties: {
+            videoId: { type: "string", description: "YouTube video ID (11 characters, e.g. 'dQw4w9WgXcQ') or full YouTube URL." },
+          },
+          required: ["videoId"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "fetch_transcript_audio",
+        description: "Fetch a YouTube transcript by downloading the audio via yt-dlp and transcribing it with OpenAI Whisper. Works even when no captions exist and Gemini/Supadata are unavailable. Use when the user explicitly asks for audio/Whisper transcription. Note: slow for long videos (may take several minutes). Requires yt-dlp to be installed.",
+        parameters: {
+          type: "object",
+          properties: {
+            videoId: { type: "string", description: "YouTube video ID (11 characters, e.g. 'dQw4w9WgXcQ') or full YouTube URL." },
+          },
+          required: ["videoId"],
+        },
+      },
+    },
+    {
+      type: "function" as const,
+      function: {
+        name: "fetch_transcript_captions",
+        description: "Fetch a YouTube transcript using only native YouTube captions — no AI, no credits charged. Tries InnerTube, yt-dlp subtitles, timedtext, and the youtube-transcript library. Fast, but only works if the video actually has captions. Use when the user explicitly wants captions-only (no AI generation).",
+        parameters: {
+          type: "object",
+          properties: {
+            videoId: { type: "string", description: "YouTube video ID (11 characters, e.g. 'dQw4w9WgXcQ') or full YouTube URL." },
           },
           required: ["videoId"],
         },
@@ -2294,6 +2350,106 @@ Rules:
               return { result: 'error', label: 'Transcript disabled', detail: `Transcripts are disabled for video '${videoId}'. Try a different video.` };
             }
             return { result: 'error', label: 'Transcript fetch failed', detail: msg };
+          }
+        }
+        case 'fetch_transcript_gemini': {
+          const rawInput = String(args.videoId || '').trim();
+          if (!rawInput) return { result: 'error', label: 'videoId required', detail: 'Provide a YouTube video ID or URL.' };
+          const { fetchTranscriptViaGemini, isGeminiTranscriptAvailable, isTranscriptRefusal } = await import('./lib/geminiTranscript');
+          if (!process.env.GOOGLE_GEMINI_API_KEY || !isGeminiTranscriptAvailable()) {
+            return { result: 'error', label: 'Gemini unavailable', detail: 'GOOGLE_GEMINI_API_KEY is not configured — Gemini transcript unavailable. Add a direct Google AI Studio key (free at https://aistudio.google.com/apikey) to enable this tool.' };
+          }
+          const { extractVideoId } = await import('./lib/transcriptCache');
+          const videoId = extractVideoId(rawInput) ?? rawInput;
+          const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+          try {
+            const text = await fetchTranscriptViaGemini(videoUrl);
+            return {
+              result: 'success',
+              label: 'Gemini transcript fetched',
+              detail: `[Gemini transcript for ${videoId} — ${text.length} chars]\n${text}`,
+            };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (isTranscriptRefusal(msg) || msg.toLowerCase().includes('refusal') || msg.toLowerCase().includes('declined')) {
+              return { result: 'error', label: 'Gemini refused', detail: `Gemini declined to transcribe this video (likely copyright-protected content). ${msg}` };
+            }
+            return { result: 'error', label: 'Gemini transcript failed', detail: msg };
+          }
+        }
+        case 'fetch_transcript_supadata': {
+          const rawInput = String(args.videoId || '').trim();
+          if (!rawInput) return { result: 'error', label: 'videoId required', detail: 'Provide a YouTube video ID or URL.' };
+          const { isSupadataAvailable, fetchTranscriptViaSupadata } = await import('./lib/supadataTranscript');
+          if (!isSupadataAvailable()) {
+            return { result: 'error', label: 'Supadata unavailable', detail: 'SUPADATA_API_KEY is not configured — Supadata transcript unavailable.' };
+          }
+          const { extractVideoId } = await import('./lib/transcriptCache');
+          const videoId = extractVideoId(rawInput) ?? rawInput;
+          try {
+            const segs = await fetchTranscriptViaSupadata(videoId);
+            const text = segs.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim();
+            const creditsNote = '\n\nNote: Supadata uses mode=auto — if no native YouTube captions were found, AI generation was used (costs Supadata credits).';
+            return {
+              result: 'success',
+              label: 'Supadata transcript fetched',
+              detail: `[Supadata transcript for ${videoId} — ${text.length} chars]\n${text}${creditsNote}`,
+            };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { result: 'error', label: 'Supadata transcript failed', detail: msg };
+          }
+        }
+        case 'fetch_transcript_audio': {
+          const rawInput = String(args.videoId || '').trim();
+          if (!rawInput) return { result: 'error', label: 'videoId required', detail: 'Provide a YouTube video ID or URL.' };
+          const { getYtdlpStatus, fetchTranscriptCached, extractVideoId, ensureYtdlpUpgraded } = await import('./lib/transcriptCache');
+          await ensureYtdlpUpgraded();
+          const ytdlp = getYtdlpStatus();
+          if (!ytdlp.available) {
+            return { result: 'error', label: 'yt-dlp unavailable', detail: 'yt-dlp is not installed on this server — audio transcription unavailable.' };
+          }
+          const videoId = extractVideoId(rawInput) ?? rawInput;
+          try {
+            const { segments, source } = await fetchTranscriptCached(videoId, { audioOnly: true, bypassCache: true });
+            if (segments.length === 0) {
+              return { result: 'error', label: 'Audio transcription failed', detail: 'Audio transcription returned no segments — the video may be too long, blocked, or Whisper is unavailable.' };
+            }
+            const text = segments.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim();
+            return {
+              result: 'success',
+              label: 'Audio transcript fetched',
+              detail: `[Audio (Whisper) transcript for ${videoId} — ${text.length} chars]\n${text}`,
+            };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { result: 'error', label: 'Audio transcript failed', detail: msg };
+          }
+        }
+        case 'fetch_transcript_captions': {
+          const rawInput = String(args.videoId || '').trim();
+          if (!rawInput) return { result: 'error', label: 'videoId required', detail: 'Provide a YouTube video ID or URL.' };
+          const { fetchTranscriptCached, extractVideoId } = await import('./lib/transcriptCache');
+          const videoId = extractVideoId(rawInput) ?? rawInput;
+          const CAPTION_SOURCES = ['innertube', 'yt-dlp', 'timedtext', 'youtube-transcript'];
+          const isCaptionSource = (s: string) => CAPTION_SOURCES.some(cs => s.startsWith(cs));
+          try {
+            const { segments, source } = await fetchTranscriptCached(videoId, { captionsOnly: true, bypassCache: true });
+            if (segments.length === 0 || !isCaptionSource(source)) {
+              return { result: 'error', label: 'No captions found', detail: 'No captions available for this video — try fetch_transcript_gemini or fetch_transcript_supadata for AI-generated transcript.' };
+            }
+            const text = segments.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim();
+            return {
+              result: 'success',
+              label: 'Captions fetched',
+              detail: `[Captions transcript for ${videoId} via ${source} — ${text.length} chars]\n${text}`,
+            };
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (msg.toLowerCase().includes('no captions') || (msg.toLowerCase().includes('transcript') && msg.toLowerCase().includes('not available'))) {
+              return { result: 'error', label: 'No captions found', detail: 'No captions available for this video — try fetch_transcript_gemini or fetch_transcript_supadata for AI-generated transcript.' };
+            }
+            return { result: 'error', label: 'Captions fetch failed', detail: msg };
           }
         }
         case 'connect_channel': {
