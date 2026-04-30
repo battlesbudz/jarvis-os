@@ -175,19 +175,27 @@ export function isTranscriptRefusal(text: string): boolean {
   return GEMINI_REFUSAL_PATTERNS.some((p) => p.test(opening));
 }
 
+const GEMINI_CALL_TIMEOUT_MS = 30_000;
+
 async function callGemini(model: string, videoUrl: string): Promise<string> {
   const client = getClient();
-  const response = await client.models.generateContent({
-    model,
-    contents: [
-      {
-        parts: [
-          { fileData: { mimeType: "video/mp4", fileUri: videoUrl } },
-          { text: TRANSCRIPT_PROMPT },
-        ],
-      },
-    ],
-  });
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`Gemini model ${model} timed out after ${GEMINI_CALL_TIMEOUT_MS / 1000}s`)), GEMINI_CALL_TIMEOUT_MS)
+  );
+  const response = await Promise.race([
+    client.models.generateContent({
+      model,
+      contents: [
+        {
+          parts: [
+            { fileData: { mimeType: "video/mp4", fileUri: videoUrl } },
+            { text: TRANSCRIPT_PROMPT },
+          ],
+        },
+      ],
+    }),
+    timeoutPromise,
+  ]);
   const text = response.text;
   if (!text || !text.trim()) {
     throw new Error(`Gemini model ${model} returned an empty transcript for this video`);
