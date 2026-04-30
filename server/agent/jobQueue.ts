@@ -1591,6 +1591,321 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       return;
     }
 
+    // ── Deep-research multi-phase job ─────────────────────────────────────────
+    if (job.agentType === "deep_research") {
+      const { planResearch } = await import("./deepResearchPlanner");
+
+      const DEEP_POLL_INTERVAL_MS = 10_000;
+      const PHASE_MAX_WAIT_MS = 8 * 60 * 1000;
+      const SYNTHESIS_MAX_WAIT_MS = 4 * 60 * 1000;
+
+      /**
+       * Poll a list of job IDs until all reach a terminal state or the timeout
+       * elapses. Returns a map of jobId → { status, body }.
+       */
+      async function pollChildJobs(
+        childIds: string[],
+        maxWaitMs: number,
+      ): Promise<Map<string, { status: string; body: string }>> {
+        const results = new Map<string, { status: string; body: string }>();
+        const pollStart = Date.now();
+
+        while (
+          Date.now() - pollStart < maxWaitMs &&
+          results.size < childIds.length
+        ) {
+          for (const childId of childIds) {
+            if (results.has(childId)) continue;
+            const [row] = await db
+              .select({ status: schema.agentJobs.status })
+              .from(schema.agentJobs)
+              .where(eq(schema.agentJobs.id, childId))
+              .limit(1);
+            const status = row?.status ?? "unknown";
+            if (status === "complete" || status === "failed") {
+              let body = "";
+              if (status === "complete") {
+                const [deliv] = await db
+                  .select({ body: schema.deliverables.body })
+                  .from(schema.deliverables)
+                  .where(eq(schema.deliverables.jobId, childId))
+                  .limit(1);
+                body = deliv?.body ?? "";
+              }
+              results.set(childId, { status, body });
+            }
+          }
+          if (results.size < childIds.length) {
+            await new Promise((r) => setTimeout(r, DEEP_POLL_INTERVAL_MS));
+          }
+        }
+
+        // Mark any remaining as timed out
+        for (const childId of childIds) {
+          if (!results.has(childId)) {
+            console.warn(`[JobQueue] deep_research child job ${childId} timed out`);
+            results.set(childId, { status: "timeout", body: "" });
+          }
+        }
+
+        return results;
+      }
+
+      /**
+       * Submit N research child jobs for a list of topics and return their IDs.
+       */
+      async function submitResearchJobs(
+        topics: string[],
+        labelSuffix: string,
+        priorContext?: string,
+      ): Promise<string[]> {
+        const ids: string[] = [];
+        for (const topic of topics) {
+          const childInput: Record<string, unknown> = {
+            parentJobId: job.id,
+            originChannel,
+            originDiscordChannelId,
+            model: "gpt-4.1-mini",
+          };
+          if (priorContext) {
+            childInput.priorContext = priorContext;
+          }
+          const { id: childId } = await submitAgentJob({
+            userId: job.userId,
+            agentType: "research",
+            title: `${labelSuffix}: ${topic.slice(0, 70)}`,
+            prompt: topic,
+            input: childInput,
+          });
+          ids.push(childId);
+          console.log(`[JobQueue] deep_research ${job.id} — submitted child ${childId} (${labelSuffix}): "${topic.slice(0, 60)}"`);
+        }
+        return ids;
+      }
+
+      try {
+        // ── Step 1: Plan ──────────────────────────────────────────────────────
+        await notifyJobComplete(
+          job.userId,
+          "deep_research",
+          job.title,
+          "Planning research phases…",
+          originChannel,
+          originDiscordChannelId,
+        );
+
+        let plan = await planResearch(job.prompt, job.userId);
+
+        // Fallback: if planner produces no mainTopics somehow, use raw prompt
+        if (!plan.mainTopics.length) {
+          plan = { prerequisiteTopics: [], mainTopics: [job.prompt], synthesisGoal: job.prompt };
+        }
+
+        console.log(
+          `[JobQueue] deep_research ${job.id} — plan: prereqs=${plan.prerequisiteTopics.length} main=${plan.mainTopics.length}`,
+        );
+
+        // ── Step 2: Phase 1 — Prerequisite research ───────────────────────────
+        let priorContext = "";
+
+        if (plan.prerequisiteTopics.length > 0) {
+          await notifyJobComplete(
+            job.userId,
+            "deep_research",
+            job.title,
+            `Phase 1: researching ${plan.prerequisiteTopics.length} prerequisite topic(s)…`,
+            originChannel,
+            originDiscordChannelId,
+          );
+
+          const phase1Ids = await submitResearchJobs(
+            plan.prerequisiteTopics,
+            "Phase 1",
+          );
+          const phase1Results = await pollChildJobs(phase1Ids, PHASE_MAX_WAIT_MS);
+
+          const phase1Bodies: string[] = [];
+          for (const [childId, result] of phase1Results) {
+            if (result.body) {
+              const topic = plan.prerequisiteTopics[phase1Ids.indexOf(childId)] ?? "";
+              phase1Bodies.push(`### ${topic || childId}\n\n${result.body}`);
+            }
+          }
+
+          if (phase1Bodies.length > 0) {
+            priorContext = phase1Bodies.join("\n\n---\n\n");
+            console.log(
+              `[JobQueue] deep_research ${job.id} — Phase 1 complete: ${phase1Bodies.length} results, ${priorContext.length} chars of context`,
+            );
+          } else {
+            console.warn(`[JobQueue] deep_research ${job.id} — Phase 1 produced no usable context, proceeding`);
+          }
+        }
+
+        // ── Step 3: Phase 2 — Main research (with Phase 1 context) ───────────
+        await notifyJobComplete(
+          job.userId,
+          "deep_research",
+          job.title,
+          `Phase 2: researching ${plan.mainTopics.length} main topic(s)…`,
+          originChannel,
+          originDiscordChannelId,
+        );
+
+        const phase2Ids = await submitResearchJobs(
+          plan.mainTopics,
+          "Phase 2",
+          priorContext || undefined,
+        );
+        const phase2Results = await pollChildJobs(phase2Ids, PHASE_MAX_WAIT_MS);
+
+        // Collect all deliverable bodies (Phase 1 context + Phase 2 results)
+        const allBodies: string[] = [];
+
+        if (priorContext) {
+          allBodies.push(`## Background Context (Phase 1)\n\n${priorContext}`);
+        }
+
+        for (const [childId, result] of phase2Results) {
+          if (result.body) {
+            const topicIdx = phase2Ids.indexOf(childId);
+            const topic = plan.mainTopics[topicIdx] ?? "";
+            allBodies.push(`## ${topic || childId}\n\n${result.body}`);
+          }
+        }
+
+        if (allBodies.length === 0) {
+          // Absolute fallback: deliver whatever phase 1 produced, or a fail message
+          const fallbackBody = priorContext || "Deep research could not complete — all phases timed out or failed.";
+          await db.insert(schema.deliverables).values({
+            userId: job.userId,
+            jobId: job.id,
+            agentType: "deep_research",
+            type: "research",
+            title: job.title,
+            summary: "Deep research completed with limited results.",
+            body: fallbackBody,
+            meta: { deepResearch: true, fallback: true },
+            driveLink: null,
+          });
+          await completeJob(job.id, {
+            result: { type: "research", title: job.title },
+            turns: 0,
+            toolCallsCount: 0,
+          });
+          await notifyJobComplete(
+            job.userId,
+            "deep_research",
+            job.title,
+            fallbackBody,
+            originChannel,
+            originDiscordChannelId,
+          );
+          return;
+        }
+
+        // ── Step 4: Synthesis (or pass-through for single result) ─────────────
+        let finalBody = "";
+        let finalTitle = job.title;
+
+        const phase2BodiesOnly = phase2Results
+          ? [...phase2Results.values()].map((r) => r.body).filter(Boolean)
+          : [];
+
+        if (phase2BodiesOnly.length === 1 && !priorContext) {
+          // Only one deliverable total — deliver it directly
+          finalBody = phase2BodiesOnly[0] ?? allBodies[0] ?? "";
+          console.log(`[JobQueue] deep_research ${job.id} — single deliverable, skipping synthesis`);
+        } else {
+          // Multiple deliverables — run synthesis
+          await notifyJobComplete(
+            job.userId,
+            "deep_research",
+            job.title,
+            "Synthesising findings into one report…",
+            originChannel,
+            originDiscordChannelId,
+          );
+
+          const synthesisPrompt =
+            `Synthesise the following research into one coherent report:\n\n` +
+            `${allBodies.join("\n\n---\n\n")}\n\n` +
+            `Synthesis goal: ${plan.synthesisGoal}`;
+
+          const [synthId] = await submitResearchJobs(
+            [synthesisPrompt],
+            "Synthesis",
+          );
+          const synthResults = await pollChildJobs([synthId], SYNTHESIS_MAX_WAIT_MS);
+          const synthResult = synthResults.get(synthId);
+
+          if (synthResult?.status === "complete" && synthResult.body) {
+            finalBody = synthResult.body;
+            console.log(`[JobQueue] deep_research ${job.id} — synthesis complete (${finalBody.length} chars)`);
+          } else {
+            // Synthesis failed/timed out — concatenate all bodies as fallback
+            finalBody = allBodies.join("\n\n---\n\n");
+            console.warn(`[JobQueue] deep_research ${job.id} — synthesis failed/timed out, delivering concatenated results`);
+          }
+        }
+
+        // ── Step 5: Save deliverable and notify ───────────────────────────────
+        const summarySentence = finalBody.slice(0, 200).replace(/\n+/g, " ").trim();
+        await db.insert(schema.deliverables).values({
+          userId: job.userId,
+          jobId: job.id,
+          agentType: "deep_research",
+          type: "research",
+          title: finalTitle,
+          summary: summarySentence,
+          body: finalBody,
+          meta: {
+            deepResearch: true,
+            prerequisiteTopics: plan.prerequisiteTopics,
+            mainTopics: plan.mainTopics,
+            synthesisGoal: plan.synthesisGoal,
+          },
+          driveLink: null,
+        });
+
+        await completeJob(job.id, {
+          result: { type: "research", title: finalTitle },
+          turns: 0,
+          toolCallsCount: 0,
+        });
+
+        console.log(`[JobQueue] complete deep_research job ${job.id}`);
+
+        await notifyJobComplete(
+          job.userId,
+          "deep_research",
+          finalTitle,
+          finalBody,
+          originChannel,
+          originDiscordChannelId,
+        );
+
+        if (hasWorkflow) {
+          await onWorkflowJobComplete(wfId!, wfStep!, job.id, finalBody.slice(0, 1200)).catch((e) =>
+            console.error("[JobQueue] workflow hook failed:", e),
+          );
+        }
+      } catch (deepErr) {
+        const deepMsg = deepErr instanceof Error ? deepErr.message : String(deepErr);
+        console.error(`[JobQueue] deep_research job ${job.id} failed:`, deepErr);
+        await failJob(job.id, deepMsg, job.userId);
+        await notifyJobComplete(
+          job.userId,
+          "deep_research",
+          job.title,
+          `Deep research failed: ${deepMsg}`,
+          originChannel,
+          originDiscordChannelId,
+        );
+      }
+      return;
+    }
+
     // Sub-agent run
     const tokens = await getValidGoogleTokens(job.userId).catch(() => []);
     const googleAccessToken = tokens?.[0] || null;
@@ -1607,12 +1922,20 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // preserve the original resolution path inside runSubAgent.
     const subAgentModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
 
+    // Prior-context injection: deep_research Phase 2 jobs carry priorContext in
+    // their input so Phase 1 findings can be injected into the system prompt.
+    const priorContextRaw = typeof jobInput.priorContext === "string" ? jobInput.priorContext.trim() : "";
+    const priorContextBlock = priorContextRaw
+      ? `## Context from prior research phase\n${priorContextRaw}\n\nUse the above as background. Do not re-research topics already covered there — build on them.`
+      : undefined;
+
     let sub = await runSubAgent({
       agentType: job.agentType as SubAgentType,
       prompt: job.prompt,
       defaultTitle: job.title,
       context: ctx,
       model: subAgentModelOverride,
+      extraSystemPrompt: priorContextBlock,
     });
 
     // ── Claude Opus verification loop ─────────────────────────────────────────

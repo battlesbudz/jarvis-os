@@ -12,6 +12,12 @@ interface QueueJobArgs {
 }
 
 /**
+ * Agent types that queue_background_job accepts, including the extended
+ * "deep_research" type beyond the core SubAgentType set.
+ */
+const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research"];
+
+/**
  * Commonly confused US city names — bare city name (lower-cased) → list of states.
  * If a prompt contains one of these names with no adjacent state qualifier, the
  * tool pauses and asks the coach to confirm which city the user meant.
@@ -165,7 +171,8 @@ IMPORTANT — one job per user message: Do NOT call this tool more than once per
 Before calling this tool, use sessions_list (filter: status=queued or status=running) to check whether a recent job already exists for this topic and agent_type. If a matching job is already active, tell the user their request is already in progress rather than queuing a duplicate.
 
 Choose agent_type based on the request:
-- research: competitive analysis, market research, fact-finding briefs
+- "research"       — single focused topic; results don't depend on each other (e.g. "latest news on OpenAI", "what is the current ETH price")
+- "deep_research"  — complex request where understanding one thing is REQUIRED before properly researching another, OR multiple related topics that should be synthesised into one coherent report (e.g. "compare these two investment theses", "research this startup and its market", "analyse multiple companies in the same space")
 - writing: drafting memos, notes, blog posts, documents, reports
 - planning: phased project plans, goal breakdowns, action plans
 - email: composing an outbound email on the user's behalf
@@ -180,7 +187,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     properties: {
       agent_type: {
         type: "string",
-        enum: SUB_AGENT_TYPES,
+        enum: QUEUEABLE_AGENT_TYPES,
         description: "The type of sub-agent to run.",
       },
       prompt: {
@@ -208,15 +215,15 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
   },
   async execute(args, ctx) {
     const a = args as QueueJobArgs;
-    const agentType = String(a.agent_type || "").trim() as SubAgentType;
+    const agentType = String(a.agent_type || "").trim() as AgentJobType;
     const prompt = String(a.prompt || "").trim();
     const skipEntityCheck = Boolean(a.skip_entity_check);
     const skipLocationCheck = Boolean(a.skip_location_check);
 
-    if (!SUB_AGENT_TYPES.includes(agentType as (typeof SUB_AGENT_TYPES)[number])) {
+    if (!QUEUEABLE_AGENT_TYPES.includes(agentType)) {
       return {
         ok: false,
-        content: `Invalid agent_type "${agentType}". Must be one of: ${SUB_AGENT_TYPES.join(", ")}.`,
+        content: `Invalid agent_type "${agentType}". Must be one of: ${QUEUEABLE_AGENT_TYPES.join(", ")}.`,
         label: "Invalid agent_type",
       };
     }
@@ -227,10 +234,10 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);
 
     // ── Protected-entity pre-flight check ────────────────────────────────────
-    // Only run for research/writing jobs (the ones most likely to produce a
-    // useless result if the wrong entity name is searched), and only when the
-    // caller has not already confirmed the search term is intentional.
-    if (!skipEntityCheck && ctx.userId && (agentType === "research" || agentType === "writing")) {
+    // Only run for research/writing/deep_research jobs (the ones most likely
+    // to produce a useless result if the wrong entity name is searched), and
+    // only when the caller has not already confirmed the search term.
+    if (!skipEntityCheck && ctx.userId && (agentType === "research" || agentType === "writing" || agentType === "deep_research")) {
       try {
         const entityNames = await getProtectedEntityNames(ctx.userId);
         const nearMatch = findEntityNearMatch(prompt, entityNames);
@@ -299,7 +306,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       if (ctx.discordChannelId) jobInput.originDiscordChannelId = ctx.discordChannelId;
       const { id: jobId, isDuplicate } = await submitAgentJob({
         userId: ctx.userId,
-        agentType: agentType as AgentJobType,
+        agentType,
         title,
         prompt,
         input: jobInput,
@@ -339,14 +346,15 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
   },
 };
 
-function deriveTitle(agentType: SubAgentType, prompt: string): string {
-  const prefixes: Record<SubAgentType, string> = {
+function deriveTitle(agentType: AgentJobType, prompt: string): string {
+  const prefixes: Partial<Record<AgentJobType, string>> = {
     research: "Research:",
+    deep_research: "Deep Research:",
     writing: "Draft:",
     planning: "Plan:",
     email: "Email:",
   };
-  const prefix = prefixes[agentType] || "Task:";
+  const prefix = prefixes[agentType] ?? "Task:";
   const snippet = prompt.slice(0, 60).replace(/\s+/g, " ").trim();
   return `${prefix} ${snippet}${prompt.length > 60 ? "…" : ""}`;
 }
