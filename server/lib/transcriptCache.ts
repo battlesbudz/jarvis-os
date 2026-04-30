@@ -6,6 +6,12 @@
  * Thread-safe for single-process Node.js.
  *
  * Fetch pipeline (metadata-first):
+ *   Phase 0 — Gemini native video understanding (YouTube URLs only)
+ *     → Passes the YouTube URL directly to Gemini 1.5 Flash as a fileData part.
+ *     → Google fetches and transcribes the video from its own infrastructure.
+ *     → No yt-dlp, no ffmpeg, no IP blocks. Works for any video length.
+ *     → Skipped if AI_INTEGRATIONS_GEMINI_API_KEY is not set.
+ *
  *   Phase 1 — Metadata check (InnerTube player API, lightweight)
  *     → Determines whether captions exist at all before committing to heavier work.
  *     → Terminal errors (private, age-restricted, rate-limit) surface immediately.
@@ -1416,6 +1422,41 @@ export async function fetchTranscriptCached(
   const resolvedId = videoId ?? input.trim();
   let segments: TranscriptResponse[] = [];
   let source = "unknown";
+
+  // ── Phase 0: Gemini native video understanding ────────────────────────────
+  // Passes the YouTube URL directly to Gemini 1.5 Flash as a fileData part.
+  // Google fetches and processes the video from its own infrastructure — no
+  // yt-dlp, no ffmpeg, no server-IP blocks, no file-size limit.
+  // Skipped silently when the API key is absent or this is not a YouTube URL.
+  if (videoId) {
+    try {
+      const { fetchTranscriptViaGemini, isGeminiTranscriptAvailable } = await import("./geminiTranscript");
+      if (isGeminiTranscriptAvailable()) {
+        const refreshTag = bypassCache ? " (bypass/refresh)" : "";
+        console.log(`[transcriptCache] Phase 0: trying Gemini for ${resolvedId}${refreshTag}`);
+        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        const geminiText = await fetchTranscriptViaGemini(videoUrl);
+        if (geminiText) {
+          segments = [{ text: `[AI-generated transcript via Gemini]\n\n${geminiText}`, offset: 0, duration: 0, lang: "en" }];
+          source = "gemini";
+          console.log(`[transcriptCache] Phase 0 Gemini OK ${resolvedId} — ${geminiText.length} chars`);
+          evictExpired();
+          if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
+          cache.set(videoId, { segments, cachedAt: Date.now() });
+          const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
+          console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache.size})`);
+          return { segments, noCaptionsDetected: false };
+        }
+      } else {
+        console.log("[transcriptCache] Phase 0 skipped — AI_INTEGRATIONS_GEMINI_API_KEY not set");
+      }
+    } catch (geminiErr) {
+      console.warn(
+        `[transcriptCache] Phase 0 Gemini failed for ${resolvedId} — falling through to Phase 1: ` +
+        (geminiErr instanceof Error ? geminiErr.message : String(geminiErr))
+      );
+    }
+  }
 
   // ── audioOnly fast-path: skip Phases 1 & 2 entirely ──────────────────────
   if (audioOnly) {
