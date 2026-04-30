@@ -195,6 +195,7 @@ async function checkEnvVarsPresence(): Promise<DoctorResult> {
     "GOOGLE_CLIENT_SECRET",
     "MICROSOFT_CLIENT_ID",
     "MICROSOFT_CLIENT_SECRET",
+    "SUPADATA_API_KEY",
   ];
 
   const missingCritical = critical.filter((k) => !process.env[k]);
