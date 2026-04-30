@@ -1,0 +1,49 @@
+{
+  "research": [
+    "search_web",
+    "research_topic",
+    "web_fetch",
+    "get_youtube_transcript",
+    "transcribe_video_url",
+    "search_youtube",
+    "memory_search"
+  ],
+  "communications": [
+    "fetch_emails",
+    "gmail_action",
+    "create_gmail_draft",
+    "send_email",
+    "memory_search",
+    "manage_tasks"
+  ],
+  "planning": [
+    "fetch_calendar",
+    "create_calendar_event",
+    "manage_tasks",
+    "memory_search",
+    "daemon_action"
+  ],
+  "monitoring": [
+    "fetch_calendar",
+    "fetch_emails",
+    "memory_search",
+    "manage_tasks",
+    "daemon_action"
+  ],
+  "creation": [
+    "memory_search",
+    "manage_tasks",
+    "create_document",
+    "drive_create_file",
+    "drive_list_files",
+    "drive_read_file",
+    "image_generate",
+    "create_presentation",
+    "export_document_pdf"
+  ],
+  "memory": [
+    "memory_search",
+    "memory_get",
+    "manage_tasks"
+  ]
+}
