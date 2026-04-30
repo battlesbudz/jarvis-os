@@ -12,6 +12,7 @@
  */
 
 import type { TranscriptResponse } from "youtube-transcript";
+import type { Supadata, Transcript } from "@supadata/js";
 
 /** Max time to wait for an async Supadata job (large video transcription). */
 const JOB_POLL_TIMEOUT_MS = 30_000;
@@ -56,7 +57,7 @@ export async function fetchTranscriptViaSupadata(videoId: string): Promise<Trans
     if (result && "jobId" in result) {
       const jobId = (result as { jobId: string }).jobId;
       console.log(`[supadataTranscript] Async job started: ${jobId} for ${videoId}`);
-      transcript = await pollSupadataJob(apiKey, jobId);
+      transcript = await pollSupadataJob(client, jobId);
     } else {
       transcript = result;
     }
@@ -96,27 +97,16 @@ export async function fetchTranscriptViaSupadata(videoId: string): Promise<Trans
 
 /**
  * Polls a Supadata async job until it completes or the timeout is reached.
- * Uses the REST API directly since `transcript.getJobStatus` is a property on
- * the callable function and may not surface correctly in all SDK versions.
+ * Uses the SDK's `client.transcript.getJobStatus(jobId)` method.
  */
 async function pollSupadataJob(
-  apiKey: string,
+  client: Supadata,
   jobId: string,
-): Promise<import("@supadata/js").Transcript> {
+): Promise<Transcript> {
   const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     await sleep(JOB_POLL_INTERVAL_MS);
-    const resp = await fetch(`https://api.supadata.ai/v1/transcript/${jobId}`, {
-      headers: { "x-api-key": apiKey },
-    });
-    if (!resp.ok) {
-      throw new Error(`Supadata job poll failed: HTTP ${resp.status}`);
-    }
-    const job = await resp.json() as {
-      status: string;
-      result?: import("@supadata/js").Transcript | null;
-      error?: { error?: string } | null;
-    };
+    const job = await client.transcript.getJobStatus(jobId);
     if (job.status === "completed" && job.result) {
       console.log(`[supadataTranscript] Job ${jobId} completed`);
       return job.result;
@@ -126,10 +116,7 @@ async function pollSupadataJob(
         `Supadata job ${jobId} failed: ${job.error?.error ?? "unknown error"}`
       );
     }
-    if (job.status === "cancelled") {
-      throw new Error(`Supadata job ${jobId} was cancelled`);
-    }
-    // still 'processing' — keep polling
+    // 'queued' or 'active' — keep polling
   }
   throw new Error(
     `Supadata job ${jobId} timed out after ${JOB_POLL_TIMEOUT_MS / 1000}s`
