@@ -56,7 +56,6 @@ import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { registerSubscriber, removeSubscriberIfCurrent } from "./webchatSSE";
-import { YoutubeTranscript } from "youtube-transcript/dist/youtube-transcript.esm.js";
 import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
@@ -869,6 +868,117 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("[Admin/AudioStats] failed:", err);
       res.status(500).json({ error: "Failed to retrieve audio transcription telemetry" });
+    }
+  });
+
+  /**
+   * GET /api/transcript/diagnose?videoId=VIDEO_ID
+   * Diagnoses the transcript pipeline for a specific video without spending quota.
+   * Reports Gemini key status, Supadata key + native caption check, and yt-dlp availability.
+   * Does NOT call Gemini (costs quota) — only checks key status and Supadata native captions.
+   */
+  app.get("/api/transcript/diagnose", authMiddleware, async (req: Request, res: Response) => {
+    const videoId = String(req.query.videoId ?? "").trim();
+    if (!videoId) {
+      res.status(400).json({ error: "videoId query parameter is required" });
+      return;
+    }
+
+    try {
+      const { getYtdlpStatus, ensureYtdlpUpgraded } = await import("./lib/transcriptCache");
+
+      // Check Gemini key status (do NOT call Gemini)
+      const geminiDirectKey = process.env.GOOGLE_GEMINI_API_KEY;
+      const geminiProxyKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+      const geminiKeyConfigured = !!(geminiDirectKey || geminiProxyKey);
+      const geminiKeyType = geminiDirectKey ? "direct" : geminiProxyKey ? "proxy" : "none";
+      const geminiResult = {
+        keyConfigured: geminiKeyConfigured,
+        keyType: geminiKeyType,
+        note: geminiKeyConfigured
+          ? geminiKeyType === "direct"
+            ? "Will attempt transcription as Phase 0 (direct Google AI Studio key)"
+            : "Will attempt transcription as Phase 0 (proxy key — may have quota limits)"
+          : "Phase 0 skipped — no Gemini key configured. Set GOOGLE_GEMINI_API_KEY at https://aistudio.google.com/apikey",
+      };
+
+      // Check Supadata key + native captions
+      const supadataKey = process.env.SUPADATA_API_KEY;
+      let supadataResult: Record<string, unknown>;
+      if (!supadataKey) {
+        supadataResult = {
+          keyConfigured: false,
+          nativeCaptions: null,
+          note: "Phase 0.5 skipped — SUPADATA_API_KEY not set. Get a free key at https://dash.supadata.ai",
+        };
+      } else {
+        let nativeCaptions: boolean | null = null;
+        let supadataNote = "";
+        try {
+          const nativeUrl = `https://api.supadata.ai/v1/youtube/transcript?videoId=${encodeURIComponent(videoId)}&lang=en&mode=native`;
+          const nativeRes = await fetch(nativeUrl, {
+            headers: { "x-api-key": supadataKey, "Content-Type": "application/json" },
+          });
+          if (nativeRes.ok) {
+            const data = await nativeRes.json() as { content?: unknown[] | string };
+            const content = data.content;
+            nativeCaptions = Array.isArray(content) ? content.length > 0 : typeof content === "string" ? content.trim().length > 0 : false;
+            supadataNote = nativeCaptions
+              ? "Native captions found — fast, no credits. Will return immediately."
+              : "Native captions empty — will use AI generation (mode=auto).";
+          } else if (nativeRes.status === 404 || nativeRes.status === 400) {
+            nativeCaptions = false;
+            supadataNote = "No native captions — will use AI generation (mode=auto). Takes 5-10 min for long videos.";
+          } else {
+            const body = await nativeRes.text().catch(() => "");
+            supadataNote = `Native caption check returned ${nativeRes.status}: ${body.slice(0, 200)}`;
+          }
+        } catch (supadataCheckErr) {
+          supadataNote = `Native caption check failed: ${supadataCheckErr instanceof Error ? supadataCheckErr.message : String(supadataCheckErr)}`;
+        }
+        supadataResult = {
+          keyConfigured: true,
+          nativeCaptions,
+          note: supadataNote,
+        };
+      }
+
+      // Check yt-dlp availability
+      await ensureYtdlpUpgraded().catch(() => null);
+      const ytdlpStatus = getYtdlpStatus();
+      const ytdlpResult = {
+        available: ytdlpStatus.available,
+        cmd: ytdlpStatus.cmd,
+        reason: ytdlpStatus.available
+          ? "yt-dlp is installed and responding"
+          : "yt-dlp is not available — audio transcription and caption download will fail. Note: Replit datacenter IPs are blocked by YouTube, so yt-dlp success rates are very low even when installed.",
+      };
+
+      // Build recommendation
+      const nativeCaptions = (supadataResult.nativeCaptions as boolean | null);
+      let recommendation: string;
+      if (geminiKeyConfigured && nativeCaptions !== false) {
+        recommendation = "Gemini (Phase 0) is the fastest option. Supadata native captions also available.";
+      } else if (geminiKeyConfigured) {
+        recommendation = "Gemini (Phase 0) is the primary option. Supadata will use AI generation (mode=auto) — takes 5-10 min for long videos.";
+      } else if (supadataKey && nativeCaptions === true) {
+        recommendation = "Supadata native captions available — fast retrieval.";
+      } else if (supadataKey) {
+        recommendation = "Only Supadata AI generation is viable. Takes 5-10 min for long videos. Recommend enabling Gemini with GOOGLE_GEMINI_API_KEY.";
+      } else {
+        recommendation = "No cloud transcript methods available. Only local yt-dlp/Whisper pipeline (IP-blocked on Replit). Enable Gemini or Supadata.";
+      }
+
+      res.json({
+        videoId,
+        gemini: geminiResult,
+        supadata: supadataResult,
+        ytdlp: ytdlpResult,
+        recommendation,
+      });
+    } catch (err) {
+      console.error("[transcript/diagnose] failed:", err);
+      res.status(500).json({ error: "Diagnose failed", detail: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -2330,26 +2440,93 @@ Rules:
         case 'fetch_youtube_transcript': {
           const rawInput = String(args.videoId || '').trim();
           if (!rawInput) return { result: 'error', label: 'videoId required', detail: 'Provide a YouTube video ID or URL.' };
-          // Extract ID from URL if a full URL was given
-          let videoId = rawInput;
-          const urlMatch = rawInput.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-          if (urlMatch) videoId = urlMatch[1];
-          // Also handle bare IDs that may include URL params
-          const idMatch = videoId.match(/^([a-zA-Z0-9_-]{11})/);
-          if (idMatch) videoId = idMatch[1];
+          const { fetchTranscriptCached, extractVideoId, isPlaylistUrl } = await import('./lib/transcriptCache');
+          if (isPlaylistUrl(rawInput)) {
+            return { result: 'error', label: 'Playlist URL not supported', detail: 'This looks like a YouTube playlist URL. Provide a single video URL or video ID instead.' };
+          }
+          const resolvedId = extractVideoId(rawInput) ?? rawInput.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 11);
           try {
-            const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
-            if (!transcriptItems || transcriptItems.length === 0) {
-              return { result: 'error', label: 'No transcript available', detail: `The video '${videoId}' does not have a transcript/captions enabled. This is common for music videos or videos where the creator disabled captions.` };
+            const { segments, source, asyncJobPending, jobId, phaseErrors, supadataTimedOut } = await fetchTranscriptCached(resolvedId, { userId });
+
+            if (asyncJobPending) {
+              return {
+                result: 'pending',
+                label: 'Transcript generation started',
+                detail: `Supadata started AI transcript generation for video '${resolvedId}' (job ${jobId}). This video has no native captions — AI generation takes 5-10 minutes for long videos. Try fetching this video again in a few minutes; the result will be ready then.`,
+              };
             }
-            const fullText = transcriptItems.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim();
-            return { result: 'success', label: 'Transcript fetched', detail: `Video ID: ${videoId}\nTranscript (${transcriptItems.length} segments, ${fullText.length} chars total):\n\n${fullText}` };
+
+            // Success takes priority over any timeout/error flags — if segments arrived, use them
+            if (segments && segments.length > 0) {
+              const fullText = segments.map((t) => t.text).join(' ').replace(/\s+/g, ' ').trim();
+              const sourceNote = source && source !== 'unknown' ? ` [source: ${source}]` : '';
+              return {
+                result: 'success',
+                label: 'Transcript fetched',
+                detail: `Video ID: ${resolvedId}${sourceNote}\nTranscript (${segments.length} segments, ${fullText.length} chars total):\n\n${fullText}`,
+              };
+            }
+
+            if (supadataTimedOut) {
+              return {
+                result: 'error',
+                label: 'Transcript generation timed out',
+                detail: `Supadata started AI generation for video '${resolvedId}' but it took longer than 10 minutes. The credits have been used. Please try again — the transcript may now be cached on Supadata's servers.${phaseErrors?.supadata ? ` Error: ${phaseErrors.supadata}` : ''}`,
+              };
+            }
+
+            if (!segments || segments.length === 0) {
+              const errorParts: string[] = [];
+              if (phaseErrors?.gemini) errorParts.push(`Gemini error: ${phaseErrors.gemini}`);
+              if (phaseErrors?.supadata) errorParts.push(`Supadata error: ${phaseErrors.supadata}`);
+              const geminiKey = process.env.GOOGLE_GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+              const supadataKey = process.env.SUPADATA_API_KEY;
+              let detail = `Could not retrieve transcript for video '${resolvedId}'.`;
+              if (errorParts.length > 0) {
+                detail += ` ${errorParts.join('. ')}. This video likely has no native captions. Try again — Supadata may need more time for AI generation.`;
+              } else if (!geminiKey && !supadataKey) {
+                detail += ' No cloud transcript services are configured (GOOGLE_GEMINI_API_KEY and SUPADATA_API_KEY are both unset). This video likely has no native captions, and the server IP is blocked by YouTube for direct downloads.';
+              } else {
+                detail += ' This video likely has no native captions. Gemini and/or Supadata were attempted — check server logs for the exact error. If Supadata returned a job ID, try again in a few minutes.';
+              }
+              return { result: 'error', label: 'No transcript found', detail };
+            }
+
+            // Fallthrough safety — should not reach here (segments > 0 handled above)
+            return { result: 'error', label: 'No transcript found', detail: `No transcript found for video '${resolvedId}'.` };
           } catch (err: any) {
-            const msg = err?.message || String(err);
-            if (msg.includes('disabled') || msg.includes('Transcript is disabled')) {
-              return { result: 'error', label: 'Transcript disabled', detail: `Transcripts are disabled for video '${videoId}'. Try a different video.` };
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[fetch_youtube_transcript] Error for ${resolvedId}:`, msg);
+
+            if (msg.startsWith('SUPADATA_JOB_PENDING:')) {
+              const jobId = msg.replace('SUPADATA_JOB_PENDING:', '');
+              return {
+                result: 'pending',
+                label: 'Transcript generation started',
+                detail: `Supadata started AI transcript generation for video '${resolvedId}' (job ${jobId}). This video has no native captions — AI generation takes 5-10 minutes for long videos. Try fetching this video again in a few minutes.`,
+              };
             }
-            return { result: 'error', label: 'Transcript fetch failed', detail: msg };
+            if (msg.toLowerCase().includes('timed out after') && msg.toLowerCase().includes('supadata')) {
+              return {
+                result: 'error',
+                label: 'Transcript generation timed out',
+                detail: `Supadata started AI generation for this video but it took longer than 10 minutes. The credits have been used. Please try again — the transcript may now be cached on Supadata's servers. Error: ${msg}`,
+              };
+            }
+            if (msg.includes('LOGIN_REQUIRED') || msg.includes('private video')) {
+              return { result: 'error', label: 'Video unavailable', detail: `This video is private or requires login. Cannot fetch transcript for '${resolvedId}'.` };
+            }
+            if (msg.includes('CONTENT_RESTRICTED') || msg.includes('age-restricted')) {
+              return { result: 'error', label: 'Content restricted', detail: `This video is age-restricted or region-blocked. Cannot fetch transcript for '${resolvedId}'.` };
+            }
+            if (msg.includes('disabled') || msg.includes('Transcript is disabled')) {
+              return { result: 'error', label: 'Transcript disabled', detail: `Transcripts are disabled for video '${resolvedId}'. Try a different video.` };
+            }
+            return {
+              result: 'error',
+              label: 'Transcript fetch failed',
+              detail: `Could not retrieve transcript for '${resolvedId}'. Error: ${msg}. If this video has no native captions, try again in a few minutes — Supadata may need more time for AI generation.`,
+            };
           }
         }
         case 'fetch_transcript_gemini': {
@@ -2388,6 +2565,9 @@ Rules:
           const videoId = extractVideoId(rawInput) ?? rawInput;
           try {
             const segs = await fetchTranscriptViaSupadata(videoId);
+            if (!segs || segs.length === 0) {
+              return { result: 'error', label: 'No transcript returned', detail: `Supadata returned an empty transcript for video '${videoId}'. The video may have no speech content, or AI generation produced no output.` };
+            }
             const text = segs.map(s => s.text).join(' ').replace(/\s+/g, ' ').trim();
             const creditsNote = '\n\nNote: Supadata uses mode=auto — if no native YouTube captions were found, AI generation was used (costs Supadata credits).';
             return {
