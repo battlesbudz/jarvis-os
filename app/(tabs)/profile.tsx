@@ -2107,6 +2107,23 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+        {/* Knowledge Vault */}
+        <Animated.View entering={FadeInDown.duration(400).delay(405)}>
+          <Pressable
+            style={styles.vaultRow}
+            onPress={() => router.push('/vault')}
+          >
+            <View style={styles.vaultIcon}>
+              <Ionicons name="library-outline" size={20} color={Colors.violet} />
+            </View>
+            <View style={styles.vaultInfo}>
+              <Text style={styles.vaultTitle}>My Knowledge Vault</Text>
+              <Text style={styles.vaultSub}>Browse what Jarvis knows about you</Text>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
+          </Pressable>
+        </Animated.View>
+
         {/* JARVIS Soul */}
         <Animated.View entering={FadeInDown.duration(400).delay(410)}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
@@ -5181,6 +5198,42 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
     marginBottom: 14,
+  },
+
+  /* Knowledge Vault row */
+  vaultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+    marginTop: 12,
+  },
+  vaultIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 11,
+    backgroundColor: Colors.violetDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  vaultInfo: {
+    flex: 1,
+    gap: 2,
+  },
+  vaultTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  vaultSub: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
   },
 
   /* Badge grid */
