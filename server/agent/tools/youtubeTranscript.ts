@@ -291,8 +291,10 @@ export const youtubeTranscriptTool: AgentTool = {
 
       if (isAiGenerated) {
         const body = rawSegments[0].text;
+        const isGeminiTranscript = body.startsWith("[AI-generated transcript via Gemini]");
+        const transcriptMethod = isGeminiTranscript ? "via Gemini" : "audio transcription";
         const header =
-          `AI-Generated Transcript (audio transcription${sourceTag})\n` +
+          `AI-Generated Transcript (${transcriptMethod}${sourceTag})\n` +
           `${"─".repeat(60)}\n`;
         const fullText = header + body;
 
@@ -302,16 +304,21 @@ export const youtubeTranscriptTool: AgentTool = {
             kind: "document",
             filename: `transcript-${(extractVideoId(input) ?? "video")}.txt`,
             content: fullText,
-            caption: `AI-generated transcript (no official captions were available).`,
+            caption: isGeminiTranscript
+              ? `Full transcript via Gemini (no official captions needed).`
+              : `AI-generated transcript (no official captions were available).`,
             mimeType: "text/plain",
           });
           return {
             ok: true,
-            content:
-              `Audio transcription complete (~${Math.round(body.length / 1000)} k chars). ` +
-              `No official captions were available, so the audio was transcribed via AI. ` +
-              `Sending the full transcript as a text file.`,
-            label: `get_youtube_transcript: ai-audio-transcription → file`,
+            content: isGeminiTranscript
+              ? `Transcript complete via Gemini (~${Math.round(body.length / 1000)} k chars). Sending as a text file.`
+              : `Audio transcription complete (~${Math.round(body.length / 1000)} k chars). ` +
+                `No official captions were available, so the audio was transcribed via AI. ` +
+                `Sending the full transcript as a text file.`,
+            label: isGeminiTranscript
+              ? `get_youtube_transcript: gemini → file`
+              : `get_youtube_transcript: ai-audio-transcription → file`,
           };
         }
 
@@ -324,7 +331,9 @@ export const youtubeTranscriptTool: AgentTool = {
         return {
           ok: true,
           content: header + inlineBody + truncNote,
-          label: `get_youtube_transcript: ai-audio-transcription`,
+          label: isGeminiTranscript
+            ? `get_youtube_transcript: gemini`
+            : `get_youtube_transcript: ai-audio-transcription`,
         };
       }
 
