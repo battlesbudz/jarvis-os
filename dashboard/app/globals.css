@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@theme {
+  --color-void: #09090f;
+  --color-surface: #111219;
+  --color-surface-alt: #16171f;
+  --color-surface-hover: #1c1d2a;
+  --color-border: #1e2035;
+  --color-green: #22c55e;
+  --color-green-dim: color-mix(in srgb, #22c55e 15%, transparent);
+  --color-purple: #a855f7;
+  --color-purple-dim: color-mix(in srgb, #a855f7 15%, transparent);
+  --color-gold: #eab308;
+  --color-text: #e8eaed;
+  --color-muted: #6b7280;
+  --color-faint: #2a2d40;
+}
+
+:root {
+  --background: #09090f;
+  --foreground: #e8eaed;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: #1e2035 #09090f;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #09090f;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e2035;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2a2d40;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.animate-blink {
+  animation: blink 2s ease-in-out infinite;
+}
