@@ -6,6 +6,7 @@
  */
 
 import { fetchTranscriptCached } from "../lib/transcriptCache";
+import { humanReadableSource } from "../lib/transcriptSourceLabel";
 
 /** Per-URL character limit (prevents a single very long video from consuming the whole budget). */
 const MAX_CHARS_PER_URL = 60_000;
@@ -57,7 +58,7 @@ export async function buildYouTubeContextBlock(message: string): Promise<string>
     }
 
     try {
-      const { segments } = await fetchTranscriptCached(url);
+      const { segments, source } = await fetchTranscriptCached(url);
 
       if (!segments || segments.length === 0) continue;
 
@@ -98,9 +99,15 @@ export async function buildYouTubeContextBlock(message: string): Promise<string>
       }
 
       const totalDuration = fmtMs(lastRawOffset * toMs);
+      const readableSrc = humanReadableSource(source);
+      const sourceLabel = source === "gemini"
+        ? " | Source: Gemini AI (AI-generated — not verbatim)"
+        : readableSrc
+          ? ` | Source: ${readableSrc}`
+          : "";
       const block =
         `[Auto-fetched YouTube transcript for ${url}]\n` +
-        `Duration: ~${totalDuration} | ${segments.length} caption segments\n` +
+        `Duration: ~${totalDuration} | ${segments.length} caption segments${sourceLabel}\n` +
         "─".repeat(50) +
         "\n" +
         transcript +

@@ -1,4 +1,4 @@
-import { humanReadableSource } from "../tools/youtubeTranscript";
+import { humanReadableSource } from "../../lib/transcriptSourceLabel";
 
 describe("humanReadableSource", () => {
   it("returns null for undefined, empty string, 'unknown', and 'cache'", () => {
@@ -12,21 +12,21 @@ describe("humanReadableSource", () => {
     expect(humanReadableSource("gemini")).toBeNull();
   });
 
-  it("returns 'Supadata' for the supadata source", () => {
-    expect(humanReadableSource("supadata")).toBe("Supadata");
+  it("returns 'Supadata (verbatim captions)' for the supadata source", () => {
+    expect(humanReadableSource("supadata")).toBe("Supadata (verbatim captions)");
   });
 
-  it("returns 'YouTube captions' for all caption-based sources", () => {
-    expect(humanReadableSource("innertube/ANDROID")).toBe("YouTube captions");
-    expect(humanReadableSource("innertube/WEB")).toBe("YouTube captions");
-    expect(humanReadableSource("yt-dlp")).toBe("YouTube captions");
-    expect(humanReadableSource("timedtext")).toBe("YouTube captions");
-    expect(humanReadableSource("youtube-transcript")).toBe("YouTube captions");
+  it("returns 'YouTube captions (verbatim)' for all caption-based sources", () => {
+    expect(humanReadableSource("innertube/ANDROID")).toBe("YouTube captions (verbatim)");
+    expect(humanReadableSource("innertube/WEB")).toBe("YouTube captions (verbatim)");
+    expect(humanReadableSource("yt-dlp")).toBe("YouTube captions (verbatim)");
+    expect(humanReadableSource("timedtext")).toBe("YouTube captions (verbatim)");
+    expect(humanReadableSource("youtube-transcript")).toBe("YouTube captions (verbatim)");
   });
 
-  it("returns 'Whisper (audio)' for audio-transcription sources", () => {
-    expect(humanReadableSource("audio-transcription")).toBe("Whisper (audio)");
-    expect(humanReadableSource("audio-transcription (auto-retry)")).toBe("Whisper (audio)");
+  it("returns 'Whisper (AI audio transcription)' for audio-transcription sources", () => {
+    expect(humanReadableSource("audio-transcription")).toBe("Whisper (AI audio transcription)");
+    expect(humanReadableSource("audio-transcription (auto-retry)")).toBe("Whisper (AI audio transcription)");
   });
 
   it("returns 'browser' and 'local worker' for browser/worker sources", () => {
