@@ -37,24 +37,54 @@ const TRANSCRIPT_PROMPT =
   "Do not include timestamps, speaker labels, or any other formatting — just the spoken words.";
 
 /**
- * Patterns in Gemini error messages that indicate the Flash model explicitly
- * rejected the video (e.g. content policy, model capability limit) rather than
- * a transient network/quota error. When matched, we retry with Pro.
+ * Patterns in Gemini error messages that indicate the primary model explicitly
+ * rejected the video (e.g. content policy, model capability limit, quota) rather
+ * than a transient network error.  When matched, we retry with the Pro fallback.
+ *
+ * Covers both Gemini 1.5 Flash and Gemini 2.0 Flash error wording:
+ *
+ *   Gemini 1.5 / shared patterns
+ *     - "video not supported", "unsupported video", "model not support"
+ *     - "content policy", "safety block"
+ *     - "token limit", "context length", "too long"
+ *
+ *   Gemini 2.0 Flash additional patterns
+ *     - "response was blocked" / "candidate was blocked" (SAFETY finish reason)
+ *     - "HARM_CATEGORY" references in error payloads
+ *     - "finish_reason: SAFETY" surfaced in SDK error messages
+ *     - "RECITATION" finish reason (copyright / verbatim-recitation guard)
+ *     - "PROHIBITED_CONTENT" policy category
+ *     - "RESOURCE_EXHAUSTED" quota / rate-limit responses
+ *     - "context window" exceeded (2.0 uses this phrasing instead of "context length")
+ *     - "maximum tokens" limit messages
  */
-const FLASH_REJECTION_PATTERNS = [
+const PRIMARY_REJECTION_PATTERNS = [
+  // Video / modality support
   /video.*not supported/i,
   /unsupported.*video/i,
   /model.*not support/i,
+  // Content policy / safety (1.5 and 2.0 wording)
   /content.*policy/i,
   /safety.*block/i,
+  /blocked.*safety|safety.*blocked|response.*blocked|candidate.*blocked/i,
+  /harm.*categor/i,
+  /finish.*reason.*safety/i,
+  /recitation/i,
+  /prohibited.*content/i,
+  // Token / context limits (1.5 and 2.0 wording)
   /token.*limit/i,
   /context.*length/i,
+  /context.*window/i,
+  /maximum.*token/i,
   /too.*long/i,
+  // Quota / rate limits (RESOURCE_EXHAUSTED)
+  /resource.*exhaust/i,
+  /quota.*exceed/i,
 ];
 
-function isFlashRejection(err: unknown): boolean {
+function isPrimaryModelRejection(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return FLASH_REJECTION_PATTERNS.some((p) => p.test(msg));
+  return PRIMARY_REJECTION_PATTERNS.some((p) => p.test(msg));
 }
 
 // ── Path 1: YouTube native transcription ──────────────────────────────────────
@@ -98,7 +128,7 @@ export async function fetchTranscriptViaGemini(videoUrl: string): Promise<string
   try {
     return await callGemini("gemini-2.0-flash", videoUrl);
   } catch (flashErr) {
-    if (isFlashRejection(flashErr)) {
+    if (isPrimaryModelRejection(flashErr)) {
       const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
       console.warn(
         `[geminiTranscript] gemini-2.0-flash rejected video (${flashMsg}) — retrying with gemini-1.5-pro`
@@ -514,10 +544,10 @@ export async function transcribeVideoFromUrl(
     try {
       return await callGeminiWithFile("gemini-1.5-flash", fileUri, resolvedMime);
     } catch (flashErr) {
-      if (isFlashRejection(flashErr)) {
+      if (isPrimaryModelRejection(flashErr)) {
         const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
         console.warn(
-          `[geminiTranscript] Flash rejected uploaded file (${flashMsg}) — retrying with gemini-1.5-pro`
+          `[geminiTranscript] gemini-1.5-flash rejected uploaded file (${flashMsg}) — retrying with gemini-1.5-pro`
         );
         return await callGeminiWithFile("gemini-1.5-pro", fileUri, resolvedMime);
       }
