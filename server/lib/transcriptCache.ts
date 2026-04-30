@@ -1433,7 +1433,7 @@ export interface FetchTranscriptOptions {
 export async function fetchTranscriptCached(
   input: string,
   options: FetchTranscriptOptions = {}
-): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean; source: string; asyncJobPending?: boolean; jobId?: string }> {
+): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean; source: string; asyncJobPending?: boolean; jobId?: string; phaseErrors?: { gemini?: string; supadata?: string }; supadataTimedOut?: boolean }> {
   const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart, userId } = options;
   const videoId = extractVideoId(input);
 
@@ -1481,6 +1481,8 @@ export async function fetchTranscriptCached(
   const resolvedId = videoId ?? input.trim();
   let segments: TranscriptResponse[] = [];
   let source = "unknown";
+  const phaseErrors: { gemini?: string; supadata?: string } = {};
+  let supadataTimedOut = false;
 
   // ── Phase 0: Gemini native video understanding ────────────────────────────
   // Passes the YouTube URL directly to Gemini 2.5 Flash as a fileData part.
@@ -1518,13 +1520,13 @@ export async function fetchTranscriptCached(
       const geminiCause = geminiErr instanceof Error && geminiErr.cause
         ? ` (cause: ${geminiErr.cause instanceof Error ? geminiErr.cause.message : String(geminiErr.cause)})`
         : "";
-      console.warn(
-        `[transcriptCache] Phase 0 Gemini failed for ${resolvedId} — falling through to Phase 1: ` +
-        geminiErrMsg + geminiCause
-      );
-      if (geminiErr instanceof Error && geminiErr.stack) {
-        console.warn(`[transcriptCache] Phase 0 stack: ${geminiErr.stack}`);
-      }
+      const fullMsg = geminiErrMsg + geminiCause;
+      phaseErrors.gemini = fullMsg;
+      console.warn(`[transcriptCache] Phase 0 (Gemini) FAILED for ${resolvedId}:`, {
+        error: fullMsg,
+        stack: geminiErr instanceof Error ? geminiErr.stack?.slice(0, 400) : undefined,
+        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key (not the Replit proxy key)",
+      });
     }
   }
 
@@ -1601,9 +1603,21 @@ export async function fetchTranscriptCached(
         };
       }
       const msg = supadataErr instanceof Error ? supadataErr.message : String(supadataErr);
-      console.warn(
-        `[transcriptCache] Phase 0.5 Supadata failed for ${resolvedId} — falling through to Phase 1: ${msg}`
-      );
+      phaseErrors.supadata = msg;
+      if (msg.toLowerCase().includes("timed out after")) {
+        supadataTimedOut = true;
+      }
+      console.warn(`[transcriptCache] Phase 0.5 (Supadata) FAILED for ${resolvedId}:`, {
+        error: msg,
+        hint: "Check SUPADATA_API_KEY is valid. For no-caption videos, AI generation takes 5-10 min.",
+      });
+
+      // Short-circuit when Supadata timed out — Phases 1-4 are all IP-blocked on Replit
+      // datacenter servers, so falling through wastes time and masks the real failure.
+      if (supadataTimedOut) {
+        console.warn(`[transcriptCache] Phase 0.5 timed out for ${resolvedId} — skipping Phases 1-4 (all IP-blocked on datacenter)`);
+        return { segments: [], noCaptionsDetected: true, source: "supadata", phaseErrors, supadataTimedOut: true };
+      }
     }
   }
 
@@ -1826,7 +1840,14 @@ export async function fetchTranscriptCached(
     );
   }
 
-  return { segments, noCaptionsDetected: noCaptions, source };
+  const hasPhaseErrors = Object.keys(phaseErrors).length > 0;
+  return {
+    segments,
+    noCaptionsDetected: noCaptions,
+    source,
+    ...(hasPhaseErrors ? { phaseErrors } : {}),
+    ...(supadataTimedOut ? { supadataTimedOut: true } : {}),
+  };
 }
 
 /** Manually invalidate a single video's cache entry (e.g. on explicit user request). */
