@@ -306,6 +306,7 @@ Jarvis can now auto-detect habits from orchestration traces and interaction logs
   - **Active Custom Skills** — all non-built-in user_skills with a toggle (active/inactive) and delete button.
   - Mirrors the Memory Review card design (`memoryRow` / `memoryEmptyCard` styles).
 
+<<<<<<< HEAD
 ## JARVIS COMMAND — Next.js Mission Control Dashboard
 
 A separate **Next.js 16 + Tailwind v4** web dashboard running on **port 3001**, providing a desktop-class Mission Control interface alongside the Expo mobile app.
@@ -345,3 +346,47 @@ A separate **Next.js 16 + Tailwind v4** web dashboard running on **port 3001**, 
 - `dashboard/.env.local` — `DASHBOARD_SECRET` + `JARVIS_API`
 - `server/auth.ts` — `authMiddleware` (async, DASHBOARD_SECRET bypass at line ~292)
 - `server/routes.ts` — `GET /api/goals` added (returns `goals.data` JSONB array)
+=======
+## LLM Wiki — Karpathy-style Compounding Knowledge Base (Task #1126)
+
+The Knowledge Vault has been upgraded from a 5-page static wiki (regenerated every 6 hours) to a Karpathy-style compounding wiki where knowledge is compiled once and accumulated over time.
+
+### Three Core Operations
+
+**Ingest** (`ingestSource(userId, sourceText, sourceType)` in `server/memory/vaultWriter.ts`):
+- Triggered automatically after memories are stored from rich source types (chat, telegram, email, transcript, document, voice)
+- Loads the current wiki index, asks the LLM which pages are affected + what new entity/concept pages to create
+- Updates each affected page with new information and embeds `[[slug]]` cross-references
+- Creates new entity/concept pages for named people, projects, companies, or concepts worth their own page
+- Regenerates the index page at the end of each ingest
+
+**Query Filing** (`fileQuery(userId, question, answer)` in `server/memory/vaultWriter.ts`):
+- Fires after every substantive coach/Telegram response (100+ chars)
+- LLM decides if the answer is worth filing (novel synthesis, multi-step reasoning, lasting factual value)
+- Creates a `queries/slug` page that can be retrieved for similar future questions instead of re-deriving
+
+**Lint** (`lintWiki(userId)` in `server/memory/vaultWriter.ts`):
+- Runs every Sunday at midnight via the scheduler
+- Scans all pages in batches, detects contradictions and missing cross-links
+- Applies corrections page-by-page, adds missing `[[slug]]` links
+- Archives entity/concept/query pages inactive for 30+ days (core pages never archived)
+- Writes a lint log record + updates the index page with a `## Lint Log` section
+
+### Schema Changes
+- `knowledge_vault_pages` extended with: `page_type` (core|entity|concept|query), `tags` (JSONB array), `cross_refs` (JSONB array of linked slugs), `archived_at` (timestamp for soft archiving)
+- New `wiki_lint_log` table tracking lint run stats: pages_scanned, pages_updated, pages_archived, contradictions_fixed, cross_links_added, summary
+- Hard-coded 5-slug constraint removed — the wiki now grows to arbitrary size
+
+### Key Files
+- `server/memory/vaultWriter.ts` — all wiki operations: ingestSource, fileQuery, generateWikiIndex, lintWiki, lintWikiForAllUsers
+- `server/memory/extractor.ts` — routes rich sources (chat/email/transcript) through ingestSource instead of maybeRegenerateVault
+- `server/channels/coachAgent.ts` — calls fileQuery after substantive replies (fire-and-forget)
+- `server/scheduler.ts` — weekly lint cron (Sunday 00:00)
+- `server/vaultRoutes.ts` — updated to expose pageType, crossRefs, tags; new `/api/vault/page?slug=` endpoint for slug lookup; `/api/vault/lint` for manual trigger
+- `app/vault.tsx` — full rewrite: page type badges (Core/Entity/Concept/Query), Index/Browse All tabs, cross-reference panel, backlinks panel, clickable `[[wiki-link]]` navigation, grouped page list by type
+
+### Vault UI Changes
+- **Index tab**: shows the master wiki index page as entry point; browse-by-type summary with page counts
+- **Browse All tab**: pages grouped by type (Core → Entity → Concept → Query), each card shows type badge, cross-ref count, and time
+- **Detail view**: page type badge next to timestamp; `[[slug]]` links in body are tappable and navigate to referenced pages; References panel shows "links to" and "linked from" (backlinks)
+>>>>>>> c8e4fdb (feat: LLM Wiki — Karpathy-style compounding knowledge base (Task #1126))

@@ -260,9 +260,21 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
 
   if (stored.length > 0) {
     markSoulStale(userId).catch((err) => console.error("[Memory] markSoulStale:", err));
-    import("./vaultWriter").then(({ maybeRegenerateVault }) => {
-      maybeRegenerateVault(userId).catch((err) => console.error("[Memory] maybeRegenerateVault:", err));
-    }).catch((err) => console.error("[Memory] vaultWriter import failed:", err));
+
+    // For rich source types use ingestSource (compounding wiki) instead of
+    // the legacy TTL-gated maybeRegenerateVault.
+    const richSourceTypes = ["chat", "telegram", "email", "transcript", "document", "voice"];
+    if (richSourceTypes.includes(sourceType)) {
+      import("./vaultWriter").then(({ ingestSource }) => {
+        ingestSource(userId, source, sourceType).catch((err) =>
+          console.error("[Memory] ingestSource:", err),
+        );
+      }).catch((err) => console.error("[Memory] vaultWriter import failed:", err));
+    } else {
+      import("./vaultWriter").then(({ maybeRegenerateVault }) => {
+        maybeRegenerateVault(userId).catch((err) => console.error("[Memory] maybeRegenerateVault:", err));
+      }).catch((err) => console.error("[Memory] vaultWriter import failed:", err));
+    }
   }
 
   if (!hadAnyError) {
