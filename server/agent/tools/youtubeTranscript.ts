@@ -227,6 +227,11 @@ export const youtubeTranscriptTool: AgentTool = {
     "Works for short clips, YouTube Shorts, and videos over an hour long. " +
     "Use this when the user shares a YouTube URL and wants you to read, summarize, quote, " +
     "analyse, or extract insights from it — including visual or on-screen content. " +
+    "IMPORTANT: Only call this tool when the user has explicitly provided a YouTube URL or video ID " +
+    "in their current message. Never re-use a video URL or ID from an earlier part of the conversation — " +
+    "if the user asks about 'another video' or 'a different video' without providing a URL, ask them to share the link first. " +
+    "Always tell the user which method successfully retrieved the transcript (e.g. 'via Supadata', 'via YouTube captions', 'via Whisper') — " +
+    "this information is in the result label and transcript header. " +
     "Set refresh=true when the user asks to re-read, refresh, or get the latest version of a video. " +
     "Set includeVisuals=false only if the user explicitly wants transcript text only with no visual analysis. " +
     "Set force_audio=true to skip caption lookups entirely and transcribe the audio directly via Whisper — " +
@@ -421,7 +426,7 @@ export const youtubeTranscriptTool: AgentTool = {
           content:
             `Transcript retrieved (${rawSegments.length} segments, ~${totalDuration}${sourceTag}). ` +
             `The full text is long (~${Math.round(body.length / 1000)} k chars) — I'm sending it as a text file so it's easy to save or search.`,
-          label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration} → file`,
+          label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}${sourceTag} → file`,
         };
       }
 
@@ -436,7 +441,7 @@ export const youtubeTranscriptTool: AgentTool = {
       return {
         ok: true,
         content: header + inlineBody + truncationNote,
-        label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}`,
+        label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}${sourceTag}`,
       };
     };
 
