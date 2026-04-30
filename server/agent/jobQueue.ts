@@ -934,7 +934,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         `[JobQueue] complete custom_agent job ${job.id} agent="${agentDef.name}" deliverable=${deliverableId}`,
       );
 
-      const notifyMsg = `${sub.summary || "Ready for review"} — open Inbox to review.`;
+      const notifyMsg = sub.body || sub.summary || "Ready for review";
       await notifyJobComplete(
         job.userId,
         "custom_agent",
@@ -1783,7 +1783,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       metadata: { jobId: job.id, agentType: job.agentType, recovery: true },
     }).catch(() => {});
     console.log(`[JobQueue] complete ${job.agentType} job ${job.id} → deliverable ${deliverableId}`);
-    const subNotifyMsg = `${sub.summary || "Ready for review"} — open Inbox to approve, edit, or discard.${pdfNote}`;
+    const subNotifyMsg = (sub.body || sub.summary || "Ready for review") + pdfNote;
 
     // For writing jobs with PDF attachments, forward those attachments in the notification.
     // Research jobs: the batch coordinator handles attachments at flush time.
