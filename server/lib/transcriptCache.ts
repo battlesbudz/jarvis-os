@@ -7,7 +7,7 @@
  *
  * Fetch pipeline (metadata-first):
  *   Phase 0 — Gemini native video understanding (YouTube URLs only)
- *     → Passes the YouTube URL directly to Gemini 1.5 Flash as a fileData part.
+ *     → Passes the YouTube URL directly to Gemini 2.5 Flash as a fileData part.
  *     → Google fetches and transcribes the video from its own infrastructure.
  *     → No yt-dlp, no ffmpeg, no IP blocks. Works for any video length.
  *     → Skipped if AI_INTEGRATIONS_GEMINI_API_KEY is not set.
@@ -333,6 +333,13 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>();
+
+/**
+ * Lazily resolved reference to isTranscriptRefusal from geminiTranscript.
+ * Cached here so the dynamic import is resolved at most once per process
+ * and reused for both the stale-cache eviction check and any future callers.
+ */
+let _isTranscriptRefusal: ((text: string) => boolean) | undefined;
 
 /** Extract the 11-char YouTube video ID from a URL or bare ID. Returns null if unrecognised. */
 export function extractVideoId(input: string): string | null {
@@ -1422,8 +1429,8 @@ export async function fetchTranscriptCached(
       const GEMINI_LABEL = "[AI-generated transcript via Gemini]";
       if (hit.segments.length === 1 && hit.segments[0].text.startsWith(GEMINI_LABEL)) {
         const body = hit.segments[0].text.slice(GEMINI_LABEL.length).trimStart();
-        const { isTranscriptRefusal } = await import("./geminiTranscript");
-        if (isTranscriptRefusal(body)) {
+        _isTranscriptRefusal ??= (await import("./geminiTranscript")).isTranscriptRefusal;
+        if (_isTranscriptRefusal(body)) {
           console.warn(
             `[transcriptCache] EVICT ${videoId} — cached entry contains a Gemini refusal (stale). Fetching live.`
           );
@@ -1455,10 +1462,9 @@ export async function fetchTranscriptCached(
   let source = "unknown";
 
   // ── Phase 0: Gemini native video understanding ────────────────────────────
-  // Passes the YouTube URL directly to Gemini 2.0 Flash as a fileData part.
-  // Gemini 2.0 Flash is the minimum model version that supports YouTube URL-
-  // based video processing via fileData.fileUri — Gemini 1.5 models silently
-  // fail or return empty responses for YouTube URLs.
+  // Passes the YouTube URL directly to Gemini 2.5 Flash as a fileData part.
+  // Gemini 2.0+ models support YouTube URL-based video processing natively
+  // via fileData.fileUri.
   // Google fetches and processes the video from its own infrastructure — no
   // yt-dlp, no ffmpeg, no server-IP blocks, no file-size limit.
   // Skipped silently when the API key is absent or this is not a YouTube URL.
