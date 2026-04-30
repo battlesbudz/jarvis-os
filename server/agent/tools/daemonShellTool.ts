@@ -355,7 +355,7 @@ const screenshotCountPerCtx = new WeakMap<object, number>();
  * Pass the ToolContext object (ctx) from the tool's execute function.
  * Returns true unconditionally when ctx is not provided (no-op for internal callers).
  */
-function checkAndIncrementScreenshotBudget(ctx: object | undefined): boolean {
+export function checkAndIncrementScreenshotBudget(ctx: object | undefined): boolean {
   if (!ctx) return true;
   const current = screenshotCountPerCtx.get(ctx) ?? 0;
   if (current >= MAX_SCREENSHOTS_PER_TURN) return false;
@@ -635,6 +635,7 @@ type ScrollAndRefreshResult = {
 async function scrollAndRefreshScreenMap(
   userId: string,
   tag: string,
+  ctx?: object,
 ): Promise<ScrollAndRefreshResult> {
   console.log(`[${tag}] scrolling down to reveal off-screen content`);
 
@@ -668,7 +669,7 @@ async function scrollAndRefreshScreenMap(
     // Non-fatal — still attempt to refresh the ScreenMap even if the swipe failed
   }
   await sleep(SCROLL_SETTLE_MS);
-  const screenMap = await buildScreenMapElements(userId);
+  const screenMap = await buildScreenMapElements(userId, ctx);
   return { swipeOk, swipeError: swipeResult.ok ? undefined : (swipeResult.error ?? "unknown"), screenMap };
 }
 
@@ -2561,7 +2562,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // still takes effect even when the caller disables the downward scroll loop.
     if ((!bestElement || bestScore === 0) && resetScroll) {
       console.log(`[android_swipe_element] element "${label}" not found on initial screen — resetting to top of page before downward scroll-to-find loop`);
-      await scrollToTop(ctx.userId, 5);
+      await scrollToTop(ctx.userId, 5, ctx);
       // Brief pause so the page settles after scrolling to top
       await new Promise((resolve) => setTimeout(resolve, 400));
 
@@ -3158,7 +3159,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
  * Shared by both androidScrollToTopTool and the reset_scroll path inside
  * androidTapElementTool so the logic is not duplicated.
  */
-async function scrollToTop(userId: string, swipeCount: number): Promise<{ swipesPerformed: number }> {
+async function scrollToTop(userId: string, swipeCount: number, ctx?: object): Promise<{ swipesPerformed: number }> {
   const screenMidX = 540;
   const swipeY1 = 300;   // start near the top of the screen
   const swipeY2 = 1500;  // end near the bottom  (finger ↓ → content scrolls up)
@@ -3172,7 +3173,7 @@ async function scrollToTop(userId: string, swipeCount: number): Promise<{ swipes
     // capture fails): fingerprint the readable element set by label + coords.
     // We always read the hierarchy so the fingerprint is available as a fallback
     // even when a screenshot was taken but the post-swipe capture later fails.
-    const preSwipeScreenshot: string | null = await captureScreenshot(userId);
+    const preSwipeScreenshot: string | null = await captureScreenshot(userId, ctx);
     const preSwipeElements = await readScreen(userId);
     const preSwipeFingerprint: string = preSwipeElements
       .map((el) => `${el.label}:${el.x}:${el.y}`)
@@ -3198,7 +3199,7 @@ async function scrollToTop(userId: string, swipeCount: number): Promise<{ swipes
     // diff is below 2 % the page has not moved — we are already at the top.
     let screenshotCheckConclusive = false;
     if (preSwipeScreenshot) {
-      const postSwipeScreenshot = await captureScreenshot(userId);
+      const postSwipeScreenshot = await captureScreenshot(userId, ctx);
       if (postSwipeScreenshot) {
         screenshotCheckConclusive = true;
         const diffRatio = await screenshotDiff(preSwipeScreenshot, postSwipeScreenshot).catch(() => 1);
@@ -3270,7 +3271,7 @@ Returns the number of swipes performed.`,
     const rawCount = typeof args.swipe_count === "number" ? Math.floor(args.swipe_count) : 5;
     const swipeCount = Math.max(1, Math.min(rawCount, 20));
 
-    const { swipesPerformed } = await scrollToTop(ctx.userId, swipeCount);
+    const { swipesPerformed } = await scrollToTop(ctx.userId, swipeCount, ctx);
 
     console.log(`[android_scroll_to_top] userId=${ctx.userId} performed ${swipesPerformed} swipe(s) to top`);
 
@@ -3427,7 +3428,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // still takes effect even when the caller disables the downward scroll loop.
     if ((!bestElement || bestScore === 0) && resetScroll) {
       console.log(`[android_tap_element] element "${label}" not found on initial screen — resetting to top of page before downward scroll-to-find loop`);
-      await scrollToTop(ctx.userId, 5);
+      await scrollToTop(ctx.userId, 5, ctx);
       // Brief pause so the page settles after scrolling to top
       await new Promise((resolve) => setTimeout(resolve, 400));
 
@@ -3871,7 +3872,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // because a previous interaction left the page scrolled partway down.
     if ((!bestElement || bestScore === 0) && resetScroll) {
       console.log(`[android_long_press_element] element "${label}" not found on initial screen — resetting to top of page`);
-      await scrollToTop(ctx.userId, 5);
+      await scrollToTop(ctx.userId, 5, ctx);
       // Brief pause so the page settles after scrolling to top
       await new Promise((resolve) => setTimeout(resolve, 400));
 
@@ -4183,7 +4184,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // still takes effect even when the caller disables the downward scroll loop.
     if ((!dropdownBest || dropdownScore === 0) && resetScroll) {
       console.log(`[android_select_option] dropdown "${label}" not found on initial screen — resetting to top of page before downward scroll-to-find loop`);
-      await scrollToTop(ctx.userId, 5);
+      await scrollToTop(ctx.userId, 5, ctx);
       // Brief pause so the page settles after scrolling to top
       await new Promise((resolve) => setTimeout(resolve, 400));
 
@@ -4725,7 +4726,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // ── Optional reset: scroll to top if source element not found ─────────────
     if ((!fromElement || fromScore === 0) && resetScroll) {
       console.log(`[android_drag_element] element "${fromLabel}" not found on initial screen — resetting to top of page`);
-      await scrollToTop(ctx.userId, 5);
+      await scrollToTop(ctx.userId, 5, ctx);
       await new Promise((resolve) => setTimeout(resolve, 400));
 
       const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
@@ -4930,7 +4931,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // position (e.g. dragging from the bottom of a list to near the top).
       if ((!toElement || toScore === 0) && resetScroll && maxScrollAttempts > 0) {
         console.log(`[android_drag_element] destination "${toLabel}" not found after downward scan — resetting to top to search upward coverage`);
-        await scrollToTop(ctx.userId, 5);
+        await scrollToTop(ctx.userId, 5, ctx);
         await new Promise((resolve) => setTimeout(resolve, 400));
 
         const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
@@ -5059,7 +5060,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         } else {
           // Source scrolled off-screen — reset to top and re-locate
           console.log(`[android_drag_element] source "${fromLabel}" no longer visible after destination scroll — resetting to top`);
-          await scrollToTop(ctx.userId, 5);
+          await scrollToTop(ctx.userId, 5, ctx);
           await new Promise((resolve) => setTimeout(resolve, 400));
 
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
@@ -6319,7 +6320,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     while ((!bestElement || bestScore === 0) && scrollAttempts < SCROLL_MAX_ATTEMPTS) {
       scrollAttempts++;
       console.log(`[android_type_into_element] userId=${ctx.userId} field="${label}" not found — scroll attempt ${scrollAttempts}/${SCROLL_MAX_ATTEMPTS}`);
-      const scrolled = await scrollAndRefreshScreenMap(ctx.userId, "android_type_into_element");
+      const scrolled = await scrollAndRefreshScreenMap(ctx.userId, "android_type_into_element", ctx);
       if (!scrolled.swipeOk) {
         console.warn(`[android_type_into_element] scroll swipe failed (attempt ${scrollAttempts}): ${scrolled.swipeError}`);
       }
@@ -6755,7 +6756,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
         result.scroll_attempts++;
         result.steps.push(`Field "${fieldLabel}" still not found — scrolling down (attempt ${result.scroll_attempts}/${SCROLL_MAX_ATTEMPTS})...`);
         console.log(`[android_fill_form] userId=${ctx.userId} field="${fieldLabel}" not found — scroll attempt ${result.scroll_attempts}/${SCROLL_MAX_ATTEMPTS}`);
-        const scrolled = await scrollAndRefreshScreenMap(ctx.userId, "android_fill_form");
+        const scrolled = await scrollAndRefreshScreenMap(ctx.userId, "android_fill_form", ctx);
         const swipeStatus = scrolled.swipeOk ? "swipe ok" : `swipe failed: ${scrolled.swipeError ?? "unknown"}`;
         if (scrolled.screenMap.ok) {
           screenElements = scrolled.screenMap.elements;
