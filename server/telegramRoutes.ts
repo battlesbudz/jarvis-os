@@ -603,6 +603,9 @@ async function processUpdate(update: any): Promise<void> {
 
     let imageUrl: string | undefined;
     let text = message.text?.trim() || message.caption?.trim() || '';
+    // Capture the clean user input before any context-prefix injection so task
+    // guidance is stored without the "[Replying to Jarvis's message: ...]" wrapper.
+    const rawUserText = text;
 
     // Inject context when the user replies to a specific Jarvis message, so the
     // agent knows what the reply is referring to without needing conversation history.
@@ -1452,6 +1455,54 @@ async function processUpdate(update: any): Promise<void> {
       }
 
       const userId = link[0].userId;
+
+      // ── "Needs You" plain-message routing ────────────────────────────────
+      // If the user has tasks flagged as needsAttention and their message did
+      // NOT arrive as a direct Telegram reply to a task notification (which is
+      // handled earlier via the taskTagMatch path), auto-route to the task
+      // resolver so they can answer without leaving Telegram.
+      // Skip slash commands — they are intentional commands, not task answers.
+      if (rawUserText && !taskTagMatch && !rawUserText.startsWith('/')) {
+        try {
+          const needsTasks = await db
+            .select()
+            .from(schema.jarvisScheduledTasks)
+            .where(
+              and(
+                eq(schema.jarvisScheduledTasks.userId, userId),
+                eq(schema.jarvisScheduledTasks.needsAttention, true)
+              )
+            )
+            .orderBy(desc(schema.jarvisScheduledTasks.createdAt));
+
+          if (needsTasks.length === 1) {
+            // Use rawUserText so stored guidance isn't polluted with the
+            // "[Replying to Jarvis's message: ...]" context-injection prefix.
+            const result = await resolveScheduledTaskAttention(userId, needsTasks[0].id, rawUserText);
+            if (result.ok) {
+              await sendMessage(
+                chatId,
+                `✅ Got it. I've saved your guidance for *"${result.taskTitle}"* and will apply it next time.`
+              );
+              return;
+            }
+          } else if (needsTasks.length > 1) {
+            const taskList = needsTasks
+              .map((t, i) => {
+                const q = t.attentionQuestion ? `\n   ↳ ${t.attentionQuestion}` : "";
+                return `${i + 1}. *"${t.title}"*${q}`;
+              })
+              .join("\n\n");
+            await sendMessage(
+              chatId,
+              `You have ${needsTasks.length} tasks waiting for your input:\n\n${taskList}\n\nPlease reply directly to the specific task notification message so I know which one your answer applies to.`
+            );
+            return;
+          }
+        } catch (needsErr) {
+          console.error("[Telegram] needsAttention routing error:", needsErr);
+        }
+      }
 
       await handleCoachReply(userId, chatId, text, imageUrl);
     } catch (err) {
