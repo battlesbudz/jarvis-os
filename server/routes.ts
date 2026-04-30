@@ -72,6 +72,7 @@ interface PrimeSections {
   personas: Record<string, string>;
   coachingRules: string;
   emailFormat: string;
+  actuation: string;
 }
 
 const PRIME_DEFAULTS: PrimeSections = {
@@ -122,6 +123,21 @@ Body:
 [email body]
 ---END DRAFT---
 Then add a brief note like "I've formatted this as a draft — tap 'Save to Drafts' to send it to your Gmail."`,
+  actuation: `## Actuation — You Have Real Hands
+You can take real actions on connected services. Use these tools proactively when the user asks:
+
+- **check_connections** — Always call this before claiming a service is (or isn't) connected. Never make assumptions about connection status.
+- **generate_reconnect_link** — When a Google or Microsoft account is disconnected and the user wants to reconnect, call this to generate a tappable OAuth button. After calling it, say something like "I've added a button below — tap it to reconnect." Do NOT write the URL in your message text.
+- **connect_channel** — When the user asks to connect Telegram, WhatsApp, Slack, or Discord, call this to generate a connection code. After calling it, the tool result JSON contains a "code" field for Telegram. For Telegram: say "I've added a button below — tap it to open Telegram, then type the code **[CODE]** in the chat." (replace [CODE] with the actual code value from the tool result). Do NOT write raw URLs. Supported channels: telegram, whatsapp, slack, discord.
+- **create_calendar_event** — When the user says "block time", "schedule a meeting", "add to my calendar" — call this to actually create the event. Don't describe what you'd do, do it.
+- **fetch_emails** — Fetch inbox emails on demand beyond the ambient context.
+- **send_email** — When the user explicitly confirms they want to send an email (not just draft), call this. Always confirm before sending.
+- **schedule_jarvis_task** — Schedule a future task for Jarvis to act on at a specific time. Use when the user says "remind me to...", "schedule...", "do X at Y time", or asks Jarvis to take an action later. Always confirm the scheduled time before calling. Supports recurrence (daily, weekly, weekdays, every Monday, etc.).
+- **daemon_action** — Execute actions on the user's paired daemon (desktop or Android). {{DAEMON_SECTION}}
+- **image_generate** — Generate an image from a text prompt. Use model "dalle" (default, fast) for illustrations and concepts. Use model "flux" when the user asks for photorealistic or artistic images (requires INFSH_API_KEY).
+- **generate_video** — Generate a short AI video (2-6 min). Always warn the user it will take a few minutes before calling. Requires INFSH_API_KEY. Use for animated scenes or explicit video requests only.
+{{SELF_IMPROVEMENT_SECTION}}
+**Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected. When a user asks to connect any channel, always call connect_channel rather than giving manual instructions.`,
 };
 
 function loadPrimeSections(): PrimeSections {
@@ -129,7 +145,7 @@ function loadPrimeSections(): PrimeSections {
   let content: string;
   try {
     content = fs.readFileSync(filePath, "utf8");
-    console.log('[routes] agents/PRIME.md loaded — sections: coachingFrameworks, personas (5), coachingRules, emailFormat');
+    console.log('[routes] agents/PRIME.md loaded — sections: coachingFrameworks, personas (5), coachingRules, emailFormat, actuation');
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     console.warn(`[routes] agents/PRIME.md unavailable: ${reason} — using built-in defaults`);
@@ -154,10 +170,11 @@ function loadPrimeSections(): PrimeSections {
     personas[key] = sectionMap[heading] ?? PRIME_DEFAULTS.personas[key];
   }
   return {
-    coachingFrameworks: sectionMap['Coaching Frameworks You Draw From'] ?? PRIME_DEFAULTS.coachingFrameworks,
+    coachingFrameworks: sectionMap['Coaching Frameworks You Draw From']   ?? PRIME_DEFAULTS.coachingFrameworks,
     personas,
-    coachingRules:      sectionMap['How you coach']   ?? PRIME_DEFAULTS.coachingRules,
-    emailFormat:        sectionMap['Email Drafting']  ?? PRIME_DEFAULTS.emailFormat,
+    coachingRules:      sectionMap['How you coach']                       ?? PRIME_DEFAULTS.coachingRules,
+    emailFormat:        sectionMap['Email Drafting']                      ?? PRIME_DEFAULTS.emailFormat,
+    actuation:          sectionMap['Actuation — You Have Real Hands']     ?? PRIME_DEFAULTS.actuation,
   };
 }
 
@@ -401,21 +418,9 @@ ${PRIME.coachingRules}
 
 ${PRIME.emailFormat}
 
-## Actuation — You Have Real Hands
-You can take real actions on connected services. Use these tools proactively when the user asks:
-
-- **check_connections** — Always call this before claiming a service is (or isn't) connected. Never make assumptions about connection status.
-- **generate_reconnect_link** — When a Google or Microsoft account is disconnected and the user wants to reconnect, call this to generate a tappable OAuth button. After calling it, say something like "I've added a button below — tap it to reconnect." Do NOT write the URL in your message text.
-- **connect_channel** — When the user asks to connect Telegram, WhatsApp, Slack, or Discord, call this to generate a connection code. After calling it, the tool result JSON contains a "code" field for Telegram. For Telegram: say "I've added a button below — tap it to open Telegram, then type the code **[CODE]** in the chat." (replace [CODE] with the actual code value from the tool result). Do NOT write raw URLs. Supported channels: telegram, whatsapp, slack, discord.
-- **create_calendar_event** — When the user says "block time", "schedule a meeting", "add to my calendar" — call this to actually create the event. Don't describe what you'd do, do it.
-- **fetch_emails** — Fetch inbox emails on demand beyond the ambient context.
-- **send_email** — When the user explicitly confirms they want to send an email (not just draft), call this. Always confirm before sending.
-- **schedule_jarvis_task** — Schedule a future task for Jarvis to act on at a specific time. Use when the user says "remind me to...", "schedule...", "do X at Y time", or asks Jarvis to take an action later. Always confirm the scheduled time before calling. Supports recurrence (daily, weekly, weekdays, every Monday, etc.).
-- **daemon_action** — Execute actions on the user's paired daemon (desktop or Android). ${daemonSection || 'Call check_connections first to determine which daemon type is paired and which actions are available.'}
-- **image_generate** — Generate an image from a text prompt. Use model "dalle" (default, fast) for illustrations and concepts. Use model "flux" when the user asks for photorealistic or artistic images (requires INFSH_API_KEY).
-- **generate_video** — Generate a short AI video (2-6 min). Always warn the user it will take a few minutes before calling. Requires INFSH_API_KEY. Use for animated scenes or explicit video requests only.
-${selfImprovementSection ? `\n${selfImprovementSection}` : ''}
-**Critical rule**: Never claim you can or cannot access a service without first calling check_connections. Never promise to send an email, create a calendar event, or run a daemon command if you haven't verified the service is connected. When a user asks to connect any channel, always call connect_channel rather than giving manual instructions.`;
+${PRIME.actuation
+  .replace('{{DAEMON_SECTION}}', daemonSection || 'Call check_connections first to determine which daemon type is paired and which actions are available.')
+  .replace('{{SELF_IMPROVEMENT_SECTION}}', selfImprovementSection ? `\n${selfImprovementSection}` : '')}`;
 }
 
 export async function buildPlanFromInputs(body: any): Promise<{
