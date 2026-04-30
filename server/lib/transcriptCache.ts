@@ -1434,7 +1434,10 @@ export async function fetchTranscriptCached(
   let source = "unknown";
 
   // ── Phase 0: Gemini native video understanding ────────────────────────────
-  // Passes the YouTube URL directly to Gemini 1.5 Flash as a fileData part.
+  // Passes the YouTube URL directly to Gemini 2.0 Flash as a fileData part.
+  // Gemini 2.0 Flash is the minimum model version that supports YouTube URL-
+  // based video processing via fileData.fileUri — Gemini 1.5 models silently
+  // fail or return empty responses for YouTube URLs.
   // Google fetches and processes the video from its own infrastructure — no
   // yt-dlp, no ffmpeg, no server-IP blocks, no file-size limit.
   // Skipped silently when the API key is absent or this is not a YouTube URL.
@@ -1461,9 +1464,13 @@ export async function fetchTranscriptCached(
         console.warn("[transcriptCache] Phase 0 skipped — AI_INTEGRATIONS_GEMINI_API_KEY not set");
       }
     } catch (geminiErr) {
+      const geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+      const geminCause = geminiErr instanceof Error && geminiErr.cause
+        ? ` (cause: ${geminiErr.cause instanceof Error ? geminiErr.cause.message : String(geminiErr.cause)})`
+        : "";
       console.warn(
         `[transcriptCache] Phase 0 Gemini failed for ${resolvedId} — falling through to Phase 1: ` +
-        (geminiErr instanceof Error ? geminiErr.message : String(geminiErr))
+        geminiErrMsg + geminCause
       );
     }
   }

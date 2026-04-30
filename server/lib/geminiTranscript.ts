@@ -81,10 +81,12 @@ async function callGemini(model: string, videoUrl: string): Promise<string> {
  * Fetches a full spoken transcript for a YouTube video URL using Gemini.
  *
  * Strategy:
- *   1. Try gemini-1.5-flash (fast and cheap)
- *   2. If Flash explicitly rejects the video (content policy, model limit, etc.),
- *      retry once with gemini-1.5-pro
- *   3. Any other error is rethrown so the caller can fall through to Phase 1
+ *   1. Try gemini-2.0-flash — the only Gemini model that supports YouTube URL
+ *      processing natively via fileData.fileUri (Gemini 1.5 models do NOT support
+ *      YouTube URLs in fileData; they silently fail or return empty responses).
+ *   2. If 2.0-flash explicitly rejects the video (content policy, model limit, etc.),
+ *      retry once with gemini-1.5-pro as a conservative fallback.
+ *   3. Any other error is rethrown so the caller can fall through to Phase 1.
  *
  * @param videoUrl - Full YouTube URL (e.g. https://www.youtube.com/watch?v=...)
  * @returns The full transcript as plain text
@@ -92,17 +94,17 @@ async function callGemini(model: string, videoUrl: string): Promise<string> {
  */
 export async function fetchTranscriptViaGemini(videoUrl: string): Promise<string> {
   try {
-    return await callGemini("gemini-1.5-flash", videoUrl);
+    return await callGemini("gemini-2.0-flash", videoUrl);
   } catch (flashErr) {
     if (isFlashRejection(flashErr)) {
       const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
       console.warn(
-        `[geminiTranscript] Flash rejected video (${flashMsg}) — retrying with gemini-1.5-pro`
+        `[geminiTranscript] gemini-2.0-flash rejected video (${flashMsg}) — retrying with gemini-1.5-pro`
       );
       return await callGemini("gemini-1.5-pro", videoUrl);
     }
     throw Object.assign(
-      new Error(`gemini-1.5-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
+      new Error(`gemini-2.0-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
       { cause: flashErr }
     );
   }
