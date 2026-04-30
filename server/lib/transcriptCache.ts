@@ -1415,9 +1415,30 @@ export async function fetchTranscriptCached(
     evictExpired();
     const hit = cache.get(videoId);
     if (hit) {
-      const age = Math.round((Date.now() - hit.cachedAt) / 1000);
-      console.log(`[transcriptCache] HIT  ${videoId} — ${hit.segments.length} segs, cached ${age}s ago`);
-      return { segments: hit.segments, noCaptionsDetected: false };
+      // Evict stale entries where Gemini returned a refusal text that was
+      // cached before the refusal-detection guard was added.  These are
+      // single-segment entries whose text body (after the Gemini source label)
+      // is an inability/refusal message rather than an actual transcript.
+      const GEMINI_LABEL = "[AI-generated transcript via Gemini]";
+      if (hit.segments.length === 1 && hit.segments[0].text.startsWith(GEMINI_LABEL)) {
+        const body = hit.segments[0].text.slice(GEMINI_LABEL.length).trimStart();
+        const { isTranscriptRefusal } = await import("./geminiTranscript");
+        if (isTranscriptRefusal(body)) {
+          console.warn(
+            `[transcriptCache] EVICT ${videoId} — cached entry contains a Gemini refusal (stale). Fetching live.`
+          );
+          cache.delete(videoId);
+          // fall through to live fetch below
+        } else {
+          const age = Math.round((Date.now() - hit.cachedAt) / 1000);
+          console.log(`[transcriptCache] HIT  ${videoId} — ${hit.segments.length} segs, cached ${age}s ago`);
+          return { segments: hit.segments, noCaptionsDetected: false };
+        }
+      } else {
+        const age = Math.round((Date.now() - hit.cachedAt) / 1000);
+        console.log(`[transcriptCache] HIT  ${videoId} — ${hit.segments.length} segs, cached ${age}s ago`);
+        return { segments: hit.segments, noCaptionsDetected: false };
+      }
     }
   }
 
