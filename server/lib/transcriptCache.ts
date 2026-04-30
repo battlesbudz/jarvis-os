@@ -1377,6 +1377,12 @@ export interface FetchTranscriptOptions {
    */
   audioOnly?: boolean;
   /**
+   * When true, skip Phase 0 (Gemini) and Phase 0.5 (Supadata) and only attempt
+   * YouTube's native caption retrieval (Phases 1–4). No AI involved, no credits
+   * charged. Fast but only works if the video actually has captions.
+   */
+  captionsOnly?: boolean;
+  /**
    * Called once when a live fetch is about to begin (i.e. after confirming
    * there is no usable cache entry). Never called on cache hits.
    * Use this to surface a "Fetching transcript…" progress indicator to the user.
@@ -1414,7 +1420,7 @@ export async function fetchTranscriptCached(
   input: string,
   options: FetchTranscriptOptions = {}
 ): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean; source: string }> {
-  const { bypassCache = false, config, audioOnly = false, onFetchStart } = options;
+  const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart } = options;
   const videoId = extractVideoId(input);
 
   // audioOnly=true skips the cache read so audio transcription always runs,
@@ -1469,7 +1475,9 @@ export async function fetchTranscriptCached(
   // Google fetches and processes the video from its own infrastructure — no
   // yt-dlp, no ffmpeg, no server-IP blocks, no file-size limit.
   // Skipped silently when the API key is absent or this is not a YouTube URL.
-  if (videoId) {
+  // Also skipped when captionsOnly=true or audioOnly=true (caller has
+  // specified a different method and AI phases should not interfere).
+  if (videoId && !captionsOnly && !audioOnly) {
     try {
       const { fetchTranscriptViaGemini, isGeminiTranscriptAvailable } = await import("./geminiTranscript");
       if (isGeminiTranscriptAvailable()) {
@@ -1511,7 +1519,9 @@ export async function fetchTranscriptCached(
   // datacenter IP blocks don't apply.  It also has an AI fallback (mode=auto)
   // that generates a transcript even when YouTube has no captions at all.
   // Skipped when SUPADATA_API_KEY is not set or segments were already found.
-  if (videoId && segments.length === 0) {
+  // Also skipped when captionsOnly=true or audioOnly=true (caller has
+  // specified a different method and AI phases should not interfere).
+  if (videoId && segments.length === 0 && !captionsOnly && !audioOnly) {
     try {
       const { fetchTranscriptViaSupadata, isSupadataAvailable } = await import("./supadataTranscript");
       if (isSupadataAvailable()) {
@@ -1708,7 +1718,8 @@ export async function fetchTranscriptCached(
   // Downloads audio via yt-dlp (with --impersonate chrome), converts to WAV,
   // transcribes via Whisper. Runs BEFORE the browser and local-worker fallbacks
   // so the one path that works is tried as the third option, not the last.
-  if (segments.length === 0) {
+  // Skipped when captionsOnly=true — caller wants only native YouTube captions.
+  if (segments.length === 0 && !captionsOnly) {
     const reason = noCaptions
       ? "no captions — going straight to audio transcription"
       : "all subtitle strategies failed — trying audio transcription";
