@@ -601,6 +601,18 @@ export function startScheduler() {
       }).catch((err) => console.error('[Scheduler] Gut calibration import failed:', err));
     }
 
+    // Sunday 00:00 — wiki lint for all users (contradictions, cross-links, archiving).
+    if (dow === 0 && h === 0 && m === 0) {
+      import('./memory/vaultWriter').then(({ lintWikiForAllUsers }) => {
+        console.log('[Scheduler] Running weekly wiki lint...');
+        lintWikiForAllUsers().then((count) => {
+          console.log(`[Scheduler] Wiki lint complete — ${count} user(s) processed`);
+        }).catch((err) => {
+          console.error('[Scheduler] Wiki lint failed:', err);
+        });
+      }).catch((err) => console.error('[Scheduler] vaultWriter import failed for lint:', err));
+    }
+
     // Sunday 03:00 local — enqueue weekly pattern recognition jobs for
     // every active user. Workers (jobQueue) pick them up over the next
     // few minutes, regenerate each user's SOUL, and deliver a Telegram
@@ -740,7 +752,7 @@ export function startScheduler() {
 
   }, 60 * 1000);
 
-  console.log('[Scheduler] Started — morning plan 7:00 AM daily, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, build session cleanup 5:30 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute, autonomous project sessions every minute');
+  console.log('[Scheduler] Started — morning plan 7:00 AM daily, wiki lint Sunday 0:00 AM, weekly patterns Sunday 3:00 AM, learning synthesis Sunday 4:30 AM, session cleanup 4:00 AM daily, Discord confirm token cleanup 4:05 AM daily, memory TTL cleanup 4:30 AM daily, interaction log cleanup 5:00 AM daily, action log cleanup 5:15 AM daily, build session cleanup 5:30 AM daily, embedding backfill 6:00 AM daily, Discord schedules every minute, autonomous project sessions every minute');
 }
 
 /**

@@ -1519,6 +1519,56 @@ export async function ensureTablesExist() {
         ON build_sessions (user_id, reminded, created_at DESC)
     `).catch(() => {});
 
+    // ── LLM Wiki — Karpathy-style compounding knowledge base (Task #1126) ────
+    // Add new columns to knowledge_vault_pages for wiki page types, cross-refs,
+    // tags, and archiving. Remove 5-slug hard-coded constraint (schema-side only).
+    await db.execute(sql`ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS page_type VARCHAR NOT NULL DEFAULT 'core'`).catch(() => {});
+    await db.execute(sql`ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(() => {});
+    await db.execute(sql`ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS cross_refs JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(() => {});
+    await db.execute(sql`ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP`).catch(() => {});
+    await db.execute(sql`ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS last_accessed_at TIMESTAMP`).catch(() => {});
+    // Drop any legacy CHECK constraint that may have enforced the old 5-slug limit
+    await db.execute(sql`ALTER TABLE knowledge_vault_pages DROP CONSTRAINT IF EXISTS knowledge_vault_pages_slug_check`).catch(() => {});
+    await db.execute(sql`ALTER TABLE knowledge_vault_pages DROP CONSTRAINT IF EXISTS knowledge_vault_pages_5_slugs_check`).catch(() => {});
+
+    // wiki_lint_log — weekly lint run records
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS wiki_lint_log (
+        id                   SERIAL    PRIMARY KEY,
+        user_id              VARCHAR   NOT NULL REFERENCES users(id),
+        ran_at               TIMESTAMP NOT NULL DEFAULT NOW(),
+        pages_scanned        INTEGER   NOT NULL DEFAULT 0,
+        pages_updated        INTEGER   NOT NULL DEFAULT 0,
+        pages_archived       INTEGER   NOT NULL DEFAULT 0,
+        contradictions_fixed INTEGER   NOT NULL DEFAULT 0,
+        cross_links_added    INTEGER   NOT NULL DEFAULT 0,
+        summary              TEXT      NOT NULL DEFAULT ''
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS wiki_lint_log_user_ran_idx
+        ON wiki_lint_log (user_id, ran_at DESC)
+    `).catch(() => {});
+
+    // Ensure knowledge_vault_pages table exists (it may have been created via push earlier)
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS knowledge_vault_pages (
+        id           SERIAL    PRIMARY KEY,
+        user_id      VARCHAR   NOT NULL REFERENCES users(id),
+        slug         TEXT      NOT NULL,
+        title        TEXT      NOT NULL,
+        content      TEXT      NOT NULL,
+        page_type    VARCHAR   NOT NULL DEFAULT 'core',
+        tags         JSONB     NOT NULL DEFAULT '[]'::jsonb,
+        cross_refs   JSONB     NOT NULL DEFAULT '[]'::jsonb,
+        archived_at      TIMESTAMP,
+        last_accessed_at TIMESTAMP,
+        generated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, slug)
+      )
+    `).catch(() => {});
+
     console.log("Database tables verified");
   } catch (error) {
     console.error("Failed to ensure database tables exist:", error);

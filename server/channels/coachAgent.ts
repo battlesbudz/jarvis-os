@@ -858,6 +858,16 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";
   const attachments = (agentCtx.state.pendingAttachments || []) as ChannelAttachment[];
 
+  // ── Query Filing — optionally save substantive synthesis answers to the wiki ─
+  // Fire-and-forget. Only runs when reply is substantial (100+ chars).
+  if (rawReply && rawReply.length >= 100 && userText && userText.length >= 10) {
+    import("../memory/vaultWriter").then(({ fileQuery }) => {
+      fileQuery(userId, userText, rawReply).catch((err) =>
+        console.error("[coach] fileQuery failed:", err),
+      );
+    }).catch(() => {});
+  }
+
   // ── Session management — update or initialise after successful run ────────────
   // Mirror the runNamedAgent pattern:
   //   • First turn (no sdkSessionId or expired fallback): init a new session

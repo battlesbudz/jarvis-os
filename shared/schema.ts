@@ -1751,12 +1751,20 @@ export type TournamentRun = typeof tournamentRuns.$inferSelect;
 export const VAULT_SLUGS = ["about-you", "projects", "people", "patterns", "decisions"] as const;
 export type VaultSlug = typeof VAULT_SLUGS[number];
 
+export const VAULT_PAGE_TYPES = ["core", "entity", "concept", "query"] as const;
+export type VaultPageType = typeof VAULT_PAGE_TYPES[number];
+
 export const knowledgeVaultPages = pgTable("knowledge_vault_pages", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull().references(() => users.id),
   slug: text("slug").notNull(),
   title: text("title").notNull(),
   content: text("content").notNull(),
+  pageType: varchar("page_type").notNull().default("core"),
+  tags: jsonb("tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  crossRefs: jsonb("cross_refs").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  archivedAt: timestamp("archived_at"),
+  lastAccessedAt: timestamp("last_accessed_at"),
   generatedAt: timestamp("generated_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
@@ -1764,6 +1772,20 @@ export const knowledgeVaultPages = pgTable("knowledge_vault_pages", {
 ]);
 
 export type KnowledgeVaultPage = typeof knowledgeVaultPages.$inferSelect;
+
+export const wikiLintLog = pgTable("wiki_lint_log", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  ranAt: timestamp("ran_at").defaultNow().notNull(),
+  pagesScanned: integer("pages_scanned").notNull().default(0),
+  pagesUpdated: integer("pages_updated").notNull().default(0),
+  pagesArchived: integer("pages_archived").notNull().default(0),
+  contradictionsFixed: integer("contradictions_fixed").notNull().default(0),
+  crossLinksAdded: integer("cross_links_added").notNull().default(0),
+  summary: text("summary").notNull().default(""),
+});
+
+export type WikiLintLog = typeof wikiLintLog.$inferSelect;
 
 // ── Transcript Jobs ────────────────────────────────────────────────────────────
 // Tracks async Supadata transcript jobs for long videos (3+ hours) where the
