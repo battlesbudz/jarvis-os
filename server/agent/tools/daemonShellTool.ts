@@ -461,7 +461,7 @@ async function buildScreenMapElements(userId: string, ctx?: object): Promise<Bui
     return {
       ok: false,
       content:
-        "Screenshot limit reached for this turn (max 4). Use `android_read_screen` to read the " +
+        "Screenshot limit reached for this turn (max 4). Use android_read_screen to read the " +
         "current screen content as text — it returns the accessibility tree without requiring a screenshot.",
       label: "buildScreenMap: turn screenshot limit reached",
     };
