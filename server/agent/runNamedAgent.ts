@@ -28,6 +28,8 @@ import { checkResponseQuality } from "./responseQuality";
 import { contextRegistry } from "./contextRegistry";
 import { db } from "../db";
 import { userPreferences } from "@shared/schema";
+import fs from "fs";
+import path from "path";
 import { eq } from "drizzle-orm";
 // Side-effect import: registers workspace topic context provider.
 import "./providers/topicContext";
@@ -51,6 +53,27 @@ const MAX_DEPTH = 3;
 
 function depthKey(userId: string, agentId: string): string {
   return `${userId}:${agentId}`;
+}
+
+// ── Crew specialist reinforcement loader ────────────────────────────────────
+// Loads operational protocol markdown from agents/crew/<crewRole>.md on first
+// use and caches in-process. Falls back to empty string when the file is absent.
+
+const _reinforcementCache = new Map<string, string>();
+const CREW_DIR = path.resolve(process.cwd(), "agents/crew");
+
+function loadCrewReinforcement(crewRole: string): string {
+  if (_reinforcementCache.has(crewRole)) return _reinforcementCache.get(crewRole)!;
+  const filePath = path.join(CREW_DIR, `${crewRole}.md`);
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    _reinforcementCache.set(crewRole, content);
+    return content;
+  } catch {
+    console.warn(`[runNamedAgent] crew reinforcement file not found: ${filePath} — using empty string`);
+    _reinforcementCache.set(crewRole, "");
+    return "";
+  }
 }
 
 function incrementDepth(userId: string, agentId: string): number {
@@ -258,55 +281,11 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       // first tool calls and output contract. This runs in addition to the
       // detailed operational protocol already baked into their persona so the
       // model can't "forget" the most important behaviour constraints mid-run.
-      const SPECIALIST_REINFORCEMENT: Record<string, string> = {
-        research: `
-## Active Task Reminder (ATLAS)
-- Your FIRST two actions MUST be search_web calls with different query angles.
-- Fetch the top result(s) with web_fetch before drawing conclusions.
-- Your final reply MUST contain a ## Sources section listing every URL you used.
-- Label claims [VERIFIED] or [INFERRED].`,
-
-        communications: `
-## Active Task Reminder (HERALD)
-- Your FIRST action MUST be fetch_emails — never triage or draft without reading the live inbox.
-- Cluster messages by urgency: URGENT / WATCHING / FYI.
-- Reference specific subject lines, sender names, and content in every draft.
-- Save every draft with gmail_draft before reporting it.`,
-
-        planning: `
-## Active Task Reminder (ORACLE)
-- Your FIRST action MUST be fetch_calendar (days=7) — never plan without seeing the schedule.
-- Your SECOND action MUST be manage_tasks (action: list_tasks) — surface existing commitments.
-- Every plan must have: Goal, Timeline, Numbered Steps (with owners), Risks, First Move.
-- Create tasks for each actionable step via manage_tasks.`,
-
-        monitoring: `
-## Active Task Reminder (SCOUT)
-- Your FIRST action MUST be fetch_calendar (days=3) to check deadlines and conflicts.
-- Your SECOND action MUST be fetch_emails to check for urgent or anomalous messages.
-- Tier every finding: 🔴 URGENT / 🟡 WATCH / 🟢 FYI.
-- One sentence each: what it is, why it matters, suggested action.`,
-
-        creation: `
-## Active Task Reminder (FORGE)
-- You MUST produce the full, complete document — outlines are not acceptable.
-- Call memory_search first to check for style preferences or past templates.
-- Save the final output using drive_create_file or create_document.
-- Documents > 400 words must open with a TL;DR paragraph.`,
-
-        memory: `
-## Active Task Reminder (ECHO)
-- Your FIRST action MUST be memory_search — never answer personal-context questions from memory alone.
-- Quote or paraphrase specific memory entries in your answer.
-- Attribute: "Based on your memory from [context]..."
-- If no memories match, say so explicitly — do not fill gaps with generic advice.`,
-      };
-
       const configJsonForPrompt = (agent.configJson ?? {}) as Record<string, unknown>;
       const crewRoleForPrompt = typeof configJsonForPrompt.crewRole === "string" ? configJsonForPrompt.crewRole : null;
       const isCrewMemberForPrompt = configJsonForPrompt.isCrewMember === true;
-      const reinforcementBlock = (isCrewMemberForPrompt && crewRoleForPrompt && SPECIALIST_REINFORCEMENT[crewRoleForPrompt])
-        ? SPECIALIST_REINFORCEMENT[crewRoleForPrompt]
+      const reinforcementBlock = (isCrewMemberForPrompt && crewRoleForPrompt)
+        ? loadCrewReinforcement(crewRoleForPrompt)
         : "";
 
       const systemPromptBase = `${persona}${reinforcementBlock}${soulBlock}${memoryBlock}`;
