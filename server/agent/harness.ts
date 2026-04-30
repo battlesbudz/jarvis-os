@@ -815,10 +815,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       "standalone reply like 'I will now tap...' or 'Proceeding now...' — just call the " +
       "next tool. This rule does NOT override screen-reading: you must still call " +
       "android_read_screen after every navigation before tapping anything.\n\n" +
-      "When the user provides a direct URL to a specific video or page, use `daemon_action` " +
+      "When the user provides a YouTube URL (youtube.com/watch?v=… or youtu.be/…), " +
+      "ALWAYS call the `get_youtube_transcript` tool first — do NOT open the YouTube app, " +
+      "do NOT use android_browse to navigate to YouTube, and do NOT search YouTube manually. " +
+      "get_youtube_transcript uses Gemini AI natively and is always available. " +
+      "For non-YouTube URLs to a specific page, use `daemon_action` " +
       "with action `android_browse` and the full URL immediately — do not open the app " +
-      "manually and search for it. Example: for youtube.com/watch?v=… call android_browse " +
-      "with that URL; do not open the YouTube app and type in the search bar.";
+      "manually and search for it.";
     messages = messages.map((m, i) => {
       if (i === 0 && m.role === "system") {
         return { ...m, content: (m.content ?? "") + androidRule };
