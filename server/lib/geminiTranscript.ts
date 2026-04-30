@@ -63,10 +63,20 @@ function isUsingDirectKey(): boolean {
   return !!process.env.GOOGLE_GEMINI_API_KEY;
 }
 
-/** Detect a gateway-level INVALID_ENDPOINT response (proxy doesn't support this path). */
+/**
+ * Detect a gateway-level rejection meaning the proxy doesn't support this endpoint.
+ * Covers the known Replit AI gateway error variants:
+ *   - "INVALID_ENDPOINT" — explicit endpoint-not-found response
+ *   - "Endpoint: '...' is not supported" — longer form of the same error
+ *   - "endpoint.*not supported" — any other phrasing of the same condition
+ */
 function isGatewayEndpointError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return msg.includes("INVALID_ENDPOINT");
+  return (
+    msg.includes("INVALID_ENDPOINT") ||
+    /endpoint[^.]*is not supported/i.test(msg) ||
+    /not supported.*endpoint/i.test(msg)
+  );
 }
 
 const TRANSCRIPT_PROMPT =
