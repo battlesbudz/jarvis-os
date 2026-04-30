@@ -1490,57 +1490,12 @@ export async function fetchTranscriptCached(
   const phaseErrors: { gemini?: string; supadata?: string } = {};
   let supadataTimedOut = false;
 
-  // ── Phase 0: Gemini native video understanding ────────────────────────────
-  // Passes the YouTube URL directly to Gemini 2.5 Flash as a fileData part.
-  // Gemini 2.0+ models support YouTube URL-based video processing natively
-  // via fileData.fileUri.
-  // Google fetches and processes the video from its own infrastructure — no
-  // yt-dlp, no ffmpeg, no server-IP blocks, no file-size limit.
-  // Skipped silently when the API key is absent or this is not a YouTube URL.
-  // Also skipped when captionsOnly=true or audioOnly=true (caller has
-  // specified a different method and AI phases should not interfere).
-  if (videoId && !captionsOnly && !audioOnly) {
-    try {
-      const { fetchTranscriptViaGemini, isGeminiTranscriptAvailable } = await import("./geminiTranscript");
-      if (isGeminiTranscriptAvailable()) {
-        const refreshTag = bypassCache ? " (bypass/refresh)" : "";
-        console.log(`[transcriptCache] Phase 0: trying Gemini for ${resolvedId}${refreshTag}`);
-        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-        const geminiText = await fetchTranscriptViaGemini(videoUrl);
-        if (geminiText) {
-          segments = [{ text: `[AI-generated transcript via Gemini]\n\n${geminiText}`, offset: 0, duration: 0, lang: "en" }];
-          source = "gemini";
-          console.log(`[transcriptCache] Phase 0 Gemini OK ${resolvedId} — ${geminiText.length} chars`);
-          evictExpired();
-          if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
-          cache.set(videoId, { segments, cachedAt: Date.now(), source });
-          const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
-          console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache.size})`);
-          return { segments, noCaptionsDetected: false, source };
-        }
-      } else {
-        console.warn("[transcriptCache] Phase 0 skipped — no Gemini key configured (set GOOGLE_GEMINI_API_KEY for direct access, or AI_INTEGRATIONS_GEMINI_API_KEY for proxy)");
-      }
-    } catch (geminiErr) {
-      const geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-      const geminiCause = geminiErr instanceof Error && geminiErr.cause
-        ? ` (cause: ${geminiErr.cause instanceof Error ? geminiErr.cause.message : String(geminiErr.cause)})`
-        : "";
-      const fullMsg = geminiErrMsg + geminiCause;
-      phaseErrors.gemini = fullMsg;
-      console.warn(`[transcriptCache] Phase 0 (Gemini) FAILED for ${resolvedId}:`, {
-        error: fullMsg,
-        stack: geminiErr instanceof Error ? geminiErr.stack?.slice(0, 400) : undefined,
-        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key (not the Replit proxy key)",
-      });
-    }
-  }
-
-  // ── Phase 0.5: Supadata cloud transcript API ──────────────────────────────
+  // ── Phase 0: Supadata cloud transcript API ───────────────────────────────
   // Supadata runs its own infrastructure (residential IPs) so YouTube's
   // datacenter IP blocks don't apply.  It also has an AI fallback (mode=auto)
   // that generates a transcript even when YouTube has no captions at all.
-  // Skipped when SUPADATA_API_KEY is not set or segments were already found.
+  // Returns the real verbatim caption track with a timestamp on every segment.
+  // Skipped when SUPADATA_API_KEY is not set.
   // Also skipped when captionsOnly=true or audioOnly=true (caller has
   // specified a different method and AI phases should not interfere).
   //
@@ -1548,7 +1503,7 @@ export async function fetchTranscriptCached(
   // When userId is set: the job is saved to DB, we throw SupadataJobPendingError,
   // and the tool layer returns a "started, will notify when ready" message.
   // When userId is absent: synchronous polling is used (up to 120 s).
-  if (videoId && segments.length === 0 && !captionsOnly && !audioOnly) {
+  if (videoId && !captionsOnly && !audioOnly) {
     try {
       const { fetchTranscriptViaSupadata, isSupadataAvailable, SupadataJobPendingError } = await import("./supadataTranscript");
       if (isSupadataAvailable()) {
@@ -1559,7 +1514,7 @@ export async function fetchTranscriptCached(
           if (cached && cached.length > 0) {
             segments = cached;
             source = "supadata";
-            console.log(`[transcriptCache] Phase 0.5 async job result loaded for ${resolvedId} — ${cached.length} segs`);
+            console.log(`[transcriptCache] Phase 0 async job result loaded for ${resolvedId} — ${cached.length} segs`);
             evictExpired();
             if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
             cache.set(videoId, { segments, cachedAt: Date.now(), source });
@@ -1568,14 +1523,14 @@ export async function fetchTranscriptCached(
         }
 
         const refreshTag = bypassCache ? " (bypass/refresh)" : "";
-        console.log(`[transcriptCache] Phase 0.5: trying Supadata for ${resolvedId}${refreshTag}`);
+        console.log(`[transcriptCache] Phase 0: trying Supadata for ${resolvedId}${refreshTag}`);
         const supadataSegs = await fetchTranscriptViaSupadata(resolvedId, { userId, signal });
         if (supadataSegs.length > 0) {
           segments = supadataSegs;
           source = "supadata";
           const totalChars = supadataSegs.reduce((n, s) => n + s.text.length, 0);
           console.log(
-            `[transcriptCache] Phase 0.5 Supadata OK ${resolvedId} — ` +
+            `[transcriptCache] Phase 0 Supadata OK ${resolvedId} — ` +
             `${supadataSegs.length} segs, ${totalChars} chars`
           );
           evictExpired();
@@ -1587,7 +1542,7 @@ export async function fetchTranscriptCached(
         }
       } else {
         console.log(
-          "[transcriptCache] Phase 0.5 skipped — SUPADATA_API_KEY not set " +
+          "[transcriptCache] Phase 0 skipped — SUPADATA_API_KEY not set " +
           "(get a free key at https://dash.supadata.ai)"
         );
       }
@@ -1597,7 +1552,7 @@ export async function fetchTranscriptCached(
       if (supadataErr instanceof SupadataJobPendingError) {
         const jobId = supadataErr.jobId;
         console.log(
-          `[transcriptCache] Phase 0.5 async job pending for ${resolvedId} — jobId=${jobId}. ` +
+          `[transcriptCache] Phase 0 async job pending for ${resolvedId} — jobId=${jobId}. ` +
           `3-hour video: Supadata AI generation started, transcript will arrive via notification.`
         );
         return {
@@ -1613,18 +1568,71 @@ export async function fetchTranscriptCached(
       if (msg.toLowerCase().includes("timed out after")) {
         supadataTimedOut = true;
       }
-      console.warn(`[transcriptCache] Phase 0.5 (Supadata) FAILED for ${resolvedId}:`, {
+      console.warn(`[transcriptCache] Phase 0 (Supadata) FAILED for ${resolvedId}:`, {
         error: msg,
         hint: "Check SUPADATA_API_KEY is valid. For no-caption videos, AI generation takes 5-10 min.",
       });
 
-      // Short-circuit when Supadata timed out — Phases 1-4 are all IP-blocked on Replit
-      // datacenter servers, so falling through wastes time and masks the real failure.
-      if (supadataTimedOut) {
-        console.warn(`[transcriptCache] Phase 0.5 timed out for ${resolvedId} — skipping Phases 1-4 (all IP-blocked on datacenter)`);
-        return { segments: [], noCaptionsDetected: true, source: "supadata", phaseErrors, supadataTimedOut: true };
-      }
+      // Do NOT short-circuit here — let Phase 0.5 (Gemini fallback) run first.
+      // The phases-1-4 short-circuit is applied after Phase 0.5 completes.
     }
+  }
+
+  // ── Phase 0.5: Gemini native video understanding (fallback) ───────────────
+  // Only fires when Supadata failed or returned no segments.
+  // Passes the YouTube URL directly to Gemini 2.5 Flash as a fileData part.
+  // Gemini 2.0+ models support YouTube URL-based video processing natively
+  // via fileData.fileUri.
+  // Google fetches and processes the video from its own infrastructure — no
+  // yt-dlp, no ffmpeg, no server-IP blocks, no file-size limit.
+  // Gemini is prompted to include [HH:MM:SS] timestamps so the output remains
+  // navigable even though it is AI-generated rather than a verbatim caption track.
+  // Skipped silently when the API key is absent or this is not a YouTube URL.
+  // Also skipped when captionsOnly=true or audioOnly=true (caller has
+  // specified a different method and AI phases should not interfere).
+  if (videoId && segments.length === 0 && !captionsOnly && !audioOnly) {
+    try {
+      const { fetchTranscriptViaGemini, isGeminiTranscriptAvailable } = await import("./geminiTranscript");
+      if (isGeminiTranscriptAvailable()) {
+        const refreshTag = bypassCache ? " (bypass/refresh)" : "";
+        console.log(`[transcriptCache] Phase 0.5: trying Gemini (fallback) for ${resolvedId}${refreshTag}`);
+        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        const geminiText = await fetchTranscriptViaGemini(videoUrl);
+        if (geminiText) {
+          segments = [{ text: `[AI-generated transcript via Gemini]\n\n${geminiText}`, offset: 0, duration: 0, lang: "en" }];
+          source = "gemini";
+          console.log(`[transcriptCache] Phase 0.5 Gemini OK ${resolvedId} — ${geminiText.length} chars`);
+          evictExpired();
+          if (!cache.has(videoId) && cache.size >= MAX_ENTRIES) evictOldest();
+          cache.set(videoId, { segments, cachedAt: Date.now(), source });
+          const reason = bypassCache ? "BYPASS→stored" : "MISS→stored";
+          console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache.size})`);
+          return { segments, noCaptionsDetected: false, source };
+        }
+      } else {
+        console.warn("[transcriptCache] Phase 0.5 skipped — no Gemini key configured (set GOOGLE_GEMINI_API_KEY for direct access, or AI_INTEGRATIONS_GEMINI_API_KEY for proxy)");
+      }
+    } catch (geminiErr) {
+      const geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+      const geminiCause = geminiErr instanceof Error && geminiErr.cause
+        ? ` (cause: ${geminiErr.cause instanceof Error ? geminiErr.cause.message : String(geminiErr.cause)})`
+        : "";
+      const fullMsg = geminiErrMsg + geminiCause;
+      phaseErrors.gemini = fullMsg;
+      console.warn(`[transcriptCache] Phase 0.5 (Gemini) FAILED for ${resolvedId}:`, {
+        error: fullMsg,
+        stack: geminiErr instanceof Error ? geminiErr.stack?.slice(0, 400) : undefined,
+        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key (not the Replit proxy key)",
+      });
+    }
+  }
+
+  // Short-circuit when Supadata timed out and Gemini fallback also produced nothing —
+  // Phases 1-4 are all IP-blocked on Replit datacenter servers, so falling through
+  // wastes time and masks the real failure.
+  if (supadataTimedOut && segments.length === 0) {
+    console.warn(`[transcriptCache] Supadata timed out and Gemini fallback produced nothing for ${resolvedId} — skipping Phases 1-4 (all IP-blocked on datacenter)`);
+    return { segments: [], noCaptionsDetected: true, source: "supadata", phaseErrors, supadataTimedOut: true };
   }
 
   // ── audioOnly fast-path: skip Phases 1 & 2 entirely ──────────────────────
