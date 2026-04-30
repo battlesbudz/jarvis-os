@@ -1402,6 +1402,12 @@ export interface FetchTranscriptOptions {
    * the background and the user is notified via the normal channel.
    */
   userId?: string;
+  /**
+   * AbortSignal from the active request's AbortController. When aborted (user
+   * presses Stop), any in-progress Supadata polling loop is terminated
+   * immediately rather than continuing to poll for up to 120 seconds.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -1434,7 +1440,7 @@ export async function fetchTranscriptCached(
   input: string,
   options: FetchTranscriptOptions = {}
 ): Promise<{ segments: TranscriptResponse[]; noCaptionsDetected: boolean; source: string; asyncJobPending?: boolean; jobId?: string; phaseErrors?: { gemini?: string; supadata?: string }; supadataTimedOut?: boolean }> {
-  const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart, userId } = options;
+  const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart, userId, signal } = options;
   const videoId = extractVideoId(input);
 
   // audioOnly=true skips the cache read so audio transcription always runs,
@@ -1563,7 +1569,7 @@ export async function fetchTranscriptCached(
 
         const refreshTag = bypassCache ? " (bypass/refresh)" : "";
         console.log(`[transcriptCache] Phase 0.5: trying Supadata for ${resolvedId}${refreshTag}`);
-        const supadataSegs = await fetchTranscriptViaSupadata(resolvedId, userId);
+        const supadataSegs = await fetchTranscriptViaSupadata(resolvedId, { userId, signal });
         if (supadataSegs.length > 0) {
           segments = supadataSegs;
           source = "supadata";

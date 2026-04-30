@@ -60,6 +60,25 @@ export async function getCompletedTranscript(
 }
 
 /**
+ * Cancel all pending transcript jobs for a user.
+ * Called when the user presses Stop — prevents the background poller from
+ * completing and notifying the user for a job they already cancelled.
+ * Returns the number of rows updated.
+ */
+export async function cancelUserTranscriptJobs(userId: string): Promise<number> {
+  const result = await db
+    .update(transcriptJobs)
+    .set({ status: "cancelled", updatedAt: new Date() })
+    .where(
+      and(
+        eq(transcriptJobs.userId, userId),
+        eq(transcriptJobs.status, "pending")
+      )
+    );
+  return (result as unknown as { rowCount?: number }).rowCount ?? 0;
+}
+
+/**
  * Poll a single job row, check its Supadata status, and update DB on completion.
  * Returns the completed segments if the job finished, or null if still pending/failed.
  */

@@ -64,8 +64,9 @@ export function isSupadataAvailable(): boolean {
  */
 export async function fetchTranscriptViaSupadata(
   videoId: string,
-  userId?: string
+  options?: { userId?: string; signal?: AbortSignal }
 ): Promise<TranscriptResponse[]> {
+  const { userId, signal } = options ?? {};
   const apiKey = process.env.SUPADATA_API_KEY;
   if (!apiKey) throw new Error("SUPADATA_API_KEY is not set");
 
@@ -132,7 +133,7 @@ export async function fetchTranscriptViaSupadata(
       throw new SupadataJobPendingError(jobId);
     } else {
       // No userId — fall back to synchronous polling
-      return await pollSupadataJob(apiKey, jobId, videoId);
+      return await pollSupadataJob(apiKey, jobId, videoId, signal);
     }
   }
 
@@ -198,11 +199,13 @@ function parseSupadataResponse(
  * Polls a Supadata async job until it completes or the timeout is reached.
  * Uses exponential backoff: starts at 3s, doubles each miss, caps at 30s.
  * Logs progress every 30 seconds so the server logs show activity.
+ * Respects the optional AbortSignal — throws AbortError immediately when aborted.
  */
 async function pollSupadataJob(
   apiKey: string,
   jobId: string,
-  videoId: string
+  videoId: string,
+  signal?: AbortSignal,
 ): Promise<TranscriptResponse[]> {
   const headers: Record<string, string> = {
     "x-api-key": apiKey,
@@ -217,7 +220,17 @@ async function pollSupadataJob(
   console.log(`[supadataTranscript] Polling job ${jobId} for ${videoId} (max ${JOB_POLL_TIMEOUT_MS / 1000}s)`);
 
   while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      console.log(`[supadataTranscript] Job ${jobId} polling aborted by user signal`);
+      throw new DOMException("Aborted by user", "AbortError");
+    }
+
     await sleep(intervalMs);
+
+    if (signal?.aborted) {
+      console.log(`[supadataTranscript] Job ${jobId} polling aborted by user signal`);
+      throw new DOMException("Aborted by user", "AbortError");
+    }
 
     const elapsed = Math.round((Date.now() - (deadline - JOB_POLL_TIMEOUT_MS)) / 1000);
     if (Date.now() - lastLogAt >= JOB_POLL_LOG_INTERVAL_MS) {
@@ -243,7 +256,6 @@ async function pollSupadataJob(
     }
 
     const job = await res.json() as SupadataJobStatusResponse;
-
     if (job.status === "completed" && job.result) {
       const segments = parseSupadataResponse(videoId, job.result);
       const elapsed2 = Math.round((Date.now() - (deadline - JOB_POLL_TIMEOUT_MS)) / 1000);
