@@ -6007,7 +6007,7 @@ Return ONLY the JSON object.`;
           const { sendLongMessage } = await import("./integrations/telegram");
           await sendLongMessage(
             link.chatId,
-            `⚠️ Your task *"${task.title}"* needs your guidance:\n\n${attentionQuestion}\n\nReply here or tap the task in Mission Control to answer.`
+            `⚠️ Your task *"${task.title}"* needs your guidance:\n\n${attentionQuestion}\n\nReply directly to this message with your answer and I'll take it from there.\n\n[task:${id}]`
           );
         }
       } catch (err) {
@@ -6029,28 +6029,11 @@ Return ONLY the JSON object.`;
       const { userAnswer } = req.body;
       if (!userAnswer) return res.status(400).json({ error: "userAnswer is required" });
 
-      const [task] = await db
-        .select()
-        .from(schema.jarvisScheduledTasks)
-        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)))
-        .limit(1);
-      if (!task) return res.status(404).json({ error: "Task not found" });
-
-      const memoryContent = `Task guidance for "${task.title}": ${task.attentionQuestion ? `Q: ${task.attentionQuestion} ` : ""}A: ${userAnswer}`;
-      await db.insert(schema.userMemories).values({
-        userId,
-        content: memoryContent,
-        category: "Task Guidance",
-        confidence: 90,
-        relevanceScore: 80,
-        sourceType: "task_guidance",
-        sourceRef: task.id,
-      });
-
-      await db
-        .update(schema.jarvisScheduledTasks)
-        .set({ needsAttention: false, attentionQuestion: null })
-        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)));
+      const { resolveScheduledTaskAttention } = await import("./lib/taskResolver");
+      const result = await resolveScheduledTaskAttention(userId, id, userAnswer);
+      if (!result.ok) {
+        return res.status(404).json({ error: result.reason === "not_found" ? "Task not found" : "Task does not need attention" });
+      }
 
       try {
         const [link] = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.userId, userId));
@@ -6058,7 +6041,7 @@ Return ONLY the JSON object.`;
           const { sendLongMessage } = await import("./integrations/telegram");
           await sendLongMessage(
             link.chatId,
-            `✅ Got it. I've saved your guidance for *"${task.title}"* and will apply it next time.`
+            `✅ Got it. I've saved your guidance for *"${result.taskTitle}"* and will apply it next time.`
           );
         }
       } catch (err) {
