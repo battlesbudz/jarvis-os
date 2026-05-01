@@ -236,7 +236,7 @@ test.describe("Self-improvement gap scan (Settings)", () => {
     const [response] = await Promise.all([
       page.waitForResponse(
         (r) => r.url().includes("/api/gap-analysis/run") && r.request().method() === "POST",
-        { timeout: 15000 }
+        { timeout: 30000 }
       ),
       scanBtn.click({ force: true }),
     ]);

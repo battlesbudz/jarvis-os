@@ -3215,8 +3215,15 @@ export default function SettingsScreen() {
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
             </Pressable>
           </Link>
+        </View>
+        </ErrorBoundary>
+
+        {/* Scan Capability Gaps — own ErrorBoundary so a crash in the JARVIS INTELLIGENCE
+            navigation links above does not hide this interactive row */}
+        <ErrorBoundary FallbackComponent={SectionFallback}>
+        <View style={[styles.card, { gap: 0 }]}>
           <Pressable
-            style={[styles.prefRow, styles.prefRowBorder]}
+            style={styles.prefRow}
             onPress={() => { void runGapScan(); }}
             disabled={gapScanRunning}
             testID="scan-capability-gaps-button"
@@ -3520,35 +3527,6 @@ export default function SettingsScreen() {
           )}
         </View>
 
-        <View style={[styles.card, { gap: 0, marginTop: 8 }]}>
-          <Pressable
-            testID="scan-capability-gaps-button"
-            style={styles.prefRow}
-            onPress={() => { void runGapScan(); }}
-            disabled={gapScanRunning}
-          >
-            <View style={styles.prefLeft}>
-              <Ionicons name="search-outline" size={16} color={Colors.cyan} />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.prefTitle}>Scan Capability Gaps</Text>
-                <Text style={styles.prefSub}>
-                  {gapScanRunning
-                    ? 'Analysing recent gaps…'
-                    : gapScanResult
-                      ? gapScanResult.total === -1
-                        ? 'Scan failed — tap to retry'
-                        : gapScanResult.total === 0
-                          ? 'No gaps found — all caught up'
-                          : `Found ${gapScanResult.total} gap${gapScanResult.total !== 1 ? 's' : ''}`
-                      : 'Run the weekly gap scan right now'}
-                </Text>
-              </View>
-            </View>
-            {gapScanRunning
-              ? <ActivityIndicator size="small" color={Colors.cyan} />
-              : <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />}
-          </Pressable>
-        </View>
         </ErrorBoundary>
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
