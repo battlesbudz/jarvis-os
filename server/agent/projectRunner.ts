@@ -8,7 +8,7 @@
  */
 
 import { db } from "../db";
-import { eq, asc, desc } from "drizzle-orm";
+import { eq, asc, desc, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { ProjectPlanStep } from "@shared/schema";
 import { runAgent } from "./harness";
@@ -698,12 +698,37 @@ export async function getProjectStatus(projectId: string): Promise<{
   return { project, sessions, plan, completedCount, totalCount: plan.length, nextStep };
 }
 
-export async function getUserProjects(userId: string): Promise<schema.JarvisProject[]> {
-  return db
+export async function getUserProjects(userId: string): Promise<(schema.JarvisProject & { lastSessionSummary: string | null })[]> {
+  const projects = await db
     .select()
     .from(schema.jarvisProjects)
     .where(eq(schema.jarvisProjects.userId, userId))
     .orderBy(desc(schema.jarvisProjects.updatedAt));
+
+  if (projects.length === 0) return [];
+
+  const projectIds = projects.map((p) => p.id);
+  const recentSessions = await db
+    .select({
+      projectId: schema.jarvisProjectSessions.projectId,
+      sessionNumber: schema.jarvisProjectSessions.sessionNumber,
+      summary: schema.jarvisProjectSessions.summary,
+    })
+    .from(schema.jarvisProjectSessions)
+    .where(inArray(schema.jarvisProjectSessions.projectId, projectIds))
+    .orderBy(desc(schema.jarvisProjectSessions.sessionNumber));
+
+  const latestSummaryByProject = new Map<string, string | null>();
+  for (const session of recentSessions) {
+    if (!latestSummaryByProject.has(session.projectId)) {
+      latestSummaryByProject.set(session.projectId, session.summary);
+    }
+  }
+
+  return projects.map((p) => ({
+    ...p,
+    lastSessionSummary: latestSummaryByProject.get(p.id) ?? null,
+  }));
 }
 
 // ── Notification helpers ───────────────────────────────────────────────────────
