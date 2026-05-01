@@ -3184,6 +3184,18 @@ export default function SettingsScreen() {
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
             </Pressable>
           </Link>
+          <Link href="/capability-gaps" asChild>
+            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+              <View style={styles.prefLeft}>
+                <Ionicons name="alert-circle-outline" size={16} color={Colors.warning} />
+                <View>
+                  <Text style={styles.prefTitle}>Capability Gaps</Text>
+                  <Text style={styles.prefSub}>What Jarvis couldn't do this week</Text>
+                </View>
+              </View>
+              <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
+            </Pressable>
+          </Link>
         </View>
         </ErrorBoundary>
 

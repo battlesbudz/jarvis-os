@@ -213,6 +213,7 @@ function AppNavigator() {
       <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
       <Stack.Screen name="focus-timer" options={{ presentation: 'modal', headerShown: false }} />
       <Stack.Screen name="jarvis-report" options={{ headerShown: false }} />
+      <Stack.Screen name="capability-gaps" options={{ headerShown: false }} />
     </Stack>
   );
 }

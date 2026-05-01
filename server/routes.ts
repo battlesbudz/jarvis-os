@@ -9034,6 +9034,69 @@ Extract up to 8 memories per batch.`;
     }
   });
 
+  // ── Capability gaps ───────────────────────────────────────────────────────
+  // Returns all gaps from the past 7 days grouped by (userMessage, detectedReason)
+  // with occurrence count and addressed status, so users can see frequency and
+  // track what has already been dismissed before Sunday's analysis runs.
+  app.get("/api/capability-gaps", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const rows = await db
+        .select({
+          userMessage: schema.capabilityGaps.userMessage,
+          agentReplySnippet: sql<string | null>`MAX(${schema.capabilityGaps.agentReplySnippet})`,
+          detectedReason: schema.capabilityGaps.detectedReason,
+          channel: sql<string | null>`MAX(${schema.capabilityGaps.channel})`,
+          occurrenceCount: sql<number>`COUNT(*)::int`,
+          addressed: sql<boolean>`BOOL_AND(${schema.capabilityGaps.addressed})`,
+          latestCreatedAt: sql<string>`MAX(${schema.capabilityGaps.createdAt})::text`,
+        })
+        .from(schema.capabilityGaps)
+        .where(
+          and(
+            eq(schema.capabilityGaps.userId, userId),
+            gte(schema.capabilityGaps.createdAt, sevenDaysAgo),
+          ),
+        )
+        .groupBy(
+          schema.capabilityGaps.userMessage,
+          schema.capabilityGaps.detectedReason,
+        )
+        .orderBy(desc(sql`MAX(${schema.capabilityGaps.createdAt})`))
+        .limit(50);
+      res.json({ gaps: rows });
+    } catch (err) {
+      console.error("[capability-gaps] GET error:", err);
+      res.status(500).json({ error: "Failed to fetch capability gaps" });
+    }
+  });
+
+  // Dismiss a capability gap group (all rows matching userMessage + detectedReason).
+  app.delete("/api/capability-gaps", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { userMessage, detectedReason } = req.body as { userMessage?: string; detectedReason?: string };
+      if (!userMessage || !detectedReason) {
+        return res.status(400).json({ error: "userMessage and detectedReason are required" });
+      }
+      await db
+        .update(schema.capabilityGaps)
+        .set({ addressed: true })
+        .where(
+          and(
+            eq(schema.capabilityGaps.userId, userId),
+            eq(schema.capabilityGaps.userMessage, userMessage),
+            eq(schema.capabilityGaps.detectedReason, detectedReason),
+          ),
+        );
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[capability-gaps] DELETE error:", err);
+      res.status(500).json({ error: "Failed to dismiss capability gap" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }
