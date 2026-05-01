@@ -128,6 +128,7 @@ import { listCustomAgentsTool } from "./listCustomAgents";
 import { runTournamentTool } from "./runTournamentTool";
 import { listGithubPrsTool, getGithubPrTool, mergeGithubPrTool } from "./githubPrTools";
 import { projectShellTool } from "./projectShellTool";
+import { deployAppTool } from "./deployApp";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -187,6 +188,7 @@ export const ALL_TOOLS: AgentTool[] = [
   listCustomAgentsTool,
   runTournamentTool,
   projectShellTool,
+  deployAppTool,
 ];
 
 // ── Tool index + resolver ──────────────────────────────────────────────────────
@@ -196,6 +198,7 @@ const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 TOOL_GROUP_MAP[listCustomAgentsTool.name] = ["coaching"];
 TOOL_GROUP_MAP[runTournamentTool.name] = ["system"];
 TOOL_GROUP_MAP[projectShellTool.name] = ["app_build"];
+TOOL_GROUP_MAP[deployAppTool.name] = ["app_build", "coaching"];
 
 // Wire the resolver so testToolTool can look up tools without a circular import.
 initToolResolver((name) => TOOL_INDEX.get(name));
@@ -230,6 +233,7 @@ export function telegramCoachTools(opts: { hasGoogle: boolean }): AgentTool[] {
     ),
     listCustomAgentsTool,
     runTournamentTool,
+    deployAppTool,
   ];
   if (opts.hasGoogle) {
     base.push(gmailActionTool, gmailDraftTool, fetchCalendarTool, driveCreateFileTool, driveListFilesTool, driveReadFileTool);
@@ -367,4 +371,5 @@ export {
   getGithubPrTool,
   mergeGithubPrTool,
   projectShellTool,
+  deployAppTool,
 };
