@@ -1436,6 +1436,11 @@ export async function ensureTablesExist() {
       CREATE INDEX IF NOT EXISTS jarvis_projects_next_run_idx
         ON jarvis_projects (next_run_at) WHERE next_run_at IS NOT NULL
     `).catch(() => {});
+    // columns added after initial table creation
+    await db.execute(sql`ALTER TABLE jarvis_projects ADD COLUMN IF NOT EXISTS workspace_dir TEXT`).catch(() => {});
+    await db.execute(sql`ALTER TABLE jarvis_projects ADD COLUMN IF NOT EXISTS app_framework VARCHAR`).catch(() => {});
+    await db.execute(sql`ALTER TABLE jarvis_projects ADD COLUMN IF NOT EXISTS dev_server_port INTEGER`).catch(() => {});
+    await db.execute(sql`ALTER TABLE jarvis_projects ADD COLUMN IF NOT EXISTS github_repo_url TEXT`).catch(() => {});
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS jarvis_project_sessions (

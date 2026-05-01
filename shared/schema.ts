@@ -1619,6 +1619,7 @@ export const jarvisProjects = pgTable("jarvis_projects", {
   workspaceDir: text("workspace_dir"),
   appFramework: varchar("app_framework"),
   devServerPort: integer("dev_server_port"),
+  githubRepoUrl: text("github_repo_url"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
