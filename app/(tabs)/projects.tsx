@@ -40,6 +40,8 @@ interface Project {
   autonomousMode: boolean;
   questionPending: string | null;
   lastProgressAt: string | null;
+  appFramework: string | null;
+  lastSessionSummary: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -66,7 +68,15 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof 
 };
 
 function useProjects() {
-  return useQuery<Project[]>({ queryKey: ["/api/projects"], refetchInterval: 30000 });
+  return useQuery<Project[]>({
+    queryKey: ["/api/projects"],
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return 15000;
+      const hasActive = data.some((p) => p.status === "building" || p.status === "planning");
+      return hasActive ? 8000 : 30000;
+    },
+  });
 }
 
 function useProjectDetail(id: string | null) {
@@ -89,16 +99,26 @@ function ProgressBar({ completed, total, color }: { completed: number; total: nu
 function ProjectCard({ project, onPress }: { project: Project; onPress: () => void }) {
   const colors = useColors();
   const cfg = STATUS_CONFIG[project.status] ?? STATUS_CONFIG.draft;
-  const completed = (project.plan ?? []).filter((s) => s.status === "complete").length;
-  const total = (project.plan ?? []).length;
+  const plan = project.plan ?? [];
+  const completed = plan.filter((s) => s.status === "complete").length;
+  const total = plan.length;
+  const isAppProject = !!project.appFramework;
+  const runningStep = plan.find((s) => s.status === "running") ?? null;
+  const currentStep = runningStep ?? (plan.find((s) => s.status === "pending") ?? null);
 
   return (
-    <TouchableOpacity style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]} onPress={onPress} activeOpacity={0.75}>
+    <TouchableOpacity style={[styles.card, { backgroundColor: colors.surface, borderColor: isAppProject ? "#6366F144" : colors.border }]} onPress={onPress} activeOpacity={0.75}>
       <View style={styles.cardHeader}>
         <View style={[styles.statusBadge, { backgroundColor: cfg.color + "22" }]}>
           <Ionicons name={cfg.icon} size={14} color={cfg.color} />
           <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.label}</Text>
         </View>
+        {isAppProject && (
+          <View style={[styles.autoBadge, { backgroundColor: "#6366F122" }]}>
+            <Ionicons name="code-slash" size={12} color="#6366F1" />
+            <Text style={[styles.autoText, { color: "#6366F1" }]}>App Build</Text>
+          </View>
+        )}
         {project.autonomousMode && (
           <View style={[styles.autoBadge, { backgroundColor: "#3B82F622" }]}>
             <Ionicons name="flash" size={12} color="#3B82F6" />
@@ -120,8 +140,24 @@ function ProjectCard({ project, onPress }: { project: Project; onPress: () => vo
       {total > 0 && (
         <View style={styles.progressSection}>
           <ProgressBar completed={completed} total={total} color={cfg.color} />
-          <Text style={[styles.progressLabel, { color: colors.textTertiary }]}>
-            {completed}/{total} steps
+          <View style={styles.progressRow}>
+            <Text style={[styles.progressLabel, { color: colors.textTertiary }]}>
+              {completed}/{total} steps
+            </Text>
+            {(project.status === "building" || project.status === "planning") && currentStep && (
+              <Text style={[styles.currentStepLabel, { color: cfg.color }]} numberOfLines={1}>
+                {currentStep.phase} · {currentStep.label}
+              </Text>
+            )}
+          </View>
+        </View>
+      )}
+
+      {project.lastSessionSummary && project.status !== "draft" && (
+        <View style={[styles.sessionSummaryBanner, { backgroundColor: colors.background, borderColor: colors.border }]}>
+          <Ionicons name="time-outline" size={13} color={colors.textTertiary} />
+          <Text style={[styles.sessionSummaryText, { color: colors.textSecondary }]} numberOfLines={2}>
+            {project.lastSessionSummary}
           </Text>
         </View>
       )}
@@ -566,7 +602,19 @@ const styles = StyleSheet.create({
   progressSection: { gap: 4 },
   progressBarBg: { height: 4, borderRadius: 2, backgroundColor: "#E5E7EB" },
   progressBarFill: { height: 4, borderRadius: 2 },
+  progressRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
   progressLabel: { fontSize: 12 },
+  currentStepLabel: { fontSize: 11, fontWeight: "500", flex: 1, textAlign: "right" },
+
+  sessionSummaryBanner: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 5,
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  sessionSummaryText: { flex: 1, fontSize: 12, lineHeight: 17 },
 
   questionBanner: {
     flexDirection: "row",
