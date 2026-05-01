@@ -312,9 +312,10 @@ function GitHubPushModal({ visible, project, onClose, onPushed }: {
   visible: boolean;
   project: Project;
   onClose: () => void;
-  onPushed: (repoUrl: string) => void;
+  onPushed: (repoUrl: string, wasSyncMode: boolean) => void;
 }) {
   const colors = useColors();
+  const isSyncMode = !!project.githubRepoUrl;
   const [repoName, setRepoName] = useState(() => {
     const base = (project.title ?? "jarvis-project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     return base || "jarvis-project";
@@ -322,27 +323,33 @@ function GitHubPushModal({ visible, project, onClose, onPushed }: {
   const [isPrivate, setIsPrivate] = useState(false);
   const [isPushing, setIsPushing] = useState(false);
 
+  const canSubmit = isSyncMode ? true : repoName.trim().length > 0;
+
   const handlePush = useCallback(async () => {
-    if (!repoName.trim()) return;
+    if (!canSubmit) return;
     setIsPushing(true);
     try {
-      const res = await apiRequest("POST", `/api/projects/${project.id}/push-to-github`, {
-        repoName: repoName.trim(),
-        isPrivate,
-        description: project.goal ?? project.description ?? undefined,
-      });
+      const body = isSyncMode
+        ? { existingRepoUrl: project.githubRepoUrl }
+        : { repoName: repoName.trim(), isPrivate, description: project.goal ?? project.description ?? undefined };
+
+      const res = await apiRequest("POST", `/api/projects/${project.id}/push-to-github`, body);
       const data = await res.json() as { repoUrl?: string; error?: string };
       if (!res.ok || !data.repoUrl) {
-        Alert.alert("Push failed", data.error ?? "Failed to push to GitHub");
+        Alert.alert(isSyncMode ? "Sync failed" : "Push failed", data.error ?? "Failed to push to GitHub");
       } else {
-        onPushed(data.repoUrl);
+        onPushed(data.repoUrl, isSyncMode);
       }
     } catch (err) {
-      Alert.alert("Push failed", err instanceof Error ? err.message : "Network error");
+      Alert.alert(isSyncMode ? "Sync failed" : "Push failed", err instanceof Error ? err.message : "Network error");
     } finally {
       setIsPushing(false);
     }
-  }, [project.id, repoName, isPrivate, project.goal, project.description, onPushed]);
+  }, [canSubmit, isSyncMode, project.id, project.githubRepoUrl, repoName, isPrivate, project.goal, project.description, onPushed]);
+
+  const actionLabel = isPushing
+    ? (isSyncMode ? "Syncing..." : "Pushing...")
+    : (isSyncMode ? "Sync" : "Push");
 
   return (
     <Modal visible={visible} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
@@ -351,43 +358,61 @@ function GitHubPushModal({ visible, project, onClose, onPushed }: {
           <TouchableOpacity onPress={onClose}>
             <Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text>
           </TouchableOpacity>
-          <Text style={[styles.modalTitle, { color: colors.text }]}>Push to GitHub</Text>
-          <TouchableOpacity onPress={handlePush} disabled={!repoName.trim() || isPushing}>
-            <Text style={[styles.modalSave, { color: (!repoName.trim() || isPushing) ? colors.textTertiary : "#3B82F6" }]}>
-              {isPushing ? "Pushing..." : "Push"}
+          <Text style={[styles.modalTitle, { color: colors.text }]}>
+            {isSyncMode ? "Sync to GitHub" : "Create GitHub Repo"}
+          </Text>
+          <TouchableOpacity onPress={handlePush} disabled={!canSubmit || isPushing}>
+            <Text style={[styles.modalSave, { color: (!canSubmit || isPushing) ? colors.textTertiary : "#3B82F6" }]}>
+              {actionLabel}
             </Text>
           </TouchableOpacity>
         </View>
 
         <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
-          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Repository Name *</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
-            placeholder="my-awesome-app"
-            placeholderTextColor={colors.textTertiary}
-            value={repoName}
-            onChangeText={setRepoName}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
+          {isSyncMode ? (
+            <>
+              <View style={[styles.syncRepoRow, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Ionicons name="logo-github" size={18} color={colors.text} />
+                <Text style={[styles.syncRepoUrl, { color: colors.text }]} numberOfLines={1}>
+                  {project.githubRepoUrl}
+                </Text>
+              </View>
+              <Text style={[styles.githubNote, { color: colors.textTertiary }]}>
+                Jarvis will commit any new or changed files and push them to this repo. Your existing commit history is preserved.
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Repository Name *</Text>
+              <TextInput
+                style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
+                placeholder="my-awesome-app"
+                placeholderTextColor={colors.textTertiary}
+                value={repoName}
+                onChangeText={setRepoName}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
 
-          <TouchableOpacity
-            style={[styles.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={() => setIsPrivate(!isPrivate)}
-            activeOpacity={0.75}
-          >
-            <View>
-              <Text style={[styles.toggleLabel, { color: colors.text }]}>Private Repository</Text>
-              <Text style={[styles.toggleDesc, { color: colors.textSecondary }]}>Only you can see this repo</Text>
-            </View>
-            <View style={[styles.toggleSwitch, { backgroundColor: isPrivate ? "#3B82F6" : colors.border }]}>
-              <View style={[styles.toggleThumb, { left: isPrivate ? 22 : 2 }]} />
-            </View>
-          </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                onPress={() => setIsPrivate(!isPrivate)}
+                activeOpacity={0.75}
+              >
+                <View>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>Private Repository</Text>
+                  <Text style={[styles.toggleDesc, { color: colors.textSecondary }]}>Only you can see this repo</Text>
+                </View>
+                <View style={[styles.toggleSwitch, { backgroundColor: isPrivate ? "#3B82F6" : colors.border }]}>
+                  <View style={[styles.toggleThumb, { left: isPrivate ? 22 : 2 }]} />
+                </View>
+              </TouchableOpacity>
 
-          <Text style={[styles.githubNote, { color: colors.textTertiary }]}>
-            Jarvis will create a new GitHub repo and push all project files. Make sure your GitHub token has repo creation permissions.
-          </Text>
+              <Text style={[styles.githubNote, { color: colors.textTertiary }]}>
+                Jarvis will create a new GitHub repo and push all project files. Make sure your GitHub token has repo creation permissions.
+              </Text>
+            </>
+          )}
         </ScrollView>
       </View>
     </Modal>
@@ -442,11 +467,15 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
     ]);
   }, [projectId, queryClient, onBack]);
 
-  const handleGitHubPushed = useCallback((repoUrl: string) => {
+  const handleGitHubPushed = useCallback((repoUrl: string, wasSyncMode: boolean) => {
     setShowGitHubModal(false);
     queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
     queryClient.invalidateQueries({ queryKey: ["/api/projects", projectId] });
-    Alert.alert("Pushed to GitHub!", `Your project is live at:\n${repoUrl}`, [{ text: "OK" }]);
+    const title = wasSyncMode ? "Synced to GitHub!" : "Pushed to GitHub!";
+    const message = wasSyncMode
+      ? `Latest changes pushed to:\n${repoUrl}`
+      : `Your project is live at:\n${repoUrl}`;
+    Alert.alert(title, message, [{ text: "OK" }]);
   }, [projectId, queryClient]);
 
   if (isLoading || !data) {
@@ -542,7 +571,7 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
                   onPress={() => setShowGitHubModal(true)}
                 >
                   <Ionicons name="git-branch-outline" size={14} color="#10B981" />
-                  <Text style={[styles.actionBtnText, { color: "#10B981" }]}>Push to new repo</Text>
+                  <Text style={[styles.actionBtnText, { color: "#10B981" }]}>Sync to GitHub</Text>
                 </TouchableOpacity>
               </>
             ) : (
@@ -560,7 +589,7 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
                   testID="push-to-github-button"
                 >
                   <Ionicons name="logo-github" size={14} color={colors.text} />
-                  <Text style={[styles.actionBtnText, { color: colors.text }]}>Push to GitHub</Text>
+                  <Text style={[styles.actionBtnText, { color: colors.text }]}>Create GitHub repo</Text>
                 </TouchableOpacity>
               </>
             )}
@@ -858,4 +887,6 @@ const styles = StyleSheet.create({
   githubCardDesc: { fontSize: 13, lineHeight: 19 },
   githubRepoUrl: { fontSize: 13, fontWeight: "500" },
   githubNote: { fontSize: 12, lineHeight: 18, marginTop: 16 },
+  syncRepoRow: { flexDirection: "row", alignItems: "center", gap: 10, padding: 14, borderRadius: 10, borderWidth: 1, marginBottom: 12 },
+  syncRepoUrl: { flex: 1, fontSize: 13, fontWeight: "500" as const },
 });

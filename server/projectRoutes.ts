@@ -144,18 +144,23 @@ export function registerProjectRoutes(app: Express): void {
     }
   });
 
-  // POST /api/projects/:id/push-to-github — push the project workspace to a new GitHub repo
+  // POST /api/projects/:id/push-to-github — push the project workspace to GitHub
+  // If existingRepoUrl is provided, pushes a new commit to the existing repo (sync).
+  // Otherwise creates a brand-new repo and pushes (first push).
   app.post("/api/projects/:id/push-to-github", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
       const id = _p(req.params.id);
-      const { repoName, isPrivate, description } = req.body as {
+      const { repoName, isPrivate, description, existingRepoUrl } = req.body as {
         repoName?: string;
         isPrivate?: boolean;
         description?: string;
+        existingRepoUrl?: string;
       };
 
-      if (!repoName) {
+      const isSyncMode = !!existingRepoUrl;
+
+      if (!isSyncMode && !repoName) {
         return res.status(400).json({ error: "repoName is required" });
       }
 
@@ -180,7 +185,45 @@ export function registerProjectRoutes(app: Express): void {
         return res.status(400).json({ error: "No GitHub token configured. Add your GitHub PAT in Settings → GitHub." });
       }
 
-      const safeRepoName = repoName.trim().replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[._-]+|[._-]+$/g, "").slice(0, 100);
+      // ── Sync mode: push to an existing repo ──────────────────────────────────
+      if (isSyncMode) {
+        // Always use the repo URL stored in the DB — never trust the client-provided value
+        // as the authoritative sync target. The client flag is only used to branch into
+        // sync mode; the actual destination comes from project.githubRepoUrl.
+        const storedRepoUrl = project.githubRepoUrl;
+        if (!storedRepoUrl) {
+          return res.status(400).json({ error: "No GitHub repository is linked to this project. Push to GitHub first to create one." });
+        }
+
+        // Parse owner/repoName from the stored URL (e.g. https://github.com/owner/repo)
+        const match = storedRepoUrl.match(/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?(?:\/.*)?$/);
+        if (!match) {
+          return res.status(400).json({ error: "Could not parse owner/repo from the stored GitHub URL." });
+        }
+        const [, owner, repo] = match;
+
+        const now = new Date();
+        const dateStr = now.toISOString().slice(0, 10);
+        const syncMessage = `Sync: ${project.title ?? "Jarvis project"} (${dateStr})`;
+
+        const pushResult = await pushWorkspaceToGitHub(
+          settings.pat,
+          owner,
+          repo,
+          project.workspaceDir,
+          syncMessage,
+        );
+
+        if (!pushResult.ok) {
+          return res.status(500).json({ error: pushResult.error ?? "Failed to sync code to GitHub" });
+        }
+
+        console.log(`[ProjectRoutes] synced project ${id} to existing GitHub repo: ${storedRepoUrl}`);
+        return res.json({ repoUrl: storedRepoUrl });
+      }
+
+      // ── Create mode: make a new repo and push ────────────────────────────────
+      const safeRepoName = repoName!.trim().replace(/[^a-zA-Z0-9._-]/g, "-").replace(/^[._-]+|[._-]+$/g, "").slice(0, 100);
       if (!safeRepoName) {
         return res.status(400).json({ error: "Repository name contains only invalid characters. Use letters, numbers, hyphens, or underscores." });
       }
