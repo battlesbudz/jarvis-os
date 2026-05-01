@@ -227,40 +227,70 @@ export async function packageAndDeliverApp(
 
   console.log(`[AppDelivery] project ${projectId} packaged: ${zipSizeMb}MB, ${fileCount} files, framework=${framework}`);
 
-  const userHasGitHub = await hasGitHubPAT(userId).catch(() => false);
-  const githubNote = userHasGitHub
-    ? `\n\n🐙 **Push to GitHub?** Open the Projects tab in the app and tap "Push to GitHub" to create a repo and push your code directly — no zip needed.`
-    : `\n\n💡 Connect GitHub in Settings to push directly to a repo next time.`;
-
-  const notificationText =
-    `✅ **${project.title}** is complete!\n\n` +
-    `Download your app: ${downloadUrl}\n` +
-    `*(Link expires in 7 days)*\n\n` +
-    `The zip excludes node_modules — run \`npm install\` to restore dependencies.\n\n` +
-    `Tech stack: ${framework}\n` +
-    `Files: ${fileCount} files, ${zipSizeMb} MB` +
-    githubNote;
-
   // Fall back to the channel stored on the project record (set when the project was
   // first created) if no channel is supplied by the caller.  This ensures the
   // delivery notification reaches the right channel even when the job was re-queued
   // by the autonomous scheduler, which does not carry originChannel in its input.
   const effectiveChannel = originChannel ?? project.originChannel ?? undefined;
 
+  // ── GitHub note ────────────────────────────────────────────────────────────
+  const userHasGitHub = await hasGitHubPAT(userId).catch(() => false);
+  const githubNote = userHasGitHub
+    ? `\n\n🐙 **Push to GitHub?** Open the Projects tab in the app and tap "Push to GitHub" to create a repo and push your code directly — no zip needed.`
+    : `\n\n💡 Connect GitHub in Settings to push directly to a repo next time.`;
+
+
+  // ── Cloud deployment offer (opt-in) ───────────────────────────────────────
+  // Deployment is always optional. We check whether credentials are available
+  // so we can include a deployment offer in the notification, but we never
+  // auto-deploy — the user must explicitly ask Jarvis to deploy.
+  const hasVercel = !!process.env.VERCEL_TOKEN;
+  const hasRailway = !!process.env.RAILWAY_TOKEN;
+
+  // Strict framework → provider mapping, no cross-provider fallback:
+  // nextjs/react-vite → Vercel only, node-express → Railway only.
+  let deployOffer = "";
+  if ((framework === "nextjs" || framework === "react-vite") && hasVercel) {
+    deployOffer = `\n\n🚀 **Want a live URL?** Say "deploy my app" and Jarvis will publish it to Vercel.`;
+  } else if (framework === "node-express" && hasRailway) {
+    deployOffer = `\n\n🚀 **Want a live URL?** Say "deploy my app" and Jarvis will publish it to Railway.`;
+  } else if ((hasVercel || hasRailway) && (framework === "custom" || !framework)) {
+    const provider = hasVercel ? "Vercel" : "Railway";
+    deployOffer = `\n\n🚀 **Want a live URL?** Say "deploy my app" and Jarvis will publish it to ${provider}.`;
+  }
+
+  const notificationText =
+    `✅ **${project.title}** is complete!\n\n` +
+    `📦 Download your app: ${downloadUrl}\n` +
+    `*(Link expires in 7 days)*\n\n` +
+    `The zip excludes node_modules — run \`npm install\` to restore dependencies.\n\n` +
+    `Tech stack: ${framework} · ${fileCount} files · ${zipSizeMb} MB` +
+    githubNote +
+    deployOffer;
+
+  await sendDeliveryNotification(userId, effectiveChannel, notificationText);
+
+  return { downloadUrl, zipSizeMb };
+}
+
+/** Send a notification to the appropriate channel(s) for a user. */
+async function sendDeliveryNotification(
+  userId: string,
+  effectiveChannel: string | undefined,
+  text: string,
+): Promise<void> {
   try {
     const origin = (effectiveChannel ?? "").toLowerCase();
     if (origin === "telegram") {
       const telegramCh = getChannel("telegram");
-      if (telegramCh) await telegramCh.sendMessage(userId, notificationText, {}).catch(() => {});
+      if (telegramCh) await telegramCh.sendMessage(userId, text, {}).catch(() => {});
     } else if (origin.startsWith("discord")) {
-      await sendToDiscordUser(userId, notificationText).catch(() => {});
+      await sendToDiscordUser(userId, text).catch(() => {});
     }
     const inAppCh = getChannel("in_app");
-    if (inAppCh) await inAppCh.sendMessage(userId, notificationText, {}).catch(() => {});
+    if (inAppCh) await inAppCh.sendMessage(userId, text, {}).catch(() => {});
   } catch {
-    console.warn(`[AppDelivery] failed to send delivery notification to channel ${originChannel}`);
+    console.warn(`[AppDelivery] failed to send notification to channel=${effectiveChannel}`);
   }
-
-  return { downloadUrl, zipSizeMb };
 }
 
