@@ -3,6 +3,7 @@ import {
   View,
   Text,
   TouchableOpacity,
+  TextInput,
   StyleSheet,
   ActivityIndicator,
   Platform,
@@ -61,6 +62,9 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const [gisReady, setGisReady] = useState(false);
   const [hasPreviousAccount, setHasPreviousAccount] = useState(false);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [pwLoading, setPwLoading] = useState(false);
   const gisInitialized = useRef(false);
   const isAuthenticatedRef = useRef(isAuthenticated);
   useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
@@ -248,6 +252,33 @@ export default function LoginScreen() {
     }
   }
 
+  async function handlePasswordLogin() {
+    setError("");
+    if (!username.trim() || !password.trim()) {
+      setError("Please enter your username and password.");
+      return;
+    }
+    setPwLoading(true);
+    try {
+      const base = getApiUrl();
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Invalid username or password.");
+      } else {
+        await loginWithToken(data.token);
+      }
+    } catch (e: any) {
+      setError(e.message || "Login failed. Please try again.");
+    } finally {
+      setPwLoading(false);
+    }
+  }
+
   return (
     <View style={styles.container}>
       <View style={[styles.inner, { paddingTop: topPadding + 40, paddingBottom: Platform.OS === "web" ? 34 : insets.bottom + 20 }]}>
@@ -270,6 +301,44 @@ export default function LoginScreen() {
           )}
 
           {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <TextInput
+            style={styles.textInput}
+            placeholder="Username"
+            placeholderTextColor="#666"
+            value={username}
+            onChangeText={setUsername}
+            autoCapitalize="none"
+            autoCorrect={false}
+            testID="username-input"
+          />
+          <TextInput
+            style={styles.textInput}
+            placeholder="Password"
+            placeholderTextColor="#666"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            testID="password-input"
+          />
+          <TouchableOpacity
+            style={[styles.passwordButton, pwLoading && styles.buttonDisabled]}
+            onPress={handlePasswordLogin}
+            disabled={pwLoading || loading}
+            testID="password-login-button"
+          >
+            {pwLoading ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.passwordButtonText}>Sign in</Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.divider}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>or</Text>
+            <View style={styles.dividerLine} />
+          </View>
 
           <TouchableOpacity
             style={[styles.googleButton, loading && styles.buttonDisabled]}
@@ -463,5 +532,43 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: "Inter_400Regular",
     color: "#666",
+  },
+  textInput: {
+    backgroundColor: "#111",
+    borderWidth: 1,
+    borderColor: "#2a2a2a",
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    fontSize: 15,
+    fontFamily: "Inter_400Regular",
+    color: "#fff",
+  },
+  passwordButton: {
+    backgroundColor: "#6366F1",
+    borderRadius: 12,
+    paddingVertical: 16,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  passwordButtonText: {
+    fontSize: 16,
+    fontFamily: "Inter_600SemiBold",
+    color: "#fff",
+  },
+  divider: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#2a2a2a",
+  },
+  dividerText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#444",
   },
 });
