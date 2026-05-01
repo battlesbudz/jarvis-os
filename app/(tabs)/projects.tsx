@@ -10,6 +10,7 @@ import {
   Modal,
   Alert,
   Platform,
+  Linking,
   type DimensionValue,
 } from "react-native";
 import type { ComponentProps } from "react";
@@ -125,6 +126,19 @@ function ProjectCard({ project, onPress }: { project: Project; onPress: () => vo
             <Ionicons name="flash" size={12} color="#3B82F6" />
             <Text style={styles.autoText}>Auto</Text>
           </View>
+        )}
+        {project.githubRepoUrl && project.status === "complete" && (
+          <TouchableOpacity
+            style={styles.githubIconBtn}
+            onPress={() => {
+              Linking.openURL(project.githubRepoUrl!).catch(() => {
+                Alert.alert("Could not open link", "Unable to open the GitHub repository URL.");
+              });
+            }}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="logo-github" size={18} color={colors.textSecondary} />
+          </TouchableOpacity>
         )}
       </View>
 
@@ -765,7 +779,7 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
   },
-  cardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  cardHeader: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
   cardTitle: { fontSize: 16, fontWeight: "600", lineHeight: 22 },
   cardGoal: { fontSize: 13, lineHeight: 18 },
 
@@ -773,6 +787,7 @@ const styles = StyleSheet.create({
   statusText: { fontSize: 12, fontWeight: "600" },
   autoBadge: { flexDirection: "row", alignItems: "center", gap: 3, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 20 },
   autoText: { fontSize: 11, fontWeight: "600", color: "#3B82F6" },
+  githubIconBtn: { marginLeft: "auto", padding: 2 },
 
   progressSection: { gap: 4 },
   progressBarBg: { height: 4, borderRadius: 2, backgroundColor: "#E5E7EB" },
