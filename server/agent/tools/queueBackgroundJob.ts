@@ -13,9 +13,9 @@ interface QueueJobArgs {
 
 /**
  * Agent types that queue_background_job accepts, including the extended
- * "deep_research" type beyond the core SubAgentType set.
+ * "deep_research" and "app_project" types beyond the core SubAgentType set.
  */
-const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research"];
+const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research", "app_project"];
 
 /**
  * Commonly confused US city names — bare city name (lower-cased) → list of states.
@@ -173,9 +173,10 @@ Before calling this tool, use sessions_list (filter: status=queued or status=run
 Choose agent_type based on the request:
 - "research"       — single focused topic; results don't depend on each other (e.g. "latest news on OpenAI", "what is the current ETH price")
 - "deep_research"  — complex request where understanding one thing is REQUIRED before properly researching another, OR multiple related topics that should be synthesised into one coherent report (e.g. "compare these two investment theses", "research this startup and its market", "analyse multiple companies in the same space")
-- writing: drafting memos, notes, blog posts, documents, reports
-- planning: phased project plans, goal breakdowns, action plans
-- email: composing an outbound email on the user's behalf
+- "writing"        — drafting memos, notes, blog posts, documents, reports
+- "planning"       — phased project plans, goal breakdowns, action plans
+- "email"          — composing an outbound email on the user's behalf
+- "app_project"    — build a COMPLETE STANDALONE APP (not a Jarvis feature). Use when the user wants to create a separate product: a web app, tool, dashboard, API service, etc. Include in prompt: title, description, goal, and framework ("nextjs" | "react-vite" | "node-express" | "custom"). Jarvis will plan, scaffold, build, visually test, and deliver a downloadable zip. Runs autonomously — tell the user it may take 30-90 minutes depending on complexity.
 
 ENTITY CHECK: Before queueing research or writing jobs, the tool automatically checks the prompt against the user's known projects and products. If a near-match (possible typo) is found, the tool will pause and return a confirmation request — relay this to the user and wait for their reply before re-calling. If the user explicitly confirms they want to search as-is (not the matched entity), set skip_entity_check=true on the next call. If they confirm the corrected name, update the prompt and re-call without skip_entity_check.
 
@@ -297,6 +298,44 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     // ────────────────────────────────────────────────────────────────────────
 
     try {
+      // ── App project — special path: create project record first ─────────────
+      // app_project needs a project row with workspaceDir before the first job
+      // can run. startAppProject() handles that and enqueues the first session.
+      if (agentType === "app_project") {
+        const { startAppProject } = await import("../appProjectRunner");
+
+        const frameworkMatch = prompt.match(/framework[:\s]+["']?(nextjs|react-vite|node-express|custom)["']?/i);
+        let framework: "nextjs" | "react-vite" | "node-express" | "custom" = "nextjs";
+        if (frameworkMatch) {
+          const fw = frameworkMatch[1].toLowerCase();
+          if (fw === "react-vite") framework = "react-vite";
+          else if (fw === "node-express") framework = "node-express";
+          else if (fw === "custom") framework = "custom";
+          else framework = "nextjs";
+        }
+
+        const { projectId } = await startAppProject({
+          userId: ctx.userId,
+          title,
+          description: prompt,
+          goal: prompt,
+          framework,
+          originChannel: ctx.channel,
+        });
+
+        console.log(
+          `[${ctx.channel || "Coach"}] queue_background_job app_project created project=${projectId} framework=${framework} title="${title.slice(0, 60)}"`,
+        );
+        return {
+          ok: true,
+          content: `App project queued successfully (projectId=${projectId}, framework=${framework}). ` +
+            `Jarvis will plan, scaffold, build, and visually test the app across multiple sessions. ` +
+            `This typically takes 30-90 minutes. The user will receive a download link when it's ready.`,
+          label: `App project started`,
+          detail: projectId,
+        };
+      }
+
       // Inject per-type model routing so the job queue uses the appropriate
       // GPT mini for each sub-agent workload (research/planning → gpt-4.1-mini,
       // writing/email → gpt-4o-mini).

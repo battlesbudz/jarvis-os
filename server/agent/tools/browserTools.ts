@@ -39,13 +39,46 @@ const PRIVATE_CIDR_PATTERNS = [
   /^f[cd][0-9a-f]{2}:/i,
 ];
 
-function validateUrl(url: string): string | null {
+// ── Screenshot tracking for deterministic TEST_UI verification ─────────────────
+// When project_shell runs a dev server and the agent is in an app_project session,
+// the browser_screenshot tool increments this counter per projectId.
+// runDeterministicVerification() reads and clears the counter after runAgent().
+const _appProjectScreenshotCounts = new Map<string, number>();
+
+export function incrementAppProjectScreenshotCount(projectId: string): void {
+  _appProjectScreenshotCounts.set(projectId, (_appProjectScreenshotCounts.get(projectId) ?? 0) + 1);
+}
+
+export function getAndClearAppProjectScreenshotCount(projectId: string): number {
+  const count = _appProjectScreenshotCounts.get(projectId) ?? 0;
+  _appProjectScreenshotCounts.delete(projectId);
+  return count;
+}
+
+/**
+ * Validates a URL for safety. Private/internal addresses are blocked.
+ *
+ * @param url - URL to validate
+ * @param allowLocalhost - When true, allow localhost:3001-3999 (for app-build
+ *   TEST_UI phases). Must only be set via ctx.browserLocalhostException on
+ *   app_project contexts — never in general agent runs.
+ */
+function validateUrl(url: string, allowLocalhost?: boolean): string | null {
   const u = url.trim();
   if (!u) return "No URL provided.";
   if (!u.startsWith("http://") && !u.startsWith("https://")) return `URL must start with http:// or https://. Got: ${u}`;
   let parsed: URL;
   try { parsed = new URL(u); } catch { return `Invalid URL: ${u}`; }
   const host = parsed.hostname.toLowerCase();
+  const port = parsed.port ? parseInt(parsed.port, 10) : (u.startsWith("https://") ? 443 : 80);
+
+  // Localhost:3001-3999 is allowed ONLY when the caller explicitly grants the exception
+  // (i.e. the agent is operating in an app_project TEST_UI context with its own dev server).
+  if ((host === "localhost" || host === "127.0.0.1") && port >= 3001 && port <= 3999) {
+    if (allowLocalhost) return null;
+    return `Blocked: localhost:${port} access is only permitted in app-build (TEST_UI) contexts.`;
+  }
+
   if (BLOCKED_HOSTS.test(host)) return `Blocked: "${host}" is a reserved or internal address.`;
   if (host.endsWith(".local") || host.endsWith(".internal")) return `Blocked: "${host}" is a private/internal domain.`;
   if (PRIVATE_CIDR_PATTERNS.some((rx) => rx.test(host))) return `Blocked: "${host}" is a private/reserved IP address.`;
@@ -267,7 +300,7 @@ export const browserNavigateTool: AgentTool = {
   },
   async execute(args, ctx) {
     const url = String(args.url || "").trim();
-    const urlError = validateUrl(url);
+    const urlError = validateUrl(url, ctx?.browserLocalhostException);
     if (urlError) return { ok: false, content: urlError, label: "browser_navigate: bad URL" };
 
     try {
@@ -529,6 +562,8 @@ export const browserScreenshotTool: AgentTool = {
       }
 
       console.log(`[${ctx.channel || "Agent"}] browser_screenshot full=${fullPage} encoded_size=${base64.length} contentVisible=${contentVisible}`);
+      // Track actual screenshot calls for TEST_UI deterministic verification.
+      if (ctx?.projectId) incrementAppProjectScreenshotCount(ctx.projectId);
       return {
         ok: true,
         content: `Screenshot captured.\n\n[image/png;base64,${base64}]${loginHint}`,
@@ -1214,7 +1249,7 @@ export const browserGetCookiesTool: AgentTool = {
     const mcpArgs: Record<string, unknown> = {};
     if (Array.isArray(args.urls) && args.urls.length) {
       for (const u of args.urls) {
-        const err = validateUrl(String(u));
+        const err = validateUrl(String(u), ctx?.browserLocalhostException);
         if (err) return { ok: false, content: `Invalid URL in urls: ${err}`, label: "browser_get_cookies: bad URL" };
       }
       mcpArgs.urls = args.urls.map(String);
@@ -1277,7 +1312,7 @@ export const browserSetCookiesTool: AgentTool = {
 
     for (const c of cookies) {
       if (c.url) {
-        const err = validateUrl(String(c.url));
+        const err = validateUrl(String(c.url), ctx?.browserLocalhostException);
         if (err) return { ok: false, content: `Invalid cookie URL: ${err}`, label: "browser_set_cookies: bad URL" };
       }
     }
@@ -1318,7 +1353,7 @@ export const browserDeleteCookiesTool: AgentTool = {
     const mcpArgs: Record<string, unknown> = {};
     if (args.name) mcpArgs.name = String(args.name);
     if (args.url) {
-      const err = validateUrl(String(args.url));
+      const err = validateUrl(String(args.url), ctx?.browserLocalhostException);
       if (err) return { ok: false, content: `Invalid URL: ${err}`, label: "browser_delete_cookies: bad URL" };
       mcpArgs.url = String(args.url);
     }
@@ -1429,7 +1464,7 @@ export const browserTabNewTool: AgentTool = {
     }
     const mcpArgs: Record<string, unknown> = {};
     if (args.url) {
-      const urlErr = validateUrl(String(args.url));
+      const urlErr = validateUrl(String(args.url), ctx?.browserLocalhostException);
       if (urlErr) return { ok: false, content: urlErr, label: "browser_tab_new: bad URL" };
       mcpArgs.url = String(args.url);
     }
@@ -1550,14 +1585,14 @@ export const browserTabCloseTool: AgentTool = {
  * is "url" or ends with "url" (case-insensitive).  Returns an error string on
  * the first violation, or null if all URLs are safe.
  */
-function scanArgsForUrls(value: unknown, keyPath: string): string | null {
+function scanArgsForUrls(value: unknown, keyPath: string, allowLocalhost?: boolean): string | null {
   if (value === null || value === undefined) return null;
 
   if (typeof value === "string") {
     // Only validate when the key looks like a URL field
     const key = keyPath.split(".").pop() ?? "";
     if (key === "url" || key.toLowerCase().endsWith("url")) {
-      const err = validateUrl(value);
+      const err = validateUrl(value, allowLocalhost);
       if (err) return `invalid ${keyPath || "url"}: ${err}`;
     }
     return null;
@@ -1565,7 +1600,7 @@ function scanArgsForUrls(value: unknown, keyPath: string): string | null {
 
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
-      const err = scanArgsForUrls(value[i], `${keyPath}[${i}]`);
+      const err = scanArgsForUrls(value[i], `${keyPath}[${i}]`, allowLocalhost);
       if (err) return err;
     }
     return null;
@@ -1574,7 +1609,7 @@ function scanArgsForUrls(value: unknown, keyPath: string): string | null {
   if (typeof value === "object") {
     for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
       const childPath = keyPath ? `${keyPath}.${k}` : k;
-      const err = scanArgsForUrls(v, childPath);
+      const err = scanArgsForUrls(v, childPath, allowLocalhost);
       if (err) return err;
     }
     return null;
@@ -1650,7 +1685,7 @@ export const browserToolPassthrough: AgentTool = {
         : {};
 
     // SSRF guard: recursively validate any URL-like field in args (including nested objects/arrays)
-    const ssrfError = scanArgsForUrls(toolArgs, "");
+    const ssrfError = scanArgsForUrls(toolArgs, "", ctx?.browserLocalhostException);
     if (ssrfError) return { ok: false, content: `SSRF guard: ${ssrfError}`, label: "browser_tool: SSRF blocked" };
 
     try {

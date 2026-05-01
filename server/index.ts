@@ -461,6 +461,15 @@ function setupErrorHandler(app: express.Application) {
   // auto-pruning was added (non-blocking, errors are swallowed inside helper).
   pruneAuditLogArchivesOnStartup().catch(() => {});
 
+  // Startup cleanup: remove app-project zip downloads older than 7 days.
+  import("./agent/appDelivery").then(({ cleanupExpiredZips }) => cleanupExpiredZips()).catch(() => {});
+
+  // Startup cleanup: kill any dev-server processes that survived a previous crash/restart.
+  // The in-memory runningServers map is lost on restart; PID files let us find and kill orphans.
+  import("./agent/tools/projectShellTool").then(({ cleanupOrphanedDevServers }) => {
+    try { cleanupOrphanedDevServers(); } catch { /* non-fatal */ }
+  }).catch(() => {});
+
   startScheduler();
   startTriageRunner();
 

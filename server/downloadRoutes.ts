@@ -1,8 +1,14 @@
 import type { Express, Request, Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
+import { db } from "./db";
+import { eq } from "drizzle-orm";
+import * as schema from "@shared/schema";
+import { getUserIdFromRequest } from "./auth";
+import { validateDownloadToken } from "./agent/appDelivery";
 
 const APK_PATH = path.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
+const DOWNLOADS_DIR = path.join(process.cwd(), "server", "static", "downloads");
 
 function getFallbackUrl(): string | null {
   return process.env.ANDROID_APK_URL ?? null;
@@ -51,5 +57,64 @@ export function registerDownloadRoutes(app: Express): void {
     }
 
     res.json({ available: false });
+  });
+
+  // ── Project download ─────────────────────────────────────────────────────
+  // Accepts EITHER:
+  //   a) A valid signed ?token=<token> query param (for Telegram/Discord clickthrough)
+  //   b) Bearer auth (for in-app download button)
+  app.get("/api/downloads/project/:projectId", async (req: Request, res: Response) => {
+    const { projectId } = req.params;
+    const queryToken = typeof req.query.token === "string" ? req.query.token : null;
+
+    // ── Auth: signed token OR bearer ────────────────────────────────────────
+    // Signed token: usable from Telegram/Discord clickthrough without auth headers
+    // Bearer token: used by the in-app download button
+    const tokenValid = queryToken ? validateDownloadToken(projectId, queryToken) : false;
+    const bearerUserId = tokenValid ? null : await getUserIdFromRequest(req);
+
+    if (!tokenValid && !bearerUserId) {
+      return res.status(401).json({ error: "Unauthorized — provide a valid token or authenticate" });
+    }
+
+    try {
+      const [project] = await db
+        .select()
+        .from(schema.jarvisProjects)
+        .where(eq(schema.jarvisProjects.id, projectId))
+        .limit(1);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      // Bearer auth: enforce project ownership
+      if (!tokenValid && project.userId !== bearerUserId) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      const zipPath = path.join(DOWNLOADS_DIR, `${projectId}.zip`);
+
+      if (!fs.existsSync(zipPath)) {
+        return res.status(404).json({
+          error: "Project zip not yet available",
+          detail: "The project may still be building. You will receive a notification when the download is ready.",
+        });
+      }
+
+      const stat = fs.statSync(zipPath);
+      const safeName = (project.title ?? projectId).replace(/[^a-z0-9]/gi, "-").toLowerCase();
+      const filename = `${safeName}.zip`;
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      res.setHeader("Content-Length", stat.size);
+      res.setHeader("Cache-Control", "no-cache");
+
+      fs.createReadStream(zipPath).pipe(res);
+    } catch (err) {
+      console.error(`[DownloadRoutes] project download error for ${projectId}:`, err);
+      res.status(500).json({ error: "Download failed" });
+    }
   });
 }

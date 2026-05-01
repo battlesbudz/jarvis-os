@@ -869,6 +869,7 @@ async function runDueAutonomousProjectSessions(): Promise<void> {
       id: schema.jarvisProjects.id,
       userId: schema.jarvisProjects.userId,
       title: schema.jarvisProjects.title,
+      appFramework: schema.jarvisProjects.appFramework,
     });
 
   if (due.length === 0) return;
@@ -876,15 +877,17 @@ async function runDueAutonomousProjectSessions(): Promise<void> {
   const { submitAgentJob } = await import('./agent/jobClient');
 
   for (const project of due) {
-    console.log(`[Scheduler] Autonomous project session due: ${project.id} (${project.title ?? "untitled"})`);
+    const isAppProject = Boolean(project.appFramework);
+    const agentType = isAppProject ? "app_project" : "project_session";
+    console.log(`[Scheduler] Autonomous project session due: ${project.id} (${project.title ?? "untitled"}) type=${agentType}`);
     await submitAgentJob({
       userId: project.userId,
-      agentType: "project_session",
+      agentType,
       title: `Build: ${project.title ?? "Project"} (autonomous session)`,
       prompt: `Continue building project ${project.id}`,
       input: { projectId: project.id },
     }).catch((err) => {
-      console.error(`[Scheduler] Failed to enqueue project_session for ${project.id}:`, err);
+      console.error(`[Scheduler] Failed to enqueue ${agentType} for ${project.id}:`, err);
     });
   }
 }

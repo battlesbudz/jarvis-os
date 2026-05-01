@@ -126,6 +126,7 @@ import { workspaceUpdateTool } from "./workspaceUpdateTool";
 import { listCustomAgentsTool } from "./listCustomAgents";
 import { runTournamentTool } from "./runTournamentTool";
 import { listGithubPrsTool, getGithubPrTool, mergeGithubPrTool } from "./githubPrTools";
+import { projectShellTool } from "./projectShellTool";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -148,6 +149,7 @@ export type ToolGroup =
   | "mcp"         // auto-discovered tools from connected MCP servers
   | "compute"     // run_python — sandboxed code execution
   | "github"      // list_github_prs, get_github_pr, merge_github_pr
+  | "app_build"   // project_shell — sandboxed shell for standalone app projects
 
 // ── Registry-derived data (single source of truth for capability tools) ────────
 // GOOGLE_GATED and TOOL_GROUP_MAP come entirely from the capability registry.
@@ -183,6 +185,7 @@ export const ALL_TOOLS: AgentTool[] = [
   ...capabilityRegistry.getAllTools(),
   listCustomAgentsTool,
   runTournamentTool,
+  projectShellTool,
 ];
 
 // ── Tool index + resolver ──────────────────────────────────────────────────────
@@ -191,6 +194,7 @@ const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 // Register custom-agent tools in the group map so filterToolsByGroups includes them.
 TOOL_GROUP_MAP[listCustomAgentsTool.name] = ["coaching"];
 TOOL_GROUP_MAP[runTournamentTool.name] = ["system"];
+TOOL_GROUP_MAP[projectShellTool.name] = ["app_build"];
 
 // Wire the resolver so testToolTool can look up tools without a circular import.
 initToolResolver((name) => TOOL_INDEX.get(name));
@@ -360,4 +364,5 @@ export {
   listGithubPrsTool,
   getGithubPrTool,
   mergeGithubPrTool,
+  projectShellTool,
 };

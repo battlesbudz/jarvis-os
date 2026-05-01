@@ -1006,6 +1006,44 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       return;
     }
 
+    // ── Standalone app build project session ───────────────────────────────────
+    if (job.agentType === "app_project") {
+      const input = (job.input as Record<string, unknown>) ?? {};
+      const projectId = String(input.projectId ?? "");
+      if (!projectId) throw new Error("app_project job missing projectId");
+      const userAnswer = typeof input.userAnswer === "string" ? input.userAnswer : undefined;
+      const originChannel = typeof input.originChannel === "string" ? input.originChannel : undefined;
+
+      console.log(`[JobQueue] app_project start: project=${projectId}${userAnswer ? " (with user answer)" : ""}`);
+      const { runAppProjectSession } = await import("./appProjectRunner");
+      const sessionResult = await runAppProjectSession(projectId, 1, userAnswer);
+
+      if (sessionResult.status === "complete") {
+        const { packageAndDeliverApp } = await import("./appDelivery");
+        try {
+          await packageAndDeliverApp(projectId, job.userId, originChannel);
+        } catch (deliveryErr) {
+          console.error(`[JobQueue] app_project delivery failed for ${projectId}:`, deliveryErr);
+        }
+      }
+
+      await completeJob(job.id, {
+        result: {
+          projectId,
+          status: sessionResult.status,
+          stepsCompleted: sessionResult.stepsCompleted,
+          summary: sessionResult.summary,
+        },
+        turns: 1,
+        toolCallsCount: 0,
+      });
+
+      console.log(
+        `[JobQueue] app_project complete: project=${projectId} status=${sessionResult.status} stepsCompleted=${sessionResult.stepsCompleted}`,
+      );
+      return;
+    }
+
     // ── General-purpose diagnostic agent (e.g. auto-debug from IntegrationValidator) ─
     if (job.agentType === "general") {
       const generalCtx: ToolContext = {
