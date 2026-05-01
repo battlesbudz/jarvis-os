@@ -272,8 +272,8 @@ export default function LoginScreen() {
       } else {
         await loginWithToken(data.token);
       }
-    } catch (e: any) {
-      setError(e.message || "Login failed. Please try again.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Login failed. Please try again.");
     } finally {
       setPwLoading(false);
     }

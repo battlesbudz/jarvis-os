@@ -27,6 +27,7 @@
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@napi-rs/canvas": "^0.1.99",
     "@playwright/mcp": "^0.0.70",
+    "@playwright/test": "^1.59.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@replit/connectors-sdk": "^0.4.0",
     "@stardazed/streams-text-encoding": "^1.0.2",
