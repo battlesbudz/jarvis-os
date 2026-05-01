@@ -206,10 +206,18 @@ async function _runAnalysisInner(userId: string): Promise<{ submitted: number; q
   // ── Step B: LLM clustering + build decision ────────────────────────────────
   // Number the gaps so the LLM can attribute them to clusters via memberIndices.
   const gapSummary = rawGaps
-    .map((g, i) =>
-      `[${i}] [${g.detectedReason}] (×${g.count}) User said: "${g.userMessage.slice(0, 200)}"` +
-      (g.agentReplySnippet ? `\n   Jarvis said: "${g.agentReplySnippet.slice(0, 150)}"` : ''),
-    )
+    .map((g, i) => {
+      const isJobGap = g.detectedReason === 'job_failure';
+      const prefix = isJobGap
+        ? `[${i}] [job_failure] (×${g.count}) Background job: "${g.userMessage.slice(0, 200)}"`
+        : `[${i}] [${g.detectedReason}] (×${g.count}) User said: "${g.userMessage.slice(0, 200)}"`;
+      const suffix = g.agentReplySnippet
+        ? (isJobGap
+            ? `\n   Error: "${g.agentReplySnippet.slice(0, 150)}"`
+            : `\n   Jarvis said: "${g.agentReplySnippet.slice(0, 150)}"`)
+        : '';
+      return prefix + suffix;
+    })
     .join('\n\n');
 
   let clustering: ClusteringResult;
@@ -218,11 +226,17 @@ async function _runAnalysisInner(userId: string): Promise<{ submitted: number; q
     const response = await anthropic.messages.create({
       model: ANALYZER_LLM_MODEL,
       max_tokens: 2048,
-      system: `You are Jarvis's capability expansion engine. You receive a numbered list of requests Jarvis failed to handle this week. Your job is to:
-1. Cluster them into distinct capability gaps (merge duplicates and near-duplicates). Cap at ${MAX_GAP_CLUSTERS} clusters.
+      system: `You are Jarvis's capability expansion engine. You receive a numbered list of capability gaps from this week. Gaps may come from two sources:
+- Chat interactions where Jarvis deflected or apologised (labelled deflection, apology_only, no_tool_for_request)
+- Background job failures where a scheduled or queued job crashed with a logic/format error (labelled job_failure)
+
+Note: job_failure gaps have already been filtered — transient auth, network, and rate-limit errors are excluded. These represent genuine missing capabilities (e.g. an ICS parsing failure, an API response format change, a missing tool for a job type).
+
+Your job is to:
+1. Cluster them into distinct capability gaps (merge duplicates and near-duplicates, merge chat and job gaps on the same theme). Cap at ${MAX_GAP_CLUSTERS} clusters.
 2. For each cluster, report which numbered gaps (0-based indices) belong to it in memberIndices.
-3. For each cluster, decide: is this buildable as a new Jarvis tool?
-   BUILDABLE: new API integrations with simple REST calls, data lookups, formatting helpers, notification types, content fetchers
+3. For each cluster, decide: is this buildable as a new Jarvis tool or fix?
+   BUILDABLE: new API integrations with simple REST calls, data lookups, formatting helpers, notification types, content fetchers, parsing fixes
    NOT BUILDABLE: things requiring hardware, private credentials Jarvis doesn't have, UI changes, database schema changes, core infrastructure changes
 4. Estimate risk:
    - low: new isolated tool with no dependencies on existing tool files

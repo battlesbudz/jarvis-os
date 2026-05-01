@@ -1822,9 +1822,11 @@ export const capabilityGaps = pgTable("capability_gaps", {
   userId: varchar("user_id").notNull(),
   userMessage: text("user_message").notNull(),
   agentReplySnippet: text("agent_reply_snippet"),
-  // "deflection" | "apology_only" | "no_tool_for_request"
+  // "deflection" | "apology_only" | "no_tool_for_request" | "job_failure"
   detectedReason: varchar("detected_reason").notNull(),
   channel: varchar("channel"),
+  // "chat" (default) | "job" — where the gap was detected
+  source: varchar("source").default("chat"),
   addressed: boolean("addressed").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });

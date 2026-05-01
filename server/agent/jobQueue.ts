@@ -666,6 +666,58 @@ async function failJob(jobId: string, message: string, userId?: string): Promise
   }).catch(() => {});
 }
 
+/**
+ * Returns true when an error message looks like a transient infrastructure
+ * problem (auth expiry, network blip, rate-limit) that is NOT a capability gap.
+ *
+ * Only permanent logic/parsing/tool failures should be recorded as gaps.
+ */
+function isTransientJobError(msg: string): boolean {
+  const lower = msg.toLowerCase();
+  // Auth / credential problems — user needs to re-authorise, not a missing tool
+  if (/\b(401|403|unauthori[sz]ed|forbidden|invalid.?grant|token.?expired?|refresh.?token|invalid.?token|credentials?|authentication.?fail)\b/.test(lower)) return true;
+  // Network / socket problems
+  if (/\b(econnrefused|econnreset|etimedout|enotfound|epipe|econnaborted|socket.?hang.?up|network.?error|connection.?refused|connection.?reset)\b/.test(lower)) return true;
+  // Rate limits
+  if (/\b(429|rate.?limit|too.?many.?requests|quota.?exceeded)\b/.test(lower)) return true;
+  // Timeout catch-all (but not "timeout" inside error messages about logic)
+  if (/\btimeout\b/.test(lower) && !/\bparse|format|schema\b/.test(lower)) return true;
+  return false;
+}
+
+/**
+ * Record a permanently-failed background job as a capability gap so the Sunday
+ * analysis can surface it alongside chat-detected gaps.
+ *
+ * Skips transient auth/network failures — they are infrastructure problems,
+ * not missing capabilities.
+ *
+ * Fire-and-forget via setImmediate — never blocks the job failure path.
+ */
+function recordJobCapabilityGap(
+  job: { id: string; userId: string; agentType: string; title: string },
+  errorMessage: string,
+): void {
+  if (isTransientJobError(errorMessage)) {
+    console.log(`[JobQueue] skipping capability gap for transient error on job ${job.id}: ${errorMessage.slice(0, 120)}`);
+    return;
+  }
+  setImmediate(() => {
+    const userMessage = `[${job.agentType}] ${job.title}`.slice(0, 500);
+    const replySnippet = errorMessage.slice(0, 300);
+    db.insert(schema.capabilityGaps).values({
+      userId: job.userId,
+      userMessage,
+      agentReplySnippet: replySnippet,
+      detectedReason: "job_failure",
+      channel: "background_job",
+      source: "job",
+    }).catch((err: unknown) => {
+      console.error(`[JobQueue] capability gap insert failed for job ${job.id}:`, err);
+    });
+  });
+}
+
 async function completeJob(
   jobId: string,
   payload: { result: Record<string, unknown>; turns: number; toolCallsCount: number },
@@ -2220,6 +2272,8 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     } else {
       console.log(`[JobQueue] permanently failing job ${job.id} after ${MAX_RETRIES + 1} total attempts`);
       await failJob(job.id, msg, job.userId);
+      // Record as a capability gap if the failure is not transient (auth/network).
+      recordJobCapabilityGap(job, msg);
       // Fail the workflow step if applicable.
       const wfId2   = jobInput.workflowId    as string | undefined;
       const wfStep2 = jobInput.workflowStepIndex as number | undefined;
