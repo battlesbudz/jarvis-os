@@ -10,6 +10,7 @@
  */
 
 import { submitAgentJob, cancelAllForUser, type AgentJobType } from "../agent/jobClient";
+import { getCapabilityGapsTool } from "../agent/tools/getCapabilityGaps";
 
 export interface SlashCommandDef {
   name: string;
@@ -76,6 +77,11 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   {
     name: "stop",
     description: "Stop all Jarvis activity",
+    agentType: null,
+  },
+  {
+    name: "gaps",
+    description: "Show what Jarvis couldn't do this week",
     agentType: null,
   },
 ];
@@ -192,6 +198,15 @@ export async function routeSlashCommand(
       } catch (err) {
         console.error("[SlashCommandRouter] /stop error:", err);
         return "Sorry, I couldn't cancel all jobs right now — please try again.";
+      }
+    }
+    if (command === "gaps") {
+      try {
+        const result = await getCapabilityGapsTool.execute({}, { userId, channel, state: {} });
+        return result.content;
+      } catch (err) {
+        console.error("[SlashCommandRouter] /gaps error:", err);
+        return "Sorry, I couldn't fetch capability gaps right now — please try again.";
       }
     }
     return getHelpText(channel);

@@ -4,12 +4,13 @@ import { sessionsListTool, sessionsHistoryTool, sessionsSendTool } from "../agen
 import { buildFeatureTool, testToolTool } from "../agent/tools/buildFeatureTool";
 import { registerApprovalTool } from "../agent/tools/registerApproval";
 import { selfDiagnoseTool } from "../agent/tools/selfDiagnoseTool";
+import { getCapabilityGapsTool } from "../agent/tools/getCapabilityGaps";
 
 export const systemCapability: Capability = {
   id: "system",
   label: "System & Sub-Agents",
   toolGroups: ["system"],
-  tools: [spawnSubagentTool, sessionsListTool, sessionsHistoryTool, sessionsSendTool, buildFeatureTool, testToolTool, registerApprovalTool, selfDiagnoseTool],
+  tools: [spawnSubagentTool, sessionsListTool, sessionsHistoryTool, sessionsSendTool, buildFeatureTool, testToolTool, registerApprovalTool, selfDiagnoseTool, getCapabilityGapsTool],
   configRequirements: [],
   async healthCheck() {
     return { healthy: true };
