@@ -684,6 +684,8 @@ export default function SettingsScreen() {
   const [healthLoading, setHealthLoading] = useState(false);
   const [diagnosisText, setDiagnosisText] = useState<string | null>(null);
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
+  const [gapScanRunning, setGapScanRunning] = useState(false);
+  const [gapScanResult, setGapScanResult] = useState<{ submitted: number; queued: number; total: number } | null>(null);
   const [subsystemSheetVisible, setSubsystemSheetVisible] = useState(false);
   const [subsystemSheetName, setSubsystemSheetName] = useState<string>('memory');
   const [subsystemSheetLabel, setSubsystemSheetLabel] = useState<string>('Memory');
@@ -849,6 +851,23 @@ export default function SettingsScreen() {
       setDiagnosisText('Failed to run diagnosis. Please try again.');
     }
     setDiagnosisLoading(false);
+  }, []);
+
+  const runGapScan = useCallback(async () => {
+    setGapScanRunning(true);
+    setGapScanResult(null);
+    try {
+      const res = await apiRequest('POST', '/api/gap-analysis/run');
+      if (res.ok) {
+        const data = await res.json();
+        setGapScanResult({ submitted: data.submitted ?? 0, queued: data.queued ?? 0, total: data.total ?? 0 });
+      } else {
+        setGapScanResult({ submitted: 0, queued: 0, total: -1 });
+      }
+    } catch {
+      setGapScanResult({ submitted: 0, queued: 0, total: -1 });
+    }
+    setGapScanRunning(false);
   }, []);
 
   const openSubsystemErrorSheet = useCallback(async (name: string, label: string) => {
@@ -3196,6 +3215,36 @@ export default function SettingsScreen() {
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
             </Pressable>
           </Link>
+          <Pressable
+            style={[styles.prefRow, styles.prefRowBorder]}
+            onPress={() => { void runGapScan(); }}
+            disabled={gapScanRunning}
+          >
+            <View style={styles.prefLeft}>
+              <Ionicons name="search-outline" size={16} color={Colors.cyan} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.prefTitle}>Scan Capability Gaps</Text>
+                <Text style={styles.prefSub}>
+                  {gapScanRunning
+                    ? 'Analysing recent gaps…'
+                    : gapScanResult
+                      ? gapScanResult.total === -1
+                        ? 'Scan failed — tap to retry'
+                        : gapScanResult.total === 0
+                          ? 'No gaps found — all caught up'
+                          : `Found ${gapScanResult.total} gap${gapScanResult.total !== 1 ? 's' : ''}: ${gapScanResult.submitted} auto-building, ${gapScanResult.queued} in inbox`
+                      : 'Run the weekly gap scan right now'}
+                </Text>
+              </View>
+            </View>
+            {gapScanRunning
+              ? <ActivityIndicator size="small" color={Colors.cyan} />
+              : gapScanResult && gapScanResult.total !== -1
+                ? <Ionicons name="checkmark-circle-outline" size={16} color="#10B981" />
+                : gapScanResult && gapScanResult.total === -1
+                  ? <Ionicons name="alert-circle-outline" size={16} color="#EF4444" />
+                  : <Ionicons name="play-circle-outline" size={16} color={Colors.cyan} />}
+          </Pressable>
         </View>
         </ErrorBoundary>
 

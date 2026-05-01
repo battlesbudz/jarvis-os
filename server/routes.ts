@@ -62,6 +62,7 @@ import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
+import { runCapabilityGapAnalysis } from "./agent/capabilityGapAnalyzer";
 
 // ── PRIME.md loader — Jarvis core identity & behavioral rules ────────────────
 // Reads agents/PRIME.md once at module load. Sections are delimited by ## headings.
@@ -9094,6 +9095,21 @@ Extract up to 8 memories per batch.`;
     } catch (err) {
       console.error("[capability-gaps] DELETE error:", err);
       res.status(500).json({ error: "Failed to dismiss capability gap" });
+    }
+  });
+
+  // ── On-demand capability gap analysis ────────────────────────────────────
+  app.post("/api/gap-analysis/run", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const { submitted, queued, failed } = await runCapabilityGapAnalysis(userId);
+      if (failed) {
+        return res.status(500).json({ error: "Gap analysis failed — LLM clustering or DB error. Check server logs." });
+      }
+      res.json({ ok: true, submitted, queued, total: submitted + queued });
+    } catch (err) {
+      console.error("[gap-analysis] POST /run error:", err);
+      res.status(500).json({ error: "Failed to run gap analysis" });
     }
   });
 

@@ -118,6 +118,7 @@ import {
   initToolResolver,
 } from "./buildFeatureTool";
 import { selfDiagnoseTool } from "./selfDiagnoseTool";
+import { runGapAnalysisTool } from "./runGapAnalysisTool";
 import { listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./selfEditTools";
 import { applyCodeChangeTool } from "./applyCodeChangeTool";
 import { runShellTool } from "./runShellTool";
@@ -350,6 +351,7 @@ export {
   imageGenerateTool,
   videoGenerateTool,
   selfDiagnoseTool,
+  runGapAnalysisTool,
   exportDocumentPdfTool,
   createPresentationTool,
   listSourceFilesTool,

@@ -160,16 +160,16 @@ export function markCapabilityGapEntriesAddressed(
  */
 export async function runCapabilityGapAnalysis(
   userId: string,
-): Promise<{ submitted: number; queued: number }> {
+): Promise<{ submitted: number; queued: number; failed?: boolean }> {
   try {
     return await _runAnalysisInner(userId);
   } catch (err) {
     console.error(`[CapabilityGap] Analysis failed for user=${userId} (non-blocking):`, err);
-    return { submitted: 0, queued: 0 };
+    return { submitted: 0, queued: 0, failed: true };
   }
 }
 
-async function _runAnalysisInner(userId: string): Promise<{ submitted: number; queued: number }> {
+async function _runAnalysisInner(userId: string): Promise<{ submitted: number; queued: number; failed?: boolean }> {
   // ── Step A: Load this week's gaps ─────────────────────────────────────────
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -277,7 +277,7 @@ memberIndices are required for every cluster. toolProposal is only required when
     if (!Array.isArray(clustering.clusters)) clustering.clusters = [];
   } catch (err) {
     console.error(`[CapabilityGap] LLM clustering failed for user=${userId}:`, err);
-    return { submitted: 0, queued: 0 };
+    return { submitted: 0, queued: 0, failed: true };
   }
 
   const clusters = clustering.clusters.slice(0, MAX_GAP_CLUSTERS);
