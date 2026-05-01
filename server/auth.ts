@@ -303,3 +303,25 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
+
+/**
+ * Non-middleware version: extracts and validates the bearer token from a request
+ * and returns the userId, or null if unauthenticated. Does NOT send any response.
+ * Safe to use inside async route handlers alongside other auth strategies.
+ */
+export async function getUserIdFromRequest(req: Request): Promise<string | null> {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  try {
+    const token = authHeader.slice(7);
+    const dashSecret = process.env.DASHBOARD_SECRET;
+    if (dashSecret && token === dashSecret) {
+      const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
+      return firstUser?.id ?? null;
+    }
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+    return payload.userId ?? null;
+  } catch {
+    return null;
+  }
+}

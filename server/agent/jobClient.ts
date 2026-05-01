@@ -9,7 +9,7 @@ import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { findDuplicateJob } from "./tools/jobDuplicateGuard";
 
-export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research";
+export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research" | "app_project";
 
 export interface SubmitJobInput {
   userId: string;

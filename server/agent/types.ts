@@ -64,6 +64,18 @@ export interface ToolContext {
    * (e.g. test_tool) MUST check this set to prevent surface-escaping.
    */
   allowedToolNames?: ReadonlySet<string>;
+  /**
+   * Standalone app project ID — set when the agent is operating inside an
+   * isolated project workspace (app_project job type). Used by projectShellTool
+   * to scope commands to the correct workspace directory.
+   */
+  projectId?: string;
+  /**
+   * When true, browser tools are allowed to navigate localhost ports 3001-3999.
+   * Must only be set in app_project contexts where the agent is testing its own
+   * dev server — never granted in general chat or other agent runs.
+   */
+  browserLocalhostException?: boolean;
 }
 
 export interface ToolResult {

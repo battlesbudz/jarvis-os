@@ -1616,6 +1616,9 @@ export const jarvisProjects = pgTable("jarvis_projects", {
   originChannel: varchar("origin_channel"),
   lastProgressAt: timestamp("last_progress_at"),
   consecutiveErrors: integer("consecutive_errors").notNull().default(0),
+  workspaceDir: text("workspace_dir"),
+  appFramework: varchar("app_framework"),
+  devServerPort: integer("dev_server_port"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
