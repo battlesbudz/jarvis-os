@@ -309,6 +309,29 @@ export default function LoginScreen() {
               <Text style={styles.switchAccountText}>Sign in as a different account</Text>
             </TouchableOpacity>
           )}
+
+          {__DEV__ && (
+            <TouchableOpacity
+              style={styles.devLoginButton}
+              testID="dev-login-button"
+              onPress={async () => {
+                setError("");
+                setLoading(true);
+                try {
+                  const base = getApiUrl();
+                  const res = await fetch(`${base}/api/dev-token`);
+                  const { token } = await res.json();
+                  await loginWithToken(token);
+                } catch (e: any) {
+                  setError(e.message || "Dev login failed");
+                  setLoading(false);
+                }
+              }}
+              disabled={loading}
+            >
+              <Text style={styles.devLoginText}>⚡ Dev Login (test only)</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         <Text style={styles.footer}>
@@ -426,5 +449,19 @@ const styles = StyleSheet.create({
     fontFamily: "Inter_400Regular",
     color: "#555",
     textDecorationLine: "underline",
+  },
+  devLoginButton: {
+    alignItems: "center",
+    paddingVertical: 10,
+    marginTop: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#333",
+    borderStyle: "dashed",
+  },
+  devLoginText: {
+    fontSize: 13,
+    fontFamily: "Inter_400Regular",
+    color: "#666",
   },
 });
