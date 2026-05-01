@@ -1549,6 +1549,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           );
           await cleanupJobWorkspace(job.id).catch(() => {});
           await failJob(job.id, failReason, job.userId);
+          // Record as a capability gap so Jarvis learns from persistent build failures.
+          // recordJobCapabilityGap already filters transient errors internally.
+          recordJobCapabilityGap(job, failReason);
           diagEmit({
             userId: job.userId,
             subsystem: "job_queue",
