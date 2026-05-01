@@ -42,6 +42,7 @@ interface Project {
   lastProgressAt: string | null;
   appFramework: string | null;
   lastSessionSummary: string | null;
+  githubRepoUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -307,12 +308,99 @@ function NewProjectModal({ visible, onClose, onCreated }: {
   );
 }
 
+function GitHubPushModal({ visible, project, onClose, onPushed }: {
+  visible: boolean;
+  project: Project;
+  onClose: () => void;
+  onPushed: (repoUrl: string) => void;
+}) {
+  const colors = useColors();
+  const [repoName, setRepoName] = useState(() => {
+    const base = (project.title ?? "jarvis-project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+    return base || "jarvis-project";
+  });
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [isPushing, setIsPushing] = useState(false);
+
+  const handlePush = useCallback(async () => {
+    if (!repoName.trim()) return;
+    setIsPushing(true);
+    try {
+      const res = await apiRequest("POST", `/api/projects/${project.id}/push-to-github`, {
+        repoName: repoName.trim(),
+        isPrivate,
+        description: project.goal ?? project.description ?? undefined,
+      });
+      const data = await res.json() as { repoUrl?: string; error?: string };
+      if (!res.ok || !data.repoUrl) {
+        Alert.alert("Push failed", data.error ?? "Failed to push to GitHub");
+      } else {
+        onPushed(data.repoUrl);
+      }
+    } catch (err) {
+      Alert.alert("Push failed", err instanceof Error ? err.message : "Network error");
+    } finally {
+      setIsPushing(false);
+    }
+  }, [project.id, repoName, isPrivate, project.goal, project.description, onPushed]);
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
+      <View style={[styles.modal, { backgroundColor: colors.background }]}>
+        <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+          <TouchableOpacity onPress={onClose}>
+            <Text style={[styles.modalCancel, { color: colors.textSecondary }]}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={[styles.modalTitle, { color: colors.text }]}>Push to GitHub</Text>
+          <TouchableOpacity onPress={handlePush} disabled={!repoName.trim() || isPushing}>
+            <Text style={[styles.modalSave, { color: (!repoName.trim() || isPushing) ? colors.textTertiary : "#3B82F6" }]}>
+              {isPushing ? "Pushing..." : "Push"}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Repository Name *</Text>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
+            placeholder="my-awesome-app"
+            placeholderTextColor={colors.textTertiary}
+            value={repoName}
+            onChangeText={setRepoName}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          <TouchableOpacity
+            style={[styles.toggleRow, { backgroundColor: colors.surface, borderColor: colors.border }]}
+            onPress={() => setIsPrivate(!isPrivate)}
+            activeOpacity={0.75}
+          >
+            <View>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>Private Repository</Text>
+              <Text style={[styles.toggleDesc, { color: colors.textSecondary }]}>Only you can see this repo</Text>
+            </View>
+            <View style={[styles.toggleSwitch, { backgroundColor: isPrivate ? "#3B82F6" : colors.border }]}>
+              <View style={[styles.toggleThumb, { left: isPrivate ? 22 : 2 }]} />
+            </View>
+          </TouchableOpacity>
+
+          <Text style={[styles.githubNote, { color: colors.textTertiary }]}>
+            Jarvis will create a new GitHub repo and push all project files. Make sure your GitHub token has repo creation permissions.
+          </Text>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
 function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: () => void }) {
   const colors = useColors();
   const queryClient = useQueryClient();
   const { data, isLoading, refetch } = useProjectDetail(projectId);
   const [answerText, setAnswerText] = useState("");
   const [answering, setAnswering] = useState(false);
+  const [showGitHubModal, setShowGitHubModal] = useState(false);
 
   const { mutate: updateProject } = useMutation({
     mutationFn: async (body: Record<string, unknown>) => {
@@ -354,6 +442,13 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
     ]);
   }, [projectId, queryClient, onBack]);
 
+  const handleGitHubPushed = useCallback((repoUrl: string) => {
+    setShowGitHubModal(false);
+    queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/projects", projectId] });
+    Alert.alert("Pushed to GitHub!", `Your project is live at:\n${repoUrl}`, [{ text: "OK" }]);
+  }, [projectId, queryClient]);
+
   if (isLoading || !data) {
     return (
       <View style={[styles.centered, { backgroundColor: colors.background }]}>
@@ -366,6 +461,7 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
   const { project, sessions, completedCount, totalCount, nextStep } = data;
   const cfg = STATUS_CONFIG[project.status] ?? STATUS_CONFIG.draft;
   const phases = [...new Set((project.plan ?? []).map((s) => s.phase))];
+  const isComplete = project.status === "complete";
 
   return (
     <View style={[styles.flex, { backgroundColor: colors.background }]}>
@@ -430,6 +526,46 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
           </View>
         </View>
 
+        {isComplete && (
+          <View style={[styles.githubCard, { backgroundColor: colors.surface, borderColor: project.githubRepoUrl ? "#10B98133" : colors.border }]}>
+            {project.githubRepoUrl ? (
+              <>
+                <View style={styles.githubCardHeader}>
+                  <Ionicons name="logo-github" size={18} color="#10B981" />
+                  <Text style={[styles.githubCardTitle, { color: colors.text }]}>Pushed to GitHub</Text>
+                </View>
+                <Text style={[styles.githubRepoUrl, { color: "#3B82F6" }]} numberOfLines={1}>
+                  {project.githubRepoUrl}
+                </Text>
+                <TouchableOpacity
+                  style={[styles.actionBtn, { backgroundColor: "#10B98122", alignSelf: "flex-start" }]}
+                  onPress={() => setShowGitHubModal(true)}
+                >
+                  <Ionicons name="git-branch-outline" size={14} color="#10B981" />
+                  <Text style={[styles.actionBtnText, { color: "#10B981" }]}>Push to new repo</Text>
+                </TouchableOpacity>
+              </>
+            ) : (
+              <>
+                <View style={styles.githubCardHeader}>
+                  <Ionicons name="logo-github" size={18} color={colors.text} />
+                  <Text style={[styles.githubCardTitle, { color: colors.text }]}>Push to GitHub</Text>
+                </View>
+                <Text style={[styles.githubCardDesc, { color: colors.textSecondary }]}>
+                  Create a GitHub repo and push your project code — ready to clone, open in VS Code, or deploy.
+                </Text>
+                <TouchableOpacity
+                  style={[styles.actionBtn, { backgroundColor: "#1F293722", alignSelf: "flex-start" }]}
+                  onPress={() => setShowGitHubModal(true)}
+                >
+                  <Ionicons name="logo-github" size={14} color={colors.text} />
+                  <Text style={[styles.actionBtnText, { color: colors.text }]}>Push to GitHub</Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
+        )}
+
         {project.questionPending && (
           <View style={[styles.questionCard, { backgroundColor: "#F59E0B11", borderColor: "#F59E0B44" }]}>
             <View style={styles.questionHeader}>
@@ -479,6 +615,15 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
           </View>
         )}
       </ScrollView>
+
+      {isComplete && (
+        <GitHubPushModal
+          visible={showGitHubModal}
+          project={project}
+          onClose={() => setShowGitHubModal(false)}
+          onPushed={handleGitHubPushed}
+        />
+      )}
     </View>
   );
 }
@@ -705,4 +850,11 @@ const styles = StyleSheet.create({
   sessionRow: { paddingHorizontal: 14, paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth },
   sessionNum: { fontSize: 11, fontWeight: "600", marginBottom: 2 },
   sessionSummary: { fontSize: 13, lineHeight: 18 },
+
+  githubCard: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, padding: 16, gap: 8 },
+  githubCardHeader: { flexDirection: "row", alignItems: "center", gap: 8 },
+  githubCardTitle: { fontSize: 15, fontWeight: "600" },
+  githubCardDesc: { fontSize: 13, lineHeight: 19 },
+  githubRepoUrl: { fontSize: 13, fontWeight: "500" },
+  githubNote: { fontSize: 12, lineHeight: 18, marginTop: 16 },
 });

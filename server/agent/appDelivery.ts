@@ -17,6 +17,7 @@ import * as schema from "@shared/schema";
 import { getChannel } from "../channels/registry";
 import { stopProjectServer } from "./tools/projectShellTool";
 import { sendToDiscordUser } from "../discord/manager";
+import { hasGitHubPAT } from "../integrations/github";
 
 const DOWNLOADS_DIR = path.join(process.cwd(), "server", "static", "downloads");
 const ZIP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -226,13 +227,19 @@ export async function packageAndDeliverApp(
 
   console.log(`[AppDelivery] project ${projectId} packaged: ${zipSizeMb}MB, ${fileCount} files, framework=${framework}`);
 
+  const userHasGitHub = await hasGitHubPAT(userId).catch(() => false);
+  const githubNote = userHasGitHub
+    ? `\n\n🐙 **Push to GitHub?** Open the Projects tab in the app and tap "Push to GitHub" to create a repo and push your code directly — no zip needed.`
+    : `\n\n💡 Connect GitHub in Settings to push directly to a repo next time.`;
+
   const notificationText =
     `✅ **${project.title}** is complete!\n\n` +
     `Download your app: ${downloadUrl}\n` +
     `*(Link expires in 7 days)*\n\n` +
     `The zip excludes node_modules — run \`npm install\` to restore dependencies.\n\n` +
     `Tech stack: ${framework}\n` +
-    `Files: ${fileCount} files, ${zipSizeMb} MB`;
+    `Files: ${fileCount} files, ${zipSizeMb} MB` +
+    githubNote;
 
   // Fall back to the channel stored on the project record (set when the project was
   // first created) if no channel is supplied by the caller.  This ensures the

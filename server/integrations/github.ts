@@ -326,3 +326,148 @@ export async function hasGitHubPAT(userId: string): Promise<boolean> {
   const token = await getUserToken(userId, "github").catch(() => null);
   return !!(token?.accessToken);
 }
+
+export interface CreateRepoResult {
+  ok: boolean;
+  repoUrl?: string;
+  cloneUrl?: string;
+  owner?: string;
+  repoName?: string;
+  error?: string;
+}
+
+export async function createGitHubRepo(
+  pat: string,
+  name: string,
+  description: string,
+  isPrivate: boolean,
+): Promise<CreateRepoResult> {
+  try {
+    const res = await githubRequest(pat, "/user/repos", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        description,
+        private: isPrivate,
+        auto_init: false,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = (await res.json()) as { message?: string };
+      return { ok: false, error: err.message ?? `Failed to create repo (HTTP ${res.status})` };
+    }
+
+    const data = (await res.json()) as {
+      html_url: string;
+      clone_url: string;
+      full_name: string;
+      owner: { login: string };
+      name: string;
+    };
+
+    return {
+      ok: true,
+      repoUrl: data.html_url,
+      cloneUrl: data.clone_url,
+      owner: data.owner.login,
+      repoName: data.name,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Create repo failed" };
+  }
+}
+
+export async function pushWorkspaceToGitHub(
+  pat: string,
+  owner: string,
+  repoName: string,
+  workspaceDir: string,
+  commitMessage = "Initial commit from Jarvis",
+): Promise<{ ok: boolean; error?: string }> {
+  const { spawnSync } = await import("child_process");
+  const pathMod = await import("path");
+  const fsMod = await import("fs");
+  const os = await import("os");
+
+  // The credential URL is only used in-process for the push; it is never
+  // stored permanently in .git/config (we set the clean URL after pushing).
+  const credentialUrl = `https://x-access-token:${pat}@github.com/${owner}/${repoName}.git`;
+  const cleanUrl = `https://github.com/${owner}/${repoName}.git`;
+
+  // Strip the PAT from any error strings so it is never leaked in logs/responses.
+  const sanitize = (s?: string | null): string =>
+    (s ?? "").replace(new RegExp(pat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "***").slice(0, 500);
+
+  const env: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    HOME: os.homedir(),
+    GIT_AUTHOR_NAME: "Jarvis",
+    GIT_AUTHOR_EMAIL: "jarvis@replit.app",
+    GIT_COMMITTER_NAME: "Jarvis",
+    GIT_COMMITTER_EMAIL: "jarvis@replit.app",
+    GIT_TERMINAL_PROMPT: "0",
+  };
+
+  const run = (args: string[]) =>
+    spawnSync("git", args, {
+      cwd: workspaceDir,
+      env,
+      encoding: "utf8",
+      timeout: 120_000,
+    });
+
+  const gitDir = pathMod.join(workspaceDir, ".git");
+  const hasGit = fsMod.existsSync(gitDir);
+
+  if (!hasGit) {
+    // Try -b main flag (git >= 2.28), fall back to init + rename
+    const init = run(["init", "-b", "main"]);
+    if (init.status !== 0) {
+      const altInit = run(["init"]);
+      if (altInit.status !== 0) {
+        return { ok: false, error: `git init failed: ${sanitize(altInit.stderr)}` };
+      }
+      run(["checkout", "-b", "main"]);
+    }
+  }
+
+  run(["config", "user.email", "jarvis@replit.app"]);
+  run(["config", "user.name", "Jarvis"]);
+
+  const addResult = run(["add", "--all"]);
+  if (addResult.status !== 0) {
+    return { ok: false, error: `git add failed: ${sanitize(addResult.stderr)}` };
+  }
+
+  const statusResult = run(["status", "--porcelain"]);
+  const hasChanges = (statusResult.stdout ?? "").trim().length > 0;
+
+  if (hasChanges) {
+    const commitResult = run(["commit", "-m", commitMessage]);
+    if (commitResult.status !== 0) {
+      return { ok: false, error: `git commit failed: ${sanitize(commitResult.stderr)}` };
+    }
+  }
+
+  // Set the remote with embedded credentials only for the push call.
+  const remoteList = run(["remote"]);
+  const hasOrigin = (remoteList.stdout ?? "").includes("origin");
+  if (hasOrigin) {
+    run(["remote", "set-url", "origin", credentialUrl]);
+  } else {
+    run(["remote", "add", "origin", credentialUrl]);
+  }
+
+  const pushResult = run(["push", "-u", "origin", "main"]);
+
+  // Immediately replace the credential URL with the clean public URL so the
+  // PAT is never persisted in .git/config.
+  run(["remote", "set-url", "origin", cleanUrl]);
+
+  if (pushResult.status !== 0) {
+    return { ok: false, error: `git push failed: ${sanitize(pushResult.stderr)}` };
+  }
+
+  return { ok: true };
+}
