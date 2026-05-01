@@ -699,6 +699,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     });
   }
 
+  // Dev-only: force a project to "complete" status — used by e2e tests
+  if (process.env.NODE_ENV !== "production") {
+    app.patch("/api/dev/projects/:id/complete", async (req: Request, res: Response) => {
+      try {
+        await db
+          .update(schema.jarvisProjects)
+          .set({ status: "complete" })
+          .where(eq(schema.jarvisProjects.id, req.params.id));
+        res.json({ ok: true });
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
+    });
+  }
+
   // Health-check — unauthenticated, used by the UI to detect when the server has
   // come back up after a self-applied code-proposal restart.
   app.get("/api/ping", (_req: Request, res: Response) => {

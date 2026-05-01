@@ -557,6 +557,7 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
                 <TouchableOpacity
                   style={[styles.actionBtn, { backgroundColor: "#1F293722", alignSelf: "flex-start" }]}
                   onPress={() => setShowGitHubModal(true)}
+                  testID="push-to-github-button"
                 >
                   <Ionicons name="logo-github" size={14} color={colors.text} />
                   <Text style={[styles.actionBtnText, { color: colors.text }]}>Push to GitHub</Text>

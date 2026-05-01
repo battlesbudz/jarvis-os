@@ -22,7 +22,7 @@ import * as schema from '@shared/schema';
 import { anthropic } from '../lib/anthropicClient';
 import { submitAgentJob } from './jobClient';
 
-const ANALYZER_LLM_MODEL = 'claude-3-5-haiku-20241022';
+const ANALYZER_LLM_MODEL = 'claude-haiku-4-5';
 const MAX_GAP_CLUSTERS = 5;
 const MAX_AUTO_BUILDS = 2;
 
