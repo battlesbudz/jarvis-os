@@ -689,6 +689,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/oauth", oauthCallbackRouter);
   registerDownloadRoutes(app);
 
+  // Dev-only: return a valid JWT for the first user — used by automated e2e tests
+  if (process.env.NODE_ENV !== "production") {
+    app.get("/api/dev-token", async (_req: Request, res: Response) => {
+      const [firstUser] = await db.select({ id: schema.users.id }).from(schema.users).limit(1);
+      if (!firstUser) return res.status(404).json({ error: "No users in DB" });
+      const token = generateToken(firstUser.id);
+      res.json({ token, userId: firstUser.id });
+    });
+  }
+
   // Health-check — unauthenticated, used by the UI to detect when the server has
   // come back up after a self-applied code-proposal restart.
   app.get("/api/ping", (_req: Request, res: Response) => {
@@ -9077,7 +9087,7 @@ Extract up to 8 memories per batch.`;
   app.delete("/api/capability-gaps", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const { userMessage, detectedReason } = req.body as { userMessage?: string; detectedReason?: string };
+      const { userMessage, detectedReason } = (req.body ?? {}) as { userMessage?: string; detectedReason?: string };
       if (!userMessage || !detectedReason) {
         return res.status(400).json({ error: "userMessage and detectedReason are required" });
       }
