@@ -7,7 +7,7 @@ export default defineConfig({
   reporter: [["list"], ["json", { outputFile: "e2e/results.json" }]],
   use: {
     baseURL: "http://localhost:8081",
-    viewport: { width: 400, height: 720 },
+    viewport: { width: 400, height: 900 },
     screenshot: "only-on-failure",
     actionTimeout: 20000,
   },

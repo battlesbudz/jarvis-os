@@ -387,7 +387,10 @@ export default function LoginScreen() {
                 setError("");
                 setLoading(true);
                 try {
-                  const base = getApiUrl();
+                  const base =
+                    typeof window !== "undefined" && window.location.hostname === "localhost"
+                      ? "http://localhost:5000"
+                      : getApiUrl();
                   const res = await fetch(`${base}/api/dev-token`);
                   const { token } = await res.json();
                   await loginWithToken(token);
