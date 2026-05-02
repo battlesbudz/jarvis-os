@@ -43,6 +43,7 @@ interface JsonRpcRequest {
 type RpcContext = GatewayPrincipal;
 
 const GATEWAY_WS_PATH = "/api/gateway/ws";
+const GATEWAY_CHAT_CHANNEL = "Gateway";
 const STARTED_AT = new Date();
 
 interface GatewayCapability {
@@ -54,6 +55,7 @@ interface GatewayCapability {
 
 const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
+  { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
   { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], openClawSurface: ["agents", "sessions", "chat/talk state"] },
   { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], openClawSurface: ["channels", "instances", "linked apps"] },
   { area: "daemon", status: "mapped", jarvisSurface: ["daemon.status", "desktop daemon", "android daemon", "operation audit"], openClawSurface: ["nodes", "device status", "exec approvals"] },
@@ -228,6 +230,43 @@ async function logState(userId: string | null, limit: number) {
   return { userScoped: Boolean(userId), diagnostics, selfHeal };
 }
 
+async function chatSend(userId: string, params: RpcParams) {
+  const text = typeof params.text === "string" ? params.text.trim() : "";
+  if (!text) throw new Error("text is required");
+
+  const requestedSessionId = typeof params.sdkSessionId === "string" && params.sdkSessionId.trim()
+    ? params.sdkSessionId.trim()
+    : undefined;
+  const resetSession = params.resetSession === true;
+  const [{ runCoachAgent }, sessionStore] = await Promise.all([
+    import("../channels/coachAgent"),
+    import("../channels/sessionStore"),
+  ]);
+  const sdkSessionId = resetSession
+    ? undefined
+    : requestedSessionId ?? (await sessionStore.getSession(userId, GATEWAY_CHAT_CHANNEL));
+  const started = Date.now();
+  const result = await runCoachAgent({
+    userId,
+    userText: text,
+    channelName: GATEWAY_CHAT_CHANNEL,
+    sdkSessionId,
+  });
+
+  if (result.sdkSessionId) {
+    sessionStore.setSession(userId, GATEWAY_CHAT_CHANNEL, result.sdkSessionId);
+  }
+
+  return {
+    channel: GATEWAY_CHAT_CHANNEL,
+    reply: result.reply,
+    rawReply: result.rawReply,
+    attachments: result.attachments,
+    sdkSessionId: result.sdkSessionId,
+    elapsedMs: Date.now() - started,
+  };
+}
+
 async function handleRpc(req: JsonRpcRequest, ctx: RpcContext) {
   if (!req || typeof req !== "object") return err(null, -32600, "Invalid JSON-RPC request");
   if (!req.method || typeof req.method !== "string") return err(req.id, -32600, "JSON-RPC method is required");
@@ -246,6 +285,9 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext) {
       case "gateway.status": return ok(req.id, await gatewayStatus(userId));
       case "gateway.capabilities": return ok(req.id, { capabilities: OPENCLAW_PARITY_CAPABILITIES });
       case "config.get": return ok(req.id, publicConfigSnapshot());
+      case "chat.send":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await chatSend(requireUser(), params));
       case "channels.list":
         if (userId) requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await channelState(userId, limit));

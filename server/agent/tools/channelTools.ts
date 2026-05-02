@@ -17,6 +17,7 @@ import type { ChannelName } from "../../channels/types";
 /** Fallback groups for channels that are not in the registry. */
 const UNREGISTERED_FALLBACKS: Readonly<Record<string, ToolGroup[]>> = {
   daemon: ["coaching", "calendar", "memory", "connections", "system"],
+  gateway: ["coaching", "calendar", "email", "memory", "connections", "research", "system"],
   voice:  ["coaching", "calendar", "memory"],
 };
 
