@@ -65,7 +65,7 @@ const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "daemon", status: "mapped", jarvisSurface: ["daemon.status", "desktop daemon", "android daemon", "operation audit"], openClawSurface: ["nodes", "device status", "exec approvals"] },
   { area: "devices", status: "foundation", jarvisSurface: ["devices.pairing.request", "devices.pairing.approve", "devices.list", "devices.revoke"], openClawSurface: ["device pairing", "scoped operator tokens", "browser/node trust"] },
   { area: "automation", status: "mapped", jarvisSurface: ["cron.list", "jarvis_scheduled_tasks", "agent_workflows", "agent_jobs"], openClawSurface: ["cron", "dreams", "background jobs"] },
-  { area: "approvals", status: "mapped", jarvisSurface: ["approvals.list", "agent_approval_gates", "agent_approval_policies"], openClawSurface: ["approval gates", "exec/tool approvals"] },
+  { area: "approvals", status: "mapped", jarvisSurface: ["approvals.list", "approvals.approve", "approvals.reject", "agent_approval_gates", "agent_approval_policies"], openClawSurface: ["approval gates", "exec/tool approvals"] },
   { area: "skills", status: "partial", jarvisSurface: ["skills.list", "skill_packs", "user_skills", "mcp_servers"], openClawSurface: ["skills", "plugins", "MCP"] },
   { area: "config", status: "foundation", jarvisSurface: ["config.get"], openClawSurface: ["runtime config", "secret refs", "model/provider config"] },
   { area: "logs", status: "mapped", jarvisSurface: ["logs.tail", "diagnostic_events", "self_heal_audit_log"], openClawSurface: ["debug", "logs", "health traces"] },
@@ -217,6 +217,23 @@ async function approvalState(userId: string, limit: number) {
   return { gates, policies };
 }
 
+async function resolveApprovalGate(userId: string, params: RpcParams, decision: "approve" | "reject") {
+  const gateId = typeof params.gateId === "string" ? params.gateId.trim() : "";
+  if (!gateId) throw new Error("gateId is required");
+
+  const { approveGate, getGate, rejectGate } = await import("../agent/agentApproval");
+  const gate = await getGate(gateId);
+  if (!gate) throw new Error("Gate not found");
+  if (gate.userId !== userId) throw new Error("Forbidden: this approval gate belongs to another user");
+  if (gate.status !== "pending") throw new Error("Gate already resolved");
+
+  const ok = decision === "approve"
+    ? await approveGate(gateId, userId)
+    : await rejectGate(gateId, userId);
+  if (!ok) throw new Error(`Failed to ${decision} gate`);
+  return { ok: true, gateId, status: decision === "approve" ? "approved" : "rejected" };
+}
+
 async function skillState(userId: string | null, limit: number) {
   const [skillPacks, mcpServers, userSkills] = await Promise.all([
     db.select().from(schema.skillPacks).limit(limit).catch(() => []),
@@ -317,6 +334,12 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "approvals.list":
         requireGatewayScope(ctx, "operator.approvals");
         return ok(req.id, await approvalState(requireUser(), limit));
+      case "approvals.approve":
+        requireGatewayScope(ctx, "operator.approvals");
+        return ok(req.id, await resolveApprovalGate(requireUser(), params, "approve"));
+      case "approvals.reject":
+        requireGatewayScope(ctx, "operator.approvals");
+        return ok(req.id, await resolveApprovalGate(requireUser(), params, "reject"));
       case "skills.list":
         if (userId) requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await skillState(userId, limit));

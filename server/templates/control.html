@@ -515,6 +515,8 @@
                 <option>daemon.status</option>
                 <option>cron.list</option>
                 <option>approvals.list</option>
+                <option>approvals.approve</option>
+                <option>approvals.reject</option>
                 <option>skills.list</option>
                 <option>logs.tail</option>
               </select>
@@ -790,7 +792,14 @@
         ...(cron.jobs || []).map((x) => item(x.title || x.id, pill(x.status, x.status === "complete" ? "ok" : x.status === "failed" ? "danger" : "warn"), x.agentType || "")),
       ].join("") || `<div class="muted">No jobs or workflows.</div>`;
       $("approvals").innerHTML = (approvals.gates || [])
-        .map((gate) => item(gate.toolName, pill(gate.status, gate.status === "pending" ? "warn" : "ok"), gate.description))
+        .map((gate) => item(
+          gate.toolName,
+          pill(gate.status, gate.status === "pending" ? "warn" : "ok"),
+          gate.description,
+          gate.status === "pending"
+            ? `<div class="actions"><button class="btn primary" data-approval-approve="${gate.id}">Approve</button><button class="btn danger" data-approval-reject="${gate.id}">Reject</button></div>`
+            : ""
+        ))
         .join("") || `<div class="muted">No approvals.</div>`;
     }
 
@@ -845,7 +854,11 @@
     $("run-rpc").addEventListener("click", async () => {
       try {
         const method = $("rpc-method").value;
-        const params = method === "chat.send" ? { text: "Status check from the control RPC panel", sdkSessionId: state.chatSessionId || undefined } : {};
+        const params = method === "chat.send"
+          ? { text: "Status check from the control RPC panel", sdkSessionId: state.chatSessionId || undefined }
+          : method === "approvals.approve" || method === "approvals.reject"
+            ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
+            : {};
         const result = await rpc(method, params);
         if (method === "chat.send") setChatSession(result.sdkSessionId);
         $("raw-output").textContent = JSON.stringify(result, null, 2);
@@ -882,6 +895,16 @@
       }
       if (target.dataset.revoke) {
         await rpc("devices.revoke", { deviceId: target.dataset.revoke });
+        await refreshAll();
+      }
+      if (target.dataset.approvalApprove) {
+        const result = await rpc("approvals.approve", { gateId: target.dataset.approvalApprove });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+      if (target.dataset.approvalReject) {
+        const result = await rpc("approvals.reject", { gateId: target.dataset.approvalReject });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
         await refreshAll();
       }
     });
