@@ -15,6 +15,19 @@ import {
   isDesktopDaemonActive,
   listPairedUsers,
 } from "../daemon/bridge";
+import {
+  approveGatewayPairingRequest,
+  authenticateGatewayDeviceToken,
+  createGatewayPairingRequest,
+  hasGatewayScope,
+  JWT_GATEWAY_SCOPES,
+  listGatewayDevices,
+  listGatewayPairingRequests,
+  rejectGatewayPairingRequest,
+  requireGatewayScope,
+  revokeGatewayDevice,
+  type GatewayPrincipal,
+} from "./devicePairing";
 import * as schema from "@shared/schema";
 
 type RpcId = string | number | null;
@@ -27,9 +40,7 @@ interface JsonRpcRequest {
   params?: RpcParams;
 }
 
-interface RpcContext {
-  userId: string | null;
-}
+type RpcContext = GatewayPrincipal;
 
 const GATEWAY_WS_PATH = "/api/gateway/ws";
 const STARTED_AT = new Date();
@@ -46,6 +57,7 @@ const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], openClawSurface: ["agents", "sessions", "chat/talk state"] },
   { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], openClawSurface: ["channels", "instances", "linked apps"] },
   { area: "daemon", status: "mapped", jarvisSurface: ["daemon.status", "desktop daemon", "android daemon", "operation audit"], openClawSurface: ["nodes", "device status", "exec approvals"] },
+  { area: "devices", status: "foundation", jarvisSurface: ["devices.pairing.request", "devices.pairing.approve", "devices.list", "devices.revoke"], openClawSurface: ["device pairing", "scoped operator tokens", "browser/node trust"] },
   { area: "automation", status: "mapped", jarvisSurface: ["cron.list", "jarvis_scheduled_tasks", "agent_workflows", "agent_jobs"], openClawSurface: ["cron", "dreams", "background jobs"] },
   { area: "approvals", status: "mapped", jarvisSurface: ["approvals.list", "agent_approval_gates", "agent_approval_policies"], openClawSurface: ["approval gates", "exec/tool approvals"] },
   { area: "skills", status: "partial", jarvisSurface: ["skills.list", "skill_packs", "user_skills", "mcp_servers"], openClawSurface: ["skills", "plugins", "MCP"] },
@@ -91,13 +103,14 @@ function publicConfigSnapshot() {
     },
     gateway: {
       wsPath: GATEWAY_WS_PATH,
-      auth: "Bearer Jarvis JWT, DASHBOARD_SECRET, or params.userId for trusted local calls",
+      auth: "Bearer Jarvis JWT, DASHBOARD_SECRET, or paired gateway device token",
     },
   };
 }
 
 function resolveUserId(ctx: RpcContext, params: RpcParams): string | null {
   if (ctx.userId) return ctx.userId;
+  if (process.env.JARVIS_TRUST_LOCAL_GATEWAY_RPC !== "true") return null;
   const requested = params.userId;
   return typeof requested === "string" && requested.trim() ? requested.trim() : null;
 }
@@ -120,7 +133,7 @@ async function gatewayStatus(userId: string | null) {
     ok: true,
     service: "jarvis-gateway",
     authenticated: Boolean(userId),
-    activeDaemonUsers: listPairedUsers(),
+    activeDaemonUsers: userId ? listPairedUsers() : [],
     recentDiagnostics,
     capabilities: OPENCLAW_PARITY_CAPABILITIES.map((c) => ({ area: c.area, status: c.status })),
     ...publicConfigSnapshot(),
@@ -233,14 +246,66 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext) {
       case "gateway.status": return ok(req.id, await gatewayStatus(userId));
       case "gateway.capabilities": return ok(req.id, { capabilities: OPENCLAW_PARITY_CAPABILITIES });
       case "config.get": return ok(req.id, publicConfigSnapshot());
-      case "channels.list": return ok(req.id, await channelState(userId, limit));
-      case "sessions.list": return ok(req.id, await sessionState(requireUser(), limit));
-      case "daemon.status": return ok(req.id, await daemonState(requireUser()));
-      case "agents.list": return ok(req.id, await agentState(requireUser(), limit));
-      case "cron.list": return ok(req.id, await cronState(requireUser(), limit));
-      case "approvals.list": return ok(req.id, await approvalState(requireUser(), limit));
-      case "skills.list": return ok(req.id, await skillState(userId, limit));
-      case "logs.tail": return ok(req.id, await logState(userId, limit));
+      case "channels.list":
+        if (userId) requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await channelState(userId, limit));
+      case "sessions.list":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await sessionState(requireUser(), limit));
+      case "daemon.status":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await daemonState(requireUser()));
+      case "agents.list":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await agentState(requireUser(), limit));
+      case "cron.list":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await cronState(requireUser(), limit));
+      case "approvals.list":
+        requireGatewayScope(ctx, "operator.approvals");
+        return ok(req.id, await approvalState(requireUser(), limit));
+      case "skills.list":
+        if (userId) requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await skillState(userId, limit));
+      case "logs.tail":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await logState(userId, limit));
+      case "devices.whoami":
+        return ok(req.id, { userId: ctx.userId, deviceId: ctx.deviceId, scopes: ctx.scopes, authKind: ctx.authKind });
+      case "devices.list":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, {
+          devices: await listGatewayDevices(requireUser(), Boolean(params.includeRevoked), limit),
+          pairingRequests: hasGatewayScope(ctx, "operator.pairing")
+            ? await listGatewayPairingRequests(requireUser(), limit)
+            : [],
+        });
+      case "devices.pairing.request":
+        if (ctx.userId) requireGatewayScope(ctx, "operator.pairing");
+        return ok(req.id, await createGatewayPairingRequest({
+          userId: requireUser(),
+          label: typeof params.label === "string" ? params.label : undefined,
+          kind: typeof params.kind === "string" ? params.kind : undefined,
+          origin: typeof params.origin === "string" ? params.origin : undefined,
+          requestedScopes: params.scopes,
+          metadata: typeof params.metadata === "object" && params.metadata ? params.metadata as Record<string, unknown> : {},
+        }));
+      case "devices.pairing.approve":
+        requireGatewayScope(ctx, "operator.pairing");
+        return ok(req.id, await approveGatewayPairingRequest({
+          userId: requireUser(),
+          requestId: typeof params.requestId === "string" ? params.requestId : undefined,
+          code: typeof params.code === "string" ? params.code : undefined,
+          scopes: params.scopes,
+        }));
+      case "devices.pairing.reject":
+        requireGatewayScope(ctx, "operator.pairing");
+        if (typeof params.requestId !== "string") throw new Error("requestId is required");
+        return ok(req.id, await rejectGatewayPairingRequest(requireUser(), params.requestId));
+      case "devices.revoke":
+        requireGatewayScope(ctx, "operator.pairing");
+        if (typeof params.deviceId !== "string") throw new Error("deviceId is required");
+        return ok(req.id, await revokeGatewayDevice(requireUser(), params.deviceId));
       default: return err(req.id, -32601, `Unknown gateway method: ${req.method}`);
     }
   } catch (error) {
@@ -258,13 +323,16 @@ function tokenFrom(req: IncomingMessage): string | null {
   }
 }
 
-async function wsUserId(req: IncomingMessage): Promise<string | null> {
+async function principalFromRequest(req: IncomingMessage): Promise<GatewayPrincipal> {
   const token = tokenFrom(req);
   if (token && process.env.DASHBOARD_SECRET && token === process.env.DASHBOARD_SECRET) {
     const rows = await db.select({ id: schema.users.id }).from(schema.users).limit(1).catch(() => []);
-    return rows[0]?.id ?? null;
+    return { userId: rows[0]?.id ?? null, scopes: JWT_GATEWAY_SCOPES, authKind: "jwt" };
   }
-  return getUserIdFromRequest(req as unknown as Request);
+  const jwtUserId = await getUserIdFromRequest(req as unknown as Request);
+  if (jwtUserId) return { userId: jwtUserId, scopes: JWT_GATEWAY_SCOPES, authKind: "jwt" };
+  const devicePrincipal = await authenticateGatewayDeviceToken(token);
+  return devicePrincipal ?? { userId: null, scopes: [], authKind: "anonymous" };
 }
 
 function send(ws: WebSocket, payload: unknown) {
@@ -289,8 +357,7 @@ export function registerGatewayControlPlane(app: Express, server: HttpServer): v
   app.get("/api/gateway/health", (_req, res) => res.json({ ok: true, ...publicConfigSnapshot() }));
   app.get("/api/gateway/capabilities", (_req, res) => res.json({ capabilities: OPENCLAW_PARITY_CAPABILITIES }));
   app.post("/api/gateway/rpc", async (req, res) => {
-    const userId = await getUserIdFromRequest(req);
-    const ctx: RpcContext = { userId };
+    const ctx = await principalFromRequest(req);
     const payload = req.body as JsonRpcRequest | JsonRpcRequest[];
     res.json(Array.isArray(payload) ? await Promise.all(payload.map((item) => handleRpc(item, ctx))) : await handleRpc(payload, ctx));
   });
@@ -299,13 +366,15 @@ export function registerGatewayControlPlane(app: Express, server: HttpServer): v
   server.on("upgrade", (req, socket, head) => {
     if ((req.url || "").split("?")[0] !== GATEWAY_WS_PATH) return;
     wss.handleUpgrade(req, socket, head, async (ws) => {
-      const userId = await wsUserId(req);
-      const ctx: RpcContext = { userId };
+      const ctx = await principalFromRequest(req);
       send(ws, {
         type: "hello",
         service: "jarvis-gateway",
         protocol: "json-rpc-2.0",
-        authenticated: Boolean(userId),
+        authenticated: Boolean(ctx.userId),
+        authKind: ctx.authKind,
+        deviceId: ctx.deviceId,
+        scopes: ctx.scopes,
         methods: OPENCLAW_PARITY_CAPABILITIES.flatMap((c) => c.jarvisSurface),
       });
       ws.on("message", (raw) => onMessage(ws, raw, ctx).catch((error) => {
