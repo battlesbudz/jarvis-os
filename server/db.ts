@@ -1451,6 +1451,32 @@ export async function ensureTablesExist() {
         ON gateway_devices (token_hash)
     `).catch(() => {});
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS gateway_events (
+        id           VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id      VARCHAR   REFERENCES users(id) ON DELETE CASCADE,
+        type         VARCHAR   NOT NULL,
+        area         VARCHAR   NOT NULL DEFAULT 'gateway',
+        severity     VARCHAR   NOT NULL DEFAULT 'info',
+        title        TEXT      NOT NULL,
+        message      TEXT,
+        subject_type VARCHAR,
+        subject_id   VARCHAR,
+        actor_kind   VARCHAR,
+        actor_id     VARCHAR,
+        metadata     JSONB     NOT NULL DEFAULT '{}'::jsonb,
+        created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gateway_events_user_created_idx
+        ON gateway_events (user_id, created_at DESC)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gateway_events_area_created_idx
+        ON gateway_events (area, created_at DESC)
+    `).catch(() => {});
+
     // ── Jarvis Projects — persistent 24/7 autonomous build projects ──────────
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS jarvis_projects (

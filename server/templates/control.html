@@ -393,6 +393,7 @@
       </div>
       <nav>
         <button class="tab active" data-view="overview">Overview</button>
+        <button class="tab" data-view="activity">Activity</button>
         <button class="tab" data-view="chat">Chat</button>
         <button class="tab" data-view="devices">Devices</button>
         <button class="tab" data-view="runtime">Runtime</button>
@@ -447,6 +448,16 @@
         <div class="panel half">
           <div class="panel-head"><h3>Channels</h3></div>
           <div class="panel-body stack" id="channels"></div>
+        </div>
+      </section>
+
+      <section id="activity" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Activity Timeline</h3>
+            <span id="activity-count" class="pill warn">0 events</span>
+          </div>
+          <div class="panel-body stack" id="activity-list"></div>
         </div>
       </section>
 
@@ -552,6 +563,7 @@
               <select id="rpc-method">
                 <option>gateway.status</option>
                 <option>gateway.capabilities</option>
+                <option>events.list</option>
                 <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
@@ -593,6 +605,7 @@
       sendingChat: false,
       gatewaySocket: null,
       pendingChat: null,
+      activity: [],
       snapshots: {},
     };
 
@@ -692,6 +705,10 @@
       }
       if (data.type === "hello") {
         $("chat-status").textContent = data.authenticated ? "Live socket ready" : "Socket connected";
+        return;
+      }
+      if (data.method === "gateway.event" && data.params?.event) {
+        prependActivity(data.params.event);
         return;
       }
       const pending = state.pendingChat;
@@ -868,9 +885,27 @@
         .join("") || `<div class="muted">No self-heal audit entries.</div>`;
     }
 
+    function renderActivity(events) {
+      state.activity = events || [];
+      $("activity-count").className = `pill ${state.activity.length ? "ok" : "warn"}`;
+      $("activity-count").textContent = `${state.activity.length} events`;
+      $("activity-list").innerHTML = state.activity
+        .map((event) => item(
+          event.title,
+          pill(event.area || "gateway", event.severity === "error" ? "danger" : event.severity === "warning" ? "warn" : "ok"),
+          `${time(event.createdAt)} - ${event.message || event.type || ""}`
+        ))
+        .join("") || `<div class="muted">No gateway events yet.</div>`;
+    }
+
+    function prependActivity(event) {
+      state.activity = [event, ...state.activity.filter((existing) => existing.id !== event.id)].slice(0, 50);
+      renderActivity(state.activity);
+    }
+
     async function refreshAll() {
       try {
-        const [status, caps, channels, daemon, devices, sessions, cron, approvals, logs] = await Promise.all([
+        const [status, caps, channels, daemon, devices, sessions, cron, approvals, logs, events] = await Promise.all([
           rpc("gateway.status"),
           rpc("gateway.capabilities"),
           rpc("channels.list"),
@@ -880,12 +915,14 @@
           rpc("cron.list").catch(() => ({ scheduledTasks: [], workflows: [], jobs: [] })),
           rpc("approvals.list").catch(() => ({ gates: [], policies: [] })),
           rpc("logs.tail").catch(() => ({ diagnostics: [], selfHeal: [] })),
+          rpc("events.list").catch(() => ({ events: [] })),
         ]);
-        state.snapshots = { status, caps, channels, daemon, devices, sessions, cron, approvals, logs };
+        state.snapshots = { status, caps, channels, daemon, devices, sessions, cron, approvals, logs, events };
         renderOverview(status, caps, channels, daemon);
         renderDevices(devices);
         renderRuntime(sessions, cron, approvals);
         renderLogs(logs);
+        renderActivity(events.events || []);
         $("raw-output").textContent = JSON.stringify(state.snapshots, null, 2);
       } catch (error) {
         $("side-status").textContent = "Error";
