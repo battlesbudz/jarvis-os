@@ -46,6 +46,10 @@ const GATEWAY_WS_PATH = "/api/gateway/ws";
 const GATEWAY_CHAT_CHANNEL = "Gateway";
 const STARTED_AT = new Date();
 
+interface RpcEvents {
+  emit?: (method: string, params: Record<string, unknown>) => void;
+}
+
 interface GatewayCapability {
   area: string;
   status: "foundation" | "mapped" | "partial";
@@ -230,7 +234,7 @@ async function logState(userId: string | null, limit: number) {
   return { userScoped: Boolean(userId), diagnostics, selfHeal };
 }
 
-async function chatSend(userId: string, params: RpcParams) {
+async function chatSend(userId: string, params: RpcParams, events: RpcEvents = {}) {
   const text = typeof params.text === "string" ? params.text.trim() : "";
   if (!text) throw new Error("text is required");
 
@@ -246,11 +250,18 @@ async function chatSend(userId: string, params: RpcParams) {
     ? undefined
     : requestedSessionId ?? (await sessionStore.getSession(userId, GATEWAY_CHAT_CHANNEL));
   const started = Date.now();
+  const streamCallbacks = events.emit
+    ? {
+        onToken: (chunk: string) => events.emit?.("chat.token", { content: chunk }),
+        onProgressMessage: (message: string) => events.emit?.("chat.progress", { message }),
+      }
+    : {};
   const result = await runCoachAgent({
     userId,
     userText: text,
     channelName: GATEWAY_CHAT_CHANNEL,
     sdkSessionId,
+    ...streamCallbacks,
   });
 
   if (result.sdkSessionId) {
@@ -267,7 +278,7 @@ async function chatSend(userId: string, params: RpcParams) {
   };
 }
 
-async function handleRpc(req: JsonRpcRequest, ctx: RpcContext) {
+async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents = {}) {
   if (!req || typeof req !== "object") return err(null, -32600, "Invalid JSON-RPC request");
   if (!req.method || typeof req.method !== "string") return err(req.id, -32600, "JSON-RPC method is required");
 
@@ -287,7 +298,7 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext) {
       case "config.get": return ok(req.id, publicConfigSnapshot());
       case "chat.send":
         requireGatewayScope(ctx, "operator.write");
-        return ok(req.id, await chatSend(requireUser(), params));
+        return ok(req.id, await chatSend(requireUser(), params, events));
       case "channels.list":
         if (userId) requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await channelState(userId, limit));
@@ -389,9 +400,12 @@ async function onMessage(ws: WebSocket, raw: RawData, ctx: RpcContext) {
     send(ws, err(null, -32700, "Invalid JSON"));
     return;
   }
+  const eventsFor = (id: RpcId | undefined): RpcEvents => ({
+    emit: (method, params) => send(ws, { jsonrpc: "2.0", method, params: { requestId: id ?? null, ...params } }),
+  });
   const response = Array.isArray(parsed)
     ? await Promise.all(parsed.map((item) => handleRpc(item, ctx)))
-    : await handleRpc(parsed, ctx);
+    : await handleRpc(parsed, ctx, eventsFor(parsed.id));
   send(ws, response);
 }
 
