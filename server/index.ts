@@ -16,6 +16,7 @@ import { registerWhatsAppWebhook } from "./channels/whatsappWebhook";
 import { registerSlackWebhook } from "./channels/slackWebhook";
 import { seedAllSessions } from "./channels/sessionStore";
 import { startDaemonBridge } from "./daemon/bridge";
+import { registerGatewayControlPlane } from "./gateway/controlPlane";
 import { registerVoiceRelay } from "./voiceRelayRoutes";
 import { bootAllBots as bootDiscordBots, bootSharedBot } from "./discord/manager";
 import { pruneAuditLogArchivesOnStartup } from "./agent/tools/applyCodeChangeTool";
@@ -439,6 +440,7 @@ function setupErrorHandler(app: express.Application) {
 
   initChannels();
   startDaemonBridge(server);
+  registerGatewayControlPlane(app, server);
 
   // Voice relay: server-side WebSocket proxy to OpenAI Realtime API.
   // Must be registered before any catch-all upgrade handler so the path is claimed first.
@@ -447,7 +449,7 @@ function setupErrorHandler(app: express.Application) {
   // Catch-all upgrade guard: registered last, so this only sees sockets that no
   // prior handler claimed. Paths that ARE handled (daemon, voice relay) are explicitly
   // excluded so we never touch an already-upgraded WebSocket connection.
-  const KNOWN_WS_PATHS = ["/api/daemon/ws", "/api/voice/ws"];
+  const KNOWN_WS_PATHS = ["/api/daemon/ws", "/api/voice/ws", "/api/gateway/ws"];
   server.on("upgrade", (req, socket) => {
     const pathname = (req.url || "").split("?")[0];
     const isKnown = KNOWN_WS_PATHS.some(p => pathname.startsWith(p));
