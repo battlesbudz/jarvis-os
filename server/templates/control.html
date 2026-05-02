@@ -1,0 +1,630 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis Control</title>
+  <style>
+    :root {
+      --bg: #f5f7f8;
+      --panel: #ffffff;
+      --panel-2: #eef3f0;
+      --text: #16201c;
+      --muted: #60716a;
+      --line: #d7e1dc;
+      --accent: #0f7b5f;
+      --accent-2: #3457a6;
+      --danger: #a63f3f;
+      --warn: #a66812;
+      --ok: #0f7b5f;
+      --shadow: 0 10px 28px rgba(26, 45, 38, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 244px minmax(0, 1fr);
+    }
+
+    aside {
+      background: #17231e;
+      color: #f5faf7;
+      padding: 22px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand {
+      padding: 0 8px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.1;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 6px 0 0;
+      color: #b8c9c1;
+      font-size: 13px;
+    }
+
+    nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    .tab {
+      border: 0;
+      color: #dce8e2;
+      background: transparent;
+      border-radius: 8px;
+      padding: 10px 10px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .tab.active {
+      background: rgba(255,255,255,0.12);
+      color: #ffffff;
+    }
+
+    main {
+      padding: 22px;
+      min-width: 0;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+
+    .topbar h2 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .topbar .meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 9px 12px;
+      cursor: pointer;
+      min-height: 38px;
+    }
+
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn.danger {
+      border-color: #e1b7b7;
+      color: var(--danger);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .panel {
+      grid-column: span 12;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel.half { grid-column: span 6; }
+    .panel.third { grid-column: span 4; }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfb;
+    }
+
+    .panel-head h3 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .panel-body {
+      padding: 14px 16px;
+    }
+
+    .kv {
+      display: grid;
+      gap: 10px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr);
+      gap: 12px;
+      align-items: baseline;
+      min-height: 28px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 12px;
+      margin: 2px 4px 2px 0;
+      border: 1px solid var(--line);
+    }
+
+    .pill.ok { color: var(--ok); border-color: #b9d8cd; background: #eef8f4; }
+    .pill.warn { color: var(--warn); border-color: #e8cfaa; background: #fff7eb; }
+    .pill.danger { color: var(--danger); border-color: #e5c0c0; background: #fff1f1; }
+
+    .stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+      display: grid;
+      gap: 7px;
+    }
+
+    .item-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 680;
+      min-width: 0;
+    }
+
+    .item-title span:first-child {
+      overflow-wrap: anywhere;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    input, select {
+      min-height: 38px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      background: #fff;
+      color: var(--text);
+      min-width: 0;
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      max-height: 520px;
+      overflow: auto;
+      background: #101915;
+      color: #e4efe9;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .hidden { display: none; }
+
+    @media (max-width: 860px) {
+      .shell { grid-template-columns: 1fr; }
+      aside {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        padding: 14px;
+      }
+      nav {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .tab {
+        text-align: center;
+        padding: 9px 6px;
+        font-size: 13px;
+      }
+      main { padding: 16px; }
+      .topbar { grid-template-columns: 1fr; }
+      .actions { justify-content: flex-start; }
+      .panel.half, .panel.third { grid-column: span 12; }
+      .row { grid-template-columns: 1fr; gap: 2px; }
+      .form { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <h1>Jarvis Control</h1>
+        <p id="side-status">Disconnected</p>
+      </div>
+      <nav>
+        <button class="tab active" data-view="overview">Overview</button>
+        <button class="tab" data-view="devices">Devices</button>
+        <button class="tab" data-view="runtime">Runtime</button>
+        <button class="tab" data-view="logs">Logs</button>
+        <button class="tab" data-view="raw">RPC</button>
+      </nav>
+    </aside>
+    <main>
+      <div class="topbar">
+        <div>
+          <h2 id="view-title">Overview</h2>
+          <div class="meta" id="view-meta">Gateway snapshot</div>
+        </div>
+        <div class="actions">
+          <input id="auth-token" placeholder="Bearer or device token">
+          <button class="btn" id="save-token">Save Token</button>
+          <button class="btn" id="dev-token">Dev Token</button>
+          <button class="btn primary" id="refresh">Refresh</button>
+        </div>
+      </div>
+
+      <section id="overview" class="view grid">
+        <div class="panel third">
+          <div class="panel-head"><h3>Gateway</h3><span id="gateway-pill" class="pill warn">unknown</span></div>
+          <div class="panel-body kv" id="gateway-kv"></div>
+        </div>
+        <div class="panel third">
+          <div class="panel-head"><h3>Providers</h3></div>
+          <div class="panel-body" id="providers"></div>
+        </div>
+        <div class="panel third">
+          <div class="panel-head"><h3>Daemon</h3></div>
+          <div class="panel-body kv" id="daemon-kv"></div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Capabilities</h3></div>
+          <div class="panel-body stack" id="capabilities"></div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Channels</h3></div>
+          <div class="panel-body stack" id="channels"></div>
+        </div>
+      </section>
+
+      <section id="devices" class="view grid hidden">
+        <div class="panel half">
+          <div class="panel-head"><h3>Paired Devices</h3></div>
+          <div class="panel-body stack" id="device-list"></div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Pairing Requests</h3></div>
+          <div class="panel-body stack" id="pairing-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Create Pairing Request</h3></div>
+          <div class="panel-body form">
+            <input id="pair-label" placeholder="Device label">
+            <button class="btn primary" id="create-pairing">Create</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="runtime" class="view grid hidden">
+        <div class="panel half">
+          <div class="panel-head"><h3>Sessions</h3></div>
+          <div class="panel-body stack" id="sessions"></div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Jobs And Workflows</h3></div>
+          <div class="panel-body stack" id="cron"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Approvals</h3></div>
+          <div class="panel-body stack" id="approvals"></div>
+        </div>
+      </section>
+
+      <section id="logs" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>Diagnostics</h3></div>
+          <div class="panel-body stack" id="diagnostics"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Self-Heal Audit</h3></div>
+          <div class="panel-body stack" id="self-heal"></div>
+        </div>
+      </section>
+
+      <section id="raw" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>RPC Request</h3></div>
+          <div class="panel-body stack">
+            <div class="form">
+              <select id="rpc-method">
+                <option>gateway.status</option>
+                <option>gateway.capabilities</option>
+                <option>devices.whoami</option>
+                <option>devices.list</option>
+                <option>channels.list</option>
+                <option>sessions.list</option>
+                <option>daemon.status</option>
+                <option>cron.list</option>
+                <option>approvals.list</option>
+                <option>skills.list</option>
+                <option>logs.tail</option>
+              </select>
+              <button class="btn primary" id="run-rpc">Run</button>
+            </div>
+            <pre id="raw-output">{}</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const TOKEN_KEY = "jarvis_web_token";
+    const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const urlToken = new URL(location.href).searchParams.get("token") || hashParams.get("token");
+    if (urlToken) localStorage.setItem(TOKEN_KEY, urlToken);
+    const state = { token: localStorage.getItem(TOKEN_KEY) || "", snapshots: {} };
+
+    const $ = (id) => document.getElementById(id);
+    const fmt = (value) => value == null ? "none" : String(value);
+    const time = (value) => value ? new Date(value).toLocaleString() : "none";
+
+    function pill(value, tone) {
+      return `<span class="pill ${tone || ""}">${value}</span>`;
+    }
+
+    function item(title, meta, body, actions) {
+      return `<div class="item">
+        <div class="item-title"><span>${title}</span><span>${meta || ""}</span></div>
+        ${body ? `<div class="muted">${body}</div>` : ""}
+        ${actions || ""}
+      </div>`;
+    }
+
+    function kv(rows) {
+      return rows.map(([label, value]) => `<div class="row"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("");
+    }
+
+    async function rpc(method, params = {}) {
+      const headers = { "Content-Type": "application/json" };
+      if (state.token) headers.Authorization = `Bearer ${state.token}`;
+      const res = await fetch("/api/gateway/rpc", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "RPC failed");
+      return data.result;
+    }
+
+    async function getDevToken() {
+      const res = await fetch("/api/dev-token");
+      if (!res.ok) throw new Error("Dev token unavailable");
+      const data = await res.json();
+      state.token = data.token;
+      localStorage.setItem(TOKEN_KEY, state.token);
+      await refreshAll();
+    }
+
+    function setView(view) {
+      document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
+      document.querySelectorAll(".tab").forEach((el) => el.classList.toggle("active", el.dataset.view === view));
+      $(view).classList.remove("hidden");
+      $("view-title").textContent = document.querySelector(`.tab[data-view="${view}"]`).textContent;
+      $("view-meta").textContent = view === "overview" ? "Gateway snapshot" : "Live gateway RPC data";
+    }
+
+    function renderOverview(status, caps, channels, daemon) {
+      $("side-status").textContent = status.authenticated ? "Authenticated" : "Unauthenticated";
+      $("gateway-pill").className = `pill ${status.ok ? "ok" : "danger"}`;
+      $("gateway-pill").textContent = status.ok ? "online" : "offline";
+      $("gateway-kv").innerHTML = kv([
+        ["Service", status.service],
+        ["Environment", status.environment],
+        ["Version", status.version],
+        ["Uptime", `${status.uptimeSeconds}s`],
+        ["Auth", status.authenticated ? "yes" : "no"],
+      ]);
+      $("providers").innerHTML = Object.entries(status.providers || {})
+        .map(([name, ok]) => pill(name, ok ? "ok" : "warn"))
+        .join("");
+      $("capabilities").innerHTML = (caps.capabilities || [])
+        .map((cap) => item(cap.area, pill(cap.status, cap.status === "partial" ? "warn" : "ok"), (cap.jarvisSurface || []).join(", ")))
+        .join("") || `<div class="muted">No capabilities found.</div>`;
+      $("channels").innerHTML = (channels.registered || [])
+        .map((ch) => item(ch.name, pill(ch.configured ? "configured" : "missing", ch.configured ? "ok" : "warn"), (ch.toolGroups || []).join(", ")))
+        .join("") || `<div class="muted">No channels found.</div>`;
+      $("daemon-kv").innerHTML = kv([
+        ["Desktop", daemon.desktop ? `${daemon.desktop.connected ? "connected" : "offline"} - ${time(daemon.desktop.lastSeenAt)}` : "unknown"],
+        ["Android", daemon.android ? `${daemon.android.connected ? "connected" : "offline"} - ${time(daemon.android.lastSeenAt)}` : "unknown"],
+        ["Recent ops", String((daemon.recentOps || []).length)],
+      ]);
+    }
+
+    function renderDevices(data) {
+      $("device-list").innerHTML = (data.devices || [])
+        .map((device) => item(
+          device.label,
+          pill(device.revokedAt ? "revoked" : "active", device.revokedAt ? "danger" : "ok"),
+          `${device.kind} - ${time(device.pairedAt)} - ${(device.scopes || []).join(", ")}`,
+          device.revokedAt ? "" : `<button class="btn danger" data-revoke="${device.id}">Revoke</button>`
+        ))
+        .join("") || `<div class="muted">No paired gateway devices.</div>`;
+      $("pairing-list").innerHTML = (data.pairingRequests || [])
+        .map((req) => item(
+          req.label,
+          pill(req.status, req.status === "pending" ? "warn" : req.status === "approved" ? "ok" : "danger"),
+          `Code ${req.code} - expires ${time(req.expiresAt)}`,
+          req.status === "pending" ? `<button class="btn primary" data-approve="${req.id}">Approve</button>` : ""
+        ))
+        .join("") || `<div class="muted">No pairing requests.</div>`;
+    }
+
+    function renderRuntime(sessions, cron, approvals) {
+      const coach = sessions.coachSessions || [];
+      const agent = sessions.agentSessions || [];
+      $("sessions").innerHTML = [
+        ...coach.map((s) => item(s.channel, "coach", s.sdkSessionId)),
+        ...agent.map((s) => item(s.agentId, "agent", `${s.sdkSessionId} - ${time(s.updatedAt)}`)),
+      ].join("") || `<div class="muted">No active sessions.</div>`;
+      $("cron").innerHTML = [
+        ...(cron.scheduledTasks || []).map((x) => item(x.title || x.id, pill(x.active ? "active" : "off", x.active ? "ok" : "warn"), time(x.scheduledAt))),
+        ...(cron.workflows || []).map((x) => item(x.title || x.id, pill(x.status, x.status === "active" ? "ok" : "warn"), x.description || "")),
+        ...(cron.jobs || []).map((x) => item(x.title || x.id, pill(x.status, x.status === "complete" ? "ok" : x.status === "failed" ? "danger" : "warn"), x.agentType || "")),
+      ].join("") || `<div class="muted">No jobs or workflows.</div>`;
+      $("approvals").innerHTML = (approvals.gates || [])
+        .map((gate) => item(gate.toolName, pill(gate.status, gate.status === "pending" ? "warn" : "ok"), gate.description))
+        .join("") || `<div class="muted">No approvals.</div>`;
+    }
+
+    function renderLogs(logs) {
+      $("diagnostics").innerHTML = (logs.diagnostics || [])
+        .map((log) => item(log.subsystem, pill(log.severity, log.severity === "error" || log.severity === "critical" ? "danger" : log.severity === "warning" ? "warn" : "ok"), `${time(log.createdAt)} - ${log.message}`))
+        .join("") || `<div class="muted">No diagnostics.</div>`;
+      $("self-heal").innerHTML = (logs.selfHeal || [])
+        .map((log) => item(log.file || `audit ${log.id}`, pill(log.verified || "pending", log.verified === "passed" ? "ok" : "warn"), `${log.reason || ""} ${log.changesSummary || ""}`))
+        .join("") || `<div class="muted">No self-heal audit entries.</div>`;
+    }
+
+    async function refreshAll() {
+      try {
+        const [status, caps, channels, daemon, devices, sessions, cron, approvals, logs] = await Promise.all([
+          rpc("gateway.status"),
+          rpc("gateway.capabilities"),
+          rpc("channels.list"),
+          rpc("daemon.status").catch(() => ({})),
+          rpc("devices.list").catch(() => ({ devices: [], pairingRequests: [] })),
+          rpc("sessions.list").catch(() => ({ coachSessions: [], agentSessions: [] })),
+          rpc("cron.list").catch(() => ({ scheduledTasks: [], workflows: [], jobs: [] })),
+          rpc("approvals.list").catch(() => ({ gates: [], policies: [] })),
+          rpc("logs.tail").catch(() => ({ diagnostics: [], selfHeal: [] })),
+        ]);
+        state.snapshots = { status, caps, channels, daemon, devices, sessions, cron, approvals, logs };
+        renderOverview(status, caps, channels, daemon);
+        renderDevices(devices);
+        renderRuntime(sessions, cron, approvals);
+        renderLogs(logs);
+        $("raw-output").textContent = JSON.stringify(state.snapshots, null, 2);
+      } catch (error) {
+        $("side-status").textContent = "Error";
+        $("raw-output").textContent = String(error.message || error);
+      }
+    }
+
+    document.querySelectorAll(".tab").forEach((btn) => btn.addEventListener("click", () => setView(btn.dataset.view)));
+    $("auth-token").value = state.token;
+    $("save-token").addEventListener("click", async () => {
+      state.token = $("auth-token").value.trim();
+      if (state.token) localStorage.setItem(TOKEN_KEY, state.token);
+      else localStorage.removeItem(TOKEN_KEY);
+      await refreshAll();
+    });
+    $("refresh").addEventListener("click", refreshAll);
+    $("dev-token").addEventListener("click", () => getDevToken().catch((e) => alert(e.message)));
+    $("run-rpc").addEventListener("click", async () => {
+      try {
+        const result = await rpc($("rpc-method").value);
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+      } catch (error) {
+        $("raw-output").textContent = String(error.message || error);
+      }
+    });
+    $("create-pairing").addEventListener("click", async () => {
+      const label = $("pair-label").value.trim() || "Gateway browser";
+      await rpc("devices.pairing.request", { label, kind: "browser", scopes: ["operator.read", "operator.write"] });
+      await refreshAll();
+    });
+    document.body.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.dataset.approve) {
+        const result = await rpc("devices.pairing.approve", { requestId: target.dataset.approve });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+      if (target.dataset.revoke) {
+        await rpc("devices.revoke", { deviceId: target.dataset.revoke });
+        await refreshAll();
+      }
+    });
+
+    refreshAll();
+  </script>
+</body>
+</html>
