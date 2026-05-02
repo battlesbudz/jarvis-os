@@ -1537,6 +1537,44 @@ export const webchatInviteTokens = pgTable("webchat_invite_tokens", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+export const GATEWAY_DEVICE_SCOPES = [
+  "operator.admin",
+  "operator.read",
+  "operator.write",
+  "operator.approvals",
+  "operator.pairing",
+] as const;
+export type GatewayDeviceScope = typeof GATEWAY_DEVICE_SCOPES[number];
+
+export const gatewayDevicePairingRequests = pgTable("gateway_device_pairing_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code").notNull().unique(),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  kind: varchar("kind").notNull().default("browser"),
+  origin: text("origin"),
+  requestedScopes: jsonb("requested_scopes").$type<GatewayDeviceScope[]>().notNull().default(sql`'[]'::jsonb`),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  status: varchar("status").$type<"pending" | "approved" | "rejected" | "expired">().notNull().default("pending"),
+  deviceId: varchar("device_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  resolvedAt: timestamp("resolved_at"),
+});
+
+export const gatewayDevices = pgTable("gateway_devices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  label: text("label").notNull(),
+  kind: varchar("kind").notNull().default("browser"),
+  tokenHash: text("token_hash").notNull().unique(),
+  scopes: jsonb("scopes").$type<GatewayDeviceScope[]>().notNull().default(sql`'[]'::jsonb`),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  pairedAt: timestamp("paired_at").defaultNow().notNull(),
+  lastSeenAt: timestamp("last_seen_at"),
+  revokedAt: timestamp("revoked_at"),
+});
+
 // ── Self-heal audit log — persists autonomous-write history across restarts ──
 // ── User-Defined Custom Sub-Agents ────────────────────────────────────────────
 // Users can define named, reusable sub-agents with a custom system prompt that
