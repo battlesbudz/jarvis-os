@@ -1575,6 +1575,25 @@ export const gatewayDevices = pgTable("gateway_devices", {
   revokedAt: timestamp("revoked_at"),
 });
 
+export const gatewayEvents = pgTable("gateway_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id, { onDelete: "cascade" }),
+  type: varchar("type").notNull(),
+  area: varchar("area").notNull().default("gateway"),
+  severity: varchar("severity").$type<"debug" | "info" | "warning" | "error">().notNull().default("info"),
+  title: text("title").notNull(),
+  message: text("message"),
+  subjectType: varchar("subject_type"),
+  subjectId: varchar("subject_id"),
+  actorKind: varchar("actor_kind"),
+  actorId: varchar("actor_id"),
+  metadata: jsonb("metadata").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type GatewayEvent = typeof gatewayEvents.$inferSelect;
+export type InsertGatewayEvent = typeof gatewayEvents.$inferInsert;
+
 // ── Self-heal audit log — persists autonomous-write history across restarts ──
 // ── User-Defined Custom Sub-Agents ────────────────────────────────────────────
 // Users can define named, reusable sub-agents with a custom system prompt that

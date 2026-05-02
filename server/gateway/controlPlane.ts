@@ -28,6 +28,7 @@ import {
   revokeGatewayDevice,
   type GatewayPrincipal,
 } from "./devicePairing";
+import { listGatewayEvents, onGatewayEvent, recordGatewayEvent } from "./eventBus";
 import * as schema from "@shared/schema";
 
 type RpcId = string | number | null;
@@ -59,6 +60,7 @@ interface GatewayCapability {
 
 const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
+  { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
   { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
   { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], openClawSurface: ["agents", "sessions", "chat/talk state"] },
   { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], openClawSurface: ["channels", "instances", "linked apps"] },
@@ -240,6 +242,16 @@ async function cronCreate(userId: string, params: RpcParams) {
     recurrence,
     shellCommand,
   }).returning();
+  recordGatewayEvent({
+    userId,
+    type: "cron.created",
+    area: "automation",
+    title: `Scheduled ${title}`,
+    message: scheduledAt.toISOString(),
+    subjectType: "scheduled_task",
+    subjectId: task?.id ?? null,
+    metadata: { recurrence, shellCommand: Boolean(shellCommand) },
+  }).catch(() => {});
   return { ok: true, task };
 }
 
@@ -263,6 +275,15 @@ async function jobCreate(userId: string, params: RpcParams) {
     prompt,
     input: { ...input, source: "gateway" },
   });
+  recordGatewayEvent({
+    userId,
+    type: result.isDuplicate ? "job.duplicate" : "job.queued",
+    area: "automation",
+    title: result.isDuplicate ? `Existing job reused: ${title}` : `Queued job: ${title}`,
+    subjectType: "job",
+    subjectId: result.id,
+    metadata: { agentType },
+  }).catch(() => {});
   return { ok: true, ...result };
 }
 
@@ -280,31 +301,73 @@ async function jobCancel(userId: string, params: RpcParams) {
     .set({ status: nextStatus, ...(nextStatus === "cancelled" ? { completedAt: new Date() } : {}) })
     .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, userId)))
     .returning({ id: schema.agentJobs.id, status: schema.agentJobs.status });
+  recordGatewayEvent({
+    userId,
+    type: "job.cancelled",
+    area: "automation",
+    title: `Job ${nextStatus}`,
+    subjectType: "job",
+    subjectId: jobId,
+    metadata: { status: nextStatus },
+  }).catch(() => {});
   return { ok: Boolean(updated), job: updated };
 }
 
 async function daemonPing(userId: string, params: RpcParams) {
   const timeoutMs = Number.isFinite(Number(params.timeoutMs)) ? Number(params.timeoutMs) : 5000;
   const { pingDaemon } = await import("../daemon/bridge");
-  return pingDaemon(userId, timeoutMs);
+  const result = await pingDaemon(userId, timeoutMs);
+  recordGatewayEvent({
+    userId,
+    type: result.ok ? "daemon.ping.ok" : "daemon.ping.failed",
+    area: "daemon",
+    severity: result.ok ? "info" : "warning",
+    title: result.ok ? "Daemon ping succeeded" : "Daemon ping failed",
+    message: result.error ?? null,
+    metadata: { timeoutMs },
+  }).catch(() => {});
+  return result;
 }
 
 async function daemonNotify(userId: string, params: RpcParams) {
   const title = typeof params.title === "string" && params.title.trim() ? params.title.trim() : "Jarvis";
   const body = typeof params.body === "string" && params.body.trim() ? params.body.trim() : "Gateway test notification";
   const { sendDaemonOp } = await import("../daemon/bridge");
-  return sendDaemonOp(userId, { type: "notify", title, body }, 7000);
+  const result = await sendDaemonOp(userId, { type: "notify", title, body }, 7000);
+  recordGatewayEvent({
+    userId,
+    type: result.ok ? "daemon.notify.sent" : "daemon.notify.failed",
+    area: "daemon",
+    severity: result.ok ? "info" : "warning",
+    title: result.ok ? "Daemon notification sent" : "Daemon notification failed",
+    message: result.error ?? body,
+  }).catch(() => {});
+  return result;
 }
 
 async function daemonTest(userId: string, params: RpcParams) {
   const action = typeof params.action === "string" ? params.action.trim() : "ping";
   const { sendDaemonOp } = await import("../daemon/bridge");
-  if (action === "desktop_screenshot") return sendDaemonOp(userId, { type: "desktop_screenshot" }, 10000);
-  if (action === "desktop_read_screen") return sendDaemonOp(userId, { type: "desktop_read_screen" }, 10000);
-  if (action === "android_read_screen") return sendDaemonOp(userId, { type: "android_read_screen" }, 10000);
-  if (action === "android_screenshot") return sendDaemonOp(userId, { type: "android_screenshot" }, 10000);
   if (action === "notify") return daemonNotify(userId, params);
-  return daemonPing(userId, params);
+  if (action === "ping") return daemonPing(userId, params);
+
+  let result: { ok: boolean; data?: unknown; error?: string };
+  if (action === "desktop_screenshot") result = await sendDaemonOp(userId, { type: "desktop_screenshot" }, 10000);
+  else if (action === "desktop_read_screen") result = await sendDaemonOp(userId, { type: "desktop_read_screen" }, 10000);
+  else if (action === "android_read_screen") result = await sendDaemonOp(userId, { type: "android_read_screen" }, 10000);
+  else if (action === "android_screenshot") result = await sendDaemonOp(userId, { type: "android_screenshot" }, 10000);
+  else result = await daemonPing(userId, params);
+
+  recordGatewayEvent({
+    userId,
+    type: result.ok ? "daemon.test.ok" : "daemon.test.failed",
+    area: "daemon",
+    severity: result.ok ? "info" : "warning",
+    title: result.ok ? `Daemon test succeeded: ${action}` : `Daemon test failed: ${action}`,
+    message: result.error ?? null,
+    metadata: { action },
+  }).catch(() => {});
+  return result;
 }
 
 async function approvalState(userId: string, limit: number) {
@@ -329,6 +392,15 @@ async function resolveApprovalGate(userId: string, params: RpcParams, decision: 
     ? await approveGate(gateId, userId)
     : await rejectGate(gateId, userId);
   if (!ok) throw new Error(`Failed to ${decision} gate`);
+  recordGatewayEvent({
+    userId,
+    type: decision === "approve" ? "approval.approved" : "approval.rejected",
+    area: "approvals",
+    title: decision === "approve" ? "Approval gate approved" : "Approval gate rejected",
+    subjectType: "approval_gate",
+    subjectId: gateId,
+    metadata: { toolName: gate.toolName },
+  }).catch(() => {});
   return { ok: true, gateId, status: decision === "approve" ? "approved" : "rejected" };
 }
 
@@ -347,6 +419,10 @@ async function logState(userId: string | null, limit: number) {
     db.select().from(schema.selfHealAuditLog).orderBy(desc(schema.selfHealAuditLog.id)).limit(Math.min(limit, 25)).catch(() => []),
   ]);
   return { userScoped: Boolean(userId), diagnostics, selfHeal };
+}
+
+async function eventState(userId: string | null, limit: number) {
+  return { events: await listGatewayEvents(userId, limit) };
 }
 
 async function chatSend(userId: string, params: RpcParams, events: RpcEvents = {}) {
@@ -383,6 +459,16 @@ async function chatSend(userId: string, params: RpcParams, events: RpcEvents = {
     sessionStore.setSession(userId, GATEWAY_CHAT_CHANNEL, result.sdkSessionId);
   }
 
+  recordGatewayEvent({
+    userId,
+    type: "chat.completed",
+    area: "chat",
+    title: "Gateway chat reply completed",
+    subjectType: "session",
+    subjectId: result.sdkSessionId ?? null,
+    metadata: { elapsedMs: Date.now() - started, hasAttachments: result.attachments.length > 0 },
+  }).catch(() => {});
+
   return {
     channel: GATEWAY_CHAT_CHANNEL,
     reply: result.reply,
@@ -411,6 +497,9 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "gateway.status": return ok(req.id, await gatewayStatus(userId));
       case "gateway.capabilities": return ok(req.id, { capabilities: OPENCLAW_PARITY_CAPABILITIES });
       case "config.get": return ok(req.id, publicConfigSnapshot());
+      case "events.list":
+        if (userId) requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await eventState(userId, limit));
       case "chat.send":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await chatSend(requireUser(), params, events));
@@ -474,30 +563,76 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
         });
       case "devices.pairing.request":
         if (ctx.userId) requireGatewayScope(ctx, "operator.pairing");
-        return ok(req.id, await createGatewayPairingRequest({
-          userId: requireUser(),
-          label: typeof params.label === "string" ? params.label : undefined,
-          kind: typeof params.kind === "string" ? params.kind : undefined,
-          origin: typeof params.origin === "string" ? params.origin : undefined,
-          requestedScopes: params.scopes,
-          metadata: typeof params.metadata === "object" && params.metadata ? params.metadata as Record<string, unknown> : {},
-        }));
+        {
+          const result = await createGatewayPairingRequest({
+            userId: requireUser(),
+            label: typeof params.label === "string" ? params.label : undefined,
+            kind: typeof params.kind === "string" ? params.kind : undefined,
+            origin: typeof params.origin === "string" ? params.origin : undefined,
+            requestedScopes: params.scopes,
+            metadata: typeof params.metadata === "object" && params.metadata ? params.metadata as Record<string, unknown> : {},
+          });
+          recordGatewayEvent({
+            userId: requireUser(),
+            type: "device.pairing.requested",
+            area: "devices",
+            title: `Pairing requested: ${result.label}`,
+            subjectType: "gateway_pairing_request",
+            subjectId: result.id,
+            metadata: { kind: result.kind, code: result.code },
+          }).catch(() => {});
+          return ok(req.id, result);
+        }
       case "devices.pairing.approve":
         requireGatewayScope(ctx, "operator.pairing");
-        return ok(req.id, await approveGatewayPairingRequest({
-          userId: requireUser(),
-          requestId: typeof params.requestId === "string" ? params.requestId : undefined,
-          code: typeof params.code === "string" ? params.code : undefined,
-          scopes: params.scopes,
-        }));
+        {
+          const result = await approveGatewayPairingRequest({
+            userId: requireUser(),
+            requestId: typeof params.requestId === "string" ? params.requestId : undefined,
+            code: typeof params.code === "string" ? params.code : undefined,
+            scopes: params.scopes,
+          });
+          recordGatewayEvent({
+            userId: requireUser(),
+            type: "device.paired",
+            area: "devices",
+            title: `Gateway device paired: ${result.device.label}`,
+            subjectType: "gateway_device",
+            subjectId: result.device.id,
+            metadata: { scopes: result.device.scopes },
+          }).catch(() => {});
+          return ok(req.id, result);
+        }
       case "devices.pairing.reject":
         requireGatewayScope(ctx, "operator.pairing");
         if (typeof params.requestId !== "string") throw new Error("requestId is required");
-        return ok(req.id, await rejectGatewayPairingRequest(requireUser(), params.requestId));
+        {
+          const result = await rejectGatewayPairingRequest(requireUser(), params.requestId);
+          recordGatewayEvent({
+            userId: requireUser(),
+            type: "device.pairing.rejected",
+            area: "devices",
+            title: "Gateway pairing rejected",
+            subjectType: "gateway_pairing_request",
+            subjectId: params.requestId,
+          }).catch(() => {});
+          return ok(req.id, result);
+        }
       case "devices.revoke":
         requireGatewayScope(ctx, "operator.pairing");
         if (typeof params.deviceId !== "string") throw new Error("deviceId is required");
-        return ok(req.id, await revokeGatewayDevice(requireUser(), params.deviceId));
+        {
+          const result = await revokeGatewayDevice(requireUser(), params.deviceId);
+          recordGatewayEvent({
+            userId: requireUser(),
+            type: "device.revoked",
+            area: "devices",
+            title: "Gateway device revoked",
+            subjectType: "gateway_device",
+            subjectId: params.deviceId,
+          }).catch(() => {});
+          return ok(req.id, result);
+        }
       default: return err(req.id, -32601, `Unknown gateway method: ${req.method}`);
     }
   } catch (error) {
@@ -562,6 +697,11 @@ export function registerGatewayControlPlane(app: Express, server: HttpServer): v
     if ((req.url || "").split("?")[0] !== GATEWAY_WS_PATH) return;
     wss.handleUpgrade(req, socket, head, async (ws) => {
       const ctx = await principalFromRequest(req);
+      const unsubscribe = onGatewayEvent((event) => {
+        if (event.userId && ctx.userId && event.userId !== ctx.userId) return;
+        if (event.userId && !ctx.userId) return;
+        send(ws, { jsonrpc: "2.0", method: "gateway.event", params: { event } });
+      });
       send(ws, {
         type: "hello",
         service: "jarvis-gateway",
@@ -575,6 +715,7 @@ export function registerGatewayControlPlane(app: Express, server: HttpServer): v
       ws.on("message", (raw) => onMessage(ws, raw, ctx).catch((error) => {
         send(ws, err(null, -32000, error instanceof Error ? error.message : String(error)));
       }));
+      ws.on("close", unsubscribe);
       ws.on("error", () => {});
     });
   });
