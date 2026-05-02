@@ -305,10 +305,27 @@ function configureExpoAndLanding(app: express.Application) {
     }
   });
 
+  const controlTemplatePath = path.resolve(process.cwd(), "server", "templates", "control.html");
+  app.get(["/control", "/gateway"], (_req: Request, res: Response) => {
+    try {
+      const html = fs.readFileSync(controlTemplatePath, "utf-8");
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      res.status(200).send(html);
+    } catch {
+      res.status(500).send("Control page unavailable");
+    }
+  });
+
   // SPA catch-all: for web build, serve index.html for any non-API, non-asset path
   // so that client-side Expo Router navigation works in Chrome
   app.use((req: Request, res: Response, next: NextFunction) => {
-    if (req.path.startsWith("/api") || req.path.startsWith("/assets") || req.path === "/chat") return next();
+    if (
+      req.path.startsWith("/api") ||
+      req.path.startsWith("/assets") ||
+      req.path === "/chat" ||
+      req.path === "/control" ||
+      req.path === "/gateway"
+    ) return next();
     if (fs.existsSync(webIndexPath)) {
       return res.sendFile(webIndexPath);
     }
