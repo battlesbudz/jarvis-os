@@ -394,6 +394,7 @@
       <nav>
         <button class="tab active" data-view="overview">Overview</button>
         <button class="tab" data-view="activity">Activity</button>
+        <button class="tab" data-view="nodes">Nodes</button>
         <button class="tab" data-view="chat">Chat</button>
         <button class="tab" data-view="devices">Devices</button>
         <button class="tab" data-view="runtime">Runtime</button>
@@ -458,6 +459,26 @@
             <span id="activity-count" class="pill warn">0 events</span>
           </div>
           <div class="panel-body stack" id="activity-list"></div>
+        </div>
+      </section>
+
+      <section id="nodes" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Node Registry</h3>
+            <span id="node-count" class="pill warn">0 nodes</span>
+          </div>
+          <div class="panel-body stack" id="node-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Capability Route</h3></div>
+          <div class="panel-body stack">
+            <div class="form">
+              <input id="route-capability" placeholder="Capability, e.g. desktop.desktop_read_screen">
+              <button class="btn primary" id="route-capability-run">Route</button>
+            </div>
+            <pre id="route-output">{}</pre>
+          </div>
         </div>
       </section>
 
@@ -564,6 +585,8 @@
                 <option>gateway.status</option>
                 <option>gateway.capabilities</option>
                 <option>events.list</option>
+                <option>nodes.list</option>
+                <option>capabilities.route</option>
                 <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
@@ -898,6 +921,19 @@
         .join("") || `<div class="muted">No gateway events yet.</div>`;
     }
 
+    function renderNodes(nodes) {
+      const all = nodes || [];
+      $("node-count").className = `pill ${all.length ? "ok" : "warn"}`;
+      $("node-count").textContent = `${all.length} nodes`;
+      $("node-list").innerHTML = all
+        .map((node) => item(
+          node.label,
+          pill(node.status, node.status === "online" || node.status === "running" ? "ok" : node.status === "offline" ? "danger" : "warn"),
+          `${node.kind} - ${(node.capabilities || []).slice(0, 8).join(", ")}${(node.capabilities || []).length > 8 ? "..." : ""}`
+        ))
+        .join("") || `<div class="muted">No nodes found.</div>`;
+    }
+
     function prependActivity(event) {
       state.activity = [event, ...state.activity.filter((existing) => existing.id !== event.id)].slice(0, 50);
       renderActivity(state.activity);
@@ -905,7 +941,7 @@
 
     async function refreshAll() {
       try {
-        const [status, caps, channels, daemon, devices, sessions, cron, approvals, logs, events] = await Promise.all([
+        const [status, caps, channels, daemon, devices, sessions, cron, approvals, logs, events, nodes] = await Promise.all([
           rpc("gateway.status"),
           rpc("gateway.capabilities"),
           rpc("channels.list"),
@@ -916,13 +952,15 @@
           rpc("approvals.list").catch(() => ({ gates: [], policies: [] })),
           rpc("logs.tail").catch(() => ({ diagnostics: [], selfHeal: [] })),
           rpc("events.list").catch(() => ({ events: [] })),
+          rpc("nodes.list").catch(() => ({ nodes: [] })),
         ]);
-        state.snapshots = { status, caps, channels, daemon, devices, sessions, cron, approvals, logs, events };
+        state.snapshots = { status, caps, channels, daemon, devices, sessions, cron, approvals, logs, events, nodes };
         renderOverview(status, caps, channels, daemon);
         renderDevices(devices);
         renderRuntime(sessions, cron, approvals);
         renderLogs(logs);
         renderActivity(events.events || []);
+        renderNodes(nodes.nodes || []);
         $("raw-output").textContent = JSON.stringify(state.snapshots, null, 2);
       } catch (error) {
         $("side-status").textContent = "Error";
@@ -964,6 +1002,8 @@
         const method = $("rpc-method").value;
         const params = method === "chat.send"
           ? { text: "Status check from the control RPC panel", sdkSessionId: state.chatSessionId || undefined }
+          : method === "capabilities.route"
+            ? { capability: $("route-capability").value.trim() || "chat.send" }
           : method === "approvals.approve" || method === "approvals.reject"
             ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
             : method === "daemon.notify"
@@ -982,6 +1022,15 @@
         $("raw-output").textContent = JSON.stringify(result, null, 2);
       } catch (error) {
         $("raw-output").textContent = String(error.message || error);
+      }
+    });
+    $("route-capability-run").addEventListener("click", async () => {
+      try {
+        const result = await rpc("capabilities.route", { capability: $("route-capability").value.trim() || "chat.send" });
+        $("route-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      } catch (error) {
+        $("route-output").textContent = String(error.message || error);
       }
     });
     $("send-chat").addEventListener("click", () => sendChat());

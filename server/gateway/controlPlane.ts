@@ -29,6 +29,7 @@ import {
   type GatewayPrincipal,
 } from "./devicePairing";
 import { listGatewayEvents, onGatewayEvent, recordGatewayEvent } from "./eventBus";
+import { listGatewayNodes, routeCapability } from "./nodeRegistry";
 import * as schema from "@shared/schema";
 
 type RpcId = string | number | null;
@@ -61,6 +62,7 @@ interface GatewayCapability {
 const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
   { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
+  { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
   { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
   { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], openClawSurface: ["agents", "sessions", "chat/talk state"] },
   { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], openClawSurface: ["channels", "instances", "linked apps"] },
@@ -425,6 +427,29 @@ async function eventState(userId: string | null, limit: number) {
   return { events: await listGatewayEvents(userId, limit) };
 }
 
+async function nodeState(userId: string | null, limit: number) {
+  return { nodes: await listGatewayNodes(userId, limit) };
+}
+
+async function capabilityRouteState(userId: string | null, params: RpcParams, limit: number) {
+  const capability = typeof params.capability === "string" ? params.capability.trim() : "";
+  if (!capability) throw new Error("capability is required");
+  const nodes = await listGatewayNodes(userId, limit);
+  const route = routeCapability(capability, nodes);
+  recordGatewayEvent({
+    userId,
+    type: route.routed ? "capability.routed" : "capability.unrouted",
+    area: "nodes",
+    severity: route.routed ? "info" : "warning",
+    title: route.routed ? `Capability routed: ${capability}` : `No route for capability: ${capability}`,
+    message: route.reason,
+    subjectType: route.node?.kind ?? "capability",
+    subjectId: route.node?.nodeId ?? capability,
+    metadata: { capability, nodeId: route.node?.nodeId ?? null },
+  }).catch(() => {});
+  return route;
+}
+
 async function chatSend(userId: string, params: RpcParams, events: RpcEvents = {}) {
   const text = typeof params.text === "string" ? params.text.trim() : "";
   if (!text) throw new Error("text is required");
@@ -500,6 +525,12 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "events.list":
         if (userId) requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await eventState(userId, limit));
+      case "nodes.list":
+        if (userId) requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await nodeState(userId, limit));
+      case "capabilities.route":
+        if (userId) requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await capabilityRouteState(userId, params, limit));
       case "chat.send":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await chatSend(requireUser(), params, events));
