@@ -3,7 +3,7 @@ import path from "path";
 import type { Express, Request } from "express";
 import type { IncomingMessage, Server as HttpServer } from "http";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db";
 import { getUserIdFromRequest } from "../auth";
 import { listChannels } from "../channels/registry";
@@ -63,8 +63,8 @@ const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], openClawSurface: ["agents", "sessions", "chat/talk state"] },
   { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], openClawSurface: ["channels", "instances", "linked apps"] },
   { area: "daemon", status: "mapped", jarvisSurface: ["daemon.status", "desktop daemon", "android daemon", "operation audit"], openClawSurface: ["nodes", "device status", "exec approvals"] },
-  { area: "devices", status: "foundation", jarvisSurface: ["devices.pairing.request", "devices.pairing.approve", "devices.list", "devices.revoke"], openClawSurface: ["device pairing", "scoped operator tokens", "browser/node trust"] },
-  { area: "automation", status: "mapped", jarvisSurface: ["cron.list", "jarvis_scheduled_tasks", "agent_workflows", "agent_jobs"], openClawSurface: ["cron", "dreams", "background jobs"] },
+  { area: "devices", status: "foundation", jarvisSurface: ["devices.pairing.request", "devices.pairing.approve", "devices.list", "devices.revoke", "daemon.ping", "daemon.notify", "daemon.test"], openClawSurface: ["device pairing", "scoped operator tokens", "browser/node trust"] },
+  { area: "automation", status: "mapped", jarvisSurface: ["cron.list", "cron.create", "jobs.create", "jobs.cancel", "jarvis_scheduled_tasks", "agent_workflows", "agent_jobs"], openClawSurface: ["cron", "dreams", "background jobs"] },
   { area: "approvals", status: "mapped", jarvisSurface: ["approvals.list", "approvals.approve", "approvals.reject", "agent_approval_gates", "agent_approval_policies"], openClawSurface: ["approval gates", "exec/tool approvals"] },
   { area: "skills", status: "partial", jarvisSurface: ["skills.list", "skill_packs", "user_skills", "mcp_servers"], openClawSurface: ["skills", "plugins", "MCP"] },
   { area: "config", status: "foundation", jarvisSurface: ["config.get"], openClawSurface: ["runtime config", "secret refs", "model/provider config"] },
@@ -209,6 +209,104 @@ async function cronState(userId: string, limit: number) {
   return { scheduledTasks, workflows, jobs };
 }
 
+async function cronCreate(userId: string, params: RpcParams) {
+  const title = typeof params.title === "string" ? params.title.trim() : "";
+  const whenExpr = typeof params.when === "string" ? params.when.trim() : "";
+  if (!title) throw new Error("title is required");
+  if (!whenExpr) throw new Error("when is required");
+
+  const [{ parseNaturalTime, parseRecurringExpr }] = await Promise.all([
+    import("../agent/tools/cronTools"),
+  ]);
+  const recurring = parseRecurringExpr(whenExpr);
+  const scheduledAt = recurring?.scheduledAt ?? parseNaturalTime(whenExpr);
+  if (!scheduledAt) throw new Error(`Could not parse time expression: ${whenExpr}`);
+
+  const recurrence = typeof params.recurrence === "string" && params.recurrence.trim()
+    ? params.recurrence.trim()
+    : recurring?.recurrence ?? null;
+  const description = typeof params.description === "string" && params.description.trim()
+    ? params.description.trim()
+    : null;
+  const shellCommand = typeof params.shellCommand === "string" && params.shellCommand.trim()
+    ? params.shellCommand.trim()
+    : null;
+
+  const [task] = await db.insert(schema.jarvisScheduledTasks).values({
+    userId,
+    title,
+    description,
+    scheduledAt,
+    recurrence,
+    shellCommand,
+  }).returning();
+  return { ok: true, task };
+}
+
+async function jobCreate(userId: string, params: RpcParams) {
+  const title = typeof params.title === "string" ? params.title.trim() : "";
+  const prompt = typeof params.prompt === "string" ? params.prompt.trim() : "";
+  const agentType = typeof params.agentType === "string" && params.agentType.trim()
+    ? params.agentType.trim()
+    : "general";
+  if (!title) throw new Error("title is required");
+  if (!prompt) throw new Error("prompt is required");
+
+  const { submitAgentJob } = await import("../agent/jobClient");
+  const input = typeof params.input === "object" && params.input
+    ? params.input as Record<string, unknown>
+    : {};
+  const result = await submitAgentJob({
+    userId,
+    agentType: agentType as any,
+    title,
+    prompt,
+    input: { ...input, source: "gateway" },
+  });
+  return { ok: true, ...result };
+}
+
+async function jobCancel(userId: string, params: RpcParams) {
+  const jobId = typeof params.jobId === "string" ? params.jobId.trim() : "";
+  if (!jobId) throw new Error("jobId is required");
+  const [row] = await db.select({ status: schema.agentJobs.status })
+    .from(schema.agentJobs)
+    .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, userId)))
+    .limit(1);
+  if (!row) throw new Error("Job not found");
+  if (!["queued", "running"].includes(row.status)) throw new Error(`Job is already ${row.status}`);
+  const nextStatus = row.status === "running" ? "cancelling" : "cancelled";
+  const [updated] = await db.update(schema.agentJobs)
+    .set({ status: nextStatus, ...(nextStatus === "cancelled" ? { completedAt: new Date() } : {}) })
+    .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, userId)))
+    .returning({ id: schema.agentJobs.id, status: schema.agentJobs.status });
+  return { ok: Boolean(updated), job: updated };
+}
+
+async function daemonPing(userId: string, params: RpcParams) {
+  const timeoutMs = Number.isFinite(Number(params.timeoutMs)) ? Number(params.timeoutMs) : 5000;
+  const { pingDaemon } = await import("../daemon/bridge");
+  return pingDaemon(userId, timeoutMs);
+}
+
+async function daemonNotify(userId: string, params: RpcParams) {
+  const title = typeof params.title === "string" && params.title.trim() ? params.title.trim() : "Jarvis";
+  const body = typeof params.body === "string" && params.body.trim() ? params.body.trim() : "Gateway test notification";
+  const { sendDaemonOp } = await import("../daemon/bridge");
+  return sendDaemonOp(userId, { type: "notify", title, body }, 7000);
+}
+
+async function daemonTest(userId: string, params: RpcParams) {
+  const action = typeof params.action === "string" ? params.action.trim() : "ping";
+  const { sendDaemonOp } = await import("../daemon/bridge");
+  if (action === "desktop_screenshot") return sendDaemonOp(userId, { type: "desktop_screenshot" }, 10000);
+  if (action === "desktop_read_screen") return sendDaemonOp(userId, { type: "desktop_read_screen" }, 10000);
+  if (action === "android_read_screen") return sendDaemonOp(userId, { type: "android_read_screen" }, 10000);
+  if (action === "android_screenshot") return sendDaemonOp(userId, { type: "android_screenshot" }, 10000);
+  if (action === "notify") return daemonNotify(userId, params);
+  return daemonPing(userId, params);
+}
+
 async function approvalState(userId: string, limit: number) {
   const [gates, policies] = await Promise.all([
     db.select().from(schema.agentApprovalGates).where(eq(schema.agentApprovalGates.userId, userId)).orderBy(desc(schema.agentApprovalGates.createdAt)).limit(limit).catch(() => []),
@@ -325,12 +423,30 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "daemon.status":
         requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await daemonState(requireUser()));
+      case "daemon.ping":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await daemonPing(requireUser(), params));
+      case "daemon.notify":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await daemonNotify(requireUser(), params));
+      case "daemon.test":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await daemonTest(requireUser(), params));
       case "agents.list":
         requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await agentState(requireUser(), limit));
       case "cron.list":
         requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await cronState(requireUser(), limit));
+      case "cron.create":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await cronCreate(requireUser(), params));
+      case "jobs.create":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await jobCreate(requireUser(), params));
+      case "jobs.cancel":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await jobCancel(requireUser(), params));
       case "approvals.list":
         requireGatewayScope(ctx, "operator.approvals");
         return ok(req.id, await approvalState(requireUser(), limit));

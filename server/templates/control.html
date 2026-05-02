@@ -259,6 +259,10 @@
       align-items: center;
     }
 
+    .form.three {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    }
+
     input, select {
       min-height: 38px;
       border-radius: 8px;
@@ -376,7 +380,7 @@
       .actions { justify-content: flex-start; }
       .panel.half, .panel.third { grid-column: span 12; }
       .row { grid-template-columns: 1fr; gap: 2px; }
-      .form { grid-template-columns: 1fr; }
+      .form, .form.three { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -421,7 +425,20 @@
         </div>
         <div class="panel third">
           <div class="panel-head"><h3>Daemon</h3></div>
-          <div class="panel-body kv" id="daemon-kv"></div>
+          <div class="panel-body stack">
+            <div class="kv" id="daemon-kv"></div>
+            <div class="actions">
+              <button class="btn" id="daemon-ping">Ping</button>
+              <button class="btn" id="daemon-notify">Notify</button>
+              <select id="daemon-test-action">
+                <option>desktop_read_screen</option>
+                <option>desktop_screenshot</option>
+                <option>android_read_screen</option>
+                <option>android_screenshot</option>
+              </select>
+              <button class="btn primary" id="daemon-test">Test</button>
+            </div>
+          </div>
         </div>
         <div class="panel half">
           <div class="panel-head"><h3>Capabilities</h3></div>
@@ -486,6 +503,34 @@
           <div class="panel-head"><h3>Approvals</h3></div>
           <div class="panel-body stack" id="approvals"></div>
         </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Queue Job</h3></div>
+          <div class="panel-body stack">
+            <div class="form three">
+              <select id="job-type">
+                <option>general</option>
+                <option>research</option>
+                <option>planning</option>
+                <option>writing</option>
+                <option>deep_research</option>
+              </select>
+              <input id="job-title" placeholder="Job title">
+              <button class="btn primary" id="create-job">Queue</button>
+            </div>
+            <textarea id="job-prompt" placeholder="Job prompt"></textarea>
+          </div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Schedule Task</h3></div>
+          <div class="panel-body stack">
+            <div class="form three">
+              <input id="cron-title" placeholder="Task title">
+              <input id="cron-when" placeholder="When">
+              <button class="btn primary" id="create-cron">Schedule</button>
+            </div>
+            <input id="cron-shell" placeholder="Optional shell command">
+          </div>
+        </div>
       </section>
 
       <section id="logs" class="view grid hidden">
@@ -513,7 +558,13 @@
                 <option>channels.list</option>
                 <option>sessions.list</option>
                 <option>daemon.status</option>
+                <option>daemon.ping</option>
+                <option>daemon.notify</option>
+                <option>daemon.test</option>
                 <option>cron.list</option>
+                <option>cron.create</option>
+                <option>jobs.create</option>
+                <option>jobs.cancel</option>
                 <option>approvals.list</option>
                 <option>approvals.approve</option>
                 <option>approvals.reject</option>
@@ -789,7 +840,12 @@
       $("cron").innerHTML = [
         ...(cron.scheduledTasks || []).map((x) => item(x.title || x.id, pill(x.active ? "active" : "off", x.active ? "ok" : "warn"), time(x.scheduledAt))),
         ...(cron.workflows || []).map((x) => item(x.title || x.id, pill(x.status, x.status === "active" ? "ok" : "warn"), x.description || "")),
-        ...(cron.jobs || []).map((x) => item(x.title || x.id, pill(x.status, x.status === "complete" ? "ok" : x.status === "failed" ? "danger" : "warn"), x.agentType || "")),
+        ...(cron.jobs || []).map((x) => item(
+          x.title || x.id,
+          pill(x.status, x.status === "complete" ? "ok" : x.status === "failed" ? "danger" : "warn"),
+          `${x.agentType || ""} - ${time(x.createdAt)}`,
+          ["queued", "running"].includes(x.status) ? `<button class="btn danger" data-job-cancel="${x.id}">Cancel</button>` : ""
+        )),
       ].join("") || `<div class="muted">No jobs or workflows.</div>`;
       $("approvals").innerHTML = (approvals.gates || [])
         .map((gate) => item(
@@ -851,6 +907,21 @@
     });
     $("refresh").addEventListener("click", refreshAll);
     $("dev-token").addEventListener("click", () => getDevToken().catch((e) => alert(e.message)));
+    $("daemon-ping").addEventListener("click", async () => {
+      const result = await rpc("daemon.ping");
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("daemon-notify").addEventListener("click", async () => {
+      const result = await rpc("daemon.notify", { title: "Jarvis", body: "Gateway notification test" });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("daemon-test").addEventListener("click", async () => {
+      const result = await rpc("daemon.test", { action: $("daemon-test-action").value });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
     $("run-rpc").addEventListener("click", async () => {
       try {
         const method = $("rpc-method").value;
@@ -858,6 +929,16 @@
           ? { text: "Status check from the control RPC panel", sdkSessionId: state.chatSessionId || undefined }
           : method === "approvals.approve" || method === "approvals.reject"
             ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
+            : method === "daemon.notify"
+              ? { title: "Jarvis", body: "Gateway notification test" }
+              : method === "daemon.test"
+                ? { action: $("daemon-test-action").value }
+                : method === "cron.create"
+                  ? { title: "Gateway scheduled test", when: "in 1 hour" }
+                  : method === "jobs.create"
+                    ? { title: "Gateway test job", prompt: "Summarize current Jarvis runtime status.", agentType: "general" }
+                    : method === "jobs.cancel"
+                      ? { jobId: (state.snapshots.cron?.jobs || []).find((job) => ["queued", "running"].includes(job.status))?.id || "" }
             : {};
         const result = await rpc(method, params);
         if (method === "chat.send") setChatSession(result.sdkSessionId);
@@ -885,6 +966,22 @@
       await rpc("devices.pairing.request", { label, kind: "browser", scopes: ["operator.read", "operator.write"] });
       await refreshAll();
     });
+    $("create-job").addEventListener("click", async () => {
+      const title = $("job-title").value.trim();
+      const prompt = $("job-prompt").value.trim();
+      const result = await rpc("jobs.create", { title, prompt, agentType: $("job-type").value });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("create-cron").addEventListener("click", async () => {
+      const result = await rpc("cron.create", {
+        title: $("cron-title").value.trim(),
+        when: $("cron-when").value.trim(),
+        shellCommand: $("cron-shell").value.trim() || undefined,
+      });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
     document.body.addEventListener("click", async (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement)) return;
@@ -895,6 +992,11 @@
       }
       if (target.dataset.revoke) {
         await rpc("devices.revoke", { deviceId: target.dataset.revoke });
+        await refreshAll();
+      }
+      if (target.dataset.jobCancel) {
+        const result = await rpc("jobs.cancel", { jobId: target.dataset.jobCancel });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
         await refreshAll();
       }
       if (target.dataset.approvalApprove) {
