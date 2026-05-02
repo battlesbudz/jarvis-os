@@ -538,6 +538,8 @@
       chatSessionId: localStorage.getItem(SESSION_KEY) || "",
       chatResetPending: false,
       sendingChat: false,
+      gatewaySocket: null,
+      pendingChat: null,
       snapshots: {},
     };
 
@@ -580,6 +582,7 @@
       const data = await res.json();
       state.token = data.token;
       localStorage.setItem(TOKEN_KEY, state.token);
+      connectGatewaySocket();
       await refreshAll();
     }
 
@@ -610,6 +613,78 @@
       node.append(label, body);
       $("chat-log").appendChild(node);
       $("chat-log").scrollTop = $("chat-log").scrollHeight;
+      return { node, label, body };
+    }
+
+    function gatewaySocketUrl() {
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      const url = new URL(`${protocol}://${location.host}/api/gateway/ws`);
+      if (state.token) url.searchParams.set("token", state.token);
+      return url.toString();
+    }
+
+    function finishChatSend() {
+      state.sendingChat = false;
+      state.pendingChat = null;
+      $("send-chat").disabled = false;
+      $("chat-status").textContent = "Ready";
+    }
+
+    function handleSocketMessage(event) {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (data.type === "hello") {
+        $("chat-status").textContent = data.authenticated ? "Live socket ready" : "Socket connected";
+        return;
+      }
+      const pending = state.pendingChat;
+      if (data.method === "chat.progress" && pending && data.params?.requestId === pending.id) {
+        $("chat-status").textContent = data.params.message || "Working...";
+        return;
+      }
+      if (data.method === "chat.token" && pending && data.params?.requestId === pending.id) {
+        pending.received += data.params.content || "";
+        pending.message.body.textContent = pending.received;
+        $("chat-log").scrollTop = $("chat-log").scrollHeight;
+        return;
+      }
+      if (!pending || data.id !== pending.id) return;
+      if (data.error) {
+        pending.message.node.remove();
+        appendChatMessage("system", data.error.message || "Chat request failed.", "Error");
+        finishChatSend();
+        return;
+      }
+      const result = data.result || {};
+      state.chatResetPending = false;
+      setChatSession(result.sdkSessionId);
+      if (!pending.received.trim()) pending.message.body.textContent = result.reply || "";
+      pending.message.label.textContent = `${result.channel || "Jarvis"} - ${result.elapsedMs || 0}ms`;
+      finishChatSend();
+    }
+
+    function connectGatewaySocket() {
+      if (state.gatewaySocket) state.gatewaySocket.close();
+      try {
+        const ws = new WebSocket(gatewaySocketUrl());
+        state.gatewaySocket = ws;
+        ws.addEventListener("message", handleSocketMessage);
+        ws.addEventListener("open", () => { $("chat-status").textContent = "Opening live socket"; });
+        ws.addEventListener("close", () => {
+          if (state.gatewaySocket === ws) {
+            state.gatewaySocket = null;
+            if (state.pendingChat) appendChatMessage("system", "Live socket closed before the reply completed.", "Socket");
+            if (state.pendingChat) finishChatSend();
+            else $("chat-status").textContent = "HTTP fallback";
+          }
+        });
+      } catch {
+        $("chat-status").textContent = "HTTP fallback";
+      }
     }
 
     async function sendChat() {
@@ -621,12 +696,28 @@
       $("chat-status").textContent = "Sending...";
       appendChatMessage("user", text, "You");
       $("chat-input").value = "";
+      const params = {
+        text,
+        sdkSessionId: state.chatSessionId || undefined,
+        resetSession: state.chatResetPending || undefined,
+      };
+      if (state.gatewaySocket?.readyState === WebSocket.OPEN) {
+        const id = Date.now();
+        state.pendingChat = {
+          id,
+          received: "",
+          message: appendChatMessage("assistant", "", "Jarvis"),
+        };
+        try {
+          state.gatewaySocket.send(JSON.stringify({ jsonrpc: "2.0", id, method: "chat.send", params }));
+          return;
+        } catch {
+          state.pendingChat.message.node.remove();
+          state.pendingChat = null;
+        }
+      }
       try {
-        const result = await rpc("chat.send", {
-          text,
-          sdkSessionId: state.chatSessionId || undefined,
-          resetSession: state.chatResetPending || undefined,
-        });
+        const result = await rpc("chat.send", params);
         state.chatResetPending = false;
         setChatSession(result.sdkSessionId);
         appendChatMessage("assistant", result.reply || "", `${result.channel || "Jarvis"} - ${result.elapsedMs || 0}ms`);
@@ -741,10 +832,12 @@
     $("auth-token").value = state.token;
     setChatSession(state.chatSessionId);
     appendChatMessage("system", "Gateway chat is ready.", "System");
+    connectGatewaySocket();
     $("save-token").addEventListener("click", async () => {
       state.token = $("auth-token").value.trim();
       if (state.token) localStorage.setItem(TOKEN_KEY, state.token);
       else localStorage.removeItem(TOKEN_KEY);
+      connectGatewaySocket();
       await refreshAll();
     });
     $("refresh").addEventListener("click", refreshAll);
