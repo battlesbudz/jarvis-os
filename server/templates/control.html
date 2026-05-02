@@ -1,0 +1,1103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis Control</title>
+  <style>
+    :root {
+      --bg: #f5f7f8;
+      --panel: #ffffff;
+      --panel-2: #eef3f0;
+      --text: #16201c;
+      --muted: #60716a;
+      --line: #d7e1dc;
+      --accent: #0f7b5f;
+      --accent-2: #3457a6;
+      --danger: #a63f3f;
+      --warn: #a66812;
+      --ok: #0f7b5f;
+      --shadow: 0 10px 28px rgba(26, 45, 38, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    button, input, select {
+      font: inherit;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 244px minmax(0, 1fr);
+    }
+
+    aside {
+      background: #17231e;
+      color: #f5faf7;
+      padding: 22px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand {
+      padding: 0 8px 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.1;
+      font-weight: 760;
+      letter-spacing: 0;
+    }
+
+    .brand p {
+      margin: 6px 0 0;
+      color: #b8c9c1;
+      font-size: 13px;
+    }
+
+    nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    .tab {
+      border: 0;
+      color: #dce8e2;
+      background: transparent;
+      border-radius: 8px;
+      padding: 10px 10px;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .tab.active {
+      background: rgba(255,255,255,0.12);
+      color: #ffffff;
+    }
+
+    main {
+      padding: 22px;
+      min-width: 0;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+
+    .topbar h2 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .topbar .meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .btn {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 9px 12px;
+      cursor: pointer;
+      min-height: 38px;
+    }
+
+    .btn.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .btn.danger {
+      border-color: #e1b7b7;
+      color: var(--danger);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .panel {
+      grid-column: span 12;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel.half { grid-column: span 6; }
+    .panel.third { grid-column: span 4; }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfb;
+    }
+
+    .panel-head h3 {
+      margin: 0;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .panel-body {
+      padding: 14px 16px;
+    }
+
+    .kv {
+      display: grid;
+      gap: 10px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 160px minmax(0, 1fr);
+      gap: 12px;
+      align-items: baseline;
+      min-height: 28px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .value {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-size: 14px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: var(--panel-2);
+      color: var(--text);
+      font-size: 12px;
+      margin: 2px 4px 2px 0;
+      border: 1px solid var(--line);
+    }
+
+    .pill.ok { color: var(--ok); border-color: #b9d8cd; background: #eef8f4; }
+    .pill.warn { color: var(--warn); border-color: #e8cfaa; background: #fff7eb; }
+    .pill.danger { color: var(--danger); border-color: #e5c0c0; background: #fff1f1; }
+
+    .stack {
+      display: grid;
+      gap: 10px;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fff;
+      display: grid;
+      gap: 7px;
+    }
+
+    .item-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-weight: 680;
+      min-width: 0;
+    }
+
+    .item-title span:first-child {
+      overflow-wrap: anywhere;
+    }
+
+    .muted {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .form {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .form.three {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+    }
+
+    input, select {
+      min-height: 38px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      background: #fff;
+      color: var(--text);
+      min-width: 0;
+    }
+
+    textarea {
+      min-height: 112px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      padding: 10px;
+      background: #fff;
+      color: var(--text);
+      resize: vertical;
+      min-width: 0;
+      width: 100%;
+      font: inherit;
+    }
+
+    .chat-log {
+      min-height: 340px;
+      max-height: calc(100vh - 340px);
+      overflow: auto;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+      padding-right: 4px;
+    }
+
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #fff;
+      display: grid;
+      gap: 6px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .message.user {
+      border-color: #b7d1c8;
+      background: #f2faf6;
+    }
+
+    .message.assistant {
+      border-color: #bdc9e9;
+      background: #f4f7ff;
+    }
+
+    .message.system {
+      border-style: dashed;
+      color: var(--muted);
+      background: #fbfcfb;
+    }
+
+    .message-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+      text-transform: uppercase;
+    }
+
+    .chat-compose {
+      display: grid;
+      gap: 10px;
+    }
+
+    .chat-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      max-height: 520px;
+      overflow: auto;
+      background: #101915;
+      color: #e4efe9;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .hidden { display: none; }
+
+    @media (max-width: 860px) {
+      .shell { grid-template-columns: 1fr; }
+      aside {
+        position: sticky;
+        top: 0;
+        z-index: 5;
+        padding: 14px;
+      }
+      nav {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+      .tab {
+        text-align: center;
+        padding: 9px 6px;
+        font-size: 13px;
+      }
+      main { padding: 16px; }
+      .topbar { grid-template-columns: 1fr; }
+      .actions { justify-content: flex-start; }
+      .panel.half, .panel.third { grid-column: span 12; }
+      .row { grid-template-columns: 1fr; gap: 2px; }
+      .form, .form.three { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand">
+        <h1>Jarvis Control</h1>
+        <p id="side-status">Disconnected</p>
+      </div>
+      <nav>
+        <button class="tab active" data-view="overview">Overview</button>
+        <button class="tab" data-view="activity">Activity</button>
+        <button class="tab" data-view="nodes">Nodes</button>
+        <button class="tab" data-view="chat">Chat</button>
+        <button class="tab" data-view="devices">Devices</button>
+        <button class="tab" data-view="runtime">Runtime</button>
+        <button class="tab" data-view="logs">Logs</button>
+        <button class="tab" data-view="raw">RPC</button>
+      </nav>
+    </aside>
+    <main>
+      <div class="topbar">
+        <div>
+          <h2 id="view-title">Overview</h2>
+          <div class="meta" id="view-meta">Gateway snapshot</div>
+        </div>
+        <div class="actions">
+          <input id="auth-token" placeholder="Bearer or device token">
+          <button class="btn" id="save-token">Save Token</button>
+          <button class="btn" id="dev-token">Dev Token</button>
+          <button class="btn primary" id="refresh">Refresh</button>
+        </div>
+      </div>
+
+      <section id="overview" class="view grid">
+        <div class="panel third">
+          <div class="panel-head"><h3>Gateway</h3><span id="gateway-pill" class="pill warn">unknown</span></div>
+          <div class="panel-body kv" id="gateway-kv"></div>
+        </div>
+        <div class="panel third">
+          <div class="panel-head"><h3>Providers</h3></div>
+          <div class="panel-body" id="providers"></div>
+        </div>
+        <div class="panel third">
+          <div class="panel-head"><h3>Daemon</h3></div>
+          <div class="panel-body stack">
+            <div class="kv" id="daemon-kv"></div>
+            <div class="actions">
+              <button class="btn" id="daemon-ping">Ping</button>
+              <button class="btn" id="daemon-notify">Notify</button>
+              <select id="daemon-test-action">
+                <option>desktop_read_screen</option>
+                <option>desktop_screenshot</option>
+                <option>android_read_screen</option>
+                <option>android_screenshot</option>
+              </select>
+              <button class="btn primary" id="daemon-test">Test</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Capabilities</h3></div>
+          <div class="panel-body stack" id="capabilities"></div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Channels</h3></div>
+          <div class="panel-body stack" id="channels"></div>
+        </div>
+      </section>
+
+      <section id="activity" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Activity Timeline</h3>
+            <span id="activity-count" class="pill warn">0 events</span>
+          </div>
+          <div class="panel-body stack" id="activity-list"></div>
+        </div>
+      </section>
+
+      <section id="nodes" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Node Registry</h3>
+            <span id="node-count" class="pill warn">0 nodes</span>
+          </div>
+          <div class="panel-body stack" id="node-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Capability Route</h3></div>
+          <div class="panel-body stack">
+            <div class="form">
+              <input id="route-capability" placeholder="Capability, e.g. desktop.desktop_read_screen">
+              <button class="btn primary" id="route-capability-run">Route</button>
+            </div>
+            <pre id="route-output">{}</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="chat" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Gateway Chat</h3>
+            <span id="chat-session" class="pill warn">new session</span>
+          </div>
+          <div class="panel-body stack">
+            <div class="chat-log" id="chat-log"></div>
+            <div class="chat-compose">
+              <textarea id="chat-input" placeholder="Message Jarvis"></textarea>
+              <div class="chat-actions">
+                <span class="muted" id="chat-status">Ready</span>
+                <div class="actions">
+                  <button class="btn" id="clear-chat">Clear</button>
+                  <button class="btn primary" id="send-chat">Send</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="devices" class="view grid hidden">
+        <div class="panel half">
+          <div class="panel-head"><h3>Paired Devices</h3></div>
+          <div class="panel-body stack" id="device-list"></div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Pairing Requests</h3></div>
+          <div class="panel-body stack" id="pairing-list"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Create Pairing Request</h3></div>
+          <div class="panel-body form">
+            <input id="pair-label" placeholder="Device label">
+            <button class="btn primary" id="create-pairing">Create</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="runtime" class="view grid hidden">
+        <div class="panel half">
+          <div class="panel-head"><h3>Sessions</h3></div>
+          <div class="panel-body stack" id="sessions"></div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Jobs And Workflows</h3></div>
+          <div class="panel-body stack" id="cron"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Approvals</h3></div>
+          <div class="panel-body stack" id="approvals"></div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Queue Job</h3></div>
+          <div class="panel-body stack">
+            <div class="form three">
+              <select id="job-type">
+                <option>general</option>
+                <option>research</option>
+                <option>planning</option>
+                <option>writing</option>
+                <option>deep_research</option>
+              </select>
+              <input id="job-title" placeholder="Job title">
+              <button class="btn primary" id="create-job">Queue</button>
+            </div>
+            <textarea id="job-prompt" placeholder="Job prompt"></textarea>
+          </div>
+        </div>
+        <div class="panel half">
+          <div class="panel-head"><h3>Schedule Task</h3></div>
+          <div class="panel-body stack">
+            <div class="form three">
+              <input id="cron-title" placeholder="Task title">
+              <input id="cron-when" placeholder="When">
+              <button class="btn primary" id="create-cron">Schedule</button>
+            </div>
+            <input id="cron-shell" placeholder="Optional shell command">
+          </div>
+        </div>
+      </section>
+
+      <section id="logs" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>Diagnostics</h3></div>
+          <div class="panel-body stack" id="diagnostics"></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Self-Heal Audit</h3></div>
+          <div class="panel-body stack" id="self-heal"></div>
+        </div>
+      </section>
+
+      <section id="raw" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head"><h3>RPC Request</h3></div>
+          <div class="panel-body stack">
+            <div class="form">
+              <select id="rpc-method">
+                <option>gateway.status</option>
+                <option>gateway.capabilities</option>
+                <option>events.list</option>
+                <option>nodes.list</option>
+                <option>capabilities.route</option>
+                <option>chat.send</option>
+                <option>devices.whoami</option>
+                <option>devices.list</option>
+                <option>channels.list</option>
+                <option>sessions.list</option>
+                <option>daemon.status</option>
+                <option>daemon.ping</option>
+                <option>daemon.notify</option>
+                <option>daemon.test</option>
+                <option>cron.list</option>
+                <option>cron.create</option>
+                <option>jobs.create</option>
+                <option>jobs.cancel</option>
+                <option>approvals.list</option>
+                <option>approvals.approve</option>
+                <option>approvals.reject</option>
+                <option>skills.list</option>
+                <option>logs.tail</option>
+              </select>
+              <button class="btn primary" id="run-rpc">Run</button>
+            </div>
+            <pre id="raw-output">{}</pre>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const TOKEN_KEY = "jarvis_web_token";
+    const SESSION_KEY = "jarvis_gateway_session";
+    const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const urlToken = new URL(location.href).searchParams.get("token") || hashParams.get("token");
+    if (urlToken) localStorage.setItem(TOKEN_KEY, urlToken);
+    const state = {
+      token: localStorage.getItem(TOKEN_KEY) || "",
+      chatSessionId: localStorage.getItem(SESSION_KEY) || "",
+      chatResetPending: false,
+      sendingChat: false,
+      gatewaySocket: null,
+      pendingChat: null,
+      activity: [],
+      snapshots: {},
+    };
+
+    const $ = (id) => document.getElementById(id);
+    const fmt = (value) => value == null ? "none" : String(value);
+    const time = (value) => value ? new Date(value).toLocaleString() : "none";
+
+    function pill(value, tone) {
+      return `<span class="pill ${tone || ""}">${value}</span>`;
+    }
+
+    function item(title, meta, body, actions) {
+      return `<div class="item">
+        <div class="item-title"><span>${title}</span><span>${meta || ""}</span></div>
+        ${body ? `<div class="muted">${body}</div>` : ""}
+        ${actions || ""}
+      </div>`;
+    }
+
+    function kv(rows) {
+      return rows.map(([label, value]) => `<div class="row"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("");
+    }
+
+    async function rpc(method, params = {}) {
+      const headers = { "Content-Type": "application/json" };
+      if (state.token) headers.Authorization = `Bearer ${state.token}`;
+      const res = await fetch("/api/gateway/rpc", {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message || "RPC failed");
+      return data.result;
+    }
+
+    async function getDevToken() {
+      const res = await fetch("/api/dev-token");
+      if (!res.ok) throw new Error("Dev token unavailable");
+      const data = await res.json();
+      state.token = data.token;
+      localStorage.setItem(TOKEN_KEY, state.token);
+      connectGatewaySocket();
+      await refreshAll();
+    }
+
+    function setView(view) {
+      document.querySelectorAll(".view").forEach((el) => el.classList.add("hidden"));
+      document.querySelectorAll(".tab").forEach((el) => el.classList.toggle("active", el.dataset.view === view));
+      $(view).classList.remove("hidden");
+      $("view-title").textContent = document.querySelector(`.tab[data-view="${view}"]`).textContent;
+      $("view-meta").textContent = view === "overview" ? "Gateway snapshot" : "Live gateway RPC data";
+    }
+
+    function setChatSession(id) {
+      state.chatSessionId = id || "";
+      if (state.chatSessionId) localStorage.setItem(SESSION_KEY, state.chatSessionId);
+      else localStorage.removeItem(SESSION_KEY);
+      $("chat-session").className = `pill ${state.chatSessionId ? "ok" : "warn"}`;
+      $("chat-session").textContent = state.chatSessionId ? `session ${state.chatSessionId.slice(0, 10)}` : "new session";
+    }
+
+    function appendChatMessage(role, content, meta) {
+      const node = document.createElement("div");
+      node.className = `message ${role}`;
+      const label = document.createElement("div");
+      label.className = "message-meta";
+      label.textContent = meta || role;
+      const body = document.createElement("div");
+      body.textContent = content;
+      node.append(label, body);
+      $("chat-log").appendChild(node);
+      $("chat-log").scrollTop = $("chat-log").scrollHeight;
+      return { node, label, body };
+    }
+
+    function gatewaySocketUrl() {
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      const url = new URL(`${protocol}://${location.host}/api/gateway/ws`);
+      if (state.token) url.searchParams.set("token", state.token);
+      return url.toString();
+    }
+
+    function finishChatSend() {
+      state.sendingChat = false;
+      state.pendingChat = null;
+      $("send-chat").disabled = false;
+      $("chat-status").textContent = "Ready";
+    }
+
+    function handleSocketMessage(event) {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (data.type === "hello") {
+        $("chat-status").textContent = data.authenticated ? "Live socket ready" : "Socket connected";
+        return;
+      }
+      if (data.method === "gateway.event" && data.params?.event) {
+        prependActivity(data.params.event);
+        return;
+      }
+      const pending = state.pendingChat;
+      if (data.method === "chat.progress" && pending && data.params?.requestId === pending.id) {
+        $("chat-status").textContent = data.params.message || "Working...";
+        return;
+      }
+      if (data.method === "chat.token" && pending && data.params?.requestId === pending.id) {
+        pending.received += data.params.content || "";
+        pending.message.body.textContent = pending.received;
+        $("chat-log").scrollTop = $("chat-log").scrollHeight;
+        return;
+      }
+      if (!pending || data.id !== pending.id) return;
+      if (data.error) {
+        pending.message.node.remove();
+        appendChatMessage("system", data.error.message || "Chat request failed.", "Error");
+        finishChatSend();
+        return;
+      }
+      const result = data.result || {};
+      state.chatResetPending = false;
+      setChatSession(result.sdkSessionId);
+      if (!pending.received.trim()) pending.message.body.textContent = result.reply || "";
+      pending.message.label.textContent = `${result.channel || "Jarvis"} - ${result.elapsedMs || 0}ms`;
+      finishChatSend();
+    }
+
+    function connectGatewaySocket() {
+      if (state.gatewaySocket) state.gatewaySocket.close();
+      try {
+        const ws = new WebSocket(gatewaySocketUrl());
+        state.gatewaySocket = ws;
+        ws.addEventListener("message", handleSocketMessage);
+        ws.addEventListener("open", () => { $("chat-status").textContent = "Opening live socket"; });
+        ws.addEventListener("close", () => {
+          if (state.gatewaySocket === ws) {
+            state.gatewaySocket = null;
+            if (state.pendingChat) appendChatMessage("system", "Live socket closed before the reply completed.", "Socket");
+            if (state.pendingChat) finishChatSend();
+            else $("chat-status").textContent = "HTTP fallback";
+          }
+        });
+      } catch {
+        $("chat-status").textContent = "HTTP fallback";
+      }
+    }
+
+    async function sendChat() {
+      if (state.sendingChat) return;
+      const text = $("chat-input").value.trim();
+      if (!text) return;
+      state.sendingChat = true;
+      $("send-chat").disabled = true;
+      $("chat-status").textContent = "Sending...";
+      appendChatMessage("user", text, "You");
+      $("chat-input").value = "";
+      const params = {
+        text,
+        sdkSessionId: state.chatSessionId || undefined,
+        resetSession: state.chatResetPending || undefined,
+      };
+      if (state.gatewaySocket?.readyState === WebSocket.OPEN) {
+        const id = Date.now();
+        state.pendingChat = {
+          id,
+          received: "",
+          message: appendChatMessage("assistant", "", "Jarvis"),
+        };
+        try {
+          state.gatewaySocket.send(JSON.stringify({ jsonrpc: "2.0", id, method: "chat.send", params }));
+          return;
+        } catch {
+          state.pendingChat.message.node.remove();
+          state.pendingChat = null;
+        }
+      }
+      try {
+        const result = await rpc("chat.send", params);
+        state.chatResetPending = false;
+        setChatSession(result.sdkSessionId);
+        appendChatMessage("assistant", result.reply || "", `${result.channel || "Jarvis"} - ${result.elapsedMs || 0}ms`);
+        $("chat-status").textContent = "Ready";
+      } catch (error) {
+        appendChatMessage("system", String(error.message || error), "Error");
+        $("chat-status").textContent = "Error";
+      } finally {
+        state.sendingChat = false;
+        $("send-chat").disabled = false;
+      }
+    }
+
+    function renderOverview(status, caps, channels, daemon) {
+      $("side-status").textContent = status.authenticated ? "Authenticated" : "Unauthenticated";
+      $("gateway-pill").className = `pill ${status.ok ? "ok" : "danger"}`;
+      $("gateway-pill").textContent = status.ok ? "online" : "offline";
+      $("gateway-kv").innerHTML = kv([
+        ["Service", status.service],
+        ["Environment", status.environment],
+        ["Version", status.version],
+        ["Uptime", `${status.uptimeSeconds}s`],
+        ["Auth", status.authenticated ? "yes" : "no"],
+      ]);
+      $("providers").innerHTML = Object.entries(status.providers || {})
+        .map(([name, ok]) => pill(name, ok ? "ok" : "warn"))
+        .join("");
+      $("capabilities").innerHTML = (caps.capabilities || [])
+        .map((cap) => item(cap.area, pill(cap.status, cap.status === "partial" ? "warn" : "ok"), (cap.jarvisSurface || []).join(", ")))
+        .join("") || `<div class="muted">No capabilities found.</div>`;
+      $("channels").innerHTML = (channels.registered || [])
+        .map((ch) => item(ch.name, pill(ch.configured ? "configured" : "missing", ch.configured ? "ok" : "warn"), (ch.toolGroups || []).join(", ")))
+        .join("") || `<div class="muted">No channels found.</div>`;
+      $("daemon-kv").innerHTML = kv([
+        ["Desktop", daemon.desktop ? `${daemon.desktop.connected ? "connected" : "offline"} - ${time(daemon.desktop.lastSeenAt)}` : "unknown"],
+        ["Android", daemon.android ? `${daemon.android.connected ? "connected" : "offline"} - ${time(daemon.android.lastSeenAt)}` : "unknown"],
+        ["Recent ops", String((daemon.recentOps || []).length)],
+      ]);
+    }
+
+    function renderDevices(data) {
+      $("device-list").innerHTML = (data.devices || [])
+        .map((device) => item(
+          device.label,
+          pill(device.revokedAt ? "revoked" : "active", device.revokedAt ? "danger" : "ok"),
+          `${device.kind} - ${time(device.pairedAt)} - ${(device.scopes || []).join(", ")}`,
+          device.revokedAt ? "" : `<button class="btn danger" data-revoke="${device.id}">Revoke</button>`
+        ))
+        .join("") || `<div class="muted">No paired gateway devices.</div>`;
+      $("pairing-list").innerHTML = (data.pairingRequests || [])
+        .map((req) => item(
+          req.label,
+          pill(req.status, req.status === "pending" ? "warn" : req.status === "approved" ? "ok" : "danger"),
+          `Code ${req.code} - expires ${time(req.expiresAt)}`,
+          req.status === "pending" ? `<button class="btn primary" data-approve="${req.id}">Approve</button>` : ""
+        ))
+        .join("") || `<div class="muted">No pairing requests.</div>`;
+    }
+
+    function renderRuntime(sessions, cron, approvals) {
+      const coach = sessions.coachSessions || [];
+      const agent = sessions.agentSessions || [];
+      $("sessions").innerHTML = [
+        ...coach.map((s) => item(s.channel, "coach", s.sdkSessionId)),
+        ...agent.map((s) => item(s.agentId, "agent", `${s.sdkSessionId} - ${time(s.updatedAt)}`)),
+      ].join("") || `<div class="muted">No active sessions.</div>`;
+      $("cron").innerHTML = [
+        ...(cron.scheduledTasks || []).map((x) => item(x.title || x.id, pill(x.active ? "active" : "off", x.active ? "ok" : "warn"), time(x.scheduledAt))),
+        ...(cron.workflows || []).map((x) => item(x.title || x.id, pill(x.status, x.status === "active" ? "ok" : "warn"), x.description || "")),
+        ...(cron.jobs || []).map((x) => item(
+          x.title || x.id,
+          pill(x.status, x.status === "complete" ? "ok" : x.status === "failed" ? "danger" : "warn"),
+          `${x.agentType || ""} - ${time(x.createdAt)}`,
+          ["queued", "running"].includes(x.status) ? `<button class="btn danger" data-job-cancel="${x.id}">Cancel</button>` : ""
+        )),
+      ].join("") || `<div class="muted">No jobs or workflows.</div>`;
+      $("approvals").innerHTML = (approvals.gates || [])
+        .map((gate) => item(
+          gate.toolName,
+          pill(gate.status, gate.status === "pending" ? "warn" : "ok"),
+          gate.description,
+          gate.status === "pending"
+            ? `<div class="actions"><button class="btn primary" data-approval-approve="${gate.id}">Approve</button><button class="btn danger" data-approval-reject="${gate.id}">Reject</button></div>`
+            : ""
+        ))
+        .join("") || `<div class="muted">No approvals.</div>`;
+    }
+
+    function renderLogs(logs) {
+      $("diagnostics").innerHTML = (logs.diagnostics || [])
+        .map((log) => item(log.subsystem, pill(log.severity, log.severity === "error" || log.severity === "critical" ? "danger" : log.severity === "warning" ? "warn" : "ok"), `${time(log.createdAt)} - ${log.message}`))
+        .join("") || `<div class="muted">No diagnostics.</div>`;
+      $("self-heal").innerHTML = (logs.selfHeal || [])
+        .map((log) => item(log.file || `audit ${log.id}`, pill(log.verified || "pending", log.verified === "passed" ? "ok" : "warn"), `${log.reason || ""} ${log.changesSummary || ""}`))
+        .join("") || `<div class="muted">No self-heal audit entries.</div>`;
+    }
+
+    function renderActivity(events) {
+      state.activity = events || [];
+      $("activity-count").className = `pill ${state.activity.length ? "ok" : "warn"}`;
+      $("activity-count").textContent = `${state.activity.length} events`;
+      $("activity-list").innerHTML = state.activity
+        .map((event) => item(
+          event.title,
+          pill(event.area || "gateway", event.severity === "error" ? "danger" : event.severity === "warning" ? "warn" : "ok"),
+          `${time(event.createdAt)} - ${event.message || event.type || ""}`
+        ))
+        .join("") || `<div class="muted">No gateway events yet.</div>`;
+    }
+
+    function renderNodes(nodes) {
+      const all = nodes || [];
+      $("node-count").className = `pill ${all.length ? "ok" : "warn"}`;
+      $("node-count").textContent = `${all.length} nodes`;
+      $("node-list").innerHTML = all
+        .map((node) => item(
+          node.label,
+          pill(node.status, node.status === "online" || node.status === "running" ? "ok" : node.status === "offline" ? "danger" : "warn"),
+          `${node.kind} - ${(node.capabilities || []).slice(0, 8).join(", ")}${(node.capabilities || []).length > 8 ? "..." : ""}`
+        ))
+        .join("") || `<div class="muted">No nodes found.</div>`;
+    }
+
+    function prependActivity(event) {
+      state.activity = [event, ...state.activity.filter((existing) => existing.id !== event.id)].slice(0, 50);
+      renderActivity(state.activity);
+    }
+
+    async function refreshAll() {
+      try {
+        const [status, caps, channels, daemon, devices, sessions, cron, approvals, logs, events, nodes] = await Promise.all([
+          rpc("gateway.status"),
+          rpc("gateway.capabilities"),
+          rpc("channels.list"),
+          rpc("daemon.status").catch(() => ({})),
+          rpc("devices.list").catch(() => ({ devices: [], pairingRequests: [] })),
+          rpc("sessions.list").catch(() => ({ coachSessions: [], agentSessions: [] })),
+          rpc("cron.list").catch(() => ({ scheduledTasks: [], workflows: [], jobs: [] })),
+          rpc("approvals.list").catch(() => ({ gates: [], policies: [] })),
+          rpc("logs.tail").catch(() => ({ diagnostics: [], selfHeal: [] })),
+          rpc("events.list").catch(() => ({ events: [] })),
+          rpc("nodes.list").catch(() => ({ nodes: [] })),
+        ]);
+        state.snapshots = { status, caps, channels, daemon, devices, sessions, cron, approvals, logs, events, nodes };
+        renderOverview(status, caps, channels, daemon);
+        renderDevices(devices);
+        renderRuntime(sessions, cron, approvals);
+        renderLogs(logs);
+        renderActivity(events.events || []);
+        renderNodes(nodes.nodes || []);
+        $("raw-output").textContent = JSON.stringify(state.snapshots, null, 2);
+      } catch (error) {
+        $("side-status").textContent = "Error";
+        $("raw-output").textContent = String(error.message || error);
+      }
+    }
+
+    document.querySelectorAll(".tab").forEach((btn) => btn.addEventListener("click", () => setView(btn.dataset.view)));
+    $("auth-token").value = state.token;
+    setChatSession(state.chatSessionId);
+    appendChatMessage("system", "Gateway chat is ready.", "System");
+    connectGatewaySocket();
+    $("save-token").addEventListener("click", async () => {
+      state.token = $("auth-token").value.trim();
+      if (state.token) localStorage.setItem(TOKEN_KEY, state.token);
+      else localStorage.removeItem(TOKEN_KEY);
+      connectGatewaySocket();
+      await refreshAll();
+    });
+    $("refresh").addEventListener("click", refreshAll);
+    $("dev-token").addEventListener("click", () => getDevToken().catch((e) => alert(e.message)));
+    $("daemon-ping").addEventListener("click", async () => {
+      const result = await rpc("daemon.ping");
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("daemon-notify").addEventListener("click", async () => {
+      const result = await rpc("daemon.notify", { title: "Jarvis", body: "Gateway notification test" });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("daemon-test").addEventListener("click", async () => {
+      const result = await rpc("daemon.test", { action: $("daemon-test-action").value });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("run-rpc").addEventListener("click", async () => {
+      try {
+        const method = $("rpc-method").value;
+        const params = method === "chat.send"
+          ? { text: "Status check from the control RPC panel", sdkSessionId: state.chatSessionId || undefined }
+          : method === "capabilities.route"
+            ? { capability: $("route-capability").value.trim() || "chat.send" }
+          : method === "approvals.approve" || method === "approvals.reject"
+            ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
+            : method === "daemon.notify"
+              ? { title: "Jarvis", body: "Gateway notification test" }
+              : method === "daemon.test"
+                ? { action: $("daemon-test-action").value }
+                : method === "cron.create"
+                  ? { title: "Gateway scheduled test", when: "in 1 hour" }
+                  : method === "jobs.create"
+                    ? { title: "Gateway test job", prompt: "Summarize current Jarvis runtime status.", agentType: "general" }
+                    : method === "jobs.cancel"
+                      ? { jobId: (state.snapshots.cron?.jobs || []).find((job) => ["queued", "running"].includes(job.status))?.id || "" }
+            : {};
+        const result = await rpc(method, params);
+        if (method === "chat.send") setChatSession(result.sdkSessionId);
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+      } catch (error) {
+        $("raw-output").textContent = String(error.message || error);
+      }
+    });
+    $("route-capability-run").addEventListener("click", async () => {
+      try {
+        const result = await rpc("capabilities.route", { capability: $("route-capability").value.trim() || "chat.send" });
+        $("route-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      } catch (error) {
+        $("route-output").textContent = String(error.message || error);
+      }
+    });
+    $("send-chat").addEventListener("click", () => sendChat());
+    $("clear-chat").addEventListener("click", () => {
+      $("chat-log").innerHTML = "";
+      setChatSession("");
+      state.chatResetPending = true;
+      $("chat-status").textContent = "New session on next send";
+      appendChatMessage("system", "Gateway chat is ready.", "System");
+    });
+    $("chat-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        sendChat();
+      }
+    });
+    $("create-pairing").addEventListener("click", async () => {
+      const label = $("pair-label").value.trim() || "Gateway browser";
+      await rpc("devices.pairing.request", { label, kind: "browser", scopes: ["operator.read", "operator.write"] });
+      await refreshAll();
+    });
+    $("create-job").addEventListener("click", async () => {
+      const title = $("job-title").value.trim();
+      const prompt = $("job-prompt").value.trim();
+      const result = await rpc("jobs.create", { title, prompt, agentType: $("job-type").value });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("create-cron").addEventListener("click", async () => {
+      const result = await rpc("cron.create", {
+        title: $("cron-title").value.trim(),
+        when: $("cron-when").value.trim(),
+        shellCommand: $("cron-shell").value.trim() || undefined,
+      });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    document.body.addEventListener("click", async (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.dataset.approve) {
+        const result = await rpc("devices.pairing.approve", { requestId: target.dataset.approve });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+      if (target.dataset.revoke) {
+        await rpc("devices.revoke", { deviceId: target.dataset.revoke });
+        await refreshAll();
+      }
+      if (target.dataset.jobCancel) {
+        const result = await rpc("jobs.cancel", { jobId: target.dataset.jobCancel });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+      if (target.dataset.approvalApprove) {
+        const result = await rpc("approvals.approve", { gateId: target.dataset.approvalApprove });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+      if (target.dataset.approvalReject) {
+        const result = await rpc("approvals.reject", { gateId: target.dataset.approvalReject });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+    });
+
+    refreshAll();
+  </script>
+</body>
+</html>

@@ -1401,6 +1401,82 @@ export async function ensureTablesExist() {
         ON webchat_invite_tokens (token)
     `).catch(() => {});
 
+    // ── Gateway devices — OpenClaw-style scoped browser/node pairing ─────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS gateway_device_pairing_requests (
+        id               VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
+        code             VARCHAR   NOT NULL UNIQUE,
+        user_id          VARCHAR   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        label            TEXT      NOT NULL,
+        kind             VARCHAR   NOT NULL DEFAULT 'browser',
+        origin           TEXT,
+        requested_scopes JSONB     NOT NULL DEFAULT '[]'::jsonb,
+        metadata         JSONB     NOT NULL DEFAULT '{}'::jsonb,
+        status           VARCHAR   NOT NULL DEFAULT 'pending',
+        device_id        VARCHAR,
+        created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at       TIMESTAMP NOT NULL,
+        resolved_at      TIMESTAMP
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gateway_pairing_user_status_idx
+        ON gateway_device_pairing_requests (user_id, status, created_at DESC)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gateway_pairing_code_idx
+        ON gateway_device_pairing_requests (code)
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS gateway_devices (
+        id             VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id        VARCHAR   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        label          TEXT      NOT NULL,
+        kind           VARCHAR   NOT NULL DEFAULT 'browser',
+        token_hash     TEXT      NOT NULL UNIQUE,
+        scopes         JSONB     NOT NULL DEFAULT '[]'::jsonb,
+        metadata       JSONB     NOT NULL DEFAULT '{}'::jsonb,
+        paired_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+        last_seen_at   TIMESTAMP,
+        revoked_at     TIMESTAMP
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gateway_devices_user_revoked_idx
+        ON gateway_devices (user_id, revoked_at, paired_at DESC)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gateway_devices_token_hash_idx
+        ON gateway_devices (token_hash)
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS gateway_events (
+        id           VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id      VARCHAR   REFERENCES users(id) ON DELETE CASCADE,
+        type         VARCHAR   NOT NULL,
+        area         VARCHAR   NOT NULL DEFAULT 'gateway',
+        severity     VARCHAR   NOT NULL DEFAULT 'info',
+        title        TEXT      NOT NULL,
+        message      TEXT,
+        subject_type VARCHAR,
+        subject_id   VARCHAR,
+        actor_kind   VARCHAR,
+        actor_id     VARCHAR,
+        metadata     JSONB     NOT NULL DEFAULT '{}'::jsonb,
+        created_at   TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gateway_events_user_created_idx
+        ON gateway_events (user_id, created_at DESC)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS gateway_events_area_created_idx
+        ON gateway_events (area, created_at DESC)
+    `).catch(() => {});
+
     // ── Jarvis Projects — persistent 24/7 autonomous build projects ──────────
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS jarvis_projects (
