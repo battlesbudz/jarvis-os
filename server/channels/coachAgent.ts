@@ -83,6 +83,7 @@ const FORMAT_HINTS: Record<string, string> = {
   Slack: "You're responding via Slack DM. Keep messages SHORT (2-4 sentences). Use Slack mrkdwn (*bold*, _italic_, `code`, > quote). No markdown headers.",
   Daemon: "You're responding to a desktop daemon. Plain text only. The user sees the reply as a desktop notification — keep it under 2 sentences when possible.",
   Discord: "You're responding via Discord. Keep responses SHORT — 2-4 sentences max. Your total response MUST be under 1800 characters. Discord renders **bold**, _italic_, `code`, ```blocks```. No headers. If a task needs many steps, pick the single most important next action and say it clearly.",
+  Gateway: "You're responding in the Jarvis Control UI. Be direct, operational, and complete enough for a power user managing agents, devices, jobs, and integrations from the dashboard. Markdown is supported, but avoid large decorative headers.",
   Voice: "You're responding via voice / Talk Mode — your reply will be read aloud on a phone speaker. Plain text only. No markdown, bullet points, or special characters. Keep your answer to 1-3 short, natural spoken sentences. Be direct and conversational.",
 };
 
@@ -90,6 +91,7 @@ function getMaxTokensForChannel(channelName: string): number {
   if (channelName.startsWith("Discord")) return 1200;
   if (channelName === "Daemon") return 200;
   if (channelName === "Voice") return 250;
+  if (channelName === "Gateway") return 4000;
   if (channelName === "Telegram") return 8000;
   return 2000;
 }

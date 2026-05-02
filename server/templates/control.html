@@ -269,6 +269,76 @@
       min-width: 0;
     }
 
+    textarea {
+      min-height: 112px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      padding: 10px;
+      background: #fff;
+      color: var(--text);
+      resize: vertical;
+      min-width: 0;
+      width: 100%;
+      font: inherit;
+    }
+
+    .chat-log {
+      min-height: 340px;
+      max-height: calc(100vh - 340px);
+      overflow: auto;
+      display: grid;
+      align-content: start;
+      gap: 10px;
+      padding-right: 4px;
+    }
+
+    .message {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #fff;
+      display: grid;
+      gap: 6px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .message.user {
+      border-color: #b7d1c8;
+      background: #f2faf6;
+    }
+
+    .message.assistant {
+      border-color: #bdc9e9;
+      background: #f4f7ff;
+    }
+
+    .message.system {
+      border-style: dashed;
+      color: var(--muted);
+      background: #fbfcfb;
+    }
+
+    .message-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+      text-transform: uppercase;
+    }
+
+    .chat-compose {
+      display: grid;
+      gap: 10px;
+    }
+
+    .chat-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+
     pre {
       margin: 0;
       padding: 12px;
@@ -319,6 +389,7 @@
       </div>
       <nav>
         <button class="tab active" data-view="overview">Overview</button>
+        <button class="tab" data-view="chat">Chat</button>
         <button class="tab" data-view="devices">Devices</button>
         <button class="tab" data-view="runtime">Runtime</button>
         <button class="tab" data-view="logs">Logs</button>
@@ -359,6 +430,28 @@
         <div class="panel half">
           <div class="panel-head"><h3>Channels</h3></div>
           <div class="panel-body stack" id="channels"></div>
+        </div>
+      </section>
+
+      <section id="chat" class="view grid hidden">
+        <div class="panel">
+          <div class="panel-head">
+            <h3>Gateway Chat</h3>
+            <span id="chat-session" class="pill warn">new session</span>
+          </div>
+          <div class="panel-body stack">
+            <div class="chat-log" id="chat-log"></div>
+            <div class="chat-compose">
+              <textarea id="chat-input" placeholder="Message Jarvis"></textarea>
+              <div class="chat-actions">
+                <span class="muted" id="chat-status">Ready</span>
+                <div class="actions">
+                  <button class="btn" id="clear-chat">Clear</button>
+                  <button class="btn primary" id="send-chat">Send</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -414,6 +507,7 @@
               <select id="rpc-method">
                 <option>gateway.status</option>
                 <option>gateway.capabilities</option>
+                <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
                 <option>channels.list</option>
@@ -435,10 +529,17 @@
 
   <script>
     const TOKEN_KEY = "jarvis_web_token";
+    const SESSION_KEY = "jarvis_gateway_session";
     const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
     const urlToken = new URL(location.href).searchParams.get("token") || hashParams.get("token");
     if (urlToken) localStorage.setItem(TOKEN_KEY, urlToken);
-    const state = { token: localStorage.getItem(TOKEN_KEY) || "", snapshots: {} };
+    const state = {
+      token: localStorage.getItem(TOKEN_KEY) || "",
+      chatSessionId: localStorage.getItem(SESSION_KEY) || "",
+      chatResetPending: false,
+      sendingChat: false,
+      snapshots: {},
+    };
 
     const $ = (id) => document.getElementById(id);
     const fmt = (value) => value == null ? "none" : String(value);
@@ -488,6 +589,55 @@
       $(view).classList.remove("hidden");
       $("view-title").textContent = document.querySelector(`.tab[data-view="${view}"]`).textContent;
       $("view-meta").textContent = view === "overview" ? "Gateway snapshot" : "Live gateway RPC data";
+    }
+
+    function setChatSession(id) {
+      state.chatSessionId = id || "";
+      if (state.chatSessionId) localStorage.setItem(SESSION_KEY, state.chatSessionId);
+      else localStorage.removeItem(SESSION_KEY);
+      $("chat-session").className = `pill ${state.chatSessionId ? "ok" : "warn"}`;
+      $("chat-session").textContent = state.chatSessionId ? `session ${state.chatSessionId.slice(0, 10)}` : "new session";
+    }
+
+    function appendChatMessage(role, content, meta) {
+      const node = document.createElement("div");
+      node.className = `message ${role}`;
+      const label = document.createElement("div");
+      label.className = "message-meta";
+      label.textContent = meta || role;
+      const body = document.createElement("div");
+      body.textContent = content;
+      node.append(label, body);
+      $("chat-log").appendChild(node);
+      $("chat-log").scrollTop = $("chat-log").scrollHeight;
+    }
+
+    async function sendChat() {
+      if (state.sendingChat) return;
+      const text = $("chat-input").value.trim();
+      if (!text) return;
+      state.sendingChat = true;
+      $("send-chat").disabled = true;
+      $("chat-status").textContent = "Sending...";
+      appendChatMessage("user", text, "You");
+      $("chat-input").value = "";
+      try {
+        const result = await rpc("chat.send", {
+          text,
+          sdkSessionId: state.chatSessionId || undefined,
+          resetSession: state.chatResetPending || undefined,
+        });
+        state.chatResetPending = false;
+        setChatSession(result.sdkSessionId);
+        appendChatMessage("assistant", result.reply || "", `${result.channel || "Jarvis"} - ${result.elapsedMs || 0}ms`);
+        $("chat-status").textContent = "Ready";
+      } catch (error) {
+        appendChatMessage("system", String(error.message || error), "Error");
+        $("chat-status").textContent = "Error";
+      } finally {
+        state.sendingChat = false;
+        $("send-chat").disabled = false;
+      }
     }
 
     function renderOverview(status, caps, channels, daemon) {
@@ -589,6 +739,8 @@
 
     document.querySelectorAll(".tab").forEach((btn) => btn.addEventListener("click", () => setView(btn.dataset.view)));
     $("auth-token").value = state.token;
+    setChatSession(state.chatSessionId);
+    appendChatMessage("system", "Gateway chat is ready.", "System");
     $("save-token").addEventListener("click", async () => {
       state.token = $("auth-token").value.trim();
       if (state.token) localStorage.setItem(TOKEN_KEY, state.token);
@@ -599,10 +751,27 @@
     $("dev-token").addEventListener("click", () => getDevToken().catch((e) => alert(e.message)));
     $("run-rpc").addEventListener("click", async () => {
       try {
-        const result = await rpc($("rpc-method").value);
+        const method = $("rpc-method").value;
+        const params = method === "chat.send" ? { text: "Status check from the control RPC panel", sdkSessionId: state.chatSessionId || undefined } : {};
+        const result = await rpc(method, params);
+        if (method === "chat.send") setChatSession(result.sdkSessionId);
         $("raw-output").textContent = JSON.stringify(result, null, 2);
       } catch (error) {
         $("raw-output").textContent = String(error.message || error);
+      }
+    });
+    $("send-chat").addEventListener("click", () => sendChat());
+    $("clear-chat").addEventListener("click", () => {
+      $("chat-log").innerHTML = "";
+      setChatSession("");
+      state.chatResetPending = true;
+      $("chat-status").textContent = "New session on next send";
+      appendChatMessage("system", "Gateway chat is ready.", "System");
+    });
+    $("chat-input").addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        sendChat();
       }
     });
     $("create-pairing").addEventListener("click", async () => {
