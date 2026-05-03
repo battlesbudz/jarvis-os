@@ -61,6 +61,7 @@ interface GatewayCapability {
 
 const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
+  { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], openClawSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
   { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
   { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
   { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
@@ -450,6 +451,151 @@ async function capabilityRouteState(userId: string | null, params: RpcParams, li
   return route;
 }
 
+function inputFrom(params: RpcParams): RpcParams {
+  return typeof params.input === "object" && params.input && !Array.isArray(params.input)
+    ? params.input as RpcParams
+    : {};
+}
+
+function daemonActionForCapability(capability: string): string | null {
+  const direct = capability.startsWith("desktop.")
+    ? capability.slice("desktop.".length)
+    : capability.startsWith("android.")
+      ? capability.slice("android.".length)
+      : capability;
+  const aliases: Record<string, string> = {
+    "desktop.notify": "notify",
+    "android.notify": "notify",
+    "desktop.desktop_screenshot": "desktop_screenshot",
+    "desktop.desktop_read_screen": "desktop_read_screen",
+    "desktop.file_read": "file_read",
+    "desktop.file_list": "file_list",
+    "android.android_screenshot": "android_screenshot",
+    "android.android_read_screen": "android_read_screen",
+    "android.android_file_read": "android_file_read",
+    "android.android_file_list": "android_file_list",
+    "daemon.notify": "notify",
+    "daemon.ping": "ping",
+  };
+  return aliases[capability] ?? aliases[direct] ?? direct;
+}
+
+async function daemonCapabilityInvoke(userId: string, capability: string, input: RpcParams) {
+  const action = daemonActionForCapability(capability);
+  if (!action) throw new Error(`No daemon action registered for ${capability}`);
+  if (action === "notify") return daemonNotify(userId, input);
+  if (action === "ping") return daemonPing(userId, input);
+  const { sendDaemonOp } = await import("../daemon/bridge");
+
+  if (action === "file_read" || action === "file_list" || action === "android_file_read" || action === "android_file_list") {
+    const path = typeof input.path === "string" ? input.path.trim() : "";
+    if (!path) throw new Error("path is required");
+    return sendDaemonOp(userId, { type: action, path } as any, action.endsWith("read") ? 10000 : 8000);
+  }
+  if (action === "desktop_screenshot") return sendDaemonOp(userId, { type: "desktop_screenshot" }, 20000);
+  if (action === "desktop_read_screen") return sendDaemonOp(userId, { type: "desktop_read_screen" }, 40000);
+  if (action === "android_screenshot") return sendDaemonOp(userId, { type: "android_screenshot" }, 20000);
+  if (action === "android_read_screen") return sendDaemonOp(userId, { type: "android_read_screen" }, 20000);
+
+  return daemonTest(userId, { ...input, action });
+}
+
+async function actionInvoke(userId: string, params: RpcParams, events: RpcEvents, limit: number) {
+  const capability = typeof params.capability === "string" ? params.capability.trim() : "";
+  if (!capability) throw new Error("capability is required");
+  const input = inputFrom(params);
+  await recordGatewayEvent({
+    userId,
+    type: "action.requested",
+    area: "actions",
+    title: `Action requested: ${capability}`,
+    subjectType: "capability",
+    subjectId: capability,
+    metadata: { capability },
+  }).catch(() => {});
+
+  const nodes = await listGatewayNodes(userId, limit);
+  const route = routeCapability(capability, nodes);
+  if (!route.routed) {
+    await recordGatewayEvent({
+      userId,
+      type: "action.failed",
+      area: "actions",
+      severity: "warning",
+      title: `Action not routed: ${capability}`,
+      message: route.reason,
+      subjectType: route.node?.kind ?? "capability",
+      subjectId: route.node?.nodeId ?? capability,
+      metadata: { capability, nodeId: route.node?.nodeId ?? null },
+    }).catch(() => {});
+    return { ok: false, capability, route, error: route.reason };
+  }
+
+  try {
+    let result: unknown;
+    switch (capability) {
+      case "chat.send":
+        result = await chatSend(userId, input, events);
+        break;
+      case "daemon.ping":
+        result = await daemonPing(userId, input);
+        break;
+      case "daemon.notify":
+        result = await daemonNotify(userId, input);
+        break;
+      case "daemon.test":
+        result = await daemonTest(userId, input);
+        break;
+      case "jobs.create":
+        result = await jobCreate(userId, input);
+        break;
+      case "jobs.cancel":
+        result = await jobCancel(userId, input);
+        break;
+      case "cron.create":
+        result = await cronCreate(userId, input);
+        break;
+      case "approvals.approve":
+        result = await resolveApprovalGate(userId, input, "approve");
+        break;
+      case "approvals.reject":
+        result = await resolveApprovalGate(userId, input, "reject");
+        break;
+      default:
+        if (capability.startsWith("desktop.") || capability.startsWith("android.")) {
+          result = await daemonCapabilityInvoke(userId, capability, input);
+        } else {
+          throw new Error(`No invoker registered for ${capability}`);
+        }
+    }
+
+    await recordGatewayEvent({
+      userId,
+      type: "action.completed",
+      area: "actions",
+      title: `Action completed: ${capability}`,
+      subjectType: route.node?.kind ?? "capability",
+      subjectId: route.node?.nodeId ?? capability,
+      metadata: { capability, nodeId: route.node?.nodeId ?? null },
+    }).catch(() => {});
+    return { ok: true, capability, route, result };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordGatewayEvent({
+      userId,
+      type: "action.failed",
+      area: "actions",
+      severity: "warning",
+      title: `Action failed: ${capability}`,
+      message,
+      subjectType: route.node?.kind ?? "capability",
+      subjectId: route.node?.nodeId ?? capability,
+      metadata: { capability, nodeId: route.node?.nodeId ?? null },
+    }).catch(() => {});
+    return { ok: false, capability, route, error: message };
+  }
+}
+
 async function chatSend(userId: string, params: RpcParams, events: RpcEvents = {}) {
   const text = typeof params.text === "string" ? params.text.trim() : "";
   if (!text) throw new Error("text is required");
@@ -531,6 +677,9 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "capabilities.route":
         if (userId) requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await capabilityRouteState(userId, params, limit));
+      case "actions.invoke":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await actionInvoke(requireUser(), params, events, limit));
       case "chat.send":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await chatSend(requireUser(), params, events));
