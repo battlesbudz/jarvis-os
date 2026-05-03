@@ -62,6 +62,7 @@ interface GatewayCapability {
 const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
   { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], openClawSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
+  { area: "code", status: "foundation", jarvisSurface: ["code.change.request", "build_feature", "branch-and-PR policy"], openClawSurface: ["autonomous code changes", "branch scoped builds", "pull request review loop"] },
   { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
   { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
   { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
@@ -288,6 +289,89 @@ async function jobCreate(userId: string, params: RpcParams) {
     metadata: { agentType },
   }).catch(() => {});
   return { ok: true, ...result };
+}
+
+function branchSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "change";
+}
+
+function codeChangeBranch(title: string, requested?: unknown): string {
+  if (typeof requested === "string" && requested.trim()) {
+    const branch = requested.trim();
+    return branch.startsWith("codex/") ? branch : `codex/${branchSlug(branch)}`;
+  }
+  return `codex/jarvis-${branchSlug(title)}`;
+}
+
+function codeChangePrompt(title: string, request: string, baseBranch: string, targetBranch: string, repository: string | null) {
+  return [
+    `Build request: ${title}`,
+    "",
+    request,
+    "",
+    "Branch and pull request policy:",
+    `- Repository: ${repository ?? "current repository"}`,
+    `- Base branch for review: ${baseBranch}`,
+    `- Target branch for all commits: ${targetBranch}`,
+    "- Never commit or push directly to main.",
+    "- Put all changes on the target branch and prepare a pull request into the base branch.",
+    "- If you cannot create the branch, push, or open the PR automatically, finish with exact next commands/instructions instead of touching main.",
+    "- Keep the change scoped to this request and run the relevant verification before reporting success.",
+  ].join("\n");
+}
+
+async function codeChangeRequest(userId: string, params: RpcParams) {
+  const title = typeof params.title === "string" && params.title.trim()
+    ? params.title.trim()
+    : "Jarvis code change";
+  const request = typeof params.request === "string" && params.request.trim()
+    ? params.request.trim()
+    : typeof params.prompt === "string" && params.prompt.trim()
+      ? params.prompt.trim()
+      : "";
+  if (!request) throw new Error("request is required");
+
+  const baseBranch = typeof params.baseBranch === "string" && params.baseBranch.trim()
+    ? params.baseBranch.trim()
+    : "main";
+  const targetBranch = codeChangeBranch(title, params.targetBranch);
+  const repository = typeof params.repository === "string" && params.repository.trim()
+    ? params.repository.trim()
+    : typeof params.repositoryFullName === "string" && params.repositoryFullName.trim()
+      ? params.repositoryFullName.trim()
+      : null;
+  const prompt = codeChangePrompt(title, request, baseBranch, targetBranch, repository);
+  const { submitAgentJob } = await import("../agent/jobClient");
+  const result = await submitAgentJob({
+    userId,
+    agentType: "build_feature",
+    title: `Code change: ${title}`,
+    prompt,
+    input: {
+      source: "gateway",
+      mode: "code_change_request",
+      feature_description: request,
+      baseBranch,
+      targetBranch,
+      repository,
+      prRequired: true,
+      directMainPushAllowed: false,
+    },
+  });
+  recordGatewayEvent({
+    userId,
+    type: result.isDuplicate ? "code.change.duplicate" : "code.change.queued",
+    area: "code",
+    title: result.isDuplicate ? `Existing code job reused: ${title}` : `Queued code change: ${title}`,
+    subjectType: "job",
+    subjectId: result.id,
+    metadata: { baseBranch, targetBranch, repository, prRequired: true },
+  }).catch(() => {});
+  return { ok: true, ...result, baseBranch, targetBranch, repository, prRequired: true };
 }
 
 async function jobCancel(userId: string, params: RpcParams) {
@@ -549,6 +633,9 @@ async function actionInvoke(userId: string, params: RpcParams, events: RpcEvents
       case "jobs.create":
         result = await jobCreate(userId, input);
         break;
+      case "code.change.request":
+        result = await codeChangeRequest(userId, input);
+        break;
       case "jobs.cancel":
         result = await jobCancel(userId, input);
         break;
@@ -710,6 +797,9 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "cron.create":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await cronCreate(requireUser(), params));
+      case "code.change.request":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await codeChangeRequest(requireUser(), params));
       case "jobs.create":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await jobCreate(requireUser(), params));

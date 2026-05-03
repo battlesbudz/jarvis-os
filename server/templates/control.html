@@ -552,6 +552,7 @@
             <div class="form three">
               <select id="job-type">
                 <option>general</option>
+                <option>build_feature</option>
                 <option>research</option>
                 <option>planning</option>
                 <option>writing</option>
@@ -572,6 +573,17 @@
               <button class="btn primary" id="create-cron">Schedule</button>
             </div>
             <input id="cron-shell" placeholder="Optional shell command">
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Request Code Change</h3></div>
+          <div class="panel-body stack">
+            <div class="form three">
+              <input id="code-title" placeholder="Change title">
+              <input id="code-branch" placeholder="Target branch, defaults to codex/...">
+              <button class="btn primary" id="create-code-change">Queue</button>
+            </div>
+            <textarea id="code-request" placeholder="Describe what Jarvis should build or change. It will be queued as branch-and-PR scoped work, not a direct main change."></textarea>
           </div>
         </div>
       </section>
@@ -599,6 +611,7 @@
                 <option>nodes.list</option>
                 <option>capabilities.route</option>
                 <option>actions.invoke</option>
+                <option>code.change.request</option>
                 <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
@@ -1024,6 +1037,8 @@
             ? { capability: $("route-capability").value.trim() || "chat.send" }
           : method === "actions.invoke"
             ? { capability: $("invoke-capability").value.trim() || "chat.send", input: parseJsonTextarea("invoke-input", { text: "Hello from actions.invoke" }) }
+          : method === "code.change.request"
+            ? { title: $("code-title").value.trim() || "Gateway code change", request: $("code-request").value.trim() || "Add a small gateway health check improvement.", targetBranch: $("code-branch").value.trim() || undefined, baseBranch: "main" }
           : method === "approvals.approve" || method === "approvals.reject"
             ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
             : method === "daemon.notify"
@@ -1097,6 +1112,16 @@
         title: $("cron-title").value.trim(),
         when: $("cron-when").value.trim(),
         shellCommand: $("cron-shell").value.trim() || undefined,
+      });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("create-code-change").addEventListener("click", async () => {
+      const result = await rpc("code.change.request", {
+        title: $("code-title").value.trim() || "Gateway code change",
+        request: $("code-request").value.trim(),
+        targetBranch: $("code-branch").value.trim() || undefined,
+        baseBranch: "main",
       });
       $("raw-output").textContent = JSON.stringify(result, null, 2);
       await refreshAll();
