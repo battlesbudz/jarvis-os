@@ -25,12 +25,119 @@ import { fetchCalendarTool } from "./tools/calendar";
 import { researchHasSourceUrls } from "./researchUtils";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
 import { createDriveBinaryFile } from "../integrations/googleDrive";
+import { spawn } from "child_process";
 
 // Re-export from the shared client so existing callers don't break.
 export type AgentJobType = _AgentJobType;
 export type { SubmitJobInput };
 export const submitAgentJob = _submitAgentJob;
 export const getModelForJobType = _getModelForJobType;
+
+interface CodeChangePolicy {
+  enabled: boolean;
+  baseBranch: string;
+  targetBranch: string;
+  repository: string | null;
+  prRequired: boolean;
+  directMainPushAllowed: boolean;
+}
+
+function branchSafeSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || "change";
+}
+
+function normalizeCodeChangePolicy(input: Record<string, unknown>, title: string): CodeChangePolicy {
+  const mode = String(input.mode ?? "");
+  const prRequired = input.prRequired === true || mode === "code_change_request";
+  const requestedBranch = typeof input.targetBranch === "string" && input.targetBranch.trim()
+    ? input.targetBranch.trim()
+    : `codex/jarvis-${branchSafeSlug(title)}`;
+  const targetBranch = requestedBranch.startsWith("codex/")
+    ? requestedBranch
+    : `codex/${branchSafeSlug(requestedBranch)}`;
+  const baseBranch = typeof input.baseBranch === "string" && input.baseBranch.trim()
+    ? input.baseBranch.trim()
+    : "main";
+  const repository = typeof input.repository === "string" && input.repository.trim()
+    ? input.repository.trim()
+    : null;
+  return {
+    enabled: prRequired || Boolean(input.targetBranch || input.baseBranch || input.repository),
+    baseBranch,
+    targetBranch,
+    repository,
+    prRequired,
+    directMainPushAllowed: input.directMainPushAllowed === true,
+  };
+}
+
+function codeChangePolicyText(policy: CodeChangePolicy): string {
+  if (!policy.enabled) return "";
+  return [
+    "CODE CHANGE POLICY:",
+    `- Repository: ${policy.repository ?? "current repository"}`,
+    `- Base branch: ${policy.baseBranch}`,
+    `- Target branch: ${policy.targetBranch}`,
+    `- Pull request required: ${policy.prRequired ? "yes" : "no"}`,
+    `- Direct main push allowed: ${policy.directMainPushAllowed ? "yes" : "no"}`,
+    "- Keep every change scoped to the target branch/PR contract.",
+    "- Do not instruct the user that main has been updated unless a PR has been merged.",
+  ].join("\n");
+}
+
+function runGit(args: string[]): Promise<{ ok: boolean; output: string }> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    const child = spawn("git", args, {
+      cwd: process.cwd(),
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.on("close", (code) => {
+      resolve({ ok: code === 0, output: Buffer.concat(chunks).toString("utf8").trim() });
+    });
+    child.on("error", (error) => {
+      resolve({ ok: false, output: error.message });
+    });
+  });
+}
+
+async function ensureCodeChangeBranch(policy: CodeChangePolicy): Promise<{ ok: boolean; branch?: string; message: string }> {
+  if (!policy.prRequired) return { ok: true, branch: undefined, message: "No PR-required branch policy." };
+  if (!policy.targetBranch.startsWith("codex/")) {
+    return { ok: false, message: `Refusing PR-required build with non-codex target branch: ${policy.targetBranch}` };
+  }
+  if (policy.directMainPushAllowed) {
+    return { ok: false, message: "Refusing PR-required build because directMainPushAllowed=true." };
+  }
+
+  const inside = await runGit(["rev-parse", "--is-inside-work-tree"]);
+  if (!inside.ok || inside.output !== "true") {
+    return { ok: false, message: `Cannot enforce branch policy outside a git worktree: ${inside.output}` };
+  }
+
+  await runGit(["fetch", "origin", policy.baseBranch]).catch(() => ({ ok: false, output: "" }));
+  const baseRef = (await runGit(["rev-parse", "--verify", `origin/${policy.baseBranch}`])).ok
+    ? `origin/${policy.baseBranch}`
+    : policy.baseBranch;
+  const checkout = await runGit(["checkout", "-B", policy.targetBranch, baseRef]);
+  if (!checkout.ok) {
+    return { ok: false, message: `Could not check out ${policy.targetBranch} from ${baseRef}: ${checkout.output}` };
+  }
+
+  const current = await runGit(["branch", "--show-current"]);
+  const branch = current.output.trim();
+  if (branch !== policy.targetBranch) {
+    return { ok: false, message: `Expected branch ${policy.targetBranch}, but git reports ${branch || "unknown"}.` };
+  }
+  return { ok: true, branch, message: `Checked out ${branch} from ${baseRef}.` };
+}
 
 async function notifyJobComplete(
   userId: string,
@@ -1251,6 +1358,33 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const featureDescription = conversationContext
         ? `Conversation context (for follow-up understanding):\n${conversationContext}\n\nLatest request: ${baseFeatureDescription}`
         : baseFeatureDescription;
+      const codePolicy = normalizeCodeChangePolicy(jobInput, job.title);
+      const codePolicyBlock = codeChangePolicyText(codePolicy);
+      if (codePolicy.enabled && jobInput.normalizedCodeChangePolicy === undefined) {
+        await persistProgress({ normalizedCodeChangePolicy: codePolicy });
+      }
+      if (codePolicy.prRequired && !jobInput.branchPolicyReady) {
+        const branchReady = await ensureCodeChangeBranch(codePolicy);
+        await persistProgress({
+          branchPolicyReady: branchReady.ok,
+          branchPolicyMessage: branchReady.message,
+          activeBranch: branchReady.branch ?? null,
+        });
+        if (!branchReady.ok) {
+          const failReason = `Code change branch policy failed before writing files: ${branchReady.message}`;
+          await sendBuildPing(`Code change blocked before writing files: ${branchReady.message}`);
+          await failJob(job.id, failReason, job.userId);
+          diagEmit({
+            userId: job.userId,
+            subsystem: "job_queue",
+            severity: "warning",
+            message: failReason,
+            metadata: { jobId: job.id, agentType: job.agentType, codePolicy },
+          }).catch(() => {});
+          return;
+        }
+        await sendBuildPing(`Code change branch ready: ${branchReady.message}`);
+      }
 
       // ── Phase 1: Research (if requested and not already completed) ──────────
       // Research is queued as a standard agent_jobs record.  claimNextJob has a
@@ -1319,6 +1453,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       if (!plan) {
         const planCtx = [
           featureDescription,
+          codePolicyBlock ? `\n\n${codePolicyBlock}` : "",
           researchBody ? `\n\nResearch findings:\n${researchBody}` : "",
         ].join("");
 
@@ -1423,6 +1558,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             `BUILD CONTEXT:`,
             `Feature: ${featureDescription.slice(0, 400)}`,
             `Job ID: ${job.id}  ← use this as job_id when calling exec_in_workspace`,
+            codePolicyBlock,
             researchBody ? `Research: ${researchBody.slice(0, 500)}` : "",
             correctionContext
               ? `\nPrevious attempt rejected — fix specifically: ${correctionContext}`
@@ -1629,8 +1765,11 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       // Clean up temp workspace
       await cleanupJobWorkspace(job.id).catch(() => {});
 
-      // Schedule server restart to activate new code
-      setTimeout(() => process.kill(process.pid, "SIGTERM"), 2_000);
+      // Direct in-place builds restart the server immediately. PR-required code
+      // change requests wait for review/merge, so do not activate unreviewed code.
+      if (!codePolicy.prRequired) {
+        setTimeout(() => process.kill(process.pid, "SIGTERM"), 2_000);
+      }
 
       // Collect the unique files that were declared as changed across all plan steps
       const changedFiles: string[] = [
@@ -1647,6 +1786,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           changedFiles,
           finalTypeCheckPassed: finalTypeCheck.ok,
           finalTestsPassed: finalTestResult?.ok ?? null,
+          codeChangePolicy: codePolicy.enabled ? codePolicy : null,
         },
         turns: plan.length,
         toolCallsCount: completedSteps.length,
@@ -1670,7 +1810,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         ``,
         synthesis,
         changedFilesSection,
-        `The server is restarting to activate the new feature.`,
+        codePolicy.prRequired
+          ? `Branch/PR policy: prepare review from ${codePolicy.targetBranch} into ${codePolicy.baseBranch}. The server was not restarted because this change requires PR review before activation.`
+          : `The server is restarting to activate the new feature.`,
       ].filter(Boolean).join("\n");
 
       console.log(`[JobQueue] complete build_feature job ${job.id} → ${plan.length} steps, allPassed=${allPassed}`);
