@@ -480,6 +480,17 @@
             <pre id="route-output">{}</pre>
           </div>
         </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Invoke Action</h3></div>
+          <div class="panel-body stack">
+            <div class="form">
+              <input id="invoke-capability" placeholder="Capability, e.g. chat.send">
+              <button class="btn primary" id="invoke-action-run">Invoke</button>
+            </div>
+            <textarea id="invoke-input" placeholder='{"text":"Hello from actions.invoke"}'></textarea>
+            <pre id="invoke-output">{}</pre>
+          </div>
+        </div>
       </section>
 
       <section id="chat" class="view grid hidden">
@@ -587,6 +598,7 @@
                 <option>events.list</option>
                 <option>nodes.list</option>
                 <option>capabilities.route</option>
+                <option>actions.invoke</option>
                 <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
@@ -650,6 +662,12 @@
 
     function kv(rows) {
       return rows.map(([label, value]) => `<div class="row"><div class="label">${label}</div><div class="value">${value}</div></div>`).join("");
+    }
+
+    function parseJsonTextarea(id, fallback = {}) {
+      const raw = $(id).value.trim();
+      if (!raw) return fallback;
+      return JSON.parse(raw);
     }
 
     async function rpc(method, params = {}) {
@@ -1004,6 +1022,8 @@
           ? { text: "Status check from the control RPC panel", sdkSessionId: state.chatSessionId || undefined }
           : method === "capabilities.route"
             ? { capability: $("route-capability").value.trim() || "chat.send" }
+          : method === "actions.invoke"
+            ? { capability: $("invoke-capability").value.trim() || "chat.send", input: parseJsonTextarea("invoke-input", { text: "Hello from actions.invoke" }) }
           : method === "approvals.approve" || method === "approvals.reject"
             ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
             : method === "daemon.notify"
@@ -1019,6 +1039,7 @@
             : {};
         const result = await rpc(method, params);
         if (method === "chat.send") setChatSession(result.sdkSessionId);
+        if (method === "actions.invoke" && params.capability === "chat.send" && result.result?.sdkSessionId) setChatSession(result.result.sdkSessionId);
         $("raw-output").textContent = JSON.stringify(result, null, 2);
       } catch (error) {
         $("raw-output").textContent = String(error.message || error);
@@ -1031,6 +1052,18 @@
         await refreshAll();
       } catch (error) {
         $("route-output").textContent = String(error.message || error);
+      }
+    });
+    $("invoke-action-run").addEventListener("click", async () => {
+      try {
+        const capability = $("invoke-capability").value.trim() || "chat.send";
+        const input = parseJsonTextarea("invoke-input", { text: "Hello from actions.invoke" });
+        const result = await rpc("actions.invoke", { capability, input });
+        if (capability === "chat.send" && result.result?.sdkSessionId) setChatSession(result.result.sdkSessionId);
+        $("invoke-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      } catch (error) {
+        $("invoke-output").textContent = String(error.message || error);
       }
     });
     $("send-chat").addEventListener("click", () => sendChat());
