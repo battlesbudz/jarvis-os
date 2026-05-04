@@ -63,7 +63,7 @@ const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
   { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], openClawSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
   { area: "code", status: "foundation", jarvisSurface: ["code.change.request", "repo.branch.push", "repo.pr.create", "repo.pr.status", "repo.pr.verify", "build_feature", "branch-and-PR policy"], openClawSurface: ["autonomous code changes", "branch scoped builds", "pull request review loop"] },
-  { area: "orchestration", status: "foundation", jarvisSurface: ["orchestration.plan.create", "agent_workflows", "workflow steps"], openClawSurface: ["multi-agent plans", "planner/worker/verifier workflows", "background orchestration"] },
+  { area: "orchestration", status: "foundation", jarvisSurface: ["orchestration.plan.create", "orchestration.plan.status", "orchestration.plan.pause", "orchestration.plan.resume", "agent_workflows", "workflow steps"], openClawSurface: ["multi-agent plans", "planner/worker/verifier workflows", "background orchestration"] },
   { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
   { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
   { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
@@ -482,6 +482,89 @@ async function orchestrationPlanCreate(userId: string, params: RpcParams) {
     metadata: { workflowId: workflow.id, firstJobId, steps: steps.length },
   }).catch(() => {});
   return { ok: true, workflowId: workflow.id, firstJobId, steps, workflow };
+}
+
+async function loadWorkflowForUser(userId: string, params: RpcParams) {
+  const workflowId = typeof params.workflowId === "string" && params.workflowId.trim()
+    ? params.workflowId.trim()
+    : typeof params.workflow_id === "string" && params.workflow_id.trim()
+      ? params.workflow_id.trim()
+      : "";
+  if (!workflowId) throw new Error("workflowId is required");
+  const [workflow] = await db.select()
+    .from(schema.agentWorkflows)
+    .where(and(eq(schema.agentWorkflows.id, workflowId), eq(schema.agentWorkflows.userId, userId)))
+    .limit(1);
+  if (!workflow) throw new Error("Workflow not found");
+  return workflow;
+}
+
+function workflowSnapshot(workflow: typeof schema.agentWorkflows.$inferSelect) {
+  const steps = (workflow.steps as schema.WorkflowStep[]) || [];
+  return {
+    workflow,
+    summary: {
+      id: workflow.id,
+      title: workflow.title,
+      status: workflow.status,
+      currentStepIndex: workflow.currentStepIndex,
+      totalSteps: steps.length,
+      completedSteps: steps.filter((step) => step.status === "complete").length,
+      runningStep: steps.find((step) => step.status === "running") ?? null,
+      nextPendingStep: steps.find((step) => step.status === "pending") ?? null,
+    },
+  };
+}
+
+async function orchestrationPlanStatus(userId: string, params: RpcParams) {
+  const workflow = await loadWorkflowForUser(userId, params);
+  return { ok: true, ...workflowSnapshot(workflow) };
+}
+
+async function orchestrationPlanPause(userId: string, params: RpcParams) {
+  const workflow = await loadWorkflowForUser(userId, params);
+  if (["complete", "failed"].includes(workflow.status)) throw new Error(`Workflow is already ${workflow.status}`);
+  await db.update(schema.agentWorkflows)
+    .set({ status: "paused", updatedAt: new Date() })
+    .where(eq(schema.agentWorkflows.id, workflow.id));
+  recordGatewayEvent({
+    userId,
+    type: "orchestration.plan.paused",
+    area: "orchestration",
+    title: `Workflow paused: ${workflow.title}`,
+    subjectType: "workflow",
+    subjectId: workflow.id,
+  }).catch(() => {});
+  return { ok: true, workflowId: workflow.id, status: "paused" };
+}
+
+async function orchestrationPlanResume(userId: string, params: RpcParams) {
+  const workflow = await loadWorkflowForUser(userId, params);
+  if (workflow.status !== "paused") throw new Error(`Workflow is ${workflow.status}; only paused workflows can be resumed`);
+  const steps = (workflow.steps as schema.WorkflowStep[]) || [];
+  const nextIdx = steps.findIndex((step) => step.status === "pending");
+  if (nextIdx === -1) {
+    await db.update(schema.agentWorkflows)
+      .set({ status: "complete", updatedAt: new Date() })
+      .where(eq(schema.agentWorkflows.id, workflow.id));
+    return { ok: true, workflowId: workflow.id, status: "complete", message: "All steps were already complete." };
+  }
+  await db.update(schema.agentWorkflows)
+    .set({ status: "active", updatedAt: new Date() })
+    .where(eq(schema.agentWorkflows.id, workflow.id));
+  const { executeWorkflowStep } = await import("../agent/workflowEngine");
+  const jobId = await executeWorkflowStep({ ...workflow, status: "active" }, nextIdx);
+  recordGatewayEvent({
+    userId,
+    type: "orchestration.plan.resumed",
+    area: "orchestration",
+    title: `Workflow resumed: ${workflow.title}`,
+    message: `Step ${nextIdx + 1} job ${jobId}`,
+    subjectType: "workflow",
+    subjectId: workflow.id,
+    metadata: { workflowId: workflow.id, jobId, stepIndex: nextIdx },
+  }).catch(() => {});
+  return { ok: true, workflowId: workflow.id, status: "paused_waiting", jobId, stepIndex: nextIdx };
 }
 
 async function resolveRepo(userId: string, params: RpcParams): Promise<{ repo: string; owner: string; name: string; pat: string }> {
@@ -945,6 +1028,15 @@ async function actionInvoke(userId: string, params: RpcParams, events: RpcEvents
       case "orchestration.plan.create":
         result = await orchestrationPlanCreate(userId, input);
         break;
+      case "orchestration.plan.status":
+        result = await orchestrationPlanStatus(userId, input);
+        break;
+      case "orchestration.plan.pause":
+        result = await orchestrationPlanPause(userId, input);
+        break;
+      case "orchestration.plan.resume":
+        result = await orchestrationPlanResume(userId, input);
+        break;
       case "jobs.cancel":
         result = await jobCancel(userId, input);
         break;
@@ -1124,6 +1216,15 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "orchestration.plan.create":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await orchestrationPlanCreate(requireUser(), params));
+      case "orchestration.plan.status":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await orchestrationPlanStatus(requireUser(), params));
+      case "orchestration.plan.pause":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await orchestrationPlanPause(requireUser(), params));
+      case "orchestration.plan.resume":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await orchestrationPlanResume(requireUser(), params));
       case "jobs.create":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await jobCreate(requireUser(), params));

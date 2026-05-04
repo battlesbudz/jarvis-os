@@ -644,6 +644,9 @@
                 <option>repo.pr.status</option>
                 <option>repo.pr.verify</option>
                 <option>orchestration.plan.create</option>
+                <option>orchestration.plan.status</option>
+                <option>orchestration.plan.pause</option>
+                <option>orchestration.plan.resume</option>
                 <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
@@ -977,6 +980,29 @@
       return "warn";
     }
 
+    function workflowDetails(workflow) {
+      const steps = workflow.steps || [];
+      const done = steps.filter((step) => step.status === "complete").length;
+      const running = steps.find((step) => step.status === "running");
+      const next = steps.find((step) => step.status === "pending");
+      return [
+        `${done}/${steps.length} steps done`,
+        running ? `Running: ${running.title}` : "",
+        next ? `Next: ${next.title}` : "",
+      ].filter(Boolean).join(" | ");
+    }
+
+    function workflowActions(workflow) {
+      const parts = [`<button class="btn" data-workflow-status="${workflow.id}">Status</button>`];
+      if (!["complete", "failed", "paused"].includes(workflow.status)) {
+        parts.push(`<button class="btn" data-workflow-pause="${workflow.id}">Pause</button>`);
+      }
+      if (workflow.status === "paused") {
+        parts.push(`<button class="btn primary" data-workflow-resume="${workflow.id}">Resume</button>`);
+      }
+      return `<div class="actions">${parts.join("")}</div>`;
+    }
+
     function renderRuntime(sessions, cron, approvals) {
       const coach = sessions.coachSessions || [];
       const agent = sessions.agentSessions || [];
@@ -986,7 +1012,12 @@
       ].join("") || `<div class="muted">No active sessions.</div>`;
       $("cron").innerHTML = [
         ...(cron.scheduledTasks || []).map((x) => item(x.title || x.id, pill(x.active ? "active" : "off", x.active ? "ok" : "warn"), time(x.scheduledAt))),
-        ...(cron.workflows || []).map((x) => item(x.title || x.id, pill(x.status, x.status === "active" ? "ok" : "warn"), x.description || "")),
+        ...(cron.workflows || []).map((x) => item(
+          x.title || x.id,
+          pill(x.status, x.status === "complete" ? "ok" : x.status === "failed" ? "danger" : x.status === "paused" ? "warn" : "ok"),
+          workflowDetails(x),
+          workflowActions(x)
+        )),
         ...(cron.jobs || []).map((x) => item(
           x.title || x.id,
           pill(x.status, jobTone(x)),
@@ -1130,6 +1161,8 @@
             ? { repository: $("repo-name").value.trim(), branch: $("repo-branch").value.trim() }
           : method === "orchestration.plan.create"
             ? { title: $("orch-title").value.trim() || "Gateway orchestration plan", request: $("orch-request").value.trim() || "Plan, build, and verify a small gateway improvement.", targetBranch: $("orch-branch").value.trim() || undefined, baseBranch: "main", repository: $("repo-name").value.trim() || undefined }
+          : method === "orchestration.plan.status" || method === "orchestration.plan.pause" || method === "orchestration.plan.resume"
+            ? { workflowId: (state.snapshots.cron?.workflows || [])[0]?.id || "" }
           : method === "approvals.approve" || method === "approvals.reject"
             ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
             : method === "daemon.notify"
@@ -1274,6 +1307,21 @@
       }
       if (target.dataset.jobCancel) {
         const result = await rpc("jobs.cancel", { jobId: target.dataset.jobCancel });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+      if (target.dataset.workflowStatus) {
+        const result = await rpc("orchestration.plan.status", { workflowId: target.dataset.workflowStatus });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+      if (target.dataset.workflowPause) {
+        const result = await rpc("orchestration.plan.pause", { workflowId: target.dataset.workflowPause });
+        $("raw-output").textContent = JSON.stringify(result, null, 2);
+        await refreshAll();
+      }
+      if (target.dataset.workflowResume) {
+        const result = await rpc("orchestration.plan.resume", { workflowId: target.dataset.workflowResume });
         $("raw-output").textContent = JSON.stringify(result, null, 2);
         await refreshAll();
       }
