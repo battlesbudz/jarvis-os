@@ -72,7 +72,7 @@ export async function executeWorkflowStep(
     agentType: (step.agentType || DEFAULT_AGENT_TYPE) as Parameters<typeof submitAgentJob>[0]["agentType"],
     title: step.title,
     prompt: enrichedPrompt,
-    input: { workflowId: workflow.id, workflowStepIndex: stepIdx },
+    input: { ...(step.input ?? {}), workflowId: workflow.id, workflowStepIndex: stepIdx },
   });
 
   steps[stepIdx] = { ...steps[stepIdx], jobId };

@@ -602,6 +602,17 @@
             </div>
           </div>
         </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Orchestration Plan</h3></div>
+          <div class="panel-body stack">
+            <div class="form three">
+              <input id="orch-title" placeholder="Plan title">
+              <input id="orch-branch" placeholder="Target branch, defaults to codex/...">
+              <button class="btn primary" id="create-orchestration">Start</button>
+            </div>
+            <textarea id="orch-request" placeholder="Describe the multi-agent task. Jarvis will create planner, builder, and verifier workflow steps."></textarea>
+          </div>
+        </div>
       </section>
 
       <section id="logs" class="view grid hidden">
@@ -632,6 +643,7 @@
                 <option>repo.pr.create</option>
                 <option>repo.pr.status</option>
                 <option>repo.pr.verify</option>
+                <option>orchestration.plan.create</option>
                 <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
@@ -1116,6 +1128,8 @@
             ? { repository: $("repo-name").value.trim() }
           : method === "repo.pr.verify"
             ? { repository: $("repo-name").value.trim(), branch: $("repo-branch").value.trim() }
+          : method === "orchestration.plan.create"
+            ? { title: $("orch-title").value.trim() || "Gateway orchestration plan", request: $("orch-request").value.trim() || "Plan, build, and verify a small gateway improvement.", targetBranch: $("orch-branch").value.trim() || undefined, baseBranch: "main", repository: $("repo-name").value.trim() || undefined }
           : method === "approvals.approve" || method === "approvals.reject"
             ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
             : method === "daemon.notify"
@@ -1231,6 +1245,17 @@
       const result = await rpc("repo.pr.verify", {
         repository: $("repo-name").value.trim(),
         branch: $("repo-branch").value.trim(),
+      });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("create-orchestration").addEventListener("click", async () => {
+      const result = await rpc("orchestration.plan.create", {
+        title: $("orch-title").value.trim() || "Gateway orchestration plan",
+        request: $("orch-request").value.trim(),
+        targetBranch: $("orch-branch").value.trim() || undefined,
+        baseBranch: "main",
+        repository: $("repo-name").value.trim() || undefined,
       });
       $("raw-output").textContent = JSON.stringify(result, null, 2);
       await refreshAll();

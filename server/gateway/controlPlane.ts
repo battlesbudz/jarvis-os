@@ -63,6 +63,7 @@ const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
   { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], openClawSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
   { area: "code", status: "foundation", jarvisSurface: ["code.change.request", "repo.branch.push", "repo.pr.create", "repo.pr.status", "repo.pr.verify", "build_feature", "branch-and-PR policy"], openClawSurface: ["autonomous code changes", "branch scoped builds", "pull request review loop"] },
+  { area: "orchestration", status: "foundation", jarvisSurface: ["orchestration.plan.create", "agent_workflows", "workflow steps"], openClawSurface: ["multi-agent plans", "planner/worker/verifier workflows", "background orchestration"] },
   { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
   { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
   { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
@@ -372,6 +373,115 @@ async function codeChangeRequest(userId: string, params: RpcParams) {
     metadata: { baseBranch, targetBranch, repository, prRequired: true },
   }).catch(() => {});
   return { ok: true, ...result, baseBranch, targetBranch, repository, prRequired: true };
+}
+
+function orchestrationStepsFrom(params: RpcParams, title: string, request: string) {
+  const rawSteps = Array.isArray(params.steps) ? params.steps : [];
+  if (rawSteps.length > 0) {
+    return rawSteps.slice(0, 8).map((raw, index) => {
+      const step = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+      return {
+        id: `step_${index + 1}`,
+        title: typeof step.title === "string" && step.title.trim() ? step.title.trim() : `Step ${index + 1}`,
+        prompt: typeof step.prompt === "string" && step.prompt.trim() ? step.prompt.trim() : request,
+        agentType: typeof step.agentType === "string" ? step.agentType : typeof step.agent_type === "string" ? step.agent_type : "planning",
+        input: typeof step.input === "object" && step.input ? step.input as Record<string, unknown> : undefined,
+        status: "pending" as const,
+      };
+    });
+  }
+
+  const targetBranch = codeChangeBranch(title, params.targetBranch);
+  const baseBranch = typeof params.baseBranch === "string" && params.baseBranch.trim() ? params.baseBranch.trim() : "main";
+  const repository = typeof params.repository === "string" && params.repository.trim()
+    ? params.repository.trim()
+    : typeof params.repositoryFullName === "string" && params.repositoryFullName.trim()
+      ? params.repositoryFullName.trim()
+      : null;
+  return [
+    {
+      id: "step_1",
+      title: `Plan: ${title}`,
+      prompt: [
+        "Create a concise implementation plan for this request.",
+        "Identify files likely to change, risks, and acceptance criteria.",
+        "",
+        request,
+      ].join("\n"),
+      agentType: "planning",
+      status: "pending" as const,
+    },
+    {
+      id: "step_2",
+      title: `Build: ${title}`,
+      prompt: [
+        "Implement the requested change using the prior planning output as context.",
+        "Keep the implementation scoped. Preserve the branch/PR policy.",
+        "",
+        request,
+      ].join("\n"),
+      agentType: "build_feature",
+      input: {
+        source: "gateway",
+        mode: "code_change_request",
+        feature_description: request,
+        baseBranch,
+        targetBranch,
+        repository,
+        prRequired: true,
+        directMainPushAllowed: false,
+      },
+      status: "pending" as const,
+    },
+    {
+      id: "step_3",
+      title: `Verify: ${title}`,
+      prompt: [
+        "Review the prior build output and PR finalization evidence.",
+        "Summarize whether the work is ready for human review, list blockers, and include the PR URL if available.",
+      ].join("\n"),
+      agentType: "planning",
+      status: "pending" as const,
+    },
+  ];
+}
+
+async function orchestrationPlanCreate(userId: string, params: RpcParams) {
+  const title = typeof params.title === "string" && params.title.trim()
+    ? params.title.trim()
+    : "Gateway orchestration plan";
+  const request = typeof params.request === "string" && params.request.trim()
+    ? params.request.trim()
+    : typeof params.prompt === "string" && params.prompt.trim()
+      ? params.prompt.trim()
+      : "";
+  if (!request) throw new Error("request is required");
+  const steps = orchestrationStepsFrom(params, title, request);
+  const description = typeof params.description === "string" && params.description.trim()
+    ? params.description.trim()
+    : request.slice(0, 1200);
+
+  const [workflow] = await db.insert(schema.agentWorkflows).values({
+    userId,
+    title,
+    description,
+    steps,
+    status: "active",
+  }).returning();
+
+  const { executeWorkflowStep } = await import("../agent/workflowEngine");
+  const firstJobId = await executeWorkflowStep(workflow, 0);
+  recordGatewayEvent({
+    userId,
+    type: "orchestration.plan.created",
+    area: "orchestration",
+    title: `Orchestration started: ${title}`,
+    message: `${steps.length} step(s), first job ${firstJobId}`,
+    subjectType: "workflow",
+    subjectId: workflow.id,
+    metadata: { workflowId: workflow.id, firstJobId, steps: steps.length },
+  }).catch(() => {});
+  return { ok: true, workflowId: workflow.id, firstJobId, steps, workflow };
 }
 
 async function resolveRepo(userId: string, params: RpcParams): Promise<{ repo: string; owner: string; name: string; pat: string }> {
@@ -832,6 +942,9 @@ async function actionInvoke(userId: string, params: RpcParams, events: RpcEvents
       case "repo.pr.verify":
         result = await repoPrVerify(userId, input);
         break;
+      case "orchestration.plan.create":
+        result = await orchestrationPlanCreate(userId, input);
+        break;
       case "jobs.cancel":
         result = await jobCancel(userId, input);
         break;
@@ -1008,6 +1121,9 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "repo.pr.verify":
         requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await repoPrVerify(requireUser(), params));
+      case "orchestration.plan.create":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await orchestrationPlanCreate(requireUser(), params));
       case "jobs.create":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await jobCreate(requireUser(), params));

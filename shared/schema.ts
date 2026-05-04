@@ -459,6 +459,7 @@ export interface WorkflowStep {
   title: string;
   prompt: string;
   agentType?: string;
+  input?: Record<string, unknown>;
   status: "pending" | "running" | "complete" | "failed";
   jobId?: string;
   output?: string;
