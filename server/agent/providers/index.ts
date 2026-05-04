@@ -1,5 +1,5 @@
 /**
- * Provider registry — factory + instance cache for model providers.
+ * Provider registry - factory + instance cache for model providers.
  *
  * Usage:
  *   const provider = getProvider("openai");
@@ -14,17 +14,19 @@
 import { BaseProvider, accumulateTurn } from "./base";
 import { OpenAIProvider } from "./openai";
 import { ClaudeProvider } from "./claude";
+import { OpenAICompatibleProvider } from "./openaiCompatible";
 
-export type ProviderName = "openai" | "claude";
+export type ProviderName = "openai" | "claude" | "openai-compatible";
 
 type ProviderFactory = () => BaseProvider;
 
 const PROVIDER_FACTORIES: Record<ProviderName, ProviderFactory> = {
   openai: () => new OpenAIProvider(),
   claude: () => new ClaudeProvider(),
+  "openai-compatible": () => new OpenAICompatibleProvider(),
 };
 
-// Singleton instance cache — one instance per provider name per process.
+// Singleton instance cache - one instance per provider name per process.
 const instanceCache = new Map<ProviderName, BaseProvider>();
 
 /**
