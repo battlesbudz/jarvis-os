@@ -919,6 +919,50 @@
         .join("") || `<div class="muted">No pairing requests.</div>`;
     }
 
+    function asObj(value) {
+      return value && typeof value === "object" ? value : {};
+    }
+
+    function codeJobDetails(job) {
+      const input = asObj(job.input);
+      const result = asObj(job.result);
+      const policy = asObj(result.codeChangePolicy || input.normalizedCodeChangePolicy || input);
+      const finalizer = asObj(result.prFinalization || input.prFinalization);
+      const pr = asObj(finalizer.pr);
+      const lines = [
+        `${job.agentType || ""} - ${time(job.createdAt)}`,
+      ];
+      if (policy.targetBranch) lines.push(`Branch: ${policy.targetBranch}`);
+      if (policy.baseBranch) lines.push(`Base: ${policy.baseBranch}`);
+      if (result.finalTypeCheckPassed !== undefined) lines.push(`Type check: ${result.finalTypeCheckPassed ? "passed" : "failed"}`);
+      if (result.finalTestsPassed !== undefined && result.finalTestsPassed !== null) lines.push(`Tests: ${result.finalTestsPassed ? "passed" : "failed"}`);
+      if (finalizer.message) lines.push(`Finalizer: ${finalizer.message}`);
+      if (pr.url) lines.push(`PR: ${pr.url}`);
+      return lines.join(" | ");
+    }
+
+    function codeJobActions(job) {
+      const input = asObj(job.input);
+      const result = asObj(job.result);
+      const finalizer = asObj(result.prFinalization || input.prFinalization);
+      const pr = asObj(finalizer.pr);
+      const parts = [];
+      if (pr.url) parts.push(`<a class="btn primary" href="${pr.url}" target="_blank" rel="noreferrer">Open PR</a>`);
+      if (["queued", "running"].includes(job.status)) parts.push(`<button class="btn danger" data-job-cancel="${job.id}">Cancel</button>`);
+      return parts.length ? `<div class="actions">${parts.join("")}</div>` : "";
+    }
+
+    function jobTone(job) {
+      if (job.status === "failed") return "danger";
+      if (job.status === "complete" || job.status === "delivered") {
+        const result = asObj(job.result);
+        const finalizer = asObj(result.prFinalization);
+        if (finalizer.ok === false) return "warn";
+        return "ok";
+      }
+      return "warn";
+    }
+
     function renderRuntime(sessions, cron, approvals) {
       const coach = sessions.coachSessions || [];
       const agent = sessions.agentSessions || [];
@@ -931,9 +975,11 @@
         ...(cron.workflows || []).map((x) => item(x.title || x.id, pill(x.status, x.status === "active" ? "ok" : "warn"), x.description || "")),
         ...(cron.jobs || []).map((x) => item(
           x.title || x.id,
-          pill(x.status, x.status === "complete" ? "ok" : x.status === "failed" ? "danger" : "warn"),
-          `${x.agentType || ""} - ${time(x.createdAt)}`,
-          ["queued", "running"].includes(x.status) ? `<button class="btn danger" data-job-cancel="${x.id}">Cancel</button>` : ""
+          pill(x.status, jobTone(x)),
+          x.agentType === "build_feature" ? codeJobDetails(x) : `${x.agentType || ""} - ${time(x.createdAt)}`,
+          x.agentType === "build_feature"
+            ? codeJobActions(x)
+            : ["queued", "running"].includes(x.status) ? `<button class="btn danger" data-job-cancel="${x.id}">Cancel</button>` : ""
         )),
       ].join("") || `<div class="muted">No jobs or workflows.</div>`;
       $("approvals").innerHTML = (approvals.gates || [])
@@ -965,7 +1011,10 @@
         .map((event) => item(
           event.title,
           pill(event.area || "gateway", event.severity === "error" ? "danger" : event.severity === "warning" ? "warn" : "ok"),
-          `${time(event.createdAt)} - ${event.message || event.type || ""}`
+          `${time(event.createdAt)} - ${event.message || event.type || ""}`,
+          event.type === "repo.pr.ready" && event.message
+            ? `<a class="btn primary" href="${event.message}" target="_blank" rel="noreferrer">Open PR</a>`
+            : ""
         ))
         .join("") || `<div class="muted">No gateway events yet.</div>`;
     }
