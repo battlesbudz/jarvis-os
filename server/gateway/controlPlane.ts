@@ -62,7 +62,7 @@ interface GatewayCapability {
 const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
   { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], openClawSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
-  { area: "code", status: "foundation", jarvisSurface: ["code.change.request", "repo.branch.push", "repo.pr.create", "repo.pr.status", "build_feature", "branch-and-PR policy"], openClawSurface: ["autonomous code changes", "branch scoped builds", "pull request review loop"] },
+  { area: "code", status: "foundation", jarvisSurface: ["code.change.request", "repo.branch.push", "repo.pr.create", "repo.pr.status", "repo.pr.verify", "build_feature", "branch-and-PR policy"], openClawSurface: ["autonomous code changes", "branch scoped builds", "pull request review loop"] },
   { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
   { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
   { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
@@ -489,6 +489,75 @@ async function repoPrStatus(userId: string, params: RpcParams) {
   return { ok: true, repo, prs };
 }
 
+type VerifyCheck = { name: string; ok: boolean; severity: "pass" | "warn" | "blocker"; detail: string };
+
+function check(name: string, ok: boolean, detail: string, blocker = true): VerifyCheck {
+  return { name, ok, detail, severity: ok ? "pass" : blocker ? "blocker" : "warn" };
+}
+
+async function findBuildJobEvidence(userId: string, repo: string, prNumber: number, branch: string, explicitJobId?: unknown) {
+  const where = explicitJobId && typeof explicitJobId === "string"
+    ? and(eq(schema.agentJobs.id, explicitJobId), eq(schema.agentJobs.userId, userId))
+    : eq(schema.agentJobs.userId, userId);
+  const rows = await db.select()
+    .from(schema.agentJobs)
+    .where(where)
+    .orderBy(desc(schema.agentJobs.createdAt))
+    .limit(explicitJobId ? 1 : 50)
+    .catch(() => []);
+  return rows.find((job) => {
+    const input = (job.input as Record<string, any>) || {};
+    const result = (job.result as Record<string, any>) || {};
+    const finalizer = result.prFinalization || input.prFinalization || {};
+    const policy = result.codeChangePolicy || input.normalizedCodeChangePolicy || input || {};
+    return finalizer?.pr?.number === prNumber
+      || finalizer?.pr?.url?.includes(`/${repo}/pull/${prNumber}`)
+      || policy.targetBranch === branch;
+  }) ?? null;
+}
+
+async function repoPrVerify(userId: string, params: RpcParams) {
+  const { repo, owner, name, pat } = await resolveRepo(userId, params);
+  const { getPR, listOpenPRs, getDiffSummary } = await import("../integrations/github");
+  const requestedNumber = Number(params.prNumber ?? params.number);
+  const requestedBranch = typeof params.branch === "string" ? params.branch.trim() : "";
+  const pr = Number.isFinite(requestedNumber) && requestedNumber > 0
+    ? await getPR(pat, owner, name, Math.floor(requestedNumber))
+    : (await listOpenPRs(pat, [repo])).find((candidate) => requestedBranch ? candidate.branch === requestedBranch : true) ?? null;
+  if (!pr) throw new Error("PR not found. Provide prNumber or a matching branch.");
+
+  const diff = await getDiffSummary(pat, owner, name, pr.number);
+  const job = await findBuildJobEvidence(userId, repo, pr.number, pr.branch, params.jobId);
+  const jobResult = ((job?.result as Record<string, any>) || {});
+  const finalizer = jobResult.prFinalization || {};
+  const checks: VerifyCheck[] = [
+    check("PR exists", true, `${repo}#${pr.number}`),
+    check("Branch is codex scoped", pr.branch.startsWith("codex/"), pr.branch),
+    check("Base is main", (pr.baseBranch ?? "main") === "main", pr.baseBranch ?? "unknown"),
+    check("PR is draft", pr.draft === true, pr.draft ? "draft" : "ready/non-draft", false),
+    check("Build job evidence", Boolean(job), job ? `job ${job.id}` : "No matching build_feature job found"),
+    check("Type check passed", job ? jobResult.finalTypeCheckPassed === true : false, job ? String(jobResult.finalTypeCheckPassed) : "missing"),
+    check("Tests not failing", job ? jobResult.finalTestsPassed !== false : false, job ? String(jobResult.finalTestsPassed ?? "not recorded") : "missing", job ? false : true),
+    check("GitHub CI not failing", pr.ciStatus !== "fail", pr.ciStatus),
+    check("Files changed", diff.filesChanged > 0, `${diff.filesChanged} file(s)`),
+  ];
+  const blockers = checks.filter((item) => !item.ok && item.severity === "blocker");
+  const warnings = checks.filter((item) => !item.ok && item.severity === "warn");
+  const readyForReview = blockers.length === 0;
+  await recordGatewayEvent({
+    userId,
+    type: readyForReview ? "repo.pr.verified" : "repo.pr.verify_failed",
+    area: "code",
+    severity: readyForReview ? "info" : "warning",
+    title: readyForReview ? `PR verified: ${repo}#${pr.number}` : `PR verification blocked: ${repo}#${pr.number}`,
+    message: readyForReview ? pr.url : blockers.map((item) => item.name).join(", "),
+    subjectType: "pull_request",
+    subjectId: `${repo}#${pr.number}`,
+    metadata: { repo, prNumber: pr.number, branch: pr.branch, blockers: blockers.length, warnings: warnings.length },
+  }).catch(() => {});
+  return { ok: readyForReview, readyForReview, repo, pr, diff, job: job ? { id: job.id, status: job.status, title: job.title } : null, checks, blockers, warnings };
+}
+
 async function jobCancel(userId: string, params: RpcParams) {
   const jobId = typeof params.jobId === "string" ? params.jobId.trim() : "";
   if (!jobId) throw new Error("jobId is required");
@@ -760,6 +829,9 @@ async function actionInvoke(userId: string, params: RpcParams, events: RpcEvents
       case "repo.pr.status":
         result = await repoPrStatus(userId, input);
         break;
+      case "repo.pr.verify":
+        result = await repoPrVerify(userId, input);
+        break;
       case "jobs.cancel":
         result = await jobCancel(userId, input);
         break;
@@ -933,6 +1005,9 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "repo.pr.status":
         requireGatewayScope(ctx, "operator.read");
         return ok(req.id, await repoPrStatus(requireUser(), params));
+      case "repo.pr.verify":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await repoPrVerify(requireUser(), params));
       case "jobs.create":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await jobCreate(requireUser(), params));

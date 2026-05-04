@@ -8,6 +8,7 @@ export interface GitHubPR {
   title: string;
   author: string;
   branch: string;
+  baseBranch?: string;
   repo: string;
   url: string;
   description: string | null;
@@ -234,6 +235,7 @@ export async function listOpenPRs(pat: string, repos: string[]): Promise<GitHubP
           title: pr.title,
           author: pr.user.login,
           branch: pr.head.ref,
+          baseBranch: (pr as any).base?.ref,
           repo: fullRepo,
           url: pr.html_url,
           description: pr.body,
@@ -267,6 +269,7 @@ export async function getPR(
       title: string;
       user: { login: string };
       head: { ref: string; sha: string };
+      base: { ref: string };
       body: string | null;
       state: string;
       draft: boolean;
@@ -282,6 +285,7 @@ export async function getPR(
       title: pr.title,
       author: pr.user.login,
       branch: pr.head.ref,
+      baseBranch: pr.base.ref,
       repo: `${owner}/${repo}`,
       url: pr.html_url,
       description: pr.body,

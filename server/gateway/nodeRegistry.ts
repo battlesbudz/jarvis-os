@@ -50,6 +50,7 @@ const SERVER_CAPABILITIES = [
   "repo.branch.push",
   "repo.pr.create",
   "repo.pr.status",
+  "repo.pr.verify",
   "events.list",
   "chat.send",
   "sessions.list",
@@ -87,7 +88,7 @@ export async function listGatewayNodes(userId: string | null, limit = 50): Promi
       capabilities: SERVER_CAPABILITIES,
       scopes: ["operator.read", "operator.write", "operator.approvals", "operator.pairing"],
       lastSeenAt: now,
-      actions: ["gateway.status", "events.list", "actions.invoke", "code.change.request", "repo.branch.push", "repo.pr.create", "repo.pr.status", "chat.send", "jobs.create", "cron.create"],
+      actions: ["gateway.status", "events.list", "actions.invoke", "code.change.request", "repo.branch.push", "repo.pr.create", "repo.pr.status", "repo.pr.verify", "chat.send", "jobs.create", "cron.create"],
       metadata: { processUptimeSeconds: Math.floor(process.uptime()) },
     },
     {

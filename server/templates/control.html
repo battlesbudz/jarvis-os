@@ -598,6 +598,7 @@
               <input id="pr-title" placeholder="PR title">
               <button class="btn primary" id="create-pr">Create PR</button>
               <button class="btn" id="pr-status">Status</button>
+              <button class="btn" id="pr-verify">Verify</button>
             </div>
           </div>
         </div>
@@ -630,6 +631,7 @@
                 <option>repo.branch.push</option>
                 <option>repo.pr.create</option>
                 <option>repo.pr.status</option>
+                <option>repo.pr.verify</option>
                 <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
@@ -1012,7 +1014,7 @@
           event.title,
           pill(event.area || "gateway", event.severity === "error" ? "danger" : event.severity === "warning" ? "warn" : "ok"),
           `${time(event.createdAt)} - ${event.message || event.type || ""}`,
-          event.type === "repo.pr.ready" && event.message
+          (event.type === "repo.pr.ready" || event.type === "repo.pr.verified") && event.message
             ? `<a class="btn primary" href="${event.message}" target="_blank" rel="noreferrer">Open PR</a>`
             : ""
         ))
@@ -1112,6 +1114,8 @@
             ? { repository: $("repo-name").value.trim(), branch: $("repo-branch").value.trim(), title: $("pr-title").value.trim() || "Jarvis gateway code change", base: "main", draft: true }
           : method === "repo.pr.status"
             ? { repository: $("repo-name").value.trim() }
+          : method === "repo.pr.verify"
+            ? { repository: $("repo-name").value.trim(), branch: $("repo-branch").value.trim() }
           : method === "approvals.approve" || method === "approvals.reject"
             ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
             : method === "daemon.notify"
@@ -1220,6 +1224,14 @@
     });
     $("pr-status").addEventListener("click", async () => {
       const result = await rpc("repo.pr.status", { repository: $("repo-name").value.trim() });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("pr-verify").addEventListener("click", async () => {
+      const result = await rpc("repo.pr.verify", {
+        repository: $("repo-name").value.trim(),
+        branch: $("repo-branch").value.trim(),
+      });
       $("raw-output").textContent = JSON.stringify(result, null, 2);
       await refreshAll();
     });
