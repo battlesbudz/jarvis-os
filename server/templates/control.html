@@ -586,6 +586,21 @@
             <textarea id="code-request" placeholder="Describe what Jarvis should build or change. It will be queued as branch-and-PR scoped work, not a direct main change."></textarea>
           </div>
         </div>
+        <div class="panel">
+          <div class="panel-head"><h3>Pull Request Loop</h3></div>
+          <div class="panel-body stack">
+            <div class="form three">
+              <input id="repo-name" placeholder="Repository, e.g. battlesbudz/Gameplanjarvisai">
+              <input id="repo-branch" placeholder="Branch, e.g. codex/my-change">
+              <button class="btn" id="push-branch">Push</button>
+            </div>
+            <div class="form three">
+              <input id="pr-title" placeholder="PR title">
+              <button class="btn primary" id="create-pr">Create PR</button>
+              <button class="btn" id="pr-status">Status</button>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section id="logs" class="view grid hidden">
@@ -612,6 +627,9 @@
                 <option>capabilities.route</option>
                 <option>actions.invoke</option>
                 <option>code.change.request</option>
+                <option>repo.branch.push</option>
+                <option>repo.pr.create</option>
+                <option>repo.pr.status</option>
                 <option>chat.send</option>
                 <option>devices.whoami</option>
                 <option>devices.list</option>
@@ -1039,6 +1057,12 @@
             ? { capability: $("invoke-capability").value.trim() || "chat.send", input: parseJsonTextarea("invoke-input", { text: "Hello from actions.invoke" }) }
           : method === "code.change.request"
             ? { title: $("code-title").value.trim() || "Gateway code change", request: $("code-request").value.trim() || "Add a small gateway health check improvement.", targetBranch: $("code-branch").value.trim() || undefined, baseBranch: "main" }
+          : method === "repo.branch.push"
+            ? { repository: $("repo-name").value.trim(), branch: $("repo-branch").value.trim() }
+          : method === "repo.pr.create"
+            ? { repository: $("repo-name").value.trim(), branch: $("repo-branch").value.trim(), title: $("pr-title").value.trim() || "Jarvis gateway code change", base: "main", draft: true }
+          : method === "repo.pr.status"
+            ? { repository: $("repo-name").value.trim() }
           : method === "approvals.approve" || method === "approvals.reject"
             ? { gateId: (state.snapshots.approvals?.gates || []).find((gate) => gate.status === "pending")?.id || "" }
             : method === "daemon.notify"
@@ -1123,6 +1147,30 @@
         targetBranch: $("code-branch").value.trim() || undefined,
         baseBranch: "main",
       });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("push-branch").addEventListener("click", async () => {
+      const result = await rpc("repo.branch.push", {
+        repository: $("repo-name").value.trim(),
+        branch: $("repo-branch").value.trim(),
+      });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("create-pr").addEventListener("click", async () => {
+      const result = await rpc("repo.pr.create", {
+        repository: $("repo-name").value.trim(),
+        branch: $("repo-branch").value.trim(),
+        title: $("pr-title").value.trim() || "Jarvis gateway code change",
+        base: "main",
+        draft: true,
+      });
+      $("raw-output").textContent = JSON.stringify(result, null, 2);
+      await refreshAll();
+    });
+    $("pr-status").addEventListener("click", async () => {
+      const result = await rpc("repo.pr.status", { repository: $("repo-name").value.trim() });
       $("raw-output").textContent = JSON.stringify(result, null, 2);
       await refreshAll();
     });

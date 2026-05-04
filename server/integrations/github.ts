@@ -322,6 +322,56 @@ export async function mergePR(
   }
 }
 
+export async function createOrGetPullRequest(
+  pat: string,
+  owner: string,
+  repo: string,
+  head: string,
+  base: string,
+  title: string,
+  body: string,
+  draft = true,
+): Promise<{ ok: boolean; pr?: GitHubPR; created?: boolean; message?: string }> {
+  try {
+    const existingRes = await githubRequest(
+      pat,
+      `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(`${owner}:${head}`)}&base=${encodeURIComponent(base)}&per_page=1`,
+    );
+    if (existingRes.ok) {
+      const existing = (await existingRes.json()) as Array<{ number: number }>;
+      if (existing[0]?.number) {
+        const pr = await getPR(pat, owner, repo, existing[0].number);
+        return pr
+          ? { ok: true, pr, created: false, message: "Existing pull request found." }
+          : { ok: false, message: "Existing pull request could not be loaded." };
+      }
+    }
+
+    const res = await githubRequest(pat, `/repos/${owner}/${repo}/pulls`, {
+      method: "POST",
+      body: JSON.stringify({
+        title,
+        head,
+        base,
+        body,
+        draft,
+        maintainer_can_modify: true,
+      }),
+    });
+    if (!res.ok) {
+      const err = (await res.json()) as { message?: string };
+      return { ok: false, message: err.message || `Create PR failed (HTTP ${res.status})` };
+    }
+    const data = (await res.json()) as { number: number };
+    const pr = await getPR(pat, owner, repo, data.number);
+    return pr
+      ? { ok: true, pr, created: true, message: "Pull request created." }
+      : { ok: false, message: "Pull request was created but could not be loaded." };
+  } catch (err) {
+    return { ok: false, message: err instanceof Error ? err.message : "Create PR failed" };
+  }
+}
+
 export async function hasGitHubPAT(userId: string): Promise<boolean> {
   const token = await getUserToken(userId, "github").catch(() => null);
   return !!(token?.accessToken);

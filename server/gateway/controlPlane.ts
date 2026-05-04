@@ -62,7 +62,7 @@ interface GatewayCapability {
 const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
   { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
   { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], openClawSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
-  { area: "code", status: "foundation", jarvisSurface: ["code.change.request", "build_feature", "branch-and-PR policy"], openClawSurface: ["autonomous code changes", "branch scoped builds", "pull request review loop"] },
+  { area: "code", status: "foundation", jarvisSurface: ["code.change.request", "repo.branch.push", "repo.pr.create", "repo.pr.status", "build_feature", "branch-and-PR policy"], openClawSurface: ["autonomous code changes", "branch scoped builds", "pull request review loop"] },
   { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
   { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
   { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
@@ -374,6 +374,121 @@ async function codeChangeRequest(userId: string, params: RpcParams) {
   return { ok: true, ...result, baseBranch, targetBranch, repository, prRequired: true };
 }
 
+async function resolveRepo(userId: string, params: RpcParams): Promise<{ repo: string; owner: string; name: string; pat: string }> {
+  const { getGitHubSettings } = await import("../integrations/github");
+  const settings = await getGitHubSettings(userId);
+  if (!settings.pat) throw new Error("GitHub is not connected. Add GitHub OAuth or a PAT in Settings.");
+  const requested = typeof params.repository === "string" && params.repository.trim()
+    ? params.repository.trim()
+    : typeof params.repo === "string" && params.repo.trim()
+      ? params.repo.trim()
+      : settings.repos[0] ?? "";
+  const [owner, name] = requested.split("/");
+  if (!owner || !name) throw new Error("repository is required in owner/repo format");
+  return { repo: `${owner}/${name}`, owner, name, pat: settings.pat };
+}
+
+async function git(args: string[], cwd = process.cwd()): Promise<{ ok: boolean; output: string }> {
+  const { spawn } = await import("child_process");
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    const child = spawn("git", args, {
+      cwd,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+    child.stdout.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => chunks.push(chunk));
+    child.on("close", (code) => resolve({ ok: code === 0, output: Buffer.concat(chunks).toString("utf8").trim().slice(0, 2000) }));
+    child.on("error", (error) => resolve({ ok: false, output: error.message }));
+  });
+}
+
+async function currentBranch(): Promise<string> {
+  const result = await git(["branch", "--show-current"]);
+  return result.ok ? result.output.trim() : "";
+}
+
+async function repoBranchPush(userId: string, params: RpcParams) {
+  const { repo, owner, name, pat } = await resolveRepo(userId, params);
+  const branch = typeof params.branch === "string" && params.branch.trim()
+    ? params.branch.trim()
+    : await currentBranch();
+  if (!branch) throw new Error("branch is required");
+  if (!branch.startsWith("codex/")) throw new Error(`Refusing to push non-codex branch: ${branch}`);
+
+  const credentialUrl = `https://x-access-token:${pat}@github.com/${owner}/${name}.git`;
+  const cleanUrl = `https://github.com/${owner}/${name}.git`;
+  const result = await git(["push", credentialUrl, `${branch}:${branch}`]);
+  const sanitized = result.output.replaceAll(pat, "***").replaceAll(credentialUrl, cleanUrl);
+  recordGatewayEvent({
+    userId,
+    type: result.ok ? "repo.branch.pushed" : "repo.branch.push_failed",
+    area: "code",
+    severity: result.ok ? "info" : "warning",
+    title: result.ok ? `Pushed ${branch}` : `Push failed: ${branch}`,
+    message: sanitized,
+    metadata: { repo, branch },
+  }).catch(() => {});
+  return { ok: result.ok, repo, branch, output: sanitized, command: result.ok ? undefined : `git push origin ${branch}` };
+}
+
+function prBodyFrom(params: RpcParams, branch: string, base: string) {
+  const body = typeof params.body === "string" && params.body.trim() ? params.body.trim() : "";
+  return body || [
+    "Gateway-created PR for Jarvis autonomous code work.",
+    "",
+    `Base: ${base}`,
+    `Branch: ${branch}`,
+    "",
+    "Review before merging. This PR is intentionally kept off main until approved.",
+  ].join("\n");
+}
+
+async function repoPrCreate(userId: string, params: RpcParams) {
+  const { repo, owner, name, pat } = await resolveRepo(userId, params);
+  const branch = typeof params.branch === "string" && params.branch.trim()
+    ? params.branch.trim()
+    : await currentBranch();
+  if (!branch) throw new Error("branch is required");
+  if (!branch.startsWith("codex/")) throw new Error(`Refusing to create PR from non-codex branch: ${branch}`);
+  const base = typeof params.base === "string" && params.base.trim() ? params.base.trim() : "main";
+  const title = typeof params.title === "string" && params.title.trim()
+    ? params.title.trim()
+    : `Jarvis code change: ${branch.replace(/^codex\//, "")}`;
+  const draft = params.draft !== false;
+  const { createOrGetPullRequest } = await import("../integrations/github");
+  const result = await createOrGetPullRequest(pat, owner, name, branch, base, title, prBodyFrom(params, branch, base), draft);
+  recordGatewayEvent({
+    userId,
+    type: result.ok ? (result.created ? "repo.pr.created" : "repo.pr.existing") : "repo.pr.create_failed",
+    area: "code",
+    severity: result.ok ? "info" : "warning",
+    title: result.ok ? `PR ready: ${title}` : `PR create failed: ${title}`,
+    message: result.pr?.url ?? result.message ?? null,
+    subjectType: "pull_request",
+    subjectId: result.pr ? `${repo}#${result.pr.number}` : null,
+    metadata: { repo, branch, base, draft },
+  }).catch(() => {});
+  return { ok: result.ok, repo, branch, base, title, created: result.created ?? false, pr: result.pr ?? null, message: result.message };
+}
+
+async function repoPrStatus(userId: string, params: RpcParams) {
+  const { repo, owner, name, pat } = await resolveRepo(userId, params);
+  const { getPR, listOpenPRs, getDiffSummary } = await import("../integrations/github");
+  const prNumber = Number(params.prNumber ?? params.number);
+  if (Number.isFinite(prNumber) && prNumber > 0) {
+    const [pr, diff] = await Promise.all([
+      getPR(pat, owner, name, Math.floor(prNumber)),
+      getDiffSummary(pat, owner, name, Math.floor(prNumber)),
+    ]);
+    return { ok: Boolean(pr), repo, pr, diff };
+  }
+  const prs = await listOpenPRs(pat, [repo]);
+  return { ok: true, repo, prs };
+}
+
 async function jobCancel(userId: string, params: RpcParams) {
   const jobId = typeof params.jobId === "string" ? params.jobId.trim() : "";
   if (!jobId) throw new Error("jobId is required");
@@ -636,6 +751,15 @@ async function actionInvoke(userId: string, params: RpcParams, events: RpcEvents
       case "code.change.request":
         result = await codeChangeRequest(userId, input);
         break;
+      case "repo.branch.push":
+        result = await repoBranchPush(userId, input);
+        break;
+      case "repo.pr.create":
+        result = await repoPrCreate(userId, input);
+        break;
+      case "repo.pr.status":
+        result = await repoPrStatus(userId, input);
+        break;
       case "jobs.cancel":
         result = await jobCancel(userId, input);
         break;
@@ -800,6 +924,15 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
       case "code.change.request":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await codeChangeRequest(requireUser(), params));
+      case "repo.branch.push":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await repoBranchPush(requireUser(), params));
+      case "repo.pr.create":
+        requireGatewayScope(ctx, "operator.write");
+        return ok(req.id, await repoPrCreate(requireUser(), params));
+      case "repo.pr.status":
+        requireGatewayScope(ctx, "operator.read");
+        return ok(req.id, await repoPrStatus(requireUser(), params));
       case "jobs.create":
         requireGatewayScope(ctx, "operator.write");
         return ok(req.id, await jobCreate(requireUser(), params));
