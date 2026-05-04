@@ -995,6 +995,12 @@ async function actionInvoke(userId: string, params: RpcParams, events: RpcEvents
   try {
     let result: unknown;
     switch (capability) {
+      case "gateway.status":
+        result = await gatewayStatus(userId);
+        break;
+      case "events.list":
+        result = await eventState(userId, limit);
+        break;
       case "chat.send":
         result = await chatSend(userId, input, events);
         break;
