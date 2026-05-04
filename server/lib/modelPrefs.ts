@@ -5,7 +5,6 @@
  * Reads from userPreferences.data.modelPreferences with hard-coded defaults.
  * Falls back silently on any DB error so callers never crash.
  */
-import { db } from "../db";
 import { userPreferences } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
@@ -28,8 +27,8 @@ export const AVAILABLE_MODELS = [
 ] as const;
 
 export const ORCHESTRATOR_MODELS = [
-  { value: "claude-opus-4-6", label: "Claude Opus 4.6", description: "Primary mainframe AI — orchestrates every task" },
-  { value: "claude-opus-4-7", label: "Claude Opus 4.7", description: "Newer flagship — alternative orchestrator" },
+  { value: "claude-opus-4-6", label: "Claude Opus 4.6", description: "Primary mainframe AI - orchestrates every task" },
+  { value: "claude-opus-4-7", label: "Claude Opus 4.7", description: "Newer flagship - alternative orchestrator" },
   { value: "claude-sonnet-4-6", label: "Claude Sonnet", description: "Balanced speed & quality" },
   { value: "claude-haiku-4-5", label: "Claude Haiku", description: "Fast, lightweight orchestration" },
 ] as const;
@@ -68,6 +67,7 @@ export function isValidModelForCategory(value: unknown, category: ModelCategory)
 export async function getModel(userId: string, category: ModelCategory): Promise<string> {
   if (!userId) return MODEL_DEFAULTS[category];
   try {
+    const { db } = await import("../db");
     const rows = await db
       .select({ data: userPreferences.data })
       .from(userPreferences)
