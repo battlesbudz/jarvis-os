@@ -1,5 +1,5 @@
 /**
- * Provider fallback chain — automatic retry on a backup model when the
+ * Provider fallback chain - automatic retry on a backup model when the
  * primary provider returns a retriable error (5xx, 429, timeout, etc.).
  *
  * Usage (harness):
@@ -20,7 +20,7 @@
  *              When set, every runAgent call implicitly uses this chain unless
  *              the caller provides its own.
  *
- * The feature is opt-in and off by default — if neither the env var nor the
+ * The feature is opt-in and off by default - if neither the env var nor the
  * per-run option is set the harness behaves exactly as before.
  */
 
@@ -28,8 +28,6 @@ import type { ProviderQueryParams, ProviderTurnResult } from "./base";
 import { accumulateTurn } from "./base";
 import { getProvider } from "./index";
 import type { ProviderName } from "./index";
-
-// ── Default models per provider ────────────────────────────────────────────
 
 /**
  * Default model string used when a fallback chain entry does not specify one.
@@ -39,9 +37,8 @@ import type { ProviderName } from "./index";
 export const DEFAULT_PROVIDER_MODELS: Record<ProviderName, string> = {
   claude: "claude-opus-4-7",
   openai: "gpt-4.1-mini",
+  "openai-compatible": "modelrelay/auto-fastest",
 };
-
-// ── Fallback chain entry ────────────────────────────────────────────────────
 
 /**
  * A single entry in the provider fallback chain.
@@ -55,8 +52,6 @@ export interface FallbackChainEntry {
   model: string;
 }
 
-// ── Error classification ────────────────────────────────────────────────────
-
 /**
  * Returns true for errors that warrant trying a backup provider:
  *   - HTTP 5xx (provider-side outage / maintenance)
@@ -64,7 +59,7 @@ export interface FallbackChainEntry {
  *   - Network-level timeouts and connection failures
  *
  * 4xx client errors (400 Bad Request, 401 Unauthorized, etc.) are NOT
- * retriable — a different provider would see the same failure.
+ * retriable - a different provider would see the same failure.
  */
 export function isRetriableProviderError(err: unknown): boolean {
   // Check numeric `.status` property emitted by OpenAI / Anthropic SDKs
@@ -104,9 +99,7 @@ export function isRetriableProviderError(err: unknown): boolean {
   return false;
 }
 
-// ── Global fallback chain from env ─────────────────────────────────────────
-
-const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude"];
+const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude", "openai-compatible"];
 
 /**
  * Reads PROVIDER_FALLBACK_CHAIN from the environment and returns an ordered
@@ -115,11 +108,11 @@ const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude"];
  *
  * Formats accepted:
  *   "openai,claude"
- *      → uses DEFAULT_PROVIDER_MODELS for model strings
+ *      -> uses DEFAULT_PROVIDER_MODELS for model strings
  *   "claude:claude-opus-4-7,openai:gpt-4.1-mini"
- *      → uses explicit model strings
+ *      -> uses explicit model strings
  *   Mixed: "claude,openai:gpt-4o-mini"
- *      → first entry uses the default, second uses the explicit model
+ *      -> first entry uses the default, second uses the explicit model
  *
  * Unknown provider names are silently dropped so a misconfigured env var
  * does not crash the server.
@@ -141,8 +134,6 @@ export function getGlobalFallbackChain(): FallbackChainEntry[] | null {
   return entries.length >= 2 ? entries : null;
 }
 
-// ── Core fallback helper ────────────────────────────────────────────────────
-
 /**
  * Runs a provider query using the first entry in `chain`.
  * On a retriable error, falls back to the next entry in the chain and
@@ -154,7 +145,7 @@ export function getGlobalFallbackChain(): FallbackChainEntry[] | null {
  * "claude-3-5-sonnet-20241022", not "gpt-4o").
  *
  * Non-retriable errors (client 4xx, AbortError, etc.) propagate immediately
- * without trying further providers — they would fail on any provider.
+ * without trying further providers - they would fail on any provider.
  *
  * @param chain      Ordered provider entries to try (primary first).
  * @param params     Base query parameters. `model` is overridden per entry.
@@ -180,7 +171,7 @@ export async function queryWithFallback(
       const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
       console.warn(
         `${logPrefix} provider_fallback: primary=${prev.providerName}(${prev.model}) failed ` +
-          `with retriable error — retrying on fallback=${entry.providerName}(${entry.model}). ` +
+          `with retriable error - retrying on fallback=${entry.providerName}(${entry.model}). ` +
           `Error: ${errMsg.slice(0, 200)}`,
       );
     } else {
@@ -204,18 +195,18 @@ export async function queryWithFallback(
     } catch (err) {
       lastError = err;
 
-      // AbortError — caller cancelled the run; do not try further providers.
+      // AbortError - caller cancelled the run; do not try further providers.
       if (err instanceof Error && err.name === "AbortError") {
         throw err;
       }
 
       const hasMore = i < chain.length - 1;
       if (hasMore && isRetriableProviderError(err)) {
-        // Retriable — try the next provider in the chain.
+        // Retriable - try the next provider in the chain.
         continue;
       }
 
-      // Last provider or non-retriable error — propagate.
+      // Last provider or non-retriable error - propagate.
       throw err;
     }
   }
