@@ -89,11 +89,12 @@ function codeChangePolicyText(policy: CodeChangePolicy): string {
   ].join("\n");
 }
 
-function runGit(args: string[]): Promise<{ ok: boolean; output: string }> {
+function runGit(args: string[], extraEnv: Record<string, string> = {}): Promise<{ ok: boolean; output: string }> {
   return new Promise((resolve) => {
     const chunks: Buffer[] = [];
     const child = spawn("git", args, {
       cwd: process.cwd(),
+      env: { ...process.env, ...extraEnv, GIT_TERMINAL_PROMPT: "0" },
       stdio: ["ignore", "pipe", "pipe"],
       shell: false,
     });
@@ -137,6 +138,118 @@ async function ensureCodeChangeBranch(policy: CodeChangePolicy): Promise<{ ok: b
     return { ok: false, message: `Expected branch ${policy.targetBranch}, but git reports ${branch || "unknown"}.` };
   }
   return { ok: true, branch, message: `Checked out ${branch} from ${baseRef}.` };
+}
+
+function parseGitHubRemote(value: string): string | null {
+  const httpsMatch = value.match(/github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?(?:\s|$)/);
+  if (!httpsMatch) return null;
+  return `${httpsMatch[1]}/${httpsMatch[2]}`;
+}
+
+async function inferRepository(input: Record<string, unknown>): Promise<string | null> {
+  if (typeof input.repository === "string" && input.repository.trim()) return input.repository.trim();
+  const remote = await runGit(["remote", "get-url", "origin"]);
+  return remote.ok ? parseGitHubRemote(remote.output) : null;
+}
+
+function sanitizeGitOutput(output: string, token: string, credentialUrl: string, cleanUrl: string): string {
+  return output.replaceAll(token, "***").replaceAll(credentialUrl, cleanUrl).slice(0, 2000);
+}
+
+async function finalizeCodeChangePr(args: {
+  userId: string;
+  jobId: string;
+  title: string;
+  summary: string;
+  policy: CodeChangePolicy;
+  changedFiles: string[];
+}): Promise<{ ok: boolean; pushed: boolean; pr?: { number: number; url: string; title: string; state: string; draft: boolean }; repo?: string; branch: string; base: string; message: string; output?: string }> {
+  const { getGitHubSettings, createOrGetPullRequest } = await import("../integrations/github");
+  const settings = await getGitHubSettings(args.userId);
+  if (!settings.pat) {
+    return { ok: false, pushed: false, branch: args.policy.targetBranch, base: args.policy.baseBranch, message: "GitHub is not connected. Add OAuth or a PAT in Settings." };
+  }
+  const inferredRepo = await inferRepository({ repository: args.policy.repository });
+  const repoFullName = args.policy.repository ?? settings.repos[0] ?? inferredRepo;
+  const [owner, repoName] = (repoFullName ?? "").split("/");
+  if (!owner || !repoName) {
+    return { ok: false, pushed: false, branch: args.policy.targetBranch, base: args.policy.baseBranch, message: "No repository available for PR finalization." };
+  }
+  if (!args.policy.targetBranch.startsWith("codex/")) {
+    return { ok: false, pushed: false, repo: repoFullName ?? undefined, branch: args.policy.targetBranch, base: args.policy.baseBranch, message: `Refusing to finalize non-codex branch: ${args.policy.targetBranch}` };
+  }
+  const current = await runGit(["branch", "--show-current"]);
+  if (!current.ok || current.output.trim() !== args.policy.targetBranch) {
+    return { ok: false, pushed: false, repo: repoFullName ?? undefined, branch: args.policy.targetBranch, base: args.policy.baseBranch, message: `Expected active branch ${args.policy.targetBranch}, but git reports ${current.output.trim() || "unknown"}.` };
+  }
+
+  await runGit(["config", "user.email", "jarvis@replit.app"]);
+  await runGit(["config", "user.name", "Jarvis"]);
+  const add = await runGit(["add", "--all"]);
+  if (!add.ok) {
+    return { ok: false, pushed: false, repo: repoFullName ?? undefined, branch: args.policy.targetBranch, base: args.policy.baseBranch, message: `git add failed: ${add.output}` };
+  }
+  const status = await runGit(["status", "--porcelain"]);
+  if (status.ok && status.output.trim()) {
+    const commit = await runGit(["commit", "-m", `Jarvis: ${args.title.slice(0, 72)}`]);
+    if (!commit.ok) {
+      return { ok: false, pushed: false, repo: repoFullName ?? undefined, branch: args.policy.targetBranch, base: args.policy.baseBranch, message: `git commit failed: ${commit.output}` };
+    }
+  }
+
+  const credentialUrl = `https://x-access-token:${settings.pat}@github.com/${owner}/${repoName}.git`;
+  const cleanUrl = `https://github.com/${owner}/${repoName}.git`;
+  const push = await runGit(["push", credentialUrl, `${args.policy.targetBranch}:${args.policy.targetBranch}`], {
+    GIT_AUTHOR_NAME: "Jarvis",
+    GIT_AUTHOR_EMAIL: "jarvis@replit.app",
+    GIT_COMMITTER_NAME: "Jarvis",
+    GIT_COMMITTER_EMAIL: "jarvis@replit.app",
+  });
+  const pushOutput = sanitizeGitOutput(push.output, settings.pat, credentialUrl, cleanUrl);
+  if (!push.ok) {
+    return { ok: false, pushed: false, repo: repoFullName ?? undefined, branch: args.policy.targetBranch, base: args.policy.baseBranch, message: `git push failed: ${pushOutput}`, output: pushOutput };
+  }
+
+  const body = [
+    args.summary,
+    "",
+    `Job: ${args.jobId}`,
+    `Branch: ${args.policy.targetBranch}`,
+    `Base: ${args.policy.baseBranch}`,
+    args.changedFiles.length ? `Files: ${args.changedFiles.join(", ")}` : "",
+    "",
+    "Created by the Jarvis gateway PR finalizer. Review before merging.",
+  ].filter(Boolean).join("\n");
+  const prResult = await createOrGetPullRequest(
+    settings.pat,
+    owner,
+    repoName,
+    args.policy.targetBranch,
+    args.policy.baseBranch,
+    `Jarvis: ${args.title}`,
+    body,
+    true,
+  );
+  if (!prResult.ok || !prResult.pr) {
+    return { ok: false, pushed: true, repo: repoFullName ?? undefined, branch: args.policy.targetBranch, base: args.policy.baseBranch, message: prResult.message ?? "PR creation failed", output: pushOutput };
+  }
+
+  return {
+    ok: true,
+    pushed: true,
+    repo: repoFullName ?? undefined,
+    branch: args.policy.targetBranch,
+    base: args.policy.baseBranch,
+    message: prResult.created ? "Draft PR created." : "Existing draft PR reused.",
+    output: pushOutput,
+    pr: {
+      number: prResult.pr.number,
+      url: prResult.pr.url,
+      title: prResult.pr.title,
+      state: prResult.pr.state,
+      draft: prResult.pr.draft,
+    },
+  };
 }
 
 async function notifyJobComplete(
@@ -1777,6 +1890,40 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       ];
 
       const allPassed = completedSteps.every((s) => s.passed === true);
+      const prFinalization = codePolicy.prRequired && allPassed && finalTypeCheck.ok
+        ? await finalizeCodeChangePr({
+            userId: job.userId,
+            jobId: job.id,
+            title: job.title,
+            summary: synthesis,
+            policy: codePolicy,
+            changedFiles,
+          })
+        : null;
+      if (prFinalization) {
+        await persistProgress({
+          prFinalization,
+          prUrl: prFinalization.pr?.url ?? null,
+          prNumber: prFinalization.pr?.number ?? null,
+        });
+        const { recordGatewayEvent } = await import("../gateway/eventBus");
+        recordGatewayEvent({
+          userId: job.userId,
+          type: prFinalization.ok ? "repo.pr.ready" : "repo.pr.finalize_failed",
+          area: "code",
+          severity: prFinalization.ok ? "info" : "warning",
+          title: prFinalization.ok ? `PR ready: ${prFinalization.pr?.title ?? job.title}` : `PR finalization failed: ${job.title}`,
+          message: prFinalization.pr?.url ?? prFinalization.message,
+          subjectType: "pull_request",
+          subjectId: prFinalization.pr ? `${prFinalization.repo}#${prFinalization.pr.number}` : job.id,
+          metadata: {
+            jobId: job.id,
+            repo: prFinalization.repo,
+            branch: prFinalization.branch,
+            base: prFinalization.base,
+          },
+        }).catch(() => {});
+      }
       await completeJob(job.id, {
         result: {
           featureDescription,
@@ -1787,6 +1934,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           finalTypeCheckPassed: finalTypeCheck.ok,
           finalTestsPassed: finalTestResult?.ok ?? null,
           codeChangePolicy: codePolicy.enabled ? codePolicy : null,
+          prFinalization,
         },
         turns: plan.length,
         toolCallsCount: completedSteps.length,
@@ -1811,7 +1959,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         synthesis,
         changedFilesSection,
         codePolicy.prRequired
-          ? `Branch/PR policy: prepare review from ${codePolicy.targetBranch} into ${codePolicy.baseBranch}. The server was not restarted because this change requires PR review before activation.`
+          ? prFinalization?.ok
+            ? `Draft PR ready for review: ${prFinalization.pr?.url}`
+            : `Branch/PR policy: ${prFinalization?.message ?? `prepare review from ${codePolicy.targetBranch} into ${codePolicy.baseBranch}`}. The server was not restarted because this change requires PR review before activation.`
           : `The server is restarting to activate the new feature.`,
       ].filter(Boolean).join("\n");
 
