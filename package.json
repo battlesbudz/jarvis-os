@@ -2,6 +2,10 @@
   "name": "expo-app",
   "main": "expo-router/entry",
   "version": "1.0.0",
+  "engines": {
+    "node": "22.x",
+    "npm": "10.x"
+  },
   "scripts": {
     "postinstall": "patch-package",
     "expo:dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_DEV_DOMAIN REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN:5000 npx expo start --localhost",
@@ -14,7 +18,7 @@
     "start": "npx expo start",
     "lint": "npx expo lint",
     "lint:fix": "npx expo lint --fix",
-    "test": "tsx server/agent/__tests__/manifestFilter.assert.ts && tsx server/agent/__tests__/integrationError.assert.ts && tsx server/agent/__tests__/selfHeal.assert.ts && tsx server/agent/__tests__/writeBudget.assert.ts && tsx server/agent/__tests__/mcp.assert.ts && tsx server/agent/__tests__/browserTabTools.test.ts && tsx server/agent/__tests__/toolCallHooks.test.ts && tsx server/agent/__tests__/outboundMiddleware.test.ts && tsx server/agent/__tests__/responseQuality.test.ts && tsx server/agent/__tests__/queryClassifier.test.ts"
+    "test": "node scripts/run-agent-tests.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.91.1",
