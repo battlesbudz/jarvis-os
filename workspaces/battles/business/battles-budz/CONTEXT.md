@@ -43,6 +43,7 @@ The current operating mission is to get the cannabis microbusiness fully operati
 - Checklists that move licensing, facility, compliance, production, or product readiness forward.
 - Fastest compliant path to first revenue.
 - Practical retail/distribution steps over brand polish.
+- Living updates: when Battles answers one of the open questions or an email/source provides a relevant fact, append it to the matching readiness file with `living_context_update`.
 
 ## Skip Unless Needed
 - Battle Brew and Homegrower Circle files unless cross-brand strategy is requested.
@@ -65,6 +66,14 @@ The current operating mission is to get the cannabis microbusiness fully operati
 
 ## Approval Boundaries
 Do not present regulatory research as legal advice. Do not send investor, partner, customer, regulatory, or compliance communications without explicit approval. Do not treat SOPs, licensing documents, compliance plans, pricing, contracts, funding terms, or official operating decisions as approved without explicit confirmation from Battles.
+
+## Living Document Rule
+The readiness files are living operating documents. Jarvis may append dated, source-backed "Learned Updates" when:
+- Battles directly answers a readiness question in conversation.
+- A connected email/document/source clearly answers an existing unknown.
+- The update is stored as draft context with source, confidence, and approval boundary.
+
+Jarvis must not overwrite existing readiness content, delete context, send anything externally, or mark compliance/licensing/financial actions as approved through a living update.
 
 ## Handoff Back To PRIME
 Return the artifact type, risk level, business decision needed, and next action.

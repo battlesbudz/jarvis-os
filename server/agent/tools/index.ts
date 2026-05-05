@@ -124,6 +124,7 @@ import { applyCodeChangeTool } from "./applyCodeChangeTool";
 import { runShellTool } from "./runShellTool";
 import { selfHealTool } from "./selfHealTool";
 import { workspaceUpdateTool } from "./workspaceUpdateTool";
+import { livingContextUpdateTool } from "./livingContextUpdateTool";
 import { listCustomAgentsTool } from "./listCustomAgents";
 import { runTournamentTool } from "./runTournamentTool";
 import { listGithubPrsTool, getGithubPrTool, mergeGithubPrTool } from "./githubPrTools";
@@ -365,6 +366,7 @@ export {
   runShellTool,
   selfHealTool,
   workspaceUpdateTool,
+  livingContextUpdateTool,
   listCustomAgentsTool,
   runTournamentTool,
   listGithubPrsTool,

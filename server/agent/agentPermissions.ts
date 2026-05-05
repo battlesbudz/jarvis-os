@@ -74,7 +74,7 @@ const PERMISSION_TOOL_MAP: Record<keyof AgentPermissions, string[]> = {
   can_use_voice: ["speak"],
   can_create_tasks: ["manage_tasks"],
   can_create_other_agents: ["setup_named_agent"],
-  can_access_global_memory: ["memory_search", "memory_get"],
+  can_access_global_memory: ["memory_search", "memory_get", "living_context_update"],
   can_run_code: ["run_python"],
   can_access_calendar: ["fetch_calendar", "create_calendar_event"],
 };
