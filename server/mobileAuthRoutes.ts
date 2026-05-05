@@ -1,11 +1,87 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import * as crypto from "crypto";
 import { db } from "./db";
 import { users, mobileAuthSessions } from "@shared/schema";
 import { eq, lt } from "drizzle-orm";
 import { generateToken } from "./auth";
 
 export const mobileAuthRouter = Router();
+
+const PENDING_TOKEN_PREFIX = "__PENDING__:";
+const COMPLETE_TOKEN_PREFIX = "__COMPLETE__:";
+const POLL_SECRET_BYTES = 24;
+const BIND_COOKIE_NAME = "mobile_auth_bind";
+
+function sha256(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+  if (aBuffer.length !== bBuffer.length) return false;
+  return crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function readCookie(req: Request, name: string): string | null {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(";")) {
+    const [key, ...value] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(value.join("="));
+  }
+  return null;
+}
+
+function isValidSessionId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{24,128}$/.test(value);
+}
+
+function isValidPollSecret(value: string): boolean {
+  return /^[A-Za-z0-9_-]{32,256}$/.test(value);
+}
+
+function createOauthState(sessionId: string): string {
+  const nonce = crypto.randomBytes(POLL_SECRET_BYTES).toString("base64url");
+  return `${sessionId}.${nonce}`;
+}
+
+function parseOauthState(state: string): { sessionId: string; nonce: string } | null {
+  const [sessionId, nonce, ...extra] = state.split(".");
+  if (!sessionId || !nonce || extra.length > 0) return null;
+  if (!isValidSessionId(sessionId) || !isValidSessionId(nonce)) return null;
+  return { sessionId, nonce };
+}
+
+function pendingTokenValue(oauthState: string, pollSecret: string, bindNonce: string): string {
+  return `${PENDING_TOKEN_PREFIX}${sha256(oauthState)}:${sha256(pollSecret)}:${sha256(bindNonce)}`;
+}
+
+function parsePendingTokenValue(token: string): { stateHash: string; pollHash: string; bindHash: string } | null {
+  if (!token.startsWith(PENDING_TOKEN_PREFIX)) return null;
+  const rest = token.slice(PENDING_TOKEN_PREFIX.length);
+  const [stateHash, pollHash, bindHash, ...extra] = rest.split(":");
+  if (!stateHash || !pollHash || !bindHash || extra.length > 0) return null;
+  return { stateHash, pollHash, bindHash };
+}
+
+function completeTokenValue(pollHash: string, bindHash: string, token: string): string {
+  return `${COMPLETE_TOKEN_PREFIX}${pollHash}:${bindHash}:${token}`;
+}
+
+function parseCompleteTokenValue(value: string): { pollHash: string; bindHash: string; token: string } | null {
+  if (!value.startsWith(COMPLETE_TOKEN_PREFIX)) return null;
+  const rest = value.slice(COMPLETE_TOKEN_PREFIX.length);
+  const firstSeparator = rest.indexOf(":");
+  const secondSeparator = rest.indexOf(":", firstSeparator + 1);
+  if (firstSeparator <= 0 || secondSeparator <= firstSeparator) return null;
+  const pollHash = rest.slice(0, firstSeparator);
+  const bindHash = rest.slice(firstSeparator + 1, secondSeparator);
+  const token = rest.slice(secondSeparator + 1);
+  if (!pollHash || !bindHash || !token) return null;
+  return { pollHash, bindHash, token };
+}
 
 function getCallbackUrl(req: Request): string {
   const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol;
@@ -84,12 +160,40 @@ function errorHtml(message: string): string {
 </html>`;
 }
 
-mobileAuthRouter.get("/start", (req: Request, res: Response) => {
-  const { session_id } = req.query as Record<string, string>;
+mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
+  const { session_id, poll_secret } = req.query as Record<string, string>;
   if (!session_id) return res.status(400).json({ error: "session_id required" });
+  if (!isValidSessionId(session_id)) return res.status(400).json({ error: "invalid session_id" });
 
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
+
+  const oauthState = createOauthState(session_id);
+  const bindNonce = crypto.randomBytes(POLL_SECRET_BYTES).toString("base64url");
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  if (poll_secret) {
+    if (!isValidPollSecret(poll_secret)) return res.status(400).json({ error: "invalid poll_secret" });
+    await db.insert(mobileAuthSessions).values({
+      sessionId: session_id,
+      token: pendingTokenValue(oauthState, poll_secret, bindNonce),
+      expiresAt,
+    }).onConflictDoUpdate({
+      target: mobileAuthSessions.sessionId,
+      set: {
+        token: pendingTokenValue(oauthState, poll_secret, bindNonce),
+        expiresAt,
+      },
+    });
+  }
+
+  res.cookie(BIND_COOKIE_NAME, bindNonce, {
+    httpOnly: true,
+    secure: req.secure || req.headers["x-forwarded-proto"] === "https",
+    sameSite: "lax",
+    maxAge: 10 * 60 * 1000,
+    path: "/api/auth/mobile",
+  });
 
   const callbackUrl = getCallbackUrl(req);
   const params = new URLSearchParams({
@@ -97,7 +201,7 @@ mobileAuthRouter.get("/start", (req: Request, res: Response) => {
     redirect_uri: callbackUrl,
     response_type: "code",
     scope: "openid email profile",
-    state: session_id,
+    state: oauthState,
     access_type: "offline",
     prompt: "select_account",
     max_age: "0",
@@ -107,11 +211,17 @@ mobileAuthRouter.get("/start", (req: Request, res: Response) => {
 });
 
 mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
-  const { code, state: session_id, error } = req.query as Record<string, string>;
+  const { code, state, error } = req.query as Record<string, string>;
 
-  if (error || !code || !session_id) {
+  if (error || !code || !state) {
     return res.send(errorHtml(error || "Sign-in was cancelled."));
   }
+
+  const parsedState = parseOauthState(state);
+  if (!parsedState) {
+    return res.send(errorHtml("Invalid sign-in state. Please try again."));
+  }
+  const { sessionId } = parsedState;
 
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -191,15 +301,16 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
 
     const token = generateToken(user.id);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const pendingRows = await db.select().from(mobileAuthSessions)
+      .where(eq(mobileAuthSessions.sessionId, sessionId)).limit(1);
+    const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
+    const bindNonce = readCookie(req, BIND_COOKIE_NAME);
 
-    await db.insert(mobileAuthSessions).values({
-      sessionId: session_id,
-      token,
-      expiresAt,
-    }).onConflictDoUpdate({
-      target: mobileAuthSessions.sessionId,
-      set: { token, expiresAt },
-    });
+    if (pending && bindNonce && timingSafeEqual(pending.stateHash, sha256(state)) && timingSafeEqual(pending.bindHash, sha256(bindNonce))) {
+      await db.update(mobileAuthSessions)
+        .set({ token: completeTokenValue(pending.pollHash, pending.bindHash, token), expiresAt })
+        .where(eq(mobileAuthSessions.sessionId, sessionId));
+    }
 
     return res.send(successHtml(token));
   } catch (err) {
@@ -209,8 +320,12 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
 });
 
 mobileAuthRouter.get("/poll", async (req: Request, res: Response) => {
-  const { session_id } = req.query as Record<string, string>;
+  const { session_id, poll_secret } = req.query as Record<string, string>;
   if (!session_id) return res.status(400).json({ error: "session_id required" });
+  if (!poll_secret) return res.status(400).json({ error: "poll_secret required" });
+  if (!isValidSessionId(session_id) || !isValidPollSecret(poll_secret)) {
+    return res.status(400).json({ error: "invalid polling credentials" });
+  }
 
   try {
     await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, new Date()));
@@ -223,10 +338,24 @@ mobileAuthRouter.get("/poll", async (req: Request, res: Response) => {
     }
 
     const session = rows[0];
+    if (parsePendingTokenValue(session.token)) {
+      return res.status(404).json({ ready: false });
+    }
+
+    const completed = parseCompleteTokenValue(session.token);
+    const bindNonce = readCookie(req, BIND_COOKIE_NAME);
+    if (
+      !completed ||
+      !bindNonce ||
+      !timingSafeEqual(completed.pollHash, sha256(poll_secret)) ||
+      !timingSafeEqual(completed.bindHash, sha256(bindNonce))
+    ) {
+      return res.status(404).json({ ready: false });
+    }
 
     await db.delete(mobileAuthSessions).where(eq(mobileAuthSessions.sessionId, session_id));
 
-    return res.json({ ready: true, token: session.token });
+    return res.json({ ready: true, token: completed.token });
   } catch (err) {
     console.error("Mobile auth poll error:", err);
     return res.status(500).json({ ready: false, error: "Internal error" });
