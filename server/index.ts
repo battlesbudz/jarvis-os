@@ -18,6 +18,7 @@ import { seedAllSessions } from "./channels/sessionStore";
 import { startDaemonBridge } from "./daemon/bridge";
 import { registerGatewayControlPlane } from "./gateway/controlPlane";
 import { registerVoiceRelay } from "./voiceRelayRoutes";
+import { registerCoachChatRouterOverride } from "./coachChatRouteOverride";
 import { bootAllBots as bootDiscordBots, bootSharedBot } from "./discord/manager";
 import { pruneAuditLogArchivesOnStartup } from "./agent/tools/applyCodeChangeTool";
 import { telegramLinks, inboxItems } from "@shared/schema";
@@ -31,7 +32,7 @@ async function alertTelegramUsersWebhookDown(): Promise<void> {
     const uniqueUserIds = [...new Set(linked.map((r) => r.userId))];
     let alertedCount = 0;
     for (const userId of uniqueUserIds) {
-      // Skip if a pending alert already exists — prevents inbox spam during prolonged outages.
+      // Skip if a pending alert already exists â€” prevents inbox spam during prolonged outages.
       const existing = await db
         .select({ id: inboxItems.id })
         .from(inboxItems)
@@ -52,7 +53,7 @@ async function alertTelegramUsersWebhookDown(): Promise<void> {
         sourceType: "other",
         sourceId,
         subject: "Telegram bot is offline",
-        snippet: "Jarvis couldn't re-register the Telegram webhook — your bot may not receive messages. Tap 'Fix now' to open the health check in your profile.",
+        snippet: "Jarvis couldn't re-register the Telegram webhook â€” your bot may not receive messages. Tap 'Fix now' to open the health check in your profile.",
         jarvisReason: "Webhook re-registration failed",
         suggestedActions: [
           { label: "Fix now", actionType: "navigate_telegram_health" },
@@ -65,7 +66,7 @@ async function alertTelegramUsersWebhookDown(): Promise<void> {
     if (alertedCount > 0) {
       console.warn(`[Telegram] Sent offline alert to ${alertedCount} linked user(s)`);
     } else {
-      console.warn("[Telegram] Webhook still down but all users already have a pending alert — skipping duplicate insert");
+      console.warn("[Telegram] Webhook still down but all users already have a pending alert â€” skipping duplicate insert");
     }
   } catch (err) {
     console.error("[Telegram] Failed to send offline alert to users:", err);
@@ -145,7 +146,7 @@ function setupRequestLogging(app: express.Application) {
   app.use((req, res, next) => {
     const start = Date.now();
     const path = req.path;
-    let capturedJsonResponse: unknown;
+    let capturedJsonResponse: Record<string, unknown> | undefined = undefined;
 
     const originalResJson = res.json;
     res.json = function (bodyJson, ...args) {
@@ -160,11 +161,11 @@ function setupRequestLogging(app: express.Application) {
 
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(redactForApiLog(capturedJsonResponse))}`;
+        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
 
       if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
+        logLine = logLine.slice(0, 79) + "â€¦";
       }
 
       log(logLine);
@@ -172,45 +173,6 @@ function setupRequestLogging(app: express.Application) {
 
     next();
   });
-}
-
-const REDACTED_LOG_VALUE = "[REDACTED]";
-const SENSITIVE_LOG_KEYS = new Set([
-  "access_token",
-  "accesstoken",
-  "authorization",
-  "id_token",
-  "idtoken",
-  "jwt",
-  "refresh_token",
-  "refreshtoken",
-  "token",
-]);
-
-function normaliseLogKey(key: string): string {
-  return key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-}
-
-function isSensitiveLogKey(key: string): boolean {
-  const normalised = normaliseLogKey(key);
-  if (SENSITIVE_LOG_KEYS.has(normalised)) return true;
-  return normalised.endsWith("token") || normalised.includes("authorization");
-}
-
-export function redactForApiLog(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map((item) => redactForApiLog(item));
-  }
-
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-
-  const redacted: Record<string, unknown> = {};
-  for (const [key, item] of Object.entries(value)) {
-    redacted[key] = isSensitiveLogKey(key) ? REDACTED_LOG_VALUE : redactForApiLog(item);
-  }
-  return redacted;
 }
 
 function getAppName(): string {
@@ -322,24 +284,24 @@ function configureExpoAndLanding(app: express.Application) {
     next();
   });
 
-  // Serve web chat page at /chat — registered BEFORE static middleware so the
-  // dynamic template (with GOOGLE_CLIENT_ID_PLACEHOLDER replaced) always wins
-  // over any static file that might exist at the same path in the build output.
-  const chatTemplatePath = path.resolve(process.cwd(), "server", "templates", "chat.html");
-  const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || "";
-  if (googleClientId) {
-    log(`[Chat] GOOGLE_WEB_CLIENT_ID is set (${googleClientId.slice(0, 12)}…)`);
-  } else {
-    console.warn("[Chat] GOOGLE_WEB_CLIENT_ID is not set — Google Sign-In will be disabled on /chat");
+  // Serve web build assets (/_expo/static/..., /assets/..., etc.)
+  if (fs.existsSync(webBuildDir)) {
+    app.use(express.static(webBuildDir));
   }
-  app.get("/chat", (_req: Request, res: Response) => {
+
+  app.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
+  app.use(express.static(path.resolve(process.cwd(), "static-build")));
+
+  // Serve web chat page at /chat â€” must come before the SPA catch-all
+  const chatTemplatePath = path.resolve(process.cwd(), "server", "templates", "chat.html");
+  app.get("/chat", (req: Request, res: Response) => {
     try {
       let html = fs.readFileSync(chatTemplatePath, "utf-8");
-      html = html.replace(/GOOGLE_CLIENT_ID_PLACEHOLDER/g, googleClientId);
+      const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || "";
+      html = html.replace("GOOGLE_CLIENT_ID_PLACEHOLDER", googleClientId);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.status(200).send(html);
-    } catch (err) {
-      console.error("[Chat] Failed to read chat template:", err);
+    } catch {
       res.status(500).send("Chat page unavailable");
     }
   });
@@ -350,21 +312,10 @@ function configureExpoAndLanding(app: express.Application) {
       const html = fs.readFileSync(controlTemplatePath, "utf-8");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.status(200).send(html);
-    } catch (err) {
-      console.error("[Chat] Failed to read control template:", err);
+    } catch {
       res.status(500).send("Control page unavailable");
     }
   });
-
-  // Serve web build assets (/_expo/static/..., /assets/..., etc.)
-  // Registered AFTER the /chat and /control routes so those always take priority.
-  if (fs.existsSync(webBuildDir)) {
-    app.use(express.static(webBuildDir));
-  }
-
-  app.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
-  app.use(express.static(path.resolve(process.cwd(), "static-build")));
-
 
   // SPA catch-all: for web build, serve index.html for any non-API, non-asset path
   // so that client-side Expo Router navigation works in Chrome
@@ -428,7 +379,7 @@ function setupErrorHandler(app: express.Application) {
     console.warn("[Startup] seedAllSessions failed (non-fatal):", err),
   );
 
-  // Seed first-party skill packs (idempotent — skips existing rows).
+  // Seed first-party skill packs (idempotent â€” skips existing rows).
   // Awaited so the catalogue is populated before the first request arrives.
   try {
     const { seedDefaultPacks } = await import("./intelligence/behaviorStore");
@@ -438,7 +389,7 @@ function setupErrorHandler(app: express.Application) {
   }
 
   // Seed core always-on agents (Telegram bot, Discord bot, Discord channel agent)
-  // for every existing user. Idempotent — skips agents that already exist.
+  // for every existing user. Idempotent â€” skips agents that already exist.
   try {
     const { seedCoreAgentsForAllUsers } = await import("./agent/coreAgentSeed");
     await seedCoreAgentsForAllUsers();
@@ -455,7 +406,7 @@ function setupErrorHandler(app: express.Application) {
     console.warn("[Startup] seedConfirmTokenCache failed (non-fatal):", err);
   }
 
-  // Start the generic MCP server registry — connects all enabled MCP servers
+  // Start the generic MCP server registry â€” connects all enabled MCP servers
   // and registers their discovered tools into the agent's tool system.
   // Non-blocking; connection failures are non-fatal.
   import("./agent/mcp/mcpServerRegistry").then(async ({ mcpServerRegistry }) => {
@@ -502,6 +453,7 @@ function setupErrorHandler(app: express.Application) {
   registerTelegramWebhook(app);
   registerWhatsAppWebhook(app);
   registerSlackWebhook(app);
+  registerCoachChatRouterOverride(app);
 
   const server = await registerRoutes(app);
 
@@ -542,7 +494,7 @@ function setupErrorHandler(app: express.Application) {
   startScheduler();
   startTriageRunner();
 
-  // Async Supadata transcript job poller — tracks long-video (3+ hour) transcript
+  // Async Supadata transcript job poller â€” tracks long-video (3+ hour) transcript
   // generation jobs in the background, notifying users when ready.
   import("./lib/transcriptJobTracker").then(({ runBackgroundPoller }) => {
     runBackgroundPoller();
@@ -551,7 +503,7 @@ function setupErrorHandler(app: express.Application) {
   });
   // Run one immediate triage pass 5s after startup to clear untriaged backlog
   setTimeout(() => runStartupTriagePass().catch(() => {}), 5000);
-  // Sub-agent background worker — runs queued goal_decompose / research /
+  // Sub-agent background worker â€” runs queued goal_decompose / research /
   // writing / planning / email jobs and writes deliverables for approval.
   startJobQueueWorker();
 
@@ -568,7 +520,7 @@ function setupErrorHandler(app: express.Application) {
       log(`express server serving on port ${port}`);
 
       // Telegram-specific I/O (polling/webhook) only runs when Telegram is
-      // configured — but proactive engines drive notifications across all
+      // configured â€” but proactive engines drive notifications across all
       // channels (telegram/whatsapp/slack/daemon) so they must run regardless.
       if (isTelegramConfigured()) {
         const isProduction = process.env.NODE_ENV === 'production';
@@ -577,7 +529,7 @@ function setupErrorHandler(app: express.Application) {
           const webhookUrl = getExpectedWebhookUrl();
           if (webhookUrl) {
             ensureWebhook(webhookUrl).then(({ reregistered }) => {
-              console.log(`[Telegram] Production mode — webhook ${reregistered ? 're-registered' : 'verified'} at ${webhookUrl}`);
+              console.log(`[Telegram] Production mode â€” webhook ${reregistered ? 're-registered' : 'verified'} at ${webhookUrl}`);
             }).catch(err => {
               console.error("[Telegram] Failed to ensure webhook on boot:", err);
             });
@@ -587,9 +539,9 @@ function setupErrorHandler(app: express.Application) {
             setInterval(() => {
               ensureWebhook(webhookUrl).then(({ healthy, reregistered }) => {
                 if (reregistered) {
-                  console.warn("[Telegram] Periodic check: webhook was stale — re-registered successfully");
+                  console.warn("[Telegram] Periodic check: webhook was stale â€” re-registered successfully");
                 } else if (!healthy) {
-                  console.error("[Telegram] Periodic check: webhook re-registration failed — bot may be offline");
+                  console.error("[Telegram] Periodic check: webhook re-registration failed â€” bot may be offline");
                   alertTelegramUsersWebhookDown();
                 }
               }).catch(err => {
@@ -598,25 +550,25 @@ function setupErrorHandler(app: express.Application) {
               });
             }, WEBHOOK_CHECK_INTERVAL_MS);
           } else {
-            console.error("[Telegram] Production mode but REPLIT_DOMAINS is not set — cannot register webhook");
+            console.error("[Telegram] Production mode but REPLIT_DOMAINS is not set â€” cannot register webhook");
           }
         } else {
           // Dev mode: only start polling if a dedicated dev bot token is set.
-          // Without it, both dev and production would share the same bot —
+          // Without it, both dev and production would share the same bot â€”
           // Telegram delivers each message to exactly one endpoint, so they'd
           // race and the user would receive two replies for every message.
           if (!process.env.TELEGRAM_BOT_TOKEN_DEV) {
             console.warn(
-              "[Telegram] ⚠ Dev polling SKIPPED — set TELEGRAM_BOT_TOKEN_DEV as a Replit secret " +
+              "[Telegram] âš  Dev polling SKIPPED â€” set TELEGRAM_BOT_TOKEN_DEV as a Replit secret " +
               "(create a test bot via BotFather) to enable polling without conflicting with the production bot."
             );
             console.warn(
-              "[Telegram] ⚠ Dev mode — outbound sends SKIPPED " +
+              "[Telegram] âš  Dev mode â€” outbound sends SKIPPED " +
               "(set TELEGRAM_BOT_TOKEN_DEV to enable sending from the dev server)."
             );
           } else {
             // Delete any previously-set webhook (e.g. from a production deploy)
-            // before starting polling — Telegram only delivers to ONE endpoint,
+            // before starting polling â€” Telegram only delivers to ONE endpoint,
             // so an active webhook silently swallows all getUpdates responses.
             deleteWebhook()
               .then(() => startTelegramPolling())
@@ -628,7 +580,7 @@ function setupErrorHandler(app: express.Application) {
       }
 
       // Discord bots only run in production.
-      // In dev, skip booting — two Discord WebSocket connections with the same
+      // In dev, skip booting â€” two Discord WebSocket connections with the same
       // token compete for the gateway session and both would send proactive
       // notifications (integration alerts, heartbeats) to the user's real
       // Discord channel.  The pattern mirrors how Telegram skips polling in dev
@@ -646,12 +598,12 @@ function setupErrorHandler(app: express.Application) {
         });
       } else {
         console.warn(
-          "[Discord] ⚠ Dev mode — Discord bots NOT started to avoid competing with " +
+          "[Discord] âš  Dev mode â€” Discord bots NOT started to avoid competing with " +
           "the production bot and sending duplicate notifications to your real Discord channel."
         );
       }
 
-      // Channel-agnostic proactive engines — iterate every user with any
+      // Channel-agnostic proactive engines â€” iterate every user with any
       // linked channel (telegram/whatsapp/slack/daemon/discord) and route through
       // notifyUser() so WhatsApp/Slack/Discord-only users get the full experience.
       startProactiveScheduler().catch(err => {
@@ -687,7 +639,7 @@ function setupErrorHandler(app: express.Application) {
         console.error("Failed to start skill watcher:", err);
       });
 
-      // Smoke-test AI providers on startup — catches broken API keys or SDK
+      // Smoke-test AI providers on startup â€” catches broken API keys or SDK
       // regressions before they silently fail during a real user turn.
       import("./agent/providers/healthCheck").then(({ runProviderHealthChecks }) => {
         runProviderHealthChecks().catch((err: Error) => {
@@ -695,12 +647,12 @@ function setupErrorHandler(app: express.Application) {
         });
       }).catch((err: Error) => {
         console.warn(
-          "[ProviderHealth] Could not load health-check module — provider smoke tests did NOT run.",
+          "[ProviderHealth] Could not load health-check module â€” provider smoke tests did NOT run.",
           err?.message ?? err,
         );
       });
 
-      // Doctor scan — runs 30 s after startup (non-blocking). Any failures are
+      // Doctor scan â€” runs 30 s after startup (non-blocking). Any failures are
       // piped into the inbox alert system so users are notified on the home screen.
       setTimeout(() => {
         import("./doctor/doctorRoutes").then(({ runStartupDoctorScan }) => {
@@ -712,12 +664,12 @@ function setupErrorHandler(app: express.Application) {
         });
       }, 30_000);
 
-      // Verify Playwright/Chromium is usable on startup — logs a warning if not.
+      // Verify Playwright/Chromium is usable on startup â€” logs a warning if not.
       import("playwright").then(({ chromium }) => {
         chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"] })
-          .then((b) => b.close().then(() => log("[Browser] Chromium ready ✓")))
-          .catch((err: Error) => console.error("[Browser] Chromium unavailable — run `npx playwright install chromium`:", err.message.split("\n")[0]));
-      }).catch(() => { /* playwright not installed — silently skip */ });
+          .then((b) => b.close().then(() => log("[Browser] Chromium ready âœ“")))
+          .catch((err: Error) => console.error("[Browser] Chromium unavailable â€” run `npx playwright install chromium`:", err.message.split("\n")[0]));
+      }).catch(() => { /* playwright not installed â€” silently skip */ });
     },
   );
 })();
