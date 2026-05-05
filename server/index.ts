@@ -18,7 +18,6 @@ import { seedAllSessions } from "./channels/sessionStore";
 import { startDaemonBridge } from "./daemon/bridge";
 import { registerGatewayControlPlane } from "./gateway/controlPlane";
 import { registerVoiceRelay } from "./voiceRelayRoutes";
-import { registerCoachChatRouterOverride } from "./coachChatRouteOverride";
 import { bootAllBots as bootDiscordBots, bootSharedBot } from "./discord/manager";
 import { pruneAuditLogArchivesOnStartup } from "./agent/tools/applyCodeChangeTool";
 import { telegramLinks, inboxItems } from "@shared/schema";
@@ -453,7 +452,6 @@ function setupErrorHandler(app: express.Application) {
   registerTelegramWebhook(app);
   registerWhatsAppWebhook(app);
   registerSlackWebhook(app);
-  registerCoachChatRouterOverride(app);
 
   const server = await registerRoutes(app);
 
