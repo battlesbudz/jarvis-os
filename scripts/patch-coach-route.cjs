@@ -83,18 +83,18 @@ modelRouterSource = modelRouterSource.replace(
   `messages: maybeUseLeanContext(params.messages, logPrefix),`,
 );
 
-modelRouterSource = modelRouterSource.replace(
-  `const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
-
-  return queryWithFallback(`,
-  `const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
+if (!modelRouterSource.includes("const leanContextApplied = routedMessages !== params.messages;")) {
+  modelRouterSource = modelRouterSource.replace(
+    /const routedMessages = maybeUseLeanContext\(params\.messages, logPrefix\);\s*/,
+    `const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
   const leanContextApplied = routedMessages !== params.messages;
   if (leanContextApplied && params.tools?.length) {
     console.log(\`\${logPrefix} lean_context: omitted \${params.tools.length} tool schema(s)\`);
   }
 
-  return queryWithFallback(`,
-);
+  `,
+  );
+}
 
 modelRouterSource = modelRouterSource.replace(
   `tools: params.tools,
