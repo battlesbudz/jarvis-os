@@ -83,6 +83,26 @@ modelRouterSource = modelRouterSource.replace(
   `messages: maybeUseLeanContext(params.messages, logPrefix),`,
 );
 
+modelRouterSource = modelRouterSource.replace(
+  `const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
+
+  return queryWithFallback(`,
+  `const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
+  const leanContextApplied = routedMessages !== params.messages;
+  if (leanContextApplied && params.tools?.length) {
+    console.log(\`\${logPrefix} lean_context: omitted \${params.tools.length} tool schema(s)\`);
+  }
+
+  return queryWithFallback(`,
+);
+
+modelRouterSource = modelRouterSource.replace(
+  `tools: params.tools,
+      toolChoice: params.toolChoice ?? "none",`,
+  `tools: leanContextApplied ? undefined : params.tools,
+      toolChoice: leanContextApplied ? "none" : (params.toolChoice ?? "none"),`,
+);
+
 fs.writeFileSync(modelRouterPath, modelRouterSource);
 
 if (!source.includes('from "./agent/modelRouter"')) {
