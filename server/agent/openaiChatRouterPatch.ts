@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { Completions } from "openai/resources/chat/completions";
 import OpenAI from "openai";
 import { routeModelTurn } from "./modelRouter";
@@ -9,25 +10,16 @@ type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk;
 
 const ROUTER_PATCHED = Symbol.for("jarvis.openaiChatRouterPatched");
 const CLIENT_POST_PATCHED = Symbol.for("jarvis.openaiClientPostRouterPatched");
+const CLIENT_METHOD_PATCHED = Symbol.for("jarvis.openaiClientMethodRouterPatched");
 let routingDepth = 0;
+const require = createRequire(import.meta.url);
 
 function routingEnabled(): boolean {
   const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "enabled" || raw === "yes";
 }
 
-function shouldRoute(completions: unknown, body: ChatCreateBody): boolean {
-  if (!routingEnabled()) return false;
-  if (routingDepth > 0) return false;
-  if (typeof body.model !== "string") return false;
-
-  // Only catch the app's ordinary direct OpenAI chat calls. Provider adapters
-  // are invoked inside routeModelTurn(), so routingDepth prevents recursion
-  // even when they use the OpenAI SDK against Groq/OpenRouter-compatible URLs.
-  return body.model.startsWith("gpt-");
-}
-
-function shouldRouteBody(body: unknown): body is ChatCreateBody {
+function shouldRoute(body: unknown): body is ChatCreateBody {
   if (!routingEnabled()) return false;
   if (routingDepth > 0) return false;
   if (!body || typeof body !== "object") return false;
@@ -100,74 +92,115 @@ async function* toStream(text: string): AsyncGenerator<ChatCompletionChunk> {
   } as ChatCompletionChunk;
 }
 
-export function installOpenAIChatRouterPatch(): void {
-  const proto = Completions.prototype as typeof Completions.prototype & {
+type OpenAIConstructor = {
+  prototype: OpenAI & {
+    [CLIENT_POST_PATCHED]?: boolean;
+    [CLIENT_METHOD_PATCHED]?: boolean;
+    post?: (path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }) => unknown;
+    methodRequest?: (method: string, path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }) => unknown;
+  };
+};
+
+type CompletionsConstructor = {
+  prototype: typeof Completions.prototype & {
     [ROUTER_PATCHED]?: boolean;
     create: (body: ChatCreateBody, options?: ChatCreateOptions) => unknown;
   };
-  if (proto[ROUTER_PATCHED]) return;
+};
+
+function routeBody(body: ChatCreateBody, signal: AbortSignal | undefined, logPrefix: string): Promise<unknown> {
+  routingDepth++;
+  return routeModelTurn({
+    tier: tierForBody(body),
+    messages: body.messages,
+    tools: body.tools,
+    toolChoice: (body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto"),
+    maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
+    stream: false,
+    signal,
+    logPrefix,
+  }).then((result) => {
+    if (body.stream) return toStream(result.textContent);
+    return toCompletion(body, result.textContent, result.toolCallList, result.finishReason);
+  }).finally(() => {
+    routingDepth--;
+  });
+}
+
+function patchCompletions(ctor: CompletionsConstructor | undefined, logPrefix: string): boolean {
+  const proto = ctor?.prototype;
+  if (!proto || proto[ROUTER_PATCHED] || typeof proto.create !== "function") return false;
 
   const originalCreate = proto.create;
   proto.create = function patchedCreate(body: ChatCreateBody, options?: ChatCreateOptions): unknown {
-    if (!shouldRoute(this, body)) {
+    if (!shouldRoute(body)) {
       return originalCreate.call(this, body, options);
     }
 
-    routingDepth++;
-    const run = routeModelTurn({
-      tier: tierForBody(body),
-      messages: body.messages,
-      tools: body.tools,
-      toolChoice: (body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto"),
-      maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
-      stream: false,
-      signal: options?.signal,
-      logPrefix: "[OpenAIChatRouterPatch]",
-    }).then((result) => {
-      if (body.stream) return toStream(result.textContent);
-      return toCompletion(body, result.textContent, result.toolCallList, result.finishReason);
-    }).finally(() => {
-      routingDepth--;
-    });
-
-    return run;
+    return routeBody(body, options?.signal, logPrefix);
   };
   proto[ROUTER_PATCHED] = true;
+  return true;
+}
 
-  const clientProto = OpenAI.prototype as typeof OpenAI.prototype & {
-    [CLIENT_POST_PATCHED]?: boolean;
-    post: (path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }) => unknown;
-  };
-  if (!clientProto[CLIENT_POST_PATCHED]) {
+function patchOpenAIClient(ctor: OpenAIConstructor | undefined, postLogPrefix: string, methodLogPrefix: string): boolean {
+  const clientProto = ctor?.prototype;
+  if (!clientProto) return false;
+
+  let patched = false;
+
+  if (!clientProto[CLIENT_POST_PATCHED] && typeof clientProto.post === "function") {
     const originalPost = clientProto.post;
     clientProto.post = function patchedPost(path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }): unknown {
       const body = opts?.body;
-      if (path !== "/chat/completions" || !shouldRouteBody(body)) {
+      if (path !== "/chat/completions" || !shouldRoute(body)) {
         return originalPost.call(this, path, opts);
       }
 
-      routingDepth++;
-      const run = routeModelTurn({
-        tier: tierForBody(body),
-        messages: body.messages,
-        tools: body.tools,
-        toolChoice: (body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto"),
-        maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
-        stream: false,
-        signal: opts?.signal,
-        logPrefix: "[OpenAIClientPostRouterPatch]",
-      }).then((result) => {
-        if (body.stream) return toStream(result.textContent);
-        return toCompletion(body, result.textContent, result.toolCallList, result.finishReason);
-      }).finally(() => {
-        routingDepth--;
-      });
-
-      return run;
+      return routeBody(body, opts?.signal, postLogPrefix);
     };
     clientProto[CLIENT_POST_PATCHED] = true;
+    patched = true;
   }
-  console.log("[OpenAIChatRouterPatch] installed");
+
+  if (!clientProto[CLIENT_METHOD_PATCHED] && typeof clientProto.methodRequest === "function") {
+    const originalMethodRequest = clientProto.methodRequest;
+    clientProto.methodRequest = function patchedMethodRequest(method: string, path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }): unknown {
+      const body = opts?.body;
+      if (method !== "post" || path !== "/chat/completions" || !shouldRoute(body)) {
+        return originalMethodRequest.call(this, method, path, opts);
+      }
+
+      return routeBody(body, opts?.signal, methodLogPrefix);
+    };
+    clientProto[CLIENT_METHOD_PATCHED] = true;
+    patched = true;
+  }
+
+  return patched;
+}
+
+function optionalRequire(path: string): unknown {
+  try {
+    return require(path);
+  } catch {
+    return null;
+  }
+}
+
+export function installOpenAIChatRouterPatch(): void {
+  const cjsOpenAI = optionalRequire("openai") as { default?: OpenAIConstructor; OpenAI?: OpenAIConstructor } | null;
+  const cjsCompletions = optionalRequire("openai/resources/chat/completions") as { Completions?: CompletionsConstructor } | null;
+
+  const patched = [
+    patchCompletions(Completions as CompletionsConstructor, "[OpenAIChatRouterPatch]"),
+    patchCompletions(cjsCompletions?.Completions, "[OpenAIChatRouterPatch:cjs]"),
+    patchOpenAIClient(OpenAI as unknown as OpenAIConstructor, "[OpenAIClientPostRouterPatch]", "[OpenAIClientMethodRouterPatch]"),
+    patchOpenAIClient(cjsOpenAI?.default, "[OpenAIClientPostRouterPatch:cjs]", "[OpenAIClientMethodRouterPatch:cjs]"),
+    patchOpenAIClient(cjsOpenAI?.OpenAI, "[OpenAIClientPostRouterPatch:cjs-named]", "[OpenAIClientMethodRouterPatch:cjs-named]"),
+  ].some(Boolean);
+
+  if (patched) console.log("[OpenAIChatRouterPatch] installed");
 }
 
 installOpenAIChatRouterPatch();
