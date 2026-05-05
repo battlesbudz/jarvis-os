@@ -10,6 +10,7 @@ const tests = [
   { file: "server/agent/__tests__/manifestFilter.assert.ts" },
   { file: "server/agent/__tests__/modelRouter.assert.ts" },
   { file: "server/agent/__tests__/contextRegistryRouting.assert.ts" },
+  { file: "server/agent/__tests__/livingContextUpdateTool.assert.ts" },
   { file: "server/agent/__tests__/integrationError.assert.ts", requiresDatabase: true },
   { file: "server/agent/__tests__/selfHeal.assert.ts", requiresDatabase: true },
   { file: "server/agent/__tests__/writeBudget.assert.ts", requiresDatabase: true },

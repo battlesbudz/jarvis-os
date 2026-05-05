@@ -15,6 +15,7 @@ This file defines when Jarvis may use tools, write files, edit code, contact peo
 - Summarizing, planning, classifying, or drafting.
 - Creating local draft files in the correct workspace when the user asked for work product.
 - Running non-destructive checks such as type checks, tests, lint, file listing, or targeted searches.
+- Appending dated "Learned Updates" to allow-listed Battles workspace documents when the user directly answers a readiness question or a connected source clearly provides context. These updates are draft context only, not official approval to act.
 
 ## Requires Explicit Approval
 Ask before:
@@ -64,6 +65,7 @@ Ask before:
 | External APIs/OAuth | Never expose secrets or tokens in logs, docs, or chat. |
 | Cannabis licensing/compliance | Draft and analyze only. Require explicit approval before official documents, regulatory communication, SOP adoption, or compliance-affecting changes. |
 | Business finance | Draft scenarios only. Require explicit approval before pricing, funding terms, loans, purchases, contracts, or commitments. |
+| Living context docs | Use `living_context_update` to append source-backed learned updates to allow-listed Battles docs. Do not overwrite, delete, or mark official actions as approved. |
 
 ## Failure Behavior
 If a tool fails:
