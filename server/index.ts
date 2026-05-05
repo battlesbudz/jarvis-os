@@ -283,24 +283,24 @@ function configureExpoAndLanding(app: express.Application) {
     next();
   });
 
-  // Serve web build assets (/_expo/static/..., /assets/..., etc.)
-  if (fs.existsSync(webBuildDir)) {
-    app.use(express.static(webBuildDir));
-  }
-
-  app.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
-  app.use(express.static(path.resolve(process.cwd(), "static-build")));
-
-  // Serve web chat page at /chat — must come before the SPA catch-all
+  // Serve web chat page at /chat — registered BEFORE static middleware so the
+  // dynamic template (with GOOGLE_CLIENT_ID_PLACEHOLDER replaced) always wins
+  // over any static file that might exist at the same path in the build output.
   const chatTemplatePath = path.resolve(process.cwd(), "server", "templates", "chat.html");
-  app.get("/chat", (req: Request, res: Response) => {
+  const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || "";
+  if (googleClientId) {
+    log(`[Chat] GOOGLE_WEB_CLIENT_ID is set (${googleClientId.slice(0, 12)}…)`);
+  } else {
+    console.warn("[Chat] GOOGLE_WEB_CLIENT_ID is not set — Google Sign-In will be disabled on /chat");
+  }
+  app.get("/chat", (_req: Request, res: Response) => {
     try {
       let html = fs.readFileSync(chatTemplatePath, "utf-8");
-      const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || "";
       html = html.replace(/GOOGLE_CLIENT_ID_PLACEHOLDER/g, googleClientId);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.status(200).send(html);
-    } catch {
+    } catch (err) {
+      console.error("[Chat] Failed to read chat template:", err);
       res.status(500).send("Chat page unavailable");
     }
   });
@@ -311,10 +311,21 @@ function configureExpoAndLanding(app: express.Application) {
       const html = fs.readFileSync(controlTemplatePath, "utf-8");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.status(200).send(html);
-    } catch {
+    } catch (err) {
+      console.error("[Chat] Failed to read control template:", err);
       res.status(500).send("Control page unavailable");
     }
   });
+
+  // Serve web build assets (/_expo/static/..., /assets/..., etc.)
+  // Registered AFTER the /chat and /control routes so those always take priority.
+  if (fs.existsSync(webBuildDir)) {
+    app.use(express.static(webBuildDir));
+  }
+
+  app.use("/assets", express.static(path.resolve(process.cwd(), "assets")));
+  app.use(express.static(path.resolve(process.cwd(), "static-build")));
+
 
   // SPA catch-all: for web build, serve index.html for any non-API, non-asset path
   // so that client-side Expo Router navigation works in Chrome
