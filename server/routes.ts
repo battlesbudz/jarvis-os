@@ -51,6 +51,7 @@ import { getValidGoogleTokens, getValidGoogleToken, getValidMicrosoftToken, getU
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 import { extractAndStore } from "./memory/extractor";
+import { processLivingContextUpdate } from "./workspace/livingContextRouter";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { listPeople, deletePerson } from "./memory/people";
 import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
@@ -2895,6 +2896,16 @@ Rules:
       source: conversationText,
       sourceType: "chat",
     });
+
+    const lastUserMessage = [...messages].reverse().find((m: any) => m.role === "user" && typeof m.content === "string");
+    if (lastUserMessage?.content) {
+      await processLivingContextUpdate({
+        userId,
+        text: lastUserMessage.content,
+        sourceType: "conversation",
+        sourceRef: "app chat",
+      }).catch((err) => console.error("[LivingContext/app_chat] update failed:", err));
+    }
   }
 
   /**
@@ -5269,6 +5280,15 @@ Return ONLY the JSON object.`;
         source: conversationText,
         sourceType: "chat",
       });
+      const lastUserMessage = [...messages].reverse().find((m: any) => m.role === "user" && typeof m.content === "string");
+      if (lastUserMessage?.content) {
+        await processLivingContextUpdate({
+          userId,
+          text: lastUserMessage.content,
+          sourceType: "conversation",
+          sourceRef: "manual memory extraction",
+        }).catch((err) => console.error("[LivingContext/manual_extract] update failed:", err));
+      }
       res.json({ added: stored.length });
     } catch (error) {
       console.error("Error extracting memories:", error);

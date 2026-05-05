@@ -18,6 +18,7 @@ import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSo
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 import { extractAndStore } from "./memory/extractor";
+import { processLivingContextUpdate } from "./workspace/livingContextRouter";
 import { getSoulPromptBlock } from "./memory/soul";
 import { runAgent } from "./agent/harness";
 import { telegramCoachTools } from "./agent/tools";
@@ -460,6 +461,12 @@ async function extractProfileFromTelegram(userId: string, userText: string): Pro
       sourceType: "telegram",
       contextHint,
     });
+    await processLivingContextUpdate({
+      userId,
+      text: userText,
+      sourceType: "conversation",
+      sourceRef: "telegram",
+    }).catch((err) => console.error("[LivingContext/telegram] update failed:", err));
   } catch (err) {
     console.error("[Profile/Telegram] Extraction error:", err);
   }

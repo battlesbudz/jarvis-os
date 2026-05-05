@@ -17,6 +17,7 @@ import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
+import { processLivingContextUpdate } from "../workspace/livingContextRouter";
 import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
 // Side-effect import: registers workspace topic context provider.
@@ -233,6 +234,14 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   ]);
 
   logInteraction(userId, channelLower as any, "inbound", userText || "[image]").catch(() => {});
+  if (userText) {
+    processLivingContextUpdate({
+      userId,
+      text: userText,
+      sourceType: "conversation",
+      sourceRef: channelName,
+    }).catch((err) => console.error(`[LivingContext/${channelName}] update failed:`, err));
+  }
 
   let userTimezone = "America/New_York";
   if (goalsRow.status === "fulfilled") userGoals = (goalsRow.value[0]?.data as any[]) || [];

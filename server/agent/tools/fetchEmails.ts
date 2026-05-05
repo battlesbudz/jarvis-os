@@ -2,6 +2,24 @@ import type { AgentTool, ToolContext, ToolArgs, ToolResult } from "../types";
 import { getValidGoogleToken, getValidMicrosoftToken } from "../../userTokenStore";
 import { getRecentEmailCommitments } from "../../integrations/gmail";
 import { getRecentOutlookEmails } from "../../integrations/outlook";
+import { processLivingContextUpdate } from "../../workspace/livingContextRouter";
+
+function updateLivingContextFromEmails(userId: string, provider: string, emails: any[]): void {
+  for (const email of emails) {
+    const text = [
+      email.subject ? `Subject: ${email.subject}` : "",
+      email.from ? `From: ${email.from}` : "",
+      email.snippet ?? "",
+    ].filter(Boolean).join("\n");
+    if (!text.trim()) continue;
+    processLivingContextUpdate({
+      userId,
+      text,
+      sourceType: "email",
+      sourceRef: `${provider}: ${email.subject || "no subject"}`,
+    }).catch((err) => console.error(`[LivingContext/${provider}_email] update failed:`, err));
+  }
+}
 
 export const fetchEmailsTool: AgentTool = {
   name: "fetch_emails",
@@ -40,6 +58,7 @@ export const fetchEmailsTool: AgentTool = {
         if (recent.length === 0) {
           return { ok: true, content: "No emails found in the last 14 days.", label: "Inbox empty" };
         }
+        updateLivingContextFromEmails(ctx.userId, "gmail", recent);
         const lines = recent.map((e: any) =>
           `- From: ${e.from || "unknown"} | Subject: "${e.subject}" — ${e.snippet}`
         ).join("\n");
@@ -63,6 +82,7 @@ export const fetchEmailsTool: AgentTool = {
         if (emails.length === 0) {
           return { ok: true, content: "No emails found in Outlook inbox.", label: "Inbox empty" };
         }
+        updateLivingContextFromEmails(ctx.userId, "outlook", emails);
         const lines = emails.map((e: any) =>
           `- From: ${e.from} | Subject: "${e.subject}" — ${e.snippet}`
         ).join("\n");
