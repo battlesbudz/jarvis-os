@@ -1,5 +1,5 @@
 import { Completions } from "openai/resources/chat/completions";
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import { routeModelTurn } from "./modelRouter";
 
 type ChatCreateBody = OpenAI.Chat.Completions.ChatCompletionCreateParams;
@@ -8,6 +8,7 @@ type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion;
 type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk;
 
 const ROUTER_PATCHED = Symbol.for("jarvis.openaiChatRouterPatched");
+const CLIENT_POST_PATCHED = Symbol.for("jarvis.openaiClientPostRouterPatched");
 let routingDepth = 0;
 
 function routingEnabled(): boolean {
@@ -24,6 +25,14 @@ function shouldRoute(completions: unknown, body: ChatCreateBody): boolean {
   // are invoked inside routeModelTurn(), so routingDepth prevents recursion
   // even when they use the OpenAI SDK against Groq/OpenRouter-compatible URLs.
   return body.model.startsWith("gpt-");
+}
+
+function shouldRouteBody(body: unknown): body is ChatCreateBody {
+  if (!routingEnabled()) return false;
+  if (routingDepth > 0) return false;
+  if (!body || typeof body !== "object") return false;
+  const model = (body as { model?: unknown }).model;
+  return typeof model === "string" && model.startsWith("gpt-");
 }
 
 function tierForBody(body: ChatCreateBody): "cheap" | "balanced" | "smart" {
@@ -124,6 +133,40 @@ export function installOpenAIChatRouterPatch(): void {
     return run;
   };
   proto[ROUTER_PATCHED] = true;
+
+  const clientProto = OpenAI.prototype as typeof OpenAI.prototype & {
+    [CLIENT_POST_PATCHED]?: boolean;
+    post: (path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }) => unknown;
+  };
+  if (!clientProto[CLIENT_POST_PATCHED]) {
+    const originalPost = clientProto.post;
+    clientProto.post = function patchedPost(path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }): unknown {
+      const body = opts?.body;
+      if (path !== "/chat/completions" || !shouldRouteBody(body)) {
+        return originalPost.call(this, path, opts);
+      }
+
+      routingDepth++;
+      const run = routeModelTurn({
+        tier: tierForBody(body),
+        messages: body.messages,
+        tools: body.tools,
+        toolChoice: (body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto"),
+        maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
+        stream: false,
+        signal: opts?.signal,
+        logPrefix: "[OpenAIClientPostRouterPatch]",
+      }).then((result) => {
+        if (body.stream) return toStream(result.textContent);
+        return toCompletion(body, result.textContent, result.toolCallList, result.finishReason);
+      }).finally(() => {
+        routingDepth--;
+      });
+
+      return run;
+    };
+    clientProto[CLIENT_POST_PATCHED] = true;
+  }
   console.log("[OpenAIChatRouterPatch] installed");
 }
 
