@@ -31,7 +31,7 @@ import {
   sendGmailEmail,
 } from "./integrations/gmail";
 import { getSlackMessages } from "./integrations/slack";
-import { authRouter, authMiddleware, generateToken } from "./auth";
+import { authRouter, authMiddleware, generateToken, generateWebchatToken } from "./auth";
 import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
@@ -1178,7 +1178,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(410).json({ error: "This invite link has expired" });
       }
 
-      const jwtToken = generateToken(row.userId);
+      const jwtToken = generateWebchatToken(row.userId);
       return res.json({ token: jwtToken, userId: row.userId });
     } catch (error) {
       console.error("Error redeeming webchat invite token:", error);
