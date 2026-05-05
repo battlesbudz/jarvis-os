@@ -235,6 +235,27 @@ export const jarvisSouls = pgTable("jarvis_souls", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const livingContextUpdates = pgTable("living_context_updates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  target: varchar("target").notNull(),
+  path: text("path").notNull(),
+  topic: text("topic").notNull(),
+  learned: text("learned").notNull(),
+  normalizedLearned: text("normalized_learned").notNull(),
+  sourceType: varchar("source_type").notNull().default("conversation"),
+  sourceRef: text("source_ref"),
+  confidence: integer("confidence").notNull().default(70),
+  status: varchar("status").notNull().default("needs_review"),
+  fillsQuestion: text("fills_question"),
+  approvalSensitive: boolean("approval_sensitive").notNull().default(true),
+  notes: text("notes"),
+  block: text("block").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("living_context_updates_user_target_fact_idx").on(table.userId, table.target, table.normalizedLearned),
+]);
+
 export interface WeeklyPattern {
   category: MemoryCategory | "fact";
   observation: string;
