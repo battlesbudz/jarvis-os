@@ -46,6 +46,40 @@ function isWebchatScopedPath(req: Request): boolean {
   return false;
 }
 
+function stripPort(host: string): string {
+  const trimmed = host.trim().toLowerCase();
+  if (trimmed.startsWith("[::1]")) return "::1";
+  return trimmed.split(":")[0] || trimmed;
+}
+
+function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return false;
+  const normalised = stripPort(host.split(",")[0] || "");
+  return normalised === "localhost" || normalised === "127.0.0.1" || normalised === "::1";
+}
+
+function isLoopbackIp(ip: string | undefined): boolean {
+  if (!ip) return true;
+  const normalised = ip.trim().toLowerCase();
+  return normalised === "::1" ||
+    normalised === "127.0.0.1" ||
+    normalised === "::ffff:127.0.0.1" ||
+    normalised.startsWith("127.");
+}
+
+function isLocalDashboardRequest(req: Request): boolean {
+  const host = (req.headers["x-forwarded-host"] as string | undefined) || req.headers.host;
+  if (!isLoopbackHost(host)) return false;
+
+  const forwardedFor = (req.headers["x-forwarded-for"] as string | undefined)
+    ?.split(",")
+    .map((ip) => ip.trim())
+    .filter(Boolean);
+  if (forwardedFor?.length && !forwardedFor.every(isLoopbackIp)) return false;
+
+  return isLoopbackIp(req.socket.remoteAddress);
+}
+
 export const authRouter = Router();
 
 authRouter.post("/register", async (req: Request, res: Response) => {
@@ -304,10 +338,11 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
     // Dashboard internal secret — localhost-only bypass
     const dashSecret = process.env.DASHBOARD_SECRET;
-    if (dashSecret && token === dashSecret) {
+    if (dashSecret && token === dashSecret && isLocalDashboardRequest(req)) {
       const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
       if (firstUser) {
         req.userId = firstUser.id;
+        req.authScope = "user";
         return next();
       }
     }
@@ -335,7 +370,7 @@ export async function getUserIdFromRequest(req: Request): Promise<string | null>
   try {
     const token = authHeader.slice(7);
     const dashSecret = process.env.DASHBOARD_SECRET;
-    if (dashSecret && token === dashSecret) {
+    if (dashSecret && token === dashSecret && isLocalDashboardRequest(req)) {
       const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
       return firstUser?.id ?? null;
     }
