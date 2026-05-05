@@ -5,7 +5,7 @@
     "buildCommand": "npm run server:build && node scripts/patch-chat-template.mjs"
   },
   "deploy": {
-    "startCommand": "npm run db:push -- --force && npm run server:prod",
+    "startCommand": "npm run db:push -- --force && node scripts/railway-prestart.mjs && npm run server:prod",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
