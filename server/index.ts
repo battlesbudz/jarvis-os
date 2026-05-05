@@ -145,7 +145,7 @@ function setupRequestLogging(app: express.Application) {
   app.use((req, res, next) => {
     const start = Date.now();
     const path = req.path;
-    let capturedJsonResponse: Record<string, unknown> | undefined = undefined;
+    let capturedJsonResponse: unknown;
 
     const originalResJson = res.json;
     res.json = function (bodyJson, ...args) {
@@ -160,7 +160,7 @@ function setupRequestLogging(app: express.Application) {
 
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        logLine += ` :: ${JSON.stringify(redactForApiLog(capturedJsonResponse))}`;
       }
 
       if (logLine.length > 80) {
@@ -172,6 +172,45 @@ function setupRequestLogging(app: express.Application) {
 
     next();
   });
+}
+
+const REDACTED_LOG_VALUE = "[REDACTED]";
+const SENSITIVE_LOG_KEYS = new Set([
+  "access_token",
+  "accesstoken",
+  "authorization",
+  "id_token",
+  "idtoken",
+  "jwt",
+  "refresh_token",
+  "refreshtoken",
+  "token",
+]);
+
+function normaliseLogKey(key: string): string {
+  return key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+}
+
+function isSensitiveLogKey(key: string): boolean {
+  const normalised = normaliseLogKey(key);
+  if (SENSITIVE_LOG_KEYS.has(normalised)) return true;
+  return normalised.endsWith("token") || normalised.includes("authorization");
+}
+
+export function redactForApiLog(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactForApiLog(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    redacted[key] = isSensitiveLogKey(key) ? REDACTED_LOG_VALUE : redactForApiLog(item);
+  }
+  return redacted;
 }
 
 function getAppName(): string {
