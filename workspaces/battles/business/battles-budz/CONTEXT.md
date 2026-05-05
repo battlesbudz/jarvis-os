@@ -26,10 +26,14 @@ The current operating mission is to get the cannabis microbusiness fully operati
 - Community building unless it directly drives revenue, distribution, or partnership outcomes.
 
 ## Read First
-1. Most recent files in `compliance/` and `licensing/` for regulatory tasks.
-2. Most recent files in `investors/` for funding, pitch, or update tasks.
-3. Product/partner files when the request is commercial.
-4. `workspaces/battles/research/` when facts, laws, or claims need support.
+1. `licensing/2026-05-05-licensing-readiness-checklist-draft-v1.md` for final approval and OCM work.
+2. `compliance/2026-05-05-compliance-readiness-checklist-draft-v1.md` for SOP, recordkeeping, and operating requirement work.
+3. `facility/2026-05-05-facility-readiness-checklist-draft-v1.md` for facility readiness, inspection, and production capability work.
+4. `products/2026-05-05-product-readiness-matrix-draft-v1.md` for pre-roll, Battle Brew tea, and edible launch sequencing.
+5. `revenue/2026-05-05-first-revenue-action-plan-draft-v1.md` when deciding the shortest compliant path to revenue.
+6. Most recent files in `investors/` for funding, pitch, or update tasks when funding is required.
+7. Product/partner files when the request is commercial.
+8. `workspaces/battles/research/` when facts, laws, or claims need support.
 
 ## Prefer
 - Compliance-aware language.
