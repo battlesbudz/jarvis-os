@@ -3,12 +3,18 @@
  * that expose an OpenAI-compatible Chat Completions API.
  *
  * Model string convention:
- *   modelrelay/auto-fastest       -> MODEL_RELAY_BASE_URL or http://127.0.0.1:7352/v1
+ *   openrouter/<model-id>         -> OpenRouter's OpenAI-compatible API
+ *   groq/<model-id>               -> Groq's OpenAI-compatible API
+ *   together/<model-id>           -> Together's OpenAI-compatible API
+ *   fireworks/<model-id>          -> Fireworks' OpenAI-compatible API
+ *   cerebras/<model-id>           -> Cerebras' OpenAI-compatible API
+ *   nvidia/<model-id>             -> NVIDIA's OpenAI-compatible API
+ *   deepseek/<model-id>           -> DeepSeek's OpenAI-compatible API
  *   openai-compatible/<model-id>  -> OPENAI_COMPATIBLE_BASE_URL
  *
  * This keeps Jarvis's canonical provider contract intact while allowing cheap
- * or free model workers to sit behind ModelRelay, Ollama, LM Studio, vLLM,
- * OpenRouter-compatible gateways, or any other /v1/chat/completions server.
+ * or free model workers to sit behind OpenRouter, Groq, Together, Ollama,
+ * LM Studio, vLLM, or any other /v1/chat/completions server.
  */
 
 import OpenAI from "openai";
@@ -21,8 +27,30 @@ type RelayTarget = {
   model: string;
 };
 
+type OpenAICompatiblePrefix =
+  | "modelrelay"
+  | "openai-compatible"
+  | "openrouter"
+  | "groq"
+  | "together"
+  | "fireworks"
+  | "cerebras"
+  | "nvidia"
+  | "deepseek";
+
 const MODELRELAY_PREFIX = "modelrelay/";
 const OPENAI_COMPATIBLE_PREFIX = "openai-compatible/";
+const PROVIDER_PREFIXES: Array<{ prefix: OpenAICompatiblePrefix; marker: string }> = [
+  { prefix: "modelrelay", marker: MODELRELAY_PREFIX },
+  { prefix: "openai-compatible", marker: OPENAI_COMPATIBLE_PREFIX },
+  { prefix: "openrouter", marker: "openrouter/" },
+  { prefix: "groq", marker: "groq/" },
+  { prefix: "together", marker: "together/" },
+  { prefix: "fireworks", marker: "fireworks/" },
+  { prefix: "cerebras", marker: "cerebras/" },
+  { prefix: "nvidia", marker: "nvidia/" },
+  { prefix: "deepseek", marker: "deepseek/" },
+];
 
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
@@ -33,12 +61,11 @@ function normalizeBaseURL(value: string | undefined, fallback: string): string {
   return trimTrailingSlash(raw);
 }
 
-function stripKnownPrefix(model: string): { prefix: "modelrelay" | "openai-compatible"; model: string } {
-  if (model.startsWith(MODELRELAY_PREFIX)) {
-    return { prefix: "modelrelay", model: model.slice(MODELRELAY_PREFIX.length) || "auto-fastest" };
-  }
-  if (model.startsWith(OPENAI_COMPATIBLE_PREFIX)) {
-    return { prefix: "openai-compatible", model: model.slice(OPENAI_COMPATIBLE_PREFIX.length) };
+function stripKnownPrefix(model: string): { prefix: OpenAICompatiblePrefix; model: string } {
+  for (const { prefix, marker } of PROVIDER_PREFIXES) {
+    if (model.startsWith(marker)) {
+      return { prefix, model: model.slice(marker.length) };
+    }
   }
   return { prefix: "openai-compatible", model };
 }
@@ -46,22 +73,65 @@ function stripKnownPrefix(model: string): { prefix: "modelrelay" | "openai-compa
 function resolveRelayTarget(model: string): RelayTarget {
   const parsed = stripKnownPrefix(model);
 
-  if (parsed.prefix === "modelrelay") {
-    return {
-      baseURL: normalizeBaseURL(
-        process.env.MODEL_RELAY_BASE_URL ?? process.env.MODELRELAY_BASE_URL,
-        "http://127.0.0.1:7352/v1",
-      ),
-      apiKey: process.env.MODEL_RELAY_API_KEY ?? process.env.MODELRELAY_API_KEY ?? "no-key",
-      model: parsed.model,
-    };
+  switch (parsed.prefix) {
+    case "openrouter":
+      return {
+        baseURL: normalizeBaseURL(process.env.OPENROUTER_BASE_URL, "https://openrouter.ai/api/v1"),
+        apiKey: process.env.OPENROUTER_API_KEY ?? "no-key",
+        model: parsed.model || process.env.OPENROUTER_MODEL || "openrouter/auto",
+      };
+    case "groq":
+      return {
+        baseURL: normalizeBaseURL(process.env.GROQ_BASE_URL, "https://api.groq.com/openai/v1"),
+        apiKey: process.env.GROQ_API_KEY ?? "no-key",
+        model: parsed.model || process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+      };
+    case "together":
+      return {
+        baseURL: normalizeBaseURL(process.env.TOGETHER_BASE_URL, "https://api.together.xyz/v1"),
+        apiKey: process.env.TOGETHER_API_KEY ?? "no-key",
+        model: parsed.model || process.env.TOGETHER_MODEL || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+      };
+    case "fireworks":
+      return {
+        baseURL: normalizeBaseURL(process.env.FIREWORKS_BASE_URL, "https://api.fireworks.ai/inference/v1"),
+        apiKey: process.env.FIREWORKS_API_KEY ?? "no-key",
+        model: parsed.model || process.env.FIREWORKS_MODEL || "accounts/fireworks/models/llama-v3p1-8b-instruct",
+      };
+    case "cerebras":
+      return {
+        baseURL: normalizeBaseURL(process.env.CEREBRAS_BASE_URL, "https://api.cerebras.ai/v1"),
+        apiKey: process.env.CEREBRAS_API_KEY ?? "no-key",
+        model: parsed.model || process.env.CEREBRAS_MODEL || "llama3.1-8b",
+      };
+    case "nvidia":
+      return {
+        baseURL: normalizeBaseURL(process.env.NVIDIA_BASE_URL, "https://integrate.api.nvidia.com/v1"),
+        apiKey: process.env.NVIDIA_API_KEY ?? "no-key",
+        model: parsed.model || process.env.NVIDIA_MODEL || "meta/llama-3.1-8b-instruct",
+      };
+    case "deepseek":
+      return {
+        baseURL: normalizeBaseURL(process.env.DEEPSEEK_BASE_URL, "https://api.deepseek.com"),
+        apiKey: process.env.DEEPSEEK_API_KEY ?? "no-key",
+        model: parsed.model || process.env.DEEPSEEK_MODEL || "deepseek-chat",
+      };
+    case "modelrelay":
+      return {
+        baseURL: normalizeBaseURL(
+          process.env.MODEL_RELAY_BASE_URL ?? process.env.MODELRELAY_BASE_URL,
+          "http://127.0.0.1:7352/v1",
+        ),
+        apiKey: process.env.MODEL_RELAY_API_KEY ?? process.env.MODELRELAY_API_KEY ?? "no-key",
+        model: parsed.model || "auto-fastest",
+      };
+    case "openai-compatible":
+      return {
+        baseURL: normalizeBaseURL(process.env.OPENAI_COMPATIBLE_BASE_URL, "http://127.0.0.1:7352/v1"),
+        apiKey: process.env.OPENAI_COMPATIBLE_API_KEY ?? "no-key",
+        model: parsed.model || process.env.OPENAI_COMPATIBLE_MODEL || "auto-fastest",
+      };
   }
-
-  return {
-    baseURL: normalizeBaseURL(process.env.OPENAI_COMPATIBLE_BASE_URL, "http://127.0.0.1:7352/v1"),
-    apiKey: process.env.OPENAI_COMPATIBLE_API_KEY ?? "no-key",
-    model: parsed.model || process.env.OPENAI_COMPATIBLE_MODEL || "auto-fastest",
-  };
 }
 
 export class OpenAICompatibleProvider extends BaseProvider {
