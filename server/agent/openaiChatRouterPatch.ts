@@ -15,19 +15,14 @@ function routingEnabled(): boolean {
   return raw === "1" || raw === "true" || raw === "enabled" || raw === "yes";
 }
 
-function isDirectOpenAIClient(completions: unknown): boolean {
-  const baseURL = String((completions as { _client?: { baseURL?: unknown } })._client?.baseURL ?? "");
-  return baseURL.includes("api.openai.com");
-}
-
 function shouldRoute(completions: unknown, body: ChatCreateBody): boolean {
   if (!routingEnabled()) return false;
   if (routingDepth > 0) return false;
-  if (!isDirectOpenAIClient(completions)) return false;
   if (typeof body.model !== "string") return false;
 
   // Only catch the app's ordinary direct OpenAI chat calls. Provider adapters
-  // use non-OpenAI base URLs and bypass this patch via isDirectOpenAIClient().
+  // are invoked inside routeModelTurn(), so routingDepth prevents recursion
+  // even when they use the OpenAI SDK against Groq/OpenRouter-compatible URLs.
   return body.model.startsWith("gpt-");
 }
 
