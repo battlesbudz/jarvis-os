@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { eq, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
+import { routeModelTurn } from "../agent/modelRouter";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
@@ -18,10 +18,6 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   }
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
 import { normalizeCategory, MEMORY_CATEGORIES } from "./categories";
 import { markSoulStale } from "./soul";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
@@ -122,34 +118,34 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
 Output JSON: { "memories": [{"content": string, "category": one-of-categories, "confidence": 0-100, "tier": one-of-tiers, "memory_type": one-of-types}] }
 
 Categories (pick ONE per memory):
-- work_patterns       — when/how they focus, schedule habits, tools, deep-work timing
-- communication_style — humor, energy, decision style, message length preference
-- energy_rhythms      — peak/low hours, sleep, exercise timing, recovery rituals
-- goals_history       — goals stated or inferred over time, including past goals
-- relationships       — specific named people (family, teammates, partners)
-- values              — what they care about deeply, what motivates them
-- blockers            — recurring frictions, fears, procrastination triggers
-- accomplishments     — concrete wins, milestones reached
-- preferences         — explicit preferences (meeting times, channels)
-- fact                — anything else durable and specific
+- work_patterns       â€” when/how they focus, schedule habits, tools, deep-work timing
+- communication_style â€” humor, energy, decision style, message length preference
+- energy_rhythms      â€” peak/low hours, sleep, exercise timing, recovery rituals
+- goals_history       â€” goals stated or inferred over time, including past goals
+- relationships       â€” specific named people (family, teammates, partners)
+- values              â€” what they care about deeply, what motivates them
+- blockers            â€” recurring frictions, fears, procrastination triggers
+- accomplishments     â€” concrete wins, milestones reached
+- preferences         â€” explicit preferences (meeting times, channels)
+- fact                â€” anything else durable and specific
 
 Memory Tiers (pick ONE per memory):
-- working     — fleeting context valid for minutes only (e.g. "user is currently stressed about X")
-- short_term  — conversational facts valid for 48-72 hours (e.g. "user said they're busy today")
-- long_term   — stable, durable patterns and facts that persist indefinitely
+- working     â€” fleeting context valid for minutes only (e.g. "user is currently stressed about X")
+- short_term  â€” conversational facts valid for 48-72 hours (e.g. "user said they're busy today")
+- long_term   â€” stable, durable patterns and facts that persist indefinitely
 
 Memory Types (pick ONE per memory):
-- episodic    — an event, action, or fact tied to a specific moment ("user finished the project on Friday", "user said they are busy today")
-- semantic    — a general fact or stable preference that holds across time ("user prefers morning deep work")
-- procedural  — a repeated behavioral habit or workflow ("user reviews email at 9am daily")
-- contextual  — momentary internal state with no factual claim ("user seems stressed right now")
+- episodic    â€” an event, action, or fact tied to a specific moment ("user finished the project on Friday", "user said they are busy today")
+- semantic    â€” a general fact or stable preference that holds across time ("user prefers morning deep work")
+- procedural  â€” a repeated behavioral habit or workflow ("user reviews email at 9am daily")
+- contextual  â€” momentary internal state with no factual claim ("user seems stressed right now")
 
-Tier/Type canonical assignments — follow these exactly:
-- Facts from the current conversation  → short_term + episodic  (expires 48-72 h)
-- Current fleeting/emotional state     → working    + contextual (expires 2-4 h)
-- Inferred stable patterns/preferences → long_term  + semantic
-- Specific past events                 → long_term  + episodic
-- Repeated behavioral habits           → long_term  + procedural
+Tier/Type canonical assignments â€” follow these exactly:
+- Facts from the current conversation  â†’ short_term + episodic  (expires 48-72 h)
+- Current fleeting/emotional state     â†’ working    + contextual (expires 2-4 h)
+- Inferred stable patterns/preferences â†’ long_term  + semantic
+- Specific past events                 â†’ long_term  + episodic
+- Repeated behavioral habits           â†’ long_term  + procedural
 
 Rules:
 - Only extract facts that are SPECIFIC and not already captured.
@@ -164,17 +160,20 @@ ${source.slice(0, 6000)}
 
 Return { "memories": [] } if nothing new and high-confidence was learned.`;
 
-    const { getModel } = await import("../lib/modelPrefs");
-    const model = await getModel(userId, "memory");
-
-    const response = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 500,
+    const response = await routeModelTurn({
+      tier: "cheap",
+      messages: [
+        {
+          role: "system",
+          content: "Return only valid JSON. Do not include markdown fences, prose, or commentary.",
+        },
+        { role: "user", content: prompt },
+      ],
+      maxCompletionTokens: 500,
+      logPrefix: "[MemoryExtract]",
     });
 
-    const content = response.choices[0]?.message?.content || '{"memories":[]}';
+    const content = response.textContent || '{"memories":[]}';
     const raw = parseExtraction(content).slice(0, maxNew);
 
     for (const r of raw) {
