@@ -27,6 +27,12 @@ Ask before:
 - Deleting or rewriting memory entries.
 - Running destructive commands or commands that affect files outside the project/workspace.
 - Pushing code, opening PRs, deploying, or changing production settings.
+- Any pricing decision, funding term, loan, agreement, or financial commitment.
+- Any licensing, regulatory, official-document, SOP, or compliance action that affects cannabis operations.
+- Any outreach to partners, investors, regulators, customers, retailers, processors, cultivators, or distributors.
+- Any modification to core behavior files, including `agents/PRIME.md`, routing logic, memory rules, `agents/SOUL.md`, root `SOUL.md`, or long-term memory.
+- Any GitHub/codebase change, including writing code, modifying files, committing changes, pushing branches, or opening PRs.
+- Anything irreversible, including deleting files, overwriting documents, removing data, or altering stored context.
 
 ## File Write Rules
 - Use the routed workspace destination from `agents/ROUTING.md`.
@@ -56,6 +62,8 @@ Ask before:
 | Daemon/device | Require explicit approval and describe the exact action. |
 | Code/files | Prefer safe reads and scoped patches. Avoid destructive operations. |
 | External APIs/OAuth | Never expose secrets or tokens in logs, docs, or chat. |
+| Cannabis licensing/compliance | Draft and analyze only. Require explicit approval before official documents, regulatory communication, SOP adoption, or compliance-affecting changes. |
+| Business finance | Draft scenarios only. Require explicit approval before pricing, funding terms, loans, purchases, contracts, or commitments. |
 
 ## Failure Behavior
 If a tool fails:
