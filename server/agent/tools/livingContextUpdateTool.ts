@@ -185,6 +185,7 @@ async function syncPersistedUpdatesToFile(input: {
       FROM living_context_updates
       WHERE user_id = ${input.userId}
         AND target = ${input.target}
+        AND status <> 'discarded'
       ORDER BY created_at ASC
     `);
     return Array.isArray(result) ? result : result.rows ?? [];
@@ -210,7 +211,7 @@ async function syncPersistedUpdatesToFile(input: {
 
 export function createLivingContextUpdateTool(options: LivingContextToolOptions = {}): AgentTool {
   const rootDir = options.rootDir ?? process.cwd();
-  const targets = options.targets ?? DEFAULT_TARGETS;
+  const targets: Record<string, string> = options.targets ?? DEFAULT_TARGETS;
   const auditLogPath = options.auditLogPath ?? path.join(rootDir, "server", "living-context-audit.log");
   const requireOwner = options.requireOwner ?? true;
   const now = options.now ?? (() => new Date());

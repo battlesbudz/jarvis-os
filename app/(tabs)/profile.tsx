@@ -96,6 +96,21 @@ interface PendingMemory {
   extracted_at: string;
 }
 
+interface PendingLivingContextUpdate {
+  id: string;
+  target: string;
+  path: string;
+  topic: string;
+  learned: string;
+  source_type: string;
+  source_ref: string | null;
+  confidence: number;
+  status: string;
+  fills_question: string | null;
+  approval_sensitive: boolean;
+  created_at: string;
+}
+
 interface MorningVoiceNote {
   id: string;
   recordedAt: string;
@@ -241,6 +256,10 @@ export default function ProfileScreen() {
   const [pendingMemoriesLoading, setPendingMemoriesLoading] = useState(false);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemoryText, setEditingMemoryText] = useState('');
+  const [pendingLivingUpdates, setPendingLivingUpdates] = useState<PendingLivingContextUpdate[]>([]);
+  const [pendingLivingUpdatesLoading, setPendingLivingUpdatesLoading] = useState(false);
+  const [editingLivingUpdateId, setEditingLivingUpdateId] = useState<string | null>(null);
+  const [editingLivingUpdateText, setEditingLivingUpdateText] = useState('');
   const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
@@ -1080,7 +1099,7 @@ export default function ProfileScreen() {
     }
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadSkills()]);
+    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadPendingLivingContextUpdates(), loadSkills()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -1102,7 +1121,8 @@ export default function ProfileScreen() {
         setTtsLatencyTier(prefs.ttsLatencyTier as 0 | 2 | 4);
       }
     } catch {}
-  // loadDaemonPerms, loadAndroidDaemonPerms, and loadPendingMemories are all
+  // loadDaemonPerms, loadAndroidDaemonPerms, loadPendingMemories, and
+  // loadPendingLivingContextUpdates are all
   // useCallback([], []) / stable refs declared after loadAll — omit from deps
   // to avoid temporal-dead-zone ReferenceErrors at initialisation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1523,6 +1543,34 @@ export default function ProfileScreen() {
       setEditingMemoryText('');
     } catch (err) {
       console.error('[pending-memories] review error:', err);
+    }
+  }, []);
+
+  const loadPendingLivingContextUpdates = useCallback(async () => {
+    setPendingLivingUpdatesLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/living-context/pending-review');
+      const data = await res.json();
+      setPendingLivingUpdates(Array.isArray(data) ? data : (data.updates ?? []));
+    } catch (err) {
+      console.error('[living-context-review] load error:', err);
+    } finally {
+      setPendingLivingUpdatesLoading(false);
+    }
+  }, []);
+
+  const handleReviewLivingContextUpdate = useCallback(async (
+    id: string,
+    action: 'keep' | 'edit' | 'discard',
+    editedLearned?: string,
+  ) => {
+    try {
+      await apiRequest('PATCH', `/api/living-context/${id}/review`, { action, updatedLearned: editedLearned });
+      setPendingLivingUpdates((prev) => prev.filter((u) => u.id !== id));
+      setEditingLivingUpdateId(null);
+      setEditingLivingUpdateText('');
+    } catch (err) {
+      console.error('[living-context-review] review error:', err);
     }
   }, []);
 
@@ -2418,6 +2466,135 @@ export default function ProfileScreen() {
                     {mem.extracted_at && (
                       <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }}>
                         Extracted {new Date(mem.extracted_at).toLocaleDateString()}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+        </Animated.View>
+
+        {/* Living Context Review */}
+        <Animated.View entering={FadeInDown.duration(400).delay(414)}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.sectionTitle}>Living Context Review</Text>
+              {pendingLivingUpdates.length > 0 && (
+                <View style={{ backgroundColor: Colors.primary ?? '#6C63FF', borderRadius: 10, minWidth: 20, paddingHorizontal: 6, paddingVertical: 2, alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{pendingLivingUpdates.length}</Text>
+                </View>
+              )}
+            </View>
+            <Pressable onPress={loadPendingLivingContextUpdates} hitSlop={8} disabled={pendingLivingUpdatesLoading}>
+              {pendingLivingUpdatesLoading
+                ? <ActivityIndicator size="small" color={Colors.textTertiary} />
+                : <Ionicons name="refresh" size={16} color={Colors.textSecondary} />}
+            </Pressable>
+          </View>
+          <Text style={styles.sectionSubtitle}>
+            Source-backed business facts Jarvis captured for the Battles folder-brain
+          </Text>
+          {pendingLivingUpdatesLoading ? (
+            <View style={styles.memoryEmptyCard}>
+              <ActivityIndicator size="small" color={Colors.textTertiary} />
+            </View>
+          ) : pendingLivingUpdates.length === 0 ? (
+            <View style={styles.memoryEmptyCard}>
+              <View style={styles.memoryEmptyIcon}>
+                <Ionicons name="folder-open-outline" size={22} color={Colors.textTertiary} />
+              </View>
+              <Text style={styles.memoryEmptyText}>
+                No living context updates waiting for review
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.memoryList}>
+              {pendingLivingUpdates.map((update, idx) => (
+                <View key={update.id} style={[styles.memoryRow, idx < pendingLivingUpdates.length - 1 && styles.memoryRowBorder]}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{update.topic}</Text>
+                      </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{update.source_type}</Text>
+                      </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{update.confidence}%</Text>
+                      </View>
+                    </View>
+                    {editingLivingUpdateId === update.id ? (
+                      <View>
+                        <TextInput
+                          value={editingLivingUpdateText}
+                          onChangeText={setEditingLivingUpdateText}
+                          multiline
+                          autoFocus
+                          placeholderTextColor={Colors.textTertiary}
+                          style={{
+                            backgroundColor: Colors.background,
+                            borderRadius: 8,
+                            padding: 10,
+                            color: Colors.text,
+                            fontSize: 14,
+                            lineHeight: 20,
+                            minHeight: 70,
+                            textAlignVertical: 'top',
+                            borderWidth: 1,
+                            borderColor: Colors.border,
+                            marginBottom: 8,
+                          }}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Pressable
+                            onPress={() => handleReviewLivingContextUpdate(update.id, 'edit', editingLivingUpdateText)}
+                            style={{ flex: 1, backgroundColor: Colors.text, padding: 10, borderRadius: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: Colors.background, fontWeight: '600', fontSize: 13 }}>Save & Keep</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => { setEditingLivingUpdateId(null); setEditingLivingUpdateText(''); }}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 10, borderRadius: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: Colors.text, fontWeight: '500', fontSize: 13 }}>Cancel</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      <View>
+                        <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 20, marginBottom: 8 }}>{update.learned}</Text>
+                        <Text style={{ color: Colors.textTertiary, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                          {update.path}{update.source_ref ? ` · ${update.source_ref}` : ''}
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Pressable
+                            onPress={() => handleReviewLivingContextUpdate(update.id, 'keep')}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="checkmark" size={14} color={Colors.text} />
+                            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>Keep</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => { setEditingLivingUpdateId(update.id); setEditingLivingUpdateText(update.learned); }}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="create-outline" size={14} color={Colors.text} />
+                            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>Edit</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => handleReviewLivingContextUpdate(update.id, 'discard')}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                            <Text style={{ color: '#EF4444', fontWeight: '600', fontSize: 13 }}>Discard</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    )}
+                    {update.created_at && (
+                      <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }}>
+                        Captured {new Date(update.created_at).toLocaleDateString()}
                       </Text>
                     )}
                   </View>

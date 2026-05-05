@@ -69,6 +69,29 @@ import { runCapabilityGapAnalysis } from "./agent/capabilityGapAnalyzer";
 // Reads agents/PRIME.md once at module load. Sections are delimited by ## headings.
 // Falls back to hardcoded defaults if the file is missing or unreadable.
 
+async function applyLivingContextReviewToFile(relPath: string | null | undefined, oldBlock: string | null | undefined, newBlock?: string | null): Promise<void> {
+  if (!relPath || !oldBlock) return;
+  if (path.isAbsolute(relPath) || relPath.includes("..")) return;
+  const rootDir = process.cwd();
+  const abs = path.resolve(rootDir, relPath);
+  const allowedRoot = path.resolve(rootDir, "workspaces", "battles");
+  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path.sep))) return;
+  if (path.extname(abs).toLowerCase() !== ".md") return;
+
+  try {
+    let content = await fs.promises.readFile(abs, "utf-8");
+    const replacement = newBlock ? `${newBlock}\n` : "";
+    if (content.includes(oldBlock)) {
+      content = content.replace(oldBlock, replacement).replace(/\n{4,}/g, "\n\n\n");
+      await fs.promises.writeFile(abs, content, "utf-8");
+    } else if (newBlock && !content.includes(newBlock)) {
+      await fs.promises.appendFile(abs, `\n${newBlock}\n`, "utf-8");
+    }
+  } catch {
+    // The database row is the durable source of truth; runtime file sync is best effort.
+  }
+}
+
 interface PrimeSections {
   coachingFrameworks: string;
   personas: Record<string, string>;
@@ -5200,6 +5223,129 @@ Return ONLY the JSON object.`;
     } catch (error) {
       console.error("Error bulk-approving pending memories:", error);
       res.status(500).json({ error: "Failed to approve pending memories" });
+    }
+  });
+
+  app.get("/api/living-context/pending-review", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.execute<{
+        id: string;
+        target: string;
+        path: string;
+        topic: string;
+        learned: string;
+        source_type: string;
+        source_ref: string | null;
+        confidence: number;
+        status: string;
+        fills_question: string | null;
+        approval_sensitive: boolean;
+        created_at: string;
+      }>(sql`
+        SELECT id, target, path, topic, learned, source_type, source_ref, confidence,
+               status, fills_question, approval_sensitive, created_at
+        FROM living_context_updates
+        WHERE user_id = ${userId}
+          AND status = 'needs_review'
+        ORDER BY created_at DESC
+        LIMIT 50
+      `);
+      res.json({ updates: rows.rows ?? [] });
+    } catch (error) {
+      console.error("Error fetching pending living-context updates:", error);
+      res.status(500).json({ error: "Failed to fetch living-context updates" });
+    }
+  });
+
+  app.patch("/api/living-context/:id/review", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = _p(req.params.id);
+      const { action, updatedLearned } = req.body as { action: "keep" | "edit" | "discard"; updatedLearned?: string };
+      if (!["keep", "edit", "discard"].includes(action)) {
+        return res.status(400).json({ error: "action must be keep, edit, or discard" });
+      }
+
+      if (action === "discard") {
+        const result = await db.execute<{ id: string; path: string; block: string }>(sql`
+          UPDATE living_context_updates
+          SET status = 'discarded'
+          WHERE id = ${id} AND user_id = ${userId} AND status = 'needs_review'
+          RETURNING id, path, block
+        `);
+        const row = (result.rows ?? [])[0];
+        if (!row) return res.status(404).json({ error: "Living context update not found" });
+        applyLivingContextReviewToFile(row.path, row.block, null).catch(() => {});
+        return res.json({ ok: true });
+      }
+
+      if (action === "edit") {
+        const learned = typeof updatedLearned === "string" ? updatedLearned.trim() : "";
+        if (!learned) return res.status(400).json({ error: "updatedLearned is required for edit action" });
+        const existing = await db.execute<{
+          topic: string;
+          source_type: string;
+          source_ref: string | null;
+          confidence: number;
+          fills_question: string | null;
+          approval_sensitive: boolean;
+          notes: string | null;
+          created_at: string;
+          path: string;
+          block: string;
+        }>(sql`
+          SELECT topic, source_type, source_ref, confidence, fills_question, approval_sensitive, notes, created_at, path, block
+          FROM living_context_updates
+          WHERE id = ${id} AND user_id = ${userId} AND status = 'needs_review'
+          LIMIT 1
+        `);
+        const row = (existing.rows ?? [])[0];
+        if (!row) return res.status(404).json({ error: "Living context update not found" });
+        const created = new Date(row.created_at);
+        const date = Number.isNaN(created.getTime()) ? new Date().toISOString().slice(0, 10) : created.toISOString().slice(0, 10);
+        const sourceRef = row.source_ref ? ` (${row.source_ref})` : "";
+        const blockLines = [
+          `### ${date} - ${row.topic || "Context update"}`,
+          `- Source: ${row.source_type || "conversation"}${sourceRef}`,
+          `- Confidence: ${row.confidence ?? 70}`,
+          "- Status: edited",
+          `- Learned: ${learned}`,
+        ];
+        if (row.fills_question) blockLines.push(`- Fills: ${row.fills_question}`);
+        if (row.approval_sensitive) {
+          blockLines.push("- Approval boundary: This may inform planning, but official compliance, licensing, financial, or external actions still require explicit approval from Battles.");
+        }
+        if (row.notes) blockLines.push(`- Notes: ${row.notes}`);
+        const block = blockLines.join("\n");
+        const normalized = createHash("sha256").update(learned.toLowerCase().replace(/\s+/g, " ").trim()).digest("hex");
+        const result = await db.execute(sql`
+          UPDATE living_context_updates
+          SET learned = ${learned},
+              normalized_learned = ${normalized},
+              block = ${block},
+              status = 'edited'
+          WHERE id = ${id} AND user_id = ${userId} AND status = 'needs_review'
+          RETURNING id
+        `);
+        if ((result.rows ?? []).length === 0) return res.status(404).json({ error: "Living context update not found" });
+        applyLivingContextReviewToFile(row.path, row.block, block).catch(() => {});
+        return res.json({ ok: true });
+      }
+
+      const result = await db.execute(sql`
+        UPDATE living_context_updates
+        SET status = 'kept'
+        WHERE id = ${id} AND user_id = ${userId} AND status = 'needs_review'
+        RETURNING id
+      `);
+      if ((result.rows ?? []).length === 0) return res.status(404).json({ error: "Living context update not found" });
+      return res.json({ ok: true });
+    } catch (error) {
+      console.error("Error reviewing living-context update:", error);
+      res.status(500).json({ error: "Failed to review living-context update" });
     }
   });
 

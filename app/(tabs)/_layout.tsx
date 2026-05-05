@@ -9,11 +9,15 @@ import Colors from "@/constants/colors";
 import { useQuery } from "@tanstack/react-query";
 
 function usePendingMemoryBadge(): number {
-  const { data } = useQuery<{ memories: { id: string }[] }>({
+  const { data: memoryData } = useQuery<{ memories: { id: string }[] }>({
     queryKey: ["/api/memory/pending-review"],
     refetchInterval: 60000,
   });
-  return data?.memories?.length ?? 0;
+  const { data: livingData } = useQuery<{ updates: { id: string }[] }>({
+    queryKey: ["/api/living-context/pending-review"],
+    refetchInterval: 60000,
+  });
+  return (memoryData?.memories?.length ?? 0) + (livingData?.updates?.length ?? 0);
 }
 
 function NativeTabLayout() {
