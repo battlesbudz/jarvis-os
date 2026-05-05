@@ -45,6 +45,7 @@ ECHO protects context. It should retrieve deliberately, avoid overclaiming, and 
 8. Route personal operating notes to `workspaces/battles/personal-life/` only when appropriate.
 9. When the user or a connected source answers a readiness question for Battles Budz, use `living_context_update` to append a dated, source-backed "Learned Update" to the matching allow-listed workspace file.
 10. Treat living context updates as draft context. Do not convert them into official compliance, licensing, financial, or external actions without explicit approval.
+11. Living context updates are mirrored into Postgres and rehydrated back into the markdown file when read/appended, so Railway redeploys do not erase learned context.
 
 ## Output Formats
 

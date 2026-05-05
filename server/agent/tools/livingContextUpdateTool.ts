@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import { createHash } from "crypto";
 import type { AgentTool, ToolArgs, ToolContext } from "../types";
 
 type SourceType = "conversation" | "email" | "document" | "research" | "manual";
@@ -30,6 +31,10 @@ function normalizeForDedup(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
 }
 
+function factKey(value: string): string {
+  return createHash("sha256").update(normalizeForDedup(value)).digest("hex");
+}
+
 function clampConfidence(value: unknown): number {
   const n = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(n)) return 70;
@@ -58,6 +63,19 @@ async function appendAudit(auditLogPath: string, entry: Record<string, unknown>)
     await fs.appendFile(auditLogPath, JSON.stringify(entry) + "\n", "utf-8");
   } catch {
     // Audit logging is best effort; the file write result is still returned to the user.
+  }
+}
+
+async function withDb<T>(fn: (db: any, sql: any) => Promise<T>): Promise<T | null> {
+  if (!process.env.DATABASE_URL) return null;
+  try {
+    const [{ db }, { sql }] = await Promise.all([
+      import("../../db"),
+      import("drizzle-orm"),
+    ]);
+    return await fn(db, sql);
+  } catch {
+    return null;
   }
 }
 
@@ -103,6 +121,91 @@ function formatLearning(args: ToolArgs, now: Date): {
   if (notes) lines.push(`- Notes: ${notes}`);
 
   return { block: lines.join("\n"), learned, status: finalStatus, confidence, sourceType };
+}
+
+async function persistLivingContextUpdate(input: {
+  userId: string;
+  target: string;
+  path: string;
+  args: ToolArgs;
+  block: string;
+  learned: string;
+  status: LearningStatus;
+  confidence: number;
+  sourceType: SourceType;
+}): Promise<void> {
+  await withDb(async (db, sql) => {
+    await db.execute(sql`
+      INSERT INTO living_context_updates (
+        user_id,
+        target,
+        path,
+        topic,
+        learned,
+        normalized_learned,
+        source_type,
+        source_ref,
+        confidence,
+        status,
+        fills_question,
+        approval_sensitive,
+        notes,
+        block
+      )
+      VALUES (
+        ${input.userId},
+        ${input.target},
+        ${input.path},
+        ${cleanSingleLine(input.args.topic, "Context update").slice(0, 120)},
+        ${input.learned},
+        ${factKey(input.learned)},
+        ${input.sourceType},
+        ${cleanSingleLine(input.args.sourceRef, "").slice(0, 200) || null},
+        ${input.confidence},
+        ${input.status},
+        ${cleanSingleLine(input.args.fillsQuestion, "").slice(0, 240) || null},
+        ${Boolean(input.args.approvalSensitive)},
+        ${String(input.args.notes ?? "").trim() || null},
+        ${input.block}
+      )
+      ON CONFLICT DO NOTHING
+    `);
+  });
+}
+
+async function syncPersistedUpdatesToFile(input: {
+  userId: string;
+  target: string;
+  abs: string;
+}): Promise<string> {
+  const existing = await fs.readFile(input.abs, "utf-8").catch(() => "");
+  const rows = await withDb(async (db, sql) => {
+    const result = await db.execute(sql`
+      SELECT block
+      FROM living_context_updates
+      WHERE user_id = ${input.userId}
+        AND target = ${input.target}
+      ORDER BY created_at ASC
+    `);
+    return Array.isArray(result) ? result : result.rows ?? [];
+  });
+
+  if (!rows?.length) return existing;
+
+  let updated = ensureLearnedUpdatesSection(existing);
+  let changed = false;
+  for (const row of rows) {
+    if (!row.block || updated.includes(row.block)) continue;
+    updated = `${updated.trimEnd()}\n\n${row.block}\n`;
+    changed = true;
+  }
+
+  if (changed) {
+    await fs.mkdir(path.dirname(input.abs), { recursive: true });
+    await fs.writeFile(input.abs, updated, "utf-8");
+  }
+
+  return updated;
 }
 
 export function createLivingContextUpdateTool(options: LivingContextToolOptions = {}): AgentTool {
@@ -207,7 +310,11 @@ export function createLivingContextUpdateTool(options: LivingContextToolOptions 
       }
 
       if (action === "read") {
-        const content = await fs.readFile(resolved.abs, "utf-8").catch(() => "");
+        const content = await syncPersistedUpdatesToFile({
+          userId: ctx.userId,
+          target: targetKey,
+          abs: resolved.abs,
+        });
         return {
           ok: true,
           content: content || "(file is empty or missing)",
@@ -225,7 +332,11 @@ export function createLivingContextUpdateTool(options: LivingContextToolOptions 
           };
         }
 
-        const existing = await fs.readFile(resolved.abs, "utf-8").catch(() => "");
+        const existing = await syncPersistedUpdatesToFile({
+          userId: ctx.userId,
+          target: targetKey,
+          abs: resolved.abs,
+        });
         if (normalizeForDedup(existing).includes(normalizeForDedup(learned))) {
           return {
             ok: true,
@@ -237,6 +348,17 @@ export function createLivingContextUpdateTool(options: LivingContextToolOptions 
         const updated = `${ensureLearnedUpdatesSection(existing)}\n\n${block}\n`;
         await fs.mkdir(path.dirname(resolved.abs), { recursive: true });
         await fs.writeFile(resolved.abs, updated, "utf-8");
+        await persistLivingContextUpdate({
+          userId: ctx.userId,
+          target: targetKey,
+          path: resolved.rel,
+          args,
+          block,
+          learned,
+          status,
+          confidence,
+          sourceType,
+        });
         await appendAudit(auditLogPath, {
           ts: now().toISOString(),
           event: "living_context_append",

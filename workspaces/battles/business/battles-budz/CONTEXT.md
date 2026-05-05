@@ -75,5 +75,7 @@ The readiness files are living operating documents. Jarvis may append dated, sou
 
 Jarvis must not overwrite existing readiness content, delete context, send anything externally, or mark compliance/licensing/financial actions as approved through a living update.
 
+Living updates are also stored in the `living_context_updates` database table. When Jarvis reads or appends an allow-listed readiness file, it restores missing learned updates from the database before continuing. This keeps the folder-brain durable across Railway redeploys while preserving markdown as the working surface.
+
 ## Handoff Back To PRIME
 Return the artifact type, risk level, business decision needed, and next action.
