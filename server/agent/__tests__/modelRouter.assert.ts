@@ -30,12 +30,12 @@ function userMessage(content: string) {
     explicitModel: false,
     messages: userMessage("Rewrite this to be shorter."),
     toolCount: 0,
-    routing: { enabled: true },
+    routing: { enabled: true, cheapModel: "groq/llama-3.1-8b-instant" },
   });
-  assert.equal(decision.model, "modelrelay/auto-fastest");
+  assert.equal(decision.model, "groq/llama-3.1-8b-instant");
   assert.equal(decision.tier, "free");
   assert.equal(decision.delegated, true);
-  console.log("OK: easy no-tool task routes to free tier when enabled");
+  console.log("OK: easy no-tool task routes to native cheap/free provider when enabled");
 }
 
 {
