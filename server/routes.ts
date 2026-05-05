@@ -181,6 +181,36 @@ function loadPrimeSections(): PrimeSections {
 
 const PRIME = loadPrimeSections();
 
+function readPromptDoc(relativePath: string, maxChars: number): string {
+  try {
+    const filePath = path.resolve(process.cwd(), relativePath);
+    const root = path.resolve(process.cwd());
+    if (!filePath.startsWith(root)) return "";
+    return fs.readFileSync(filePath, "utf8").trim().slice(0, maxChars);
+  } catch {
+    return "";
+  }
+}
+
+function loadAgentRoutingPromptBlock(): string {
+  const docs = [
+    ["agents/CONTEXT.md", readPromptDoc("agents/CONTEXT.md", 2500)],
+    ["agents/ROUTING.md", readPromptDoc("agents/ROUTING.md", 4000)],
+    ["agents/TOOL_POLICY.md", readPromptDoc("agents/TOOL_POLICY.md", 2500)],
+    ["workspaces/battles/CONTEXT.md", readPromptDoc("workspaces/battles/CONTEXT.md", 2000)],
+    ["workspaces/battles/WORKSPACE_MAP.md", readPromptDoc("workspaces/battles/WORKSPACE_MAP.md", 2000)],
+  ].filter(([, content]) => content.trim());
+
+  if (docs.length === 0) return "";
+
+  return "\n## Jarvis Workspace Router\n" +
+    "Use this repo-backed router to choose the right workspace, avoid broad context loading, respect tool approval boundaries, and place outputs in the correct folder.\n\n" +
+    docs.map(([name, content]) => `### ${name}\n${content}`).join("\n\n") +
+    "\n";
+}
+
+const AGENT_ROUTING_PROMPT_BLOCK = loadAgentRoutingPromptBlock();
+
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
 const openai = new OpenAI({
@@ -391,6 +421,7 @@ function buildCoachSystemPrompt(goals: any[], stats: any, history: any[], calend
 
 Today is ${dayOfWeek}, ${dateStr}.
 ${crossChannelContext || ''}
+${AGENT_ROUTING_PROMPT_BLOCK}
 
 ${PRIME.coachingFrameworks}
 

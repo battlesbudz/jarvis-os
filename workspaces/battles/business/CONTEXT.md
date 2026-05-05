@@ -1,7 +1,7 @@
 # Business Context
 
 ## Purpose
-Top-level operating area for Justin's business entities and related strategic/operational outputs.
+Top-level operating area for Battles business entities and related strategic/operational outputs.
 
 ## When to Use
 Use for company operations, compliance, investors, product decisions, partnerships, and business communications.

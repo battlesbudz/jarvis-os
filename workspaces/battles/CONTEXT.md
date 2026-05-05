@@ -1,7 +1,7 @@
-# Justin Workspace Context
+# Battles Workspace Context
 
 ## Purpose
-Operational workspace for Justin Battles across life, business, content, research, and production.
+Operational workspace for Battles across life, business, content, research, and production.
 
 ## When PRIME Should Use This
 - Daily planning and prioritization

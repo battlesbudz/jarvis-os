@@ -1,0 +1,36 @@
+# Jarvis Architecture
+
+## Purpose
+This document makes the existing repo understandable to future humans and agents without forcing a folder refactor. It is a map, not a mandate to move files.
+
+## Conceptual Split
+
+| Layer | Existing Location | Meaning |
+|---|---|---|
+| Identity and routing | `agents/` | Natural-language brain: PRIME, routing, tool policy, specialist crews. |
+| Agent orchestration | `server/agent/` | Runtime loop, tools, jobs, approvals, policies, subagents, project execution. |
+| Memory | `server/memory/`, `agents/SOUL.md`, root `SOUL.md` | Retrieval, extraction, long-term continuity, personality anchors. |
+| Adaptive intelligence | `server/intelligence/` | Ego, gut, emotional state, predictions, validation, skill writing. |
+| Capabilities | `server/capabilities/` | What Jarvis knows it can do. |
+| Channels | `server/channels/` | Where Jarvis talks: in-app, Discord, Telegram, Slack, WhatsApp, daemon. |
+| Integrations | `server/integrations/` | External services and OAuth/API clients. |
+| Client app | `app/`, `components/`, `lib/`, `hooks/`, `constants/` | Expo mobile/web experience. |
+| Shared contract | `shared/` | Schema and shared models. |
+| Workspace content | `workspaces/` | User/business/content/research/production operating areas. |
+
+## Current Architecture Notes
+- `agents/PRIME.md` is the canonical master identity file.
+- Root `SOUL.md` and `agents/SOUL.md` both exist. Treat them as personality/memory anchors until a deliberate consolidation task is approved.
+- `server/routes.ts` is large and central. New route groups should prefer dedicated route modules when possible.
+- `server/agent/` is intentionally broad today. Use `agents/ROUTING.md` to know which part matters before reading it.
+- `workspaces/battles/` is the user-facing operating system layer for daily, business, content, research, and production work.
+
+## Design Principle
+Make routing visible before moving code. The fastest way to improve Jarvis is to help future agents know where to look, what to skip, which tools are allowed, and where outputs belong.
+
+## Suggested Future Refactors
+Do these only as separate implementation tasks with tests/checks:
+- Consolidate duplicate identity anchors after verifying all loaders.
+- Split large route handlers into focused route modules.
+- Group `server/agent/` by orchestration, planning, execution, safety, quality, and tools.
+- Move client/daemon folders under a `clients/` folder only after import/script/deploy paths are mapped.
