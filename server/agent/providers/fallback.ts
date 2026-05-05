@@ -82,6 +82,8 @@ export function isRetriableProviderError(err: unknown): boolean {
     "rate_limit",
     "ratelimit",
     "quota exceeded",
+    "exceeded your current quota",
+    "insufficient_quota",
     "too many requests",
     "timeout",
     "timed out",
