@@ -25,12 +25,25 @@ declare global {
   namespace Express {
     interface Request {
       userId?: string;
+      authScope?: "user" | "webchat";
     }
   }
 }
 
 export function generateToken(userId: string): string {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+  return jwt.sign({ userId, scope: "user" }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+}
+
+export function generateWebchatToken(userId: string): string {
+  return jwt.sign({ userId, scope: "webchat" }, JWT_SECRET, { expiresIn: "24h" });
+}
+
+function isWebchatScopedPath(req: Request): boolean {
+  if (req.method === "GET" && req.path === "/api/webchat/events") return true;
+  if (req.method === "POST" && req.path === "/api/coach/chat") return true;
+  if (["GET", "PUT", "DELETE"].includes(req.method) && req.path === "/api/data/chat-history") return true;
+  if (["GET", "PUT"].includes(req.method) && req.path === "/api/data/coach-session-id") return true;
+  return false;
 }
 
 export const authRouter = Router();
@@ -241,7 +254,10 @@ authRouter.get("/me", async (req: Request, res: Response) => {
     }
 
     const token = authHeader.slice(7);
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; scope?: string };
+    if (payload.scope === "webchat") {
+      return res.status(401).json({ error: "Invalid token" });
+    }
 
     const [user] = await db.select({
       id: users.id,
@@ -296,8 +312,12 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       }
     }
 
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; scope?: string };
+    if (payload.scope === "webchat" && !isWebchatScopedPath(req)) {
+      return res.status(403).json({ error: "Webchat token is not allowed for this endpoint" });
+    }
     req.userId = payload.userId;
+    req.authScope = payload.scope === "webchat" ? "webchat" : "user";
     next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
@@ -319,7 +339,8 @@ export async function getUserIdFromRequest(req: Request): Promise<string | null>
       const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
       return firstUser?.id ?? null;
     }
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; scope?: string };
+    if (payload.scope === "webchat" && !isWebchatScopedPath(req)) return null;
     return payload.userId ?? null;
   } catch {
     return null;
