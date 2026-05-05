@@ -56,35 +56,43 @@ export interface FallbackChainEntry {
  * Returns true for errors that warrant trying a backup provider:
  *   - HTTP 5xx (provider-side outage / maintenance)
  *   - HTTP 429 (rate-limit / quota exceeded)
+ *   - HTTP 413 (provider/model token cap too small for this prompt)
  *   - Network-level timeouts and connection failures
  *
- * 4xx client errors (400 Bad Request, 401 Unauthorized, etc.) are NOT
- * retriable - a different provider would see the same failure.
+ * Most 4xx client errors (400 Bad Request, 401 Unauthorized, etc.) are NOT
+ * retriable - a different provider would see the same failure. 413 is the
+ * exception because another model/provider may have a larger context or TPM cap.
  */
 export function isRetriableProviderError(err: unknown): boolean {
   // Check numeric `.status` property emitted by OpenAI / Anthropic SDKs
   const anyErr = err as Record<string, unknown>;
   if (typeof anyErr.status === "number") {
     const s = anyErr.status as number;
-    if (s === 429 || (s >= 500 && s < 600)) return true;
+    if (s === 413 || s === 429 || (s >= 500 && s < 600)) return true;
   }
 
   const msg = err instanceof Error ? err.message : String(err);
   const lower = msg.toLowerCase();
 
   // Numeric status codes embedded in the error message
-  if (/\b(500|502|503|504|529)\b/.test(msg)) return true;
-  if (/\b429\b/.test(msg)) return true;
+  if (/\b(413|429|500|502|503|504|529)\b/.test(msg)) return true;
 
   // Textual signals common across provider SDKs
   const retriableTerms = [
     "rate limit",
     "rate_limit",
     "ratelimit",
+    "rate_limit_exceeded",
     "quota exceeded",
     "exceeded your current quota",
     "insufficient_quota",
     "too many requests",
+    "request too large",
+    "tokens per minute",
+    "tpm",
+    "please reduce your message size",
+    "context length",
+    "maximum context",
     "timeout",
     "timed out",
     "econnrefused",
