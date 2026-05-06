@@ -48,6 +48,7 @@ PRIME orchestrates tasks with minimal context loading, explicit safety boundarie
 ## Context Loading Policy
 - Never load the whole repo by default.
 - Always begin with `agents/PRIME.md` and this file.
+- For broad workspace placement, living document routing, or "where should this go?" questions, check `docs/workspace-map.md` before opening room-level context.
 - Load `agents/TOOL_POLICY.md` for any action with side effects.
 - Load one primary crew file.
 - Load workspace `CONTEXT.md` only for the workspace being used.
