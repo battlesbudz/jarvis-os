@@ -99,8 +99,15 @@ if (!modelRouterSource.includes("const leanContextApplied = routedMessages !== p
 modelRouterSource = modelRouterSource.replace(
   `tools: params.tools,
       toolChoice: params.toolChoice ?? "none",`,
+  `tools: routedMessages !== params.messages ? undefined : params.tools,
+      toolChoice: routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),`,
+);
+
+modelRouterSource = modelRouterSource.replace(
   `tools: leanContextApplied ? undefined : params.tools,
       toolChoice: leanContextApplied ? "none" : (params.toolChoice ?? "none"),`,
+  `tools: routedMessages !== params.messages ? undefined : params.tools,
+      toolChoice: routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),`,
 );
 
 fs.writeFileSync(modelRouterPath, modelRouterSource);
