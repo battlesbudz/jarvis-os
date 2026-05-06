@@ -24,10 +24,13 @@ Use this file as the room selector. Do not use it as the place to store deep det
 | `templates/` | Reusable artifact scaffolds | FORGE, HERALD, ATLAS | Draft templates and standardized formats |
 
 ## Read First
-1. `WORKSPACE_MAP.md`
+1. `docs/workspace-map.md`
 2. `NAMING_CONVENTIONS.md`
 3. The target room `CONTEXT.md`
 4. The smallest set of existing files needed to continue the task
+
+## Current Highest-Priority Living Docs
+Battles Budz readiness docs are the top living workspace documents right now. For licensing, compliance, facility, product readiness, or first-revenue facts, route through `docs/workspace-map.md` and the Battles Budz `CONTEXT.md` before reading or appending to a readiness file.
 
 ## Routing Rules
 - If the request is about today's focus, decisions, commitments, or "next step", route to `daily-command-center/`.
