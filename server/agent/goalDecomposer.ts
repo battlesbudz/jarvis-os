@@ -8,6 +8,7 @@
  * payload that we persist into goal_trees.
  */
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./providers/env";
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
@@ -18,10 +19,7 @@ import type {
   GoalTreeTask,
 } from "@shared/schema";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 interface UserGoal {
   id: string;

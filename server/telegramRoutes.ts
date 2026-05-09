@@ -27,15 +27,13 @@ import { routeToNamedAgent } from "./agent/runNamedAgent";
 import { completePairing as completeDiscordPairing } from "./discord/manager";
 import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { resolveScheduledTaskAttention } from "./lib/taskResolver";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
 import { getActiveRunForUser, activeCoachRuns } from "./runRegistry";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 function generateLinkCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";

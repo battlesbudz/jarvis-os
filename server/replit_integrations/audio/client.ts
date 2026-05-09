@@ -1,4 +1,5 @@
 import OpenAI, { toFile } from "openai";
+import { getOpenAIClientConfig } from "../../agent/providers/env";
 import { Buffer } from "node:buffer";
 import { spawn } from "child_process";
 import { writeFile, unlink, readFile } from "fs/promises";
@@ -6,10 +7,7 @@ import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import { join } from "path";
 
-export const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+export const openai = new OpenAI(getOpenAIClientConfig());
 
 export type AudioFormat = "wav" | "mp3" | "webm" | "mp4" | "m4a" | "ogg" | "unknown";
 

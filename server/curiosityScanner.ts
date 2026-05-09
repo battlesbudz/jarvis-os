@@ -10,11 +10,9 @@ import { getOutlookCalendarEvents, getRecentOutlookEmails } from "./integrations
 import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const CURIOSITY_SCAN_LOCK_ID = 7654321098;
 let scannerStarted = false;

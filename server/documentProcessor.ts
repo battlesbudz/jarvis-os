@@ -1,13 +1,11 @@
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
 import { userDocuments } from "@shared/schema";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const MAX_DOCS_PER_USER = 10;
 const MAX_EXTRACTED_CHARS = 80000;

@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import { agentMemories } from "@shared/schema";
 import type { AgentMemory } from "@shared/schema";
 import { logAgentEvent } from "./agentLogger";
+import { getOpenAIClientConfig } from "./providers/env";
 
 const MEMORY_SIZE_LIMIT = 500;
 const SUMMARIZATION_THRESHOLD = 400;
@@ -131,10 +132,7 @@ export async function summarizeAgentMemory(
   let summary = "";
   try {
     const OpenAI = (await import("openai")).default;
-    const openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    const openai = new OpenAI(getOpenAIClientConfig());
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [

@@ -25,11 +25,9 @@ import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { emit as diagEmit } from "./diagnostics/diagnosticsService";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const CHECKLIST_PATH = path.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");

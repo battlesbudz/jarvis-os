@@ -120,17 +120,7 @@ if (!source.includes('from "./agent/modelRouter"')) {
 }
 
 if (!source.includes("async function runCoachModelTurn(")) {
-  source = source.replace(
-    `const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
-`,
-    `const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
-
+  const coachHelper = `
 async function runCoachModelTurn(
   params: {
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
@@ -151,8 +141,22 @@ async function runCoachModelTurn(
     logPrefix: params.logPrefix,
   });
 }
+`;
+  const openaiBlocks = [
+    `const openai = new OpenAI(getOpenAIClientConfig());
 `,
-  );
+    `const openai = new OpenAI({
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+});
+`,
+  ];
+  for (const block of openaiBlocks) {
+    if (source.includes(block)) {
+      source = source.replace(block, `${block}${coachHelper}`);
+      break;
+    }
+  }
 }
 
 source = source.replace(

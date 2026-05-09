@@ -3,13 +3,11 @@ import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { websiteCrawls } from "@shared/schema";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 import * as dns from "node:dns/promises";
 import * as net from "node:net";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const MAX_PAGES = 60;
 const FETCH_TIMEOUT_MS = 8000;

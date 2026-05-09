@@ -9,6 +9,7 @@ const tsxCli = path.join(projectRoot, "node_modules", "tsx", "dist", "cli.mjs");
 const tests = [
   { file: "server/agent/__tests__/manifestFilter.assert.ts" },
   { file: "server/agent/__tests__/modelRouter.assert.ts" },
+  { file: "server/agent/__tests__/providerEnv.assert.ts" },
   { file: "server/agent/__tests__/contextRegistryRouting.assert.ts" },
   { file: "server/agent/__tests__/livingContextUpdateTool.assert.ts" },
   { file: "server/workspace/__tests__/livingContextRouter.assert.ts" },

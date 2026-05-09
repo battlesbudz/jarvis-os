@@ -1,3 +1,4 @@
+import "./agent/providers/envAliases";
 import { createHash } from 'crypto';
 import fs from "fs";
 import path from "path";
@@ -6,6 +7,7 @@ import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSo
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
@@ -237,10 +239,7 @@ const AGENT_ROUTING_PROMPT_BLOCK = loadAgentRoutingPromptBlock();
 
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 // Temporary in-memory screenshot store keyed by UUID (30-minute TTL)
 const screenshotStore = new Map<string, { data: Buffer; expires: number }>();
@@ -2854,10 +2853,7 @@ Rules:
           const preferredSize = sizeMap[String(args.size || 'square')] ?? '1024x1024';
           try {
             const { default: OpenAI } = await import('openai');
-            const imgClient = new OpenAI({
-              apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-              baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-            });
+            const imgClient = new OpenAI(getOpenAIClientConfig());
             let b64: string | undefined;
             try {
               const response = await imgClient.images.generate({

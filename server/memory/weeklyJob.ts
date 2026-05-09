@@ -2,6 +2,7 @@ import { db } from "../db";
 import { eq, and, gte, desc, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
 import { normalizeCategory } from "./categories";
 import type { WeeklyPattern, MemoryCategory } from "@shared/schema";
 import { regenerateSoul } from "./soul";
@@ -21,10 +22,7 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   }
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 interface ChatMessage {
   role?: string;

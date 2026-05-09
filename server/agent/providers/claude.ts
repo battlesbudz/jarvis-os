@@ -48,12 +48,12 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type OpenAI from "openai";
 import { randomUUID } from "crypto";
-import { db } from "../../db";
 import { eq, and, gt, asc, desc } from "drizzle-orm";
 import { agentChatSessions, agentChatMessages } from "@shared/schema";
 import type { AgentChatMessage } from "@shared/schema";
 import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
+import { getAnthropicClientConfig } from "./env";
 
 // ── Session types & helpers ────────────────────────────────────────────────────
 
@@ -61,6 +61,11 @@ const SESSION_TTL_HOURS = parseInt(process.env.AGENT_SESSION_TTL_HOURS ?? "24", 
 const SESSION_TTL_MS = (isNaN(SESSION_TTL_HOURS) || SESSION_TTL_HOURS <= 0 ? 24 : SESSION_TTL_HOURS) * 60 * 60 * 1000;
 
 type OAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
+async function getDb() {
+  const mod = await import("../../db");
+  return mod.db;
+}
 
 function toAgentMessage(m: OAIMessage): AgentChatMessage {
   return {
@@ -138,6 +143,7 @@ export async function resumeSession(
 
   // 2. Fall through to DB.
   try {
+    const db = await getDb();
     const now = new Date();
     const rows = await db
       .select()
@@ -193,6 +199,7 @@ export async function initSession(
   const stored = messages.map(toAgentMessage);
 
   try {
+    const db = await getDb();
     await db.insert(agentChatSessions).values({
       sdkSessionId,
       agentId,
@@ -227,6 +234,7 @@ export async function appendToSession(
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
 
   try {
+    const db = await getDb();
     const existing = await resumeSession(sdkSessionId, agentId, userId);
     const base = existing?.messages ?? [];
     const merged = [...base, ...newMessages].map(toAgentMessage);
@@ -268,6 +276,7 @@ export async function persistChatMessages(
   // Insert messages sequentially (not in a single batch) so each row receives a
   // distinct NOW() timestamp, ensuring stable chronological ordering even when
   // user + assistant messages are stored in the same call.
+  const db = await getDb();
   for (const m of messages) {
     try {
       await db.insert(agentChatMessages).values({
@@ -300,6 +309,7 @@ export async function getChatHistory(
   const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
 
   try {
+    const db = await getDb();
     const where = and(
       eq(agentChatMessages.agentId, agentId),
       eq(agentChatMessages.userId, userId),
@@ -344,6 +354,7 @@ export async function getChatHistory(
 export async function expireSession(sdkSessionId: string): Promise<void> {
   processCache.delete(sdkSessionId);
   try {
+    const db = await getDb();
     await db
       .delete(agentChatSessions)
       .where(eq(agentChatSessions.sdkSessionId, sdkSessionId));
@@ -359,10 +370,7 @@ export class ClaudeProvider extends BaseProvider {
 
   constructor() {
     super();
-    this.client = new Anthropic({
-      apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-    });
+    this.client = new Anthropic(getAnthropicClientConfig());
   }
 
   async initialize(): Promise<void> {

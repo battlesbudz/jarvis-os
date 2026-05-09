@@ -12,16 +12,13 @@
  * Each run is persisted to the `learning_synthesis_log` DB table so users
  * can review their synthesis history in the app.
  */
-
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
 import { readWorkspaceFile, writeWorkspaceFile, STUBS } from "../workspace/loader";
 import { db } from "../db";
 import { learningSynthesisLog } from "@shared/schema";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 export interface SynthesisResult {
   bullets: string[];

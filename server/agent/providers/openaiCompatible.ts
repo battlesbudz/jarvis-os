@@ -20,6 +20,7 @@
 import OpenAI from "openai";
 import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
+import { getProviderEnvValue } from "./env";
 
 type RelayTarget = {
   baseURL: string;
@@ -76,45 +77,66 @@ function resolveRelayTarget(model: string): RelayTarget {
   switch (parsed.prefix) {
     case "openrouter":
       return {
-        baseURL: normalizeBaseURL(process.env.OPENROUTER_BASE_URL, "https://openrouter.ai/api/v1"),
-        apiKey: process.env.OPENROUTER_API_KEY ?? "no-key",
-        model: parsed.model || process.env.OPENROUTER_MODEL || "openrouter/auto",
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("OPENROUTER_BASE_URL", "AI_INTEGRATIONS_OPENROUTER_BASE_URL"),
+          "https://openrouter.ai/api/v1",
+        ),
+        apiKey: getProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("OPENROUTER_MODEL", "AI_INTEGRATIONS_OPENROUTER_MODEL") || "openrouter/auto",
       };
     case "groq":
       return {
-        baseURL: normalizeBaseURL(process.env.GROQ_BASE_URL, "https://api.groq.com/openai/v1"),
-        apiKey: process.env.GROQ_API_KEY ?? "no-key",
-        model: parsed.model || process.env.GROQ_MODEL || "llama-3.1-8b-instant",
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("GROQ_BASE_URL", "AI_INTEGRATIONS_GROQ_BASE_URL"),
+          "https://api.groq.com/openai/v1",
+        ),
+        apiKey: getProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("GROQ_MODEL", "AI_INTEGRATIONS_GROQ_MODEL") || "llama-3.1-8b-instant",
       };
     case "together":
       return {
-        baseURL: normalizeBaseURL(process.env.TOGETHER_BASE_URL, "https://api.together.xyz/v1"),
-        apiKey: process.env.TOGETHER_API_KEY ?? "no-key",
-        model: parsed.model || process.env.TOGETHER_MODEL || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("TOGETHER_BASE_URL", "AI_INTEGRATIONS_TOGETHER_BASE_URL"),
+          "https://api.together.xyz/v1",
+        ),
+        apiKey: getProviderEnvValue("TOGETHER_API_KEY", "AI_INTEGRATIONS_TOGETHER_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("TOGETHER_MODEL", "AI_INTEGRATIONS_TOGETHER_MODEL") || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
       };
     case "fireworks":
       return {
-        baseURL: normalizeBaseURL(process.env.FIREWORKS_BASE_URL, "https://api.fireworks.ai/inference/v1"),
-        apiKey: process.env.FIREWORKS_API_KEY ?? "no-key",
-        model: parsed.model || process.env.FIREWORKS_MODEL || "accounts/fireworks/models/llama-v3p1-8b-instruct",
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("FIREWORKS_BASE_URL", "AI_INTEGRATIONS_FIREWORKS_BASE_URL"),
+          "https://api.fireworks.ai/inference/v1",
+        ),
+        apiKey: getProviderEnvValue("FIREWORKS_API_KEY", "AI_INTEGRATIONS_FIREWORKS_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("FIREWORKS_MODEL", "AI_INTEGRATIONS_FIREWORKS_MODEL") || "accounts/fireworks/models/llama-v3p1-8b-instruct",
       };
     case "cerebras":
       return {
-        baseURL: normalizeBaseURL(process.env.CEREBRAS_BASE_URL, "https://api.cerebras.ai/v1"),
-        apiKey: process.env.CEREBRAS_API_KEY ?? "no-key",
-        model: parsed.model || process.env.CEREBRAS_MODEL || "llama3.1-8b",
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("CEREBRAS_BASE_URL", "AI_INTEGRATIONS_CEREBRAS_BASE_URL"),
+          "https://api.cerebras.ai/v1",
+        ),
+        apiKey: getProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("CEREBRAS_MODEL", "AI_INTEGRATIONS_CEREBRAS_MODEL") || "llama3.1-8b",
       };
     case "nvidia":
       return {
-        baseURL: normalizeBaseURL(process.env.NVIDIA_BASE_URL, "https://integrate.api.nvidia.com/v1"),
-        apiKey: process.env.NVIDIA_API_KEY ?? "no-key",
-        model: parsed.model || process.env.NVIDIA_MODEL || "meta/llama-3.1-8b-instruct",
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("NVIDIA_BASE_URL", "AI_INTEGRATIONS_NVIDIA_BASE_URL"),
+          "https://integrate.api.nvidia.com/v1",
+        ),
+        apiKey: getProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("NVIDIA_MODEL", "AI_INTEGRATIONS_NVIDIA_MODEL") || "meta/llama-3.1-8b-instruct",
       };
     case "deepseek":
       return {
-        baseURL: normalizeBaseURL(process.env.DEEPSEEK_BASE_URL, "https://api.deepseek.com"),
-        apiKey: process.env.DEEPSEEK_API_KEY ?? "no-key",
-        model: parsed.model || process.env.DEEPSEEK_MODEL || "deepseek-chat",
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("DEEPSEEK_BASE_URL", "AI_INTEGRATIONS_DEEPSEEK_BASE_URL"),
+          "https://api.deepseek.com",
+        ),
+        apiKey: getProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat",
       };
     case "modelrelay":
       return {
@@ -127,9 +149,12 @@ function resolveRelayTarget(model: string): RelayTarget {
       };
     case "openai-compatible":
       return {
-        baseURL: normalizeBaseURL(process.env.OPENAI_COMPATIBLE_BASE_URL, "http://127.0.0.1:7352/v1"),
-        apiKey: process.env.OPENAI_COMPATIBLE_API_KEY ?? "no-key",
-        model: parsed.model || process.env.OPENAI_COMPATIBLE_MODEL || "auto-fastest",
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL"),
+          "http://127.0.0.1:7352/v1",
+        ),
+        apiKey: getProviderEnvValue("OPENAI_COMPATIBLE_API_KEY", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL") || "auto-fastest",
       };
   }
 }

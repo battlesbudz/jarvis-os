@@ -6,6 +6,7 @@
  * first to build context; Phase 2 (mainTopics) runs with that context injected.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { getAnthropicClientConfig } from "./providers/env";
 
 export interface ResearchPlan {
   prerequisiteTopics: string[];
@@ -43,7 +44,7 @@ export async function planResearch(
   userId: string,
 ): Promise<ResearchPlan> {
   try {
-    const client = new Anthropic();
+    const client = new Anthropic(getAnthropicClientConfig());
     const response = await client.messages.create({
       model: "claude-3-5-haiku-20241022",
       max_tokens: 512,
