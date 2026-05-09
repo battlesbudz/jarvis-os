@@ -17,11 +17,9 @@ import { logInteraction } from "../interactionLog";
 import { markSoulStale } from "../memory/soul";
 import { recordSkillSignal } from "./skillWriter";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const SELF_CORRECTION_THRESHOLD = 0.25;
 const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;

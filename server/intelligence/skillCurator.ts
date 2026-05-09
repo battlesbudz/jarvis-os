@@ -7,16 +7,13 @@
  * calls an LLM to draft candidate skills. Candidates are written to the
  * skill_candidates table for the user to review in Profile > Skills.
  */
-
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
 import { db } from "../db";
 import { skillCandidates, orchestrationTraces, interactionLog, users } from "@shared/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const MIN_OCCURRENCES = 3;
 const LOOKBACK_DAYS = 7;

@@ -18,11 +18,9 @@ import fs from "fs/promises";
 import { watch } from "fs";
 import path from "path";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 export const SKILLS_DIR = path.join(process.cwd(), "server", "skills");
 const CRYSTALLIZE_THRESHOLD = 3;

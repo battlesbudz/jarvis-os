@@ -14,16 +14,14 @@
 import OpenAI from "openai";
 import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
+import { getOpenAIClientConfig } from "./env";
 
 export class OpenAIProvider extends BaseProvider {
   private client: OpenAI;
 
   constructor() {
     super();
-    this.client = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    this.client = new OpenAI(getOpenAIClientConfig());
   }
 
   async initialize(): Promise<void> {

@@ -23,17 +23,13 @@ import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { DiagnosticSubsystem, DiagnosticSeverity } from "@shared/schema";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
+import { getAnthropicClientConfig } from "../agent/providers/env";
 import Anthropic from "@anthropic-ai/sdk";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
-const anthropic = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-});
+const anthropic = new Anthropic(getAnthropicClientConfig());
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

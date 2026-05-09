@@ -2,6 +2,7 @@ import type OpenAI from "openai";
 import type { ProviderName } from "./providers";
 import { getGlobalFallbackChain, queryWithFallback, type FallbackChainEntry } from "./providers/fallback";
 import type { ProviderTurnResult } from "./providers/base";
+import { getProviderEnvValue, hasDirectOpenAIProvider, hasProviderEnvValue } from "./providers/env";
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
 export type TaskComplexity = "trivial" | "easy" | "medium" | "hard";
@@ -68,10 +69,6 @@ export const DEFAULT_TIER_MODELS: Record<ModelTier, string> = {
   cheap: process.env.JARVIS_CHEAP_MODEL ?? "gpt-4o-mini",
   free: process.env.JARVIS_FREE_MODEL ?? "openrouter/openrouter/auto",
 };
-
-function hasEnvValue(...names: string[]): boolean {
-  return names.some((name) => !!process.env[name]?.trim());
-}
 
 function pushUnique(chain: FallbackChainEntry[], entry: FallbackChainEntry): void {
   const key = `${entry.providerName}:${entry.model}`;
@@ -317,29 +314,36 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
   const envEntry = envModelForExecutionTier(tier);
   if (envEntry) pushUnique(chain, envEntry);
 
-  const hasOpenAICompatible = hasEnvValue("OPENAI_COMPATIBLE_BASE_URL");
-  const hasOpenRouter = hasEnvValue("OPENROUTER_API_KEY");
-  const hasGroq = hasEnvValue("GROQ_API_KEY");
-  const hasTogether = hasEnvValue("TOGETHER_API_KEY");
-  const hasFireworks = hasEnvValue("FIREWORKS_API_KEY");
-  const hasCerebras = hasEnvValue("CEREBRAS_API_KEY");
-  const hasNvidia = hasEnvValue("NVIDIA_API_KEY");
-  const hasDeepSeek = hasEnvValue("DEEPSEEK_API_KEY");
-  const hasClaude = hasEnvValue("AI_INTEGRATIONS_ANTHROPIC_API_KEY", "AI_INTEGRATIONS_ANTHROPIC_BASE_URL");
-  const hasOpenAI = hasEnvValue("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY");
+  const hasOpenAICompatible = hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL");
+  const hasOpenRouter = hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY");
+  const hasGroq = hasProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY");
+  const hasTogether = hasProviderEnvValue("TOGETHER_API_KEY", "AI_INTEGRATIONS_TOGETHER_API_KEY");
+  const hasFireworks = hasProviderEnvValue("FIREWORKS_API_KEY", "AI_INTEGRATIONS_FIREWORKS_API_KEY");
+  const hasCerebras = hasProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY");
+  const hasNvidia = hasProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY");
+  const hasDeepSeek = hasProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY");
+  const hasClaude = hasProviderEnvValue(
+    "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AI_INTEGRATIONS_ANTHROPIC_BASE_URL",
+    "ANTHROPIC_BASE_URL",
+  );
+  const hasOpenAI = hasDirectOpenAIProvider();
 
   const compatibleModel =
-    process.env.OPENAI_COMPATIBLE_MODEL
-      ? `openai-compatible/${process.env.OPENAI_COMPATIBLE_MODEL}`
+    getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL")
+      ? `openai-compatible/${getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL")}`
       : "openai-compatible/auto-fastest";
+  const openRouterDefaultModel = getProviderEnvValue("OPENROUTER_MODEL", "AI_INTEGRATIONS_OPENROUTER_MODEL") || "openrouter/auto";
   const openRouterModel =
     tier === "smart"
-      ? process.env.OPENROUTER_SMART_MODEL || process.env.OPENROUTER_MODEL || "openrouter/auto"
-      : process.env.OPENROUTER_CHEAP_MODEL || process.env.OPENROUTER_MODEL || "openrouter/auto";
+      ? getProviderEnvValue("OPENROUTER_SMART_MODEL", "AI_INTEGRATIONS_OPENROUTER_SMART_MODEL") || openRouterDefaultModel
+      : getProviderEnvValue("OPENROUTER_CHEAP_MODEL", "AI_INTEGRATIONS_OPENROUTER_CHEAP_MODEL") || openRouterDefaultModel;
+  const groqDefaultModel = getProviderEnvValue("GROQ_MODEL", "AI_INTEGRATIONS_GROQ_MODEL");
   const groqModel =
     tier === "smart"
-      ? process.env.GROQ_SMART_MODEL || process.env.GROQ_MODEL || "llama-3.3-70b-versatile"
-      : process.env.GROQ_CHEAP_MODEL || process.env.GROQ_MODEL || "llama-3.1-8b-instant";
+      ? getProviderEnvValue("GROQ_SMART_MODEL", "AI_INTEGRATIONS_GROQ_SMART_MODEL") || groqDefaultModel || "llama-3.3-70b-versatile"
+      : getProviderEnvValue("GROQ_CHEAP_MODEL", "AI_INTEGRATIONS_GROQ_CHEAP_MODEL") || groqDefaultModel || "llama-3.1-8b-instant";
 
   const openaiModel =
     tier === "smart"
@@ -353,11 +357,11 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
   if (tier === "cheap") {
     if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
     if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
-    if (hasTogether) pushUnique(chain, { providerName: "openai-compatible", model: `together/${process.env.TOGETHER_MODEL || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"}` });
-    if (hasFireworks) pushUnique(chain, { providerName: "openai-compatible", model: `fireworks/${process.env.FIREWORKS_MODEL || "accounts/fireworks/models/llama-v3p1-8b-instruct"}` });
-    if (hasCerebras) pushUnique(chain, { providerName: "openai-compatible", model: `cerebras/${process.env.CEREBRAS_MODEL || "llama3.1-8b"}` });
-    if (hasNvidia) pushUnique(chain, { providerName: "openai-compatible", model: `nvidia/${process.env.NVIDIA_MODEL || "meta/llama-3.1-8b-instruct"}` });
-    if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${process.env.DEEPSEEK_MODEL || "deepseek-chat"}` });
+    if (hasTogether) pushUnique(chain, { providerName: "openai-compatible", model: `together/${getProviderEnvValue("TOGETHER_MODEL", "AI_INTEGRATIONS_TOGETHER_MODEL") || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"}` });
+    if (hasFireworks) pushUnique(chain, { providerName: "openai-compatible", model: `fireworks/${getProviderEnvValue("FIREWORKS_MODEL", "AI_INTEGRATIONS_FIREWORKS_MODEL") || "accounts/fireworks/models/llama-v3p1-8b-instruct"}` });
+    if (hasCerebras) pushUnique(chain, { providerName: "openai-compatible", model: `cerebras/${getProviderEnvValue("CEREBRAS_MODEL", "AI_INTEGRATIONS_CEREBRAS_MODEL") || "llama3.1-8b"}` });
+    if (hasNvidia) pushUnique(chain, { providerName: "openai-compatible", model: `nvidia/${getProviderEnvValue("NVIDIA_MODEL", "AI_INTEGRATIONS_NVIDIA_MODEL") || "meta/llama-3.1-8b-instruct"}` });
+    if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
     if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
     if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });
     if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: "gpt-4.1-mini" });
@@ -369,14 +373,14 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
     if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
     if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
     if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
-    if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${process.env.DEEPSEEK_MODEL || "deepseek-chat"}` });
+    if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
     if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
     return chain;
   }
 
   if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
   if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
-  if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${process.env.DEEPSEEK_MODEL || "deepseek-chat"}` });
+  if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
   if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
   if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
   if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });

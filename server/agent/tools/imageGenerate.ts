@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../providers/env";
 // @inferencesh/sdk is loaded dynamically inside generateFlux() — do NOT
 // add a static top-level import here.  The package uses bare ESM relative
 // imports (no .js extensions) that crash Node.js at startup when the module
@@ -16,10 +17,7 @@ import {
 import type { AgentTool } from "../types";
 
 // Chat/text completions — routes through the Replit AI integration proxy.
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 // Image generation — must bypass the Replit proxy, which only supports
 // chat/text models and returns "Unknown model" for gpt-image-1 / dall-e-3.

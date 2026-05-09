@@ -16,11 +16,9 @@ import { eq, and, desc, gte, isNull, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { PatternAnalysis } from "./pattern-analyser";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const CONFIDENCE_THRESHOLD = 55;
 

@@ -2,12 +2,10 @@ import { db } from "../db";
 import { sql, inArray } from "drizzle-orm";
 import { userMemories } from "@shared/schema";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const EMBED_MODEL = "text-embedding-3-small";
 

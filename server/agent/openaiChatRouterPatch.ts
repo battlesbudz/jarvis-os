@@ -2,6 +2,8 @@ import { createRequire } from "node:module";
 import { Completions } from "openai/resources/chat/completions";
 import OpenAI from "openai";
 import { routeModelTurn } from "./modelRouter";
+import "./providers/envAliases";
+import { hasDirectOpenAIProvider, hasNonOpenAIRoutableProvider } from "./providers/env";
 
 type ChatCreateBody = OpenAI.Chat.Completions.ChatCompletionCreateParams;
 type ChatCreateOptions = { signal?: AbortSignal };
@@ -16,7 +18,9 @@ const require = createRequire(import.meta.url);
 
 function routingEnabled(): boolean {
   const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
-  return raw === "1" || raw === "true" || raw === "enabled" || raw === "yes";
+  if (raw === "0" || raw === "false" || raw === "disabled" || raw === "no") return false;
+  if (raw === "1" || raw === "true" || raw === "enabled" || raw === "yes") return true;
+  return !hasDirectOpenAIProvider() && hasNonOpenAIRoutableProvider();
 }
 
 function shouldRoute(body: unknown): body is ChatCreateBody {

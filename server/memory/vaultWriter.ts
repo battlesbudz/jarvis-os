@@ -15,12 +15,10 @@ import { db } from "../db";
 import { eq, and, desc, gte, sql, count, isNull, lt } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const VAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const VAULT_NOVELTY_THRESHOLD = 3;

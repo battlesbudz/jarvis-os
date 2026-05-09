@@ -3,12 +3,10 @@ import * as schema from "@shared/schema";
 import type { MomentumStepData } from "@shared/schema";
 import { eq, and, lt } from "drizzle-orm";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 import { sendMessageWithButtons, sendMessage } from "./integrations/telegram";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const STEP_DELAY_MS = 3 * 60 * 1000;

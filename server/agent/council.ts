@@ -11,6 +11,7 @@
 import { runNamedAgent } from "./runNamedAgent";
 import { listAgents } from "./agentManager";
 import { logAgentEvent } from "./agentLogger";
+import { getOpenAIClientConfig } from "./providers/env";
 
 export interface CouncilAgentResponse {
   agentId: string;
@@ -143,10 +144,7 @@ async function synthesizeCouncilResponse(
 
   try {
     const OpenAI = (await import("openai")).default;
-    const openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    const openai = new OpenAI(getOpenAIClientConfig());
 
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",

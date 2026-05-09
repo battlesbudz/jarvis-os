@@ -1,9 +1,8 @@
+import "./agent/providers/envAliases";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 export interface CompletionHistoryItem {
   title: string;
