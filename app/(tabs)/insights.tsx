@@ -1972,6 +1972,21 @@ export default function InsightsScreen() {
       const serverRunId = response.headers.get('X-Run-Id');
       if (serverRunId) chatRunIdRef.current = serverRunId;
 
+      if (!response.ok) {
+        const rawError = await response.text().catch(() => '');
+        let message = `Chat request failed (${response.status})`;
+        try {
+          const parsed = JSON.parse(rawError);
+          if (parsed?.error) message = String(parsed.error);
+        } catch {
+          if (rawError.trim()) message = rawError.trim().slice(0, 240);
+        }
+        if (response.status === 401) {
+          message = 'You are not signed in. Please sign in again, then try chat.';
+        }
+        throw new Error(message);
+      }
+
       setShowTyping(false);
       const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' };
       streamingAssistantIdRef.current = assistantId;
@@ -2214,7 +2229,9 @@ export default function InsightsScreen() {
         // you switched apps. Show a contextual message instead of a generic error.
         const errContent = isWorkingOnPhone
           ? "Your phone task finished — the connection dropped when you switched apps. If you got a notification, it completed successfully. Ask me to recap what I did and I'll tell you."
-          : 'Sorry, I had trouble connecting. Please try again.';
+          : error instanceof Error && error.message
+            ? error.message
+            : 'Sorry, I had trouble connecting. Please try again.';
         const errMsg: ChatMessage = {
           id: assistantId,
           role: 'assistant',
