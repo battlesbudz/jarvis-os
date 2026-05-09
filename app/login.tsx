@@ -55,6 +55,44 @@ function loadGisScript(): Promise<void> {
   });
 }
 
+function createOauthNonce(length = 48): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const cryptoSource = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+
+  if (cryptoSource?.getRandomValues) {
+    const values = new Uint8Array(length);
+    cryptoSource.getRandomValues(values);
+    return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
+  }
+
+  let nonce = "";
+  while (nonce.length < length) {
+    nonce += Math.random().toString(36).slice(2);
+  }
+  return nonce.slice(0, length);
+}
+
+function buildMobileAuthUrls(baseUrl: string) {
+  const sessionId = createOauthNonce(32);
+  const pollSecret = createOauthNonce(48);
+
+  const startUrl = new URL("/api/auth/mobile/start", baseUrl);
+  startUrl.searchParams.set("session_id", sessionId);
+  startUrl.searchParams.set("poll_secret", pollSecret);
+
+  const pollUrl = new URL("/api/auth/mobile/poll", baseUrl);
+  pollUrl.searchParams.set("session_id", sessionId);
+  pollUrl.searchParams.set("poll_secret", pollSecret);
+
+  return {
+    sessionId,
+    startUrl: startUrl.toString(),
+    pollUrl: pollUrl.toString(),
+  };
+}
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
@@ -121,10 +159,8 @@ export default function LoginScreen() {
     // wrong-account session can never silently survive into the new session.
     await clearAuthStorage();
 
-    const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
     const baseUrl = getApiUrl();
-    const startUrl = new URL(`/api/auth/mobile/start?session_id=${sessionId}`, baseUrl).toString();
-    const pollUrl = new URL(`/api/auth/mobile/poll?session_id=${sessionId}`, baseUrl).toString();
+    const { sessionId, startUrl, pollUrl } = buildMobileAuthUrls(baseUrl);
 
     let pollInterval: ReturnType<typeof setInterval> | null = null;
     let succeeded = false;
@@ -141,7 +177,7 @@ export default function LoginScreen() {
       attemptNum++;
       try {
         console.log(`[GoogleAuth] Poll #${attemptNum} → ${pollUrl}`);
-        const res = await fetch(pollUrl);
+        const res = await fetch(pollUrl, { credentials: "include" });
         console.log(`[GoogleAuth] Poll #${attemptNum} status: ${res.status}`);
         if (res.ok) {
           const data = await res.json();
@@ -186,7 +222,6 @@ export default function LoginScreen() {
         return;
       }
 
-      const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
       for (let i = 0; i < 3; i++) {
         if (isAuthenticatedRef.current) {
           setLoading(false);
@@ -209,11 +244,76 @@ export default function LoginScreen() {
     }
   }
 
+  async function handleWebGooglePopupSignIn() {
+    if (typeof window === "undefined") {
+      throw new Error("Google sign-in is only available in a browser.");
+    }
+
+    await clearAuthStorage();
+
+    const { startUrl, pollUrl } = buildMobileAuthUrls(getApiUrl());
+    const popup = window.open(
+      startUrl,
+      "gameplan-google-signin",
+      "popup=yes,width=520,height=720,menubar=no,toolbar=no,location=yes,status=no",
+    );
+
+    if (!popup) {
+      throw new Error("Google sign-in window was blocked. Allow pop-ups for this site and try again.");
+    }
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < 2 * 60 * 1000) {
+      if (isAuthenticatedRef.current) {
+        popup.close();
+        return;
+      }
+
+      try {
+        const res = await fetch(pollUrl, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ready && data.token) {
+            popup.close();
+            await loginWithToken(data.token);
+            return;
+          }
+        } else if (res.status >= 500) {
+          const data = await res.json().catch(() => null);
+          throw new Error(data?.error || "Google sign-in failed on the server.");
+        }
+      } catch (err) {
+        if (err instanceof Error && err.message !== "Failed to fetch") {
+          throw err;
+        }
+      }
+
+      if (popup.closed && Date.now() - startedAt > 3000) {
+        throw new Error("Google sign-in window was closed before sign-in finished.");
+      }
+
+      await delay(1500);
+    }
+
+    popup.close();
+    throw new Error("Google sign-in timed out. Please try again.");
+  }
+
   async function handleGooglePress() {
     setError("");
     if (sessionExpired) clearSessionExpired();
 
     if (Platform.OS === "web") {
+      setLoading(true);
+      try {
+        await handleWebGooglePopupSignIn();
+        return;
+      } catch (popupErr) {
+        console.warn("[GoogleAuth] Popup sign-in failed, falling back to GIS:", popupErr);
+      } finally {
+        setLoading(false);
+      }
+
       if (!gisReady) {
         setLoading(true);
         try {
