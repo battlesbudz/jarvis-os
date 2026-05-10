@@ -120,6 +120,16 @@ export default function LoginScreen() {
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
 
+    loadGisScript()
+      .then(() => {})
+      .catch((err) => {
+        console.warn("[GoogleAuth] Could not preload Google sign-in:", err);
+      });
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+
     const readTokenFromHash = () => {
       const hash = window.location.hash.startsWith("#")
         ? window.location.hash.slice(1)
@@ -266,92 +276,66 @@ export default function LoginScreen() {
       throw new Error("Google client ID not configured.");
     }
 
-    await loadGisScript();
-    const tokenClient = window.google?.accounts.oauth2?.initTokenClient({
-      client_id: clientId,
-      scope: "openid email profile",
-      prompt: "select_account",
-      callback: async (response) => {
-        if (response.error) {
-          setError(response.error_description || response.error || "Google sign-in failed");
-          setLoading(false);
-          return;
-        }
-        if (!response.access_token) {
-          setError("Google did not return an access token. Please try again.");
-          setLoading(false);
-          return;
-        }
-        try {
-          await loginWithGoogle(null, response.access_token);
-        } catch (e: any) {
-          setError(e.message || "Google sign-in failed");
-        } finally {
-          setLoading(false);
-        }
-      },
-    });
-
-    if (!tokenClient) {
-      throw new Error("Google sign-in could not initialize.");
+    if (!window.google?.accounts.oauth2) {
+      await loadGisScript();
+      throw new Error("Google sign-in finished loading. Please click Sign in with Google again.");
     }
 
-    tokenClient.requestAccessToken({ prompt: "select_account" });
-  }
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error("Google sign-in did not finish. Your browser may have blocked the Google pop-up."));
+      }, 30000);
 
-  async function handleWebGoogleRedirectSignIn() {
-    if (typeof window === "undefined") {
-      throw new Error("Google sign-in is only available in a browser.");
-    }
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        fn();
+      };
 
-    await clearAuthStorage();
-    const { startUrl, pollUrl } = buildMobileAuthUrls(getApiUrl());
-    const popup = window.open(
-      startUrl,
-      "gameplan-google-signin",
-      "popup=yes,width=520,height=720,menubar=no,toolbar=no,location=yes,status=no",
-    );
+      const tokenClient = window.google?.accounts.oauth2?.initTokenClient({
+        client_id: clientId,
+        scope: "openid email profile",
+        prompt: "select_account",
+        callback: async (response) => {
+          if (response.error) {
+            finish(() => reject(new Error(response.error_description || response.error || "Google sign-in failed")));
+            return;
+          }
+          if (!response.access_token) {
+            finish(() => reject(new Error("Google did not return an access token. Please try again.")));
+            return;
+          }
+          try {
+            await loginWithGoogle(null, response.access_token);
+            finish(resolve);
+          } catch (e: any) {
+            finish(() => reject(new Error(e.message || "Google sign-in failed")));
+          }
+        },
+      });
 
-    if (!popup) {
-      window.location.assign(startUrl);
-      return;
-    }
-
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 2 * 60 * 1000) {
-      if (isAuthenticatedRef.current) {
-        popup.close();
+      if (!tokenClient) {
+        finish(() => reject(new Error("Google sign-in could not initialize.")));
         return;
       }
 
       try {
-        const res = await fetch(pollUrl, { credentials: "include" });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.ready && data.token) {
-            popup.close();
-            await loginWithToken(data.token);
-            return;
-          }
-        } else if (res.status >= 500) {
-          const data = await res.json().catch(() => null);
-          throw new Error(data?.error || "Google sign-in failed on the server.");
-        }
-      } catch (err) {
-        if (err instanceof Error && err.message !== "Failed to fetch") {
-          throw err;
-        }
+        tokenClient.requestAccessToken({ prompt: "select_account" });
+      } catch (e: any) {
+        finish(() => {
+          reject(new Error(e.message || "Google sign-in could not open."));
+        });
       }
+    });
+  }
 
-      if (popup.closed && Date.now() - startedAt > 3000) {
-        throw new Error("Google sign-in window was closed before sign-in finished.");
-      }
-
-      await delay(1500);
-    }
-
-    popup.close();
-    throw new Error("Google sign-in timed out. Please try again.");
+  function googleConfigHelp(errorMessage?: string) {
+    const base = errorMessage || "Google sign-in could not finish.";
+    return `${base} In Google Cloud Console, make sure this OAuth client allows the JavaScript origin https://gameplanjarvisai.up.railway.app and redirect URI https://gameplanjarvisai.up.railway.app/api/auth/mobile/callback.`;
   }
 
   async function handleGooglePress() {
@@ -364,15 +348,9 @@ export default function LoginScreen() {
         await handleWebGoogleTokenSignIn();
       } catch (e: any) {
         console.warn("[GoogleAuth] Browser token sign-in failed:", e);
-        try {
-          await handleWebGoogleRedirectSignIn();
-        } catch (fallbackErr: any) {
-          setError(
-            fallbackErr.message ||
-              "Google sign-in is not fully configured. Add the Railway callback URL to Google Cloud, then try again.",
-          );
-          setLoading(false);
-        }
+        setError(googleConfigHelp(e.message));
+      } finally {
+        setLoading(false);
       }
       return;
     }
