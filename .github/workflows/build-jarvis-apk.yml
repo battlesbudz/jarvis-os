@@ -40,7 +40,7 @@ jobs:
 
       - name: Run Expo prebuild
         env:
-          EXPO_PUBLIC_DOMAIN: GameplanAI.replit.app
+          EXPO_PUBLIC_DOMAIN: gameplanjarvisai.up.railway.app
           EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
         run: npx expo prebuild --platform android --clean
 
@@ -141,7 +141,7 @@ jobs:
           body: |
             Pre-built APK for the Jarvis main app — build ${{ github.run_number }}.
 
-            Connects to the production server at **GameplanAI.replit.app** — no Expo Go required.
+            Connects to the production server at **gameplanjarvisai.up.railway.app** — no Expo Go required.
 
             **First-time install:**
             1. Download `jarvis-app.apk` to your Android phone

@@ -20,10 +20,10 @@
  * Setup:
  *   1. Get your token from Jarvis:
  *        Ask Jarvis: "show me my local worker token"
- *      Or open: https://<your-replit-app>/api/local-worker/token  (while logged in)
+ *      Or open: https://gameplanjarvisai.up.railway.app/api/local-worker/token  (while logged in)
  *
  *   2. Run:
- *        TOKEN=lw_xxxxx SERVER=https://your-app.replit.app node jarvis-local-worker.js
+ *        TOKEN=lw_xxxxx SERVER=https://gameplanjarvisai.up.railway.app node jarvis-local-worker.js
  *
  *      Or set them at the top of this file:
  */
@@ -39,7 +39,7 @@ const path = require("path");
 const os = require("os");
 
 if (!TOKEN || !SERVER) {
-  console.error("Usage: TOKEN=lw_xxx SERVER=https://your-app.replit.app node jarvis-local-worker.js");
+  console.error("Usage: TOKEN=lw_xxx SERVER=https://gameplanjarvisai.up.railway.app node jarvis-local-worker.js");
   process.exit(1);
 }
 

@@ -37,7 +37,7 @@ npm install
 3. On your desktop, run:
 
 ```bash
-JARVIS_SERVER=https://your-gameplan.replit.app \
+JARVIS_SERVER=https://gameplanjarvisai.up.railway.app \
 JARVIS_PAIR_CODE=ABCD1234 \
 JARVIS_DAEMON_ROOT=$HOME/jarvis-workspace \
 node jarvis-daemon.js

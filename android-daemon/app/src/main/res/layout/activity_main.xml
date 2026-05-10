@@ -350,7 +350,7 @@
             <com.google.android.material.textfield.TextInputLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Jarvis server URL (e.g. https://myapp.replit.app)"
+                android:hint="Jarvis server URL (e.g. https://gameplanjarvisai.up.railway.app)"
                 android:layout_marginBottom="12dp"
                 style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
                 <com.google.android.material.textfield.TextInputEditText

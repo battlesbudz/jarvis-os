@@ -1907,7 +1907,7 @@ export default function SettingsScreen() {
                       <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
                         To enable one-tap GitHub login, an admin must create a GitHub OAuth App and set the{' '}
                         <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>GITHUB_CLIENT_ID</Text>
-                        {' '}secret in the Replit environment.
+                        {' '}secret in the Railway environment.
                       </Text>
                       <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
                         Setup steps:{'\n'}
@@ -1924,7 +1924,7 @@ export default function SettingsScreen() {
                         {'4. '}Enable "Device Flow" in the app settings.{'\n'}
                         {'5. '}Copy the Client ID and add it as the{' '}
                         <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>GITHUB_CLIENT_ID</Text>
-                        {' '}secret in Replit.{'\n'}
+                        {' '}variable in Railway.{'\n'}
                         {'   '}(No client secret needed for Device Flow.)
                       </Text>
                       <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
@@ -2217,7 +2217,7 @@ export default function SettingsScreen() {
                     </View>
                     {mcpAddEnvPresent === false && (
                       <Text style={{ color: Colors.error, fontSize: 11, marginBottom: 8, marginTop: -4 }}>
-                        Variable not found — add it to Replit Secrets first.
+                        Variable not found — add it to Railway Variables first.
                       </Text>
                     )}
                     {mcpAddEnvPresent === true && (
@@ -2239,7 +2239,7 @@ export default function SettingsScreen() {
                     {mcpEnvGuideExpanded && (
                       <View style={{ backgroundColor: Colors.surface, borderRadius: 8, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: Colors.border }}>
                         <Text style={{ color: Colors.text, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18 }}>
-                          {`1. Open your Replit project.\n2. Click the padlock icon (Secrets) in the left sidebar.\n3. Add a new secret with your chosen name (e.g. MY_API_TOKEN) and paste the value.\n4. The variable will be available in this dropdown immediately — no restart needed.\n\nUsing Secrets keeps raw keys out of your database and lets you rotate them without changing the app.`}
+                          {`1. Open your Railway project.\n2. Go to the service's Variables tab.\n3. Add a variable with your chosen name (e.g. MY_API_TOKEN) and paste the value.\n4. Redeploy the service so the server receives the new variable.\n\nUsing Railway Variables keeps raw keys out of your database and lets you rotate them without changing the app.`}
                         </Text>
                       </View>
                     )}

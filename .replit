@@ -127,7 +127,7 @@ DASHBOARD_SECRET = "your-dashboard-secret"
 JARVIS_API = "http://localhost:5000"
 
 [userenv.production]
-EXPO_PUBLIC_DOMAIN = "GameplanAI.replit.app"
+EXPO_PUBLIC_DOMAIN = "gameplanjarvisai.up.railway.app"
 
 [postMerge]
 path = "scripts/post-merge.sh"

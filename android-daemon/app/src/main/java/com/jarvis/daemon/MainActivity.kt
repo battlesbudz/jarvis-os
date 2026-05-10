@@ -94,10 +94,8 @@ class MainActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences("jarvis_daemon", Context.MODE_PRIVATE)
 
-        val savedUrl = prefs.getString("server_url", "") ?: ""
-        if (savedUrl.isNotEmpty()) {
-            binding.etServerUrl.setText(savedUrl)
-        }
+        val savedUrl = prefs.getString("server_url", JarvisConfig.SERVER_URL) ?: JarvisConfig.SERVER_URL
+        binding.etServerUrl.setText(savedUrl)
 
         binding.etServerUrl.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}

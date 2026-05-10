@@ -317,7 +317,7 @@ object OpHandler {
         // Last resort: open the URL directly (may cause page reload in some browsers)
         val svc = JarvisAccessibilityService.instance
         if (svc == null) {
-            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://GameplanAI.replit.app")).apply {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(JarvisConfig.SERVER_URL)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             val pi = android.app.PendingIntent.getActivity(
@@ -327,9 +327,9 @@ object OpHandler {
             NotificationHelper.showAction(context, "↩ Return to Jarvis", "Tap to reopen the Jarvis chat", pi, "return_jarvis".hashCode())
             return OpResult(false, error = "No browser found to bring to foreground — showed notification")
         }
-        val opened = try { svc.browseUrl("https://GameplanAI.replit.app") } catch (e: Exception) { false }
+        val opened = try { svc.browseUrl(JarvisConfig.SERVER_URL) } catch (e: Exception) { false }
         return if (opened) {
-            OpResult(true, data = JSONObject().put("returned", true).put("url", "https://GameplanAI.replit.app"))
+            OpResult(true, data = JSONObject().put("returned", true).put("url", JarvisConfig.SERVER_URL))
         } else {
             OpResult(false, error = "Could not navigate back to Jarvis")
         }

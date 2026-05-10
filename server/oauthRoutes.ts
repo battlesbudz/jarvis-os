@@ -1,17 +1,13 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { saveUserToken, deleteUserToken, getUserOAuthStatus } from './userTokenStore';
+import { getPublicBaseUrl } from './publicUrl';
 
 export const oauthRouter = Router();
 export const oauthCallbackRouter = Router();
 
 function getBaseUrl(req: Request): string {
-  const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-  if (domain) {
-    const isDev = process.env.REPLIT_DEV_DOMAIN === domain;
-    return isDev ? `https://${domain}:5000` : `https://${domain}`;
-  }
-  return `${req.protocol}://${req.get('host')}`;
+  return getPublicBaseUrl(req);
 }
 
 function successHtml(provider: string, email?: string): string {
