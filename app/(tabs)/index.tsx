@@ -13,12 +13,12 @@ import VisionSprite from '@/components/VisionSprite';
 import TasksScreen from '@/components/missionControl/TasksScreen';
 import CalendarScreen from '@/components/missionControl/CalendarScreen';
 import MemoryScreen from '@/components/missionControl/MemoryScreen';
-import PlaceholderScreen from '@/components/missionControl/PlaceholderScreen';
 import ProjectsScreen from '@/components/missionControl/ProjectsScreen';
+import UsageScreen from '@/components/missionControl/UsageScreen';
 import VisualOfficeScreen from '@/components/missionControl/VisualOfficeScreen';
 import { apiRequest } from '@/lib/query-client';
 
-const TABS = ['Tasks', 'Calendar', 'Projects', 'Memory', 'Visual'] as const;
+const TABS = ['Tasks', 'Calendar', 'Projects', 'Memory', 'Usage', 'Visual'] as const;
 type TabName = typeof TABS[number];
 
 function usePrimeStatus(): boolean | null {
@@ -87,6 +87,8 @@ function TabContent({ tab }: { tab: TabName }) {
       return <ProjectsScreen />;
     case 'Memory':
       return <MemoryScreen />;
+    case 'Usage':
+      return <UsageScreen />;
     case 'Visual':
       return <VisualOfficeScreen />;
   }

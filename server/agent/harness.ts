@@ -6,6 +6,7 @@ import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
 import type { ProviderName, FallbackChainEntry } from "./providers";
 import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
+import { estimateModelUsage, recordModelUsage } from "./modelUsage";
 
 /**
  * Resolve the provider name from a model string.
@@ -14,7 +15,22 @@ import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
  * (via modelPrefs) — no harness edits required.
  */
 function resolveProviderName(model: string): ProviderName {
-  return model.startsWith("claude") ? "claude" : "openai";
+  const normalized = model.toLowerCase();
+  if (normalized.startsWith("claude")) return "claude";
+  if (
+    normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("openai-compatible/") ||
+    normalized.startsWith("openrouter/") ||
+    normalized.startsWith("groq/") ||
+    normalized.startsWith("together/") ||
+    normalized.startsWith("fireworks/") ||
+    normalized.startsWith("cerebras/") ||
+    normalized.startsWith("nvidia/") ||
+    normalized.startsWith("deepseek/")
+  ) {
+    return "openai-compatible";
+  }
+  return "openai";
 }
 
 export interface RunAgentOptions {
@@ -922,14 +938,71 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
    * Falls back to the plain accumulateTurn(provider.query(...)) path when
    * no fallback chain is configured so the hot path has no extra overhead.
    */
-  const runProviderQuery = (
+  const runProviderQuery = async (
     queryParams: Parameters<typeof provider.query>[0],
   ) => {
-    if (effectiveFallbackChain) {
-      return queryWithFallback(effectiveFallbackChain, queryParams, `[${channel}/Agent]`);
+    const startedAt = Date.now();
+    try {
+      const result = effectiveFallbackChain
+        ? await queryWithFallback(effectiveFallbackChain, queryParams, `[${channel}/Agent]`)
+        : await (async () => {
+            console.log(`[${channel}/Agent] provider=${primaryProviderName} model=${model}`);
+            const plainResult = await accumulateTurn(provider.query(queryParams));
+            plainResult.providerName = primaryProviderName;
+            plainResult.model = queryParams.model;
+            plainResult.fallbackUsed = false;
+            return plainResult;
+          })();
+
+      if (context.userId) {
+        const usage = estimateModelUsage({
+          messages: queryParams.messages,
+          tools: queryParams.tools,
+          textContent: result.textContent,
+          toolCallList: result.toolCallList,
+        });
+        void recordModelUsage({
+          userId: context.userId,
+          provider: result.providerName ?? primaryProviderName,
+          model: result.model ?? queryParams.model,
+          source: context.channel ?? channel,
+          ...usage,
+          durationMs: Date.now() - startedAt,
+          success: true,
+          metadata: {
+            finishReason: result.finishReason,
+            toolCalls: result.toolCallList.length,
+            fallbackUsed: Boolean(result.fallbackUsed),
+          },
+        });
+      }
+
+      return result;
+    } catch (err) {
+      if (context.userId) {
+        const usage = estimateModelUsage({
+          messages: queryParams.messages,
+          tools: queryParams.tools,
+          textContent: "",
+          toolCallList: [],
+        });
+        void recordModelUsage({
+          userId: context.userId,
+          provider: primaryProviderName,
+          model: queryParams.model,
+          source: context.channel ?? channel,
+          ...usage,
+          completionTokens: 0,
+          totalTokens: usage.promptTokens,
+          durationMs: Date.now() - startedAt,
+          success: false,
+          metadata: {
+            error: err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300),
+          },
+        });
+      }
+      throw err;
     }
-    console.log(`[${channel}/Agent] provider=${primaryProviderName} model=${model}`);
-    return accumulateTurn(provider.query(queryParams));
   };
 
   // `messages` was already set above (with skills injected); spread into a mutable copy

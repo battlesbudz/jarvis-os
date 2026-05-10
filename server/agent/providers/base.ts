@@ -45,6 +45,9 @@ export interface ProviderTurnResult {
   textChunks: string[];
   toolCallList: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[];
   finishReason: string | null;
+  providerName?: string;
+  model?: string;
+  fallbackUsed?: boolean;
 }
 
 // ── Accumulator helper ─────────────────────────────────────────────────────────
