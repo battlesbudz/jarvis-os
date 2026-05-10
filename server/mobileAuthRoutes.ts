@@ -91,6 +91,8 @@ function getCallbackUrl(req: Request): string {
 
 function successHtml(token: string): string {
   const encodedToken = encodeURIComponent(token);
+  const tokenJson = JSON.stringify(token);
+  const originFallback = `/login#auth_token=${encodedToken}`;
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -130,8 +132,19 @@ function successHtml(token: string): string {
   </div>
   <script>
     try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'gameplan-auth-token', token: ${tokenJson} }, window.location.origin);
+        window.close();
+      }
+    } catch(e) {}
+    try {
       window.location.href = 'gameplan://auth/complete?token=${encodedToken}';
     } catch(e) {}
+    setTimeout(function () {
+      try {
+        window.location.replace('${originFallback}');
+      } catch(e) {}
+    }, 800);
   </script>
 </body>
 </html>`;
