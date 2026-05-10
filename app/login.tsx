@@ -373,15 +373,22 @@ export default function LoginScreen() {
     setPwLoading(true);
     try {
       const base = getApiUrl();
-      const res = await fetch(`${base}/api/auth/login`, {
+      const res = await fetch(new URL("/api/auth/login", base).toString(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), password }),
       });
-      const data = await res.json();
+      const raw = await res.text();
+      let data: { token?: string; error?: string } = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error("Login returned an unexpected response. Please refresh and try again.");
+      }
       if (!res.ok) {
         setError(data.error || "Invalid username or password.");
       } else {
+        if (!data.token) throw new Error("Login response did not include a token.");
         await loginWithToken(data.token);
       }
     } catch (err: unknown) {
@@ -503,7 +510,7 @@ export default function LoginScreen() {
                     typeof window !== "undefined" && window.location.hostname === "localhost"
                       ? "http://localhost:5000"
                       : getApiUrl();
-                  const res = await fetch(`${base}/api/dev-token`);
+                  const res = await fetch(new URL("/api/dev-token", base).toString());
                   const { token } = await res.json();
                   await loginWithToken(token);
                 } catch (e: any) {

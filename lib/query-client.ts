@@ -17,7 +17,7 @@ export function getApiUrl(): string {
 
   let url = new URL(`https://${host}`);
 
-  return url.href;
+  return url.origin;
 }
 
 async function throwIfResNotOk(res: Response) {
