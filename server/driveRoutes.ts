@@ -5,14 +5,10 @@ import { eq } from 'drizzle-orm';
 import * as schema from '@shared/schema';
 import { getValidGoogleToken } from './userTokenStore';
 import { ensureJarvisFolder, checkDriveScope } from './integrations/googleDrive';
+import { getPublicBaseUrl } from './publicUrl';
 
 function getBaseUrl(req: Request): string {
-  const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-  if (domain) {
-    const isDev = process.env.REPLIT_DEV_DOMAIN === domain;
-    return isDev ? `https://${domain}:5000` : `https://${domain}`;
-  }
-  return `${req.protocol}://${req.get('host')}`;
+  return getPublicBaseUrl(req);
 }
 
 export const driveRouter = Router();

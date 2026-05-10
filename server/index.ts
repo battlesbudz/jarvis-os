@@ -26,6 +26,7 @@ import { telegramLinks, inboxItems } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import * as fs from "fs";
 import * as path from "path";
+import { getPublicBaseUrl } from "./publicUrl";
 
 async function alertTelegramUsersWebhookDown(): Promise<void> {
   try {
@@ -86,6 +87,7 @@ declare module "http" {
 function setupCors(app: express.Application) {
   app.use((req, res, next) => {
     const origins = new Set<string>();
+    origins.add(getPublicBaseUrl());
 
     if (process.env.REPLIT_DEV_DOMAIN) {
       origins.add(`https://${process.env.REPLIT_DEV_DOMAIN}`);
@@ -550,7 +552,7 @@ function setupErrorHandler(app: express.Application) {
               });
             }, WEBHOOK_CHECK_INTERVAL_MS);
           } else {
-            console.error("[Telegram] Production mode but REPLIT_DOMAINS is not set â€” cannot register webhook");
+            console.error("[Telegram] Production mode but no public base URL could be determined; cannot register webhook");
           }
         } else {
           // Dev mode: only start polling if a dedicated dev bot token is set.
@@ -559,7 +561,7 @@ function setupErrorHandler(app: express.Application) {
           // race and the user would receive two replies for every message.
           if (!process.env.TELEGRAM_BOT_TOKEN_DEV) {
             console.warn(
-              "[Telegram] âš  Dev polling SKIPPED â€” set TELEGRAM_BOT_TOKEN_DEV as a Replit secret " +
+              "[Telegram] âš  Dev polling SKIPPED â€” set TELEGRAM_BOT_TOKEN_DEV as a Railway variable " +
               "(create a test bot via BotFather) to enable polling without conflicting with the production bot."
             );
             console.warn(

@@ -7,7 +7,7 @@ if (!JWT_SECRET) throw new Error("JWT_SECRET env var is required");
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) throw new Error("DATABASE_URL env var is required");
 
-const PROD_URL = process.env.PROD_URL || "https://gameplanai.replit.app";
+const PROD_URL = process.env.PROD_URL || "https://gameplanjarvisai.up.railway.app";
 
 const DEV_USER_ID = process.argv[2];
 const PROD_USER_ID = process.argv[3];

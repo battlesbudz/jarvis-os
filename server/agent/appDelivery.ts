@@ -18,6 +18,7 @@ import { getChannel } from "../channels/registry";
 import { stopProjectServer } from "./tools/projectShellTool";
 import { sendToDiscordUser } from "../discord/manager";
 import { hasGitHubPAT } from "../integrations/github";
+import { getPublicBaseUrl } from "../publicUrl";
 
 const DOWNLOADS_DIR = path.join(process.cwd(), "server", "static", "downloads");
 const ZIP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -220,9 +221,7 @@ export async function packageAndDeliverApp(
   const signedToken = generateDownloadToken(projectId);
 
   // Build an absolute URL so the link is usable in Telegram/Discord notifications.
-  const baseUrl = process.env.REPLIT_DEV_DOMAIN
-    ? `https://${process.env.REPLIT_DEV_DOMAIN}`
-    : process.env.SERVER_URL ?? "http://localhost:5000";
+  const baseUrl = getPublicBaseUrl();
   const downloadUrl = `${baseUrl}/api/downloads/project/${projectId}?token=${signedToken}`;
 
   console.log(`[AppDelivery] project ${projectId} packaged: ${zipSizeMb}MB, ${fileCount} files, framework=${framework}`);

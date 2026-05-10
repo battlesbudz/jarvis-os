@@ -16,10 +16,8 @@ object NotificationHelper {
     private var notifId = 2000
 
     // Tapping any Jarvis completion notification brings the user back to the Jarvis chat.
-    private const val JARVIS_URL = "https://GameplanAI.replit.app"
-
     private fun jarvisTapIntent(context: Context): PendingIntent {
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(JARVIS_URL)).apply {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(JarvisConfig.SERVER_URL)).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         return PendingIntent.getActivity(

@@ -62,7 +62,7 @@ async function generateVideo(prompt: string, duration?: number): Promise<string>
   const apiKey = process.env.INFSH_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "INFSH_API_KEY is not configured. Add it as a Replit secret to enable AI video generation."
+      "INFSH_API_KEY is not configured. Add it as a Railway variable to enable AI video generation."
     );
   }
   // Dynamic import so the module is never loaded when INFSH_API_KEY is absent.

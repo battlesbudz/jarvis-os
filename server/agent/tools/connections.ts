@@ -4,15 +4,7 @@ import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { channelLinks, telegramLinks } from "@shared/schema";
 import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive } from "../../daemon/bridge";
-
-function getServerBaseUrl(): string {
-  const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-  if (domain) {
-    const isDev = process.env.REPLIT_DEV_DOMAIN === domain;
-    return isDev ? `https://${domain}:5000` : `https://${domain}`;
-  }
-  return 'http://localhost:5000';
-}
+import { getPublicBaseUrl } from "../../publicUrl";
 
 export const checkConnectionsTool: AgentTool = {
   name: "check_connections",
@@ -83,7 +75,7 @@ export const generateReconnectLinkTool: AgentTool = {
   },
   async execute(args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
     const provider = String(args.provider || "").toLowerCase();
-    const baseUrl = getServerBaseUrl();
+    const baseUrl = getPublicBaseUrl();
 
     if (provider === "google") {
       const clientId = process.env.GOOGLE_WEB_CLIENT_ID;

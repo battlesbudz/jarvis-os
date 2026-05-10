@@ -152,7 +152,7 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
         throw new Error(
           "Image generation requires a direct OpenAI API key. " +
           "The Replit AI integration proxy does not support image models. " +
-          "Add your own OPENAI_API_KEY as a Replit secret to enable image generation. " +
+          "Add your own OPENAI_API_KEY as a Railway variable to enable image generation. " +
           `(Original error: ${msg})`
         );
       }
@@ -188,7 +188,7 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
     throw new Error(
       "Image generation requires a direct OpenAI API key — " +
       "the Replit AI integration proxy only supports chat/text models. " +
-      "Add your own OPENAI_API_KEY as a Replit secret to enable image generation. " +
+      "Add your own OPENAI_API_KEY as a Railway variable to enable image generation. " +
       `(Error: ${msg})`
     );
   }
@@ -227,7 +227,7 @@ async function generateFlux(prompt: string, imageSize: string): Promise<string> 
   const apiKey = process.env.INFSH_API_KEY;
   if (!apiKey) {
     throw new Error(
-      "INFSH_API_KEY is not configured. Add it as a Replit secret to enable FLUX image generation."
+      "INFSH_API_KEY is not configured. Add it as a Railway variable to enable FLUX image generation."
     );
   }
   // Dynamic import so the module is never loaded when INFSH_API_KEY is absent.

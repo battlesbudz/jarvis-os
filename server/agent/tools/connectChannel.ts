@@ -4,6 +4,7 @@ import { telegramLinkCodes, channelLinkCodes } from "../../../shared/schema";
 import { eq, and } from "drizzle-orm";
 import { getTelegramBotUsername, isTelegramConfigured } from "../../integrations/telegram";
 import { buildSlackAuthorizeUrl } from "../../oauthRoutes";
+import { getPublicBaseUrl } from "../../publicUrl";
 
 type Channel = "telegram" | "whatsapp" | "discord" | "slack";
 
@@ -113,8 +114,7 @@ export const connectChannelTool: AgentTool = {
             label: "Slack not configured",
           };
         }
-        const domain = process.env.REPLIT_DOMAINS?.split(",")[0];
-        const baseUrl = domain ? `https://${domain}` : "http://localhost:5000";
+        const baseUrl = getPublicBaseUrl();
         const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
         const url = buildSlackAuthorizeUrl(userId, redirectUri);
         if (!url) {

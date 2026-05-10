@@ -1380,7 +1380,7 @@ export default function ProfileScreen() {
       if (!res.ok || data.error) {
         const msg = data.error || 'Could not generate link code.';
         if (msg.includes('not configured')) {
-          alert('Telegram bot not set up yet — add your TELEGRAM_BOT_TOKEN in Replit Secrets to enable this.');
+          alert('Telegram bot not set up yet — add your TELEGRAM_BOT_TOKEN in Railway Variables to enable this.');
         } else {
           alert(msg);
         }
@@ -3725,7 +3725,7 @@ export default function ProfileScreen() {
                         <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
                           In Discord Developer Portal → General Information, copy the{' '}
                           <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>Public Key</Text>{' '}
-                          value. Then in Replit Secrets, add it as{' '}
+                          value. Then in Railway Variables, add it as{' '}
                           <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>DISCORD_PUBLIC_KEY</Text>.
                         </Text>
                         {discordSlashConfig?.publicKeyConfigured ? (
@@ -4161,7 +4161,7 @@ export default function ProfileScreen() {
                 <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#34A85312', borderWidth: 1, borderColor: '#34A853', marginBottom: 8 }}>
                   <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#1a6b30', lineHeight: 20 }}>
                     1. Server URL:{'\n'}
-                    <Text style={{ fontFamily: 'Inter_700Bold', letterSpacing: 0.5 }}>https://GameplanAI.replit.app</Text>{'\n\n'}
+                    <Text style={{ fontFamily: 'Inter_700Bold', letterSpacing: 0.5 }}>https://gameplanjarvisai.up.railway.app</Text>{'\n\n'}
                     2. Pairing Code: enter the code above{'\n\n'}
                     3. Tap <Text style={{ fontFamily: 'Inter_700Bold' }}>Pair</Text>. The dot turns green when connected.
                   </Text>

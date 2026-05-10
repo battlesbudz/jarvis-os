@@ -1,8 +1,9 @@
 import crypto from 'crypto';
+import { getPublicBaseUrl } from '../publicUrl';
 
 // Token selection: in dev, prefer TELEGRAM_BOT_TOKEN_DEV (a separate test bot
 // created via BotFather) so the dev server never races with the production
-// webhook.  Set TELEGRAM_BOT_TOKEN_DEV as a Replit secret in the workspace.
+// webhook. Set TELEGRAM_BOT_TOKEN_DEV in the local/dev environment.
 // In production, always use TELEGRAM_BOT_TOKEN.
 const isProduction = process.env.NODE_ENV === 'production';
 const BOT_TOKEN = (!isProduction && process.env.TELEGRAM_BOT_TOKEN_DEV)
@@ -100,12 +101,9 @@ export interface InlineKeyboardMarkup {
  * Points to /go/voice-call — a public Express route that first attempts to
  * open the native app via jarvis://voice-realtime and falls back to the HTTPS
  * web version of the voice screen after 1.5 s if the app is not installed.
- * Returns null in dev mode when REPLIT_DOMAINS is not set.
  */
 function getVoiceCallUrl(): string | null {
-  const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
-  if (!domain) return null;
-  return `https://${domain}/go/voice-call`;
+  return `${getPublicBaseUrl()}/go/voice-call`;
 }
 
 /**
@@ -114,7 +112,6 @@ function getVoiceCallUrl(): string | null {
  *   1. Attempts to launch the native app via jarvis://voice-realtime
  *   2. Falls back to the HTTPS web voice screen after 1.5 s
  *
- * Returns null if no URL can be determined (dev mode without REPLIT_DOMAINS).
  */
 export function buildVoiceCallKeyboard(opts?: {
   includeTextReplyButton?: boolean;
@@ -537,13 +534,10 @@ export async function ensureWebhook(expectedUrl: string): Promise<{ healthy: boo
 }
 
 /**
- * Returns the expected production webhook URL derived from REPLIT_DOMAINS.
- * Returns null if REPLIT_DOMAINS is not set (dev mode).
+ * Returns the expected production webhook URL.
  */
 export function getExpectedWebhookUrl(): string | null {
-  const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
-  if (!domain) return null;
-  return `https://${domain}/api/telegram/webhook`;
+  return `${getPublicBaseUrl()}/api/telegram/webhook`;
 }
 
 export function isTelegramConfigured(): boolean {
@@ -732,7 +726,7 @@ export function logTelegramStatus(): void {
   if (BOT_TOKEN) {
     console.log('Telegram: configured ✓');
   } else {
-    console.log('Telegram: not configured (set TELEGRAM_BOT_TOKEN in Replit Secrets)');
+    console.log('Telegram: not configured (set TELEGRAM_BOT_TOKEN in the server environment)');
   }
 }
 

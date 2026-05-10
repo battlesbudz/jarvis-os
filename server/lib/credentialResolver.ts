@@ -60,7 +60,7 @@ export function resolveCredential(
       value: null,
       source: "env",
       missing: true,
-      errorMessage: `Environment variable "${envKey}" is not set — add it to Replit Secrets`,
+      errorMessage: `Environment variable "${envKey}" is not set — add it to Railway Variables`,
     };
   }
 
