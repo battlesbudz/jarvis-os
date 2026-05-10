@@ -16,6 +16,47 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiUrl } from "@/lib/query-client";
 import { Ionicons } from "@expo/vector-icons";
 
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        oauth2?: {
+          initTokenClient: (config: {
+            client_id: string;
+            scope: string;
+            callback: (response: { access_token?: string; error?: string; error_description?: string }) => void;
+            prompt?: string;
+          }) => {
+            requestAccessToken: (options?: { prompt?: string }) => void;
+          };
+        };
+      };
+    };
+  }
+}
+
+function loadGisScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") return reject(new Error("Not in browser"));
+    if (window.google?.accounts?.oauth2) return resolve();
+
+    const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Failed to load Google sign-in")));
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Google sign-in"));
+    document.head.appendChild(script);
+  });
+}
+
 function createOauthNonce(length = 48): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   const cryptoSource = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
@@ -56,7 +97,7 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
+  const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [hasPreviousAccount, setHasPreviousAccount] = useState(false);
@@ -214,13 +255,56 @@ export default function LoginScreen() {
     }
   }
 
-  async function handleWebGooglePopupSignIn() {
+  async function handleWebGoogleTokenSignIn() {
     if (typeof window === "undefined") {
       throw new Error("Google sign-in is only available in a browser.");
     }
 
     await clearAuthStorage();
+    const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+    if (!clientId) {
+      throw new Error("Google client ID not configured.");
+    }
 
+    await loadGisScript();
+    const tokenClient = window.google?.accounts.oauth2?.initTokenClient({
+      client_id: clientId,
+      scope: "openid email profile",
+      prompt: "select_account",
+      callback: async (response) => {
+        if (response.error) {
+          setError(response.error_description || response.error || "Google sign-in failed");
+          setLoading(false);
+          return;
+        }
+        if (!response.access_token) {
+          setError("Google did not return an access token. Please try again.");
+          setLoading(false);
+          return;
+        }
+        try {
+          await loginWithGoogle(null, response.access_token);
+        } catch (e: any) {
+          setError(e.message || "Google sign-in failed");
+        } finally {
+          setLoading(false);
+        }
+      },
+    });
+
+    if (!tokenClient) {
+      throw new Error("Google sign-in could not initialize.");
+    }
+
+    tokenClient.requestAccessToken({ prompt: "select_account" });
+  }
+
+  async function handleWebGoogleRedirectSignIn() {
+    if (typeof window === "undefined") {
+      throw new Error("Google sign-in is only available in a browser.");
+    }
+
+    await clearAuthStorage();
     const { startUrl, pollUrl } = buildMobileAuthUrls(getApiUrl());
     const popup = window.open(
       startUrl,
@@ -277,11 +361,18 @@ export default function LoginScreen() {
     if (Platform.OS === "web") {
       setLoading(true);
       try {
-        await handleWebGooglePopupSignIn();
+        await handleWebGoogleTokenSignIn();
       } catch (e: any) {
-        setError(e.message || "Could not start Google sign-in");
-      } finally {
-        setLoading(false);
+        console.warn("[GoogleAuth] Browser token sign-in failed:", e);
+        try {
+          await handleWebGoogleRedirectSignIn();
+        } catch (fallbackErr: any) {
+          setError(
+            fallbackErr.message ||
+              "Google sign-in is not fully configured. Add the Railway callback URL to Google Cloud, then try again.",
+          );
+          setLoading(false);
+        }
       }
       return;
     }
