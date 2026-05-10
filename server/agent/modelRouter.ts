@@ -212,6 +212,65 @@ function messageTextSize(messages: OpenAI.Chat.Completions.ChatCompletionMessage
   return messages.reduce((sum, message) => sum + textFromContent(message.content).length, 0);
 }
 
+function hasToolMessages(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
+  return messages.some((message) => message.role === "tool");
+}
+
+function needsPersonalJarvisContext(text: string): boolean {
+  const lower = text.toLowerCase();
+  const personalSignals = [
+    "my task", "my tasks", "my plan", "my plans", "my goal", "my goals",
+    "my memory", "my memories", "remember", "about me", "who am i",
+    "what do you know about me", "commitment", "commitments", "calendar",
+    "schedule", "meeting", "email", "gmail", "inbox", "telegram", "discord",
+    "slack", "profile", "dashboard", "stats", "xp", "habit", "habits",
+    "document", "documents", "file", "files", "code", "repo", "repository",
+    "screen", "phone", "daemon",
+  ];
+  return personalSignals.some((signal) => lower.includes(signal));
+}
+
+function buildLeanSystemPrompt(): string {
+  return [
+    "You are GamePlan Coach, Jarvis's chat persona.",
+    "Answer the user's latest message directly and keep it concise.",
+    "Use only the context included in this request. Do not invent memories, files, user data, live research, or tool results.",
+    "If the user asks for current information or an action and a relevant tool is available, use it. If the needed tool or API is unavailable, say that plainly.",
+  ].join("\n");
+}
+
+function maybeUseLeanContext(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  logPrefix: string,
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  if (process.env.JARVIS_LEAN_CONTEXT === "0") return messages;
+
+  const inputChars = messageTextSize(messages);
+  const maxChars = Number(process.env.JARVIS_LEAN_CONTEXT_CHAR_LIMIT || 12000);
+  if (inputChars <= maxChars) return messages;
+
+  if (hasToolMessages(messages)) return messages;
+
+  const lastUserText = getLastUserText(messages);
+  const complexity = classifyTaskComplexity(lastUserText);
+  if (complexity !== "trivial" && complexity !== "easy") return messages;
+  if (needsPersonalJarvisContext(lastUserText)) return messages;
+
+  const historyLimit = Math.max(1, Number(process.env.JARVIS_LEAN_CONTEXT_HISTORY_MESSAGES || 4));
+  const nonSystemMessages = messages.filter((message) => message.role !== "system");
+  const leanMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: buildLeanSystemPrompt() },
+    ...nonSystemMessages.slice(-historyLimit),
+  ];
+
+  const leanChars = messageTextSize(leanMessages);
+  console.log(
+    `${logPrefix} lean_context: ${inputChars} chars -> ${leanChars} chars for ${complexity} non-personal request`,
+  );
+
+  return leanMessages;
+}
+
 function modelForEntry(entry: FallbackChainEntry): string {
   return entry.model;
 }
@@ -408,13 +467,19 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
       .join(" -> ")}`,
   );
 
+  const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
+  const leanContextApplied = routedMessages !== params.messages;
+  if (leanContextApplied && params.tools?.length) {
+    console.log(`${logPrefix} lean_context: omitted ${params.tools.length} tool schema(s)`);
+  }
+
   return queryWithFallback(
     chain,
     {
       model: chain[0].model,
-      messages: params.messages,
-      tools: params.tools,
-      toolChoice: params.toolChoice ?? "none",
+      messages: routedMessages,
+      tools: routedMessages !== params.messages ? undefined : params.tools,
+      toolChoice: routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),
       maxCompletionTokens: params.maxCompletionTokens,
       stream: params.stream ?? false,
       signal: params.signal,
