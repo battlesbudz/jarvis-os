@@ -45,12 +45,13 @@ function toCompletion(
   text: string,
   toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[],
   finishReason: string | null,
+  routedModel?: string,
 ): ChatCompletion {
   return {
     id: `jarvis-routed-${Date.now()}`,
     object: "chat.completion",
     created: Math.floor(Date.now() / 1000),
-    model: String(body.model),
+    model: routedModel || String(body.model),
     choices: [
       {
         index: 0,
@@ -67,12 +68,12 @@ function toCompletion(
   } as ChatCompletion;
 }
 
-async function* toStream(text: string): AsyncGenerator<ChatCompletionChunk> {
+async function* toStream(text: string, routedModel: string): AsyncGenerator<ChatCompletionChunk> {
   yield {
     id: `jarvis-routed-${Date.now()}`,
     object: "chat.completion.chunk",
     created: Math.floor(Date.now() / 1000),
-    model: "jarvis-routed",
+    model: routedModel,
     choices: [
       {
         index: 0,
@@ -86,7 +87,7 @@ async function* toStream(text: string): AsyncGenerator<ChatCompletionChunk> {
     id: `jarvis-routed-${Date.now()}`,
     object: "chat.completion.chunk",
     created: Math.floor(Date.now() / 1000),
-    model: "jarvis-routed",
+    model: routedModel,
     choices: [
       {
         index: 0,
@@ -126,8 +127,9 @@ function routeBody(body: ChatCreateBody, signal: AbortSignal | undefined, logPre
     signal,
     logPrefix,
   }).then((result) => {
-    if (body.stream) return toStream(result.textContent);
-    return toCompletion(body, result.textContent, result.toolCallList, result.finishReason);
+    const routedModel = result.model ?? String(body.model);
+    if (body.stream) return toStream(result.textContent, routedModel);
+    return toCompletion(body, result.textContent, result.toolCallList, result.finishReason, routedModel);
   }).finally(() => {
     routingDepth--;
   });

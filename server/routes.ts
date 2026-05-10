@@ -67,6 +67,26 @@ import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
 import { runCapabilityGapAnalysis } from "./agent/capabilityGapAnalyzer";
 import { getPublicBaseUrl } from "./publicUrl";
+import { estimateModelUsage, getModelUsageSummary, recordModelUsage } from "./agent/modelUsage";
+
+function providerLabelForModel(model: string): string {
+  const normalized = model.toLowerCase();
+  if (normalized.startsWith("claude")) return "claude";
+  if (
+    normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("openai-compatible/") ||
+    normalized.startsWith("openrouter/") ||
+    normalized.startsWith("groq/") ||
+    normalized.startsWith("together/") ||
+    normalized.startsWith("fireworks/") ||
+    normalized.startsWith("cerebras/") ||
+    normalized.startsWith("nvidia/") ||
+    normalized.startsWith("deepseek/")
+  ) {
+    return "openai-compatible";
+  }
+  return "openai";
+}
 
 // ── PRIME.md loader — Jarvis core identity & behavioral rules ────────────────
 // Reads agents/PRIME.md once at module load. Sections are delimited by ## headings.
@@ -3333,6 +3353,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             ...chatMessages,
             ...toolMessages,
           ];
+          const phase1StartedAt = Date.now();
           const phase1 = await openai.chat.completions.create({
             model: "gpt-4o-mini",
             messages: currentMessages,
@@ -3344,6 +3365,30 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           }, { signal });
 
           const choice = phase1.choices[0];
+          const phase1ToolCalls = (choice.message.tool_calls ?? []).filter(
+            (tc): tc is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => tc.type === "function",
+          );
+          const phase1Usage = estimateModelUsage({
+            messages: currentMessages,
+            tools: requestTools,
+            textContent: choice.message.content ?? "",
+            toolCallList: phase1ToolCalls,
+          });
+          void recordModelUsage({
+            userId,
+            provider: providerLabelForModel(phase1.model || "gpt-4o-mini"),
+            model: phase1.model || "gpt-4o-mini",
+            source: "app_chat",
+            ...phase1Usage,
+            durationMs: Date.now() - phase1StartedAt,
+            success: true,
+            metadata: {
+              phase: "tool_loop",
+              turn,
+              finishReason: choice.finish_reason,
+              toolCalls: phase1ToolCalls.length,
+            },
+          });
 
           // Model finished with text (no more tool calls this turn)
           if (choice.finish_reason !== 'tool_calls' || !choice.message.tool_calls?.length) {
@@ -3790,6 +3835,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ? [...chatMessages, ...toolMessages]
         : chatMessages;
 
+      const streamStartedAt = Date.now();
       const stream = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: streamMessages,
@@ -3799,8 +3845,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       stopKeepalive();
       let fullStreamedReply = '';
+      let streamedModel = "gpt-4o-mini";
       for await (const chunk of stream) {
         if (signal.aborted) break;
+        if (chunk.model) streamedModel = chunk.model;
         const content = chunk.choices[0]?.delta?.content || '';
         if (content) {
           fullStreamedReply += content;
@@ -3811,6 +3859,25 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
 
       // Persist if daemon actions ran — response survives connection drops
+      const streamUsage = estimateModelUsage({
+        messages: streamMessages,
+        textContent: fullStreamedReply,
+      });
+      void recordModelUsage({
+        userId,
+        provider: providerLabelForModel(streamedModel),
+        model: streamedModel,
+        source: "app_chat",
+        ...streamUsage,
+        durationMs: Date.now() - streamStartedAt,
+        success: !signal.aborted,
+        metadata: {
+          phase: "final_stream",
+          actionCount: actionResults.length,
+          attachmentCount: allMcpAttachments.length,
+        },
+      });
+
       if (hasDaemonActions && userId && fullStreamedReply) {
         const screenshotUrl = actionResults.find((a: any) => a.screenshotUrl)?.screenshotUrl;
         savePendingResponse(userId, fullStreamedReply, screenshotUrl).catch(() => {});
@@ -6198,6 +6265,21 @@ Return ONLY the JSON object.`;
     } catch (err) {
       console.error("Error fetching jarvis scheduled tasks:", err);
       res.status(500).json({ error: "Failed to fetch scheduled tasks" });
+    }
+  });
+
+  app.get("/api/jarvis/model-usage", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const rawDays = Number(req.query.days ?? 7);
+      const days = Number.isFinite(rawDays) ? Math.floor(rawDays) : 7;
+      const usage = await getModelUsageSummary(userId, days);
+      res.json(usage);
+    } catch (err) {
+      console.error("Error fetching model usage:", err);
+      res.status(500).json({ error: "Failed to fetch model usage" });
     }
   });
 

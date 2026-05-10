@@ -194,6 +194,9 @@ export async function queryWithFallback(
       // Model namespaces are provider-specific: OpenAI accepts "gpt-*",
       // Anthropic accepts "claude-*". Cross-provider fallback MUST remap the model.
       const result = await accumulateTurn(provider.query({ ...params, model: entry.model }));
+      result.providerName = entry.providerName;
+      result.model = entry.model;
+      result.fallbackUsed = isFallback;
 
       if (isFallback) {
         console.log(
