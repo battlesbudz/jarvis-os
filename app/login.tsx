@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -15,45 +15,6 @@ import { useAuth, clearAuthStorage } from "@/lib/auth-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiUrl } from "@/lib/query-client";
 import { Ionicons } from "@expo/vector-icons";
-
-declare global {
-  interface Window {
-    google?: {
-      accounts: {
-        id: {
-          initialize: (config: {
-            client_id: string;
-            callback: (response: { credential: string }) => void;
-            auto_select?: boolean;
-          }) => void;
-          prompt: (notification?: (n: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean }) => void) => void;
-          renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void;
-        };
-      };
-    };
-  }
-}
-
-function loadGisScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (typeof window === "undefined") return reject(new Error("Not in browser"));
-    if (window.google?.accounts?.id) return resolve();
-
-    const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]');
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Google Identity Services"));
-    document.head.appendChild(script);
-  });
-}
 
 function createOauthNonce(length = 48): string {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -95,15 +56,13 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
-  const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
+  const { loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [gisReady, setGisReady] = useState(false);
   const [hasPreviousAccount, setHasPreviousAccount] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [pwLoading, setPwLoading] = useState(false);
-  const gisInitialized = useRef(false);
   const isAuthenticatedRef = useRef(isAuthenticated);
   useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
 
@@ -117,42 +76,53 @@ export default function LoginScreen() {
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
-  const handleGisCredential = useCallback(
-    async (response: { credential: string }) => {
-      setLoading(true);
-      setError("");
-      try {
-        await loginWithGoogle(response.credential, null);
-      } catch (e: any) {
-        setError(e.message || "Google sign-in failed");
-      } finally {
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+
+    const readTokenFromHash = () => {
+      const hash = window.location.hash.startsWith("#")
+        ? window.location.hash.slice(1)
+        : window.location.hash;
+      const params = new URLSearchParams(hash);
+      return params.get("auth_token");
+    };
+
+    const token = readTokenFromHash();
+    if (!token) return;
+
+    setLoading(true);
+    window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+    loginWithToken(token)
+      .catch((e: any) => {
+        setError(e.message || "Failed to complete Google sign-in");
+      })
+      .finally(() => {
         setLoading(false);
-      }
-    },
-    [loginWithGoogle]
-  );
+      });
+  }, [loginWithToken]);
 
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
 
-    const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-    if (!clientId) return;
+    const handleAuthMessage = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const token = event.data?.type === "gameplan-auth-token" ? event.data.token : null;
+      if (typeof token !== "string" || !token) return;
 
-    loadGisScript()
-      .then(() => {
-        if (gisInitialized.current) return;
-        gisInitialized.current = true;
+      setLoading(true);
+      setError("");
+      try {
+        await loginWithToken(token);
+      } catch (e: any) {
+        setError(e.message || "Failed to complete Google sign-in");
+      } finally {
+        setLoading(false);
+      }
+    };
 
-        window.google!.accounts.id.initialize({
-          client_id: clientId,
-          callback: handleGisCredential,
-        });
-        setGisReady(true);
-      })
-      .catch((err) => {
-        console.error("GIS load error:", err);
-      });
-  }, [handleGisCredential]);
+    window.addEventListener("message", handleAuthMessage);
+    return () => window.removeEventListener("message", handleAuthMessage);
+  }, [loginWithToken]);
 
   async function handleNativeGoogleSignIn() {
     // Always clear any stale token before starting a new OAuth flow so the
@@ -259,7 +229,8 @@ export default function LoginScreen() {
     );
 
     if (!popup) {
-      throw new Error("Google sign-in window was blocked. Allow pop-ups for this site and try again.");
+      window.location.assign(startUrl);
+      return;
     }
 
     const startedAt = Date.now();
@@ -307,39 +278,11 @@ export default function LoginScreen() {
       setLoading(true);
       try {
         await handleWebGooglePopupSignIn();
-        return;
-      } catch (popupErr) {
-        console.warn("[GoogleAuth] Popup sign-in failed, falling back to GIS:", popupErr);
+      } catch (e: any) {
+        setError(e.message || "Could not start Google sign-in");
       } finally {
         setLoading(false);
       }
-
-      if (!gisReady) {
-        setLoading(true);
-        try {
-          const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-          if (!clientId) throw new Error("Google client ID not configured");
-          await loadGisScript();
-          if (!gisInitialized.current) {
-            gisInitialized.current = true;
-            window.google!.accounts.id.initialize({
-              client_id: clientId,
-              callback: handleGisCredential,
-            });
-            setGisReady(true);
-          }
-        } catch (e: any) {
-          setError(e.message || "Could not load Google sign-in");
-          setLoading(false);
-          return;
-        }
-        setLoading(false);
-      }
-      window.google?.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          setError("Google sign-in was dismissed. Please try again.");
-        }
-      });
       return;
     }
 
