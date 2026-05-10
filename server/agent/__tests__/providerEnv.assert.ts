@@ -77,6 +77,19 @@ withCleanEnv({ AI_INTEGRATIONS_OPENROUTER_API_KEY: "or-key" }, () => {
   console.log("OK: Railway OpenRouter alias routes through openai-compatible without fake OpenAI fallback");
 });
 
+withCleanEnv({ OPENAI_API_KEY: "sk-openai", AI_INTEGRATIONS_OPENROUTER_API_KEY: "or-key" }, () => {
+  applyProviderEnvAliases();
+  assert.equal(hasDirectOpenAIProvider(), true);
+  assert.equal(hasNonOpenAIRoutableProvider(), true);
+  const chain = getModelRouteChain("balanced");
+  assert.deepEqual(chain[0], {
+    providerName: "openai-compatible",
+    model: "openrouter/openrouter/auto",
+  });
+  assert.equal(chain.some((entry) => entry.providerName === "openai"), true);
+  console.log("OK: alternate provider is preferred when direct OpenAI is also configured");
+});
+
 withCleanEnv({ ANTHROPIC_API_KEY: "sk-anthropic" }, () => {
   applyProviderEnvAliases();
   assert.equal(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, "sk-anthropic");

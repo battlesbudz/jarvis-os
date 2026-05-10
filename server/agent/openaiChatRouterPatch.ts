@@ -20,7 +20,9 @@ function routingEnabled(): boolean {
   const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
   if (raw === "0" || raw === "false" || raw === "disabled" || raw === "no") return false;
   if (raw === "1" || raw === "true" || raw === "enabled" || raw === "yes") return true;
-  return !hasDirectOpenAIProvider() && hasNonOpenAIRoutableProvider();
+  // Prefer the router whenever an alternate provider is configured. Otherwise an
+  // exhausted direct OpenAI key can bypass OpenRouter/Groq/etc. and break chat.
+  return hasNonOpenAIRoutableProvider();
 }
 
 function shouldRoute(body: unknown): body is ChatCreateBody {
