@@ -108,7 +108,17 @@ export function parseCodexOAuthOrchestratorOutput(raw: string): CodexOAuthOrches
   return { type: "final", content: raw.trim() };
 }
 
-function buildPrompt(params: ProviderQueryParams): string {
+function getCodexGatewayUrl(): string | null {
+  const raw = process.env.JARVIS_CODEX_GATEWAY_URL?.trim();
+  if (!raw) return null;
+  return raw.replace(/\/+$/, "");
+}
+
+function getCodexGatewayToken(): string | null {
+  return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
+}
+
+export function buildCodexOAuthProviderPrompt(params: ProviderQueryParams): string {
   const sections = params.messages.map((message, index) => {
     const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
     return `Message ${index + 1} [${message.role}${name}]\n${textFromContent(message.content)}`;
@@ -152,7 +162,7 @@ function buildPrompt(params: ProviderQueryParams): string {
   ].join("\n");
 }
 
-async function runCodexPrompt(command: string, prompt: string, signal?: AbortSignal): Promise<string> {
+export async function runCodexOAuthPrompt(command: string, prompt: string, signal?: AbortSignal): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "jarvis-codex-oauth-"));
   const outputPath = join(dir, "answer.txt");
 
@@ -206,6 +216,35 @@ async function runCodexPrompt(command: string, prompt: string, signal?: AbortSig
   }
 }
 
+async function runRemoteCodexOAuthPrompt(gatewayUrl: string, prompt: string, signal?: AbortSignal): Promise<string> {
+  const token = getCodexGatewayToken();
+  if (!token) throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
+
+  const response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt }),
+    signal,
+  });
+
+  const raw = await response.text();
+  let payload: any = {};
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {
+    payload = { error: raw };
+  }
+
+  if (!response.ok) {
+    throw new Error(String(payload.error || payload.message || `Codex gateway returned ${response.status}`));
+  }
+
+  return String(payload.content || "").trim();
+}
+
 export class CodexOAuthProvider extends BaseProvider {
   async initialize(): Promise<void> {
     // Codex is launched per request so it can use the host's current OAuth login.
@@ -216,7 +255,11 @@ export class CodexOAuthProvider extends BaseProvider {
   }
 
   async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
-    const answer = await runCodexPrompt(getCodexOAuthCommand(), buildPrompt(params), params.signal);
+    const prompt = buildCodexOAuthProviderPrompt(params);
+    const gatewayUrl = getCodexGatewayUrl();
+    const answer = gatewayUrl
+      ? await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal)
+      : await runCodexOAuthPrompt(getCodexOAuthCommand(), prompt, params.signal);
     const parsed = parseCodexOAuthOrchestratorOutput(answer);
 
     if (parsed.type === "tool_calls") {
