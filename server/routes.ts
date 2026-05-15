@@ -80,6 +80,8 @@ import {
   resolveCodexDelegationCwd,
   runLocalCodexDelegation,
 } from "./agent/codexDelegation";
+import { runCodexOAuthPrompt } from "./agent/providers/codexOAuth";
+import { getCodexOAuthCommand } from "./agent/providers/env";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 
@@ -1299,6 +1301,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.json(result);
     } catch (error) {
       console.error("[CodexGateway] delegation failed:", error);
+      return res.status(500).json({
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  app.post("/api/codex/provider-turn", async (req: Request, res: Response) => {
+    try {
+      const expectedToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim();
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+      if (!expectedToken || token !== expectedToken) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const prompt = String(req.body?.prompt ?? "").trim();
+      if (!prompt) return res.status(400).json({ error: "prompt is required" });
+
+      const content = await runCodexOAuthPrompt(getCodexOAuthCommand(), prompt);
+      return res.json({ content });
+    } catch (error) {
+      console.error("[CodexGateway] provider turn failed:", error);
       return res.status(500).json({
         error: error instanceof Error ? error.message : String(error),
       });
