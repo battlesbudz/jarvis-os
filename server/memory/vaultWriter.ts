@@ -16,6 +16,7 @@ import { eq, and, desc, gte, sql, count, isNull, lt } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
+import { isRetriableProviderError } from "../agent/providers/fallback";
 
 const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
 
@@ -769,6 +770,11 @@ Instructions:
 
     console.log(`[Vault] Updated wiki page "${slug}" (${pageType}) for ${userId} — ${crossRefs.length} cross-refs`);
   } catch (err) {
+    if (isRetriableProviderError(err)) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Vault] updateWikiPage("${opts.slug}") skipped: provider backpressure (${msg.slice(0, 180)})`);
+      return;
+    }
     console.error(`[Vault] updateWikiPage("${opts.slug}") failed:`, err);
   }
 }
