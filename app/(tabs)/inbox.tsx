@@ -59,9 +59,16 @@ interface AgentJob {
   id: string;
   agentType: string;
   title: string;
+  prompt: string;
+  input?: Record<string, unknown>;
   status: string;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  turns?: number | null;
+  toolCallsCount?: number | null;
   createdAt: string;
   startedAt: string | null;
+  completedAt?: string | null;
 }
 
 interface Deliverable {
@@ -258,6 +265,11 @@ export default function InboxScreen() {
     },
   });
 
+  const { data: failedJobs = [], refetch: refetchFailedJobs } = useQuery<AgentJob[]>({
+    queryKey: ['/api/agent-jobs?status=failed&limit=10'],
+    refetchInterval: 60000,
+  });
+
   const cancelJobMutation = useMutation({
     mutationFn: async (jobId: string) => {
       const res = await apiRequest('POST', `/api/agent-jobs/${jobId}/cancel`, {});
@@ -268,6 +280,21 @@ export default function InboxScreen() {
     },
     onError: () => {
       Alert.alert('Error', 'Could not cancel this job.');
+    },
+  });
+
+  const retryJobMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const res = await apiRequest('POST', `/api/agent-jobs/${jobId}/retry`, {});
+      return res.json() as Promise<{ ok: boolean; jobId: string; status: string }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs?status=failed&limit=10'] });
+      Alert.alert('Retry queued', 'Jarvis will try this job again.');
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not retry this job.');
     },
   });
 
@@ -357,10 +384,12 @@ export default function InboxScreen() {
   });
 
   const [editingDeliverable, setEditingDeliverable] = useState<Deliverable | null>(null);
+  const [revisingDeliverable, setRevisingDeliverable] = useState<Deliverable | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editBody, setEditBody] = useState('');
   const [editTo, setEditTo] = useState('');
   const [editSubject, setEditSubject] = useState('');
+  const [revisionInstructions, setRevisionInstructions] = useState('');
 
   const openEditDeliverable = useCallback((d: Deliverable) => {
     const meta = (d.meta as { to?: string; subject?: string; emailBody?: string } | null) || {};
@@ -373,6 +402,16 @@ export default function InboxScreen() {
 
   const closeEditDeliverable = useCallback(() => {
     setEditingDeliverable(null);
+  }, []);
+
+  const openReviseDeliverable = useCallback((d: Deliverable) => {
+    setRevisingDeliverable(d);
+    setRevisionInstructions('');
+  }, []);
+
+  const closeReviseDeliverable = useCallback(() => {
+    setRevisingDeliverable(null);
+    setRevisionInstructions('');
   }, []);
 
   const editDeliverableMutation = useMutation({
@@ -404,6 +443,32 @@ export default function InboxScreen() {
     }
     editDeliverableMutation.mutate({ id: editingDeliverable.id, payload });
   }, [editingDeliverable, editTitle, editBody, editTo, editSubject, editDeliverableMutation]);
+
+  const reviseDeliverableMutation = useMutation({
+    mutationFn: async (input: { id: string; instructions: string }) => {
+      const res = await apiRequest('POST', `/api/deliverables/${input.id}/revise`, {
+        instructions: input.instructions,
+      });
+      return res.json() as Promise<{ ok: boolean; jobId: string; status: string }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+      closeReviseDeliverable();
+      Alert.alert('Revision queued', 'Jarvis will create a new version for review.');
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not request a revision.');
+    },
+  });
+
+  const submitRevision = useCallback(() => {
+    if (!revisingDeliverable || !revisionInstructions.trim()) return;
+    reviseDeliverableMutation.mutate({
+      id: revisingDeliverable.id,
+      instructions: revisionInstructions.trim(),
+    });
+  }, [revisingDeliverable, revisionInstructions, reviseDeliverableMutation]);
 
   const actionMutation = useMutation({
     mutationFn: async ({ itemId, actionType }: { itemId: string; actionType: string }) => {
@@ -457,8 +522,9 @@ export default function InboxScreen() {
       refetchDeliverables();
       refetchAutoHandled();
       refetchActiveJobs();
+      refetchFailedJobs();
       refetchGut();
-    }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchGut])
+    }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchFailedJobs, refetchGut])
   );
 
   const handleAction = (itemId: string, actionType: string, sourceId?: string, payload?: Record<string, unknown>) => {
@@ -614,7 +680,8 @@ export default function InboxScreen() {
             (approveDeliverableMutation.isPending && approveDeliverableMutation.variables === d.id) ||
             (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id) ||
             (rejectGateMutation.isPending && rejectGateMutation.variables === d.id) ||
-            (saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id);
+            (saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id) ||
+            (reviseDeliverableMutation.isPending && reviseDeliverableMutation.variables?.id === d.id);
           const meta = d.meta as {
             to?: string;
             subject?: string;
@@ -761,6 +828,14 @@ export default function InboxScreen() {
                       </Pressable>
                       <Pressable
                         style={[styles.actionButton, styles.actionButtonDismiss]}
+                        onPress={() => openReviseDeliverable(d)}
+                        disabled={busy}
+                        testID={`deliverable-revise-${d.id}`}
+                      >
+                        <Text style={[styles.actionText, styles.actionTextDismiss]}>Revise</Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.actionButton, styles.actionButtonDismiss]}
                         onPress={() => openEditDeliverable(d)}
                         disabled={busy}
                         testID={`deliverable-edit-${d.id}`}
@@ -901,6 +976,62 @@ export default function InboxScreen() {
     );
   };
 
+  const renderFailedJobs = () => {
+    if (failedJobs.length === 0) return null;
+    return (
+      <View style={styles.draftSection}>
+        <View style={styles.draftHeader}>
+          <Ionicons name="alert-circle-outline" size={16} color={Colors.error} />
+          <Text style={[styles.draftHeaderText, { color: Colors.error }]}>
+            Needs retry - {failedJobs.length} failed job{failedJobs.length === 1 ? '' : 's'}
+          </Text>
+        </View>
+        {failedJobs.map((job, index) => {
+          const icon = JOB_ICON[job.agentType] || 'sparkles';
+          const label = JOB_LABEL[job.agentType] || job.agentType;
+          const busy = retryJobMutation.isPending && retryJobMutation.variables === job.id;
+          const preview = job.error || job.prompt || 'No details available.';
+          return (
+            <Animated.View key={job.id} entering={FadeInDown.duration(300).delay(index * 60)}>
+              <View style={[styles.jobCard, styles.jobFailedCard]}>
+                <View style={styles.jobCardRow}>
+                  <View style={[styles.sourceIcon, { backgroundColor: Colors.error + '15' }]}>
+                    <Ionicons name={icon} size={18} color={Colors.error} />
+                  </View>
+                  <View style={styles.jobCardMeta}>
+                    <Text style={styles.jobTitle} numberOfLines={2}>{job.title}</Text>
+                    <View style={styles.jobStatusRow}>
+                      <Ionicons name="warning-outline" size={13} color={Colors.error} style={{ marginRight: 3 }} />
+                      <Text style={[styles.jobStatusText, { color: Colors.error }]}>
+                        Failed{job.completedAt ? ` - ${formatElapsed(job.completedAt)} ago` : ''}
+                      </Text>
+                      <View style={[styles.jobTypeBadge, { backgroundColor: Colors.error + '14' }]}>
+                        <Text style={[styles.jobTypeBadgeText, { color: Colors.error }]}>{label}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.jobPreviewBox}>
+                      <Text style={styles.jobPreviewText} numberOfLines={3}>{preview}</Text>
+                    </View>
+                    <View style={styles.actionsRow}>
+                      <Pressable
+                        style={styles.actionButton}
+                        onPress={() => retryJobMutation.mutate(job.id)}
+                        disabled={busy}
+                        testID={`job-retry-${job.id}`}
+                      >
+                        <Text style={styles.actionText}>{busy ? 'Queuing...' : 'Retry'}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const renderRunningJobs = () => {
     if (activeJobs.length === 0) return null;
     return (
@@ -940,6 +1071,9 @@ export default function InboxScreen() {
                         <Text style={[styles.jobTypeBadgeText, { color: Colors.primary }]}>{label}</Text>
                       </View>
                     </View>
+                    {job.prompt ? (
+                      <Text style={styles.jobPromptPreview} numberOfLines={2}>{job.prompt}</Text>
+                    ) : null}
                   </View>
                   <Pressable
                     style={styles.jobCancelBtn}
@@ -995,6 +1129,7 @@ export default function InboxScreen() {
       {renderDeliverables()}
       {renderGutNoticed()}
       {renderRunningJobs()}
+      {renderFailedJobs()}
       {renderAutoHandledDeliverables()}
       {renderDraftQueue()}
     </View>
@@ -1072,6 +1207,7 @@ export default function InboxScreen() {
     if (drafts.length > 0) return null;
     if (deliverables.length > 0) return null;
     if (activeJobs.length > 0) return null;
+    if (failedJobs.length > 0) return null;
     return (
       <View style={styles.emptyContainer}>
         <View style={styles.emptyIcon}>
@@ -1089,9 +1225,9 @@ export default function InboxScreen() {
     <View style={[styles.container, { paddingTop: isWeb ? 67 : insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Inbox</Text>
-        {(items.length + deliverables.length) > 0 && (
+        {(items.length + deliverables.length + activeJobs.length + failedJobs.length) > 0 && (
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>{items.length + deliverables.length}</Text>
+            <Text style={styles.badgeText}>{items.length + deliverables.length + activeJobs.length + failedJobs.length}</Text>
           </View>
         )}
       </View>
@@ -1207,6 +1343,59 @@ export default function InboxScreen() {
       </Modal>
 
       <Modal
+        visible={!!revisingDeliverable}
+        animationType="slide"
+        transparent
+        onRequestClose={closeReviseDeliverable}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.editModalRoot}
+        >
+          <View style={styles.editSheet}>
+            <View style={styles.editHeader}>
+              <Text style={styles.editTitle}>Request revision</Text>
+              <Pressable onPress={closeReviseDeliverable} testID="deliverable-revise-close">
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+            <Text style={styles.reviseItemTitle} numberOfLines={2}>{revisingDeliverable?.title}</Text>
+            <Text style={styles.editLabel}>What should Jarvis change?</Text>
+            <TextInput
+              value={revisionInstructions}
+              onChangeText={setRevisionInstructions}
+              style={[styles.editInput, styles.editBody]}
+              placeholder="Tell Jarvis what to improve, add, remove, or check before sending a new version."
+              placeholderTextColor={Colors.textTertiary}
+              multiline
+              textAlignVertical="top"
+              testID="deliverable-revise-instructions"
+            />
+            <View style={styles.editFooter}>
+              <Pressable
+                style={[styles.actionButton, styles.actionButtonDismiss]}
+                onPress={closeReviseDeliverable}
+                disabled={reviseDeliverableMutation.isPending}
+                testID="deliverable-revise-cancel"
+              >
+                <Text style={[styles.actionText, styles.actionTextDismiss]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.actionButton}
+                onPress={submitRevision}
+                disabled={!revisionInstructions.trim() || reviseDeliverableMutation.isPending}
+                testID="deliverable-revise-submit"
+              >
+                <Text style={styles.actionText}>
+                  {reviseDeliverableMutation.isPending ? 'Queuing...' : 'Queue revision'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
         visible={!!gutModalSignal}
         animationType="fade"
         transparent
@@ -1273,6 +1462,12 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
+  },
+  reviseItemTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    marginBottom: 4,
   },
   editBodyScroll: {
     maxHeight: 480,
@@ -1413,6 +1608,7 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     alignItems: 'center',
   },
@@ -1609,6 +1805,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.primary + '30',
   },
+  jobFailedCard: {
+    borderColor: Colors.error + '30',
+  },
   jobCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1633,6 +1832,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.primary,
+  },
+  jobPromptPreview: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  jobPreviewBox: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  jobPreviewText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
   },
   jobTypeBadge: {
     borderRadius: 5,
