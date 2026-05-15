@@ -22,12 +22,9 @@ import { eq, and, desc, gte, sql as sqlExpr } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { DiagnosticSubsystem, DiagnosticSeverity } from "@shared/schema";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "../agent/providers/env";
 import { getAnthropicClientConfig } from "../agent/providers/env";
 import Anthropic from "@anthropic-ai/sdk";
-
-const openai = new OpenAI(getOpenAIClientConfig());
+import { routeModelTurn } from "../agent/modelRouter";
 
 const anthropic = new Anthropic(getAnthropicClientConfig());
 
@@ -436,10 +433,13 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
   let openAiLatencyMs: number | null = null;
   const openAiProbeStart = Date.now();
   try {
-    await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    await routeModelTurn({
+      tier: "cheap",
       messages: [{ role: "user", content: "ping" }],
-      max_completion_tokens: 1,
+      toolChoice: "none",
+      maxCompletionTokens: 8,
+      stream: false,
+      logPrefix: "[DiagnosticsProviderProbe]",
     });
     openAiLatencyMs = Date.now() - openAiProbeStart;
   } catch (probeErr) {
@@ -450,7 +450,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
       userId,
       subsystem: "agent_harness",
       severity: "error",
-      message: `OpenAI API health check failed: ${detail}`,
+      message: `AI provider health check failed: ${detail}`,
       metadata: { healthCheck: true },
     }).catch(() => {});
   }
@@ -494,6 +494,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
       try {
         const errorConditions: SQL<unknown>[] = [
           eq(schema.diagnosticEvents.subsystem, sub),
+          eq(schema.diagnosticEvents.resolved, false),
           gte(schema.diagnosticEvents.createdAt, windowStart),
           sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
           sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
@@ -601,6 +602,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
   try {
     const memWriteConditions: SQL<unknown>[] = [
       eq(schema.diagnosticEvents.subsystem, "memory"),
+      eq(schema.diagnosticEvents.resolved, false),
       sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
       gte(schema.diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
@@ -608,6 +610,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     ];
     const memReadConditions: SQL<unknown>[] = [
       eq(schema.diagnosticEvents.subsystem, "memory"),
+      eq(schema.diagnosticEvents.resolved, false),
       sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
       gte(schema.diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
@@ -723,17 +726,20 @@ Write a concise report:
 
 Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not alarmist.`;
 
-  // Try OpenAI first.
+  // Try the Jarvis model router first so Codex OAuth is the primary diagnoser.
   try {
-    const resp = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const resp = await routeModelTurn({
+      tier: "cheap",
       messages: [{ role: "user", content: prompt }],
-      max_completion_tokens: 400,
+      toolChoice: "none",
+      maxCompletionTokens: 400,
+      stream: false,
+      logPrefix: "[DiagnosticsDiagnosis]",
     });
-    const diagnosis = resp.choices[0]?.message?.content?.trim();
+    const diagnosis = resp.textContent?.trim();
     if (diagnosis) return { diagnosis, report };
   } catch (openAiErr) {
-    console.debug("[Diagnostics] OpenAI diagnosis failed, trying Anthropic fallback:", openAiErr instanceof Error ? openAiErr.message : openAiErr);
+    console.debug("[Diagnostics] routed diagnosis failed, trying Anthropic fallback:", openAiErr instanceof Error ? openAiErr.message : openAiErr);
   }
 
   // Fallback: try Anthropic.
@@ -752,7 +758,7 @@ Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not
 
   // Both AI providers unavailable — return a clear plain-text summary.
   const issueLines: string[] = [];
-  if (!report.openAiReachable) issueLines.push("OpenAI API is unreachable — AI features are temporarily unavailable.");
+  if (!report.openAiReachable) issueLines.push("AI provider is unreachable — AI features are temporarily unavailable.");
   if (!report.dbReachable) issueLines.push("Database is unreachable — all data operations are failing.");
   if (report.staleJobCount > 0) issueLines.push(`${report.staleJobCount} background job(s) appear stuck and have been re-enqueued.`);
   if (report.stuckWorkflowCount > 0) issueLines.push(`${report.stuckWorkflowCount} workflow(s) appear stuck.`);

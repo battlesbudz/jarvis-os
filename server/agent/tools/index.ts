@@ -67,6 +67,7 @@ import { setupContentPipelineTool } from "./setupContentPipeline";
 import { setupDiscordWorkspaceTool } from "./setupDiscordWorkspace";
 import { memorySearchTool, memoryGetTool } from "./memorySearch";
 import { webFetchTool } from "./webFetch";
+import { weatherLookupTool } from "./weatherLookup";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool, sessionsCancelTool } from "./sessionTools";
 import { speakTool } from "./tts";
 import { imageGenerateTool } from "./imageGenerate";
@@ -306,6 +307,7 @@ export {
   memorySearchTool,
   memoryGetTool,
   webFetchTool,
+  weatherLookupTool,
   sessionsListTool,
   sessionsHistoryTool,
   sessionsSendTool,

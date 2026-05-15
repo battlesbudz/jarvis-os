@@ -1,10 +1,9 @@
 import { db } from "./db";
 import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "./agent/providers/env";
+import { createRoutedOpenAIChatShim } from "./agent/routedChatCompletion";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[InboxRules]", "cheap");
 
 export interface MatchHints {
   senders?: string[];

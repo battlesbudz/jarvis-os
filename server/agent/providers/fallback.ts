@@ -38,6 +38,7 @@ export const DEFAULT_PROVIDER_MODELS: Record<ProviderName, string> = {
   claude: "claude-opus-4-7",
   openai: "gpt-4.1-mini",
   "openai-compatible": "modelrelay/auto-fastest",
+  "chatgpt-codex-oauth": "chatgpt-codex-oauth/auto",
 };
 
 /**
@@ -109,7 +110,7 @@ export function isRetriableProviderError(err: unknown): boolean {
   return false;
 }
 
-const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude", "openai-compatible"];
+const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude", "openai-compatible", "chatgpt-codex-oauth"];
 
 /**
  * Reads PROVIDER_FALLBACK_CHAIN from the environment and returns an ordered

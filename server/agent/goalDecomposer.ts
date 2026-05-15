@@ -7,11 +7,10 @@
  * JSON-schema pass to convert the plan into a typed GoalTreeData
  * payload that we persist into goal_trees.
  */
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "./providers/env";
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { createRoutedOpenAIChatShim } from "./routedChatCompletion";
 import type {
   GoalTreeData,
   GoalTreePhase,
@@ -19,7 +18,7 @@ import type {
   GoalTreeTask,
 } from "@shared/schema";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[GoalDecomposer]", "balanced");
 
 interface UserGoal {
   id: string;

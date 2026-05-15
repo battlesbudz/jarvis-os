@@ -512,14 +512,15 @@ function setupErrorHandler(app: express.Application) {
   setupErrorHandler(app);
 
   const port = parseInt(process.env.PORT || "5000", 10);
+  const host = process.env.HOST || (process.platform === "win32" ? "127.0.0.1" : "0.0.0.0");
   server.listen(
     {
       port,
-      host: "0.0.0.0",
-      reusePort: true,
+      host,
+      ...(process.platform === "win32" ? {} : { reusePort: true }),
     },
     () => {
-      log(`express server serving on port ${port}`);
+      log(`express server serving on ${host}:${port}`);
 
       // Telegram-specific I/O (polling/webhook) only runs when Telegram is
       // configured â€” but proactive engines drive notifications across all

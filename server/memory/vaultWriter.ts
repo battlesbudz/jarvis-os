@@ -14,11 +14,10 @@
 import { db } from "../db";
 import { eq, and, desc, gte, sql, count, isNull, lt } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "../agent/providers/env";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
 
 const VAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const VAULT_NOVELTY_THRESHOLD = 3;

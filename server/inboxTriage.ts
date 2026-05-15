@@ -16,10 +16,7 @@ import { eq, and, sql as drizzleSql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { markSoulStale } from "./memory/soul";
 import { STRICTLY_IRREVERSIBLE_TOOLS, approveGate } from "./agent/agentApproval";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "./agent/providers/env";
-
-const openai = new OpenAI(getOpenAIClientConfig());
+import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
 
 type TriageVerdict = "auto_handle" | "escalate" | "promote_memory";
 
@@ -53,12 +50,12 @@ Summary: ${d.summary || "(none)"}
 Content preview: ${bodySnippet}`;
 
   try {
-    const resp = await openai.chat.completions.create({
+    const resp = await createRoutedChatCompletion({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 120,
-    });
+    }, { tier: "cheap", logPrefix: "[InboxTriage/deliverable]" });
     const raw = resp.choices[0]?.message?.content || "{}";
     const result = JSON.parse(raw) as { verdict?: string; note?: string };
     const valid: TriageVerdict[] = ["auto_handle", "escalate", "promote_memory"];
@@ -186,12 +183,12 @@ Snippet: ${(item.snippet || "").slice(0, 400)}
 Jarvis reason: ${item.jarvisReason || "(none)"}`;
 
   try {
-    const resp = await openai.chat.completions.create({
+    const resp = await createRoutedChatCompletion({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 80,
-    });
+    }, { tier: "cheap", logPrefix: "[InboxTriage/item]" });
     const raw = resp.choices[0]?.message?.content || "{}";
     const result = JSON.parse(raw) as { autoDismiss?: boolean; reason?: string };
     return { autoDismiss: result.autoDismiss === true, reason: result.reason || "" };

@@ -19,6 +19,8 @@ function resolveProviderName(model: string): ProviderName {
   if (normalized.startsWith("claude")) return "claude";
   if (
     normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("chatgpt-codex-oauth/") ||
+    normalized.startsWith("codex-oauth/") ||
     normalized.startsWith("openai-compatible/") ||
     normalized.startsWith("openrouter/") ||
     normalized.startsWith("groq/") ||
@@ -28,6 +30,9 @@ function resolveProviderName(model: string): ProviderName {
     normalized.startsWith("nvidia/") ||
     normalized.startsWith("deepseek/")
   ) {
+    if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
+      return "chatgpt-codex-oauth";
+    }
     return "openai-compatible";
   }
   return "openai";

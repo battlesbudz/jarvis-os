@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import {
   ROUTER_PLACEHOLDER_OPENAI_API_KEY,
   applyProviderEnvAliases,
+  getCodexOAuthCommand,
   getOpenAIClientConfig,
   getProviderEnvValue,
+  hasCodexOAuthProvider,
   hasDirectOpenAIProvider,
   hasNonOpenAIRoutableProvider,
 } from "../providers/env";
@@ -14,6 +16,14 @@ const ENV_KEYS = [
   "AI_INTEGRATIONS_OPENAI_BASE_URL",
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
+  "JARVIS_MODEL_PROVIDER",
+  "JARVIS_AI_PROVIDER",
+  "JARVIS_CODEX_OAUTH_ENABLED",
+  "CHATGPT_CODEX_OAUTH_ENABLED",
+  "JARVIS_CODEX_COMMAND",
+  "CODEX_COMMAND",
+  "JARVIS_CODEX_OAUTH_MODEL",
+  "CHATGPT_CODEX_OAUTH_MODEL",
   "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
   "ANTHROPIC_API_KEY",
   "AI_INTEGRATIONS_OPENROUTER_API_KEY",
@@ -75,6 +85,27 @@ withCleanEnv({ AI_INTEGRATIONS_OPENROUTER_API_KEY: "or-key" }, () => {
   });
   assert.equal(chain.some((entry) => entry.providerName === "openai"), false);
   console.log("OK: Railway OpenRouter alias routes through openai-compatible without fake OpenAI fallback");
+});
+
+withCleanEnv({ JARVIS_MODEL_PROVIDER: "chatgpt-codex-oauth", JARVIS_CODEX_COMMAND: "codex-test" }, () => {
+  assert.equal(hasCodexOAuthProvider(), true);
+  assert.equal(hasNonOpenAIRoutableProvider(), true);
+  assert.equal(getCodexOAuthCommand(), "codex-test");
+  const chain = getModelRouteChain("cheap");
+  assert.deepEqual(chain[0], {
+    providerName: "chatgpt-codex-oauth",
+    model: "chatgpt-codex-oauth/auto",
+  });
+  console.log("OK: ChatGPT/Codex OAuth provider can be selected without an OpenAI API key");
+});
+
+withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
+  const chain = getModelRouteChain("balanced");
+  assert.deepEqual(chain[0], {
+    providerName: "chatgpt-codex-oauth",
+    model: "chatgpt-codex-oauth/auto",
+  });
+  console.log("OK: ChatGPT/Codex OAuth model specs resolve to the Codex OAuth provider");
 });
 
 withCleanEnv({ OPENAI_API_KEY: "sk-openai", AI_INTEGRATIONS_OPENROUTER_API_KEY: "or-key" }, () => {

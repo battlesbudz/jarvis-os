@@ -60,17 +60,24 @@ import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAl
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
+import { getTool } from "./agent/tools/index";
 import { registerSubscriber, removeSubscriberIfCurrent } from "./webchatSSE";
 import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
 import { runCapabilityGapAnalysis } from "./agent/capabilityGapAnalyzer";
+import { routeModelTurn } from "./agent/modelRouter";
+import type { ProviderTurnResult } from "./agent/providers/base";
 import { getPublicBaseUrl } from "./publicUrl";
 import { estimateModelUsage, getModelUsageSummary, recordModelUsage } from "./agent/modelUsage";
+import type { AgentTool, ToolContext } from "./agent/types";
 
 function providerLabelForModel(model: string): string {
   const normalized = model.toLowerCase();
+  if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
+    return "chatgpt-codex-oauth";
+  }
   if (normalized.startsWith("claude")) return "claude";
   if (
     normalized.startsWith("modelrelay/") ||
@@ -261,6 +268,27 @@ const AGENT_ROUTING_PROMPT_BLOCK = loadAgentRoutingPromptBlock();
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
 const openai = new OpenAI(getOpenAIClientConfig());
+
+async function runCoachModelTurn(
+  params: {
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+    tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
+    toolChoice: "auto" | "required" | "none";
+    maxCompletionTokens: number;
+    signal?: AbortSignal;
+    logPrefix: string;
+  },
+): Promise<ProviderTurnResult> {
+  return routeModelTurn({
+    tier: "balanced",
+    messages: params.messages,
+    tools: params.tools,
+    toolChoice: params.toolChoice,
+    maxCompletionTokens: params.maxCompletionTokens,
+    signal: params.signal,
+    logPrefix: params.logPrefix,
+  });
+}
 
 // Temporary in-memory screenshot store keyed by UUID (30-minute TTL)
 const screenshotStore = new Map<string, { data: Buffer; expires: number }>();
@@ -1949,6 +1977,17 @@ Rules:
     return h.includes(n) || n.includes(h);
   }
 
+  function toOpenAIChatTool(tool: AgentTool): OpenAI.Chat.Completions.ChatCompletionTool {
+    return {
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters as Record<string, unknown>,
+      },
+    };
+  }
+
   const pendingConfirmations = new Map<string, { userId: string; tool: string; args: any; expiresAt: number }>();
   setInterval(() => {
     const now = Date.now();
@@ -3237,7 +3276,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         : "";
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally." + (process.env.TAVILY_API_KEY ? "\n\nYou also have a web_search tool. Use it whenever the user asks about current events, live data (weather, stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
+        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
         ...messages.map((m: { role: string; content: string }, idx: number) => {
           const isLast = idx === messages.length - 1;
           const content = (isLast && m.role === 'user' && youtubeCtxBlock)
@@ -3308,6 +3347,28 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
         // Build per-request tool list including MCP tools for this user
         let requestTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [...coachTools];
+        const agentToolMap = new Map<string, AgentTool>();
+        const addAgentTool = (tool: AgentTool | undefined) => {
+          if (!tool) return;
+          if (agentToolMap.has(tool.name)) return;
+          agentToolMap.set(tool.name, tool);
+          if (!requestTools.some((candidate) => candidate.function.name === tool.name)) {
+            requestTools.push(toOpenAIChatTool(tool));
+          }
+        };
+        [
+          "search_web",
+          "research_topic",
+          "weather_lookup",
+          "build_feature",
+          "test_tool",
+          "queue_background_job",
+          "spawn_subagent",
+          "jarvis_self_diagnose",
+          "list_source_files",
+          "read_source_file",
+          "propose_code_change",
+        ].forEach((name) => addAgentTool(getTool(name)));
         const mcpAgentToolsMap = new Map<string, import("./agent/types").AgentTool>();
         try {
           const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
@@ -3345,6 +3406,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               try { res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: msg })}\n\n`); } catch {}
             },
           },
+          allowedToolNames: new Set(requestTools.map((tool) => tool.function.name)),
         };
 
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
@@ -3354,17 +3416,25 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             ...toolMessages,
           ];
           const phase1StartedAt = Date.now();
-          const phase1 = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
+          const phase1 = await runCoachModelTurn({
             messages: currentMessages,
             tools: requestTools,
             // Force a tool call on turn 0 for device-control requests.
             // Subsequent turns use "auto" so the model can stop and respond.
-            tool_choice: (turn === 0 && isDeviceControlRequest) ? "required" : "auto",
-            max_completion_tokens: 2048,
-          }, { signal });
+            toolChoice: (turn === 0 && isDeviceControlRequest) ? "required" : "auto",
+            maxCompletionTokens: 2048,
+            signal,
+            logPrefix: "[CoachChat]",
+          });
 
-          const choice = phase1.choices[0];
+          const choice = {
+            finish_reason: phase1.finishReason,
+            message: {
+              role: "assistant" as const,
+              content: phase1.textContent || null,
+              tool_calls: phase1.toolCallList,
+            },
+          };
           const phase1ToolCalls = (choice.message.tool_calls ?? []).filter(
             (tc): tc is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => tc.type === "function",
           );
@@ -3651,6 +3721,55 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 execResult = {
                   result: 'error',
                   label: 'MCP tool error',
+                  detail: err instanceof Error ? err.message : String(err),
+                };
+              }
+            } else if (agentToolMap.has(tc.function.name)) {
+              const agentTool = agentToolMap.get(tc.function.name)!;
+              mcpToolCtx.state.pendingAttachments = [];
+              try {
+                const toolResult = await agentTool.execute(args, mcpToolCtx as ToolContext);
+                execResult = {
+                  result: toolResult.ok ? 'success' : 'error',
+                  label: toolResult.label ?? agentTool.name,
+                  detail: toolResult.content ?? toolResult.detail ?? '',
+                };
+                if (mcpToolCtx.state.pendingAttachments?.length) {
+                  allMcpAttachments.push(...mcpToolCtx.state.pendingAttachments.map((att) => {
+                    const textContent = typeof att.content === 'string' ? att.content : undefined;
+                    const dataContent = typeof att.content === 'string' || Buffer.isBuffer(att.content)
+                      ? Buffer.from(att.content).toString('base64')
+                      : att.data;
+                    if (att.kind === 'image') {
+                      return {
+                        kind: 'image' as const,
+                        data: att.data ?? dataContent,
+                        mimeType: att.mimeType ?? 'image/png',
+                        caption: att.caption,
+                        mcpServerName: att.mcpServerName,
+                      };
+                    }
+                    if (att.kind === 'markdown') {
+                      return {
+                        kind: 'markdown' as const,
+                        text: att.text ?? textContent,
+                        mcpServerName: att.mcpServerName,
+                      };
+                    }
+                    return {
+                      kind: att.kind === 'document' ? 'document' as const : 'file' as const,
+                      filename: att.filename,
+                      text: textContent,
+                      data: att.data ?? dataContent,
+                      mimeType: att.mimeType,
+                      mcpServerName: att.mcpServerName,
+                    };
+                  }));
+                }
+              } catch (err) {
+                execResult = {
+                  result: 'error',
+                  label: `${agentTool.name} error`,
                   detail: err instanceof Error ? err.message : String(err),
                 };
               }

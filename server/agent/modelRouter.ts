@@ -2,7 +2,7 @@ import type OpenAI from "openai";
 import type { ProviderName } from "./providers";
 import { getGlobalFallbackChain, queryWithFallback, type FallbackChainEntry } from "./providers/fallback";
 import type { ProviderTurnResult } from "./providers/base";
-import { getProviderEnvValue, hasDirectOpenAIProvider, hasProviderEnvValue } from "./providers/env";
+import { getProviderEnvValue, hasCodexOAuthProvider, hasDirectOpenAIProvider, hasProviderEnvValue } from "./providers/env";
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
 export type TaskComplexity = "trivial" | "easy" | "medium" | "hard";
@@ -97,7 +97,7 @@ function parseModelSpec(spec: string | undefined): FallbackChainEntry | null {
   if (colonIdx > 0) {
     const provider = raw.slice(0, colonIdx).trim() as ProviderName;
     const model = raw.slice(colonIdx + 1).trim();
-    if ((provider === "openai" || provider === "claude" || provider === "openai-compatible") && model) {
+    if ((provider === "openai" || provider === "claude" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth") && model) {
       return { providerName: provider, model };
     }
   }
@@ -107,6 +107,12 @@ function parseModelSpec(spec: string | undefined): FallbackChainEntry | null {
   }
   if (raw.startsWith("claude/")) {
     return { providerName: "claude", model: raw.slice("claude/".length) };
+  }
+  if (
+    raw.startsWith("chatgpt-codex-oauth/") ||
+    raw.startsWith("codex-oauth/")
+  ) {
+    return { providerName: "chatgpt-codex-oauth", model: raw };
   }
   if (
     raw.startsWith("modelrelay/") ||
@@ -388,6 +394,7 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
     "ANTHROPIC_BASE_URL",
   );
   const hasOpenAI = hasDirectOpenAIProvider();
+  const hasCodexOAuth = hasCodexOAuthProvider();
 
   const compatibleModel =
     getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL")
@@ -412,8 +419,10 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
     tier === "smart"
       ? process.env.JARVIS_CLAUDE_SMART_MODEL || "claude-3-5-sonnet-latest"
       : process.env.JARVIS_CLAUDE_CHEAP_MODEL || "claude-3-5-haiku-latest";
+  const codexOAuthModel = getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") || "chatgpt-codex-oauth/auto";
 
   if (tier === "cheap") {
+    if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
     if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
     if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
     if (hasTogether) pushUnique(chain, { providerName: "openai-compatible", model: `together/${getProviderEnvValue("TOGETHER_MODEL", "AI_INTEGRATIONS_TOGETHER_MODEL") || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"}` });
@@ -428,6 +437,7 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
   }
 
   if (tier === "smart") {
+    if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
     if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });
     if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
     if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
@@ -437,6 +447,7 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
     return chain;
   }
 
+  if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
   if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
   if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
   if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
@@ -453,22 +464,22 @@ export function getModelRouteChain(tier: ModelExecutionTier): FallbackChainEntry
 }
 
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
+  const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
+  const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
+  const leanContextApplied = routedMessages !== params.messages;
   const chain = getModelRouteChain(params.tier);
   if (chain.length === 0) {
     throw new Error(
-      "No model providers configured. Add OpenRouter, Groq, Anthropic, OpenAI, or another OpenAI-compatible provider variable.",
+      "No model providers configured. Add OpenRouter, Groq, Anthropic, OpenAI, ChatGPT/Codex OAuth, or another OpenAI-compatible provider variable.",
     );
   }
 
-  const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   console.log(
     `${logPrefix} route tier=${params.tier} candidates=${chain
       .map((entry) => `${entry.providerName}(${entry.model})`)
       .join(" -> ")}`,
   );
 
-  const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
-  const leanContextApplied = routedMessages !== params.messages;
   if (leanContextApplied && params.tools?.length) {
     console.log(`${logPrefix} lean_context: omitted ${params.tools.length} tool schema(s)`);
   }

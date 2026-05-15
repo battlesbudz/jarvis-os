@@ -16,11 +16,10 @@
 import { db } from "../db";
 import { eq, desc, and, gte, lt, sql, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "../agent/providers/env";
 import { extractAndStore } from "./extractor";
 import { markSoulStale } from "./soul";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
@@ -37,7 +36,7 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   }
 }
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[DreamCycle]", "balanced");
 
 const MINIMUM_MEMORY_AGE_DAYS = 14;
 const CONSOLIDATION_BATCH_SIZE = 20;

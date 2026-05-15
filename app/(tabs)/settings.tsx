@@ -3298,7 +3298,7 @@ export default function SettingsScreen() {
                 return (
                   <>
                     <Text style={healthStyles.overallSub}>
-                      {healthReport.openAiReachable ? `OpenAI ✓${latencyText}` : '⚠ OpenAI unreachable'} ·{' '}
+                      {healthReport.openAiReachable ? `AI provider ✓${latencyText}` : '⚠ AI provider unreachable'} ·{' '}
                       {healthReport.dbReachable ? 'DB ✓' : '⚠ DB unreachable'} ·{' '}
                       Queue: {healthReport.jobQueueDepth}
                       {healthReport.staleJobCount > 0 ? ` (${healthReport.staleJobCount} re-queued)` : ''}

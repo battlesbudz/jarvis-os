@@ -33,7 +33,7 @@ import path from "path";
 import { eq } from "drizzle-orm";
 // Side-effect import: registers workspace topic context provider.
 import "./providers/topicContext";
-import { getOpenAIClientConfig } from "./providers/env";
+import { createRoutedOpenAIChatShim } from "./routedChatCompletion";
 import type { DiscordAgent } from "@shared/schema";
 import type { ChannelAttachment } from "../channels/types";
 import type OpenAI from "openai";
@@ -717,8 +717,7 @@ async function extractAndWriteMemories(
   agentReply: string,
 ): Promise<void> {
   try {
-    const OpenAI = (await import("openai")).default;
-    const openai = new OpenAI(getOpenAIClientConfig());
+    const openai = createRoutedOpenAIChatShim("[NamedAgentMemoryExtract]", "cheap");
 
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",

@@ -43,6 +43,7 @@ export function hasAnthropicProvider(): boolean {
 
 export function hasNonOpenAIRoutableProvider(): boolean {
   return (
+    hasCodexOAuthProvider() ||
     hasAnthropicProvider() ||
     hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL") ||
     hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") ||
@@ -58,6 +59,20 @@ export function hasNonOpenAIRoutableProvider(): boolean {
 
 export function hasAnyRoutableProvider(): boolean {
   return hasDirectOpenAIProvider() || hasNonOpenAIRoutableProvider();
+}
+
+export function isCodexOAuthProviderEnabled(): boolean {
+  const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
+  const enabled = getProviderEnvValue("JARVIS_CODEX_OAUTH_ENABLED", "CHATGPT_CODEX_OAUTH_ENABLED");
+  return explicitProvider === "chatgpt-codex-oauth" || enabled === "true" || enabled === "1";
+}
+
+export function hasCodexOAuthProvider(): boolean {
+  return isCodexOAuthProviderEnabled();
+}
+
+export function getCodexOAuthCommand(): string {
+  return getProviderEnvValue("JARVIS_CODEX_COMMAND", "CODEX_COMMAND") ?? "codex";
 }
 
 export function applyProviderEnvAliases(): void {
