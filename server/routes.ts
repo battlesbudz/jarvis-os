@@ -60,7 +60,7 @@ import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAl
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
-import { getTool } from "./agent/tools/index";
+import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
 import { registerSubscriber, removeSubscriberIfCurrent } from "./webchatSSE";
 import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
@@ -79,6 +79,7 @@ import {
   resolveCodexDelegationCwd,
   runLocalCodexDelegation,
 } from "./agent/codexDelegation";
+import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 
 function providerLabelForModel(model: string): string {
   const normalized = model.toLowerCase();
@@ -3323,9 +3324,14 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const buildInstruction = codexDelegationEnabled
         ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work."
         : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
+      const toolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
+      const toolAwareInstruction = toolAwareRoute.shouldPreferTool
+        ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
+        : "";
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
+        ...(toolAwareInstruction ? [{ role: "system" as const, content: toolAwareInstruction }] : []),
         ...messages.map((m: { role: string; content: string }, idx: number) => {
           const isLast = idx === messages.length - 1;
           const content = (isLast && m.role === 'user' && youtubeCtxBlock)
@@ -3420,6 +3426,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ];
         if (codexDelegationEnabled) directAgentToolNames.push("delegate_to_codex");
         directAgentToolNames.forEach((name) => addAgentTool(getTool(name)));
+        if (toolAwareRoute.toolGroups.length > 0) {
+          filterToolsByGroups(toolAwareRoute.toolGroups as ToolGroup[], resolvedGmailConnected)
+            .forEach((tool) => addAgentTool(tool));
+        }
+        toolAwareRoute.priorityToolNames.forEach((name) => addAgentTool(getTool(name)));
         const mcpAgentToolsMap = new Map<string, import("./agent/types").AgentTool>();
         try {
           const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");

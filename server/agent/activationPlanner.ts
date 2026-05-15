@@ -15,7 +15,7 @@ import { eq, desc, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getTodayPredictions } from "../intelligence/predictor";
 import type { EmotionalState } from "../intelligence/emotional-state";
-import { classifyQueryIntent } from "./queryClassifier";
+import { classifyQueryIntent, classifyToolAwareRoute } from "./queryClassifier";
 
 // ─── Exported types ───────────────────────────────────────────────────────────
 
@@ -383,6 +383,7 @@ export class ActivationPlanner {
     const hasUrgentSignals = sessionContext.urgentSignals.length > 0;
     const hasEveningWork = timeOfDay === "evening";
     const isChannelSession = source === "channel";
+    const toolAwareRoute = queryText ? classifyToolAwareRoute(queryText) : undefined;
 
     // ── Rule 1: Night-time with no urgent signals → skip model session ─────
     // "night" bucket = local hours 22:00–04:59 (22 inclusive through 4 inclusive).
@@ -505,6 +506,22 @@ export class ActivationPlanner {
     }
 
     // ── Rule 8c: Chat-channel research gating ─────────────────────────────
+    // Tool-aware routing boost: if the user asks for a concrete capability
+    // (weather, calendar, Gmail, memory, browser, GitHub, Railway, or code),
+    // activate that capability before chat research/browser suppression runs.
+    if (isChannelSession && toolAwareRoute?.shouldPreferTool) {
+      for (const capabilityId of toolAwareRoute.capabilityIds) {
+        if (!activeCapabilityIds.includes(capabilityId)) {
+          activeCapabilityIds.push(capabilityId);
+        }
+        const suppressedIndex = suppressedCapabilityIds.indexOf(capabilityId);
+        if (suppressedIndex !== -1) suppressedCapabilityIds.splice(suppressedIndex, 1);
+        reasons[capabilityId] =
+          reasons[capabilityId] ||
+          `Activated: tool-aware route detected (${toolAwareRoute.intents.join(", ")})`;
+      }
+    }
+
     // On conversational channels (Telegram, WhatsApp, Slack, Discord) the
     // majority of queries are coaching/planning — not web research. Loading
     // research and browser tool schemas on every tick wastes tokens and
@@ -542,6 +559,13 @@ export class ActivationPlanner {
     }
 
     // ── Rule 9: Active hours → always allow model session ─────────────────
+    if (toolAwareRoute?.shouldPreferTool) {
+      for (const capabilityId of toolAwareRoute.capabilityIds) {
+        const suppressedIndex = suppressedCapabilityIds.indexOf(capabilityId);
+        if (suppressedIndex !== -1) suppressedCapabilityIds.splice(suppressedIndex, 1);
+      }
+    }
+
     // During morning, afternoon, and evening the heartbeat's job functions
     // (meeting briefs, email drafts, evening wrap-up) may have actionable
     // work that the planner cannot see (e.g. upcoming calendar events,
