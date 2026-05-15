@@ -110,18 +110,23 @@ function isProviderBackpressure(err: unknown): boolean {
 function shouldSkipLowSignalExtraction(source: string): boolean {
   const normalized = source.trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) return true;
-  if (normalized.length > 240) return false;
-  return (
+  if (
     normalized.startsWith("please reply with exactly") ||
+    normalized.includes("please reply with exactly") ||
     normalized.includes("router works") ||
+    normalized.includes("final chat works") ||
+    normalized.includes("optional ai is quiet") ||
     normalized.includes("logs checked") ||
+    normalized.includes("logs are clean") ||
     normalized.includes("tell a joke") ||
     normalized === "who are you" ||
     normalized === "who are you?" ||
     normalized === "hey" ||
     normalized === "yo" ||
     normalized === "yo yo"
-  );
+  ) return true;
+  if (normalized.length > 240) return false;
+  return false;
 }
 
 export async function extractAndStore(input: ExtractInput): Promise<ExtractedMemory[]> {

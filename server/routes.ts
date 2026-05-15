@@ -68,6 +68,7 @@ import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
 import { runCapabilityGapAnalysis } from "./agent/capabilityGapAnalyzer";
 import { routeModelTurn } from "./agent/modelRouter";
+import { isRetriableProviderError } from "./agent/providers/fallback";
 import type { ProviderTurnResult } from "./agent/providers/base";
 import { getPublicBaseUrl } from "./publicUrl";
 import { estimateModelUsage, getModelUsageSummary, recordModelUsage } from "./agent/modelUsage";
@@ -4410,7 +4411,12 @@ Return ONLY the JSON object.`;
         res.json({ actions: [], followups: [] });
       }
     } catch (error) {
-      console.error("Error generating suggestions:", error);
+      if (isRetriableProviderError(error)) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn(`[CoachSuggestions] optional suggestions skipped: provider backpressure (${msg.slice(0, 180)})`);
+      } else {
+        console.error("Error generating suggestions:", error);
+      }
       res.json({ actions: [], followups: [] });
     }
   });
