@@ -85,7 +85,14 @@ export const memorySearchTool: AgentTool = {
         .map((m, i: number) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
         .join("\n");
 
-      const content = `Found ${top.length} relevant memories for: "${query}"\n\nFormat: [tier/type] (category, confidence%)\n\n${formatted}`;
+      const content = [
+        `Memory search returned ${top.length} actual retrieved memor${top.length === 1 ? "y" : "ies"} for: "${query}"`,
+        "These are real memory entries from the user's memory store. In your final answer, summarize the entries below and do not claim there were no results.",
+        "",
+        "Format: [tier/type] (category, confidence%)",
+        "",
+        formatted,
+      ].join("\n");
 
       console.log(
         `[${ctx.channel || "Agent"}] memory_search "${query}" → ${top.length} result(s)`,

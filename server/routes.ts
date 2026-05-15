@@ -46,6 +46,7 @@ import { registerProjectRoutes } from "./projectRoutes";
 import { registerDoctorRoutes } from "./doctor/doctorRoutes";
 import { registerDownloadRoutes } from "./downloadRoutes";
 import { registerVaultRoutes } from "./vaultRoutes";
+import { createJarvisScheduledTask } from "./jarvisScheduledTasks";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { driveRouter } from "./driveRoutes";
@@ -67,7 +68,7 @@ import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
 import { runCapabilityGapAnalysis } from "./agent/capabilityGapAnalyzer";
-import { routeModelTurn } from "./agent/modelRouter";
+import { getModelRouteChain, routeModelTurn, type ModelExecutionTier } from "./agent/modelRouter";
 import { isRetriableProviderError } from "./agent/providers/fallback";
 import type { ProviderTurnResult } from "./agent/providers/base";
 import { getPublicBaseUrl } from "./publicUrl";
@@ -3576,7 +3577,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           });
           void recordModelUsage({
             userId,
-            provider: providerLabelForModel(phase1.model || "gpt-4o-mini"),
+            provider: phase1.providerName || providerLabelForModel(phase1.model || "gpt-4o-mini"),
             model: phase1.model || "gpt-4o-mini",
             source: "app_chat",
             ...phase1Usage,
@@ -3587,6 +3588,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               turn,
               finishReason: choice.finish_reason,
               toolCalls: phase1ToolCalls.length,
+              fallbackUsed: Boolean(phase1.fallbackUsed),
             },
           });
 
@@ -6550,17 +6552,56 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.get("/api/jarvis/provider-health", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+      const { runProviderHealthChecks } = await import("./agent/providers/healthCheck");
+      const report = await runProviderHealthChecks();
+      const tiers: ModelExecutionTier[] = ["cheap", "balanced", "smart"];
+      const routeChains = Object.fromEntries(
+        tiers.map((tier) => [
+          tier,
+          getModelRouteChain(tier).map((entry) => ({
+            provider: entry.providerName,
+            model: entry.model,
+          })),
+        ]),
+      );
+
+      res.status(report.allOk ? 200 : 207).json({
+        ...report,
+        routeChains,
+        codexGateway: {
+          enabled: process.env.JARVIS_CODEX_OAUTH_ENABLED === "true" || !!process.env.JARVIS_CODEX_GATEWAY_URL,
+          gatewayUrlConfigured: !!process.env.JARVIS_CODEX_GATEWAY_URL,
+          gatewayTokenConfigured: !!process.env.JARVIS_CODEX_GATEWAY_TOKEN,
+          localCommandConfigured: !!(process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND),
+        },
+      });
+    } catch (err) {
+      console.error("Error fetching provider health:", err);
+      res.status(500).json({ error: "Failed to fetch provider health" });
+    }
+  });
+
   app.post("/api/jarvis/scheduled-tasks", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { title, description, scheduledAt, recurrence } = req.body;
       if (!title || !scheduledAt) return res.status(400).json({ error: "title and scheduledAt are required" });
-      const [task] = await db
-        .insert(schema.jarvisScheduledTasks)
-        .values({ userId, title, description: description || null, scheduledAt: new Date(scheduledAt), recurrence: recurrence || null })
-        .returning();
-      res.json(task);
+      const scheduledDate = new Date(scheduledAt);
+      if (isNaN(scheduledDate.getTime())) return res.status(400).json({ error: "scheduledAt must be a valid date" });
+      const { task, deduped } = await createJarvisScheduledTask({
+        userId,
+        title: String(title),
+        description: description ? String(description) : null,
+        scheduledAt: scheduledDate,
+        recurrence: recurrence ? String(recurrence) : null,
+      });
+      res.json({ ...task, deduped });
     } catch (err) {
       console.error("Error creating jarvis scheduled task:", err);
       res.status(500).json({ error: "Failed to create scheduled task" });
@@ -8763,11 +8804,26 @@ Extract up to 8 memories per batch.`;
     try {
       const { db } = await import("./db");
       const { integrationStatus } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
+      const { eq, sql } = await import("drizzle-orm");
       const rows = await db
         .select()
         .from(integrationStatus)
         .where(eq(integrationStatus.userId, userId));
+      const linkedRaw = await db.execute(sql`
+        SELECT DISTINCT integration FROM (
+          SELECT 'telegram' AS integration FROM telegram_links WHERE user_id = ${userId}
+          UNION ALL
+          SELECT channel AS integration FROM channel_links WHERE user_id = ${userId}
+            AND channel IN ('discord', 'slack', 'whatsapp')
+          UNION ALL
+          SELECT CASE WHEN provider = 'microsoft' THEN 'outlook' ELSE provider END AS integration
+          FROM user_oauth_tokens
+          WHERE user_id = ${userId}
+            AND provider IN ('google', 'microsoft', 'slack')
+        ) linked
+      `);
+      const linkedRows = ((linkedRaw as any).rows ?? (Array.isArray(linkedRaw) ? linkedRaw : [])) as Array<{ integration: string }>;
+      const linkedIntegrations = new Set(linkedRows.map((row) => row.integration));
 
       // All integrations the app supports — returned as unconfigured by default
       // so the UI always has a complete picture even before the first validator pass.
@@ -8776,22 +8832,70 @@ Extract up to 8 memories per batch.`;
       ] as const;
 
       const now = new Date().toISOString();
+      const healthyStatuses = new Set(["healthy", "expiring_soon", "degraded"]);
+      const hasServerCredential = (integration: string) => {
+        switch (integration) {
+          case "google":
+            return Boolean((process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID) && process.env.GOOGLE_CLIENT_SECRET)
+              || Boolean(process.env.REPLIT_CONNECTORS_HOST || process.env.REPL_ID);
+          case "outlook":
+            return Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
+          case "telegram":
+            return Boolean(process.env.TELEGRAM_BOT_TOKEN);
+          case "discord":
+            return Boolean(process.env.DISCORD_BOT_TOKEN);
+          case "slack":
+            return Boolean(process.env.SLACK_BOT_TOKEN) || linkedIntegrations.has("slack");
+          case "whatsapp":
+            return Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+          default:
+            return false;
+        }
+      };
+      const decorateStatus = (integration: string, base: {
+        status: string;
+        errorMessage: string | null;
+        expiresAt: string | null;
+        lastCheckedAt: string;
+      }) => {
+        const accountLinked = linkedIntegrations.has(integration) || base.status !== "unconfigured";
+        const serverConfigured = hasServerCredential(integration);
+        const capabilityRunnable = healthyStatuses.has(base.status);
+        const blockedReason = capabilityRunnable
+          ? null
+          : base.errorMessage
+            ?? (!accountLinked ? "Account is not linked" : null)
+            ?? (!serverConfigured ? "Server credential is missing" : "Capability is not runnable");
+        return {
+          ...base,
+          accountLinked,
+          serverConfigured,
+          capabilityRunnable,
+          blockedReason,
+          readiness: capabilityRunnable ? "runnable" : accountLinked ? "linked_blocked" : "not_linked",
+        };
+      };
       const result: Record<string, {
         status: string;
         errorMessage: string | null;
         expiresAt: string | null;
         lastCheckedAt: string;
+        accountLinked: boolean;
+        serverConfigured: boolean;
+        capabilityRunnable: boolean;
+        blockedReason: string | null;
+        readiness: string;
       }> = {};
       for (const key of KNOWN_INTEGRATIONS) {
-        result[key] = { status: "unconfigured", errorMessage: null, expiresAt: null, lastCheckedAt: now };
+        result[key] = decorateStatus(key, { status: "unconfigured", errorMessage: null, expiresAt: null, lastCheckedAt: now });
       }
       for (const row of rows) {
-        result[row.integration] = {
+        result[row.integration] = decorateStatus(row.integration, {
           status: row.status,
           errorMessage: row.errorMessage ?? null,
           expiresAt: row.expiresAt ? row.expiresAt.toISOString() : null,
           lastCheckedAt: row.lastCheckedAt.toISOString(),
-        };
+        });
       }
       res.json(result);
     } catch (err) {

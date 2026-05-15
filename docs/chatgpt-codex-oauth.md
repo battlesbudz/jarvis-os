@@ -35,6 +35,37 @@ Then start the gateway:
 npm.cmd run jarvis:oauth:gateway
 ```
 
+## Desktop auto-start and keepalive
+
+On the Windows desktop that owns the Codex/ChatGPT login, install the gateway as a per-user scheduled task:
+
+```powershell
+npm.cmd run jarvis:oauth:gateway:install-startup
+```
+
+This creates a Scheduled Task named `Jarvis Codex OAuth Gateway` that starts at Windows login. The task runs `scripts/start-jarvis-oauth-gateway-supervisor.ps1`, which launches `scripts/jarvis-oauth-gateway-supervisor.mjs`. The supervisor restarts the gateway if the Node/server process exits.
+
+Useful commands:
+
+```powershell
+# Preflight check
+npm.cmd run jarvis:oauth:gateway -- --check
+
+# Start supervised gateway in the current terminal
+npm.cmd run jarvis:oauth:gateway:supervisor
+
+# Remove the login task
+npm.cmd run jarvis:oauth:gateway:uninstall-startup
+```
+
+Logs are written under:
+
+```text
+.jarvis/logs/
+```
+
+Keep Tailscale running and keep the PC awake. The scheduled task starts the gateway after login; it cannot run while the machine is fully shut down or asleep.
+
 ## Hosted Jarvis calling the gateway
 
 For Railway/hosted Jarvis, keep Codex authenticated on the gateway host and set these variables on both sides:

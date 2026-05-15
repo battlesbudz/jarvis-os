@@ -1096,6 +1096,23 @@ export async function ensureTablesExist() {
         PRIMARY KEY (user_id, integration)
       )
     `).catch(() => {});
+    await db.execute(sql`
+      WITH ranked AS (
+        SELECT
+          ctid,
+          row_number() OVER (
+            PARTITION BY user_id, integration
+            ORDER BY last_checked_at DESC NULLS LAST
+          ) AS rn
+        FROM integration_status
+      )
+      DELETE FROM integration_status
+      WHERE ctid IN (SELECT ctid FROM ranked WHERE rn > 1)
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS integration_status_user_integration_idx
+        ON integration_status (user_id, integration)
+    `).catch(() => {});
 
     // ── Behaviour Packs — operator publish + Ego override path (Task #282) ──
     await db.execute(sql`
@@ -1696,6 +1713,19 @@ export async function ensureTablesExist() {
         updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
         UNIQUE (user_id, slug)
       )
+    `).catch(() => {});
+
+    await db.execute(sql`
+      DELETE FROM knowledge_vault_pages a
+      USING knowledge_vault_pages b
+      WHERE a.user_id = b.user_id
+        AND a.slug = b.slug
+        AND a.id < b.id
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS vault_user_slug_idx
+      ON knowledge_vault_pages (user_id, slug)
     `).catch(() => {});
 
     console.log("Database tables verified");

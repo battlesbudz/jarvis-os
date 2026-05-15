@@ -60,6 +60,56 @@ function chooseForecastIndex(times: string[] | undefined, requestedDate: string 
   return tomorrowIndex >= 0 ? tomorrowIndex : Math.min(1, times.length - 1);
 }
 
+function normalizeLocationCandidates(location: string): string[] {
+  const normalized = location.trim().toLowerCase().replace(/\s+/g, " ");
+  const withoutCountry = normalized.replace(/,\s*(usa|us|united states|united states of america)$/i, "").trim();
+  const aliases: Record<string, string[]> = {
+    "nyc": ["New York"],
+    "new york city": ["New York"],
+    "new york, ny": ["New York"],
+    "new york ny": ["New York"],
+    "manhattan": ["Manhattan", "New York"],
+    "manhattan, ny": ["Manhattan", "New York"],
+    "brooklyn, ny": ["Brooklyn", "New York"],
+    "queens, ny": ["Queens", "New York"],
+    "bronx, ny": ["Bronx", "New York"],
+    "staten island, ny": ["Staten Island", "New York"],
+  };
+
+  const candidates = [location.trim(), ...(aliases[withoutCountry] ?? [])].filter(Boolean);
+  return [...new Set(candidates)];
+}
+
+function scoreGeocodeResult(place: GeocodeResult, requestedLocation: string): number {
+  const text = requestedLocation.toLowerCase();
+  let score = 0;
+  if (place.country === "United States") score += 2;
+  if (/\bny\b|new york|nyc|manhattan|brooklyn|queens|bronx|staten island/.test(text)) {
+    if (place.admin1 === "New York") score += 6;
+    if (place.name === "New York") score += 4;
+  }
+  if (place.name.toLowerCase() === requestedLocation.trim().toLowerCase()) score += 3;
+  return score;
+}
+
+async function geocodeLocation(location: string, signal?: AbortSignal): Promise<GeocodeResult | undefined> {
+  for (const candidate of normalizeLocationCandidates(location)) {
+    const geocodeUrl = new URL("https://geocoding-api.open-meteo.com/v1/search");
+    geocodeUrl.searchParams.set("name", candidate);
+    geocodeUrl.searchParams.set("count", "10");
+    geocodeUrl.searchParams.set("language", "en");
+    geocodeUrl.searchParams.set("format", "json");
+
+    const geocodeRes = await fetch(geocodeUrl, { signal });
+    if (!geocodeRes.ok) throw new Error(`geocoding failed (${geocodeRes.status})`);
+    const geocodeJson = await geocodeRes.json() as { results?: GeocodeResult[] };
+    const places = geocodeJson.results ?? [];
+    if (places.length === 0) continue;
+    return [...places].sort((a, b) => scoreGeocodeResult(b, location) - scoreGeocodeResult(a, location))[0];
+  }
+  return undefined;
+}
+
 export const weatherLookupTool: AgentTool = {
   name: "weather_lookup",
   description:
@@ -90,16 +140,7 @@ export const weatherLookupTool: AgentTool = {
     }
 
     try {
-      const geocodeUrl = new URL("https://geocoding-api.open-meteo.com/v1/search");
-      geocodeUrl.searchParams.set("name", location);
-      geocodeUrl.searchParams.set("count", "1");
-      geocodeUrl.searchParams.set("language", "en");
-      geocodeUrl.searchParams.set("format", "json");
-
-      const geocodeRes = await fetch(geocodeUrl, { signal: ctx.signal });
-      if (!geocodeRes.ok) throw new Error(`geocoding failed (${geocodeRes.status})`);
-      const geocodeJson = await geocodeRes.json() as { results?: GeocodeResult[] };
-      const place = geocodeJson.results?.[0];
+      const place = await geocodeLocation(location, ctx.signal);
       if (!place) {
         return {
           ok: false,

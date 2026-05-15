@@ -107,10 +107,22 @@ Expected result: tests pass, server build passes, and any doctor warnings are un
 
 When production is configured to use Codex OAuth, the desktop gateway must be running.
 
+Preferred setup: install the Windows login task so the gateway auto-starts and restarts if it crashes:
+
+```powershell
+npm.cmd run jarvis:oauth:gateway:install-startup
+```
+
 Start it:
 
 ```powershell
 npm.cmd run jarvis:oauth:gateway
+```
+
+For foreground supervised mode:
+
+```powershell
+npm.cmd run jarvis:oauth:gateway:supervisor
 ```
 
 If running in the background, verify it listens on port `5000`:
@@ -132,6 +144,8 @@ Expected response:
 ```
 
 Important: the PC must stay awake, Tailscale must stay running, Funnel must stay enabled, and the local gateway must stay alive.
+
+Later note: revisit the phone-device side separately. The future work is to decide how the Android daemon, Tailscale, and phone Jarvis should coordinate with the desktop gateway without trying to make the phone tunnel directly into the ChatGPT app.
 
 ## Step 6: Commit And Push
 
@@ -290,4 +304,3 @@ A change is done when:
 - Logs show no new critical errors.
 - Any remaining warnings are named clearly.
 - The relevant brain file is updated.
-

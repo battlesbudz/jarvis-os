@@ -1,6 +1,7 @@
 import type { Capability } from "./types";
 import { fetchCalendarTool } from "../agent/tools/calendar";
 import { createCalendarEventTool } from "../agent/tools/calendarCreate";
+import { getGoogleOAuthConfigStatus } from "./googleOAuthConfig";
 
 export const calendarCapability: Capability = {
   id: "calendar",
@@ -21,12 +22,13 @@ export const calendarCapability: Capability = {
     },
   ],
   configRequirements: [
-    { key: "GOOGLE_CLIENT_ID", label: "Google OAuth Client ID" },
+    { key: "GOOGLE_WEB_CLIENT_ID", label: "Google OAuth Web Client ID" },
     { key: "GOOGLE_CLIENT_SECRET", label: "Google OAuth Client Secret" },
   ],
   async healthCheck() {
-    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
-      return { healthy: false, reason: "Google OAuth credentials not configured" };
+    const status = getGoogleOAuthConfigStatus();
+    if (!status.configured) {
+      return { healthy: false, reason: status.reason };
     }
     return { healthy: true };
   },

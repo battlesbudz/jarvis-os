@@ -1,6 +1,5 @@
-import type { AgentTool, ToolContext, ToolArgs, ToolResult } from "../types";
-import { db } from "../../db";
-import * as schema from "@shared/schema";
+import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
+import { createJarvisScheduledTask } from "../../jarvisScheduledTasks";
 
 interface ScheduleJarvisTaskArgs {
   title?: string;
@@ -53,16 +52,13 @@ export const scheduleJarvisTaskTool: AgentTool = {
     }
 
     try {
-      const [task] = await db
-        .insert(schema.jarvisScheduledTasks)
-        .values({
-          userId: ctx.userId,
-          title,
-          description: a.description ? String(a.description).trim() : null,
-          scheduledAt,
-          recurrence: a.recurrence ? String(a.recurrence).trim() : null,
-        })
-        .returning();
+      const { task, deduped } = await createJarvisScheduledTask({
+        userId: ctx.userId,
+        title,
+        description: a.description ? String(a.description).trim() : null,
+        scheduledAt,
+        recurrence: a.recurrence ? String(a.recurrence).trim() : null,
+      });
 
       const when = scheduledAt.toLocaleDateString("en-US", {
         weekday: "short",
@@ -71,12 +67,13 @@ export const scheduleJarvisTaskTool: AgentTool = {
         hour: "numeric",
         minute: "2-digit",
       });
+      const actionLabel = deduped ? "Already scheduled" : "Scheduled";
 
       return {
         ok: true,
-        content: `Scheduled: "${title}" for ${when}${a.recurrence ? ` (${a.recurrence})` : ""}.\n\n[View in Scheduled Tasks →](gameplan://scheduled)`,
-        label: `Scheduled: ${title}`,
-        detail: JSON.stringify({ id: task.id, title, scheduledAt: task.scheduledAt }),
+        content: `${actionLabel}: "${title}" for ${when}${a.recurrence ? ` (${a.recurrence})` : ""}.\n\n[View in Scheduled Tasks ->](gameplan://scheduled)`,
+        label: `${actionLabel}: ${title}`,
+        detail: JSON.stringify({ id: task.id, title, scheduledAt: task.scheduledAt, deduped }),
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

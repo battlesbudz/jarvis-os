@@ -130,6 +130,7 @@ export function buildCodexOAuthProviderPrompt(params: ProviderQueryParams): stri
         "You are Jarvis's main brain orchestrator using ChatGPT/Codex OAuth.",
         "You may either answer directly or request Jarvis tool calls.",
         "You do not execute tools yourself. Jarvis executes tool calls after you request them.",
+        "Tool result messages in the conversation are authoritative observations from Jarvis. Use them directly, and do not contradict a successful tool result.",
         "When a tool is needed, return ONLY JSON in this exact shape:",
         `{"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
         "When no tool is needed, return ONLY JSON in this exact shape:",

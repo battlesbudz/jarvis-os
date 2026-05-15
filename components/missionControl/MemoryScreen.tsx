@@ -25,6 +25,12 @@ interface MemoriesResponse {
   memories: Memory[];
 }
 
+function formatRelevanceScore(score: number | undefined): string | null {
+  if (score === undefined || !Number.isFinite(score)) return null;
+  const pct = score <= 1 ? score * 100 : score;
+  return `${Math.max(0, Math.min(100, Math.round(pct)))}%`;
+}
+
 const CATEGORIES = ['all', 'fact', 'goal', 'preference', 'pattern', 'personality', 'values', 'work_style', 'accomplishment', 'achievement', 'relationship'];
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -172,7 +178,7 @@ export default function MemoryScreen() {
       {/* Date list */}
       {dateGroups.length === 0 ? (
         <View style={styles.emptyState}>
-          <Ionicons name="brain-outline" size={32} color={Colors.textTertiary} />
+          <Ionicons name="book-outline" size={32} color={Colors.textTertiary} />
           <Text style={styles.emptyText}>
             {searchInput || selectedCat !== 'all' ? 'No matches found' : 'No memories yet'}
           </Text>
@@ -213,6 +219,7 @@ export default function MemoryScreen() {
           >
             {activeDateEntries.map(m => {
               const catColor = getCatColor(m.category);
+              const relevanceLabel = formatRelevanceScore(m.relevanceScore);
               return (
                 <View key={m.id} style={styles.memoryCard}>
                   <View style={styles.memoryCardTop}>
@@ -220,8 +227,8 @@ export default function MemoryScreen() {
                     <Text style={[styles.catLabel, { color: catColor }]}>
                       {m.category?.replace('_', ' ') ?? 'fact'}
                     </Text>
-                    {m.relevanceScore !== undefined && (
-                      <Text style={styles.scoreText}>{Math.round(m.relevanceScore * 100)}%</Text>
+                    {relevanceLabel && (
+                      <Text style={styles.scoreText}>{relevanceLabel}</Text>
                     )}
                   </View>
                   <Text style={styles.memoryContent}>{m.content}</Text>

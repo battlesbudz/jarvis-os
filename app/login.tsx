@@ -333,6 +333,19 @@ export default function LoginScreen() {
     });
   }
 
+  function handleWebGoogleRedirectSignIn() {
+    if (typeof window === "undefined") {
+      throw new Error("Google sign-in is only available in a browser.");
+    }
+
+    const baseUrl = getApiUrl();
+    const { startUrl } = buildMobileAuthUrls(baseUrl);
+    clearAuthStorage().catch((err) => {
+      console.warn("[GoogleAuth] Could not clear stale auth before redirect:", err);
+    });
+    window.location.href = startUrl;
+  }
+
   function googleConfigHelp(errorMessage?: string) {
     const base = errorMessage || "Google sign-in could not finish.";
     return `${base} In Google Cloud Console, make sure this OAuth client allows the JavaScript origin https://gameplanjarvisai.up.railway.app and redirect URI https://gameplanjarvisai.up.railway.app/api/auth/mobile/callback.`;
@@ -345,12 +358,13 @@ export default function LoginScreen() {
     if (Platform.OS === "web") {
       setLoading(true);
       try {
-        await handleWebGoogleTokenSignIn();
+        await handleWebGoogleRedirectSignIn();
       } catch (e: any) {
-        console.warn("[GoogleAuth] Browser token sign-in failed:", e);
+        console.warn("[GoogleAuth] Browser redirect sign-in failed:", e);
         setError(googleConfigHelp(e.message));
-      } finally {
         setLoading(false);
+      } finally {
+        // Successful web sign-in navigates away and returns through /login#auth_token.
       }
       return;
     }

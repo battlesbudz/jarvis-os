@@ -110,6 +110,11 @@ test("multi-word query checks all words", () => {
   assert.strictEqual(result!.matchedEntity, "TrackrAi");
 });
 
+test("command verbs do NOT trigger: create should not match creative", () => {
+  const result = findEntityNearMatch("Create a short reviewable deliverable", ["creative"]);
+  assert.strictEqual(result, null, "Generic command verbs should not trigger entity confirmation");
+});
+
 test("confirmed 'no' path: skip_entity_check equivalent passes entity list as []", () => {
   // When skip_entity_check=true the caller passes an empty list, so no match
   const result = findEntityNearMatch("Research OpenCals", []);

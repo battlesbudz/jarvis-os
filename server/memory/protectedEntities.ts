@@ -198,7 +198,8 @@ export function findEntityNearMatch(
   const queryWords = searchQuery
     .split(/[\s,;:()\[\]{}"'`|]+/)
     .map((w) => w.replace(/[^a-zA-Z0-9_-]/g, "").trim())
-    .filter((w) => w.length >= 4);  // ignore short tokens to cut false positives
+    .filter((w) => w.length >= 4)
+    .filter((w) => !GOAL_STOP_WORDS.has(w.toLowerCase()));  // ignore generic command words to cut false positives
 
   for (const qw of queryWords) {
     for (const entity of entityNames) {
