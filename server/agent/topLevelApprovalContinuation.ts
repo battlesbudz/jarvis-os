@@ -1,4 +1,5 @@
 import type { ApprovalGate } from "./agentApproval";
+import { createApprovalReceipt } from "./approvalReceipt";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
 
 export interface ContinueTopLevelApprovalDeps {
@@ -82,6 +83,13 @@ export async function continueTopLevelApproval(
       approvedTopLevelAction: true,
       originChannel: channelName,
       approvedToolName: gate.toolName,
+      approvalReceipt: createApprovalReceipt({
+        gateId: gate.id,
+        userId: gate.userId,
+        toolName: gate.toolName,
+        originalUserText: userText,
+        expiresAt: gate.expiresAt,
+      }),
     },
   });
 

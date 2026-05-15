@@ -10,6 +10,7 @@
 
 import { ToolCallHookRegistry } from "../toolCallHooks";
 import type { ToolCallHookContext } from "../toolCallHooks";
+import { approvalReceiptCoversToolCall } from "../approvalReceipt";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -204,6 +205,49 @@ async function run() {
     });
     const result = await reg.run({ toolName: "test", params: {}, agentId: "a1" });
     assert(result.allowed === true, "TH-15: registry works without agentName/userId in context");
+  }
+
+  // TH-16: Scoped approval receipt bypasses duplicate approval for the exact covered tool
+  {
+    const reg = new ToolCallHookRegistry();
+    reg.register(() => ({ requireApproval: { title: "Approve", description: "Duplicate gate" } }));
+    const result = await reg.run(makeCtx({
+      toolName: "send_email",
+      userId: "user-test",
+      approvalReceipt: {
+        gateId: "gate_receipt",
+        userId: "user-test",
+        toolName: "send_email",
+        scope: "top_level_action",
+        originalUserText: "Send the email",
+        createdAt: new Date().toISOString(),
+      },
+    }));
+    assert(result.allowed === true, "TH-16: matching receipt skips duplicate approval");
+  }
+
+  // TH-17: Approval receipts are scoped to the same user and same tool
+  {
+    const receipt = {
+      gateId: "gate_receipt",
+      userId: "user-test",
+      toolName: "send_email",
+      scope: "top_level_action",
+      originalUserText: "Send the email",
+      createdAt: new Date().toISOString(),
+    };
+    assert(
+      approvalReceiptCoversToolCall(receipt, { userId: "user-test", toolName: "send_email" }),
+      "TH-17: receipt covers the matching user/tool",
+    );
+    assert(
+      !approvalReceiptCoversToolCall(receipt, { userId: "other-user", toolName: "send_email" }),
+      "TH-17: receipt does not cover a different user",
+    );
+    assert(
+      !approvalReceiptCoversToolCall(receipt, { userId: "user-test", toolName: "discord_post" }),
+      "TH-17: receipt does not cover a different tool",
+    );
   }
 
   // ── Summary ────────────────────────────────────────────────────────────────

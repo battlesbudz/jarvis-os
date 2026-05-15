@@ -51,6 +51,12 @@ async function main(): Promise<void> {
     assert.equal(jobs[0].input?.originApprovalGateId, "gate_123");
     assert.equal(jobs[0].input?.approvedTopLevelAction, true);
     assert.equal(jobs[0].input?.originChannel, "Gateway");
+    const receipt = jobs[0].input?.approvalReceipt as Record<string, unknown> | undefined;
+    assert.equal(receipt?.gateId, "gate_123");
+    assert.equal(receipt?.userId, "user_1");
+    assert.equal(receipt?.toolName, "send_email");
+    assert.equal(receipt?.scope, "top_level_action");
+    assert.equal(receipt?.originalUserText, "Send this email to the regulator");
   }
 
   {

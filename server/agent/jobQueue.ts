@@ -25,6 +25,7 @@ import { fetchCalendarTool } from "./tools/calendar";
 import { researchHasSourceUrls } from "./researchUtils";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
 import { createDriveBinaryFile } from "../integrations/googleDrive";
+import { normalizeApprovalReceipt } from "./approvalReceipt";
 
 // Re-export from the shared client so existing callers don't break.
 export type AgentJobType = _AgentJobType;
@@ -747,6 +748,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
     const jobInput = (job.input as Record<string, unknown>) ?? {};
     const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
     const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
+    const approvalReceipt = normalizeApprovalReceipt(jobInput.approvalReceipt);
 
     // Helper: fire the workflow hook if this job belongs to a workflow step.
     const wfId    = jobInput.workflowId    as string | undefined;
@@ -816,6 +818,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         platform: "orchestrator",
         initiatedBy: "jarvis",
         model: namedAgentModel,
+        approvalReceipt,
       });
 
       await completeJob(job.id, {
@@ -891,6 +894,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         context: ctx,
         model: modelOverride,
         extraSystemPrompt: agentDef.extraPrompt ?? undefined,
+        approvalReceipt,
       });
 
       // ── Claude Opus verification loop (custom_agent) ──────────────────────
@@ -942,6 +946,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
               context: ctx,
               model: modelOverride,
               extraSystemPrompt: agentDef.extraPrompt ?? undefined,
+              approvalReceipt,
             });
           } else {
             customVerificationPassed = false;
@@ -2049,6 +2054,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       context: ctx,
       model: subAgentModelOverride,
       extraSystemPrompt: priorContextBlock,
+      approvalReceipt,
     });
 
     // ── Claude Opus verification loop ─────────────────────────────────────────
@@ -2104,6 +2110,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             defaultTitle: job.title,
             context: ctx,
             model: subAgentModelOverride,
+            approvalReceipt,
           });
         } else {
           verificationPassed = false;
