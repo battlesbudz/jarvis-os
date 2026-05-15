@@ -11,7 +11,7 @@
 import { runNamedAgent } from "./runNamedAgent";
 import { listAgents } from "./agentManager";
 import { logAgentEvent } from "./agentLogger";
-import { getOpenAIClientConfig } from "./providers/env";
+import { createRoutedOpenAIChatShim } from "./routedChatCompletion";
 
 export interface CouncilAgentResponse {
   agentId: string;
@@ -143,8 +143,7 @@ async function synthesizeCouncilResponse(
     .join("\n\n---\n\n");
 
   try {
-    const OpenAI = (await import("openai")).default;
-    const openai = new OpenAI(getOpenAIClientConfig());
+    const openai = createRoutedOpenAIChatShim("[CouncilSynthesis]", "balanced");
 
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",

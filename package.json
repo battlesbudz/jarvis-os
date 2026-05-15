@@ -18,6 +18,10 @@
     "start": "npx expo start",
     "lint": "npx expo lint",
     "lint:fix": "npx expo lint --fix",
+    "jarvis:doctor": "npx --yes tsx scripts/jarvis-doctor.ts",
+    "jarvis:oauth:probe": "node scripts/probe-jarvis-codex-oauth.mjs",
+    "jarvis:oauth:gateway": "node scripts/jarvis-local-oauth-gateway.mjs",
+    "jarvis:check": "npm run jarvis:doctor && npm test",
     "test": "node scripts/run-agent-tests.mjs"
   },
   "dependencies": {

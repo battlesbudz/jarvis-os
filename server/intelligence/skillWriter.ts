@@ -17,10 +17,9 @@ import { eq } from "drizzle-orm";
 import fs from "fs/promises";
 import { watch } from "fs";
 import path from "path";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "../agent/providers/env";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[SkillWriter]", "balanced");
 
 export const SKILLS_DIR = path.join(process.cwd(), "server", "skills");
 const CRYSTALLIZE_THRESHOLD = 3;

@@ -14,10 +14,9 @@ import { tavilySearch } from "../integrations/search";
 import { notifyUser } from "../channels/registry";
 import { logInteraction } from "../interactionLog";
 import { logAction, isActionSuppressed } from "../intelligence/actionLog";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "../agent/providers/env";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[NervousSystem]", "balanced");
 
 const RELEVANCE_THRESHOLD = 0.55;
 const SCAN_INTERVAL_MS = 30 * 60 * 1000;

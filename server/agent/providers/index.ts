@@ -15,8 +15,9 @@ import { BaseProvider, accumulateTurn } from "./base";
 import { OpenAIProvider } from "./openai";
 import { ClaudeProvider } from "./claude";
 import { OpenAICompatibleProvider } from "./openaiCompatible";
+import { CodexOAuthProvider } from "./codexOAuth";
 
-export type ProviderName = "openai" | "claude" | "openai-compatible";
+export type ProviderName = "openai" | "claude" | "openai-compatible" | "chatgpt-codex-oauth";
 
 type ProviderFactory = () => BaseProvider;
 
@@ -24,6 +25,7 @@ const PROVIDER_FACTORIES: Record<ProviderName, ProviderFactory> = {
   openai: () => new OpenAIProvider(),
   claude: () => new ClaudeProvider(),
   "openai-compatible": () => new OpenAICompatibleProvider(),
+  "chatgpt-codex-oauth": () => new CodexOAuthProvider(),
 };
 
 // Singleton instance cache - one instance per provider name per process.

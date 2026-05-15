@@ -1,11 +1,10 @@
 import { db } from "../db";
 import { eq, and, gte, desc, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "../agent/providers/env";
 import { normalizeCategory } from "./categories";
 import type { WeeklyPattern, MemoryCategory } from "@shared/schema";
 import { regenerateSoul } from "./soul";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
@@ -22,7 +21,7 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   }
 }
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[WeeklyMemory]", "balanced");
 
 interface ChatMessage {
   role?: string;

@@ -24,10 +24,9 @@ import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { emit as diagEmit } from "./diagnostics/diagnosticsService";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "./agent/providers/env";
+import { createRoutedOpenAIChatShim } from "./agent/routedChatCompletion";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const CHECKLIST_PATH = path.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");

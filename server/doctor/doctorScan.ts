@@ -15,6 +15,13 @@ import { eq, and, lt, isNotNull, gt } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import https from "https";
 import http from "http";
+import {
+  getProviderEnvValue,
+  hasAnyRoutableProvider,
+  hasCodexOAuthProvider,
+  hasDirectOpenAIProvider,
+  hasNonOpenAIRoutableProvider,
+} from "../agent/providers/env";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -90,13 +97,28 @@ async function checkDatabaseConnectivity(): Promise<DoctorResult> {
 
 async function checkLlmKeyValidity(): Promise<DoctorResult> {
   const id = "llm_key_validity";
-  const label = "LLM API Key (OpenAI)";
+  const label = "AI Provider";
   const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
   const baseUrl = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL ?? "https://api.openai.com";
   const settingsPath = "/(tabs)/settings";
 
+  if (hasCodexOAuthProvider()) {
+    return pass(id, label, "ChatGPT/Codex OAuth provider is configured for local gateway model calls.");
+  }
+
+  if (!hasDirectOpenAIProvider() && hasNonOpenAIRoutableProvider()) {
+    const providerLabel = getProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY")
+      ? "OpenRouter"
+      : getProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY")
+        ? "Groq"
+        : getProviderEnvValue("AI_INTEGRATIONS_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
+          ? "Anthropic"
+          : "non-OpenAI";
+    return pass(id, label, `${providerLabel} model provider is configured.`);
+  }
+
   if (!apiKey) {
-    return fail(id, label, "OpenAI API key is not configured.", settingsPath);
+    return fail(id, label, "No AI model provider is configured.", settingsPath);
   }
 
   try {
@@ -179,10 +201,9 @@ async function checkEnvVarsPresence(): Promise<DoctorResult> {
   const settingsPath = "/(tabs)/settings";
 
   // Tier-1: absence = hard failure (system cannot operate without these)
-  const critical = [
-    "DATABASE_URL",
-    "AI_INTEGRATIONS_OPENAI_API_KEY",
-  ];
+  const missingCritical = ["DATABASE_URL"].filter((k) => !process.env[k]);
+  if (!hasAnyRoutableProvider()) missingCritical.push("AI model provider");
+
   // Tier-2: absence = warning (specific channels/features degrade)
   const important = [
     "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
@@ -198,7 +219,6 @@ async function checkEnvVarsPresence(): Promise<DoctorResult> {
     "SUPADATA_API_KEY",
   ];
 
-  const missingCritical = critical.filter((k) => !process.env[k]);
   const missingImportant = important.filter((k) => !process.env[k]);
 
   if (missingCritical.length > 0) {
