@@ -28,6 +28,11 @@ This document makes the existing repo understandable to future humans and agents
 ## Design Principle
 Make routing visible before moving code. The fastest way to improve Jarvis is to help future agents know where to look, what to skip, which tools are allowed, and where outputs belong.
 
+## Jarvis OS Foundation
+The Jarvis OS Foundation is the reliability layer that sits above the existing server and agent modules. It does not replace the current architecture. It defines a readiness contract, a doctor command, a first-pass autonomy policy, and smoke tests that prove Jarvis can safely decide between inline answers, background jobs, and approval-gated actions.
+
+This layer exists so OpenClaw-style capabilities can be added incrementally without turning setup and debugging into guesswork.
+
 ## Suggested Future Refactors
 Do these only as separate implementation tasks with tests/checks:
 - Consolidate duplicate identity anchors after verifying all loaders.

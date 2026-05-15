@@ -67,7 +67,7 @@ This is Phase 0 / Level 1 work. It does not move folders, replace the agent harn
 - Create: `server/diagnostics/osReadiness.ts`
 - Create: `server/diagnostics/__tests__/osReadiness.test.ts`
 
-- [ ] **Step 1: Write the failing readiness tests**
+- [x] **Step 1: Write the failing readiness tests**
 
 Create `server/diagnostics/__tests__/osReadiness.test.ts`:
 
@@ -149,7 +149,7 @@ const downProbe = (id: string, requiredFor: JarvisOsProbe["requiredFor"]): Jarvi
 }
 ```
 
-- [ ] **Step 2: Run the new test to verify it fails**
+- [x] **Step 2: Run the new test to verify it fails**
 
 Run:
 
@@ -159,7 +159,7 @@ npx tsx server/diagnostics/__tests__/osReadiness.test.ts
 
 Expected: fails because `server/diagnostics/osReadiness.ts` does not exist.
 
-- [ ] **Step 3: Create the readiness module**
+- [x] **Step 3: Create the readiness module**
 
 Create `server/diagnostics/osReadiness.ts`:
 
@@ -290,7 +290,7 @@ export async function getJarvisOsReadiness(userId = "local-doctor"): Promise<Jar
 }
 ```
 
-- [ ] **Step 4: Run the readiness test**
+- [x] **Step 4: Run the readiness test**
 
 Run:
 
@@ -308,7 +308,7 @@ Expected: passes.
 - Create: `scripts/jarvis-doctor.ts`
 - Modify: `package.json`
 
-- [ ] **Step 1: Create the doctor CLI**
+- [x] **Step 1: Create the doctor CLI**
 
 Create `scripts/jarvis-doctor.ts`:
 
@@ -336,7 +336,7 @@ main().catch((err) => {
 });
 ```
 
-- [ ] **Step 2: Add package scripts**
+- [x] **Step 2: Add package scripts**
 
 Modify the `scripts` section in `package.json` to include:
 
@@ -349,7 +349,7 @@ Modify the `scripts` section in `package.json` to include:
 
 Keep all existing scripts unchanged.
 
-- [ ] **Step 3: Run the doctor without a database**
+- [x] **Step 3: Run the doctor without a database**
 
 Run:
 
@@ -359,7 +359,7 @@ npm run jarvis:doctor
 
 Expected: prints a readable readiness report. If `DATABASE_URL` is missing or invalid, exits `1` and names database setup as a blocker.
 
-- [ ] **Step 4: Run the full local check**
+- [x] **Step 4: Run the full local check**
 
 Run:
 
@@ -377,7 +377,7 @@ Expected: if local setup is incomplete, doctor fails first with a clear blocker.
 - Create: `server/agent/autonomyPolicy.ts`
 - Create: `server/agent/__tests__/autonomyPolicy.test.ts`
 
-- [ ] **Step 1: Write the failing policy tests**
+- [x] **Step 1: Write the failing policy tests**
 
 Create `server/agent/__tests__/autonomyPolicy.test.ts`:
 
@@ -428,7 +428,7 @@ import { decideAutonomyMode } from "../autonomyPolicy";
 }
 ```
 
-- [ ] **Step 2: Run the policy test to verify it fails**
+- [x] **Step 2: Run the policy test to verify it fails**
 
 Run:
 
@@ -438,7 +438,7 @@ npx tsx server/agent/__tests__/autonomyPolicy.test.ts
 
 Expected: fails because `server/agent/autonomyPolicy.ts` does not exist.
 
-- [ ] **Step 3: Create the autonomy policy**
+- [x] **Step 3: Create the autonomy policy**
 
 Create `server/agent/autonomyPolicy.ts`:
 
@@ -526,7 +526,7 @@ export function decideAutonomyMode(input: AutonomyPolicyInput): AutonomyPolicyDe
 }
 ```
 
-- [ ] **Step 4: Run the policy test**
+- [x] **Step 4: Run the policy test**
 
 Run:
 
@@ -544,7 +544,7 @@ Expected: passes.
 - Create: `server/agent/osSmoke.ts`
 - Create: `server/agent/__tests__/osSmoke.test.ts`
 
-- [ ] **Step 1: Write the failing smoke test**
+- [x] **Step 1: Write the failing smoke test**
 
 Create `server/agent/__tests__/osSmoke.test.ts`:
 
@@ -587,7 +587,7 @@ import { runJarvisOsSmoke } from "../osSmoke";
 }
 ```
 
-- [ ] **Step 2: Run the smoke test to verify it fails**
+- [x] **Step 2: Run the smoke test to verify it fails**
 
 Run:
 
@@ -597,7 +597,7 @@ npx tsx server/agent/__tests__/osSmoke.test.ts
 
 Expected: fails because `server/agent/osSmoke.ts` does not exist.
 
-- [ ] **Step 3: Create the smoke flow**
+- [x] **Step 3: Create the smoke flow**
 
 Create `server/agent/osSmoke.ts`:
 
@@ -662,7 +662,7 @@ export async function runJarvisOsSmoke(deps: RunJarvisOsSmokeDeps): Promise<Jarv
 }
 ```
 
-- [ ] **Step 4: Run the smoke test**
+- [x] **Step 4: Run the smoke test**
 
 Run:
 
@@ -679,7 +679,7 @@ Expected: passes.
 **Files:**
 - Modify: `scripts/run-agent-tests.mjs`
 
-- [ ] **Step 1: Add new non-database tests to the test list**
+- [x] **Step 1: Add new non-database tests to the test list**
 
 Modify the `tests` array in `scripts/run-agent-tests.mjs` by adding:
 
@@ -691,7 +691,7 @@ Modify the `tests` array in `scripts/run-agent-tests.mjs` by adding:
 
 Place them before the DB-backed tests so foundational failures appear early.
 
-- [ ] **Step 2: Run the test runner**
+- [x] **Step 2: Run the test runner**
 
 Run:
 
@@ -708,7 +708,7 @@ Expected: new tests pass. DB-backed tests still skip when `DATABASE_URL` is abse
 **Files:**
 - Create: `docs/operations/jarvis-os-runbook.md`
 
-- [ ] **Step 1: Create the operations directory**
+- [x] **Step 1: Create the operations directory**
 
 Run:
 
@@ -718,7 +718,7 @@ New-Item -ItemType Directory -Force -Path 'docs\operations' | Out-Null
 
 Expected: `docs/operations` exists.
 
-- [ ] **Step 2: Create the runbook**
+- [x] **Step 2: Create the runbook**
 
 Create `docs/operations/jarvis-os-runbook.md`:
 
@@ -787,7 +787,7 @@ Jarvis must ask before sending messages, changing calendars, posting publicly, d
 5. Use `jarvis_self_diagnose` from the agent tool layer when debugging live user-facing behavior.
 ```
 
-- [ ] **Step 3: Confirm the runbook exists**
+- [x] **Step 3: Confirm the runbook exists**
 
 Run:
 
@@ -804,7 +804,7 @@ Expected: `True`.
 **Files:**
 - Modify: `docs/architecture.md`
 
-- [ ] **Step 1: Add a short section after "Design Principle"**
+- [x] **Step 1: Add a short section after "Design Principle"**
 
 Append this section after the existing `## Design Principle` section:
 
@@ -816,7 +816,7 @@ The Jarvis OS Foundation is the reliability layer that sits above the existing s
 This layer exists so OpenClaw-style capabilities can be added incrementally without turning setup and debugging into guesswork.
 ```
 
-- [ ] **Step 2: Review the architecture doc**
+- [x] **Step 2: Review the architecture doc**
 
 Run:
 
@@ -833,7 +833,7 @@ Expected: the new section appears once.
 **Files:**
 - No new files.
 
-- [ ] **Step 1: Run tests**
+- [x] **Step 1: Run tests**
 
 Run:
 
@@ -843,7 +843,7 @@ npm test
 
 Expected: all non-DB tests pass. DB-backed tests skip if `DATABASE_URL` is not set.
 
-- [ ] **Step 2: Run doctor**
+- [x] **Step 2: Run doctor**
 
 Run:
 
@@ -853,7 +853,7 @@ npm run jarvis:doctor
 
 Expected: prints a readiness report. It may return `blocked` on machines without database/env setup, but the output must name the blocker clearly.
 
-- [ ] **Step 3: Run full check**
+- [x] **Step 3: Run full check**
 
 Run:
 
@@ -863,7 +863,7 @@ npm run jarvis:check
 
 Expected: if the local environment is complete, doctor and tests pass. If the local environment is incomplete, doctor exits first with actionable setup guidance.
 
-- [ ] **Step 4: Inspect changed files**
+- [x] **Step 4: Inspect changed files**
 
 Run:
 
@@ -883,6 +883,25 @@ Expected: only the files named in this plan changed.
 - External actions require approval before execution.
 - Tests prove the readiness contract, autonomy policy, and smoke flow.
 - The runbook gives humans and agents the same operating path.
+
+## Follow-up Implementation Status
+
+Completed after the original checklist:
+
+- [x] Live coach/chat path now calls the autonomy runtime before the orchestrator for obvious autonomous work.
+- [x] Multi-step research, writing, planning, and email-draft requests are queued through the existing `agent_jobs` system instead of being answered as text-only coaching.
+- [x] External side-effect requests are paused with an explicit approval message before Jarvis proceeds.
+- [x] The autonomy runtime lazily loads the real job queue so unit tests can run without `DATABASE_URL`.
+- [x] `server/agent/__tests__/autonomyRuntime.test.ts` covers queue, approval, inline, and blocked-readiness behavior.
+- [x] `scripts/run-agent-tests.mjs` runs the autonomy runtime test with the rest of the foundation tests.
+
+Next work to avoid drift:
+
+- [ ] Add a proper approval UX handoff for top-level chat requests, so "send/post/schedule/delete/deploy" can create a durable approval gate instead of only replying with a confirmation prompt.
+- [ ] Surface queued autonomy jobs in the Jarvis UI with status, result preview, retry, approve, and revise actions.
+- [ ] Expand tool-aware routing for weather, calendar, Gmail, memory, browser, GitHub, Railway, and code-writing requests so Jarvis uses tools before giving capability disclaimers.
+- [ ] Add an end-to-end app-chat test that fakes DB/job dependencies and proves `/api/coach/chat` routes a research request into a background job.
+- [ ] Add production observability for autonomy decisions: mode, agent type, job ID, readiness status, and approval boundary.
 
 ## Intentional Non-Goals
 
