@@ -1,5 +1,5 @@
 import OpenAI, { toFile } from "openai";
-import { getOpenAIClientConfig } from "../../agent/providers/env";
+import { getOpenAIClientConfig, isDirectOpenAIDisabled } from "../../agent/providers/env";
 import { Buffer } from "node:buffer";
 import { spawn } from "child_process";
 import { writeFile, unlink, readFile } from "fs/promises";
@@ -279,6 +279,11 @@ export async function textToSpeech(
   voice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" = "alloy",
   format: "wav" | "mp3" | "flac" | "opus" | "pcm16" = "mp3"
 ): Promise<Buffer> {
+  if (isDirectOpenAIDisabled()) {
+    console.warn("[TTS] direct OpenAI disabled; skipping OpenAI text-to-speech");
+    return Buffer.alloc(0);
+  }
+
   const response = await openai.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
@@ -302,6 +307,11 @@ export async function textToSpeechStream(
   voice: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" = "alloy",
   signal?: AbortSignal,
 ): Promise<AsyncIterable<string>> {
+  if (isDirectOpenAIDisabled()) {
+    console.warn("[TTS] direct OpenAI disabled; skipping OpenAI streaming text-to-speech");
+    return (async function* () {})();
+  }
+
   const stream = await openai.chat.completions.create({
     model: "gpt-audio",
     modalities: ["text", "audio"],
