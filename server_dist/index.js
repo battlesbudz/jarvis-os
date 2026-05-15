@@ -20271,8 +20271,629 @@ ${summary}`,
   }
 });
 
+// server/auth.ts
+import { Router } from "express";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { eq as eq19 } from "drizzle-orm";
+import crypto2 from "crypto";
+function getJwtSecret() {
+  if (process.env.JWT_SECRET) {
+    return process.env.JWT_SECRET;
+  }
+  const generated = crypto2.randomBytes(32).toString("hex");
+  process.env.JWT_SECRET = generated;
+  console.log("Generated JWT_SECRET (set JWT_SECRET env var for persistent tokens across restarts)");
+  return generated;
+}
+function generateToken(userId) {
+  return jwt.sign({ userId, scope: "user" }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+}
+function generateWebchatToken(userId) {
+  return jwt.sign({ userId, scope: "webchat" }, JWT_SECRET, { expiresIn: "24h" });
+}
+function isWebchatScopedPath(req) {
+  if (req.method === "GET" && req.path === "/api/webchat/events") return true;
+  if (req.method === "POST" && req.path === "/api/coach/chat") return true;
+  if (["GET", "PUT", "DELETE"].includes(req.method) && req.path === "/api/data/chat-history") return true;
+  if (["GET", "PUT"].includes(req.method) && req.path === "/api/data/coach-session-id") return true;
+  return false;
+}
+function stripPort(host) {
+  const trimmed = host.trim().toLowerCase();
+  if (trimmed.startsWith("[::1]")) return "::1";
+  return trimmed.split(":")[0] || trimmed;
+}
+function isLoopbackHost(host) {
+  if (!host) return false;
+  const normalised = stripPort(host.split(",")[0] || "");
+  return normalised === "localhost" || normalised === "127.0.0.1" || normalised === "::1";
+}
+function isLoopbackIp(ip) {
+  if (!ip) return true;
+  const normalised = ip.trim().toLowerCase();
+  return normalised === "::1" || normalised === "127.0.0.1" || normalised === "::ffff:127.0.0.1" || normalised.startsWith("127.");
+}
+function isLocalDashboardRequest(req) {
+  const host = req.headers["x-forwarded-host"] || req.headers.host;
+  if (!isLoopbackHost(host)) return false;
+  const forwardedFor = req.headers["x-forwarded-for"]?.split(",").map((ip) => ip.trim()).filter(Boolean);
+  if (forwardedFor?.length && !forwardedFor.every(isLoopbackIp)) return false;
+  return isLoopbackIp(req.socket.remoteAddress);
+}
+async function authMiddleware(req, res, next) {
+  if (req.path.startsWith("/api/auth/")) {
+    return next();
+  }
+  if (req.path === "/api/oauth/google/callback" || req.path === "/api/oauth/microsoft/callback") {
+    return next();
+  }
+  if (!req.path.startsWith("/api/")) {
+    return next();
+  }
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  try {
+    const token = authHeader.slice(7);
+    const dashSecret = process.env.DASHBOARD_SECRET;
+    if (dashSecret && token === dashSecret && isLocalDashboardRequest(req)) {
+      const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
+      if (firstUser) {
+        req.userId = firstUser.id;
+        req.authScope = "user";
+        return next();
+      }
+    }
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (payload.scope === "webchat" && !isWebchatScopedPath(req)) {
+      return res.status(403).json({ error: "Webchat token is not allowed for this endpoint" });
+    }
+    req.userId = payload.userId;
+    req.authScope = payload.scope === "webchat" ? "webchat" : "user";
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+async function getUserIdFromRequest(req) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  try {
+    const token = authHeader.slice(7);
+    const dashSecret = process.env.DASHBOARD_SECRET;
+    if (dashSecret && token === dashSecret && isLocalDashboardRequest(req)) {
+      const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
+      return firstUser?.id ?? null;
+    }
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (payload.scope === "webchat" && !isWebchatScopedPath(req)) return null;
+    return payload.userId ?? null;
+  } catch {
+    return null;
+  }
+}
+var JWT_SECRET, TOKEN_EXPIRY, authRouter;
+var init_auth = __esm({
+  "server/auth.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    JWT_SECRET = getJwtSecret();
+    TOKEN_EXPIRY = "30d";
+    authRouter = Router();
+    authRouter.post("/register", async (req, res) => {
+      try {
+        const { username, password } = req.body;
+        if (!username || !password) {
+          return res.status(400).json({ error: "Username and password are required" });
+        }
+        if (username.length < 3) {
+          return res.status(400).json({ error: "Username must be at least 3 characters" });
+        }
+        if (password.length < 6) {
+          return res.status(400).json({ error: "Password must be at least 6 characters" });
+        }
+        const existing = await db.select().from(users).where(eq19(users.username, username)).limit(1);
+        if (existing.length > 0) {
+          return res.status(409).json({ error: "Username already taken" });
+        }
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const [user] = await db.insert(users).values({
+          username,
+          password: hashedPassword
+        }).returning();
+        const token = generateToken(user.id);
+        res.status(201).json({
+          token,
+          userId: user.id,
+          username: user.username
+        });
+      } catch (error) {
+        console.error("Registration error:", error);
+        res.status(500).json({ error: "Failed to create account" });
+      }
+    });
+    authRouter.post("/login", async (req, res) => {
+      try {
+        const { username, password } = req.body;
+        if (!username || !password) {
+          return res.status(400).json({ error: "Username and password are required" });
+        }
+        const [user] = await db.select().from(users).where(eq19(users.username, username)).limit(1);
+        if (!user) {
+          return res.status(401).json({ error: "Invalid username or password" });
+        }
+        if (!user.password) {
+          return res.status(401).json({ error: "This account uses Google Sign-In" });
+        }
+        const valid = await bcrypt.compare(password, user.password);
+        if (!valid) {
+          return res.status(401).json({ error: "Invalid username or password" });
+        }
+        const token = generateToken(user.id);
+        res.json({
+          token,
+          userId: user.id,
+          username: user.username
+        });
+      } catch (error) {
+        console.error("Login error:", error);
+        res.status(500).json({ error: "Failed to log in" });
+      }
+    });
+    authRouter.post("/google", async (req, res) => {
+      try {
+        const { idToken, accessToken } = req.body;
+        if (!idToken && !accessToken) {
+          return res.status(400).json({ error: "ID token or access token is required" });
+        }
+        let googleUser;
+        if (idToken) {
+          const tokenInfoRes = await fetch(
+            `https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`
+          );
+          if (!tokenInfoRes.ok) {
+            return res.status(401).json({ error: "Invalid Google ID token" });
+          }
+          const tokenInfo = await tokenInfoRes.json();
+          if (tokenInfo.error_description) {
+            return res.status(401).json({ error: "Invalid Google ID token" });
+          }
+          const validClientIds = [
+            process.env.GOOGLE_WEB_CLIENT_ID,
+            process.env.GOOGLE_IOS_CLIENT_ID,
+            process.env.GOOGLE_ANDROID_CLIENT_ID
+          ].filter(Boolean);
+          if (validClientIds.length > 0 && tokenInfo.aud && !validClientIds.includes(tokenInfo.aud)) {
+            return res.status(401).json({ error: "Token audience mismatch" });
+          }
+          if (!tokenInfo.sub) {
+            return res.status(401).json({ error: "Could not retrieve Google user info" });
+          }
+          googleUser = { id: tokenInfo.sub, name: tokenInfo.name, email: tokenInfo.email };
+        } else {
+          const userInfoRes = await fetch(
+            `https://www.googleapis.com/userinfo/v2/me`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          if (!userInfoRes.ok) {
+            return res.status(401).json({ error: "Invalid Google access token" });
+          }
+          const info = await userInfoRes.json();
+          if (!info.id) {
+            return res.status(401).json({ error: "Could not retrieve Google user info" });
+          }
+          googleUser = info;
+        }
+        if (!googleUser.id) {
+          return res.status(401).json({ error: "Could not retrieve Google user info" });
+        }
+        const existing = await db.select().from(users).where(eq19(users.googleId, googleUser.id)).limit(1);
+        let user;
+        if (existing.length > 0) {
+          user = existing[0];
+          const updates = {};
+          if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
+          if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
+          if (Object.keys(updates).length > 0) {
+            await db.update(users).set(updates).where(eq19(users.id, user.id));
+            user = { ...user, ...updates };
+          }
+        } else {
+          const username = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
+          let uniqueUsername = username;
+          const existingUsername = await db.select().from(users).where(eq19(users.username, username)).limit(1);
+          if (existingUsername.length > 0) {
+            uniqueUsername = `${username}_${Date.now().toString(36)}`;
+          }
+          const [newUser] = await db.insert(users).values({
+            username: uniqueUsername,
+            googleId: googleUser.id,
+            displayName: googleUser.name || uniqueUsername,
+            email: googleUser.email || null
+          }).returning();
+          user = newUser;
+        }
+        const token = generateToken(user.id);
+        res.json({
+          token,
+          userId: user.id,
+          username: user.displayName || user.username,
+          email: user.email || null
+        });
+      } catch (error) {
+        console.error("Google auth error:", error);
+        res.status(500).json({ error: "Failed to authenticate with Google" });
+      }
+    });
+    authRouter.get("/me", async (req, res) => {
+      try {
+        const authHeader = req.headers.authorization;
+        if (!authHeader?.startsWith("Bearer ")) {
+          return res.status(401).json({ error: "No token provided" });
+        }
+        const token = authHeader.slice(7);
+        const payload = jwt.verify(token, JWT_SECRET);
+        if (payload.scope === "webchat") {
+          return res.status(401).json({ error: "Invalid token" });
+        }
+        const [user] = await db.select({
+          id: users.id,
+          username: users.username,
+          displayName: users.displayName,
+          email: users.email,
+          createdAt: users.createdAt
+        }).from(users).where(eq19(users.id, payload.userId)).limit(1);
+        if (!user) {
+          return res.status(401).json({ error: "User not found" });
+        }
+        res.json({
+          userId: user.id,
+          username: user.displayName || user.username,
+          email: user.email || null
+        });
+      } catch (error) {
+        return res.status(401).json({ error: "Invalid token" });
+      }
+    });
+  }
+});
+
+// server/mobileAuthRoutes.ts
+import { Router as Router2 } from "express";
+import * as crypto3 from "crypto";
+import { eq as eq20, lt } from "drizzle-orm";
+function sha256(value) {
+  return crypto3.createHash("sha256").update(value).digest("hex");
+}
+function timingSafeEqual2(a, b) {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+  if (aBuffer.length !== bBuffer.length) return false;
+  return crypto3.timingSafeEqual(aBuffer, bBuffer);
+}
+function readCookie(req, name) {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(";")) {
+    const [key, ...value] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(value.join("="));
+  }
+  return null;
+}
+function isValidSessionId(value) {
+  return /^[A-Za-z0-9_-]{24,128}$/.test(value);
+}
+function isValidPollSecret(value) {
+  return /^[A-Za-z0-9_-]{32,256}$/.test(value);
+}
+function createOauthState(sessionId) {
+  const nonce = crypto3.randomBytes(POLL_SECRET_BYTES).toString("base64url");
+  return `${sessionId}.${nonce}`;
+}
+function parseOauthState(state) {
+  const [sessionId, nonce, ...extra] = state.split(".");
+  if (!sessionId || !nonce || extra.length > 0) return null;
+  if (!isValidSessionId(sessionId) || !isValidSessionId(nonce)) return null;
+  return { sessionId, nonce };
+}
+function pendingTokenValue(oauthState, pollSecret, bindNonce) {
+  return `${PENDING_TOKEN_PREFIX}${sha256(oauthState)}:${sha256(pollSecret)}:${sha256(bindNonce)}`;
+}
+function parsePendingTokenValue(token) {
+  if (!token.startsWith(PENDING_TOKEN_PREFIX)) return null;
+  const rest = token.slice(PENDING_TOKEN_PREFIX.length);
+  const [stateHash, pollHash, bindHash, ...extra] = rest.split(":");
+  if (!stateHash || !pollHash || !bindHash || extra.length > 0) return null;
+  return { stateHash, pollHash, bindHash };
+}
+function completeTokenValue(pollHash, bindHash, token) {
+  return `${COMPLETE_TOKEN_PREFIX}${pollHash}:${bindHash}:${token}`;
+}
+function parseCompleteTokenValue(value) {
+  if (!value.startsWith(COMPLETE_TOKEN_PREFIX)) return null;
+  const rest = value.slice(COMPLETE_TOKEN_PREFIX.length);
+  const firstSeparator = rest.indexOf(":");
+  const secondSeparator = rest.indexOf(":", firstSeparator + 1);
+  if (firstSeparator <= 0 || secondSeparator <= firstSeparator) return null;
+  const pollHash = rest.slice(0, firstSeparator);
+  const bindHash = rest.slice(firstSeparator + 1, secondSeparator);
+  const token = rest.slice(secondSeparator + 1);
+  if (!pollHash || !bindHash || !token) return null;
+  return { pollHash, bindHash, token };
+}
+function getRequestOrigin(req) {
+  const proto = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.get("host") || "";
+  return `${proto}://${host}`;
+}
+function getMobileAuthCallbackUrl(req) {
+  return `${getRequestOrigin(req)}/api/oauth/google/callback`;
+}
+function isMobileAuthState(value) {
+  return typeof value === "string" && parseOauthState(value) !== null;
+}
+function successHtml(token) {
+  const encodedToken = encodeURIComponent(token);
+  const tokenJson = JSON.stringify(token);
+  const originFallback = `/login#auth_token=${encodedToken}`;
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Signed In \u2014 GamePlan</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0f0f0f; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 20px;
+    }
+    .card { text-align: center; max-width: 340px; }
+    .icon { font-size: 56px; margin-bottom: 20px; }
+    h2 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
+    p { color: #888; font-size: 15px; line-height: 1.5; }
+    .dots { display: inline-flex; gap: 6px; margin-top: 24px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1;
+           animation: pulse 1.2s ease-in-out infinite; }
+    .dot:nth-child(2) { animation-delay: 0.2s; }
+    .dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">\u2705</div>
+    <h2>Signed in successfully</h2>
+    <p>Taking you back to GamePlan...</p>
+    <div class="dots">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+  </div>
+  <script>
+    try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'gameplan-auth-token', token: ${tokenJson} }, window.location.origin);
+        window.close();
+      }
+    } catch(e) {}
+    try {
+      window.location.href = 'gameplan://auth/complete?token=${encodedToken}';
+    } catch(e) {}
+    setTimeout(function () {
+      try {
+        window.location.replace('${originFallback}');
+      } catch(e) {}
+    }, 800);
+  </script>
+</body>
+</html>`;
+}
+function errorHtml(message) {
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Error \u2014 GamePlan</title>
+  <style>
+    body { font-family: sans-serif; background: #0f0f0f; color: #fff;
+           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .card { text-align: center; padding: 40px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size:48px;margin-bottom:16px">\u274C</div>
+    <h2>Sign-in Failed</h2>
+    <p style="color:#888;margin-top:8px">${message}</p>
+    <p style="color:#555;margin-top:20px;font-size:13px">You can close this tab and try again.</p>
+  </div>
+</body>
+</html>`;
+}
+async function handleMobileAuthCallback(req, res) {
+  const { code, state, error } = req.query;
+  if (error || !code || !state) {
+    return res.send(errorHtml(error || "Sign-in was cancelled."));
+  }
+  const parsedState = parseOauthState(state);
+  if (!parsedState) {
+    return res.send(errorHtml("Invalid sign-in state. Please try again."));
+  }
+  const { sessionId } = parsedState;
+  const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    return res.send(errorHtml("OAuth credentials not configured on the server."));
+  }
+  const callbackUrl = getMobileAuthCallbackUrl(req);
+  try {
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: callbackUrl,
+        grant_type: "authorization_code"
+      })
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.id_token && !tokenData.access_token) {
+      console.error("Mobile auth token exchange failed:", tokenData);
+      return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+    }
+    let googleUser;
+    if (tokenData.id_token) {
+      const infoRes = await fetch(
+        `https://oauth2.googleapis.com/tokeninfo?id_token=${tokenData.id_token}`
+      );
+      const info = await infoRes.json();
+      if (!info.sub) return res.send(errorHtml("Could not retrieve Google user info."));
+      googleUser = { id: info.sub, name: info.name, email: info.email };
+    } else {
+      const infoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` }
+      });
+      const info = await infoRes.json();
+      if (!info.id) return res.send(errorHtml("Could not retrieve Google user info."));
+      googleUser = { id: info.id, name: info.name, email: info.email };
+    }
+    const existing = await db.select().from(users).where(eq20(users.googleId, googleUser.id)).limit(1);
+    let user;
+    if (existing.length > 0) {
+      user = existing[0];
+      const updates = {};
+      if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
+      if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
+      if (Object.keys(updates).length > 0) {
+        await db.update(users).set(updates).where(eq20(users.id, user.id));
+        user = { ...user, ...updates };
+      }
+    } else {
+      const base = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
+      let uniqueUsername = base;
+      const existingUsername = await db.select().from(users).where(eq20(users.username, base)).limit(1);
+      if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
+      const [newUser] = await db.insert(users).values({
+        username: uniqueUsername,
+        googleId: googleUser.id,
+        displayName: googleUser.name || uniqueUsername,
+        email: googleUser.email || null
+      }).returning();
+      user = newUser;
+    }
+    const token = generateToken(user.id);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
+    const pendingRows = await db.select().from(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, sessionId)).limit(1);
+    const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
+    const bindNonce = readCookie(req, BIND_COOKIE_NAME);
+    if (pending && bindNonce && timingSafeEqual2(pending.stateHash, sha256(state)) && timingSafeEqual2(pending.bindHash, sha256(bindNonce))) {
+      await db.update(mobileAuthSessions).set({ token: completeTokenValue(pending.pollHash, pending.bindHash, token), expiresAt }).where(eq20(mobileAuthSessions.sessionId, sessionId));
+    }
+    return res.send(successHtml(token));
+  } catch (err2) {
+    console.error("Mobile auth callback error:", err2);
+    return res.send(errorHtml("An unexpected error occurred. Please try again."));
+  }
+}
+var mobileAuthRouter, PENDING_TOKEN_PREFIX, COMPLETE_TOKEN_PREFIX, POLL_SECRET_BYTES, BIND_COOKIE_NAME;
+var init_mobileAuthRoutes = __esm({
+  "server/mobileAuthRoutes.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_auth();
+    mobileAuthRouter = Router2();
+    PENDING_TOKEN_PREFIX = "__PENDING__:";
+    COMPLETE_TOKEN_PREFIX = "__COMPLETE__:";
+    POLL_SECRET_BYTES = 24;
+    BIND_COOKIE_NAME = "mobile_auth_bind";
+    mobileAuthRouter.get("/start", async (req, res) => {
+      const { session_id, poll_secret } = req.query;
+      if (!session_id) return res.status(400).json({ error: "session_id required" });
+      if (!isValidSessionId(session_id)) return res.status(400).json({ error: "invalid session_id" });
+      const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
+      if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
+      const oauthState = createOauthState(session_id);
+      const bindNonce = crypto3.randomBytes(POLL_SECRET_BYTES).toString("base64url");
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
+      if (poll_secret) {
+        if (!isValidPollSecret(poll_secret)) return res.status(400).json({ error: "invalid poll_secret" });
+        await db.insert(mobileAuthSessions).values({
+          sessionId: session_id,
+          token: pendingTokenValue(oauthState, poll_secret, bindNonce),
+          expiresAt
+        }).onConflictDoUpdate({
+          target: mobileAuthSessions.sessionId,
+          set: {
+            token: pendingTokenValue(oauthState, poll_secret, bindNonce),
+            expiresAt
+          }
+        });
+      }
+      res.cookie(BIND_COOKIE_NAME, bindNonce, {
+        httpOnly: true,
+        secure: req.secure || req.headers["x-forwarded-proto"] === "https",
+        sameSite: "lax",
+        maxAge: 10 * 60 * 1e3,
+        path: "/"
+      });
+      const callbackUrl = getMobileAuthCallbackUrl(req);
+      const params = new URLSearchParams({
+        client_id: clientId,
+        redirect_uri: callbackUrl,
+        response_type: "code",
+        scope: "openid email profile",
+        state: oauthState,
+        access_type: "offline",
+        prompt: "select_account",
+        max_age: "0"
+      });
+      res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+    });
+    mobileAuthRouter.get("/callback", handleMobileAuthCallback);
+    mobileAuthRouter.get("/poll", async (req, res) => {
+      const { session_id, poll_secret } = req.query;
+      if (!session_id) return res.status(400).json({ error: "session_id required" });
+      if (!poll_secret) return res.status(400).json({ error: "poll_secret required" });
+      if (!isValidSessionId(session_id) || !isValidPollSecret(poll_secret)) {
+        return res.status(400).json({ error: "invalid polling credentials" });
+      }
+      try {
+        await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, /* @__PURE__ */ new Date()));
+        const rows = await db.select().from(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, session_id)).limit(1);
+        if (rows.length === 0) {
+          return res.status(404).json({ ready: false });
+        }
+        const session = rows[0];
+        if (parsePendingTokenValue(session.token)) {
+          return res.status(404).json({ ready: false });
+        }
+        const completed = parseCompleteTokenValue(session.token);
+        const bindNonce = readCookie(req, BIND_COOKIE_NAME);
+        if (!completed || !bindNonce || !timingSafeEqual2(completed.pollHash, sha256(poll_secret)) || !timingSafeEqual2(completed.bindHash, sha256(bindNonce))) {
+          return res.status(404).json({ ready: false });
+        }
+        await db.delete(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, session_id));
+        return res.json({ ready: true, token: completed.token });
+      } catch (err2) {
+        console.error("Mobile auth poll error:", err2);
+        return res.status(500).json({ ready: false, error: "Internal error" });
+      }
+    });
+  }
+});
+
 // server/channels/slackChannel.ts
-import { eq as eq19, and as and14 } from "drizzle-orm";
+import { eq as eq21, and as and14 } from "drizzle-orm";
 async function postSlackMessage(botToken, channel, text2) {
   try {
     const res = await fetch("https://slack.com/api/chat.postMessage", {
@@ -20313,7 +20934,7 @@ async function openSlackDm(botToken, slackUserId) {
 }
 async function lookupLink(userId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and14(eq19(channelLinks.userId, userId), eq19(channelLinks.channel, "slack"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and14(eq21(channelLinks.userId, userId), eq21(channelLinks.channel, "slack"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { address: row.address, meta: row.metadata || {} };
@@ -20354,7 +20975,7 @@ var init_slackChannel = __esm({
         if (!target && link.meta.slackUserId) {
           target = await openSlackDm(botToken, link.meta.slackUserId) || void 0;
           if (target) {
-            await db.update(channelLinks).set({ metadata: { ...link.meta, imChannelId: target } }).where(and14(eq19(channelLinks.userId, userId), eq19(channelLinks.channel, "slack")));
+            await db.update(channelLinks).set({ metadata: { ...link.meta, imChannelId: target } }).where(and14(eq21(channelLinks.userId, userId), eq21(channelLinks.channel, "slack")));
           }
         }
         if (!target) target = link.address;
@@ -20378,8 +20999,8 @@ __export(slackWebhook_exports, {
   registerSlackWebhook: () => registerSlackWebhook
 });
 import express from "express";
-import * as crypto2 from "crypto";
-import { eq as eq20, and as and15 } from "drizzle-orm";
+import * as crypto4 from "crypto";
+import { eq as eq22, and as and15 } from "drizzle-orm";
 function verifySlackSignature(req) {
   if (!SLACK_SIGNING_SECRET) {
     console.error("[slack] rejecting request: SLACK_SIGNING_SECRET is not configured");
@@ -20391,16 +21012,16 @@ function verifySlackSignature(req) {
   if (Math.abs(Date.now() / 1e3 - Number(ts)) > 60 * 5) return false;
   const raw = req.rawBody?.toString("utf8") || "";
   const base = `v0:${ts}:${raw}`;
-  const computed = "v0=" + crypto2.createHmac("sha256", SLACK_SIGNING_SECRET).update(base).digest("hex");
+  const computed = "v0=" + crypto4.createHmac("sha256", SLACK_SIGNING_SECRET).update(base).digest("hex");
   try {
-    return crypto2.timingSafeEqual(Buffer.from(computed), Buffer.from(sig));
+    return crypto4.timingSafeEqual(Buffer.from(computed), Buffer.from(sig));
   } catch {
     return false;
   }
 }
 async function findUserBySlackId(teamId, slackUserId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and15(eq20(channelLinks.channel, "slack"), eq20(channelLinks.address, `${teamId}:${slackUserId}`))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and15(eq22(channelLinks.channel, "slack"), eq22(channelLinks.address, `${teamId}:${slackUserId}`))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err2) {
     console.error("[slack] user lookup failed:", err2);
@@ -20445,7 +21066,7 @@ function registerSlackWebhook(app2) {
       const userId = await findUserBySlackId(teamId, slackUserId);
       const text2 = String(ev.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
       if (!userId) {
-        const tok = await db.select().from(channelLinks).where(and15(eq20(channelLinks.channel, "slack"))).limit(1);
+        const tok = await db.select().from(channelLinks).where(and15(eq22(channelLinks.channel, "slack"))).limit(1);
         const replyToken = tok[0] ? await getSlackBotToken(tok[0].userId) : null;
         if (replyToken) {
           await postSlackMessage(replyToken, ev.channel, "I don't recognize this Slack account. Open the GamePlan app and reconnect Slack from Profile \u2192 Connected Apps.");
@@ -20552,11 +21173,11 @@ var init_slackWebhook = __esm({
 });
 
 // server/oauthRoutes.ts
-import { Router } from "express";
+import { Router as Router3 } from "express";
 function getBaseUrl(req) {
   return getPublicBaseUrl(req);
 }
-function successHtml(provider, email) {
+function successHtml2(provider, email) {
   const displayName = provider === "google" ? "Google (Calendar & Gmail)" : provider === "slack" ? "Slack" : "Microsoft Outlook";
   return `<!DOCTYPE html>
 <html>
@@ -20596,7 +21217,7 @@ function successHtml(provider, email) {
 </body>
 </html>`;
 }
-function errorHtml(message) {
+function errorHtml2(message) {
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -20635,8 +21256,9 @@ var init_oauthRoutes = __esm({
     "use strict";
     init_userTokenStore();
     init_publicUrl();
-    oauthRouter = Router();
-    oauthCallbackRouter = Router();
+    init_mobileAuthRoutes();
+    oauthRouter = Router3();
+    oauthCallbackRouter = Router3();
     oauthRouter.get("/google/authorize", (req, res) => {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
@@ -20667,13 +21289,16 @@ var init_oauthRoutes = __esm({
     });
     oauthCallbackRouter.get("/google/callback", async (req, res) => {
       const { code, state: userId, error } = req.query;
+      if (isMobileAuthState(userId)) {
+        return handleMobileAuthCallback(req, res);
+      }
       if (error || !code || !userId) {
-        return res.send(errorHtml(error || "Authorization was cancelled."));
+        return res.send(errorHtml2(error || "Authorization was cancelled."));
       }
       const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
       const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
       if (!clientId || !clientSecret) {
-        return res.send(errorHtml("Google OAuth credentials not configured on the server."));
+        return res.send(errorHtml2("Google OAuth credentials not configured on the server."));
       }
       const baseUrl = getBaseUrl(req);
       const redirectUri = `${baseUrl}/api/oauth/google/callback`;
@@ -20692,7 +21317,7 @@ var init_oauthRoutes = __esm({
         const tokenData = await tokenRes.json();
         if (!tokenData.access_token) {
           console.error("Google token exchange failed:", tokenData);
-          return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+          return res.send(errorHtml2("Failed to exchange authorization code. Please try again."));
         }
         let accountEmail;
         try {
@@ -20713,10 +21338,10 @@ var init_oauthRoutes = __esm({
           scopes: tokenData.scope,
           accountEmail: accountEmail || ""
         });
-        return res.send(successHtml("google", accountEmail));
+        return res.send(successHtml2("google", accountEmail));
       } catch (err2) {
         console.error("Google OAuth callback error:", err2);
-        return res.send(errorHtml("An unexpected error occurred. Please try again."));
+        return res.send(errorHtml2("An unexpected error occurred. Please try again."));
       }
     });
     oauthRouter.get("/microsoft/authorize", (req, res) => {
@@ -20742,12 +21367,12 @@ var init_oauthRoutes = __esm({
     oauthCallbackRouter.get("/microsoft/callback", async (req, res) => {
       const { code, state: userId, error, error_description } = req.query;
       if (error || !code || !userId) {
-        return res.send(errorHtml(error_description || error || "Authorization was cancelled."));
+        return res.send(errorHtml2(error_description || error || "Authorization was cancelled."));
       }
       const clientId = process.env.MICROSOFT_CLIENT_ID;
       const clientSecret = process.env.MICROSOFT_CLIENT_SECRET;
       if (!clientId || !clientSecret) {
-        return res.send(errorHtml("Microsoft OAuth credentials not configured on the server."));
+        return res.send(errorHtml2("Microsoft OAuth credentials not configured on the server."));
       }
       const baseUrl = getBaseUrl(req);
       const redirectUri = `${baseUrl}/api/oauth/microsoft/callback`;
@@ -20767,7 +21392,7 @@ var init_oauthRoutes = __esm({
         const tokenData = await tokenRes.json();
         if (!tokenData.access_token) {
           console.error("Microsoft token exchange failed:", tokenData);
-          return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+          return res.send(errorHtml2("Failed to exchange authorization code. Please try again."));
         }
         let accountEmail;
         try {
@@ -20788,10 +21413,10 @@ var init_oauthRoutes = __esm({
           scopes: tokenData.scope,
           accountEmail: accountEmail || ""
         });
-        return res.send(successHtml("microsoft", accountEmail));
+        return res.send(successHtml2("microsoft", accountEmail));
       } catch (err2) {
         console.error("Microsoft OAuth callback error:", err2);
-        return res.send(errorHtml("An unexpected error occurred. Please try again."));
+        return res.send(errorHtml2("An unexpected error occurred. Please try again."));
       }
     });
     oauthRouter.get("/slack/authorize", (req, res) => {
@@ -20807,12 +21432,12 @@ var init_oauthRoutes = __esm({
     oauthCallbackRouter.get("/slack/callback", async (req, res) => {
       const { code, state: userId, error: oauthError } = req.query;
       if (oauthError || !code || !userId) {
-        return res.send(errorHtml(oauthError || "Authorization was cancelled."));
+        return res.send(errorHtml2(oauthError || "Authorization was cancelled."));
       }
       const clientId = process.env.SLACK_CLIENT_ID;
       const clientSecret = process.env.SLACK_CLIENT_SECRET;
       if (!clientId || !clientSecret) {
-        return res.send(errorHtml("Slack OAuth credentials not configured on the server."));
+        return res.send(errorHtml2("Slack OAuth credentials not configured on the server."));
       }
       const baseUrl = getBaseUrl(req);
       const redirectUri = `${baseUrl}/api/oauth/slack/callback`;
@@ -20831,7 +21456,7 @@ var init_oauthRoutes = __esm({
         const userToken = tokenData.authed_user?.access_token;
         if (!userToken) {
           console.error("Slack token exchange failed:", tokenData);
-          return res.send(errorHtml("Failed to exchange authorization code. Please try again."));
+          return res.send(errorHtml2("Failed to exchange authorization code. Please try again."));
         }
         const authedUserId = tokenData.authed_user?.id || "";
         let accountEmail = "";
@@ -20865,10 +21490,10 @@ var init_oauthRoutes = __esm({
         } catch (linkErr) {
           console.error("[slack] registerSlackUserLink failed (non-fatal):", linkErr);
         }
-        return res.send(successHtml("slack", accountEmail));
+        return res.send(successHtml2("slack", accountEmail));
       } catch (err2) {
         console.error("Slack OAuth callback error:", err2);
-        return res.send(errorHtml("An unexpected error occurred. Please try again."));
+        return res.send(errorHtml2("An unexpected error occurred. Please try again."));
       }
     });
     oauthRouter.get("/status", async (req, res) => {
@@ -20909,7 +21534,7 @@ var init_oauthRoutes = __esm({
 });
 
 // server/agent/tools/connectChannel.ts
-import { eq as eq21, and as and16 } from "drizzle-orm";
+import { eq as eq23, and as and16 } from "drizzle-orm";
 function generateCode(length) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -20990,7 +21615,7 @@ var init_connectChannel = __esm({
             const phone = twilioRaw.replace(/^whatsapp:/i, "").replace(/\s+/g, "");
             const code = generateCode(6);
             const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
-            await db.delete(channelLinkCodes).where(and16(eq21(channelLinkCodes.userId, userId), eq21(channelLinkCodes.channel, "whatsapp")));
+            await db.delete(channelLinkCodes).where(and16(eq23(channelLinkCodes.userId, userId), eq23(channelLinkCodes.channel, "whatsapp")));
             await db.insert(channelLinkCodes).values({ code, userId, channel: "whatsapp", expiresAt });
             const body = encodeURIComponent(`CONNECT ${code}`);
             const url = `https://wa.me/${phone.replace("+", "")}?text=${body}`;
@@ -21058,7 +21683,7 @@ __export(discordConfirmStore_exports, {
   seedConfirmTokenCache: () => seedConfirmTokenCache,
   setConfirmToken: () => setConfirmToken
 });
-import { eq as eq22, lt, and as and17, gt as gt3 } from "drizzle-orm";
+import { eq as eq24, lt as lt2, and as and17, gt as gt3 } from "drizzle-orm";
 async function setConfirmToken(userId, action) {
   const expiresAt = new Date(Date.now() + TTL_MS);
   _cache.set(userId, { action, expiresAt: expiresAt.getTime() });
@@ -21082,7 +21707,7 @@ async function consumeConfirmToken(userId, action) {
     }
     if (cached.action !== action) return false;
     try {
-      await db.delete(discordConfirmTokens).where(eq22(discordConfirmTokens.userId, userId));
+      await db.delete(discordConfirmTokens).where(eq24(discordConfirmTokens.userId, userId));
     } catch (err2) {
       console.error("[DiscordConfirmStore] consumeConfirmToken DB delete failed (L1 path):", err2);
     }
@@ -21091,8 +21716,8 @@ async function consumeConfirmToken(userId, action) {
   try {
     const deleted = await db.delete(discordConfirmTokens).where(
       and17(
-        eq22(discordConfirmTokens.userId, userId),
-        eq22(discordConfirmTokens.action, action),
+        eq24(discordConfirmTokens.userId, userId),
+        eq24(discordConfirmTokens.action, action),
         gt3(discordConfirmTokens.expiresAt, new Date(now))
       )
     ).returning({ userId: discordConfirmTokens.userId });
@@ -21107,7 +21732,7 @@ async function clearConfirmToken(userId) {
   _deleteFromDb(userId);
 }
 function _deleteFromDb(userId) {
-  db.delete(discordConfirmTokens).where(eq22(discordConfirmTokens.userId, userId)).catch((err2) => console.error("[DiscordConfirmStore] DB delete failed:", err2));
+  db.delete(discordConfirmTokens).where(eq24(discordConfirmTokens.userId, userId)).catch((err2) => console.error("[DiscordConfirmStore] DB delete failed:", err2));
 }
 async function seedConfirmTokenCache() {
   try {
@@ -21127,7 +21752,7 @@ async function seedConfirmTokenCache() {
 async function cleanUpExpiredDiscordConfirmTokens() {
   try {
     const now = /* @__PURE__ */ new Date();
-    const deleted = await db.delete(discordConfirmTokens).where(lt(discordConfirmTokens.expiresAt, now)).returning({ userId: discordConfirmTokens.userId });
+    const deleted = await db.delete(discordConfirmTokens).where(lt2(discordConfirmTokens.expiresAt, now)).returning({ userId: discordConfirmTokens.userId });
     for (const row of deleted) {
       _cache.delete(row.userId);
     }
@@ -21389,7 +22014,7 @@ Which one should I delete? Please confirm the channel ID and I'll remove it.`,
 });
 
 // server/agent/tools/discordListChannels.ts
-import { eq as eq23, and as and18 } from "drizzle-orm";
+import { eq as eq25, and as and18 } from "drizzle-orm";
 var discordListChannelsTool;
 var init_discordListChannels = __esm({
   "server/agent/tools/discordListChannels.ts"() {
@@ -21414,7 +22039,7 @@ var init_discordListChannels = __esm({
         const { userId } = ctx;
         let resolvedGuildId = args.guildId;
         if (!resolvedGuildId) {
-          const linkRow = await db.select().from(channelLinks).where(and18(eq23(channelLinks.userId, userId), eq23(channelLinks.channel, "discord"))).limit(1);
+          const linkRow = await db.select().from(channelLinks).where(and18(eq25(channelLinks.userId, userId), eq25(channelLinks.channel, "discord"))).limit(1);
           const linkMeta = linkRow[0]?.metadata ?? {};
           resolvedGuildId = linkMeta.workspace?.guildId;
         }
@@ -21478,7 +22103,7 @@ ${allLines}`,
 });
 
 // server/jarvisScheduledTasks.ts
-import { and as and19, eq as eq24, isNull as isNull2, sql as sql11 } from "drizzle-orm";
+import { and as and19, eq as eq26, isNull as isNull2, sql as sql11 } from "drizzle-orm";
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
@@ -21486,14 +22111,14 @@ async function createJarvisScheduledTask(input) {
   const title = normalizeText(input.title);
   const description = normalizeText(input.description) || null;
   const recurrence = normalizeText(input.recurrence) || null;
-  const recurrencePredicate = recurrence ? eq24(jarvisScheduledTasks.recurrence, recurrence) : isNull2(jarvisScheduledTasks.recurrence);
+  const recurrencePredicate = recurrence ? eq26(jarvisScheduledTasks.recurrence, recurrence) : isNull2(jarvisScheduledTasks.recurrence);
   const [existing] = await db.select().from(jarvisScheduledTasks).where(and19(
-    eq24(jarvisScheduledTasks.userId, input.userId),
+    eq26(jarvisScheduledTasks.userId, input.userId),
     sql11`LOWER(TRIM(${jarvisScheduledTasks.title})) = ${title.toLowerCase()}`,
-    eq24(jarvisScheduledTasks.scheduledAt, input.scheduledAt),
+    eq26(jarvisScheduledTasks.scheduledAt, input.scheduledAt),
     recurrencePredicate,
     isNull2(jarvisScheduledTasks.completedAt),
-    eq24(jarvisScheduledTasks.active, true)
+    eq26(jarvisScheduledTasks.active, true)
   )).limit(1);
   if (existing) {
     return { task: existing, deduped: true };
@@ -21595,7 +22220,7 @@ var init_scheduleJarvisTask = __esm({
 });
 
 // server/discord/schedules.ts
-import { eq as eq25, and as and20 } from "drizzle-orm";
+import { eq as eq27, and as and20 } from "drizzle-orm";
 function detectTemplate(input) {
   const lower = input.toLowerCase();
   for (const tpl of Object.values(SCHEDULE_TEMPLATES)) {
@@ -21620,25 +22245,25 @@ async function createSchedule(userId, params) {
   return row;
 }
 async function listSchedules(userId) {
-  return db.select().from(discordChannelSchedules).where(eq25(discordChannelSchedules.userId, userId));
+  return db.select().from(discordChannelSchedules).where(eq27(discordChannelSchedules.userId, userId));
 }
 async function getSchedule(id) {
-  const rows = await db.select().from(discordChannelSchedules).where(eq25(discordChannelSchedules.id, id)).limit(1);
+  const rows = await db.select().from(discordChannelSchedules).where(eq27(discordChannelSchedules.id, id)).limit(1);
   return rows[0] ?? null;
 }
 async function deleteSchedule(userId, id) {
   await db.delete(discordChannelSchedules).where(
     and20(
-      eq25(discordChannelSchedules.id, id),
-      eq25(discordChannelSchedules.userId, userId)
+      eq27(discordChannelSchedules.id, id),
+      eq27(discordChannelSchedules.userId, userId)
     )
   );
 }
 async function toggleSchedule(userId, id, enabled) {
   await db.update(discordChannelSchedules).set({ enabled }).where(
     and20(
-      eq25(discordChannelSchedules.id, id),
-      eq25(discordChannelSchedules.userId, userId)
+      eq27(discordChannelSchedules.id, id),
+      eq27(discordChannelSchedules.userId, userId)
     )
   );
 }
@@ -21735,7 +22360,7 @@ async function runSchedule(id, previousOutput) {
       }
     }
   }
-  await db.update(discordChannelSchedules).set({ lastRun: /* @__PURE__ */ new Date(), lastOutput: result.slice(0, 5e3) }).where(eq25(discordChannelSchedules.id, id));
+  await db.update(discordChannelSchedules).set({ lastRun: /* @__PURE__ */ new Date(), lastOutput: result.slice(0, 5e3) }).where(eq27(discordChannelSchedules.id, id));
   if (schedule.pipelineNext) {
     console.log(`[DiscordSchedules] Chaining to pipeline stage ${schedule.pipelineNext}`);
     setTimeout(() => {
@@ -22601,14 +23226,14 @@ var init_geminiTranscript = __esm({
 });
 
 // server/channels/telegramChannel.ts
-import { eq as eq26 } from "drizzle-orm";
+import { eq as eq28 } from "drizzle-orm";
 async function lookupChatId(userId) {
   const ts = linkCacheTimestamps.get(userId);
   if (ts && Date.now() - ts < LINK_CACHE_TTL) {
     return linkCache.get(userId) ?? null;
   }
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq26(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq28(telegramLinks.userId, userId)).limit(1);
     const chatId = rows[0]?.chatId ?? null;
     linkCache.set(userId, chatId);
     linkCacheTimestamps.set(userId, Date.now());
@@ -22675,7 +23300,7 @@ ${markdownExtra}` : markdownExtra : text2;
 });
 
 // server/channels/whatsappChannel.ts
-import { eq as eq27, and as and21 } from "drizzle-orm";
+import { eq as eq29, and as and21 } from "drizzle-orm";
 function isTwilioConfigured() {
   return !!(TWILIO_SID && TWILIO_TOKEN && TWILIO_FROM);
 }
@@ -22705,7 +23330,7 @@ async function sendWhatsAppMessage(toAddress, body) {
 }
 async function lookupAddress(userId) {
   try {
-    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and21(eq27(channelLinks.userId, userId), eq27(channelLinks.channel, "whatsapp"))).limit(1);
+    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and21(eq29(channelLinks.userId, userId), eq29(channelLinks.channel, "whatsapp"))).limit(1);
     return rows[0]?.address ?? null;
   } catch (err2) {
     console.error("[whatsappChannel] link lookup failed:", err2);
@@ -22744,10 +23369,10 @@ var init_whatsappChannel = __esm({
 });
 
 // server/channels/daemonChannel.ts
-import { eq as eq28, and as and22 } from "drizzle-orm";
+import { eq as eq30, and as and22 } from "drizzle-orm";
 async function lookupDaemon(userId) {
   try {
-    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and22(eq28(channelLinks.userId, userId), eq28(channelLinks.channel, "daemon"))).limit(1);
+    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and22(eq30(channelLinks.userId, userId), eq30(channelLinks.channel, "daemon"))).limit(1);
     return rows.length > 0;
   } catch (err2) {
     console.error("[daemonChannel] link lookup failed:", err2);
@@ -22788,10 +23413,10 @@ var init_daemonChannel = __esm({
 });
 
 // server/channels/discordChannel.ts
-import { eq as eq29, and as and23 } from "drizzle-orm";
+import { eq as eq31, and as and23 } from "drizzle-orm";
 async function isDiscordRecentlyActive(userId) {
   try {
-    const rows = await db.select({ lastSeenAt: channelLinks.lastSeenAt }).from(channelLinks).where(and23(eq29(channelLinks.userId, userId), eq29(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select({ lastSeenAt: channelLinks.lastSeenAt }).from(channelLinks).where(and23(eq31(channelLinks.userId, userId), eq31(channelLinks.channel, "discord"))).limit(1);
     const ts = rows[0]?.lastSeenAt;
     if (!ts) return false;
     return Date.now() - new Date(ts).getTime() < DISCORD_ACTIVE_TTL_MS;
@@ -22821,7 +23446,7 @@ var init_discordChannel = __esm({
         try {
           const [tok, link] = await Promise.all([
             getUserToken(userId, "discord_bot"),
-            db.select({ id: channelLinks.id }).from(channelLinks).where(and23(eq29(channelLinks.userId, userId), eq29(channelLinks.channel, "discord"))).limit(1)
+            db.select({ id: channelLinks.id }).from(channelLinks).where(and23(eq31(channelLinks.userId, userId), eq31(channelLinks.channel, "discord"))).limit(1)
           ]);
           return !!(tok && link.length > 0 && getBotStatus(userId) === "running");
         } catch {
@@ -22877,7 +23502,7 @@ ${markdownExtra}` : markdownExtra : text2;
 });
 
 // server/webchatSSE.ts
-import crypto3 from "crypto";
+import crypto5 from "crypto";
 function nextToken() {
   return String(++tokenCounter);
 }
@@ -22917,7 +23542,7 @@ function hasSubscriber(userId) {
   return subscribers.has(userId);
 }
 function hashText(text2) {
-  return crypto3.createHash("sha1").update(text2).digest("hex");
+  return crypto5.createHash("sha1").update(text2).digest("hex");
 }
 function recordPushedHash(userId, text2) {
   const hash = hashText(text2);
@@ -23122,7 +23747,7 @@ __export(transcriptJobTracker_exports, {
   runBackgroundPoller: () => runBackgroundPoller,
   startSupadataJob: () => startSupadataJob
 });
-import { eq as eq30, and as and24 } from "drizzle-orm";
+import { eq as eq32, and as and24 } from "drizzle-orm";
 async function startSupadataJob(userId, videoId, supadataJobId) {
   await db.insert(transcriptJobs).values({
     userId,
@@ -23135,9 +23760,9 @@ async function startSupadataJob(userId, videoId, supadataJobId) {
 async function getCompletedTranscript(userId, videoId) {
   const rows = await db.select().from(transcriptJobs).where(
     and24(
-      eq30(transcriptJobs.userId, userId),
-      eq30(transcriptJobs.videoId, videoId),
-      eq30(transcriptJobs.status, "completed")
+      eq32(transcriptJobs.userId, userId),
+      eq32(transcriptJobs.videoId, videoId),
+      eq32(transcriptJobs.status, "completed")
     )
   ).limit(1);
   if (rows.length === 0 || !rows[0].result) return null;
@@ -23152,8 +23777,8 @@ async function getCompletedTranscript(userId, videoId) {
 async function cancelUserTranscriptJobs(userId) {
   const result = await db.update(transcriptJobs).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(
     and24(
-      eq30(transcriptJobs.userId, userId),
-      eq30(transcriptJobs.status, "pending")
+      eq32(transcriptJobs.userId, userId),
+      eq32(transcriptJobs.status, "pending")
     )
   );
   return result.rowCount ?? 0;
@@ -23184,7 +23809,7 @@ async function checkAndFinishJob(row) {
         status: "completed",
         result: JSON.stringify(segments),
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq30(transcriptJobs.id, row.id));
+      }).where(eq32(transcriptJobs.id, row.id));
       console.log(`[transcriptJobTracker] Job ${row.supadataJobId} completed \u2014 ${segments.length} segs for video ${row.videoId}`);
       return segments;
     }
@@ -23192,7 +23817,7 @@ async function checkAndFinishJob(row) {
       await db.update(transcriptJobs).set({
         status: "failed",
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq30(transcriptJobs.id, row.id));
+      }).where(eq32(transcriptJobs.id, row.id));
       console.warn(`[transcriptJobTracker] Job ${row.supadataJobId} failed for video ${row.videoId}`);
       return null;
     }
@@ -23208,7 +23833,7 @@ function runBackgroundPoller() {
   const POLL_INTERVAL_MS = 3e4;
   const poll = async () => {
     try {
-      const pending = await db.select().from(transcriptJobs).where(eq30(transcriptJobs.status, "pending"));
+      const pending = await db.select().from(transcriptJobs).where(eq32(transcriptJobs.status, "pending"));
       if (pending.length === 0) return;
       console.log(`[transcriptJobTracker] Polling ${pending.length} pending job(s)`);
       for (const row of pending) {
@@ -24842,11 +25467,11 @@ __export(localWorkerQueue_exports, {
   isWorkerOnline: () => isWorkerOnline,
   queueTranscriptJob: () => queueTranscriptJob
 });
-import crypto4 from "crypto";
+import crypto6 from "crypto";
 function getOrCreateWorkerToken(userId) {
   const existing = userTokenMap.get(userId);
   if (existing && tokenRegistry.has(existing)) return existing;
-  const token = `lw_${userId.slice(0, 8)}_${crypto4.randomBytes(16).toString("hex")}`;
+  const token = `lw_${userId.slice(0, 8)}_${crypto6.randomBytes(16).toString("hex")}`;
   tokenRegistry.set(token, { userId, token, lastSeen: 0 });
   userTokenMap.set(userId, token);
   return token;
@@ -24869,7 +25494,7 @@ function isWorkerOnline(userId) {
 }
 function queueTranscriptJob(userId, url, timeoutMs = 3e4) {
   return new Promise((resolve8, reject) => {
-    const id = `lwj_${Date.now()}_${crypto4.randomBytes(4).toString("hex")}`;
+    const id = `lwj_${Date.now()}_${crypto6.randomBytes(4).toString("hex")}`;
     const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve8, reject };
     jobStore.set(id, job);
     setTimeout(() => {
@@ -25942,7 +26567,7 @@ __export(agentManager_exports, {
   removeChannel: () => removeChannel,
   updateAgent: () => updateAgent
 });
-import { eq as eq31, and as and25 } from "drizzle-orm";
+import { eq as eq33, and as and25 } from "drizzle-orm";
 function mergePermissions(partial) {
   if (!partial) return { ...DEFAULT_AGENT_PERMISSIONS };
   return { ...DEFAULT_AGENT_PERMISSIONS, ...partial };
@@ -25950,7 +26575,7 @@ function mergePermissions(partial) {
 async function createAgent(userId, config) {
   const name = config.name.trim();
   if (!name) throw new Error("Agent name is required");
-  const allActive = await db.select().from(discordAgents).where(and25(eq31(discordAgents.userId, userId), eq31(discordAgents.isActive, 1)));
+  const allActive = await db.select().from(discordAgents).where(and25(eq33(discordAgents.userId, userId), eq33(discordAgents.isActive, 1)));
   const nameLower = name.toLowerCase();
   const conflict = allActive.find((a) => a.name.toLowerCase() === nameLower);
   if (conflict) {
@@ -25991,15 +26616,15 @@ async function createAgent(userId, config) {
   return agentId;
 }
 async function getAgent(agentId) {
-  const [row] = await db.select().from(discordAgents).where(eq31(discordAgents.id, agentId)).limit(1);
+  const [row] = await db.select().from(discordAgents).where(eq33(discordAgents.id, agentId)).limit(1);
   return row ?? null;
 }
 async function listAgents(userId, includeDisabled = false) {
   if (includeDisabled) {
-    return db.select().from(discordAgents).where(eq31(discordAgents.userId, userId));
+    return db.select().from(discordAgents).where(eq33(discordAgents.userId, userId));
   }
   return db.select().from(discordAgents).where(
-    and25(eq31(discordAgents.userId, userId), eq31(discordAgents.isActive, 1))
+    and25(eq33(discordAgents.userId, userId), eq33(discordAgents.isActive, 1))
   );
 }
 async function updateAgent(agentId, patch) {
@@ -26025,20 +26650,20 @@ async function updateAgent(agentId, patch) {
   if (patch.isActive !== void 0) updates.isActive = patch.isActive ? 1 : 0;
   if (patch.mentionPatterns !== void 0) updates.mentionPatterns = patch.mentionPatterns;
   if (Object.keys(updates).length === 0) return;
-  await db.update(discordAgents).set(updates).where(eq31(discordAgents.id, agentId));
+  await db.update(discordAgents).set(updates).where(eq33(discordAgents.id, agentId));
   console.log(`[AgentManager] updated agent ${agentId}`);
 }
 async function disableAgent(agentId) {
-  await db.update(discordAgents).set({ isActive: 0 }).where(eq31(discordAgents.id, agentId));
+  await db.update(discordAgents).set({ isActive: 0 }).where(eq33(discordAgents.id, agentId));
   logAgentEvent({ event: "agent_disabled_stuck", agentId, detail: "manually disabled" });
   console.log(`[AgentManager] disabled agent ${agentId}`);
 }
 async function enableAgent(agentId) {
-  await db.update(discordAgents).set({ isActive: 1, stuckSince: null, heartbeatFailCount: 0 }).where(eq31(discordAgents.id, agentId));
+  await db.update(discordAgents).set({ isActive: 1, stuckSince: null, heartbeatFailCount: 0 }).where(eq33(discordAgents.id, agentId));
   console.log(`[AgentManager] enabled agent ${agentId}`);
 }
 async function deleteAgent(agentId) {
-  await db.delete(discordAgents).where(eq31(discordAgents.id, agentId));
+  await db.delete(discordAgents).where(eq33(discordAgents.id, agentId));
   console.log(`[AgentManager] deleted agent ${agentId}`);
 }
 async function assignChannel(agentId, platform, channelId) {
@@ -26053,7 +26678,7 @@ async function assignChannel(agentId, platform, channelId) {
   if (platform === "discord" && !agent.channelId) {
     updates.channelId = channelId;
   }
-  await db.update(discordAgents).set(updates).where(eq31(discordAgents.id, agentId));
+  await db.update(discordAgents).set(updates).where(eq33(discordAgents.id, agentId));
   console.log(`[AgentManager] assigned ${platform}:${channelId} to agent ${agentId}`);
 }
 async function removeChannel(agentId, platform, channelId) {
@@ -26061,11 +26686,11 @@ async function removeChannel(agentId, platform, channelId) {
   if (!agent) throw new Error(`Agent ${agentId} not found`);
   const channels2 = agent.platformChannels ?? {};
   channels2[platform] = (channels2[platform] ?? []).filter((id) => id !== channelId);
-  await db.update(discordAgents).set({ platformChannels: channels2 }).where(eq31(discordAgents.id, agentId));
+  await db.update(discordAgents).set({ platformChannels: channels2 }).where(eq33(discordAgents.id, agentId));
   console.log(`[AgentManager] removed ${platform}:${channelId} from agent ${agentId}`);
 }
 async function getActiveAgentsForUser(userId) {
-  return db.select().from(discordAgents).where(and25(eq31(discordAgents.userId, userId), eq31(discordAgents.isActive, 1)));
+  return db.select().from(discordAgents).where(and25(eq33(discordAgents.userId, userId), eq33(discordAgents.isActive, 1)));
 }
 async function getAgentForChannel(userId, platform, channelId) {
   const agents = await getActiveAgentsForUser(userId);
@@ -26157,10 +26782,10 @@ var init_approvalReceipt = __esm({
 });
 
 // server/agent/agentPolicyManager.ts
-import { eq as eq32, and as and26, sql as sql12 } from "drizzle-orm";
+import { eq as eq34, and as and26, sql as sql12 } from "drizzle-orm";
 async function getAgentPolicy(agentId) {
-  const [policyRow] = await db.select().from(agentApprovalPolicies).where(eq32(agentApprovalPolicies.agentId, agentId)).limit(1);
-  const allowlist = await db.select().from(agentApprovalAllowlist).where(eq32(agentApprovalAllowlist.agentId, agentId)).orderBy(agentApprovalAllowlist.createdAt);
+  const [policyRow] = await db.select().from(agentApprovalPolicies).where(eq34(agentApprovalPolicies.agentId, agentId)).limit(1);
+  const allowlist = await db.select().from(agentApprovalAllowlist).where(eq34(agentApprovalAllowlist.agentId, agentId)).orderBy(agentApprovalAllowlist.createdAt);
   if (!policyRow) {
     return allowlist.length > 0 ? { agentId, scope: "global", allowlist } : null;
   }
@@ -26183,8 +26808,8 @@ async function addAllowlistPattern(agentId, userId, pattern) {
 async function removeAllowlistPattern(patternId, agentId) {
   const result = await db.delete(agentApprovalAllowlist).where(
     and26(
-      eq32(agentApprovalAllowlist.id, patternId),
-      eq32(agentApprovalAllowlist.agentId, agentId)
+      eq34(agentApprovalAllowlist.id, patternId),
+      eq34(agentApprovalAllowlist.agentId, agentId)
     )
   );
   return (result.rowCount ?? 0) > 0;
@@ -26200,7 +26825,7 @@ function recordAllowlistHit(patternId) {
   db.update(agentApprovalAllowlist).set({
     useCount: sql12`use_count + 1`,
     lastUsedAt: /* @__PURE__ */ new Date()
-  }).where(eq32(agentApprovalAllowlist.id, patternId)).catch(() => {
+  }).where(eq34(agentApprovalAllowlist.id, patternId)).catch(() => {
   });
 }
 async function evaluatePolicyForTool(agentId, toolName, isStrictlyIrreversible) {
@@ -26260,7 +26885,7 @@ __export(agentApproval_exports, {
   requestApproval: () => requestApproval,
   requiresApproval: () => requiresApproval
 });
-import { eq as eq33, and as and27, lt as lt2 } from "drizzle-orm";
+import { eq as eq35, and as and27, lt as lt3 } from "drizzle-orm";
 import { EventEmitter } from "events";
 function requiresApproval(toolName) {
   return HIGH_RISK_TOOLS.has(toolName);
@@ -26396,9 +27021,9 @@ async function approveGate(gateId, resolvedBy) {
   try {
     const result = await db.update(agentApprovalGates).set({ status: "approved", resolvedAt: now, resolvedBy }).where(
       and27(
-        eq33(agentApprovalGates.id, gateId),
-        eq33(agentApprovalGates.userId, resolvedBy),
-        eq33(agentApprovalGates.status, "pending")
+        eq35(agentApprovalGates.id, gateId),
+        eq35(agentApprovalGates.userId, resolvedBy),
+        eq35(agentApprovalGates.status, "pending")
       )
     );
     const rows = result.rowCount ?? 0;
@@ -26418,9 +27043,9 @@ async function rejectGate(gateId, resolvedBy) {
   try {
     const result = await db.update(agentApprovalGates).set({ status: "rejected", resolvedAt: now, resolvedBy }).where(
       and27(
-        eq33(agentApprovalGates.id, gateId),
-        eq33(agentApprovalGates.userId, resolvedBy),
-        eq33(agentApprovalGates.status, "pending")
+        eq35(agentApprovalGates.id, gateId),
+        eq35(agentApprovalGates.userId, resolvedBy),
+        eq35(agentApprovalGates.status, "pending")
       )
     );
     const rows = result.rowCount ?? 0;
@@ -26436,16 +27061,16 @@ async function rejectGate(gateId, resolvedBy) {
   }
 }
 async function getGate(gateId) {
-  const rows = await db.select().from(agentApprovalGates).where(eq33(agentApprovalGates.id, gateId)).limit(1);
+  const rows = await db.select().from(agentApprovalGates).where(eq35(agentApprovalGates.id, gateId)).limit(1);
   return rows[0] ? rowToGate(rows[0]) : void 0;
 }
 async function listPendingGates(userId) {
-  const rows = await db.select().from(agentApprovalGates).where(and27(eq33(agentApprovalGates.userId, userId), eq33(agentApprovalGates.status, "pending")));
+  const rows = await db.select().from(agentApprovalGates).where(and27(eq35(agentApprovalGates.userId, userId), eq35(agentApprovalGates.status, "pending")));
   return rows.map(rowToGate);
 }
 async function listAllGates(userId) {
   const { desc: desc46 } = await import("drizzle-orm");
-  const rows = await db.select().from(agentApprovalGates).where(eq33(agentApprovalGates.userId, userId)).orderBy(desc46(agentApprovalGates.createdAt)).limit(50);
+  const rows = await db.select().from(agentApprovalGates).where(eq35(agentApprovalGates.userId, userId)).orderBy(desc46(agentApprovalGates.createdAt)).limit(50);
   return rows.map(rowToGate);
 }
 var HIGH_RISK_TOOLS, STRICTLY_IRREVERSIBLE_TOOLS, gateEmitter, DEFAULT_TTL_MS, _cleanupTimer;
@@ -26501,7 +27126,7 @@ var init_agentApproval = __esm({
     _cleanupTimer = setInterval(async () => {
       try {
         const now = /* @__PURE__ */ new Date();
-        const expired = await db.update(agentApprovalGates).set({ status: "expired", resolvedAt: now }).where(and27(eq33(agentApprovalGates.status, "pending"), lt2(agentApprovalGates.expiresAt, now))).returning({ id: agentApprovalGates.id });
+        const expired = await db.update(agentApprovalGates).set({ status: "expired", resolvedAt: now }).where(and27(eq35(agentApprovalGates.status, "pending"), lt3(agentApprovalGates.expiresAt, now))).returning({ id: agentApprovalGates.id });
         for (const row of expired) {
           gateEmitter.emit(row.id, { approved: false, reason: "expired" });
         }
@@ -26889,7 +27514,7 @@ __export(agentMemory_exports, {
   summarizeAgentMemory: () => summarizeAgentMemory,
   writeAgentMemory: () => writeAgentMemory
 });
-import { eq as eq34, and as and28, desc as desc9 } from "drizzle-orm";
+import { eq as eq36, and as and28, desc as desc9 } from "drizzle-orm";
 import { sql as sql13 } from "drizzle-orm";
 async function writeAgentMemory(agentId, userId, content, category = "fact") {
   const [row] = await db.insert(agentMemories).values({ agentId, userId, content, category }).returning({ id: agentMemories.id });
@@ -26902,7 +27527,7 @@ async function readAgentMemories(agentId, userId, query, limit = 10) {
   const safeLimit = Math.min(limit, 25);
   const trimmedQuery = (query || "").trim();
   if (!trimmedQuery) {
-    return db.select().from(agentMemories).where(and28(eq34(agentMemories.agentId, agentId), eq34(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
+    return db.select().from(agentMemories).where(and28(eq36(agentMemories.agentId, agentId), eq36(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
   }
   try {
     const rows = await db.execute(sql13`
@@ -26919,7 +27544,7 @@ async function readAgentMemories(agentId, userId, query, limit = 10) {
     `);
     return rows.rows;
   } catch {
-    return db.select().from(agentMemories).where(and28(eq34(agentMemories.agentId, agentId), eq34(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
+    return db.select().from(agentMemories).where(and28(eq36(agentMemories.agentId, agentId), eq36(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
   }
 }
 async function summarizeAgentMemory(agentId, userId) {
@@ -26928,7 +27553,7 @@ async function summarizeAgentMemory(agentId, userId) {
   `);
   const total = parseInt(count2.rows[0]?.count ?? "0", 10);
   if (total < SUMMARIZATION_THRESHOLD) return;
-  const toSummarize = await db.select().from(agentMemories).where(and28(eq34(agentMemories.agentId, agentId), eq34(agentMemories.userId, userId))).orderBy(agentMemories.createdAt).limit(200);
+  const toSummarize = await db.select().from(agentMemories).where(and28(eq36(agentMemories.agentId, agentId), eq36(agentMemories.userId, userId))).orderBy(agentMemories.createdAt).limit(200);
   if (toSummarize.length < 10) return;
   const memoryText = toSummarize.map((m) => `[${m.category}] ${m.content}`).join("\n");
   let summary = "";
@@ -27150,7 +27775,7 @@ ${workspace}` : ""
 import {
   ChannelType
 } from "discord.js";
-import { eq as eq35, and as and29 } from "drizzle-orm";
+import { eq as eq37, and as and29 } from "drizzle-orm";
 function classifyTopic(text2) {
   const lower = text2.toLowerCase();
   let best = { key: "thinking", score: 0 };
@@ -27239,7 +27864,7 @@ _Jarvis will post your daily summary here every evening at 9pm._`
       categoryId: category.id,
       channels: channelIds
     };
-    const rows = await db.select().from(channelLinks).where(and29(eq35(channelLinks.userId, userId), eq35(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and29(eq37(channelLinks.userId, userId), eq37(channelLinks.channel, "discord"))).limit(1);
     if (rows.length > 0) {
       const existing = rows[0].metadata || {};
       const existingAllowlist = existing.allowlistedGuilds || [];
@@ -27255,7 +27880,7 @@ _Jarvis will post your daily summary here every evening at 9pm._`
         (g) => !(g.guildId === guildId && workspaceChannelIds.has(g.channelId))
       );
       const mergedAllowlist = [...keptExisting, ...workspaceEntries];
-      await db.update(channelLinks).set({ metadata: { ...existing, workspace, allowlistedGuilds: mergedAllowlist } }).where(and29(eq35(channelLinks.userId, userId), eq35(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...existing, workspace, allowlistedGuilds: mergedAllowlist } }).where(and29(eq37(channelLinks.userId, userId), eq37(channelLinks.channel, "discord")));
     }
     return { ok: true, workspace };
   } catch (err2) {
@@ -27366,7 +27991,7 @@ var init_workspace = __esm({
 });
 
 // server/agent/providers/topicContext.ts
-import { eq as eq36, and as and30 } from "drizzle-orm";
+import { eq as eq38, and as and30 } from "drizzle-orm";
 var init_topicContext = __esm({
   "server/agent/providers/topicContext.ts"() {
     "use strict";
@@ -27378,7 +28003,7 @@ var init_topicContext = __esm({
       async (input) => {
         if (input.platform !== "discord" || !input.channelId) return;
         try {
-          const [link] = await db.select().from(channelLinks).where(and30(eq36(channelLinks.userId, input.userId), eq36(channelLinks.channel, "discord"))).limit(1);
+          const [link] = await db.select().from(channelLinks).where(and30(eq38(channelLinks.userId, input.userId), eq38(channelLinks.channel, "discord"))).limit(1);
           if (!link?.metadata) return;
           const workspace = link.metadata.workspace;
           if (!workspace) return;
@@ -27406,7 +28031,7 @@ __export(runNamedAgent_exports, {
 });
 import fs6 from "fs";
 import path9 from "path";
-import { eq as eq37 } from "drizzle-orm";
+import { eq as eq39 } from "drizzle-orm";
 function depthKey(userId, agentId) {
   return `${userId}:${agentId}`;
 }
@@ -27678,7 +28303,7 @@ ${registryCtx.systemContext}` : systemPromptBase;
     let qualityCheckEnabled = true;
     if (!opts.isRevisionPass && userId) {
       try {
-        const prefRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq37(userPreferences.userId, userId)).limit(1);
+        const prefRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq39(userPreferences.userId, userId)).limit(1);
         const prefs = prefRows[0]?.data ?? {};
         if (prefs.responseQualityCheck === false) qualityCheckEnabled = false;
       } catch {
@@ -27887,13 +28512,13 @@ var init_runNamedAgent = __esm({
 });
 
 // server/agent/crewRouter.ts
-import { eq as eq38, and as and31 } from "drizzle-orm";
+import { eq as eq40, and as and31 } from "drizzle-orm";
 async function resolveSpecialist(assignTo, userId) {
   if (!assignTo) return null;
   const normalised = assignTo.trim().toUpperCase();
   const crewRole = NAME_TO_ROLE[normalised] ?? assignTo.toLowerCase();
   try {
-    const allAgents = await db.select().from(discordAgents).where(and31(eq38(discordAgents.userId, userId), eq38(discordAgents.isActive, 1)));
+    const allAgents = await db.select().from(discordAgents).where(and31(eq40(discordAgents.userId, userId), eq40(discordAgents.isActive, 1)));
     const match = allAgents.find((a) => {
       const cfg = a.configJson ?? {};
       if (cfg.crewRole === "orchestrator") return false;
@@ -27932,7 +28557,7 @@ Assignment rules:
 - Use ECHO when the sub-task requires the user's personal history or preferences.
 - Omit "assignTo" (or set to null) only for truly generic tasks with no specialist fit.`;
   try {
-    const allAgents = await db.select().from(discordAgents).where(and31(eq38(discordAgents.userId, userId), eq38(discordAgents.isActive, 1)));
+    const allAgents = await db.select().from(discordAgents).where(and31(eq40(discordAgents.userId, userId), eq40(discordAgents.isActive, 1)));
     const crew = allAgents.filter((a) => {
       const cfg = a.configJson ?? {};
       return cfg.isCrewMember === true && cfg.crewRole !== "orchestrator";
@@ -28685,7 +29310,7 @@ var init_orchestrator = __esm({
 });
 
 // server/agent/tools/jobDuplicateGuard.ts
-import { eq as eq39, and as and32, gte as gte4, inArray as inArray2 } from "drizzle-orm";
+import { eq as eq41, and as and32, gte as gte4, inArray as inArray2 } from "drizzle-orm";
 function normalizeTitle(title) {
   return title.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -28709,8 +29334,8 @@ async function findDuplicateJob(userId, agentType, title, windowMs = 10 * 60 * 1
   const since = new Date(Date.now() - windowMs);
   const activeJobs = await db.select({ id: agentJobs.id, title: agentJobs.title }).from(agentJobs).where(
     and32(
-      eq39(agentJobs.userId, userId),
-      eq39(agentJobs.agentType, agentType),
+      eq41(agentJobs.userId, userId),
+      eq41(agentJobs.agentType, agentType),
       inArray2(agentJobs.status, ["queued", "running"]),
       gte4(agentJobs.createdAt, since)
     )
@@ -28735,7 +29360,7 @@ __export(jobClient_exports, {
   getModelForJobType: () => getModelForJobType2,
   submitAgentJob: () => submitAgentJob2
 });
-import { eq as eq40, and as and33, inArray as inArray3 } from "drizzle-orm";
+import { eq as eq42, and as and33, inArray as inArray3 } from "drizzle-orm";
 function getModelForJobType2(agentType) {
   return SUB_AGENT_MODEL_ROUTING[agentType];
 }
@@ -28782,11 +29407,11 @@ async function submitAgentJob2(input, deps = {}) {
   return { id, isDuplicate: false };
 }
 async function cancelAllForUser(userId) {
-  const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(and33(eq40(agentJobs.userId, userId), eq40(agentJobs.status, "queued"))).returning({ id: agentJobs.id });
-  const cancelling = await db.update(agentJobs).set({ status: "cancelling" }).where(and33(eq40(agentJobs.userId, userId), eq40(agentJobs.status, "running"))).returning({ id: agentJobs.id });
+  const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(and33(eq42(agentJobs.userId, userId), eq42(agentJobs.status, "queued"))).returning({ id: agentJobs.id });
+  const cancelling = await db.update(agentJobs).set({ status: "cancelling" }).where(and33(eq42(agentJobs.userId, userId), eq42(agentJobs.status, "running"))).returning({ id: agentJobs.id });
   const paused = await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(
     and33(
-      eq40(agentWorkflows.userId, userId),
+      eq42(agentWorkflows.userId, userId),
       inArray3(agentWorkflows.status, ["active", "paused_waiting"])
     )
   ).returning({ id: agentWorkflows.id });
@@ -28828,7 +29453,7 @@ import { spawn as spawn5, execSync } from "child_process";
 import * as fs7 from "fs";
 import * as path10 from "path";
 import * as os5 from "os";
-import { eq as eq41 } from "drizzle-orm";
+import { eq as eq43 } from "drizzle-orm";
 function pidFilePath(workspaceDir) {
   return path10.join(workspaceDir, ".jarvis-dev-server.json");
 }
@@ -29107,7 +29732,7 @@ The tool returns the local URL where the app is running so you can immediately t
         if (!projectId) {
           return { ok: false, content: "project_shell requires a projectId in context", label: "No project context" };
         }
-        const [project] = await db.select().from(jarvisProjects).where(eq41(jarvisProjects.id, projectId)).limit(1);
+        const [project] = await db.select().from(jarvisProjects).where(eq43(jarvisProjects.id, projectId)).limit(1);
         if (!project) {
           return { ok: false, content: `Project ${projectId} not found`, label: "Project not found" };
         }
@@ -29115,7 +29740,7 @@ The tool returns the local URL where the app is running so you can immediately t
         if (!workspaceDir) {
           workspaceDir = path10.join(process.cwd(), "projects", projectId);
           fs7.mkdirSync(workspaceDir, { recursive: true });
-          await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq41(jarvisProjects.id, projectId));
+          await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq43(jarvisProjects.id, projectId));
         }
         if (!fs7.existsSync(workspaceDir)) {
           fs7.mkdirSync(workspaceDir, { recursive: true });
@@ -29153,7 +29778,7 @@ The tool returns the local URL where the app is running so you can immediately t
           let port = project.devServerPort ?? 0;
           if (!port || port < PORT_RANGE_START || port > PORT_RANGE_END) {
             port = findAvailablePort();
-            await db.update(jarvisProjects).set({ devServerPort: port, updatedAt: /* @__PURE__ */ new Date() }).where(eq41(jarvisProjects.id, projectId));
+            await db.update(jarvisProjects).set({ devServerPort: port, updatedAt: /* @__PURE__ */ new Date() }).where(eq43(jarvisProjects.id, projectId));
           }
           stopProjectServer(projectId);
           const { pid, url } = await runDevServer(command, workspaceDir, projectId, port);
@@ -30561,7 +31186,7 @@ import * as path11 from "path";
 import * as fs8 from "fs";
 import { spawnSync } from "child_process";
 import * as os6 from "os";
-import { eq as eq42, asc as asc2 } from "drizzle-orm";
+import { eq as eq44, asc as asc2 } from "drizzle-orm";
 function appToolGroupsForPhase(phase) {
   const p = phase.toUpperCase();
   if (p === "SCAFFOLD") return ["app_build", "research"];
@@ -30758,7 +31383,7 @@ async function startAppProject(input) {
   const projectId = project.id;
   const realWorkspaceDir = path11.join(process.cwd(), "projects", projectId);
   fs8.mkdirSync(realWorkspaceDir, { recursive: true });
-  await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq42(jarvisProjects.id, projectId));
+  await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
   console.log(`[AppProjectRunner] startAppProject: created project ${projectId} for user ${input.userId} framework=${input.framework}`);
   await submitAgentJob2({
     userId: input.userId,
@@ -30771,12 +31396,12 @@ async function startAppProject(input) {
 }
 async function runAppProjectSession(projectId, _sessionNumber, userAnswer) {
   const startTime = Date.now();
-  const [project] = await db.select().from(jarvisProjects).where(eq42(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq44(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`App project ${projectId} not found`);
   if (project.status === "paused" || project.status === "complete" || project.status === "failed") {
     return { status: project.status, stepsCompleted: 0, summary: `Project is ${project.status}` };
   }
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq42(jarvisProjectSessions.projectId, projectId)).orderBy(asc2(jarvisProjectSessions.sessionNumber));
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq44(jarvisProjectSessions.projectId, projectId)).orderBy(asc2(jarvisProjectSessions.sessionNumber));
   const sessionNumber = sessions2.length + 1;
   const sessionHistory = sessions2.slice(-3).map((s) => `Session ${s.sessionNumber}: ${s.summary || "completed"}`).join("\n");
   if (project.status === "planning") {
@@ -30792,7 +31417,7 @@ ${project.questionPending}`
     );
     if (project.autonomousMode) {
       const nextReminder = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES * 60 * 1e3);
-      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq42(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
     }
     return { status: "waiting_for_input", stepsCompleted: 0, summary: "Waiting for user input" };
   }
@@ -30881,7 +31506,7 @@ Acceptance criteria: ${acceptanceCriteria}`,
       console.error(`[AppProjectRunner] step "${step.label}" threw error:`, err2);
       const newErrors = (project.consecutiveErrors ?? 0) + 1;
       if (newErrors >= MAX_CONSECUTIVE_ERRORS) {
-        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq42(jarvisProjects.id, projectId));
+        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
         await sendAppProjectMessage(
           project.userId,
           project.originChannel ?? void 0,
@@ -30891,7 +31516,7 @@ Last error: ${String(err2).slice(0, 200)}`
         );
         return { status: "paused", stepsCompleted: completedLabels.length, summary: "Paused after too many errors" };
       }
-      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq42(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
       continue;
     }
     if (reply.startsWith("QUESTION:")) {
@@ -30909,7 +31534,7 @@ ${question}`
         status: "waiting_for_input",
         consecutiveErrors: 0,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq42(jarvisProjects.id, projectId));
+      }).where(eq44(jarvisProjects.id, projectId));
       const durationMs2 = Date.now() - startTime;
       await db.insert(jarvisProjectSessions).values({
         projectId,
@@ -30936,7 +31561,7 @@ ${question}`
       lastProgressAt: /* @__PURE__ */ new Date(),
       consecutiveErrors: 0,
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq42(jarvisProjects.id, projectId));
+    }).where(eq44(jarvisProjects.id, projectId));
     completedLabels.push(step.label);
     sessionSummary = stepOutput;
     console.log(`[AppProjectRunner] completed step "${step.label}" for project ${projectId}`);
@@ -30967,7 +31592,7 @@ ${question}`
   await sendAppProjectMessage(project.userId, project.originChannel ?? void 0, progressMsg);
   if (project.autonomousMode) {
     const nextRunAt = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES * 60 * 1e3);
-    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq42(jarvisProjects.id, projectId));
+    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
     console.log(`[AppProjectRunner] autonomous project ${projectId} scheduled for ${nextRunAt.toISOString()}`);
   }
   return {
@@ -31015,7 +31640,7 @@ async function runAppPlanningSession(project, sessionNumber, startTime) {
     console.error(`[AppProjectRunner] failed to parse planning response for project ${project.id}`);
   }
   if (!planData?.plan?.length) {
-    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq42(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, project.id));
     return { status: "failed", stepsCompleted: 0, summary: "Planning failed: could not generate a plan" };
   }
   const plan = planData.plan.map((s, i) => ({
@@ -31044,9 +31669,9 @@ ${questionText}`
 ${questionText}`,
       questionAskedAt: /* @__PURE__ */ new Date(),
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq42(jarvisProjects.id, project.id));
+    }).where(eq44(jarvisProjects.id, project.id));
   } else {
-    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq42(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, project.id));
     await sendAppProjectMessage(
       project.userId,
       project.originChannel ?? void 0,
@@ -31079,18 +31704,18 @@ Starting build now \u2014 I'll update you every ${AUTONOMOUS_INTERVAL_MINUTES} m
 }
 async function markAppProjectComplete(project, sessionNumber) {
   stopProjectServer(project.id);
-  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq42(jarvisProjects.id, project.id));
+  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, project.id));
   console.log(`[AppProjectRunner] project ${project.id} complete \u2014 handing off to appDelivery`);
 }
 async function answerAppProjectQuestion(projectId, answer) {
-  const [project] = await db.select().from(jarvisProjects).where(eq42(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq44(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`App project ${projectId} not found`);
   await db.update(jarvisProjects).set({
     questionPending: null,
     questionAskedAt: null,
     status: "building",
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq42(jarvisProjects.id, projectId));
+  }).where(eq44(jarvisProjects.id, projectId));
   await submitAgentJob2({
     userId: project.userId,
     agentType: "app_project",
@@ -31600,7 +32225,7 @@ For each topic, research the story more deeply: what happened, why audiences in 
 });
 
 // server/agent/tools/setupDiscordWorkspace.ts
-import { eq as eq43, and as and34 } from "drizzle-orm";
+import { eq as eq45, and as and34 } from "drizzle-orm";
 var ALL_CHANNELS, channelList, setupDiscordWorkspaceTool;
 var init_setupDiscordWorkspace = __esm({
   "server/agent/tools/setupDiscordWorkspace.ts"() {
@@ -31641,7 +32266,7 @@ var init_setupDiscordWorkspace = __esm({
           }
           guildId = guilds[0].id;
         }
-        const rows = await db.select().from(channelLinks).where(and34(eq43(channelLinks.userId, userId), eq43(channelLinks.channel, "discord"))).limit(1);
+        const rows = await db.select().from(channelLinks).where(and34(eq45(channelLinks.userId, userId), eq45(channelLinks.channel, "discord"))).limit(1);
         const existingMeta = rows[0]?.metadata ?? {};
         const existingWorkspace = existingMeta.workspace;
         if (existingWorkspace && existingWorkspace.guildId === guildId) {
@@ -32174,7 +32799,7 @@ var init_weatherLookup = __esm({
 });
 
 // server/agent/tools/sessionTools.ts
-import { eq as eq44, and as and35, desc as desc10 } from "drizzle-orm";
+import { eq as eq46, and as and35, desc as desc10 } from "drizzle-orm";
 function formatAge(date2) {
   if (!date2) return "unknown";
   const diffMs = Date.now() - new Date(date2).getTime();
@@ -32234,8 +32859,8 @@ var init_sessionTools = __esm({
             toolCallsCount: agentJobs.toolCallsCount
           }).from(agentJobs).where(
             and35(
-              eq44(agentJobs.userId, ctx.userId),
-              eq44(agentJobs.status, statusFilter)
+              eq46(agentJobs.userId, ctx.userId),
+              eq46(agentJobs.status, statusFilter)
             )
           ).orderBy(desc10(agentJobs.createdAt)).limit(limit) : await db.select({
             id: agentJobs.id,
@@ -32246,7 +32871,7 @@ var init_sessionTools = __esm({
             completedAt: agentJobs.completedAt,
             turns: agentJobs.turns,
             toolCallsCount: agentJobs.toolCallsCount
-          }).from(agentJobs).where(eq44(agentJobs.userId, ctx.userId)).orderBy(desc10(agentJobs.createdAt)).limit(limit);
+          }).from(agentJobs).where(eq46(agentJobs.userId, ctx.userId)).orderBy(desc10(agentJobs.createdAt)).limit(limit);
           if (rows.length === 0) {
             return {
               ok: true,
@@ -32298,8 +32923,8 @@ ${lines.join("\n")}`;
         try {
           const [job] = await db.select().from(agentJobs).where(
             and35(
-              eq44(agentJobs.id, jobId),
-              eq44(agentJobs.userId, ctx.userId)
+              eq46(agentJobs.id, jobId),
+              eq46(agentJobs.userId, ctx.userId)
             )
           ).limit(1);
           if (!job) {
@@ -32339,7 +32964,7 @@ ${JSON.stringify(r, null, 2)}`);
             summary: deliverables.summary,
             body: deliverables.body,
             status: deliverables.status
-          }).from(deliverables).where(eq44(deliverables.jobId, jobId)).limit(1);
+          }).from(deliverables).where(eq46(deliverables.jobId, jobId)).limit(1);
           const del = deliverables2[0];
           if (del) {
             parts.push(
@@ -32479,7 +33104,7 @@ The agent is now running. You can check its status with sessions_list or read it
           return { ok: false, content: "No job_id provided.", label: "sessions_cancel: no ID" };
         }
         try {
-          const [job] = await db.select().from(agentJobs).where(and35(eq44(agentJobs.id, jobId), eq44(agentJobs.userId, ctx.userId))).limit(1);
+          const [job] = await db.select().from(agentJobs).where(and35(eq46(agentJobs.id, jobId), eq46(agentJobs.userId, ctx.userId))).limit(1);
           if (!job) {
             return {
               ok: false,
@@ -32505,7 +33130,7 @@ The agent is now running. You can check its status with sessions_list or read it
           await db.update(agentJobs).set({
             status: newStatus,
             completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0
-          }).where(eq44(agentJobs.id, jobId));
+          }).where(eq46(agentJobs.id, jobId));
           const msg = newStatus === "cancelled" ? `Job "${job.title}" cancelled immediately \u2014 it was still queued and never started.` : `Job "${job.title}" marked for cancellation. It will stop at the next checkpoint (usually within seconds).`;
           console.log(
             `[${ctx.channel || "Agent"}] sessions_cancel job=${jobId} "${job.title}" \u2192 ${newStatus}`
@@ -32522,10 +33147,10 @@ The agent is now running. You can check its status with sessions_list or read it
 
 // server/agent/tools/imageGenerate.ts
 import OpenAI7 from "openai";
-import { eq as eq45 } from "drizzle-orm";
+import { eq as eq47 } from "drizzle-orm";
 async function getTelegramChatId(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq45(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq47(telegramLinks.userId, userId)).limit(1);
     return rows[0]?.chatId ?? null;
   } catch {
     return null;
@@ -32906,10 +33531,10 @@ var init_imageGenerate = __esm({
 });
 
 // server/agent/tools/videoGenerate.ts
-import { eq as eq46 } from "drizzle-orm";
+import { eq as eq48 } from "drizzle-orm";
 async function getTelegramChatId2(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq46(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq48(telegramLinks.userId, userId)).limit(1);
     return rows[0]?.chatId ?? null;
   } catch {
     return null;
@@ -33187,7 +33812,7 @@ __export(cronTools_exports, {
   parseNaturalTime: () => parseNaturalTime,
   parseRecurringExpr: () => parseRecurringExpr
 });
-import { eq as eq47, and as and36, or as or2, desc as desc11, gte as gte5, isNotNull } from "drizzle-orm";
+import { eq as eq49, and as and36, or as or2, desc as desc11, gte as gte5, isNotNull } from "drizzle-orm";
 function parseTimeOfDay(str) {
   const m = str.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
   if (!m) return null;
@@ -33501,9 +34126,9 @@ Job ID: ${task.id}
         try {
           const now = /* @__PURE__ */ new Date();
           const recentWindow = new Date(now.getTime() - 24 * 3600 * 1e3);
-          const rows = includeCompleted ? await db.select().from(jarvisScheduledTasks).where(eq47(jarvisScheduledTasks.userId, ctx.userId)).orderBy(desc11(jarvisScheduledTasks.scheduledAt)).limit(limit) : await db.select().from(jarvisScheduledTasks).where(
+          const rows = includeCompleted ? await db.select().from(jarvisScheduledTasks).where(eq49(jarvisScheduledTasks.userId, ctx.userId)).orderBy(desc11(jarvisScheduledTasks.scheduledAt)).limit(limit) : await db.select().from(jarvisScheduledTasks).where(
             and36(
-              eq47(jarvisScheduledTasks.userId, ctx.userId),
+              eq49(jarvisScheduledTasks.userId, ctx.userId),
               or2(
                 gte5(jarvisScheduledTasks.scheduledAt, now),
                 and36(
@@ -33564,8 +34189,8 @@ ${lines.join("\n")}`;
         try {
           const existing = await db.select({ id: jarvisScheduledTasks.id, title: jarvisScheduledTasks.title }).from(jarvisScheduledTasks).where(
             and36(
-              eq47(jarvisScheduledTasks.id, jobId),
-              eq47(jarvisScheduledTasks.userId, ctx.userId)
+              eq49(jarvisScheduledTasks.id, jobId),
+              eq49(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).limit(1);
           if (existing.length === 0) {
@@ -33577,8 +34202,8 @@ ${lines.join("\n")}`;
           }
           await db.delete(jarvisScheduledTasks).where(
             and36(
-              eq47(jarvisScheduledTasks.id, jobId),
-              eq47(jarvisScheduledTasks.userId, ctx.userId)
+              eq49(jarvisScheduledTasks.id, jobId),
+              eq49(jarvisScheduledTasks.userId, ctx.userId)
             )
           );
           console.log(`[${ctx.channel || "Agent"}] cron_delete id=${jobId} title="${existing[0].title}"`);
@@ -33632,8 +34257,8 @@ ${lines.join("\n")}`;
         try {
           const existing = await db.select().from(jarvisScheduledTasks).where(
             and36(
-              eq47(jarvisScheduledTasks.id, jobId),
-              eq47(jarvisScheduledTasks.userId, ctx.userId)
+              eq49(jarvisScheduledTasks.id, jobId),
+              eq49(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).limit(1);
           if (existing.length === 0) {
@@ -33686,8 +34311,8 @@ ${lines.join("\n")}`;
           }
           const [updated] = await db.update(jarvisScheduledTasks).set(patch).where(
             and36(
-              eq47(jarvisScheduledTasks.id, jobId),
-              eq47(jarvisScheduledTasks.userId, ctx.userId)
+              eq49(jarvisScheduledTasks.id, jobId),
+              eq49(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).returning();
           const title = updated.title;
@@ -33711,7 +34336,7 @@ Shell command: \`${updated.shellCommand}\`` : patch.shellCommand === null ? "\nS
 });
 
 // server/agent/workflowEngine.ts
-import { eq as eq48 } from "drizzle-orm";
+import { eq as eq50 } from "drizzle-orm";
 function buildStepPrompt(workflow, stepIdx) {
   const steps = workflow.steps;
   const step = steps[stepIdx];
@@ -33753,14 +34378,14 @@ async function executeWorkflowStep(workflow, stepIdx) {
     currentStepIndex: stepIdx,
     status: "paused_waiting",
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq48(agentWorkflows.id, workflow.id));
+  }).where(eq50(agentWorkflows.id, workflow.id));
   console.log(
     `[Workflow] queued step ${stepIdx + 1}/${workflow.steps.length} workflow="${workflow.title}" job=${jobId}`
   );
   return jobId;
 }
 async function onWorkflowJobComplete(workflowId, stepIndex, _jobId, output) {
-  const [workflow] = await db.select().from(agentWorkflows).where(eq48(agentWorkflows.id, workflowId)).limit(1);
+  const [workflow] = await db.select().from(agentWorkflows).where(eq50(agentWorkflows.id, workflowId)).limit(1);
   if (!workflow) {
     console.warn(`[Workflow] onJobComplete: workflow ${workflowId} not found`);
     return;
@@ -33770,14 +34395,14 @@ async function onWorkflowJobComplete(workflowId, stepIndex, _jobId, output) {
   );
   const nextPendingIdx = steps.findIndex((s) => s.status === "pending");
   if (workflow.status !== "paused_waiting") {
-    await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq48(agentWorkflows.id, workflowId));
+    await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq50(agentWorkflows.id, workflowId));
     console.log(
       `[Workflow] step ${stepIndex + 1} complete (workflow paused \u2014 not advancing)`
     );
     return;
   }
   if (nextPendingIdx === -1) {
-    await db.update(agentWorkflows).set({ steps, status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq48(agentWorkflows.id, workflowId));
+    await db.update(agentWorkflows).set({ steps, status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq50(agentWorkflows.id, workflowId));
     console.log(`[Workflow] "${workflow.title}" complete \u2014 all steps done`);
     await notifyUser(
       workflow.userId,
@@ -33797,19 +34422,19 @@ All ${steps.length} step(s) finished.`
     return;
   }
   const updatedWorkflow = { ...workflow, steps };
-  await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq48(agentWorkflows.id, workflowId));
+  await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq50(agentWorkflows.id, workflowId));
   const nextJobId = await executeWorkflowStep(updatedWorkflow, nextPendingIdx);
   console.log(
     `[Workflow] "${workflow.title}" auto-advanced \u2192 step ${nextPendingIdx + 1} job=${nextJobId}`
   );
 }
 async function onWorkflowJobFail(workflowId, stepIndex, error) {
-  const [workflow] = await db.select().from(agentWorkflows).where(eq48(agentWorkflows.id, workflowId)).limit(1);
+  const [workflow] = await db.select().from(agentWorkflows).where(eq50(agentWorkflows.id, workflowId)).limit(1);
   if (!workflow) return;
   const steps = workflow.steps.map(
     (s, i) => i === stepIndex ? { ...s, status: "failed", output: `Error: ${error}`, completedAt: (/* @__PURE__ */ new Date()).toISOString() } : s
   );
-  await db.update(agentWorkflows).set({ steps, status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq48(agentWorkflows.id, workflowId));
+  await db.update(agentWorkflows).set({ steps, status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq50(agentWorkflows.id, workflowId));
   await notifyUser(
     workflow.userId,
     "approval_request",
@@ -33839,7 +34464,7 @@ var init_workflowEngine = __esm({
 });
 
 // server/agent/tools/workflowTools.ts
-import { eq as eq49, and as and37, desc as desc12 } from "drizzle-orm";
+import { eq as eq51, and as and37, desc as desc12 } from "drizzle-orm";
 function stepStatusIcon(s) {
   switch (s.status) {
     case "complete":
@@ -33865,7 +34490,7 @@ function workflowSummary(w) {
   return lines.join("\n");
 }
 async function loadWorkflow(workflowId, userId) {
-  const [row] = await db.select().from(agentWorkflows).where(and37(eq49(agentWorkflows.id, workflowId), eq49(agentWorkflows.userId, userId))).limit(1);
+  const [row] = await db.select().from(agentWorkflows).where(and37(eq51(agentWorkflows.id, workflowId), eq51(agentWorkflows.userId, userId))).limit(1);
   return row || null;
 }
 var workflowCreateTool, workflowRunTool, workflowStatusTool, workflowPauseTool, workflowResumeTool, workflowListTool;
@@ -33969,7 +34594,7 @@ Call workflow_run with this ID to start execution.`,
         const steps = wf.steps;
         const nextIdx = steps.findIndex((s) => s.status === "pending");
         if (nextIdx === -1) {
-          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq49(agentWorkflows.id, wf.id));
+          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, wf.id));
           return { ok: true, content: "All steps were already complete. Workflow marked done.", label: "workflow_run: already done" };
         }
         try {
@@ -34045,7 +34670,7 @@ ${s.output.slice(0, 2e3)}`);
         if (wf.status === "paused") {
           return { ok: true, content: "Workflow is already paused.", label: "workflow_pause: already paused" };
         }
-        await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(and37(eq49(agentWorkflows.id, workflowId), eq49(agentWorkflows.userId, ctx.userId)));
+        await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(and37(eq51(agentWorkflows.id, workflowId), eq51(agentWorkflows.userId, ctx.userId)));
         console.log(`[${ctx.channel || "Agent"}] workflow_pause wf=${workflowId}`);
         return {
           ok: true,
@@ -34079,10 +34704,10 @@ ${s.output.slice(0, 2e3)}`);
         const steps = wf.steps;
         const nextIdx = steps.findIndex((s) => s.status === "pending");
         if (nextIdx === -1) {
-          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq49(agentWorkflows.id, wf.id));
+          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, wf.id));
           return { ok: true, content: "All steps were already complete. Workflow marked done.", label: "workflow_resume: done" };
         }
-        await db.update(agentWorkflows).set({ status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq49(agentWorkflows.id, wf.id));
+        await db.update(agentWorkflows).set({ status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, wf.id));
         try {
           const jobId = await executeWorkflowStep({ ...wf, status: "active" }, nextIdx);
           console.log(`[${ctx.channel || "Agent"}] workflow_resume wf=${workflowId} step=${nextIdx + 1} job=${jobId}`);
@@ -34111,7 +34736,7 @@ Background job queued: ${jobId}`,
       },
       async execute(args, ctx) {
         const includeComplete = args.include_complete === true;
-        const rows = await db.select().from(agentWorkflows).where(eq49(agentWorkflows.userId, ctx.userId)).orderBy(desc12(agentWorkflows.updatedAt)).limit(20);
+        const rows = await db.select().from(agentWorkflows).where(eq51(agentWorkflows.userId, ctx.userId)).orderBy(desc12(agentWorkflows.updatedAt)).limit(20);
         const filtered = includeComplete ? rows : rows.filter((w) => !["complete", "failed"].includes(w.status));
         if (filtered.length === 0) {
           return {
@@ -34427,7 +35052,7 @@ var init_safeWritePolicy = __esm({
 });
 
 // server/agent/tools/buildFeatureTool.ts
-import { and as and38, desc as desc13, eq as eq50, isNotNull as isNotNull2 } from "drizzle-orm";
+import { and as and38, desc as desc13, eq as eq52, isNotNull as isNotNull2 } from "drizzle-orm";
 function initToolResolver(resolver) {
   _toolResolver = resolver;
 }
@@ -34711,9 +35336,9 @@ Constraints: no uuid package; use Math.random().toString(36) for IDs; handle err
         try {
           const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
             and38(
-              eq50(openclawBuildLog.userId, ctx.userId),
-              eq50(openclawBuildLog.featureName, featureName),
-              eq50(openclawBuildLog.smokeTestPassed, true)
+              eq52(openclawBuildLog.userId, ctx.userId),
+              eq52(openclawBuildLog.featureName, featureName),
+              eq52(openclawBuildLog.smokeTestPassed, true)
             )
           ).orderBy(desc13(openclawBuildLog.createdAt)).limit(1);
           const stored = priorRows[0]?.smokeTestArgs;
@@ -34846,9 +35471,9 @@ Fix the tool_code and call build_feature again with the corrected code.`,
         try {
           const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
             and38(
-              eq50(openclawBuildLog.userId, ctx.userId),
-              eq50(openclawBuildLog.featureName, toolName),
-              eq50(openclawBuildLog.smokeTestPassed, true),
+              eq52(openclawBuildLog.userId, ctx.userId),
+              eq52(openclawBuildLog.featureName, toolName),
+              eq52(openclawBuildLog.smokeTestPassed, true),
               isNotNull2(openclawBuildLog.smokeTestArgs)
             )
           ).orderBy(desc13(openclawBuildLog.createdAt)).limit(1);
@@ -35008,7 +35633,7 @@ __export(capabilityGapAnalyzer_exports, {
   markCapabilityGapEntriesAddressed: () => markCapabilityGapEntriesAddressed,
   runCapabilityGapAnalysis: () => runCapabilityGapAnalysis
 });
-import { eq as eq51, and as and39, gte as gte6, or as or3, sql as sql16 } from "drizzle-orm";
+import { eq as eq53, and as and39, gte as gte6, or as or3, sql as sql16 } from "drizzle-orm";
 async function createGapInboxItem(userId, cluster) {
   try {
     const proposal = cluster.toolProposal;
@@ -35048,15 +35673,15 @@ function markCapabilityGapEntriesAddressed(userId, entries) {
   setImmediate(() => {
     const pairConditions = entries.map(
       (e) => and39(
-        eq51(capabilityGaps.userMessage, e.userMessage),
-        eq51(capabilityGaps.detectedReason, e.detectedReason)
+        eq53(capabilityGaps.userMessage, e.userMessage),
+        eq53(capabilityGaps.detectedReason, e.detectedReason)
       )
     );
     const pairFilter = pairConditions.length === 1 ? pairConditions[0] : or3(...pairConditions);
     db.update(capabilityGaps).set({ addressed: true }).where(
       and39(
-        eq51(capabilityGaps.userId, userId),
-        eq51(capabilityGaps.addressed, false),
+        eq53(capabilityGaps.userId, userId),
+        eq53(capabilityGaps.addressed, false),
         pairFilter
       )
     ).catch((err2) => {
@@ -35081,9 +35706,9 @@ async function _runAnalysisInner(userId) {
     count: sql16`COUNT(*)::int`
   }).from(capabilityGaps).where(
     and39(
-      eq51(capabilityGaps.userId, userId),
+      eq53(capabilityGaps.userId, userId),
       gte6(capabilityGaps.createdAt, sevenDaysAgo),
-      eq51(capabilityGaps.addressed, false)
+      eq53(capabilityGaps.addressed, false)
     )
   ).groupBy(
     capabilityGaps.userMessage,
@@ -35309,7 +35934,7 @@ var init_runGapAnalysisTool = __esm({
 // server/agent/tools/selfEditTools.ts
 import fs9 from "fs/promises";
 import path13 from "path";
-import { desc as desc14, and as and40, eq as eq52, gte as gte7 } from "drizzle-orm";
+import { desc as desc14, and as and40, eq as eq54, gte as gte7 } from "drizzle-orm";
 async function collectSourceFiles(absDir, root) {
   const results = [];
   let entries;
@@ -35574,9 +36199,9 @@ ${formatted}`,
         try {
           const existing = await db.select({ id: codeProposals.id }).from(codeProposals).where(
             and40(
-              eq52(codeProposals.userId, ctx.userId),
-              eq52(codeProposals.filePath, filePath),
-              eq52(codeProposals.status, "pending")
+              eq54(codeProposals.userId, ctx.userId),
+              eq54(codeProposals.filePath, filePath),
+              eq54(codeProposals.status, "pending")
             )
           ).limit(1);
           if (existing.length > 0) {
@@ -35674,7 +36299,7 @@ __export(applyCodeChangeTool_exports, {
 });
 import fs10 from "fs/promises";
 import path14 from "path";
-import { and as and41, eq as eq53 } from "drizzle-orm";
+import { and as and41, eq as eq55 } from "drizzle-orm";
 function _setAuditTimestampForTest(fp, ts) {
   lastAuditTimestamp.set(fp, ts);
 }
@@ -35807,7 +36432,7 @@ async function recordVerificationResult(filePaths, result, summary, userId) {
     const ts = lastAuditTimestamp.get(fp);
     if (!ts) continue;
     const summaryPart = summary ? ` \u2014 ${summary}` : "";
-    db.update(selfHealAuditLog).set({ verified: `${result}${summaryPart}` }).where(and41(eq53(selfHealAuditLog.timestamp, ts), eq53(selfHealAuditLog.file, fp))).catch(() => {
+    db.update(selfHealAuditLog).set({ verified: `${result}${summaryPart}` }).where(and41(eq55(selfHealAuditLog.timestamp, ts), eq55(selfHealAuditLog.file, fp))).catch(() => {
     });
   }
   let resolvedUserId = userId;
@@ -37050,7 +37675,7 @@ var init_workspaceUpdateTool = __esm({
 });
 
 // server/agent/tools/listCustomAgents.ts
-import { eq as eq54 } from "drizzle-orm";
+import { eq as eq56 } from "drizzle-orm";
 var listCustomAgentsTool;
 var init_listCustomAgents = __esm({
   "server/agent/tools/listCustomAgents.ts"() {
@@ -37087,7 +37712,7 @@ If the user says "run my X agent", find the matching slug here, then queue a cus
       },
       execute: async (args, context) => {
         const { userId } = context;
-        const agents = await db.select().from(customAgents).where(eq54(customAgents.userId, userId)).orderBy(customAgents.createdAt);
+        const agents = await db.select().from(customAgents).where(eq56(customAgents.userId, userId)).orderBy(customAgents.createdAt);
         if (agents.length === 0) {
           return {
             ok: true,
@@ -37318,7 +37943,7 @@ __export(github_exports, {
   pushWorkspaceToGitHub: () => pushWorkspaceToGitHub,
   saveGitHubSettings: () => saveGitHubSettings
 });
-import { eq as eq55 } from "drizzle-orm";
+import { eq as eq57 } from "drizzle-orm";
 async function getGitHubUser(token) {
   try {
     const res = await githubRequest(token, "/user");
@@ -37333,7 +37958,7 @@ async function getGitHubSettings(userId) {
   const token = await getUserToken(userId, "github").catch(() => null);
   const pat = token?.accessToken || null;
   const tokenType = token?.accountEmail === "oauth" ? "oauth" : pat ? "pat" : void 0;
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq55(userPreferences.userId, userId)).limit(1);
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq57(userPreferences.userId, userId)).limit(1);
   const prefs = rows[0]?.data || {};
   return {
     pat,
@@ -37356,7 +37981,7 @@ async function saveGitHubSettings(userId, patch) {
   }
   const needsPrefsUpdate = patch.repos !== void 0 || patch.username !== void 0;
   if (needsPrefsUpdate) {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq55(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq57(userPreferences.userId, userId)).limit(1);
     const current = rows[0]?.data || {};
     const updated = { ...current };
     if (patch.repos !== void 0) updated.github_repos = patch.repos;
@@ -37842,7 +38467,7 @@ On Telegram/in-app: ask the user to confirm, then call merge_github_pr again wit
 // server/agent/cloudDeploy.ts
 import * as fs13 from "fs";
 import * as path17 from "path";
-import * as crypto5 from "crypto";
+import * as crypto7 from "crypto";
 import { spawnSync as spawnSync2 } from "child_process";
 import * as os7 from "os";
 function slugify(title, maxLen = 50) {
@@ -37877,7 +38502,7 @@ function collectFiles(dir, baseDir, results, counter) {
         const stat = fs13.statSync(fullPath);
         if (stat.size === 0 || stat.size > MAX_FILE_SIZE_BYTES) continue;
         const data = fs13.readFileSync(fullPath);
-        const sha = crypto5.createHash("sha1").update(data).digest("hex");
+        const sha = crypto7.createHash("sha1").update(data).digest("hex");
         results.push({ file: relPath, data, sha, size: stat.size });
         counter.n++;
       } catch {
@@ -38198,7 +38823,7 @@ var init_cloudDeploy = __esm({
 });
 
 // server/agent/tools/deployApp.ts
-import { desc as desc15, eq as eq56 } from "drizzle-orm";
+import { desc as desc15, eq as eq58 } from "drizzle-orm";
 var deployAppTool;
 var init_deployApp = __esm({
   "server/agent/tools/deployApp.ts"() {
@@ -38231,7 +38856,7 @@ var init_deployApp = __esm({
         const provider = rawProvider === "vercel" ? "vercel" : rawProvider === "railway" ? "railway" : "auto";
         let project;
         if (providedProjectId) {
-          const rows = await db.select().from(jarvisProjects).where(eq56(jarvisProjects.id, providedProjectId)).limit(1);
+          const rows = await db.select().from(jarvisProjects).where(eq58(jarvisProjects.id, providedProjectId)).limit(1);
           project = rows[0];
           if (!project) {
             return { ok: false, content: `Project "${providedProjectId}" not found.` };
@@ -38240,7 +38865,7 @@ var init_deployApp = __esm({
             return { ok: false, content: "You don't have access to that project." };
           }
         } else {
-          const rows = await db.select().from(jarvisProjects).where(eq56(jarvisProjects.userId, userId)).orderBy(desc15(jarvisProjects.updatedAt)).limit(20);
+          const rows = await db.select().from(jarvisProjects).where(eq58(jarvisProjects.userId, userId)).orderBy(desc15(jarvisProjects.updatedAt)).limit(20);
           project = rows.find((r) => r.status === "complete");
           if (!project) {
             const latest = rows[0];
@@ -39618,7 +40243,7 @@ __export(websiteCrawler_exports, {
   startWebsiteCrawl: () => startWebsiteCrawl
 });
 import * as cheerio2 from "cheerio";
-import { eq as eq57 } from "drizzle-orm";
+import { eq as eq59 } from "drizzle-orm";
 import * as dns from "node:dns/promises";
 import * as net from "node:net";
 function isPrivateIp(ip) {
@@ -39822,17 +40447,17 @@ ${text2}`);
     if (combinedText.trim()) {
       summary = await distillSummary(url, combinedText);
     }
-    await db.update(websiteCrawls).set({ status: "done", pageCount, summary, crawledAt: /* @__PURE__ */ new Date() }).where(eq57(websiteCrawls.userId, userId));
+    await db.update(websiteCrawls).set({ status: "done", pageCount, summary, crawledAt: /* @__PURE__ */ new Date() }).where(eq59(websiteCrawls.userId, userId));
     console.log(`[websiteCrawler] done for user ${userId}: ${pageCount} pages`);
   } catch (err2) {
     const msg = err2 instanceof Error ? err2.message : String(err2);
     console.error("[websiteCrawler] error:", msg);
-    await db.update(websiteCrawls).set({ status: "error" }).where(eq57(websiteCrawls.userId, userId));
+    await db.update(websiteCrawls).set({ status: "error" }).where(eq59(websiteCrawls.userId, userId));
   }
 }
 async function getWebsiteCrawlSummaryBlock(userId) {
   try {
-    const rows = await db.select().from(websiteCrawls).where(eq57(websiteCrawls.userId, userId)).limit(1);
+    const rows = await db.select().from(websiteCrawls).where(eq59(websiteCrawls.userId, userId)).limit(1);
     const row = rows[0];
     if (!row || row.status !== "done" || !row.summary) return "";
     return `
@@ -39926,16 +40551,16 @@ __export(vaultWriter_exports, {
   lintWikiForAllUsers: () => lintWikiForAllUsers,
   maybeRegenerateVault: () => maybeRegenerateVault
 });
-import { eq as eq58, and as and42, desc as desc16, gte as gte8, sql as sql17, count, isNull as isNull3 } from "drizzle-orm";
+import { eq as eq60, and as and42, desc as desc16, gte as gte8, sql as sql17, count, isNull as isNull3 } from "drizzle-orm";
 async function buildAboutYouSource(userId) {
   const [soulRows, memRows] = await Promise.all([
-    db.select({ content: jarvisSouls.content }).from(jarvisSouls).where(eq58(jarvisSouls.userId, userId)).limit(1),
+    db.select({ content: jarvisSouls.content }).from(jarvisSouls).where(eq60(jarvisSouls.userId, userId)).limit(1),
     db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(
       and42(
-        eq58(userMemories.userId, userId),
-        eq58(userMemories.tier, "long_term"),
+        eq60(userMemories.userId, userId),
+        eq60(userMemories.tier, "long_term"),
         sql17`${userMemories.category} IN ('values','communication_style','preferences','fact')`,
-        eq58(userMemories.reviewStatus, "active")
+        eq60(userMemories.reviewStatus, "active")
       )
     ).orderBy(desc16(userMemories.extractedAt)).limit(80)
   ]);
@@ -39951,13 +40576,13 @@ async function buildProjectsSource(userId) {
   const [memRows, goalRows] = await Promise.all([
     db.select({ content: userMemories.content }).from(userMemories).where(
       and42(
-        eq58(userMemories.userId, userId),
-        eq58(userMemories.tier, "long_term"),
+        eq60(userMemories.userId, userId),
+        eq60(userMemories.tier, "long_term"),
         sql17`${userMemories.category} IN ('goals_history','accomplishments')`,
-        eq58(userMemories.reviewStatus, "active")
+        eq60(userMemories.reviewStatus, "active")
       )
     ).orderBy(desc16(userMemories.extractedAt)).limit(60),
-    db.select({ data: goals.data }).from(goals).where(eq58(goals.userId, userId)).limit(1)
+    db.select({ data: goals.data }).from(goals).where(eq60(goals.userId, userId)).limit(1)
   ]);
   const memList = memRows.map((m) => `- ${m.content}`).join("\n");
   const goalData = goalRows[0]?.data;
@@ -39977,12 +40602,12 @@ async function buildPeopleSource(userId) {
       notes: people.notes,
       interactionCount: people.interactionCount,
       lastInteractionAt: people.lastInteractionAt
-    }).from(people).where(eq58(people.userId, userId)).orderBy(desc16(people.interactionCount)).limit(50),
+    }).from(people).where(eq60(people.userId, userId)).orderBy(desc16(people.interactionCount)).limit(50),
     db.select({ content: userMemories.content }).from(userMemories).where(
       and42(
-        eq58(userMemories.userId, userId),
-        eq58(userMemories.category, "relationships"),
-        eq58(userMemories.reviewStatus, "active")
+        eq60(userMemories.userId, userId),
+        eq60(userMemories.category, "relationships"),
+        eq60(userMemories.reviewStatus, "active")
       )
     ).orderBy(desc16(userMemories.extractedAt)).limit(40)
   ]);
@@ -40003,8 +40628,8 @@ ${memList}`;
 }
 async function buildPatternsSource(userId) {
   const [weeklyRows, dreamRows] = await Promise.all([
-    db.select({ patterns: weeklyInsights.patterns, summary: weeklyInsights.summary, weekOf: weeklyInsights.weekOf }).from(weeklyInsights).where(eq58(weeklyInsights.userId, userId)).orderBy(desc16(weeklyInsights.createdAt)).limit(6),
-    db.select({ insightText: dreamInsights.insightText, confidenceScore: dreamInsights.confidenceScore }).from(dreamInsights).where(eq58(dreamInsights.userId, userId)).orderBy(desc16(dreamInsights.createdAt)).limit(20)
+    db.select({ patterns: weeklyInsights.patterns, summary: weeklyInsights.summary, weekOf: weeklyInsights.weekOf }).from(weeklyInsights).where(eq60(weeklyInsights.userId, userId)).orderBy(desc16(weeklyInsights.createdAt)).limit(6),
+    db.select({ insightText: dreamInsights.insightText, confidenceScore: dreamInsights.confidenceScore }).from(dreamInsights).where(eq60(dreamInsights.userId, userId)).orderBy(desc16(dreamInsights.createdAt)).limit(20)
   ]);
   const weeklyText = weeklyRows.map((row) => {
     const pats = Array.isArray(row.patterns) ? row.patterns : [];
@@ -40022,10 +40647,10 @@ ${dreamText || "No dream insights yet."}`;
 async function buildDecisionsSource(userId) {
   const rows = await db.select({ content: userMemories.content, category: userMemories.category, extractedAt: userMemories.extractedAt }).from(userMemories).where(
     and42(
-      eq58(userMemories.userId, userId),
+      eq60(userMemories.userId, userId),
       sql17`${userMemories.category} IN ('goals_history','values','blockers')`,
-      eq58(userMemories.tier, "long_term"),
-      eq58(userMemories.reviewStatus, "active")
+      eq60(userMemories.tier, "long_term"),
+      eq60(userMemories.reviewStatus, "active")
     )
   ).orderBy(desc16(userMemories.extractedAt)).limit(80);
   const grouped = {};
@@ -40042,7 +40667,7 @@ async function isVaultStale(userId) {
   try {
     const pages = await db.select({ slug: knowledgeVaultPages.slug, generatedAt: knowledgeVaultPages.generatedAt }).from(knowledgeVaultPages).where(
       and42(
-        eq58(knowledgeVaultPages.userId, userId),
+        eq60(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -40057,7 +40682,7 @@ async function isVaultStale(userId) {
     if (ageMs > VAULT_TTL_MS) return true;
     const newMemories = await db.select({ count: count() }).from(userMemories).where(
       and42(
-        eq58(userMemories.userId, userId),
+        eq60(userMemories.userId, userId),
         gte8(userMemories.extractedAt, oldestGeneratedAt)
       )
     );
@@ -40150,7 +40775,7 @@ async function generateWikiIndex(userId, model) {
       archivedAt: knowledgeVaultPages.archivedAt
     }).from(knowledgeVaultPages).where(
       and42(
-        eq58(knowledgeVaultPages.userId, userId),
+        eq60(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     ).orderBy(knowledgeVaultPages.pageType, knowledgeVaultPages.slug);
@@ -40167,7 +40792,7 @@ async function generateWikiIndex(userId, model) {
       return `- [${p.pageType}] [[${p.slug}]] \u2014 ${p.title} (updated: ${date2})`;
     }).join("\n");
     const top5 = Object.entries(backlinkCount).sort(([, a], [, b]) => b - a).slice(0, 5).map(([slug, cnt]) => `- [[${slug}]] (${cnt} reference${cnt !== 1 ? "s" : ""})`).join("\n");
-    const lintRows = await db.select({ ranAt: wikiLintLog.ranAt, summary: wikiLintLog.summary }).from(wikiLintLog).where(eq58(wikiLintLog.userId, userId)).orderBy(desc16(wikiLintLog.ranAt)).limit(1);
+    const lintRows = await db.select({ ranAt: wikiLintLog.ranAt, summary: wikiLintLog.summary }).from(wikiLintLog).where(eq60(wikiLintLog.userId, userId)).orderBy(desc16(wikiLintLog.ranAt)).limit(1);
     const lintLogSection = lintRows.length > 0 ? `
 
 ## Lint Log
@@ -40231,7 +40856,7 @@ async function ingestSource(userId, sourceText, sourceType) {
       crossRefs: knowledgeVaultPages.crossRefs
     }).from(knowledgeVaultPages).where(
       and42(
-        eq58(knowledgeVaultPages.userId, userId),
+        eq60(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -40437,15 +41062,15 @@ A: ${answer.slice(0, 600)}`
     const title = typeof parsed.title === "string" ? parsed.title : question.slice(0, 80);
     const existingPages = await db.select({ slug: knowledgeVaultPages.slug }).from(knowledgeVaultPages).where(
       and42(
-        eq58(knowledgeVaultPages.userId, userId),
+        eq60(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
     const allSlugs = existingPages.map((p) => p.slug);
     const existing = await db.select({ content: knowledgeVaultPages.content, crossRefs: knowledgeVaultPages.crossRefs }).from(knowledgeVaultPages).where(
       and42(
-        eq58(knowledgeVaultPages.userId, userId),
-        eq58(knowledgeVaultPages.slug, safeSlug)
+        eq60(knowledgeVaultPages.userId, userId),
+        eq60(knowledgeVaultPages.slug, safeSlug)
       )
     ).limit(1);
     const slugsBlock = allSlugs.length > 0 ? `Other wiki pages you can cross-link:
@@ -40523,7 +41148,7 @@ async function lintWiki(userId) {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
     const pages = await db.select().from(knowledgeVaultPages).where(
       and42(
-        eq58(knowledgeVaultPages.userId, userId),
+        eq60(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -40541,8 +41166,8 @@ async function lintWiki(userId) {
       if (lastActivity < thirtyDaysAgo) {
         await db.update(knowledgeVaultPages).set({ archivedAt: /* @__PURE__ */ new Date() }).where(
           and42(
-            eq58(knowledgeVaultPages.userId, userId),
-            eq58(knowledgeVaultPages.slug, page.slug)
+            eq60(knowledgeVaultPages.userId, userId),
+            eq60(knowledgeVaultPages.slug, page.slug)
           )
         );
         stats2.pagesArchived++;
@@ -40611,8 +41236,8 @@ Return {"corrections": []} if no issues found. Only include entries where revisi
           updatedAt: /* @__PURE__ */ new Date()
         }).where(
           and42(
-            eq58(knowledgeVaultPages.userId, userId),
-            eq58(knowledgeVaultPages.slug, correction.slug)
+            eq60(knowledgeVaultPages.userId, userId),
+            eq60(knowledgeVaultPages.slug, correction.slug)
           )
         );
         stats2.pagesUpdated++;
@@ -40751,7 +41376,7 @@ var coachAgent_exports = {};
 __export(coachAgent_exports, {
   runCoachAgent: () => runCoachAgent
 });
-import { eq as eq59, and as and43, desc as desc17, gte as gte9 } from "drizzle-orm";
+import { eq as eq61, and as and43, desc as desc17, gte as gte9 } from "drizzle-orm";
 function getMaxTokensForChannel(channelName) {
   if (channelName.startsWith("Discord")) return 1200;
   if (channelName === "Daemon") return 200;
@@ -40818,14 +41443,14 @@ async function runCoachAgent(input) {
     return null;
   });
   const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, prefsRow, recentInteractionsResult, surfacedItemsResult, soulBlockResult, websiteCrawlResult, todayPlanRow, orchestratorModelResult, preThinkResult] = await Promise.allSettled([
-    db.select().from(goals).where(eq59(goals.userId, userId)).limit(1),
-    db.select().from(stats).where(eq59(stats.userId, userId)).limit(1),
-    db.select().from(lifeContext).where(eq59(lifeContext.userId, userId)).limit(1),
+    db.select().from(goals).where(eq61(goals.userId, userId)).limit(1),
+    db.select().from(stats).where(eq61(stats.userId, userId)).limit(1),
+    db.select().from(lifeContext).where(eq61(lifeContext.userId, userId)).limit(1),
     // Skip chat_history fetch when the session cache is warm — the cached
     // message list replaces the rolling 10-message DB window.
-    sessionResumed ? Promise.resolve([]) : db.select().from(chatHistory).where(eq59(chatHistory.userId, userId)).limit(1),
-    db.select().from(commitments).where(and43(eq59(commitments.userId, userId), eq59(commitments.status, "pending"))).orderBy(desc17(commitments.extractedAt)).limit(10),
-    db.select().from(userPreferences).where(eq59(userPreferences.userId, userId)).limit(1),
+    sessionResumed ? Promise.resolve([]) : db.select().from(chatHistory).where(eq61(chatHistory.userId, userId)).limit(1),
+    db.select().from(commitments).where(and43(eq61(commitments.userId, userId), eq61(commitments.status, "pending"))).orderBy(desc17(commitments.extractedAt)).limit(10),
+    db.select().from(userPreferences).where(eq61(userPreferences.userId, userId)).limit(1),
     getRecentInteractions(userId, 20),
     db.select({
       sourceType: inboxItems.sourceType,
@@ -40835,7 +41460,7 @@ async function runCoachAgent(input) {
       jarvisReason: inboxItems.jarvisReason,
       surfacedAt: inboxItems.surfacedAt
     }).from(inboxItems).where(and43(
-      eq59(inboxItems.userId, userId),
+      eq61(inboxItems.userId, userId),
       gte9(inboxItems.surfacedAt, twentyFourHoursAgo)
     )).orderBy(desc17(inboxItems.surfacedAt)).limit(5),
     // Soul and website crawl blocks are independent of DB results — run them
@@ -40852,7 +41477,7 @@ async function runCoachAgent(input) {
     // todayPlan — fetched with tentative UTC date key so it runs in the
     // parallel batch; reconciled below if the user's timezone-adjusted date
     // differs from the UTC date (rare, only near day boundaries).
-    db.select().from(plans).where(and43(eq59(plans.userId, userId), eq59(plans.date, tentativeDateKey))).limit(1),
+    db.select().from(plans).where(and43(eq61(plans.userId, userId), eq61(plans.date, tentativeDateKey))).limit(1),
     // Resolved per-user orchestrator model (already fired above).
     _orchestratorModelPromise,
     // Pre-think fires as soon as the model resolves (already chained above).
@@ -40893,7 +41518,7 @@ async function runCoachAgent(input) {
   }
   if (dateKey !== tentativeDateKey) {
     try {
-      const planRows = await db.select().from(plans).where(and43(eq59(plans.userId, userId), eq59(plans.date, dateKey))).limit(1);
+      const planRows = await db.select().from(plans).where(and43(eq61(plans.userId, userId), eq61(plans.date, dateKey))).limit(1);
       todayPlan = planRows[0]?.data || null;
     } catch (err2) {
       console.error("[coach] plan re-fetch (timezone reconcile) failed:", err2);
@@ -41349,7 +41974,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
       let storedSession = null;
       let storedSessionId = null;
       try {
-        const rows = await db.select().from(buildSessions).where(eq59(buildSessions.userId, userId)).orderBy(desc17(buildSessions.createdAt)).limit(1);
+        const rows = await db.select().from(buildSessions).where(eq61(buildSessions.userId, userId)).orderBy(desc17(buildSessions.createdAt)).limit(1);
         if (rows.length > 0) {
           const row = rows[0];
           storedSessionId = row.id;
@@ -41380,7 +42005,7 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
           `[${channelName}] suspended-build reminder appended (ackAge=${Math.round(ackAgeMs / 36e5)}h, build="${buildDescription.slice(0, 60)}")`
         );
         if (storedSessionId) {
-          db.update(buildSessions).set({ reminded: true }).where(eq59(buildSessions.id, storedSessionId)).catch((err2) => console.error("[coach] build-session remind flag update failed:", err2));
+          db.update(buildSessions).set({ reminded: true }).where(eq61(buildSessions.id, storedSessionId)).catch((err2) => console.error("[coach] build-session remind flag update failed:", err2));
         }
       }
     } catch (reminderErr) {
@@ -41856,7 +42481,7 @@ __export(projectRunner_exports, {
   setAutonomousMode: () => setAutonomousMode,
   startProject: () => startProject
 });
-import { eq as eq60, asc as asc3, desc as desc18, inArray as inArray4 } from "drizzle-orm";
+import { eq as eq62, asc as asc3, desc as desc18, inArray as inArray4 } from "drizzle-orm";
 function toolGroupsForPhase(phase) {
   const normalized = phase.toLowerCase();
   if (normalized.includes("implement") || normalized.includes("test") || normalized.includes("deploy")) {
@@ -41968,12 +42593,12 @@ async function startProject(userId, title, description, goal, originChannel) {
 }
 async function runProjectSession(projectId, userAnswer) {
   const startTime = Date.now();
-  const [project] = await db.select().from(jarvisProjects).where(eq60(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`Project ${projectId} not found`);
   if (project.status === "paused" || project.status === "complete" || project.status === "failed") {
     return { status: project.status, stepsCompleted: 0, summary: `Project is ${project.status}` };
   }
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq60(jarvisProjectSessions.projectId, projectId)).orderBy(asc3(jarvisProjectSessions.sessionNumber));
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq62(jarvisProjectSessions.projectId, projectId)).orderBy(asc3(jarvisProjectSessions.sessionNumber));
   const sessionNumber = sessions2.length + 1;
   const sessionHistory = sessions2.slice(-3).map((s) => `Session ${s.sessionNumber}: ${s.summary || "completed"}`).join("\n");
   if (project.status === "planning") {
@@ -41991,7 +42616,7 @@ Reply to my earlier message or use: \`/project answer ${projectId} <your answer>
     );
     if (project.autonomousMode) {
       const nextReminder = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES2 * 60 * 1e3);
-      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
     }
     return { status: "waiting_for_input", stepsCompleted: 0, summary: "Waiting for user input" };
   }
@@ -42062,7 +42687,7 @@ Acceptance criteria: ${step.acceptance_criteria || "step completed successfully"
       console.error(`[ProjectRunner] step "${step.label}" threw error:`, err2);
       const newErrors = (project.consecutiveErrors ?? 0) + 1;
       if (newErrors >= MAX_CONSECUTIVE_ERRORS2) {
-        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, projectId));
+        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
         await sendProjectMessage(
           project.userId,
           project.originChannel ?? void 0,
@@ -42074,7 +42699,7 @@ Use \`/project resume ${projectId}\` to retry.`
         );
         return { status: "paused", stepsCompleted: completedLabels.length, summary: "Paused after too many errors" };
       }
-      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
       continue;
     }
     if (reply.startsWith("QUESTION:")) {
@@ -42095,7 +42720,7 @@ Reply to this message or use: \`/project answer ${projectId} <your answer>\``
         status: "waiting_for_input",
         consecutiveErrors: 0,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq60(jarvisProjects.id, projectId));
+      }).where(eq62(jarvisProjects.id, projectId));
       const durationMs2 = Date.now() - startTime;
       await db.insert(jarvisProjectSessions).values({
         projectId,
@@ -42125,7 +42750,7 @@ Reply to this message or use: \`/project answer ${projectId} <your answer>\``
       lastProgressAt: /* @__PURE__ */ new Date(),
       consecutiveErrors: 0,
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq60(jarvisProjects.id, projectId));
+    }).where(eq62(jarvisProjects.id, projectId));
     completedLabels.push(step.label);
     sessionSummary = stepOutput;
     console.log(`[ProjectRunner] completed step "${step.label}" for project ${projectId}`);
@@ -42156,7 +42781,7 @@ Reply to this message or use: \`/project answer ${projectId} <your answer>\``
   await sendProjectMessage(project.userId, project.originChannel ?? void 0, progressMsg);
   if (project.autonomousMode) {
     const nextRunAt = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES2 * 60 * 1e3);
-    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, projectId));
+    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
     console.log(`[ProjectRunner] autonomous project ${projectId} scheduled for ${nextRunAt.toISOString()}`);
   }
   return {
@@ -42201,7 +42826,7 @@ async function runPlanningSession(project, sessionNumber, startTime) {
     console.error(`[ProjectRunner] failed to parse planning response for project ${project.id}`);
   }
   if (!planData?.plan?.length) {
-    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, project.id));
     return { status: "failed", stepsCompleted: 0, summary: "Planning failed: could not generate a plan" };
   }
   const plan = planData.plan.map((s, i) => ({
@@ -42235,9 +42860,9 @@ Please answer as many as you can.`,
       questionAskedAt: /* @__PURE__ */ new Date(),
       questionMeta: planningQuestionMeta,
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq60(jarvisProjects.id, project.id));
+    }).where(eq62(jarvisProjects.id, project.id));
   } else {
-    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, project.id));
     await sendProjectMessage(
       project.userId,
       project.originChannel ?? void 0,
@@ -42270,7 +42895,7 @@ Starting first session now...`
 }
 async function markProjectComplete(project, sessionNumber) {
   const plan = asPlan2(project.plan);
-  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, project.id));
+  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, project.id));
   await sendProjectMessage(
     project.userId,
     project.originChannel ?? void 0,
@@ -42283,14 +42908,14 @@ Open the Projects tab to review all outputs.`
   console.log(`[ProjectRunner] project ${project.id} complete`);
 }
 async function answerProjectQuestion(projectId, answer) {
-  const [project] = await db.select().from(jarvisProjects).where(eq60(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`Project ${projectId} not found`);
   await db.update(jarvisProjects).set({
     questionPending: null,
     questionAskedAt: null,
     status: "building",
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq60(jarvisProjects.id, projectId));
+  }).where(eq62(jarvisProjects.id, projectId));
   console.log(`[ProjectRunner] answerProjectQuestion: project ${projectId} unblocked with answer`);
   await submitAgentJob2({
     userId: project.userId,
@@ -42301,11 +42926,11 @@ async function answerProjectQuestion(projectId, answer) {
   });
 }
 async function pauseProject(projectId) {
-  await db.update(jarvisProjects).set({ status: "paused", autonomousMode: false, nextRunAt: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, projectId));
+  await db.update(jarvisProjects).set({ status: "paused", autonomousMode: false, nextRunAt: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
 }
 async function resumeProject(projectId) {
-  await db.update(jarvisProjects).set({ status: "building", consecutiveErrors: 0, updatedAt: /* @__PURE__ */ new Date() }).where(eq60(jarvisProjects.id, projectId));
-  const [project] = await db.select().from(jarvisProjects).where(eq60(jarvisProjects.id, projectId)).limit(1);
+  await db.update(jarvisProjects).set({ status: "building", consecutiveErrors: 0, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
+  const [project] = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.id, projectId)).limit(1);
   if (project) {
     await submitAgentJob2({
       userId: project.userId,
@@ -42324,24 +42949,24 @@ async function setAutonomousMode(projectId, enabled) {
   if (!enabled) {
     updates.nextRunAt = null;
   }
-  await db.update(jarvisProjects).set(updates).where(eq60(jarvisProjects.id, projectId));
+  await db.update(jarvisProjects).set(updates).where(eq62(jarvisProjects.id, projectId));
   if (enabled) {
     await db.update(jarvisProjects).set({ nextRunAt: new Date(Date.now() + 10 * 1e3) }).where(
-      eq60(jarvisProjects.id, projectId)
+      eq62(jarvisProjects.id, projectId)
     );
   }
 }
 async function getProjectStatus(projectId) {
-  const [project] = await db.select().from(jarvisProjects).where(eq60(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.id, projectId)).limit(1);
   if (!project) return null;
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq60(jarvisProjectSessions.projectId, projectId)).orderBy(desc18(jarvisProjectSessions.sessionNumber));
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq62(jarvisProjectSessions.projectId, projectId)).orderBy(desc18(jarvisProjectSessions.sessionNumber));
   const plan = asPlan2(project.plan);
   const completedCount = plan.filter((s) => s.status === "complete").length;
   const nextStep = plan.find((s) => s.status === "pending") ?? null;
   return { project, sessions: sessions2, plan, completedCount, totalCount: plan.length, nextStep };
 }
 async function getUserProjects(userId) {
-  const projects = await db.select().from(jarvisProjects).where(eq60(jarvisProjects.userId, userId)).orderBy(desc18(jarvisProjects.updatedAt));
+  const projects = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.userId, userId)).orderBy(desc18(jarvisProjects.updatedAt));
   if (projects.length === 0) return [];
   const projectIds = projects.map((p) => p.id);
   const recentSessions = await db.select({
@@ -42385,7 +43010,7 @@ async function sendProjectQuestion(userId, originChannel, message) {
     const origin = (originChannel ?? "").toLowerCase();
     if (origin === "telegram") {
       const { sendMessageGetId: sendMessageGetId2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
-      const linkRows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq60(telegramLinks.userId, userId)).limit(1);
+      const linkRows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq62(telegramLinks.userId, userId)).limit(1);
       const chatId = linkRows[0]?.chatId;
       if (chatId) {
         const msgId = await sendMessageGetId2(chatId, message).catch(() => null);
@@ -42539,7 +43164,7 @@ var init_approvalActions = __esm({
 });
 
 // server/agent/tools/getCapabilityGaps.ts
-import { eq as eq61, and as and44, gte as gte10, desc as desc19, sql as sql19 } from "drizzle-orm";
+import { eq as eq63, and as and44, gte as gte10, desc as desc19, sql as sql19 } from "drizzle-orm";
 function formatGapsText(groups) {
   if (groups.length === 0) {
     return "No capability gaps logged this week. Jarvis handled everything it was asked!";
@@ -42606,9 +43231,9 @@ var init_getCapabilityGaps = __esm({
           if (userMsg && reason) {
             await db.update(capabilityGaps).set({ addressed: true }).where(
               and44(
-                eq61(capabilityGaps.userId, ctx.userId),
-                eq61(capabilityGaps.userMessage, userMsg),
-                eq61(capabilityGaps.detectedReason, reason)
+                eq63(capabilityGaps.userId, ctx.userId),
+                eq63(capabilityGaps.userMessage, userMsg),
+                eq63(capabilityGaps.detectedReason, reason)
               )
             );
             const content2 = `Gap dismissed \u2014 it won't be included in Sunday's analysis.`;
@@ -42624,7 +43249,7 @@ var init_getCapabilityGaps = __esm({
             latestCreatedAt: sql19`MAX(${capabilityGaps.createdAt})::text`
           }).from(capabilityGaps).where(
             and44(
-              eq61(capabilityGaps.userId, ctx.userId),
+              eq63(capabilityGaps.userId, ctx.userId),
               gte10(capabilityGaps.createdAt, sevenDaysAgo)
             )
           ).groupBy(
@@ -43588,21 +44213,21 @@ __export(slashCommands_exports, {
   registerSlashCommands: () => registerSlashCommands,
   verifyDiscordSignature: () => verifyDiscordSignature
 });
-import * as crypto6 from "node:crypto";
-import { eq as eq62, and as and45, desc as desc20 } from "drizzle-orm";
+import * as crypto8 from "node:crypto";
+import { eq as eq64, and as and45, desc as desc20 } from "drizzle-orm";
 function verifyDiscordSignature(publicKeyHex, signatureHex, timestamp2, rawBody) {
   try {
     const derPrefix = Buffer.from("302a300506032b6570032100", "hex");
     const keyBytes = Buffer.from(publicKeyHex, "hex");
     const derKey = Buffer.concat([derPrefix, keyBytes]);
-    const publicKey = crypto6.createPublicKey({
+    const publicKey = crypto8.createPublicKey({
       key: derKey,
       format: "der",
       type: "spki"
     });
     const message = Buffer.concat([Buffer.from(timestamp2, "utf-8"), rawBody]);
     const signature = Buffer.from(signatureHex, "hex");
-    return crypto6.verify(null, message, publicKey, signature);
+    return crypto8.verify(null, message, publicKey, signature);
   } catch {
     return false;
   }
@@ -43686,8 +44311,8 @@ async function lookupUserByDiscordId(discordUserId) {
   try {
     const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(
       and45(
-        eq62(channelLinks.channel, "discord"),
-        eq62(channelLinks.address, discordUserId)
+        eq64(channelLinks.channel, "discord"),
+        eq64(channelLinks.address, discordUserId)
       )
     ).limit(1);
     return rows[0] ?? null;
@@ -43807,7 +44432,7 @@ async function handleStatus(appId, interaction, userId) {
       id: agentJobs.id,
       title: agentJobs.title,
       status: agentJobs.status
-    }).from(agentJobs).where(eq62(agentJobs.userId, userId)).orderBy(desc20(agentJobs.createdAt)).limit(20);
+    }).from(agentJobs).where(eq64(agentJobs.userId, userId)).orderBy(desc20(agentJobs.createdAt)).limit(20);
     const active = jobs.filter((j) => j.status === "queued" || j.status === "running");
     const lastDone = jobs.find((j) => j.status === "complete" || j.status === "failed");
     let summary;
@@ -44859,7 +45484,7 @@ __export(manager_exports, {
   updateChannelAgentType: () => updateChannelAgentType
 });
 import { Client as Client4, GatewayIntentBits, Events, Partials, DMChannel, AttachmentBuilder } from "discord.js";
-import { eq as eq63, and as and46, sql as sql20 } from "drizzle-orm";
+import { eq as eq65, and as and46, sql as sql20 } from "drizzle-orm";
 function getClientForUser(userId) {
   return botClients.get(userId) ?? botClients.get(SHARED_BOT_KEY);
 }
@@ -44919,7 +45544,7 @@ function generateCode2(len = 6) {
 }
 async function lookupLink2(userId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { address: row.address, meta: row.metadata || {} };
@@ -44930,7 +45555,7 @@ async function lookupLink2(userId) {
 }
 async function lookupUserByDiscordId2(discordUserId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and46(eq63(channelLinks.channel, "discord"), eq63(channelLinks.address, discordUserId))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and46(eq65(channelLinks.channel, "discord"), eq65(channelLinks.address, discordUserId))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { userId: row.userId, meta: row.metadata || {} };
@@ -44940,7 +45565,7 @@ async function lookupUserByDiscordId2(discordUserId) {
   }
 }
 async function updateChannelAgentType(userId, channelId, agentType) {
-  const rows = await db.select().from(channelLinks).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord"))).limit(1);
+  const rows = await db.select().from(channelLinks).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).limit(1);
   const existing = rows[0]?.metadata ?? {};
   const channelAgents = { ...existing.channelAgents ?? {} };
   if (agentType === null) {
@@ -44949,7 +45574,7 @@ async function updateChannelAgentType(userId, channelId, agentType) {
     channelAgents[channelId] = agentType;
   }
   const updated = { ...existing, channelAgents };
-  await db.update(channelLinks).set({ metadata: updated }).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord")));
+  await db.update(channelLinks).set({ metadata: updated }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord")));
 }
 async function getChannelAgentAssignment(userId, channelId) {
   const link = await lookupLink2(userId);
@@ -45105,7 +45730,7 @@ To link this Discord account:
       try {
         const { answerProjectQuestion: answerProjectQuestion2 } = await Promise.resolve().then(() => (init_projectRunner(), projectRunner_exports));
         const { jarvisProjects: jarvisProjects2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-        const pendingProjects = await db.select().from(jarvisProjects2).where(and46(eq63(jarvisProjects2.userId, userId), eq63(jarvisProjects2.status, "waiting_for_input")));
+        const pendingProjects = await db.select().from(jarvisProjects2).where(and46(eq65(jarvisProjects2.userId, userId), eq65(jarvisProjects2.status, "waiting_for_input")));
         const matched = pendingProjects.find((p) => {
           const meta = p.questionMeta;
           return meta?.discordMessageId === replyRefMsgId && meta?.discordChannelId === replyRefChannelId;
@@ -45139,7 +45764,7 @@ To link this Discord account:
     } catch {
     }
     try {
-      db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord"))).catch(() => {
+      db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).catch(() => {
       });
       const incomingGuildId = message.guild?.id;
       if (!isDM && incomingGuildId && !pairedUser.meta.workspace?.guildId) {
@@ -45154,7 +45779,7 @@ To link this Discord account:
             channels: pairedUser.meta.workspace?.channels ?? {}
           }
         };
-        await db.update(channelLinks).set({ metadata: updatedMeta }).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord"))).then(async () => {
+        await db.update(channelLinks).set({ metadata: updatedMeta }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).then(async () => {
           console.log(`[DiscordManager] auto-saved guildId=${incomingGuildId} for user ${userId}`);
           const dmChannelId = pairedUser.meta.dmChannelId;
           if (dmChannelId) {
@@ -45812,10 +46437,10 @@ async function completePairing(userId, code) {
       allowlistedGuilds: []
     };
     await db.delete(channelLinks).where(
-      and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord"))
+      and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))
     );
     await db.delete(channelLinks).where(
-      and46(eq63(channelLinks.channel, "discord"), eq63(channelLinks.address, rec.discordUserId))
+      and46(eq65(channelLinks.channel, "discord"), eq65(channelLinks.address, rec.discordUserId))
     );
     await db.insert(channelLinks).values({
       userId,
@@ -45859,7 +46484,7 @@ async function sendToDiscordUserGetId(userId, text2) {
       const discordUser = await client.users.fetch(discordUserId);
       const dm = await discordUser.createDM();
       dmChannelId = dm.id;
-      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord")));
     }
     const channel = await client.channels.fetch(dmChannelId);
     if (!channel) return { sent: false };
@@ -45889,7 +46514,7 @@ async function sendFileToDiscordUser(userId, filename, content, description) {
       const discordUser = await client.users.fetch(discordUserId);
       const dm = await discordUser.createDM();
       dmChannelId = dm.id;
-      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord")));
     }
     const channel = await client.channels.fetch(dmChannelId);
     if (!channel) return false;
@@ -45922,7 +46547,7 @@ async function createDiscordChannel(userId, opts) {
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
-  const linkRow = await db.select().from(channelLinks).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord"))).limit(1);
+  const linkRow = await db.select().from(channelLinks).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).limit(1);
   const linkMeta = linkRow[0]?.metadata ?? {};
   const linkedGuildId = linkMeta.workspace?.guildId;
   const resolvedGuildId = linkedGuildId ?? opts.ctxGuildId;
@@ -45982,7 +46607,7 @@ async function deleteDiscordChannel(userId, opts) {
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
-  const linkRow = await db.select().from(channelLinks).where(and46(eq63(channelLinks.userId, userId), eq63(channelLinks.channel, "discord"))).limit(1);
+  const linkRow = await db.select().from(channelLinks).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).limit(1);
   const linkMeta = linkRow[0]?.metadata ?? {};
   const linkedGuildId = linkMeta.workspace?.guildId;
   const resolvedGuildId = linkedGuildId ?? opts.ctxGuildId;
@@ -46218,9 +46843,9 @@ function buildReactionHandler(botOwnerId) {
       }
       const rows = await db.select().from(discordPendingApprovals).where(
         and46(
-          eq63(discordPendingApprovals.messageId, messageId),
-          eq63(discordPendingApprovals.userId, effectiveUserId),
-          eq63(discordPendingApprovals.status, "pending")
+          eq65(discordPendingApprovals.messageId, messageId),
+          eq65(discordPendingApprovals.userId, effectiveUserId),
+          eq65(discordPendingApprovals.status, "pending")
         )
       ).limit(1);
       if (!rows[0]) return;
@@ -46229,7 +46854,7 @@ function buildReactionHandler(botOwnerId) {
       const isReject = emoji === approval.rejectEmoji;
       if (!isApprove && !isReject) return;
       const newStatus = isApprove ? "approved" : "rejected";
-      await db.update(discordPendingApprovals).set({ status: newStatus, resolvedAt: /* @__PURE__ */ new Date() }).where(eq63(discordPendingApprovals.messageId, messageId));
+      await db.update(discordPendingApprovals).set({ status: newStatus, resolvedAt: /* @__PURE__ */ new Date() }).where(eq65(discordPendingApprovals.messageId, messageId));
       console.log(`[DiscordManager] Approval ${messageId} ${newStatus} via reaction`);
       const { recordApprovalSignal: recordApprovalSignal2 } = await Promise.resolve().then(() => (init_approvalLearning(), approvalLearning_exports));
       recordApprovalSignal2({
@@ -46264,9 +46889,9 @@ async function getNamedAgentForChannel(userId, channelId) {
   try {
     const rows = await db.select().from(discordAgents).where(
       and46(
-        eq63(discordAgents.userId, userId),
-        eq63(discordAgents.channelId, channelId),
-        eq63(discordAgents.isActive, 1)
+        eq65(discordAgents.userId, userId),
+        eq65(discordAgents.channelId, channelId),
+        eq65(discordAgents.isActive, 1)
       )
     ).limit(1);
     const agent = rows[0];
@@ -46394,7 +47019,7 @@ import { writeFile as writeFile3, unlink as unlink2, readFile as readFile6 } fro
 import { randomUUID as randomUUID3 } from "crypto";
 import { tmpdir as tmpdir5 } from "os";
 import { join as join7 } from "path";
-import { eq as eq64, and as and47 } from "drizzle-orm";
+import { eq as eq66, and as and47 } from "drizzle-orm";
 function storeTempAudio(buffer, mimeType = "audio/mpeg") {
   const token = randomUUID3();
   tempAudioStore.set(token, { buffer, mimeType, expiresAt: Date.now() + 5 * 6e4 });
@@ -46447,7 +47072,7 @@ async function mp3ToOggOpus(mp3Buffer) {
 }
 async function getTelegramChatId3(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq64(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq66(telegramLinks.userId, userId)).limit(1);
     return rows[0]?.chatId ?? null;
   } catch {
     return null;
@@ -46455,7 +47080,7 @@ async function getTelegramChatId3(userId) {
 }
 async function getUserTtsPrefs(userId) {
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq64(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq66(userPreferences.userId, userId)).limit(1);
     const data = rows[0]?.data || {};
     const rawTier = data.ttsLatencyTier;
     const latencyTier = typeof rawTier === "number" && [0, 1, 2, 3, 4].includes(rawTier) ? rawTier : 2;
@@ -46469,7 +47094,7 @@ async function getUserTtsPrefs(userId) {
   }
 }
 async function setUserTtsPref(userId, patch) {
-  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq64(userPreferences.userId, userId)).limit(1);
+  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq66(userPreferences.userId, userId)).limit(1);
   const current = existing[0]?.data || {};
   const updated = { ...current };
   if (patch.enabled !== void 0) updated.ttsEnabled = patch.enabled;
@@ -46479,7 +47104,7 @@ async function setUserTtsPref(userId, patch) {
 }
 async function getUserTtsChannels(userId) {
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq64(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq66(userPreferences.userId, userId)).limit(1);
     const data = rows[0]?.data || {};
     if (Array.isArray(data.ttsChannels)) return data.ttsChannels;
     if (data.ttsEnabled === true) return ["telegram"];
@@ -46489,14 +47114,14 @@ async function getUserTtsChannels(userId) {
   }
 }
 async function setTtsChannels(userId, channels2) {
-  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq64(userPreferences.userId, userId)).limit(1);
+  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq66(userPreferences.userId, userId)).limit(1);
   const current = existing[0]?.data || {};
   const updated = { ...current, ttsChannels: channels2 };
   await db.insert(userPreferences).values({ userId, data: updated }).onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated } });
 }
 async function getWhatsAppAddress(userId) {
   try {
-    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and47(eq64(channelLinks.userId, userId), eq64(channelLinks.channel, "whatsapp"))).limit(1);
+    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "whatsapp"))).limit(1);
     return rows[0]?.address ?? null;
   } catch {
     return null;
@@ -46676,7 +47301,7 @@ var init_tts = __esm({
 });
 
 // server/momentumCoach.ts
-import { eq as eq65, and as and48, lt as lt4 } from "drizzle-orm";
+import { eq as eq67, and as and48, lt as lt5 } from "drizzle-orm";
 async function generateMomentumSteps(userId, context) {
   const incompleteTasks = (context.tasks || []).filter((t) => !t.completed);
   const taskList = incompleteTasks.slice(0, 5).map((t) => t.title).join(", ") || "no specific tasks planned";
@@ -46761,7 +47386,7 @@ async function startMomentumSession(userId, chatId, context) {
   console.log(`[Momentum] Session started for user ${userId}, step 0`);
 }
 async function handleMomentumDone(userId, chatId, stepIndex) {
-  const rows = await db.select().from(momentumSessions).where(eq65(momentumSessions.userId, userId)).limit(1);
+  const rows = await db.select().from(momentumSessions).where(eq67(momentumSessions.userId, userId)).limit(1);
   if (rows.length === 0) return;
   const session = rows[0];
   if (session.status === "expired") {
@@ -46782,7 +47407,7 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
     completedSteps: newCompletedSteps,
     status: isFinished ? "completed" : "active",
     lastStepAt: /* @__PURE__ */ new Date()
-  }).where(eq65(momentumSessions.userId, userId));
+  }).where(eq67(momentumSessions.userId, userId));
   const ackMessages = {
     implementation_intention: `Done \u2014 +${xpEarned} XP. That first step is always the hardest.`,
     identity_framing: `Locked in \u2014 +${xpEarned} XP. That's exactly who you are.`,
@@ -46798,7 +47423,7 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
   }
   setTimeout(async () => {
     try {
-      const freshRows = await db.select().from(momentumSessions).where(eq65(momentumSessions.userId, userId)).limit(1);
+      const freshRows = await db.select().from(momentumSessions).where(eq67(momentumSessions.userId, userId)).limit(1);
       if (freshRows.length === 0 || freshRows[0].currentStep !== nextStep) return;
       const freshSession = freshRows[0];
       if (freshSession.status !== "active") return;
@@ -46818,23 +47443,23 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
   }, STEP_DELAY_MS);
 }
 async function expireSession2(userId, chatId) {
-  await db.update(momentumSessions).set({ status: "expired" }).where(eq65(momentumSessions.userId, userId));
+  await db.update(momentumSessions).set({ status: "expired" }).where(eq67(momentumSessions.userId, userId));
   await sendMessage(chatId, "No worries \u2014 we'll pick it back up tomorrow.");
   console.log(`[Momentum] Session expired for user ${userId}`);
 }
 async function awardXp(userId, amount) {
   try {
-    const rows = await db.select().from(stats).where(eq65(stats.userId, userId)).limit(1);
+    const rows = await db.select().from(stats).where(eq67(stats.userId, userId)).limit(1);
     if (rows.length === 0) return;
     const data = rows[0].data ?? {};
     const currentXp = Number(data.xp ?? 0);
-    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq65(stats.userId, userId));
+    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq67(stats.userId, userId));
   } catch (err2) {
     console.error("[Momentum] Failed to award XP:", err2);
   }
 }
 async function hasMomentumSessionToday(userId, dateKey) {
-  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq65(momentumSessions.userId, userId)).limit(1);
+  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq67(momentumSessions.userId, userId)).limit(1);
   return rows.length > 0 && rows[0].sessionDate === dateKey;
 }
 async function expireStaleMomentumSessions() {
@@ -46842,13 +47467,13 @@ async function expireStaleMomentumSessions() {
     const cutoff = new Date(Date.now() - SESSION_TIMEOUT_MS);
     const staleSessions = await db.select().from(momentumSessions).where(
       and48(
-        eq65(momentumSessions.status, "active"),
-        lt4(momentumSessions.lastStepAt, cutoff)
+        eq67(momentumSessions.status, "active"),
+        lt5(momentumSessions.lastStepAt, cutoff)
       )
     );
     for (const session of staleSessions) {
-      const links = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq65(telegramLinks.userId, session.userId)).limit(1);
-      await db.update(momentumSessions).set({ status: "expired" }).where(eq65(momentumSessions.userId, session.userId));
+      const links = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq67(telegramLinks.userId, session.userId)).limit(1);
+      await db.update(momentumSessions).set({ status: "expired" }).where(eq67(momentumSessions.userId, session.userId));
       if (links.length > 0) {
         await sendMessage(links[0].chatId, "No worries \u2014 we'll pick it back up tomorrow.").catch(() => {
         });
@@ -46886,10 +47511,10 @@ __export(extractor_exports, {
   MEMORY_CATEGORIES: () => MEMORY_CATEGORIES,
   extractAndStore: () => extractAndStore
 });
-import { eq as eq66, desc as desc21 } from "drizzle-orm";
+import { eq as eq68, desc as desc21 } from "drizzle-orm";
 async function isMemoryReviewEnabledForUser(userId) {
   try {
-    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq66(lifeContext.userId, userId)).limit(1);
+    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq68(lifeContext.userId, userId)).limit(1);
     const data = rows[0]?.data;
     if (data && typeof data.memoryReviewEnabled === "boolean") return data.memoryReviewEnabled;
     return true;
@@ -46954,7 +47579,7 @@ async function extractAndStore(input) {
   let stored = [];
   let hadAnyError = false;
   try {
-    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq66(userMemories.userId, userId)).orderBy(desc21(userMemories.extractedAt)).limit(150);
+    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq68(userMemories.userId, userId)).orderBy(desc21(userMemories.extractedAt)).limit(150);
     const existingMemories = existingRows.map((r) => r.content);
     const seen = new Set(existingMemories.map(normalizeForDedup2));
     const existingList = existingMemories.length > 0 ? `
@@ -47170,12 +47795,12 @@ var taskResolver_exports = {};
 __export(taskResolver_exports, {
   resolveScheduledTaskAttention: () => resolveScheduledTaskAttention
 });
-import { eq as eq67, and as and49 } from "drizzle-orm";
+import { eq as eq69, and as and49 } from "drizzle-orm";
 async function resolveScheduledTaskAttention(userId, taskId, userAnswer) {
   const [task] = await db.select().from(jarvisScheduledTasks).where(
     and49(
-      eq67(jarvisScheduledTasks.id, taskId),
-      eq67(jarvisScheduledTasks.userId, userId)
+      eq69(jarvisScheduledTasks.id, taskId),
+      eq69(jarvisScheduledTasks.userId, userId)
     )
   ).limit(1);
   if (!task) return { ok: false, reason: "not_found" };
@@ -47192,8 +47817,8 @@ async function resolveScheduledTaskAttention(userId, taskId, userAnswer) {
   });
   await db.update(jarvisScheduledTasks).set({ needsAttention: false, attentionQuestion: null }).where(
     and49(
-      eq67(jarvisScheduledTasks.id, taskId),
-      eq67(jarvisScheduledTasks.userId, userId)
+      eq69(jarvisScheduledTasks.id, taskId),
+      eq69(jarvisScheduledTasks.userId, userId)
     )
   );
   return { ok: true, taskTitle: task.title };
@@ -47214,7 +47839,7 @@ __export(inboxRules_exports, {
   learnFromDismissal: () => learnFromDismissal,
   matchItemAgainstRules: () => matchItemAgainstRules
 });
-import { eq as eq68, and as and50 } from "drizzle-orm";
+import { eq as eq70, and as and50 } from "drizzle-orm";
 function normalizeForMatch(text2) {
   return (text2 || "").toLowerCase().trim();
 }
@@ -47255,7 +47880,7 @@ function incrementMatchCount(rule) {
   db.update(inboxRules).set({
     matchCount: (rule.matchCount ?? 0) + 1,
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq68(inboxRules.id, rule.id)).catch(() => {
+  }).where(eq70(inboxRules.id, rule.id)).catch(() => {
   });
 }
 function matchItemAgainstRules(item, rules) {
@@ -47285,20 +47910,20 @@ function matchItemAgainstRules(item, rules) {
   return { verdict: "default" };
 }
 async function getUserInboxRules(userId) {
-  return db.select().from(inboxRules).where(eq68(inboxRules.userId, userId));
+  return db.select().from(inboxRules).where(eq70(inboxRules.userId, userId));
 }
 async function learnFromDismissal(userId, itemId, telegramChatId) {
-  const [item] = await db.select().from(inboxItems).where(and50(eq68(inboxItems.id, itemId), eq68(inboxItems.userId, userId)));
+  const [item] = await db.select().from(inboxItems).where(and50(eq70(inboxItems.id, itemId), eq70(inboxItems.userId, userId)));
   if (!item) return { learned: false };
   if (item.sourceType !== "email") return { learned: false };
   const newCount = (item.dismissCount ?? 0) + 1;
-  await db.update(inboxItems).set({ dismissCount: newCount, status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq68(inboxItems.id, itemId));
+  await db.update(inboxItems).set({ dismissCount: newCount, status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq70(inboxItems.id, itemId));
   const senderDomain = item.sender ? extractDomain(item.sender) : "";
   if (!senderDomain) return { learned: false };
   const dismissed = await db.select().from(inboxItems).where(
     and50(
-      eq68(inboxItems.userId, userId),
-      eq68(inboxItems.status, "dismissed")
+      eq70(inboxItems.userId, userId),
+      eq70(inboxItems.status, "dismissed")
     )
   );
   const domainDismissals = dismissed.filter(
@@ -47307,9 +47932,9 @@ async function learnFromDismissal(userId, itemId, telegramChatId) {
   if (domainDismissals >= 3) {
     const existing = await db.select().from(inboxRules).where(
       and50(
-        eq68(inboxRules.userId, userId),
-        eq68(inboxRules.type, "suppress"),
-        eq68(inboxRules.source, "learned")
+        eq70(inboxRules.userId, userId),
+        eq70(inboxRules.type, "suppress"),
+        eq70(inboxRules.source, "learned")
       )
     );
     const alreadyHas = existing.some((r) => {
@@ -47403,7 +48028,7 @@ __export(telegramRoutes_exports, {
   startProactiveScheduler: () => startProactiveScheduler,
   startTelegramPolling: () => startTelegramPolling
 });
-import { eq as eq69, and as and51, desc as desc22, sql as sql22, gte as gte11, lte } from "drizzle-orm";
+import { eq as eq71, and as and51, desc as desc22, sql as sql22, gte as gte11, lte } from "drizzle-orm";
 import OpenAI8 from "openai";
 function generateLinkCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -47705,7 +48330,7 @@ async function extractProfileFromTelegram(userId, userText) {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
     const unanswered = await db.select().from(proactiveQuestionsSent).where(
       and51(
-        eq69(proactiveQuestionsSent.userId, userId),
+        eq71(proactiveQuestionsSent.userId, userId),
         sql22`${proactiveQuestionsSent.answeredAt} IS NULL`,
         sql22`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
       )
@@ -47715,7 +48340,7 @@ async function extractProfileFromTelegram(userId, userText) {
       const mostRecent = unanswered[0];
       const isReply = await isReplyToProactiveQuestion(userText, mostRecent.question);
       if (isReply) {
-        await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq69(proactiveQuestionsSent.id, mostRecent.id));
+        await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq71(proactiveQuestionsSent.id, mostRecent.id));
         contextHint = `User is answering proactive question: "${mostRecent.question}"`;
         console.log(`[Profile] Marked proactive question as answered: ${mostRecent.id}`);
       }
@@ -47748,7 +48373,7 @@ async function handleCallbackQuery(callbackQuery) {
     const parts = data.split(":");
     const claimedUserId = parts[1] ?? "";
     const stepIndex = parseInt(parts[2] ?? "0", 10);
-    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq69(telegramLinks.chatId, chatId)).limit(1);
+    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq71(telegramLinks.chatId, chatId)).limit(1);
     if (links.length === 0 || links[0].userId !== claimedUserId) {
       await answerCallbackQuery(queryId, "Session not found \u2014 please re-link your account.");
       console.warn(`[Momentum] Ownership mismatch: claimed=${claimedUserId}, actual=${links[0]?.userId ?? "none"}, chatId=${chatId}`);
@@ -47767,7 +48392,7 @@ async function handleCallbackQuery(callbackQuery) {
     const lastColon = rest.lastIndexOf(":");
     const fullRepo = lastColon >= 0 ? rest.slice(0, lastColon) : rest;
     const prNumber = lastColon >= 0 ? parseInt(rest.slice(lastColon + 1), 10) : 0;
-    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq69(telegramLinks.chatId, chatId)).limit(1);
+    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq71(telegramLinks.chatId, chatId)).limit(1);
     if (links.length === 0) {
       await answerCallbackQuery(queryId, "Session not found.");
       return;
@@ -47832,7 +48457,7 @@ async function processUpdate(update) {
               const chatIdStr = chat.id.toString();
               if (!currentGroups.includes(chatIdStr)) {
                 currentGroups.push(chatIdStr);
-                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq69(telegramLinks.userId, link[0].userId));
+                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq71(telegramLinks.userId, link[0].userId));
               }
             }
           } catch (err2) {
@@ -47855,7 +48480,7 @@ async function processUpdate(update) {
     if (taskTagMatch && text2) {
       const taskId = taskTagMatch[1];
       try {
-        const links = await db.select().from(telegramLinks).where(eq69(telegramLinks.chatId, chatId)).limit(1);
+        const links = await db.select().from(telegramLinks).where(eq71(telegramLinks.chatId, chatId)).limit(1);
         if (links[0]) {
           const resolveUserId2 = links[0].userId;
           const result = await resolveScheduledTaskAttention(resolveUserId2, taskId, text2);
@@ -47996,7 +48621,7 @@ ${text2}` : contextBlock;
     if (text2.startsWith("/start ") || text2.length === 6 && /^[A-Z0-9]+$/.test(text2)) {
       const code = text2.startsWith("/start ") ? text2.slice(7).trim() : text2;
       try {
-        const codeRows = await db.select().from(telegramLinkCodes).where(eq69(telegramLinkCodes.code, code));
+        const codeRows = await db.select().from(telegramLinkCodes).where(eq71(telegramLinkCodes.code, code));
         if (codeRows.length === 0) {
           await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
           return;
@@ -48004,18 +48629,18 @@ ${text2}` : contextBlock;
         const { userId } = codeRows[0];
         const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1e3);
         if (codeRows[0].createdAt < thirtyMinAgo) {
-          await db.delete(telegramLinkCodes).where(eq69(telegramLinkCodes.code, code));
+          await db.delete(telegramLinkCodes).where(eq71(telegramLinkCodes.code, code));
           await sendMessage(chatId, "This link code has expired. Please ask Jarvis to connect Telegram again or use Profile \u2192 Connections to get a new one.");
           return;
         }
         await db.delete(telegramLinks).where(
-          and51(eq69(telegramLinks.chatId, chatId), sql22`${telegramLinks.userId} != ${userId}`)
+          and51(eq71(telegramLinks.chatId, chatId), sql22`${telegramLinks.userId} != ${userId}`)
         );
         await db.insert(telegramLinks).values({ userId, chatId, username: message.from?.username || message.from?.first_name || null }).onConflictDoUpdate({
           target: telegramLinks.userId,
           set: { chatId, username: message.from?.username || message.from?.first_name || null, linkedAt: /* @__PURE__ */ new Date() }
         });
-        await db.delete(telegramLinkCodes).where(eq69(telegramLinkCodes.code, code));
+        await db.delete(telegramLinkCodes).where(eq71(telegramLinkCodes.code, code));
         await sendMessage(chatId, "\u2705 You're connected to GamePlan! Jarvis will send you morning check-ins and you can chat anytime right here.");
         console.log(`[Telegram] Linked user ${userId} to chat ${chatId}`);
       } catch (err2) {
@@ -48029,7 +48654,7 @@ ${text2}` : contextBlock;
       return;
     }
     try {
-      const link = await db.select().from(telegramLinks).where(eq69(telegramLinks.chatId, chatId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq71(telegramLinks.chatId, chatId)).limit(1);
       if (link.length === 0) {
         await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
@@ -48052,8 +48677,8 @@ ${text2}` : contextBlock;
           const { answerProjectQuestion: answerProjectQuestion2 } = await Promise.resolve().then(() => (init_projectRunner(), projectRunner_exports));
           const pendingProjects = await db.select().from(jarvisProjects).where(
             and51(
-              eq69(jarvisProjects.userId, link[0].userId),
-              eq69(jarvisProjects.status, "waiting_for_input")
+              eq71(jarvisProjects.userId, link[0].userId),
+              eq71(jarvisProjects.status, "waiting_for_input")
             )
           );
           const matched = pendingProjects.find((p) => {
@@ -48683,8 +49308,8 @@ id: \`${status.project.id.slice(0, 8)}\``;
         try {
           const needsTasks = await db.select().from(jarvisScheduledTasks).where(
             and51(
-              eq69(jarvisScheduledTasks.userId, userId),
-              eq69(jarvisScheduledTasks.needsAttention, true)
+              eq71(jarvisScheduledTasks.userId, userId),
+              eq71(jarvisScheduledTasks.needsAttention, true)
             )
           ).orderBy(desc22(jarvisScheduledTasks.createdAt));
           if (needsTasks.length === 1) {
@@ -48778,7 +49403,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq69(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq71(telegramLinks.userId, userId)).limit(1);
       const isProduction2 = process.env.NODE_ENV === "production";
       if (isProduction2 && isTelegramConfigured()) {
         const currentHealth = getWebhookHealth();
@@ -48841,7 +49466,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(telegramLinks).where(eq69(telegramLinks.userId, userId));
+      await db.delete(telegramLinks).where(eq71(telegramLinks.userId, userId));
       res.json({ success: true });
     } catch (error) {
       console.error("Error disconnecting Telegram:", error);
@@ -48852,13 +49477,13 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq69(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq71(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, messages: [] });
       }
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
       const messages2 = await db.select().from(telegramGroupMessages).where(and51(
-        eq69(telegramGroupMessages.userId, userId),
+        eq71(telegramGroupMessages.userId, userId),
         gte11(telegramGroupMessages.messageDate, sevenDaysAgo)
       )).orderBy(desc22(telegramGroupMessages.messageDate)).limit(50);
       res.json({
@@ -48881,7 +49506,7 @@ function registerTelegramRoutes(app2) {
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { type, message: msgText } = req.body;
       if (!msgText) return res.status(400).json({ error: "message is required" });
-      const link = await db.select().from(telegramLinks).where(eq69(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq71(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ sent: false, reason: "Not linked" });
       }
@@ -48895,7 +49520,7 @@ function registerTelegramRoutes(app2) {
 }
 async function getCommitmentsForUser(userId) {
   try {
-    return await db.select().from(commitments).where(and51(eq69(commitments.userId, userId), eq69(commitments.status, "pending"))).orderBy(desc22(commitments.extractedAt)).limit(20);
+    return await db.select().from(commitments).where(and51(eq71(commitments.userId, userId), eq71(commitments.status, "pending"))).orderBy(desc22(commitments.extractedAt)).limit(20);
   } catch {
     return [];
   }
@@ -48903,7 +49528,7 @@ async function getCommitmentsForUser(userId) {
 async function getPlansForDateRange(userId, startDate, endDate) {
   try {
     const rows = await db.select().from(plans).where(and51(
-      eq69(plans.userId, userId),
+      eq71(plans.userId, userId),
       gte11(plans.date, startDate),
       lte(plans.date, endDate)
     ));
@@ -49113,7 +49738,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
       const catSummary = Object.entries(categoryBreakdown).map(([cat, v]) => `  ${cat}: ${v.done}/${v.total} (${Math.round(v.done / v.total * 100)}%)`).join("\n");
       const droppedTypeEntries = Object.entries(droppedCategories).sort((a, b) => b[1] - a[1]);
       const droppedSummary = droppedTypeEntries.length > 0 ? `Top dropped task types: ${droppedTypeEntries.slice(0, 5).map(([cat, count2]) => `${cat} (${count2})`).join(", ")}` : "No incomplete tasks this week";
-      const allWeekCommitments = await db.select().from(commitments).where(eq69(commitments.userId, userId)).limit(200);
+      const allWeekCommitments = await db.select().from(commitments).where(eq71(commitments.userId, userId)).limit(200);
       const weekDueCommitments = allWeekCommitments.filter(
         (c) => c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate
       );
@@ -49150,7 +49775,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
         thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
         const thirtyDayStart = thirtyDaysAgoDate.toISOString().slice(0, 10);
         const allPlans = await getPlansForDateRange(userId, thirtyDayStart, endDate);
-        const allCommitmentsRaw = await db.select().from(commitments).where(eq69(commitments.userId, userId)).limit(200);
+        const allCommitmentsRaw = await db.select().from(commitments).where(eq71(commitments.userId, userId)).limit(200);
         const scopedCommitments30d = allCommitmentsRaw.filter(
           (c) => c.dueDate && c.dueDate >= thirtyDayStart && c.dueDate <= endDate || c.extractedAt && c.extractedAt >= new Date(thirtyDayStart) && c.extractedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(thirtyDayStart) && c.resolvedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59")
         );
@@ -49251,9 +49876,9 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
     return;
   }
   const [goalsRow, planRow, statsRow] = await Promise.allSettled([
-    db.select().from(goals).where(eq69(goals.userId, link.userId)).limit(1),
-    db.select().from(plans).where(and51(eq69(plans.userId, link.userId), eq69(plans.date, dateKey))).limit(1),
-    db.select().from(stats).where(eq69(stats.userId, link.userId)).limit(1)
+    db.select().from(goals).where(eq71(goals.userId, link.userId)).limit(1),
+    db.select().from(plans).where(and51(eq71(plans.userId, link.userId), eq71(plans.date, dateKey))).limit(1),
+    db.select().from(stats).where(eq71(stats.userId, link.userId)).limit(1)
   ]);
   const userGoals = goalsRow.status === "fulfilled" ? goalsRow.value[0]?.data || [] : [];
   const todayPlan = planRow.status === "fulfilled" ? planRow.value[0]?.data : null;
@@ -49287,7 +49912,7 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
     console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
     if (schedule.type === "morning") {
       try {
-        const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq69(userPreferences.userId, link.userId));
+        const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq71(userPreferences.userId, link.userId));
         const currentPrefs = existingPrefs[0]?.data || {};
         await db.insert(userPreferences).values({
           userId: link.userId,
@@ -49771,7 +50396,7 @@ var init_telegramRoutes = __esm({
 });
 
 // server/agent/tools/manageTasks.ts
-import { and as and52, eq as eq70, desc as desc23 } from "drizzle-orm";
+import { and as and52, eq as eq72, desc as desc23 } from "drizzle-orm";
 async function loadPatternHelpers() {
   const mod = await Promise.resolve().then(() => (init_telegramRoutes(), telegramRoutes_exports));
   return {
@@ -49861,9 +50486,9 @@ var init_manageTasks = __esm({
               }
               const updated = await db.update(commitments).set({ status: "done", resolvedAt: /* @__PURE__ */ new Date() }).where(
                 and52(
-                  eq70(commitments.id, String(args.commitment_id ?? "")),
-                  eq70(commitments.userId, userId),
-                  eq70(commitments.status, "pending")
+                  eq72(commitments.id, String(args.commitment_id ?? "")),
+                  eq72(commitments.userId, userId),
+                  eq72(commitments.status, "pending")
                 )
               ).returning({ id: commitments.id });
               if (updated.length === 0) {
@@ -49883,7 +50508,7 @@ var init_manageTasks = __esm({
             case "list_tasks": {
               const todayPlan = ctx.state?.todayPlan ?? null;
               const planTasks = todayPlan?.tasks ?? [];
-              const pendingCommitments = await db.select().from(commitments).where(and52(eq70(commitments.userId, userId), eq70(commitments.status, "pending"))).orderBy(desc23(commitments.extractedAt)).limit(10);
+              const pendingCommitments = await db.select().from(commitments).where(and52(eq72(commitments.userId, userId), eq72(commitments.status, "pending"))).orderBy(desc23(commitments.extractedAt)).limit(10);
               let listing = "";
               listing += planTasks.length > 0 ? "Today's Plan:\n" + planTasks.map((t) => `- ${t.completed ? "\u2705" : "\u2B1C"} ${t.title}`).join("\n") : "Today's Plan: No tasks yet.";
               listing += "\n\n";
@@ -49904,7 +50529,7 @@ var init_manageTasks = __esm({
               if (plans2.length < 3) {
                 return { ok: true, content: "Not enough data yet for pattern analysis (need at least a few days).", label: "Not enough data" };
               }
-              const allCommitments = await db.select().from(commitments).where(eq70(commitments.userId, userId)).limit(200);
+              const allCommitments = await db.select().from(commitments).where(eq72(commitments.userId, userId)).limit(200);
               const startDt = new Date(start);
               const endDt = /* @__PURE__ */ new Date(end + "T23:59:59");
               const scopedCommitments = allCommitments.filter(
@@ -50397,7 +51022,7 @@ ${task}` : task;
 });
 
 // server/agent/tools/reviewAgentTask.ts
-import { eq as eq71 } from "drizzle-orm";
+import { eq as eq73 } from "drizzle-orm";
 var reviewAgentTaskTool;
 var init_reviewAgentTask = __esm({
   "server/agent/tools/reviewAgentTask.ts"() {
@@ -50437,7 +51062,7 @@ var init_reviewAgentTask = __esm({
         if (verdict === "revision_needed" && !String(args.feedback ?? "").trim()) {
           return { ok: false, content: "feedback is required when verdict is revision_needed.", label: "Missing feedback" };
         }
-        const [job] = await db.select().from(agentJobs).where(eq71(agentJobs.id, jobId)).limit(1);
+        const [job] = await db.select().from(agentJobs).where(eq73(agentJobs.id, jobId)).limit(1);
         if (!job) return { ok: false, content: `Job ${jobId} not found.`, label: "Job not found" };
         if (job.userId !== ctx.userId) return { ok: false, content: "Job does not belong to you.", label: "Permission denied" };
         if (!["complete", "delivered"].includes(job.status)) {
@@ -50454,7 +51079,7 @@ var init_reviewAgentTask = __esm({
         const previousOutput = String(job.result?.output ?? "");
         const modelOverride = typeof input.model === "string" ? input.model : void 0;
         if (verdict === "approved") {
-          await db.update(agentJobs).set({ status: "delivered" }).where(eq71(agentJobs.id, jobId));
+          await db.update(agentJobs).set({ status: "delivered" }).where(eq73(agentJobs.id, jobId));
           return {
             ok: true,
             content: `Task approved. **${agentName}** completed the job in ${iterationCount + 1} iteration(s). Marked as delivered.`,
@@ -52526,7 +53151,7 @@ var init_harness = __esm({
 });
 
 // server/agent/subagents.ts
-import { and as and53, eq as eq72, sql as sql23 } from "drizzle-orm";
+import { and as and53, eq as eq74, sql as sql23 } from "drizzle-orm";
 function summarize(body, fallback, max = 240) {
   const stripped = body.replace(/^#.*$/gm, "").replace(/^---EMAIL DRAFT---[\s\S]*?Body:\s*/m, "").replace(/^---END DRAFT---/m, "").replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
   if (!stripped) return fallback;
@@ -52585,7 +53210,7 @@ ${soulText.trim()}`);
     try {
       const emailMatches = Array.from(opts.prompt.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]+/g)).map((m) => m[0].toLowerCase());
       if (emailMatches.length > 0) {
-        const peopleRows = await db.select().from(people).where(and53(eq72(people.userId, opts.context.userId), sql23`lower(${people.email}) = ANY(${emailMatches})`));
+        const peopleRows = await db.select().from(people).where(and53(eq74(people.userId, opts.context.userId), sql23`lower(${people.email}) = ANY(${emailMatches})`));
         if (peopleRows.length > 0) {
           const lines = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -52818,7 +53443,7 @@ __export(goalDecomposer_exports, {
   enqueueGoalDecomposition: () => enqueueGoalDecomposition,
   runGoalDecomposition: () => runGoalDecomposition
 });
-import { eq as eq73, and as and54 } from "drizzle-orm";
+import { eq as eq75, and as and54 } from "drizzle-orm";
 function newId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -52873,7 +53498,7 @@ function normaliseTree(raw, fallbackTitle) {
   };
 }
 async function loadGoal(userId, goalId) {
-  const [row] = await db.select({ data: goals.data }).from(goals).where(eq73(goals.userId, userId)).limit(1);
+  const [row] = await db.select({ data: goals.data }).from(goals).where(eq75(goals.userId, userId)).limit(1);
   const list = row?.data || [];
   return list.find((g) => g.id === goalId) || null;
 }
@@ -52956,11 +53581,11 @@ async function runGoalDecomposition(job) {
   if (tree.phases.length === 0) {
     throw new Error("Decomposition returned no phases");
   }
-  const existing = await db.select({ id: goalTrees.id }).from(goalTrees).where(and54(eq73(goalTrees.userId, job.userId), eq73(goalTrees.goalId, goalId))).limit(1);
+  const existing = await db.select({ id: goalTrees.id }).from(goalTrees).where(and54(eq75(goalTrees.userId, job.userId), eq75(goalTrees.goalId, goalId))).limit(1);
   let goalTreeId;
   if (existing.length > 0) {
     goalTreeId = existing[0].id;
-    await db.update(goalTrees).set({ tree, title: goal.title, status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq73(goalTrees.id, goalTreeId));
+    await db.update(goalTrees).set({ tree, title: goal.title, status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq75(goalTrees.id, goalTreeId));
   } else {
     const inserted = await db.insert(goalTrees).values({
       userId: job.userId,
@@ -53006,13 +53631,13 @@ __export(driveRoutes_exports, {
   driveRouter: () => driveRouter,
   getUserDriveSettings: () => getUserDriveSettings
 });
-import { Router as Router2 } from "express";
-import { eq as eq74 } from "drizzle-orm";
+import { Router as Router4 } from "express";
+import { eq as eq76 } from "drizzle-orm";
 function getBaseUrl2(req) {
   return getPublicBaseUrl(req);
 }
 async function getUserDrivePrefs(userId) {
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq74(userPreferences.userId, userId)).limit(1);
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq76(userPreferences.userId, userId)).limit(1);
   const data = rows[0]?.data || {};
   return {
     driveEnabled: !!data.driveEnabled,
@@ -53023,7 +53648,7 @@ async function getUserDrivePrefs(userId) {
   };
 }
 async function patchUserPrefs(userId, patch) {
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq74(userPreferences.userId, userId)).limit(1);
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq76(userPreferences.userId, userId)).limit(1);
   const current = rows[0]?.data || {};
   const updated = { ...current, ...patch };
   await db.insert(userPreferences).values({ userId, data: updated }).onConflictDoUpdate({
@@ -53067,7 +53692,7 @@ var init_driveRoutes = __esm({
     init_userTokenStore();
     init_googleDrive();
     init_publicUrl();
-    driveRouter = Router2();
+    driveRouter = Router4();
     driveRouter.get("/status", async (req, res) => {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
@@ -53173,10 +53798,10 @@ var init_driveRoutes = __esm({
 });
 
 // server/memory/weeklyJob.ts
-import { eq as eq75, and as and55, gte as gte12, desc as desc24, sql as sql24 } from "drizzle-orm";
+import { eq as eq77, and as and55, gte as gte12, desc as desc24, sql as sql24 } from "drizzle-orm";
 async function isMemoryReviewEnabledForUser2(userId) {
   try {
-    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq75(lifeContext.userId, userId)).limit(1);
+    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq77(lifeContext.userId, userId)).limit(1);
     const data = rows[0]?.data;
     if (data && typeof data.memoryReviewEnabled === "boolean") return data.memoryReviewEnabled;
     return true;
@@ -53224,11 +53849,11 @@ async function runWeeklyPatternJob(userId) {
   const sevenDaysAgo = windowStart;
   const weekOf = weekOfKey(now);
   const [completionRow, brainRow, chatRow, telegramRows, energyRows] = await Promise.allSettled([
-    db.select().from(completionHistory).where(eq75(completionHistory.userId, userId)).limit(1),
-    db.select().from(brainDumpInbox).where(eq75(brainDumpInbox.userId, userId)).limit(1),
-    db.select().from(chatHistory).where(eq75(chatHistory.userId, userId)).limit(1),
-    db.select().from(telegramGroupMessages).where(and55(eq75(telegramGroupMessages.userId, userId), gte12(telegramGroupMessages.messageDate, sevenDaysAgo))).orderBy(desc24(telegramGroupMessages.messageDate)).limit(50),
-    db.select().from(energyCheckins).where(and55(eq75(energyCheckins.userId, userId), gte12(energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10)))).orderBy(desc24(energyCheckins.date)).limit(60)
+    db.select().from(completionHistory).where(eq77(completionHistory.userId, userId)).limit(1),
+    db.select().from(brainDumpInbox).where(eq77(brainDumpInbox.userId, userId)).limit(1),
+    db.select().from(chatHistory).where(eq77(chatHistory.userId, userId)).limit(1),
+    db.select().from(telegramGroupMessages).where(and55(eq77(telegramGroupMessages.userId, userId), gte12(telegramGroupMessages.messageDate, sevenDaysAgo))).orderBy(desc24(telegramGroupMessages.messageDate)).limit(50),
+    db.select().from(energyCheckins).where(and55(eq77(energyCheckins.userId, userId), gte12(energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10)))).orderBy(desc24(energyCheckins.date)).limit(60)
   ]);
   const completionData = completionRow.status === "fulfilled" ? asArray(completionRow.value[0]?.data) : [];
   const brainData = brainRow.status === "fulfilled" ? asArray(brainRow.value[0]?.data) : [];
@@ -53582,7 +54207,7 @@ import * as fs16 from "fs";
 import * as path21 from "path";
 import { execSync as execSync2, spawnSync as spawnSync3 } from "child_process";
 import * as os9 from "os";
-import { eq as eq76 } from "drizzle-orm";
+import { eq as eq78 } from "drizzle-orm";
 function generateDownloadToken(projectId) {
   const token = Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   downloadTokens.set(projectId, { token, expiresAt: Date.now() + ZIP_TTL_MS });
@@ -53683,7 +54308,7 @@ STDERR: ${stderr}`
   }
 }
 async function packageAndDeliverApp(projectId, userId, originChannel) {
-  const [project] = await db.select().from(jarvisProjects).where(eq76(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq78(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`Project ${projectId} not found`);
   const workspaceDir = project.workspaceDir;
   if (!workspaceDir || !fs16.existsSync(workspaceDir)) {
@@ -53863,7 +54488,7 @@ __export(jobQueue_exports, {
   stopJobQueueWorker: () => stopJobQueueWorker,
   submitAgentJob: () => submitAgentJob
 });
-import { eq as eq77, and as and56, sql as sql25, gte as gte13, asc as asc5 } from "drizzle-orm";
+import { eq as eq79, and as and56, sql as sql25, gte as gte13, asc as asc5 } from "drizzle-orm";
 async function notifyJobComplete(userId, agentType, title, body, originChannel, originDiscordChannelId, opts = {}) {
   const text2 = `Jarvis (${agentType}): ${title}
 
@@ -54000,9 +54625,9 @@ async function flushResearchBatch(key) {
     const windowEnd = new Date(anchorTime + SIBLING_WINDOW_MS);
     const allSiblings = await db.select({ id: agentJobs.id, title: agentJobs.title }).from(agentJobs).where(
       and56(
-        eq77(agentJobs.userId, userId),
-        eq77(agentJobs.agentType, "research"),
-        eq77(agentJobs.status, "complete"),
+        eq79(agentJobs.userId, userId),
+        eq79(agentJobs.agentType, "research"),
+        eq79(agentJobs.status, "complete"),
         gte13(agentJobs.createdAt, windowStart),
         sql25`${agentJobs.createdAt} <= ${windowEnd}`
       )
@@ -54057,7 +54682,7 @@ async function flushResearchBatch(key) {
     try {
       const siblingDeliverables = await db.select().from(deliverables).where(
         and56(
-          eq77(deliverables.userId, userId),
+          eq79(deliverables.userId, userId),
           sql25`${deliverables.jobId} = ANY(${allSiblingJobIds})`
         )
       ).orderBy(asc5(deliverables.createdAt));
@@ -54075,18 +54700,18 @@ async function flushResearchBatch(key) {
         mergedBody = sections.join("").trim();
         mergedTitle = `Research: ${siblingDeliverables[0].title}`;
         const firstId = siblingDeliverables[0].id;
-        await db.update(deliverables).set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${siblingDeliverables.length} research threads.` }).where(eq77(deliverables.id, firstId));
+        await db.update(deliverables).set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${siblingDeliverables.length} research threads.` }).where(eq79(deliverables.id, firstId));
         mergedDeliverableId = firstId;
         for (const d of siblingDeliverables.slice(1)) {
           try {
-            const [sibJob] = await db.select().from(agentJobs).where(eq77(agentJobs.id, d.jobId ?? "")).limit(1);
+            const [sibJob] = await db.select().from(agentJobs).where(eq79(agentJobs.id, d.jobId ?? "")).limit(1);
             if (sibJob) {
               const currentResult = sibJob.result ?? {};
-              await db.update(agentJobs).set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } }).where(eq77(agentJobs.id, sibJob.id));
+              await db.update(agentJobs).set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } }).where(eq79(agentJobs.id, sibJob.id));
             }
           } catch {
           }
-          await db.delete(deliverables).where(eq77(deliverables.id, d.id));
+          await db.delete(deliverables).where(eq79(deliverables.id, d.id));
         }
         console.log(`[JobQueue] consolidated ${siblingDeliverables.length} research deliverables \u2192 ${firstId}`);
       } else if (siblingDeliverables.length === 1) {
@@ -54161,7 +54786,7 @@ async function flushResearchBatch(key) {
     }
   }
   if (batchDriveLink && mergedDeliverableId) {
-    await db.update(deliverables).set({ driveLink: batchDriveLink }).where(eq77(deliverables.id, mergedDeliverableId)).catch((e) => console.error("[JobQueue] failed to save driveLink on deliverable:", e));
+    await db.update(deliverables).set({ driveLink: batchDriveLink }).where(eq79(deliverables.id, mergedDeliverableId)).catch((e) => console.error("[JobQueue] failed to save driveLink on deliverable:", e));
   }
   const bodiedJobs = jobs.filter((j) => j.body);
   const notifyBody = (bodiedJobs[0]?.body ?? jobs[0].body) + pdfNote;
@@ -54253,12 +54878,12 @@ async function claimNextJob2() {
   `);
   const claimedId = claimed.rows?.[0]?.id;
   if (!claimedId) return null;
-  const [row] = await db.select().from(agentJobs).where(eq77(agentJobs.id, claimedId)).limit(1);
+  const [row] = await db.select().from(agentJobs).where(eq79(agentJobs.id, claimedId)).limit(1);
   return row || null;
 }
 async function failJob2(jobId, message, userId) {
   try {
-    await db.update(agentJobs).set({ status: "failed", error: message.slice(0, 2e3), completedAt: /* @__PURE__ */ new Date() }).where(eq77(agentJobs.id, jobId));
+    await db.update(agentJobs).set({ status: "failed", error: message.slice(0, 2e3), completedAt: /* @__PURE__ */ new Date() }).where(eq79(agentJobs.id, jobId));
   } catch (err2) {
     console.error(`[JobQueue] failJob ${jobId} write failed:`, err2);
   }
@@ -54306,7 +54931,7 @@ async function completeJob2(jobId, payload) {
     turns: payload.turns,
     toolCallsCount: payload.toolCallsCount,
     completedAt: /* @__PURE__ */ new Date()
-  }).where(eq77(agentJobs.id, jobId));
+  }).where(eq79(agentJobs.id, jobId));
 }
 async function processJob(job) {
   console.log(`[JobQueue] running job ${job.id} type=${job.agentType} user=${job.userId}`);
@@ -54735,7 +55360,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       };
       const persistProgress = async (updates) => {
         const merged = { ...jobInput, ...updates };
-        await db.update(agentJobs).set({ input: merged }).where(eq77(agentJobs.id, job.id));
+        await db.update(agentJobs).set({ input: merged }).where(eq79(agentJobs.id, job.id));
         Object.assign(jobInput, updates);
       };
       const sendBuildPing = (text2) => notifyJobComplete(job.userId, "build_feature", job.title, text2, originChannel, originDiscordChannelId);
@@ -54764,13 +55389,13 @@ Latest request: ${baseFeatureDescription}` : baseFeatureDescription;
         const researchPollStart = Date.now();
         let researchStatus = "";
         while (Date.now() - researchPollStart < RESEARCH_MAX_WAIT_MS) {
-          const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq77(agentJobs.id, researchJobId)).limit(1);
+          const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq79(agentJobs.id, researchJobId)).limit(1);
           researchStatus = row?.status ?? "unknown";
           if (researchStatus === "complete" || researchStatus === "failed") break;
           await new Promise((r) => setTimeout(r, RESEARCH_POLL_INTERVAL_MS));
         }
         if (researchStatus === "complete") {
-          const [deliv] = await db.select({ body: deliverables.body }).from(deliverables).where(eq77(deliverables.jobId, researchJobId)).limit(1);
+          const [deliv] = await db.select({ body: deliverables.body }).from(deliverables).where(eq79(deliverables.jobId, researchJobId)).limit(1);
           if (deliv?.body) {
             researchBody = deliv.body.slice(0, 4e3);
             await persistProgress({ researchBody });
@@ -55112,12 +55737,12 @@ Acceptance criteria: ${step.acceptance_criteria}`,
         while (Date.now() - pollStart < maxWaitMs && results.size < childIds.length) {
           for (const childId of childIds) {
             if (results.has(childId)) continue;
-            const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq77(agentJobs.id, childId)).limit(1);
+            const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq79(agentJobs.id, childId)).limit(1);
             const status = row?.status ?? "unknown";
             if (status === "complete" || status === "failed") {
               let body = "";
               if (status === "complete") {
-                const [deliv] = await db.select({ body: deliverables.body }).from(deliverables).where(eq77(deliverables.jobId, childId)).limit(1);
+                const [deliv] = await db.select({ body: deliverables.body }).from(deliverables).where(eq79(deliverables.jobId, childId)).limit(1);
                 body = deliv?.body ?? "";
               }
               results.set(childId, { status, body });
@@ -55552,7 +56177,7 @@ ${sub.body?.slice(0, 1200) || ""}`.trim();
           startedAt: null,
           error: `Retry ${nextRetry}/${MAX_RETRIES}: ${msg}`.slice(0, 2e3),
           input: { ...jobInput, retryCount: nextRetry }
-        }).where(eq77(agentJobs.id, job.id));
+        }).where(eq79(agentJobs.id, job.id));
       } catch (retryErr) {
         console.error(`[JobQueue] failed to re-queue job ${job.id}:`, retryErr);
         await failJob2(job.id, msg, job.userId);
@@ -55584,11 +56209,11 @@ async function tick() {
 }
 async function recoverStaleJobs() {
   try {
-    const requeued = await db.update(agentJobs).set({ status: "queued", startedAt: null }).where(eq77(agentJobs.status, "running")).returning({ id: agentJobs.id });
+    const requeued = await db.update(agentJobs).set({ status: "queued", startedAt: null }).where(eq79(agentJobs.status, "running")).returning({ id: agentJobs.id });
     if (requeued.length > 0) {
       console.log(`[JobQueue] recovered ${requeued.length} stale running job(s) from previous process`);
     }
-    const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(eq77(agentJobs.status, "cancelling")).returning({ id: agentJobs.id });
+    const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(eq79(agentJobs.status, "cancelling")).returning({ id: agentJobs.id });
     if (cancelled.length > 0) {
       console.log(`[JobQueue] cancelled ${cancelled.length} stale cancelling job(s) from previous process`);
     }
@@ -55681,7 +56306,7 @@ __export(integrationValidator_exports, {
   startIntegrationValidator: () => startIntegrationValidator,
   validateUserIntegrations: () => validateUserIntegrations
 });
-import { eq as eq78, and as and57, sql as sql26 } from "drizzle-orm";
+import { eq as eq80, and as and57, sql as sql26 } from "drizzle-orm";
 import { ReplitConnectors } from "@replit/connectors-sdk";
 async function checkOAuthIntegration(userId, provider) {
   try {
@@ -55902,7 +56527,7 @@ async function checkTelegramWebhookState() {
 }
 async function checkTelegram(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq78(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq80(telegramLinks.userId, userId)).limit(1);
     if (rows.length === 0) return { status: "unconfigured" };
     const botOk = await checkSystemCredential("telegram_bot", pingTelegramBot);
     if (!botOk) {
@@ -55934,8 +56559,8 @@ async function pingDiscordBotGuilds() {
 async function checkDiscord(userId) {
   try {
     const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and57(
-      eq78(channelLinks.userId, userId),
-      eq78(channelLinks.channel, "discord")
+      eq80(channelLinks.userId, userId),
+      eq80(channelLinks.channel, "discord")
     )).limit(1);
     if (rows.length === 0) return { status: "unconfigured" };
     const botOk = await checkSystemCredential("discord_bot", pingDiscordBot);
@@ -55980,8 +56605,8 @@ async function checkSlack(userId) {
       return { status: "healthy", expiresAt: expiresAt ?? void 0 };
     }
     const channelRows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and57(
-      eq78(channelLinks.userId, userId),
-      eq78(channelLinks.channel, "slack")
+      eq80(channelLinks.userId, userId),
+      eq80(channelLinks.channel, "slack")
     )).limit(1);
     if (channelRows.length === 0) return { status: "unconfigured" };
     const tokenOk = await checkSystemCredential("slack_token", pingSlack);
@@ -55998,15 +56623,15 @@ async function checkWhatsApp(userId) {
     const twilioOk = await checkSystemCredential("twilio", pingTwilio);
     if (!twilioOk) {
       const rows2 = await db.select({ id: channelLinks.id }).from(channelLinks).where(and57(
-        eq78(channelLinks.userId, userId),
-        eq78(channelLinks.channel, "whatsapp")
+        eq80(channelLinks.userId, userId),
+        eq80(channelLinks.channel, "whatsapp")
       )).limit(1);
       if (rows2.length === 0) return { status: "unconfigured" };
       return { status: "broken", errorMessage: "Twilio credentials missing or invalid" };
     }
     const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and57(
-      eq78(channelLinks.userId, userId),
-      eq78(channelLinks.channel, "whatsapp")
+      eq80(channelLinks.userId, userId),
+      eq80(channelLinks.channel, "whatsapp")
     )).limit(1);
     return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
   } catch {
@@ -56239,7 +56864,7 @@ async function getUserIntegrationStatuses(userId) {
     whatsapp: "unconfigured"
   };
   try {
-    const rows = await db.select().from(integrationStatus).where(eq78(integrationStatus.userId, userId));
+    const rows = await db.select().from(integrationStatus).where(eq80(integrationStatus.userId, userId));
     for (const row of rows) {
       defaults[row.integration] = row.status;
     }
@@ -56447,7 +57072,7 @@ __export(diagnosticsService_exports, {
   runAIDiagnosis: () => runAIDiagnosis,
   runHealthCheck: () => runHealthCheck
 });
-import { eq as eq79, and as and58, desc as desc25, gte as gte14, sql as sqlExpr } from "drizzle-orm";
+import { eq as eq81, and as and58, desc as desc25, gte as gte14, sql as sqlExpr } from "drizzle-orm";
 import Anthropic4 from "@anthropic-ai/sdk";
 async function emit(opts) {
   try {
@@ -56472,13 +57097,13 @@ async function isDegradedInDB(subsystem, userId) {
   try {
     const since = new Date(Date.now() - 4 * 60 * 60 * 1e3);
     const conditions = [
-      eq79(diagnosticEvents.subsystem, subsystem),
-      eq79(diagnosticEvents.severity, "critical"),
-      eq79(diagnosticEvents.resolved, false),
+      eq81(diagnosticEvents.subsystem, subsystem),
+      eq81(diagnosticEvents.severity, "critical"),
+      eq81(diagnosticEvents.resolved, false),
       gte14(diagnosticEvents.createdAt, since),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') = 'pattern_detected'`
     ];
-    if (userId) conditions.push(eq79(diagnosticEvents.userId, userId));
+    if (userId) conditions.push(eq81(diagnosticEvents.userId, userId));
     const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and58(...conditions)).limit(1);
     return rows.length > 0;
   } catch {
@@ -56489,11 +57114,11 @@ async function detectDegradation(subsystem, userId) {
   try {
     const windowStart = new Date(Date.now() - 15 * 60 * 1e3);
     const errorConditions = [
-      eq79(diagnosticEvents.subsystem, subsystem),
+      eq81(diagnosticEvents.subsystem, subsystem),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
       gte14(diagnosticEvents.createdAt, windowStart)
     ];
-    if (userId) errorConditions.push(eq79(diagnosticEvents.userId, userId));
+    if (userId) errorConditions.push(eq81(diagnosticEvents.userId, userId));
     const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and58(...errorConditions)).limit(5);
     if (rows.length < 3) return;
     const alreadyDegraded = await isDegradedInDB(subsystem, userId);
@@ -56533,11 +57158,11 @@ async function clearDegradation(subsystem, userId) {
     if (!isDegraded) return;
     const since = new Date(Date.now() - 4 * 60 * 60 * 1e3);
     const conditions = [
-      eq79(diagnosticEvents.subsystem, subsystem),
-      eq79(diagnosticEvents.resolved, false),
+      eq81(diagnosticEvents.subsystem, subsystem),
+      eq81(diagnosticEvents.resolved, false),
       gte14(diagnosticEvents.createdAt, since)
     ];
-    if (userId) conditions.push(eq79(diagnosticEvents.userId, userId));
+    if (userId) conditions.push(eq81(diagnosticEvents.userId, userId));
     await db.update(diagnosticEvents).set({ resolved: true }).where(and58(...conditions)).catch(() => {
     });
     console.log(`[Diagnostics] subsystem RECOVERED: ${subsystem}`);
@@ -56551,13 +57176,13 @@ async function attemptAutoRecovery(subsystem, userId) {
       const staleThreshold = new Date(Date.now() - 10 * 60 * 1e3);
       const staleJobs = await db.select({ id: agentJobs.id, agentType: agentJobs.agentType }).from(agentJobs).where(
         and58(
-          eq79(agentJobs.userId, userId),
-          eq79(agentJobs.status, "running"),
+          eq81(agentJobs.userId, userId),
+          eq81(agentJobs.status, "running"),
           sqlExpr`${agentJobs.startedAt} < ${staleThreshold}`
         )
       ).limit(5);
       for (const job of staleJobs) {
-        await db.update(agentJobs).set({ status: "queued", startedAt: null, error: "Auto-re-enqueued: exceeded watchdog timeout" }).where(eq79(agentJobs.id, job.id)).catch(() => {
+        await db.update(agentJobs).set({ status: "queued", startedAt: null, error: "Auto-re-enqueued: exceeded watchdog timeout" }).where(eq81(agentJobs.id, job.id)).catch(() => {
         });
         await emit({
           userId,
@@ -56573,13 +57198,13 @@ async function attemptAutoRecovery(subsystem, userId) {
       const staleThreshold = new Date(Date.now() - 30 * 60 * 1e3);
       const stuckWorkflows = await db.select({ id: agentWorkflows.id, title: agentWorkflows.title }).from(agentWorkflows).where(
         and58(
-          eq79(agentWorkflows.userId, userId),
-          eq79(agentWorkflows.status, "running"),
+          eq81(agentWorkflows.userId, userId),
+          eq81(agentWorkflows.status, "running"),
           sqlExpr`${agentWorkflows.updatedAt} < ${staleThreshold}`
         )
       ).limit(3);
       for (const wf of stuckWorkflows) {
-        await db.update(agentWorkflows).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq79(agentWorkflows.id, wf.id)).catch(() => {
+        await db.update(agentWorkflows).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq81(agentWorkflows.id, wf.id)).catch(() => {
         });
         await emit({
           userId,
@@ -56663,9 +57288,9 @@ async function getRecentEvents(opts) {
   const { userId, subsystem, severity, limit = 50, sinceMinutes, excludePatternDetected = false } = opts;
   try {
     const conditions = [];
-    if (userId) conditions.push(eq79(diagnosticEvents.userId, userId));
-    if (subsystem) conditions.push(eq79(diagnosticEvents.subsystem, subsystem));
-    if (severity) conditions.push(eq79(diagnosticEvents.severity, severity));
+    if (userId) conditions.push(eq81(diagnosticEvents.userId, userId));
+    if (subsystem) conditions.push(eq81(diagnosticEvents.subsystem, subsystem));
+    if (severity) conditions.push(eq81(diagnosticEvents.severity, severity));
     if (sinceMinutes) {
       const since = new Date(Date.now() - sinceMinutes * 60 * 1e3);
       conditions.push(gte14(diagnosticEvents.createdAt, since));
@@ -56689,16 +57314,16 @@ async function runHealthCheck(userId) {
   let stuckWorkflowCount = 0;
   try {
     const [depthRows, staleRows, stuckWfRows] = await Promise.all([
-      db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(eq79(agentJobs.status, "queued")),
+      db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(eq81(agentJobs.status, "queued")),
       db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(
         and58(
-          eq79(agentJobs.status, "running"),
+          eq81(agentJobs.status, "running"),
           sqlExpr`${agentJobs.startedAt} < ${new Date(now.getTime() - 10 * 60 * 1e3)}`
         )
       ),
       db.select({ count: sqlExpr`count(*)::int` }).from(agentWorkflows).where(
         and58(
-          eq79(agentWorkflows.status, "running"),
+          eq81(agentWorkflows.status, "running"),
           sqlExpr`${agentWorkflows.updatedAt} < ${new Date(now.getTime() - 30 * 60 * 1e3)}`
         )
       )
@@ -56766,15 +57391,15 @@ async function runHealthCheck(userId) {
     DIAGNOSTIC_SUBSYSTEMS.map(async (sub) => {
       try {
         const errorConditions = [
-          eq79(diagnosticEvents.subsystem, sub),
-          eq79(diagnosticEvents.resolved, false),
+          eq81(diagnosticEvents.subsystem, sub),
+          eq81(diagnosticEvents.resolved, false),
           gte14(diagnosticEvents.createdAt, windowStart),
           sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
           sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`
         ];
-        if (userId) errorConditions.push(eq79(diagnosticEvents.userId, userId));
-        const lastEventConditions = [eq79(diagnosticEvents.subsystem, sub)];
-        if (userId) lastEventConditions.push(eq79(diagnosticEvents.userId, userId));
+        if (userId) errorConditions.push(eq81(diagnosticEvents.userId, userId));
+        const lastEventConditions = [eq81(diagnosticEvents.subsystem, sub)];
+        if (userId) lastEventConditions.push(eq81(diagnosticEvents.userId, userId));
         const [recentErrorRows, lastEventRows] = await Promise.all([
           db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and58(...errorConditions)),
           db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and58(...lastEventConditions)).orderBy(desc25(diagnosticEvents.createdAt)).limit(1)
@@ -56854,24 +57479,24 @@ async function runHealthCheck(userId) {
   let memoryReadErrors15m = 0;
   try {
     const memWriteConditions = [
-      eq79(diagnosticEvents.subsystem, "memory"),
-      eq79(diagnosticEvents.resolved, false),
+      eq81(diagnosticEvents.subsystem, "memory"),
+      eq81(diagnosticEvents.resolved, false),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
       gte14(diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
       sqlExpr`(${diagnosticEvents.metadata}->>'operation') = ANY(ARRAY[${MEMORY_WRITE_OPS.map((op) => `'${op}'`).join(",")}])`
     ];
     const memReadConditions = [
-      eq79(diagnosticEvents.subsystem, "memory"),
-      eq79(diagnosticEvents.resolved, false),
+      eq81(diagnosticEvents.subsystem, "memory"),
+      eq81(diagnosticEvents.resolved, false),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
       gte14(diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
       sqlExpr`(${diagnosticEvents.metadata}->>'operation') = ANY(ARRAY[${MEMORY_READ_OPS.map((op) => `'${op}'`).join(",")}])`
     ];
     if (userId) {
-      memWriteConditions.push(eq79(diagnosticEvents.userId, userId));
-      memReadConditions.push(eq79(diagnosticEvents.userId, userId));
+      memWriteConditions.push(eq81(diagnosticEvents.userId, userId));
+      memReadConditions.push(eq81(diagnosticEvents.userId, userId));
     }
     const [writeRows, readRows] = await Promise.all([
       db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and58(...memWriteConditions)),
@@ -57174,7 +57799,7 @@ __export(emotional_state_exports, {
   pruneEmotionalStateHistory: () => pruneEmotionalStateHistory,
   setManualStateOverride: () => setManualStateOverride
 });
-import { eq as eq80, desc as desc26, and as and59, gte as gte15, sql as sql28 } from "drizzle-orm";
+import { eq as eq82, desc as desc26, and as and59, gte as gte15, sql as sql28 } from "drizzle-orm";
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
@@ -57220,7 +57845,7 @@ async function gatherSignals(userId, tz, now) {
   } catch {
   }
   try {
-    const rows = await db.select().from(energyCheckins).where(eq80(energyCheckins.userId, userId)).orderBy(desc26(energyCheckins.updatedAt)).limit(3);
+    const rows = await db.select().from(energyCheckins).where(eq82(energyCheckins.userId, userId)).orderBy(desc26(energyCheckins.updatedAt)).limit(3);
     if (rows.length > 0) {
       const scores = [];
       for (const row of rows) {
@@ -57237,7 +57862,7 @@ async function gatherSignals(userId, tz, now) {
   }
   try {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3);
-    const recentPlans = await db.select().from(plans).where(eq80(plans.userId, userId)).orderBy(desc26(plans.updatedAt)).limit(7);
+    const recentPlans = await db.select().from(plans).where(eq82(plans.userId, userId)).orderBy(desc26(plans.updatedAt)).limit(7);
     let totalTasks = 0;
     let completedTasks = 0;
     for (const plan of recentPlans) {
@@ -57261,7 +57886,7 @@ async function gatherSignals(userId, tz, now) {
       const windowStart = new Date(now.getTime() - 16 * 60 * 60 * 1e3);
       const recentActivity = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
         and59(
-          eq80(interactionLog.userId, userId),
+          eq82(interactionLog.userId, userId),
           gte15(interactionLog.createdAt, windowStart)
         )
       ).orderBy(desc26(interactionLog.createdAt)).limit(20);
@@ -57279,8 +57904,8 @@ async function gatherSignals(userId, tz, now) {
   try {
     const recent = await db.select({ content: interactionLog.content }).from(interactionLog).where(
       and59(
-        eq80(interactionLog.userId, userId),
-        eq80(interactionLog.direction, "inbound")
+        eq82(interactionLog.userId, userId),
+        eq82(interactionLog.direction, "inbound")
       )
     ).orderBy(desc26(interactionLog.createdAt)).limit(10);
     if (recent.length > 0) {
@@ -57364,7 +57989,7 @@ async function computeBaseline(userId, now, tz) {
       dayOfWeek: userEmotionalStateHistory.dayOfWeek
     }).from(userEmotionalStateHistory).where(
       and59(
-        eq80(userEmotionalStateHistory.userId, userId),
+        eq82(userEmotionalStateHistory.userId, userId),
         gte15(userEmotionalStateHistory.recordedAt, windowStart)
       )
     ).orderBy(desc26(userEmotionalStateHistory.recordedAt)).limit(500);
@@ -57405,7 +58030,7 @@ async function computeAndStoreEmotionalState(userId, tz, now) {
   await appendToHistory(userId, stressScore, flowScore, label, now, tz);
   let prevState = null;
   try {
-    const rows = await db.select().from(userEmotionalState).where(eq80(userEmotionalState.userId, userId)).limit(1);
+    const rows = await db.select().from(userEmotionalState).where(eq82(userEmotionalState.userId, userId)).limit(1);
     prevState = rows[0] ?? null;
   } catch {
   }
@@ -57497,7 +58122,7 @@ async function computeAndStoreEmotionalState(userId, tz, now) {
         await notifyUser(userId, "stress_checkin", msg);
         logInteraction(userId, "notification", "outbound", msg, "stress_checkin").catch(() => {
         });
-        await db.update(userEmotionalState).set({ lastStressCheckinAt: now, updatedAt: now }).where(eq80(userEmotionalState.userId, userId));
+        await db.update(userEmotionalState).set({ lastStressCheckinAt: now, updatedAt: now }).where(eq82(userEmotionalState.userId, userId));
         console.log(`[EmotionalState] stress check-in sent to ${userId}`);
       } catch (err2) {
         console.error("[EmotionalState] stress check-in send failed:", err2);
@@ -57514,7 +58139,7 @@ async function computeAndStoreEmotionalState(userId, tz, now) {
 }
 async function getEmotionalState(userId) {
   try {
-    const rows = await db.select().from(userEmotionalState).where(eq80(userEmotionalState.userId, userId)).limit(1);
+    const rows = await db.select().from(userEmotionalState).where(eq82(userEmotionalState.userId, userId)).limit(1);
     return rows[0] ?? null;
   } catch {
     return null;
@@ -57652,7 +58277,7 @@ __export(promptContext_exports, {
   EMPTY_AI_CONTEXT: () => EMPTY_AI_CONTEXT,
   buildAiContextSections: () => buildAiContextSections
 });
-import { eq as eq81, sql as sql29 } from "drizzle-orm";
+import { eq as eq83, sql as sql29 } from "drizzle-orm";
 async function buildAiContextSections(userId, seedQuery) {
   if (!userId) return EMPTY_AI_CONTEXT;
   const out = { ...EMPTY_AI_CONTEXT };
@@ -57740,7 +58365,7 @@ Relevant memories:
     console.error("[promptContext] emotional state load failed", err2);
   }
   try {
-    const vaultPages = await db.select({ slug: knowledgeVaultPages.slug, content: knowledgeVaultPages.content }).from(knowledgeVaultPages).where(eq81(knowledgeVaultPages.userId, userId));
+    const vaultPages = await db.select({ slug: knowledgeVaultPages.slug, content: knowledgeVaultPages.content }).from(knowledgeVaultPages).where(eq83(knowledgeVaultPages.userId, userId));
     const aboutYou = vaultPages.find((p) => p.slug === "about-you");
     const patterns = vaultPages.find((p) => p.slug === "patterns");
     const parts = [];
@@ -58056,620 +58681,6 @@ async function getSlackMessages(accessToken) {
 var init_slack = __esm({
   "server/integrations/slack.ts"() {
     "use strict";
-  }
-});
-
-// server/auth.ts
-import { Router as Router3 } from "express";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import { eq as eq82 } from "drizzle-orm";
-import crypto7 from "crypto";
-function getJwtSecret() {
-  if (process.env.JWT_SECRET) {
-    return process.env.JWT_SECRET;
-  }
-  const generated = crypto7.randomBytes(32).toString("hex");
-  process.env.JWT_SECRET = generated;
-  console.log("Generated JWT_SECRET (set JWT_SECRET env var for persistent tokens across restarts)");
-  return generated;
-}
-function generateToken(userId) {
-  return jwt.sign({ userId, scope: "user" }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
-}
-function generateWebchatToken(userId) {
-  return jwt.sign({ userId, scope: "webchat" }, JWT_SECRET, { expiresIn: "24h" });
-}
-function isWebchatScopedPath(req) {
-  if (req.method === "GET" && req.path === "/api/webchat/events") return true;
-  if (req.method === "POST" && req.path === "/api/coach/chat") return true;
-  if (["GET", "PUT", "DELETE"].includes(req.method) && req.path === "/api/data/chat-history") return true;
-  if (["GET", "PUT"].includes(req.method) && req.path === "/api/data/coach-session-id") return true;
-  return false;
-}
-function stripPort(host) {
-  const trimmed = host.trim().toLowerCase();
-  if (trimmed.startsWith("[::1]")) return "::1";
-  return trimmed.split(":")[0] || trimmed;
-}
-function isLoopbackHost(host) {
-  if (!host) return false;
-  const normalised = stripPort(host.split(",")[0] || "");
-  return normalised === "localhost" || normalised === "127.0.0.1" || normalised === "::1";
-}
-function isLoopbackIp(ip) {
-  if (!ip) return true;
-  const normalised = ip.trim().toLowerCase();
-  return normalised === "::1" || normalised === "127.0.0.1" || normalised === "::ffff:127.0.0.1" || normalised.startsWith("127.");
-}
-function isLocalDashboardRequest(req) {
-  const host = req.headers["x-forwarded-host"] || req.headers.host;
-  if (!isLoopbackHost(host)) return false;
-  const forwardedFor = req.headers["x-forwarded-for"]?.split(",").map((ip) => ip.trim()).filter(Boolean);
-  if (forwardedFor?.length && !forwardedFor.every(isLoopbackIp)) return false;
-  return isLoopbackIp(req.socket.remoteAddress);
-}
-async function authMiddleware(req, res, next) {
-  if (req.path.startsWith("/api/auth/")) {
-    return next();
-  }
-  if (req.path === "/api/oauth/google/callback" || req.path === "/api/oauth/microsoft/callback") {
-    return next();
-  }
-  if (!req.path.startsWith("/api/")) {
-    return next();
-  }
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Authentication required" });
-  }
-  try {
-    const token = authHeader.slice(7);
-    const dashSecret = process.env.DASHBOARD_SECRET;
-    if (dashSecret && token === dashSecret && isLocalDashboardRequest(req)) {
-      const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
-      if (firstUser) {
-        req.userId = firstUser.id;
-        req.authScope = "user";
-        return next();
-      }
-    }
-    const payload = jwt.verify(token, JWT_SECRET);
-    if (payload.scope === "webchat" && !isWebchatScopedPath(req)) {
-      return res.status(403).json({ error: "Webchat token is not allowed for this endpoint" });
-    }
-    req.userId = payload.userId;
-    req.authScope = payload.scope === "webchat" ? "webchat" : "user";
-    next();
-  } catch {
-    return res.status(401).json({ error: "Invalid or expired token" });
-  }
-}
-async function getUserIdFromRequest(req) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith("Bearer ")) return null;
-  try {
-    const token = authHeader.slice(7);
-    const dashSecret = process.env.DASHBOARD_SECRET;
-    if (dashSecret && token === dashSecret && isLocalDashboardRequest(req)) {
-      const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
-      return firstUser?.id ?? null;
-    }
-    const payload = jwt.verify(token, JWT_SECRET);
-    if (payload.scope === "webchat" && !isWebchatScopedPath(req)) return null;
-    return payload.userId ?? null;
-  } catch {
-    return null;
-  }
-}
-var JWT_SECRET, TOKEN_EXPIRY, authRouter;
-var init_auth = __esm({
-  "server/auth.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    JWT_SECRET = getJwtSecret();
-    TOKEN_EXPIRY = "30d";
-    authRouter = Router3();
-    authRouter.post("/register", async (req, res) => {
-      try {
-        const { username, password } = req.body;
-        if (!username || !password) {
-          return res.status(400).json({ error: "Username and password are required" });
-        }
-        if (username.length < 3) {
-          return res.status(400).json({ error: "Username must be at least 3 characters" });
-        }
-        if (password.length < 6) {
-          return res.status(400).json({ error: "Password must be at least 6 characters" });
-        }
-        const existing = await db.select().from(users).where(eq82(users.username, username)).limit(1);
-        if (existing.length > 0) {
-          return res.status(409).json({ error: "Username already taken" });
-        }
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const [user] = await db.insert(users).values({
-          username,
-          password: hashedPassword
-        }).returning();
-        const token = generateToken(user.id);
-        res.status(201).json({
-          token,
-          userId: user.id,
-          username: user.username
-        });
-      } catch (error) {
-        console.error("Registration error:", error);
-        res.status(500).json({ error: "Failed to create account" });
-      }
-    });
-    authRouter.post("/login", async (req, res) => {
-      try {
-        const { username, password } = req.body;
-        if (!username || !password) {
-          return res.status(400).json({ error: "Username and password are required" });
-        }
-        const [user] = await db.select().from(users).where(eq82(users.username, username)).limit(1);
-        if (!user) {
-          return res.status(401).json({ error: "Invalid username or password" });
-        }
-        if (!user.password) {
-          return res.status(401).json({ error: "This account uses Google Sign-In" });
-        }
-        const valid = await bcrypt.compare(password, user.password);
-        if (!valid) {
-          return res.status(401).json({ error: "Invalid username or password" });
-        }
-        const token = generateToken(user.id);
-        res.json({
-          token,
-          userId: user.id,
-          username: user.username
-        });
-      } catch (error) {
-        console.error("Login error:", error);
-        res.status(500).json({ error: "Failed to log in" });
-      }
-    });
-    authRouter.post("/google", async (req, res) => {
-      try {
-        const { idToken, accessToken } = req.body;
-        if (!idToken && !accessToken) {
-          return res.status(400).json({ error: "ID token or access token is required" });
-        }
-        let googleUser;
-        if (idToken) {
-          const tokenInfoRes = await fetch(
-            `https://oauth2.googleapis.com/tokeninfo?id_token=${idToken}`
-          );
-          if (!tokenInfoRes.ok) {
-            return res.status(401).json({ error: "Invalid Google ID token" });
-          }
-          const tokenInfo = await tokenInfoRes.json();
-          if (tokenInfo.error_description) {
-            return res.status(401).json({ error: "Invalid Google ID token" });
-          }
-          const validClientIds = [
-            process.env.GOOGLE_WEB_CLIENT_ID,
-            process.env.GOOGLE_IOS_CLIENT_ID,
-            process.env.GOOGLE_ANDROID_CLIENT_ID
-          ].filter(Boolean);
-          if (validClientIds.length > 0 && tokenInfo.aud && !validClientIds.includes(tokenInfo.aud)) {
-            return res.status(401).json({ error: "Token audience mismatch" });
-          }
-          if (!tokenInfo.sub) {
-            return res.status(401).json({ error: "Could not retrieve Google user info" });
-          }
-          googleUser = { id: tokenInfo.sub, name: tokenInfo.name, email: tokenInfo.email };
-        } else {
-          const userInfoRes = await fetch(
-            `https://www.googleapis.com/userinfo/v2/me`,
-            { headers: { Authorization: `Bearer ${accessToken}` } }
-          );
-          if (!userInfoRes.ok) {
-            return res.status(401).json({ error: "Invalid Google access token" });
-          }
-          const info = await userInfoRes.json();
-          if (!info.id) {
-            return res.status(401).json({ error: "Could not retrieve Google user info" });
-          }
-          googleUser = info;
-        }
-        if (!googleUser.id) {
-          return res.status(401).json({ error: "Could not retrieve Google user info" });
-        }
-        const existing = await db.select().from(users).where(eq82(users.googleId, googleUser.id)).limit(1);
-        let user;
-        if (existing.length > 0) {
-          user = existing[0];
-          const updates = {};
-          if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
-          if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
-          if (Object.keys(updates).length > 0) {
-            await db.update(users).set(updates).where(eq82(users.id, user.id));
-            user = { ...user, ...updates };
-          }
-        } else {
-          const username = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
-          let uniqueUsername = username;
-          const existingUsername = await db.select().from(users).where(eq82(users.username, username)).limit(1);
-          if (existingUsername.length > 0) {
-            uniqueUsername = `${username}_${Date.now().toString(36)}`;
-          }
-          const [newUser] = await db.insert(users).values({
-            username: uniqueUsername,
-            googleId: googleUser.id,
-            displayName: googleUser.name || uniqueUsername,
-            email: googleUser.email || null
-          }).returning();
-          user = newUser;
-        }
-        const token = generateToken(user.id);
-        res.json({
-          token,
-          userId: user.id,
-          username: user.displayName || user.username,
-          email: user.email || null
-        });
-      } catch (error) {
-        console.error("Google auth error:", error);
-        res.status(500).json({ error: "Failed to authenticate with Google" });
-      }
-    });
-    authRouter.get("/me", async (req, res) => {
-      try {
-        const authHeader = req.headers.authorization;
-        if (!authHeader?.startsWith("Bearer ")) {
-          return res.status(401).json({ error: "No token provided" });
-        }
-        const token = authHeader.slice(7);
-        const payload = jwt.verify(token, JWT_SECRET);
-        if (payload.scope === "webchat") {
-          return res.status(401).json({ error: "Invalid token" });
-        }
-        const [user] = await db.select({
-          id: users.id,
-          username: users.username,
-          displayName: users.displayName,
-          email: users.email,
-          createdAt: users.createdAt
-        }).from(users).where(eq82(users.id, payload.userId)).limit(1);
-        if (!user) {
-          return res.status(401).json({ error: "User not found" });
-        }
-        res.json({
-          userId: user.id,
-          username: user.displayName || user.username,
-          email: user.email || null
-        });
-      } catch (error) {
-        return res.status(401).json({ error: "Invalid token" });
-      }
-    });
-  }
-});
-
-// server/mobileAuthRoutes.ts
-import { Router as Router4 } from "express";
-import * as crypto8 from "crypto";
-import { eq as eq83, lt as lt5 } from "drizzle-orm";
-function sha256(value) {
-  return crypto8.createHash("sha256").update(value).digest("hex");
-}
-function timingSafeEqual3(a, b) {
-  const aBuffer = Buffer.from(a);
-  const bBuffer = Buffer.from(b);
-  if (aBuffer.length !== bBuffer.length) return false;
-  return crypto8.timingSafeEqual(aBuffer, bBuffer);
-}
-function readCookie(req, name) {
-  const raw = req.headers.cookie;
-  if (!raw) return null;
-  for (const part of raw.split(";")) {
-    const [key, ...value] = part.trim().split("=");
-    if (key === name) return decodeURIComponent(value.join("="));
-  }
-  return null;
-}
-function isValidSessionId(value) {
-  return /^[A-Za-z0-9_-]{24,128}$/.test(value);
-}
-function isValidPollSecret(value) {
-  return /^[A-Za-z0-9_-]{32,256}$/.test(value);
-}
-function createOauthState(sessionId) {
-  const nonce = crypto8.randomBytes(POLL_SECRET_BYTES).toString("base64url");
-  return `${sessionId}.${nonce}`;
-}
-function parseOauthState(state) {
-  const [sessionId, nonce, ...extra] = state.split(".");
-  if (!sessionId || !nonce || extra.length > 0) return null;
-  if (!isValidSessionId(sessionId) || !isValidSessionId(nonce)) return null;
-  return { sessionId, nonce };
-}
-function pendingTokenValue(oauthState, pollSecret, bindNonce) {
-  return `${PENDING_TOKEN_PREFIX}${sha256(oauthState)}:${sha256(pollSecret)}:${sha256(bindNonce)}`;
-}
-function parsePendingTokenValue(token) {
-  if (!token.startsWith(PENDING_TOKEN_PREFIX)) return null;
-  const rest = token.slice(PENDING_TOKEN_PREFIX.length);
-  const [stateHash, pollHash, bindHash, ...extra] = rest.split(":");
-  if (!stateHash || !pollHash || !bindHash || extra.length > 0) return null;
-  return { stateHash, pollHash, bindHash };
-}
-function completeTokenValue(pollHash, bindHash, token) {
-  return `${COMPLETE_TOKEN_PREFIX}${pollHash}:${bindHash}:${token}`;
-}
-function parseCompleteTokenValue(value) {
-  if (!value.startsWith(COMPLETE_TOKEN_PREFIX)) return null;
-  const rest = value.slice(COMPLETE_TOKEN_PREFIX.length);
-  const firstSeparator = rest.indexOf(":");
-  const secondSeparator = rest.indexOf(":", firstSeparator + 1);
-  if (firstSeparator <= 0 || secondSeparator <= firstSeparator) return null;
-  const pollHash = rest.slice(0, firstSeparator);
-  const bindHash = rest.slice(firstSeparator + 1, secondSeparator);
-  const token = rest.slice(secondSeparator + 1);
-  if (!pollHash || !bindHash || !token) return null;
-  return { pollHash, bindHash, token };
-}
-function getCallbackUrl(req) {
-  const proto = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.headers["x-forwarded-host"] || req.get("host") || "";
-  return `${proto}://${host}/api/auth/mobile/callback`;
-}
-function successHtml2(token) {
-  const encodedToken = encodeURIComponent(token);
-  const tokenJson = JSON.stringify(token);
-  const originFallback = `/login#auth_token=${encodedToken}`;
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Signed In \u2014 GamePlan</title>
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: #0f0f0f; color: #fff;
-      display: flex; align-items: center; justify-content: center;
-      min-height: 100vh; padding: 20px;
-    }
-    .card { text-align: center; max-width: 340px; }
-    .icon { font-size: 56px; margin-bottom: 20px; }
-    h2 { font-size: 22px; font-weight: 700; margin-bottom: 10px; }
-    p { color: #888; font-size: 15px; line-height: 1.5; }
-    .dots { display: inline-flex; gap: 6px; margin-top: 24px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #6366f1;
-           animation: pulse 1.2s ease-in-out infinite; }
-    .dot:nth-child(2) { animation-delay: 0.2s; }
-    .dot:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes pulse { 0%,80%,100% { opacity: 0.3; } 40% { opacity: 1; } }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div class="icon">\u2705</div>
-    <h2>Signed in successfully</h2>
-    <p>Taking you back to GamePlan...</p>
-    <div class="dots">
-      <div class="dot"></div>
-      <div class="dot"></div>
-      <div class="dot"></div>
-    </div>
-  </div>
-  <script>
-    try {
-      if (window.opener && !window.opener.closed) {
-        window.opener.postMessage({ type: 'gameplan-auth-token', token: ${tokenJson} }, window.location.origin);
-        window.close();
-      }
-    } catch(e) {}
-    try {
-      window.location.href = 'gameplan://auth/complete?token=${encodedToken}';
-    } catch(e) {}
-    setTimeout(function () {
-      try {
-        window.location.replace('${originFallback}');
-      } catch(e) {}
-    }, 800);
-  </script>
-</body>
-</html>`;
-}
-function errorHtml2(message) {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Error \u2014 GamePlan</title>
-  <style>
-    body { font-family: sans-serif; background: #0f0f0f; color: #fff;
-           display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-    .card { text-align: center; padding: 40px; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <div style="font-size:48px;margin-bottom:16px">\u274C</div>
-    <h2>Sign-in Failed</h2>
-    <p style="color:#888;margin-top:8px">${message}</p>
-    <p style="color:#555;margin-top:20px;font-size:13px">You can close this tab and try again.</p>
-  </div>
-</body>
-</html>`;
-}
-var mobileAuthRouter, PENDING_TOKEN_PREFIX, COMPLETE_TOKEN_PREFIX, POLL_SECRET_BYTES, BIND_COOKIE_NAME;
-var init_mobileAuthRoutes = __esm({
-  "server/mobileAuthRoutes.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_auth();
-    mobileAuthRouter = Router4();
-    PENDING_TOKEN_PREFIX = "__PENDING__:";
-    COMPLETE_TOKEN_PREFIX = "__COMPLETE__:";
-    POLL_SECRET_BYTES = 24;
-    BIND_COOKIE_NAME = "mobile_auth_bind";
-    mobileAuthRouter.get("/start", async (req, res) => {
-      const { session_id, poll_secret } = req.query;
-      if (!session_id) return res.status(400).json({ error: "session_id required" });
-      if (!isValidSessionId(session_id)) return res.status(400).json({ error: "invalid session_id" });
-      const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
-      if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
-      const oauthState = createOauthState(session_id);
-      const bindNonce = crypto8.randomBytes(POLL_SECRET_BYTES).toString("base64url");
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
-      if (poll_secret) {
-        if (!isValidPollSecret(poll_secret)) return res.status(400).json({ error: "invalid poll_secret" });
-        await db.insert(mobileAuthSessions).values({
-          sessionId: session_id,
-          token: pendingTokenValue(oauthState, poll_secret, bindNonce),
-          expiresAt
-        }).onConflictDoUpdate({
-          target: mobileAuthSessions.sessionId,
-          set: {
-            token: pendingTokenValue(oauthState, poll_secret, bindNonce),
-            expiresAt
-          }
-        });
-      }
-      res.cookie(BIND_COOKIE_NAME, bindNonce, {
-        httpOnly: true,
-        secure: req.secure || req.headers["x-forwarded-proto"] === "https",
-        sameSite: "lax",
-        maxAge: 10 * 60 * 1e3,
-        path: "/api/auth/mobile"
-      });
-      const callbackUrl = getCallbackUrl(req);
-      const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: callbackUrl,
-        response_type: "code",
-        scope: "openid email profile",
-        state: oauthState,
-        access_type: "offline",
-        prompt: "select_account",
-        max_age: "0"
-      });
-      res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
-    });
-    mobileAuthRouter.get("/callback", async (req, res) => {
-      const { code, state, error } = req.query;
-      if (error || !code || !state) {
-        return res.send(errorHtml2(error || "Sign-in was cancelled."));
-      }
-      const parsedState = parseOauthState(state);
-      if (!parsedState) {
-        return res.send(errorHtml2("Invalid sign-in state. Please try again."));
-      }
-      const { sessionId } = parsedState;
-      const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
-      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-      if (!clientId || !clientSecret) {
-        return res.send(errorHtml2("OAuth credentials not configured on the server."));
-      }
-      const callbackUrl = getCallbackUrl(req);
-      try {
-        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({
-            code,
-            client_id: clientId,
-            client_secret: clientSecret,
-            redirect_uri: callbackUrl,
-            grant_type: "authorization_code"
-          })
-        });
-        const tokenData = await tokenRes.json();
-        if (!tokenData.id_token && !tokenData.access_token) {
-          console.error("Mobile auth token exchange failed:", tokenData);
-          return res.send(errorHtml2("Failed to exchange authorization code. Please try again."));
-        }
-        let googleUser;
-        if (tokenData.id_token) {
-          const infoRes = await fetch(
-            `https://oauth2.googleapis.com/tokeninfo?id_token=${tokenData.id_token}`
-          );
-          const info = await infoRes.json();
-          if (!info.sub) return res.send(errorHtml2("Could not retrieve Google user info."));
-          googleUser = { id: info.sub, name: info.name, email: info.email };
-        } else {
-          const infoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
-            headers: { Authorization: `Bearer ${tokenData.access_token}` }
-          });
-          const info = await infoRes.json();
-          if (!info.id) return res.send(errorHtml2("Could not retrieve Google user info."));
-          googleUser = { id: info.id, name: info.name, email: info.email };
-        }
-        const existing = await db.select().from(users).where(eq83(users.googleId, googleUser.id)).limit(1);
-        let user;
-        if (existing.length > 0) {
-          user = existing[0];
-          const updates = {};
-          if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
-          if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
-          if (Object.keys(updates).length > 0) {
-            await db.update(users).set(updates).where(eq83(users.id, user.id));
-            user = { ...user, ...updates };
-          }
-        } else {
-          const base = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
-          let uniqueUsername = base;
-          const existingUsername = await db.select().from(users).where(eq83(users.username, base)).limit(1);
-          if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
-          const [newUser] = await db.insert(users).values({
-            username: uniqueUsername,
-            googleId: googleUser.id,
-            displayName: googleUser.name || uniqueUsername,
-            email: googleUser.email || null
-          }).returning();
-          user = newUser;
-        }
-        const token = generateToken(user.id);
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
-        const pendingRows = await db.select().from(mobileAuthSessions).where(eq83(mobileAuthSessions.sessionId, sessionId)).limit(1);
-        const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
-        const bindNonce = readCookie(req, BIND_COOKIE_NAME);
-        if (pending && bindNonce && timingSafeEqual3(pending.stateHash, sha256(state)) && timingSafeEqual3(pending.bindHash, sha256(bindNonce))) {
-          await db.update(mobileAuthSessions).set({ token: completeTokenValue(pending.pollHash, pending.bindHash, token), expiresAt }).where(eq83(mobileAuthSessions.sessionId, sessionId));
-        }
-        return res.send(successHtml2(token));
-      } catch (err2) {
-        console.error("Mobile auth callback error:", err2);
-        return res.send(errorHtml2("An unexpected error occurred. Please try again."));
-      }
-    });
-    mobileAuthRouter.get("/poll", async (req, res) => {
-      const { session_id, poll_secret } = req.query;
-      if (!session_id) return res.status(400).json({ error: "session_id required" });
-      if (!poll_secret) return res.status(400).json({ error: "poll_secret required" });
-      if (!isValidSessionId(session_id) || !isValidPollSecret(poll_secret)) {
-        return res.status(400).json({ error: "invalid polling credentials" });
-      }
-      try {
-        await db.delete(mobileAuthSessions).where(lt5(mobileAuthSessions.expiresAt, /* @__PURE__ */ new Date()));
-        const rows = await db.select().from(mobileAuthSessions).where(eq83(mobileAuthSessions.sessionId, session_id)).limit(1);
-        if (rows.length === 0) {
-          return res.status(404).json({ ready: false });
-        }
-        const session = rows[0];
-        if (parsePendingTokenValue(session.token)) {
-          return res.status(404).json({ ready: false });
-        }
-        const completed = parseCompleteTokenValue(session.token);
-        const bindNonce = readCookie(req, BIND_COOKIE_NAME);
-        if (!completed || !bindNonce || !timingSafeEqual3(completed.pollHash, sha256(poll_secret)) || !timingSafeEqual3(completed.bindHash, sha256(bindNonce))) {
-          return res.status(404).json({ ready: false });
-        }
-        await db.delete(mobileAuthSessions).where(eq83(mobileAuthSessions.sessionId, session_id));
-        return res.json({ ready: true, token: completed.token });
-      } catch (err2) {
-        console.error("Mobile auth poll error:", err2);
-        return res.status(500).json({ ready: false, error: "Internal error" });
-      }
-    });
   }
 });
 

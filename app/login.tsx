@@ -348,7 +348,7 @@ export default function LoginScreen() {
 
   function googleConfigHelp(errorMessage?: string) {
     const base = errorMessage || "Google sign-in could not finish.";
-    return `${base} In Google Cloud Console, make sure this OAuth client allows the JavaScript origin https://gameplanjarvisai.up.railway.app and redirect URI https://gameplanjarvisai.up.railway.app/api/auth/mobile/callback.`;
+    return `${base} In Google Cloud Console, make sure this OAuth client allows the JavaScript origin https://gameplanjarvisai.up.railway.app and redirect URI https://gameplanjarvisai.up.railway.app/api/oauth/google/callback.`;
   }
 
   async function handleGooglePress() {
@@ -358,13 +358,16 @@ export default function LoginScreen() {
     if (Platform.OS === "web") {
       setLoading(true);
       try {
-        await handleWebGoogleRedirectSignIn();
+        await handleWebGoogleTokenSignIn();
       } catch (e: any) {
-        console.warn("[GoogleAuth] Browser redirect sign-in failed:", e);
-        setError(googleConfigHelp(e.message));
-        setLoading(false);
-      } finally {
-        // Successful web sign-in navigates away and returns through /login#auth_token.
+        console.warn("[GoogleAuth] Browser popup sign-in failed; trying redirect fallback:", e);
+        try {
+          handleWebGoogleRedirectSignIn();
+        } catch (redirectErr: any) {
+          console.warn("[GoogleAuth] Browser redirect sign-in failed:", redirectErr);
+          setError(googleConfigHelp(redirectErr.message || e.message));
+          setLoading(false);
+        }
       }
       return;
     }
