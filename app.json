@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["gameplan", "jarvis"],
+    "scheme": [
+      "gameplan",
+      "jarvis"
+    ],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -29,9 +32,15 @@
         {
           "action": "VIEW",
           "data": [
-            { "scheme": "jarvis", "host": "voice-realtime" }
+            {
+              "scheme": "jarvis",
+              "host": "voice-realtime"
+            }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -51,6 +60,15 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {
+        "origin": "https://replit.com/"
+      },
+      "eas": {
+        "projectId": "8d5e2929-109d-43f4-ad23-45ef5731dfc3"
+      }
+    },
+    "owner": "wickedclown.jb"
   }
 }

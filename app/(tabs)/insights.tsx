@@ -68,6 +68,7 @@ import { getApiUrl, queryClient, apiRequest } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
 import { Linking, Image } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface EmailSuggestion {
   title: string;
@@ -92,6 +93,16 @@ const SUGGESTED_PROMPTS = [
   "Help me with my financial goals",
   "I'm struggling to stay consistent",
 ];
+
+const COMMITMENTS_COLLAPSED_KEY = '@gameplan_commitments_collapsed';
+
+function isNoisyChatFailure(message: ChatMessage, index: number): boolean {
+  if (message.role !== 'assistant' || index < 6) return false;
+  const content = message.content.toLowerCase();
+  return content.includes('failed to get coach response')
+    || content.includes('failed to get response')
+    || content.includes('something went wrong while talking to jarvis');
+}
 
 const CONTEXT_WINDOW = 12;
 
@@ -811,6 +822,26 @@ export default function InsightsScreen() {
       micPulse.value = withTiming(1, { duration: 200 });
     }
   }, [isRecording, micPulse]);
+
+  useEffect(() => {
+    AsyncStorage.getItem(COMMITMENTS_COLLAPSED_KEY)
+      .then((value) => {
+        if (value === '1') setCommitmentsCollapsed(true);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.setItem(COMMITMENTS_COLLAPSED_KEY, commitmentsCollapsed ? '1' : '0').catch(() => {});
+  }, [commitmentsCollapsed]);
+
+  useEffect(() => {
+    if (!messages[0]?.id || messages.length === 0) return;
+    if (hasScrolledRef.current && messages[0]?.role !== 'user') return;
+    requestAnimationFrame(() => {
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+    });
+  }, [messages]);
 
   useEffect(() => {
     if (isSpeaking) {
@@ -1922,6 +1953,7 @@ export default function InsightsScreen() {
     }
     const userMsg: ChatMessage = { id: generateId(), role: 'user', content: text.trim() };
     const assistantId = generateId();
+    hasScrolledRef.current = false;
 
     setMessages(prev => {
       const updated = [userMsg, ...prev];
@@ -2440,16 +2472,26 @@ export default function InsightsScreen() {
   }, [confirmClear]);
 
   const lastAssistantId = messages.find(m => m.role === 'assistant')?.id;
-  const totalMessages = messages.length;
+  const visibleMessages = messages.filter((m, index) => !isNoisyChatFailure(m, index));
+  const hiddenFailureCount = messages.length - visibleMessages.length;
+  const totalMessages = visibleMessages.length;
   const showDivider = totalMessages > CONTEXT_WINDOW;
 
-  const listData: (ChatMessage | { type: 'divider'; id: string })[] = showDivider
+  const listData: (ChatMessage | { type: 'divider'; id: string; label?: string })[] = showDivider
     ? [
-        ...messages.slice(0, CONTEXT_WINDOW),
+        ...visibleMessages.slice(0, CONTEXT_WINDOW),
         { type: 'divider' as const, id: 'divider' },
-        ...messages.slice(CONTEXT_WINDOW),
+        ...visibleMessages.slice(CONTEXT_WINDOW),
       ]
-    : messages;
+    : visibleMessages;
+
+  if (hiddenFailureCount > 0) {
+    listData.push({
+      type: 'divider' as const,
+      id: 'hidden-failures',
+      label: `${hiddenFailureCount} older failed ${hiddenFailureCount === 1 ? 'reply' : 'replies'} hidden`,
+    });
+  }
 
   const handleDiscordConnect = useCallback(async () => {
     setDiscordPairInput('');
@@ -2519,12 +2561,12 @@ export default function InsightsScreen() {
     })();
   }, [discordPhase, discordConnectVisible]);
 
-  const renderItem = useCallback(({ item, index }: { item: ChatMessage | { type: 'divider'; id: string }; index: number }) => {
+  const renderItem = useCallback(({ item, index }: { item: ChatMessage | { type: 'divider'; id: string; label?: string }; index: number }) => {
     if ('type' in item && item.type === 'divider') {
       return (
         <View style={styles.dividerRow}>
           <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>Earlier messages not sent to coach</Text>
+          <Text style={styles.dividerText}>{item.label ?? 'Earlier messages not sent to coach'}</Text>
           <View style={styles.dividerLine} />
         </View>
       );
@@ -2910,7 +2952,16 @@ export default function InsightsScreen() {
           editable={!isStreaming && !isRecording && !isTranscribing && !isBaseLoading}
           returnKeyType="send"
           blurOnSubmit={false}
-          onSubmitEditing={() => sendMessage(input)}
+          onSubmitEditing={() => {
+            if (Platform.OS !== 'web') sendMessage(input);
+          }}
+          onKeyPress={(event) => {
+            const nativeEvent = event.nativeEvent as typeof event.nativeEvent & { shiftKey?: boolean };
+            if (Platform.OS === 'web' && nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && input.trim()) {
+              (event as unknown as { preventDefault?: () => void }).preventDefault?.();
+              sendMessage(input);
+            }
+          }}
         />
         {isStreaming ? (
           <Pressable style={styles.stopBtn} onPress={handleStop}>

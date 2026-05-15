@@ -1272,6 +1272,8 @@ export async function resetStats(): Promise<void> {
 const CURRENT_MIGRATION_VERSION = 2;
 export async function runMigrations(): Promise<void> {
   try {
+    const token = await getAuthToken();
+    if (!token) return;
     const result = await apiGet('/api/data/user-preferences');
     const prefs = (result.data || {}) as UserPreferencesData;
     const version = prefs.migrationVersion || 0;

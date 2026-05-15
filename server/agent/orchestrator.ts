@@ -26,6 +26,7 @@ import { orchestrationTraces } from "@shared/schema";
 import type { ToolContext } from "./types";
 import type { AgentTool } from "./types";
 import { detectTournamentSignals } from "./tournamentRunner";
+import { routeModelTurn } from "./modelRouter";
 
 /** Default maximum retries per sub-task when not overridden by caller or env. */
 const DEFAULT_MAX_RETRIES = 3;
@@ -645,17 +646,17 @@ export async function verifyJobOutput(opts: {
     JOB_QUALITY_CRITERIA[opts.agentType] ?? JOB_QUALITY_CRITERIA.custom_agent;
 
   try {
-    const verifyPromise = anthropic.messages.create({
-      model: opts.orchestratorModel,
-      max_tokens: 512,
-      system:
-        `You are a strict quality verifier for background agent jobs. ` +
-        `Evaluate whether the agent's output meets the quality bar for its type. ` +
-        `Respond with JSON only — no other text: {"passed": true/false, "reason": "brief explanation"}`,
+    const verifyPromise = routeModelTurn({
+      tier: "smart",
+      maxCompletionTokens: 512,
+      stream: false,
+      toolChoice: "none",
+      logPrefix: "[JobVerifier]",
       messages: [
         {
           role: "user",
           content: [
+            `Verifier instruction: evaluate whether the agent output meets the quality bar. Return JSON only: {"passed": true/false, "reason": "brief explanation"}`,
             `Agent type: ${opts.agentType}`,
             `Quality criterion: ${criteria}`,
             `Original prompt: ${opts.originalPrompt}`,
@@ -671,8 +672,7 @@ export async function verifyJobOutput(opts: {
     );
 
     const response = await Promise.race([verifyPromise, timeoutPromise]);
-    const content = response.content[0];
-    const text = content.type === "text" ? content.text : "";
+    const text = response.textContent ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       // Unparseable response — treat as unknown (fail-open)

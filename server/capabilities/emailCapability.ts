@@ -2,6 +2,7 @@ import type { Capability } from "./types";
 import { gmailActionTool, gmailDraftTool } from "../agent/tools/gmailActions";
 import { sendEmailTool } from "../agent/tools/sendEmail";
 import { fetchEmailsTool } from "../agent/tools/fetchEmails";
+import { getGoogleOAuthConfigStatus } from "./googleOAuthConfig";
 
 export const emailCapability: Capability = {
   id: "email",
@@ -22,14 +23,18 @@ export const emailCapability: Capability = {
     },
   ],
   configRequirements: [
-    { key: "GOOGLE_CLIENT_ID", label: "Google OAuth Client ID", optional: true },
+    { key: "GOOGLE_WEB_CLIENT_ID", label: "Google OAuth Web Client ID", optional: true },
     { key: "MICROSOFT_CLIENT_ID", label: "Microsoft OAuth Client ID", optional: true },
   ],
   async healthCheck() {
-    const hasGoogle = !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+    const googleStatus = getGoogleOAuthConfigStatus();
+    const hasGoogle = googleStatus.configured;
     const hasMicrosoft = !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
     if (!hasGoogle && !hasMicrosoft) {
-      return { healthy: false, reason: "Neither Google nor Microsoft OAuth credentials are configured" };
+      return {
+        healthy: false,
+        reason: `${googleStatus.configured ? "Google OAuth configured" : googleStatus.reason}; Microsoft OAuth credentials are not configured`,
+      };
     }
     return { healthy: true };
   },

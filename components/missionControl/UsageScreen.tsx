@@ -50,6 +50,25 @@ interface UsageResponse {
   recent: RecentUsage[];
 }
 
+interface ProviderHealthResponse {
+  checkedAt: string;
+  allOk: boolean;
+  results: Array<{
+    provider: string;
+    ok: boolean;
+    durationMs: number;
+    error?: string;
+    result?: { textContent?: string; finishReason?: string | null };
+  }>;
+  routeChains?: Record<string, Array<{ provider: string; model: string }>>;
+  codexGateway?: {
+    enabled: boolean;
+    gatewayUrlConfigured: boolean;
+    gatewayTokenConfigured: boolean;
+    localCommandConfigured: boolean;
+  };
+}
+
 const WINDOWS = [1, 7, 30] as const;
 
 function formatNumber(value: number): string {
@@ -78,6 +97,7 @@ function formatRelative(dt: string | null): string {
 
 function providerColor(provider: string): string {
   const key = provider.toLowerCase();
+  if (key.includes('codex') || key.includes('chatgpt')) return Colors.violet;
   if (key.includes('claude')) return Colors.warning;
   if (key.includes('compatible') || key.includes('openrouter')) return Colors.cyan;
   return Colors.green;
@@ -176,6 +196,50 @@ function RecentRow({ item }: { item: RecentUsage }) {
   );
 }
 
+function ProviderHealthCard({ data }: { data?: ProviderHealthResponse }) {
+  if (!data) return null;
+  const color = data.allOk ? Colors.green : Colors.warning;
+  const balancedChain = data.routeChains?.balanced ?? [];
+  const primary = balancedChain[0];
+  const codexReady = data.codexGateway?.enabled
+    && (data.codexGateway.gatewayUrlConfigured || data.codexGateway.localCommandConfigured)
+    && data.codexGateway.gatewayTokenConfigured;
+
+  return (
+    <View style={styles.providerCard}>
+      <View style={styles.providerHealthHeader}>
+        <View style={[styles.providerHealthIcon, { backgroundColor: color + '22' }]}>
+          <Ionicons name={data.allOk ? 'shield-checkmark-outline' : 'warning-outline'} size={16} color={color} />
+        </View>
+        <View style={styles.providerHealthText}>
+          <Text style={styles.providerHealthTitle}>Provider Health</Text>
+          <Text style={styles.providerHealthSub}>
+            {primary ? `${primary.provider} / ${primary.model}` : 'No route chain configured'}
+          </Text>
+        </View>
+        <Text style={[styles.providerHealthBadge, { color }]}>
+          {data.allOk ? 'ready' : 'check'}
+        </Text>
+      </View>
+
+      <View style={styles.providerRows}>
+        {data.results.map((result) => (
+          <View key={result.provider} style={styles.providerRow}>
+            <View style={[styles.recentDot, { backgroundColor: result.ok ? Colors.green : Colors.error }]} />
+            <Text style={styles.providerRowName}>{result.provider}</Text>
+            <Text style={styles.providerRowMeta}>{result.ok ? `${result.durationMs}ms` : result.error || 'failed'}</Text>
+          </View>
+        ))}
+        <View style={styles.providerRow}>
+          <View style={[styles.recentDot, { backgroundColor: codexReady ? Colors.green : Colors.warning }]} />
+          <Text style={styles.providerRowName}>Codex OAuth Gateway</Text>
+          <Text style={styles.providerRowMeta}>{codexReady ? 'configured' : 'incomplete'}</Text>
+        </View>
+      </View>
+    </View>
+  );
+}
+
 export default function UsageScreen() {
   const [days, setDays] = useState<(typeof WINDOWS)[number]>(7);
 
@@ -186,6 +250,16 @@ export default function UsageScreen() {
       return res.json();
     },
     refetchInterval: 30000,
+  });
+
+  const { data: providerHealth } = useQuery<ProviderHealthResponse>({
+    queryKey: ['/api/jarvis/provider-health'],
+    queryFn: async () => {
+      const res = await apiRequest('GET', '/api/jarvis/provider-health');
+      return res.json();
+    },
+    refetchInterval: 60000,
+    retry: 1,
   });
 
   const maxTokens = useMemo(
@@ -242,6 +316,8 @@ export default function UsageScreen() {
           })}
         </View>
       </View>
+
+      <ProviderHealthCard data={providerHealth} />
 
       <View style={styles.statsGrid}>
         <StatCard
@@ -340,6 +416,46 @@ const styles = StyleSheet.create({
   windowButtonActive: { backgroundColor: Colors.greenDim },
   windowText: { color: Colors.textTertiary, fontSize: 12, fontWeight: '700' },
   windowTextActive: { color: Colors.green },
+  providerCard: {
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+  },
+  providerHealthHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  providerHealthIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  providerHealthText: { flex: 1, minWidth: 0 },
+  providerHealthTitle: { color: Colors.text, fontSize: 13, fontWeight: '800' },
+  providerHealthSub: { color: Colors.textTertiary, fontSize: 11, marginTop: 2 },
+  providerHealthBadge: { fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
+  providerRows: {
+    gap: 8,
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  providerRow: {
+    minHeight: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  providerRowName: { flex: 1, minWidth: 0, color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
+  providerRowMeta: { color: Colors.textTertiary, fontSize: 11, flexShrink: 1, textAlign: 'right' },
   statsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',

@@ -166,6 +166,15 @@ export interface RosterAgent {
   } | null;
 }
 
+interface IntegrationReadiness {
+  status?: string;
+  accountLinked?: boolean;
+  serverConfigured?: boolean;
+  capabilityRunnable?: boolean;
+  blockedReason?: string | null;
+  readiness?: string;
+}
+
 const ROLE_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   coach: "fitness-outline",
   researcher: "search-outline",
@@ -234,6 +243,46 @@ const PLATFORM_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   mobile: "phone-portrait-outline",
   orchestrator: "git-network-outline",
 };
+
+function platformReadinessKey(platform: string): string | null {
+  if (platform === "telegram") return "telegram";
+  if (platform === "discord") return "discord";
+  if (platform === "slack") return "slack";
+  if (platform === "whatsapp") return "whatsapp";
+  return null;
+}
+
+function getRuntimeBadges(
+  agent: RosterAgent,
+  integrations?: Record<string, IntegrationReadiness>,
+): Array<{ label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> {
+  const badges: Array<{ label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = [];
+
+  if (agent.isActive !== 1) {
+    badges.push({ label: "disabled", color: Colors.textTertiary, icon: "power-outline" });
+  } else if (agent.heartbeatFailCount > 0 || agent.status === "stuck") {
+    badges.push({ label: "heartbeat blocked", color: Colors.error, icon: "warning-outline" });
+  } else if (agent.loopEnabled !== 1 && !agent.isCoreAgent) {
+    badges.push({ label: "loop paused", color: Colors.warning, icon: "pause-circle-outline" });
+  } else {
+    badges.push({ label: agent.loopEnabled === 1 ? "loop enabled" : "listener", color: Colors.success, icon: "radio-outline" });
+  }
+
+  const blockedPlatform = (agent.platforms ?? [])
+    .map((platform) => ({ platform, key: platformReadinessKey(platform) }))
+    .find(({ key }) => key && integrations?.[key] && integrations[key]?.capabilityRunnable === false);
+  if (blockedPlatform?.key) {
+    badges.push({
+      label: `${blockedPlatform.platform} blocked`,
+      color: Colors.error,
+      icon: "link-outline",
+    });
+  } else if ((agent.platforms ?? []).length > 0) {
+    badges.push({ label: "channel ready", color: Colors.cyan, icon: "checkmark-circle-outline" });
+  }
+
+  return badges.slice(0, 2);
+}
 
 // Hardcoded fallback so the PLATFORM BOTS section is never empty
 const CORE_PLACEHOLDER_NAMES = ["Jarvis Telegram Bot", "Jarvis Discord Bot", "Discord Channel Agent"];
@@ -347,16 +396,19 @@ function LivingAgentCard({
   agent,
   onDetail,
   onRun,
+  integrations,
 }: {
   agent: RosterAgent;
   onDetail: (a: RosterAgent) => void;
   onRun: (a: RosterAgent) => void;
+  integrations?: Record<string, IntegrationReadiness>;
 }) {
   const roleColor = ROLE_COLORS[agent.role] || Colors.primary;
   const isActive = agent.isActive === 1;
   const statusColor = STATUS_COLORS[agent.status] || "#6b7280";
   const isPulsing = agent.status === "online";
   const hasActiveJob = agent.currentJob && ["queued", "running"].includes(agent.currentJob.status);
+  const runtimeBadges = getRuntimeBadges(agent, integrations);
 
   return (
     <TouchableOpacity
@@ -422,6 +474,15 @@ function LivingAgentCard({
             {agent.persona}
           </Text>
         ) : null}
+
+        <View style={styles.runtimeBadgeRow}>
+          {runtimeBadges.map((badge) => (
+            <View key={badge.label} style={[styles.runtimeBadge, { backgroundColor: badge.color + "18", borderColor: badge.color + "55" }]}>
+              <Ionicons name={badge.icon} size={10} color={badge.color} />
+              <Text style={[styles.runtimeBadgeText, { color: badge.color }]} numberOfLines={1}>{badge.label}</Text>
+            </View>
+          ))}
+        </View>
 
         {hasActiveJob && agent.currentJob ? (
           <View style={[styles.activeJobRow, { backgroundColor: Colors.success + "11" }]}>
@@ -2354,6 +2415,12 @@ export default function AgentsScreen() {
     refetchInterval: 20000,
   });
 
+  const { data: integrationReadiness } = useQuery<Record<string, IntegrationReadiness>>({
+    queryKey: ["/api/integrations/status"],
+    refetchInterval: 60000,
+    retry: 1,
+  });
+
   const { data: prefs } = useQuery<Record<string, unknown>>({
     queryKey: ["/api/preferences"],
     select: (d) => d,
@@ -2566,6 +2633,7 @@ export default function AgentsScreen() {
             <LivingAgentCard
               key={agent.id}
               agent={agent}
+              integrations={integrationReadiness}
               onDetail={setDetailAgent}
               onRun={setRunAgent}
             />
@@ -2588,6 +2656,7 @@ export default function AgentsScreen() {
                 <LivingAgentCard
                   key={agent.id}
                   agent={agent}
+                  integrations={integrationReadiness}
                   onDetail={setDetailAgent}
                   onRun={setRunAgent}
                 />
@@ -2776,6 +2845,24 @@ const styles = StyleSheet.create({
     alignItems: "center", justifyContent: "center",
   },
   cardPersona: { fontSize: 12, lineHeight: 17, marginTop: 8, marginLeft: 46 },
+  runtimeBadgeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 8,
+    marginLeft: 46,
+  },
+  runtimeBadge: {
+    minHeight: 22,
+    maxWidth: 150,
+    borderWidth: 1,
+    borderRadius: 7,
+    paddingHorizontal: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  runtimeBadgeText: { fontSize: 10, fontWeight: "700", textTransform: "uppercase" },
   cardMeta: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8, marginLeft: 46 },
   metaChip: { flexDirection: "row", alignItems: "center", gap: 3 },
   metaText: { fontSize: 11 },
