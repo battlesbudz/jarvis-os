@@ -246,7 +246,13 @@ function needsPersonalJarvisContext(text: string): boolean {
 }
 
 function likelyNeedsToolAccess(text: string): boolean {
-  return /\b(weather|forecast|temperature|rain|search|look up|current|today|tomorrow|news|stock|sports|build|create|edit|fix|implement|code|repo|repository|task|calendar|meeting|email|gmail|open|tap|screenshot|phone|daemon|send|notify)\b/i.test(text);
+  const actionObjectSignals = [
+    /\b(create|make|draft|write|generate|add|schedule)\b.{0,40}\b(task|todo|reminder|calendar|event|meeting|email|gmail|message|notification|document|file|app|site|website|page|feature|code|repo|repository|image|photo|video)\b/i,
+    /\b(build|edit|fix|implement|code|deploy|commit|push|open|tap|screenshot|send|notify)\b/i,
+  ];
+  if (actionObjectSignals.some((pattern) => pattern.test(text))) return true;
+
+  return /\b(weather|forecast|temperature|rain|search|look up|current|today|tomorrow|news|stock|sports|calendar|meeting|email|gmail|phone|daemon)\b/i.test(text);
 }
 
 function buildLeanSystemPrompt(): string {
@@ -275,7 +281,12 @@ function maybeUseLeanContext(
 
   const lastUserText = getLastUserText(messages);
   const complexity = classifyTaskComplexity(lastUserText);
-  if (complexity !== "trivial" && complexity !== "easy") return messages;
+  const lastUserWordCount = lastUserText.split(/\s+/).filter(Boolean).length;
+  const isShortPlanningAnswer =
+    complexity === "medium" &&
+    lastUserWordCount <= 40 &&
+    /\b(plan|outline|checklist|bullet|bullets|steps)\b/i.test(lastUserText);
+  if (complexity !== "trivial" && complexity !== "easy" && !isShortPlanningAnswer) return messages;
   if (needsPersonalJarvisContext(lastUserText)) return messages;
   if (tools?.length && likelyNeedsToolAccess(lastUserText)) return messages;
 

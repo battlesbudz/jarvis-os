@@ -112,7 +112,7 @@ async function runLeanContextToolBudgetAssertion(): Promise<void> {
       tier: "balanced",
       messages: [
         { role: "system", content: "full coach prompt" },
-        { role: "user", content: "tell a joke pls" },
+        { role: "user", content: "Please create a tiny 3-bullet test plan for checking that Jarvis is working." },
       ],
       tools: [
         {
@@ -137,8 +137,8 @@ async function runLeanContextToolBudgetAssertion(): Promise<void> {
     assert.equal(captured?.tools, undefined);
     assert.equal(captured?.toolChoice, "none");
     assert.equal(captured?.messages.at(-1)?.role, "user");
-    assert.equal(captured?.messages.at(-1)?.content, "tell a joke pls");
-    console.log("OK: oversized tool schemas trigger lean context for simple non-tool chat turns");
+    assert.equal(captured?.messages.at(-1)?.content, "Please create a tiny 3-bullet test plan for checking that Jarvis is working.");
+    console.log("OK: oversized tool schemas trigger lean context for simple writing/planning chat turns");
   } finally {
     _clearProviderCacheForTesting();
     for (const [key, value] of previousEnv) {
