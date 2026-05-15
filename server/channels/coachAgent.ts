@@ -4,6 +4,7 @@ import * as schema from "@shared/schema";
 import { runAgent } from "../agent/harness";
 import { activationPlanner } from "../agent/activationPlanner";
 import { parseChannelKey, resolveChannelTools } from "../agent/tools/channelTools";
+import { filterToolsByGroups, type ToolGroup } from "../agent/tools/index";
 import { getChannel } from "./registry";
 import { getValidGoogleTokens } from "../userTokenStore";
 import { getRecentEmailCommitments } from "../integrations/gmail";
@@ -18,7 +19,7 @@ import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
 import { processLivingContextUpdate } from "../workspace/livingContextRouter";
-import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
+import { classifyBuildIntent, classifyBuildFollowUp, classifyToolAwareRoute, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
 import { routeAutonomyRequest } from "../agent/autonomyRuntime";
 // Side-effect import: registers workspace topic context provider.
@@ -493,7 +494,11 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const turnStrategyBlock = turnGuidance
     ? `\n\n## Turn Strategy\n${turnGuidance}`
     : "";
-  const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock;
+  const toolAwareRoute = classifyToolAwareRoute(userText || "");
+  const toolAwareBlock = toolAwareRoute.shouldPreferTool
+    ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
+    : "";
+  const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock + toolAwareBlock;
 
   // ── Context registry: inject registered provider context ────────────────────
   // Derive a normalised platform string for providers that need it.
@@ -564,6 +569,15 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   if (input.extraTools && input.extraTools.length > 0) {
     const extraNames = new Set(input.extraTools.map(t => t.name));
     scopedTools = [...scopedTools.filter(t => !extraNames.has(t.name)), ...input.extraTools];
+  }
+  if (toolAwareRoute.toolGroups.length > 0) {
+    const existingNames = new Set(scopedTools.map((tool) => tool.name));
+    const boostedTools = filterToolsByGroups(toolAwareRoute.toolGroups as ToolGroup[], !!googleAccessToken)
+      .filter((tool) => !existingNames.has(tool.name));
+    if (boostedTools.length > 0) {
+      scopedTools = [...scopedTools, ...boostedTools];
+      console.log(`[${channelName}] tool-aware boost: +${boostedTools.length} tools for ${toolAwareRoute.intents.join(", ")}`);
+    }
   }
   const canonicalKey = parseChannelKey(channelName);
   const registeredChannel = canonicalKey ? getChannel(canonicalKey) : undefined;
