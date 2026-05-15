@@ -12,6 +12,8 @@ export interface AutonomyRuntimeInput {
 export interface AutonomyRuntimeDeps {
   getReadiness?: (userId: string) => Promise<AutonomyReadiness>;
   submitJob?: (input: SubmitJobInput) => Promise<SubmitJobResult>;
+  requestApproval?: (request: TopLevelApprovalRequest) => Promise<{ id: string; status: string }>;
+  notifyApproval?: (userId: string, text: string, gateId: string) => Promise<void>;
 }
 
 export interface AutonomyRuntimeResult {
@@ -19,7 +21,17 @@ export interface AutonomyRuntimeResult {
   decision: AutonomyPolicyDecision;
   reply?: string;
   jobId?: string;
+  gateId?: string;
   isDuplicate?: boolean;
+}
+
+export interface TopLevelApprovalRequest {
+  agentId: string;
+  userId: string;
+  toolName: string;
+  toolArgs: Record<string, unknown>;
+  description: string;
+  initiatedBy: "user" | "jarvis";
 }
 
 const APPROVAL_PHRASES = [
@@ -63,11 +75,38 @@ async function defaultSubmitJob(input: SubmitJobInput): Promise<SubmitJobResult>
   return submitAgentJob(input);
 }
 
-function approvalReply(): string {
-  return [
-    "I can help with that, but it touches an external action, so I need explicit approval before I do it.",
-    "Please confirm the exact action you want me to take, including the recipient, destination, or target if one is involved.",
-  ].join(" ");
+async function defaultRequestApproval(request: TopLevelApprovalRequest): Promise<{ id: string; status: string }> {
+  const { requestApproval } = await import("./agentApproval");
+  const gate = await requestApproval({
+    ...request,
+    ttlMs: 24 * 60 * 60 * 1000,
+  });
+  return { id: gate.id, status: gate.status };
+}
+
+async function defaultNotifyApproval(userId: string, text: string, gateId: string): Promise<void> {
+  const { notifyUser } = await import("../channels/registry");
+  await notifyUser(userId, "approval_request", text, { gateId });
+}
+
+function inferApprovalToolName(text: string): string {
+  if (/\bemail\b|\bgmail\b/i.test(text)) return "send_email";
+  if (/\bpost\b|\bdiscord\b|\bslack\b|\btelegram\b/i.test(text)) return "discord_post";
+  if (/\bschedule\b|\bcalendar\b|\bmeeting\b|\bevent\b/i.test(text)) return "schedule_jarvis_task";
+  if (/\bdeploy\b/i.test(text)) return "deploy";
+  if (/\bdelete\b|\bremove\b/i.test(text)) return "delete";
+  if (/\bcommit\b|\bpush\b|\bmerge\b/i.test(text)) return "code_change";
+  if (/\bpurchase\b|\bbuy\b|\border\b/i.test(text)) return "purchase";
+  if (/\bcontact\b|\bmessage\b|\bsend\b/i.test(text)) return "external_message";
+  return "top_level_external_action";
+}
+
+function approvalDescription(userText: string, channelName: string): string {
+  return `Top-level Jarvis chat request from ${channelName} needs approval before taking an external action: "${userText}"`;
+}
+
+function approvalReply(gateId: string): string {
+  return `I created an approval request for that action. Review it in Jarvis approvals/inbox before I proceed. Gate ID: ${gateId}.`;
 }
 
 function blockedReply(reason: string): string {
@@ -118,10 +157,29 @@ export async function routeAutonomyRequest(
   }
 
   if (decision.mode === "requires_approval") {
+    const toolName = inferApprovalToolName(userText);
+    const description = approvalDescription(userText, input.channelName);
+    const requestApproval = deps.requestApproval ?? defaultRequestApproval;
+    const notifyApproval = deps.notifyApproval ?? defaultNotifyApproval;
+    const gate = await requestApproval({
+      agentId: "coach",
+      userId: input.userId,
+      toolName,
+      toolArgs: {
+        userText,
+        channelName: input.channelName,
+      },
+      description,
+      initiatedBy: "user",
+    });
+    const notificationText = `Approval required\n\n${description}\n\nGate ID: ${gate.id}`;
+    await notifyApproval(input.userId, notificationText, gate.id);
+
     return {
       handled: true,
       decision,
-      reply: approvalReply(),
+      reply: approvalReply(gate.id),
+      gateId: gate.id,
     };
   }
 

@@ -30,6 +30,15 @@ async function main(): Promise<void> {
 
   {
     let submitCalls = 0;
+    const approvalRequests: Array<{
+      agentId: string;
+      userId: string;
+      toolName: string;
+      toolArgs: Record<string, unknown>;
+      description: string;
+      initiatedBy?: string;
+    }> = [];
+    const notifications: Array<{ userId: string; type: string; text: string; gateId?: string }> = [];
     const result = await routeAutonomyRequest(
       {
         userId: "user_1",
@@ -42,13 +51,30 @@ async function main(): Promise<void> {
           submitCalls += 1;
           return { id: "should_not_happen", isDuplicate: false };
         },
+        requestApproval: async (request) => {
+          approvalRequests.push(request);
+          return { id: "gate_123", status: "pending" };
+        },
+        notifyApproval: async (userId, text, gateId) => {
+          notifications.push({ userId, type: "approval_request", text, gateId });
+        },
       },
     );
 
     assert.equal(result.handled, true);
     assert.equal(result.decision.mode, "requires_approval");
-    assert.match(result.reply || "", /need explicit approval/i);
+    assert.equal(result.gateId, "gate_123");
+    assert.match(result.reply || "", /approval request/i);
     assert.equal(submitCalls, 0);
+    assert.equal(approvalRequests.length, 1);
+    assert.equal(approvalRequests[0].agentId, "coach");
+    assert.equal(approvalRequests[0].userId, "user_1");
+    assert.equal(approvalRequests[0].toolName, "send_email");
+    assert.equal(approvalRequests[0].toolArgs.userText, "Send this email to the regulator");
+    assert.equal(approvalRequests[0].toolArgs.channelName, "Gateway");
+    assert.equal(approvalRequests[0].initiatedBy, "user");
+    assert.equal(notifications.length, 1);
+    assert.equal(notifications[0].gateId, "gate_123");
   }
 
   {

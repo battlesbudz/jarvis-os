@@ -894,10 +894,11 @@ Completed after the original checklist:
 - [x] The autonomy runtime lazily loads the real job queue so unit tests can run without `DATABASE_URL`.
 - [x] `server/agent/__tests__/autonomyRuntime.test.ts` covers queue, approval, inline, and blocked-readiness behavior.
 - [x] `scripts/run-agent-tests.mjs` runs the autonomy runtime test with the rest of the foundation tests.
+- [x] Top-level chat approval requests now create durable `agent_approval_gates`, approval deliverables, and in-app approval notifications instead of only returning a text prompt.
 
 Next work to avoid drift:
 
-- [ ] Add a proper approval UX handoff for top-level chat requests, so "send/post/schedule/delete/deploy" can create a durable approval gate instead of only replying with a confirmation prompt.
+- [ ] Add approved-action continuation for top-level approval gates, so approving a chat-created gate can resume or queue the correct execution path without asking twice.
 - [ ] Surface queued autonomy jobs in the Jarvis UI with status, result preview, retry, approve, and revise actions.
 - [ ] Expand tool-aware routing for weather, calendar, Gmail, memory, browser, GitHub, Railway, and code-writing requests so Jarvis uses tools before giving capability disclaimers.
 - [ ] Add an end-to-end app-chat test that fakes DB/job dependencies and proves `/api/coach/chat` routes a research request into a background job.
