@@ -33,6 +33,7 @@ const ENV_KEYS = [
   "OPENROUTER_MODEL",
   "GROQ_API_KEY",
   "PROVIDER_FALLBACK_CHAIN",
+  "JARVIS_DISABLE_DIRECT_OPENAI",
   "JARVIS_CHEAP_MODEL",
   "JARVIS_BALANCED_MODEL",
   "JARVIS_DEFAULT_MODEL",
@@ -119,6 +120,18 @@ withCleanEnv({ OPENAI_API_KEY: "sk-openai", AI_INTEGRATIONS_OPENROUTER_API_KEY: 
   });
   assert.equal(chain.some((entry) => entry.providerName === "openai"), true);
   console.log("OK: alternate provider is preferred when direct OpenAI is also configured");
+});
+
+withCleanEnv({ OPENAI_API_KEY: "sk-openai", GROQ_API_KEY: "groq-key", JARVIS_DISABLE_DIRECT_OPENAI: "true" }, () => {
+  applyProviderEnvAliases();
+  assert.equal(hasDirectOpenAIProvider(), false);
+  const chain = getModelRouteChain("balanced");
+  assert.equal(chain.some((entry) => entry.providerName === "openai"), false);
+  assert.deepEqual(chain[0], {
+    providerName: "openai-compatible",
+    model: "groq/llama-3.1-8b-instant",
+  });
+  console.log("OK: direct OpenAI fallback can be disabled when the API quota is exhausted");
 });
 
 withCleanEnv({ ANTHROPIC_API_KEY: "sk-anthropic" }, () => {
