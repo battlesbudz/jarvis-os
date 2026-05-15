@@ -2,7 +2,7 @@ import { db } from "../db";
 import { sql, inArray } from "drizzle-orm";
 import { userMemories } from "@shared/schema";
 import OpenAI from "openai";
-import { getOpenAIClientConfig } from "../agent/providers/env";
+import { getOpenAIClientConfig, isDirectOpenAIDisabled } from "../agent/providers/env";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 const openai = new OpenAI(getOpenAIClientConfig());
@@ -38,6 +38,7 @@ interface MemoryRow {
 export async function embedText(text: string): Promise<number[] | null> {
   const trimmed = text.trim();
   if (!trimmed) return null;
+  if (isDirectOpenAIDisabled()) return null;
   try {
     const res = await openai.embeddings.create({
       model: EMBED_MODEL,
