@@ -902,8 +902,8 @@ Next work to avoid drift:
 - [x] Tighten approved-action execution so continuation jobs can pass a scoped approval receipt into specific tool calls and avoid duplicate final-send approval when the original gate already covers the exact action.
 - [x] Surface queued autonomy jobs in the Jarvis UI with status, result preview, retry, approve, and revise actions.
 - [x] Expand tool-aware routing for weather, calendar, Gmail, memory, browser, GitHub, Railway, and code-writing requests so Jarvis uses tools before giving capability disclaimers.
-- [ ] Add an end-to-end app-chat test that fakes DB/job dependencies and proves `/api/coach/chat` routes a research request into a background job.
-- [ ] Add production observability for autonomy decisions: mode, agent type, job ID, readiness status, and approval boundary.
+- [x] Add an end-to-end app-chat test that fakes DB/job dependencies and proves `/api/coach/chat` routes a research request into a background job.
+- [x] Add production observability for autonomy decisions: mode, agent type, job ID, readiness status, and approval boundary.
 
 ## Intentional Non-Goals
 
