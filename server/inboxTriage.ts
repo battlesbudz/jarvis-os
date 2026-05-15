@@ -17,6 +17,7 @@ import * as schema from "@shared/schema";
 import { markSoulStale } from "./memory/soul";
 import { STRICTLY_IRREVERSIBLE_TOOLS, approveGate } from "./agent/agentApproval";
 import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
+import { isInboxTriageEnabled } from "./inboxTriageConfig";
 
 type TriageVerdict = "auto_handle" | "escalate" | "promote_memory";
 
@@ -331,6 +332,11 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
 }
 
 export async function runStartupTriagePass(): Promise<void> {
+  if (!isInboxTriageEnabled()) {
+    console.log("[InboxTriage] Startup pass skipped — set JARVIS_INBOX_TRIAGE_ENABLED=true to enable automatic triage");
+    return;
+  }
+
   const users = await db.select({ id: schema.users.id }).from(schema.users);
   for (const user of users) {
     await runTriagePassForUser(user.id).catch((err) => {
@@ -343,6 +349,12 @@ let triageRunning = false;
 
 export function startTriageRunner(): void {
   if (triageRunning) return;
+
+  if (!isInboxTriageEnabled()) {
+    console.log("[InboxTriage] Automatic triage disabled — set JARVIS_INBOX_TRIAGE_ENABLED=true to enable it");
+    return;
+  }
+
   triageRunning = true;
 
   const INTERVAL_MS = 3 * 60 * 1000;

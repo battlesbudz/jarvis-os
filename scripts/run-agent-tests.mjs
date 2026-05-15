@@ -16,6 +16,7 @@ const tests = [
   { file: "server/agent/__tests__/codexOAuth.assert.ts" },
   { file: "server/agent/__tests__/routedChatCompletion.assert.ts" },
   { file: "server/agent/__tests__/providerEnv.assert.ts" },
+  { file: "server/agent/__tests__/inboxTriageConfig.assert.ts" },
   { file: "server/agent/__tests__/contextRegistryRouting.assert.ts" },
   { file: "server/agent/__tests__/livingContextUpdateTool.assert.ts" },
   { file: "server/workspace/__tests__/livingContextRouter.assert.ts" },
