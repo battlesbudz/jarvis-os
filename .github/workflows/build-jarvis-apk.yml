@@ -2,6 +2,21 @@ name: Build Jarvis App APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - codex/replit-main-continuation
+    paths:
+      - '.github/workflows/build-jarvis-apk.yml'
+      - 'app/**'
+      - 'assets/**'
+      - 'components/**'
+      - 'lib/**'
+      - 'scripts/patch_gradle.py'
+      - 'app.json'
+      - 'eas.json'
+      - 'package.json'
+      - 'package-lock.json'
 
 permissions:
   contents: write
