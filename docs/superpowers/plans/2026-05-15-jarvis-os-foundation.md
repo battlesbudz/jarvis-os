@@ -895,10 +895,11 @@ Completed after the original checklist:
 - [x] `server/agent/__tests__/autonomyRuntime.test.ts` covers queue, approval, inline, and blocked-readiness behavior.
 - [x] `scripts/run-agent-tests.mjs` runs the autonomy runtime test with the rest of the foundation tests.
 - [x] Top-level chat approval requests now create durable `agent_approval_gates`, approval deliverables, and in-app approval notifications instead of only returning a text prompt.
+- [x] Approved top-level autonomy gates now queue a safe continuation job with the original request, approval gate id, and origin channel.
 
 Next work to avoid drift:
 
-- [ ] Add approved-action continuation for top-level approval gates, so approving a chat-created gate can resume or queue the correct execution path without asking twice.
+- [ ] Tighten approved-action execution so continuation jobs can pass a scoped approval receipt into specific tool calls and avoid duplicate final-send approval when the original gate already covers the exact action.
 - [ ] Surface queued autonomy jobs in the Jarvis UI with status, result preview, retry, approve, and revise actions.
 - [ ] Expand tool-aware routing for weather, calendar, Gmail, memory, browser, GitHub, Railway, and code-writing requests so Jarvis uses tools before giving capability disclaimers.
 - [ ] Add an end-to-end app-chat test that fakes DB/job dependencies and proves `/api/coach/chat` routes a research request into a background job.

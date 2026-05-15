@@ -166,6 +166,7 @@ export async function routeAutonomyRequest(
       userId: input.userId,
       toolName,
       toolArgs: {
+        topLevelAutonomy: true,
         userText,
         channelName: input.channelName,
       },

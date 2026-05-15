@@ -58,6 +58,7 @@ import {
   rejectGate,
   getGate,
 } from "./agentApproval";
+import { continueTopLevelApproval } from "./topLevelApprovalContinuation";
 import {
   validateAgentConfig,
   exportAgentConfig,
@@ -347,7 +348,11 @@ export function registerAgentRoutes(app: Express): void {
         res.status(500).json({ error: "Failed to persist gate approval — DB write may have failed" });
         return;
       }
-      res.json({ ok: true });
+      const continuation = await continueTopLevelApproval(gate).catch((err) => {
+        console.error("[AgentRoutes] top-level approval continuation failed:", err);
+        return { continued: false, reason: "Continuation failed after approval." };
+      });
+      res.json({ ok: true, continuation });
     } catch (err) { handleError(res, err); }
   });
 
