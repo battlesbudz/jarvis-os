@@ -4392,14 +4392,14 @@ Return a JSON object with:
 
 Return ONLY the JSON object.`;
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+      const response = await routeModelTurn({
+        tier: "cheap",
         messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 600,
+        maxCompletionTokens: 600,
+        logPrefix: "[CoachSuggestions]",
       });
 
-      const content = response.choices[0]?.message?.content || '{"actions":[],"followups":[]}';
+      const content = response.textContent || '{"actions":[],"followups":[]}';
       try {
         const parsed = JSON.parse(content);
         res.json({
