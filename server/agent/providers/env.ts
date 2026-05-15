@@ -27,7 +27,13 @@ export function isRouterPlaceholderOpenAIKey(value: string | undefined): boolean
   return cleanEnvValue(value) === ROUTER_PLACEHOLDER_OPENAI_API_KEY;
 }
 
+export function isDirectOpenAIDisabled(): boolean {
+  const value = cleanEnvValue(process.env.JARVIS_DISABLE_DIRECT_OPENAI);
+  return value === "1" || value === "true";
+}
+
 export function hasDirectOpenAIProvider(): boolean {
+  if (isDirectOpenAIDisabled()) return false;
   const key = getProviderEnvValue("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY");
   return !!key && !isRouterPlaceholderOpenAIKey(key);
 }

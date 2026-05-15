@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import {
+  routeModelTurn,
   classifyTaskComplexity,
   classifyTaskPrivacy,
   routeModelForTask,
 } from "../modelRouter";
+import { BaseProvider, _clearProviderCacheForTesting, _overrideProviderForTesting } from "../providers";
+import type { ProviderChunk, ProviderQueryParams } from "../providers/base";
 
 function userMessage(content: string) {
   return [{ role: "user" as const, content }];
@@ -79,4 +82,77 @@ function userMessage(content: string) {
   console.log("OK: explicit model choices are preserved by default");
 }
 
-console.log("\nAll model router assertions passed.");
+async function runLeanContextToolBudgetAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_LEAN_CONTEXT_CHAR_LIMIT",
+    "JARVIS_LEAN_CONTEXT_HISTORY_MESSAGES",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class CapturingProvider extends BaseProvider {
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "short answer" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_LEAN_CONTEXT_CHAR_LIMIT = "1000";
+    process.env.JARVIS_LEAN_CONTEXT_HISTORY_MESSAGES = "2";
+    _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingProvider());
+
+    const hugeToolDescription = "large tool schema ".repeat(500);
+    await routeModelTurn({
+      tier: "balanced",
+      messages: [
+        { role: "system", content: "full coach prompt" },
+        { role: "user", content: "tell a joke pls" },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "expensive_tool_catalog",
+            description: hugeToolDescription,
+            parameters: {
+              type: "object",
+              properties: {
+                query: { type: "string", description: hugeToolDescription },
+              },
+            },
+          },
+        },
+      ],
+      toolChoice: "auto",
+      maxCompletionTokens: 64,
+      logPrefix: "[ModelRouterLeanTest]",
+    });
+
+    assert.equal(captured?.tools, undefined);
+    assert.equal(captured?.toolChoice, "none");
+    assert.equal(captured?.messages.at(-1)?.role, "user");
+    assert.equal(captured?.messages.at(-1)?.content, "tell a joke pls");
+    console.log("OK: oversized tool schemas trigger lean context for simple non-tool chat turns");
+  } finally {
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+runLeanContextToolBudgetAssertion()
+  .then(() => {
+    console.log("\nAll model router assertions passed.");
+  })
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });

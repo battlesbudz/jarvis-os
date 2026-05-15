@@ -222,6 +222,15 @@ function hasToolMessages(messages: OpenAI.Chat.Completions.ChatCompletionMessage
   return messages.some((message) => message.role === "tool");
 }
 
+function toolSchemaTextSize(tools?: OpenAI.Chat.Completions.ChatCompletionTool[]): number {
+  if (!tools?.length) return 0;
+  try {
+    return JSON.stringify(tools).length;
+  } catch {
+    return tools.length * 1000;
+  }
+}
+
 function needsPersonalJarvisContext(text: string): boolean {
   const lower = text.toLowerCase();
   const personalSignals = [
@@ -236,6 +245,10 @@ function needsPersonalJarvisContext(text: string): boolean {
   return personalSignals.some((signal) => lower.includes(signal));
 }
 
+function likelyNeedsToolAccess(text: string): boolean {
+  return /\b(weather|forecast|temperature|rain|search|look up|current|today|tomorrow|news|stock|sports|build|create|edit|fix|implement|code|repo|repository|task|calendar|meeting|email|gmail|open|tap|screenshot|phone|daemon|send|notify)\b/i.test(text);
+}
+
 function buildLeanSystemPrompt(): string {
   return [
     "You are GamePlan Coach, Jarvis's chat persona.",
@@ -248,12 +261,15 @@ function buildLeanSystemPrompt(): string {
 function maybeUseLeanContext(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   logPrefix: string,
+  tools?: OpenAI.Chat.Completions.ChatCompletionTool[],
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   if (process.env.JARVIS_LEAN_CONTEXT === "0") return messages;
 
   const inputChars = messageTextSize(messages);
+  const toolChars = toolSchemaTextSize(tools);
+  const totalChars = inputChars + toolChars;
   const maxChars = Number(process.env.JARVIS_LEAN_CONTEXT_CHAR_LIMIT || 12000);
-  if (inputChars <= maxChars) return messages;
+  if (totalChars <= maxChars) return messages;
 
   if (hasToolMessages(messages)) return messages;
 
@@ -261,6 +277,7 @@ function maybeUseLeanContext(
   const complexity = classifyTaskComplexity(lastUserText);
   if (complexity !== "trivial" && complexity !== "easy") return messages;
   if (needsPersonalJarvisContext(lastUserText)) return messages;
+  if (tools?.length && likelyNeedsToolAccess(lastUserText)) return messages;
 
   const historyLimit = Math.max(1, Number(process.env.JARVIS_LEAN_CONTEXT_HISTORY_MESSAGES || 4));
   const nonSystemMessages = messages.filter((message) => message.role !== "system");
@@ -271,7 +288,7 @@ function maybeUseLeanContext(
 
   const leanChars = messageTextSize(leanMessages);
   console.log(
-    `${logPrefix} lean_context: ${inputChars} chars -> ${leanChars} chars for ${complexity} non-personal request`,
+    `${logPrefix} lean_context: ${inputChars} chars + ${toolChars} tool chars -> ${leanChars} chars for ${complexity} non-tool request`,
   );
 
   return leanMessages;
@@ -465,7 +482,7 @@ export function getModelRouteChain(tier: ModelExecutionTier): FallbackChainEntry
 
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
-  const routedMessages = maybeUseLeanContext(params.messages, logPrefix);
+  const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
   const chain = getModelRouteChain(params.tier);
   if (chain.length === 0) {
