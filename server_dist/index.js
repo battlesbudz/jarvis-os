@@ -38415,6 +38415,330 @@ var init_buildIntentRouter = __esm({
   }
 });
 
+// server/agent/autonomyPolicy.ts
+function inferAgentType(text2) {
+  if (/\bemail\b|\breply\b|\breplies\b/i.test(text2)) return "email";
+  if (/\bplan\b|\broadmap\b|\bsequence\b/i.test(text2)) return "planning";
+  if (/\bwrite\b|\bdraft\b|\bmemo\b|\bdoc\b/i.test(text2)) return "writing";
+  if (/\bcompare\b|\bdeep dive\b|\bmarket\b|\bstrategy\b|\bcrm\b|\breport\b/i.test(text2)) {
+    return "deep_research";
+  }
+  return "research";
+}
+function decideAutonomyMode(input) {
+  const text2 = input.userText.trim();
+  if (input.readiness === "blocked") {
+    return {
+      mode: "blocked_by_setup",
+      reason: "Jarvis core setup is blocked, so autonomous work should not start until doctor blockers are fixed."
+    };
+  }
+  if (!input.hasApproval && EXTERNAL_ACTION_PATTERNS.some((pattern) => pattern.test(text2))) {
+    return {
+      mode: "requires_approval",
+      reason: "The request appears to involve an external action or irreversible side effect."
+    };
+  }
+  if (BACKGROUND_PATTERNS.some((pattern) => pattern.test(text2))) {
+    return {
+      mode: "queue_background_job",
+      reason: "The request is multi-step and should produce a reviewable deliverable instead of blocking the chat.",
+      agentType: inferAgentType(text2)
+    };
+  }
+  return {
+    mode: "answer_inline",
+    reason: "The request is short, low-risk, and can be answered immediately."
+  };
+}
+var BACKGROUND_PATTERNS, EXTERNAL_ACTION_PATTERNS;
+var init_autonomyPolicy = __esm({
+  "server/agent/autonomyPolicy.ts"() {
+    "use strict";
+    BACKGROUND_PATTERNS = [
+      /\bresearch\b/i,
+      /\blook into\b/i,
+      /\bcompare\b/i,
+      /\breport\b/i,
+      /\bdeep dive\b/i,
+      /\bwrite (a|an|the)\b/i,
+      /\bdraft (a|an|the)?\b/i,
+      /\bplan\b/i,
+      /\banaly[sz]e\b/i
+    ];
+    EXTERNAL_ACTION_PATTERNS = [
+      /\bsend\b/i,
+      /\bpost\b/i,
+      /\bschedule\b/i,
+      /\bdelete\b/i,
+      /\bpurchase\b/i,
+      /\bcommit\b/i,
+      /\bcontact\b/i,
+      /\bdeploy\b/i,
+      /\bsubmit\b/i
+    ];
+  }
+});
+
+// server/diagnostics/osReadiness.ts
+var osReadiness_exports = {};
+__export(osReadiness_exports, {
+  classifyJarvisOsReadiness: () => classifyJarvisOsReadiness,
+  formatJarvisOsReadiness: () => formatJarvisOsReadiness,
+  getJarvisOsReadiness: () => getJarvisOsReadiness
+});
+function isBad(status) {
+  return status === "down" || status === "unknown";
+}
+function isCoreRequired(requiredFor) {
+  return requiredFor === "core" || requiredFor === "agent_loop" || requiredFor === "background_jobs";
+}
+function hasBadProbe(probes, requiredFor) {
+  return probes.some((probe) => probe.requiredFor === requiredFor && isBad(probe.status));
+}
+function classifyJarvisOsReadiness(probes) {
+  const blockers = probes.filter((probe) => isBad(probe.status) && isCoreRequired(probe.requiredFor));
+  const warnings = probes.filter((probe) => {
+    if (probe.status === "degraded") return true;
+    return isBad(probe.status) && !isCoreRequired(probe.requiredFor);
+  });
+  const canStartServer = !hasBadProbe(probes, "core");
+  const canRunAgentLoop = canStartServer && !hasBadProbe(probes, "agent_loop");
+  const canRunBackgroundJobs = canRunAgentLoop && !hasBadProbe(probes, "background_jobs") && !probes.some((probe) => probe.requiredFor === "background_jobs" && probe.status === "degraded");
+  const canUseExternalChannels = !hasBadProbe(probes, "channel");
+  const overallStatus = blockers.length > 0 ? "blocked" : warnings.length > 0 ? "limited" : "ready";
+  return {
+    overallStatus,
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    canStartServer,
+    canRunAgentLoop,
+    canRunBackgroundJobs,
+    canUseExternalChannels,
+    blockers,
+    warnings,
+    probes
+  };
+}
+function formatJarvisOsReadiness(report) {
+  const lines = [
+    `Jarvis OS readiness: ${report.overallStatus}`,
+    `Server: ${report.canStartServer ? "ready" : "blocked"}`,
+    `Agent loop: ${report.canRunAgentLoop ? "ready" : "blocked"}`,
+    `Background jobs: ${report.canRunBackgroundJobs ? "ready" : "blocked"}`,
+    `External channels: ${report.canUseExternalChannels ? "ready" : "limited"}`
+  ];
+  if (report.blockers.length > 0) {
+    lines.push("", "Blockers:");
+    for (const blocker of report.blockers) {
+      lines.push(`- ${blocker.label}: ${blocker.message}${blocker.fix ? ` | Fix: ${blocker.fix}` : ""}`);
+    }
+  }
+  if (report.warnings.length > 0) {
+    lines.push("", "Warnings:");
+    for (const warning of report.warnings) {
+      lines.push(`- ${warning.label}: ${warning.message}${warning.fix ? ` | Fix: ${warning.fix}` : ""}`);
+    }
+  }
+  return lines.join("\n");
+}
+function subsystemMessage(status, label, lastEvent) {
+  if (lastEvent) return lastEvent;
+  if (status === "healthy") return `${label} is healthy.`;
+  if (status === "degraded") return `${label} is degraded.`;
+  if (status === "down") return `${label} is down.`;
+  return `${label} status is unknown.`;
+}
+async function getJarvisOsReadiness(userId) {
+  let health;
+  try {
+    const diagnostics = await Promise.resolve().then(() => (init_diagnosticsService(), diagnosticsService_exports));
+    health = await diagnostics.runHealthCheck(userId);
+  } catch (err2) {
+    const message = err2 instanceof Error ? err2.message : String(err2);
+    const skippedMessage = "Skipped because core diagnostics could not load.";
+    return classifyJarvisOsReadiness([
+      {
+        id: "database",
+        label: "Database",
+        status: "down",
+        requiredFor: "core",
+        message,
+        fix: FIX_BY_REQUIRED_FOR.core
+      },
+      {
+        id: "agent_harness",
+        label: "Agent Harness",
+        status: "unknown",
+        requiredFor: "agent_loop",
+        message: skippedMessage,
+        fix: FIX_BY_REQUIRED_FOR.agent_loop
+      },
+      {
+        id: "job_queue",
+        label: "Job Queue",
+        status: "unknown",
+        requiredFor: "background_jobs",
+        message: skippedMessage,
+        fix: FIX_BY_REQUIRED_FOR.background_jobs
+      },
+      {
+        id: "channel_registry",
+        label: "Channel Delivery",
+        status: "unknown",
+        requiredFor: "channel",
+        message: skippedMessage,
+        fix: FIX_BY_REQUIRED_FOR.channel
+      }
+    ]);
+  }
+  const probes = health.subsystems.map((subsystem) => {
+    const requiredFor = REQUIRED_FOR_BY_SUBSYSTEM[subsystem.name] ?? "optional";
+    return {
+      id: subsystem.name,
+      label: subsystem.label,
+      status: subsystem.status,
+      requiredFor,
+      message: subsystemMessage(subsystem.status, subsystem.label, subsystem.lastEvent),
+      fix: subsystem.status === "healthy" ? void 0 : FIX_BY_REQUIRED_FOR[requiredFor]
+    };
+  });
+  return classifyJarvisOsReadiness(probes);
+}
+var REQUIRED_FOR_BY_SUBSYSTEM, FIX_BY_REQUIRED_FOR;
+var init_osReadiness = __esm({
+  "server/diagnostics/osReadiness.ts"() {
+    "use strict";
+    REQUIRED_FOR_BY_SUBSYSTEM = {
+      database: "core",
+      agent_harness: "agent_loop",
+      job_queue: "background_jobs",
+      workflow_engine: "background_jobs",
+      channel_registry: "channel",
+      integration: "integration",
+      heartbeat: "optional",
+      memory: "optional"
+    };
+    FIX_BY_REQUIRED_FOR = {
+      core: "Fix core server setup first. Check DATABASE_URL, migrations, and database reachability.",
+      agent_loop: "Fix AI provider setup. Check OpenAI or configured model-provider credentials.",
+      background_jobs: "Fix job queue and workflow persistence before starting autonomous background work.",
+      channel: "Connect at least one delivery channel before relying on external notifications.",
+      integration: "Reconnect or repair the affected integration before using related tools.",
+      optional: "Review this subsystem before enabling related automation."
+    };
+  }
+});
+
+// server/agent/autonomyRuntime.ts
+function inferExplicitApproval(text2) {
+  return APPROVAL_PHRASES.some((pattern) => pattern.test(text2));
+}
+function deriveAutonomyTitle(text2) {
+  const normalized = text2.replace(/\s+/g, " ").replace(/\s+and\s+(make|create|write|draft|produce)\b.*$/i, "").replace(/[.!?]+$/g, "").trim();
+  return (normalized || "Autonomous Jarvis task").slice(0, 80);
+}
+async function defaultReadiness(userId) {
+  try {
+    const { getJarvisOsReadiness: getJarvisOsReadiness2 } = await Promise.resolve().then(() => (init_osReadiness(), osReadiness_exports));
+    const report = await getJarvisOsReadiness2(userId);
+    return report.overallStatus;
+  } catch (err2) {
+    console.warn("[autonomyRuntime] readiness check failed; running in limited mode:", err2);
+    return "limited";
+  }
+}
+async function defaultSubmitJob(input) {
+  const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobClient(), jobClient_exports));
+  return submitAgentJob3(input);
+}
+function approvalReply() {
+  return [
+    "I can help with that, but it touches an external action, so I need explicit approval before I do it.",
+    "Please confirm the exact action you want me to take, including the recipient, destination, or target if one is involved."
+  ].join(" ");
+}
+function blockedReply(reason) {
+  return `Jarvis OS setup is not ready for autonomous work yet: ${reason} Run npm run jarvis:doctor and fix the listed blocker first.`;
+}
+function queuedReply(agentType, job) {
+  if (job.isDuplicate) {
+    return `I already have that ${agentType} job running, so I did not queue a duplicate. Job ID: ${job.id}.`;
+  }
+  return `I've queued that as a ${agentType} background job. Job ID: ${job.id}. You'll get the result in the reviewable inbox/deliverable flow when it finishes.`;
+}
+async function routeAutonomyRequest(input, deps = {}) {
+  const userText = input.userText.trim();
+  const hasApproval = input.hasApproval ?? inferExplicitApproval(userText);
+  const preliminary = decideAutonomyMode({
+    userText,
+    readiness: "ready",
+    hasApproval
+  });
+  if (!userText || preliminary.mode === "answer_inline") {
+    return { handled: false, decision: preliminary };
+  }
+  const readiness = input.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input.userId);
+  const decision = decideAutonomyMode({
+    userText,
+    readiness,
+    hasApproval
+  });
+  if (decision.mode === "answer_inline") {
+    return { handled: false, decision };
+  }
+  if (decision.mode === "blocked_by_setup") {
+    return {
+      handled: true,
+      decision,
+      reply: blockedReply(decision.reason)
+    };
+  }
+  if (decision.mode === "requires_approval") {
+    return {
+      handled: true,
+      decision,
+      reply: approvalReply()
+    };
+  }
+  const agentType = decision.agentType || "research";
+  const title = deriveAutonomyTitle(userText);
+  const submitJob = deps.submitJob ?? defaultSubmitJob;
+  const job = await submitJob({
+    userId: input.userId,
+    agentType,
+    title,
+    prompt: userText,
+    input: {
+      originChannel: input.channelName,
+      autonomyPolicy: true
+    }
+  });
+  return {
+    handled: true,
+    decision,
+    reply: queuedReply(agentType, job),
+    jobId: job.id,
+    isDuplicate: job.isDuplicate
+  };
+}
+var APPROVAL_PHRASES;
+var init_autonomyRuntime = __esm({
+  "server/agent/autonomyRuntime.ts"() {
+    "use strict";
+    init_autonomyPolicy();
+    APPROVAL_PHRASES = [
+      /\byes\b/i,
+      /\bapproved?\b/i,
+      /\bconfirmed?\b/i,
+      /\bgo ahead\b/i,
+      /\bdo it\b/i,
+      /\bplease proceed\b/i,
+      /\bthat is ok\b/i,
+      /\bthat's ok\b/i
+    ];
+  }
+});
+
 // server/websiteCrawler.ts
 var websiteCrawler_exports = {};
 __export(websiteCrawler_exports, {
@@ -40016,6 +40340,34 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
     console.log(`[${channelName}] build-session resume detected \u2014 sending ack with BUILD_ACK_MARKER`);
     return { reply: resumeReply, rawReply: resumeReply, attachments: [], sdkSessionId: activeSessionId };
   }
+  if (userText) {
+    try {
+      const autonomyResult = await routeAutonomyRequest({
+        userId,
+        userText,
+        channelName
+      });
+      if (autonomyResult.handled && autonomyResult.reply) {
+        const autonomyReply = autonomyResult.reply;
+        const autonomyTs = Date.now();
+        const userMsgEntry = { id: autonomyTs.toString(), role: "user", content: userText };
+        const asstMsgEntry = { id: (autonomyTs + 1).toString(), role: "assistant", content: autonomyReply };
+        const updatedChatAutonomy = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
+        db.insert(chatHistory).values({ userId, data: updatedChatAutonomy }).onConflictDoUpdate({
+          target: chatHistory.userId,
+          set: { data: updatedChatAutonomy, updatedAt: /* @__PURE__ */ new Date() }
+        }).catch((err2) => console.error("[coach] autonomy-policy chat history persist failed:", err2));
+        logInteraction(userId, channelLower, "outbound", autonomyReply).catch(() => {
+        });
+        console.log(
+          `[${channelName}] autonomy-policy handled mode=${autonomyResult.decision.mode}` + (autonomyResult.jobId ? ` job=${autonomyResult.jobId}` : "")
+        );
+        return { reply: autonomyReply, rawReply: autonomyReply, attachments: [], sdkSessionId: activeSessionId };
+      }
+    } catch (autonomyErr) {
+      console.error(`[${channelName}] autonomy-policy handling failed (falling through to orchestrator):`, autonomyErr);
+    }
+  }
   const switchingFromBuild = !!userText && isUnrelatedIntent(userText) && hasActiveBuildSession(chatMessages);
   let rawReply;
   console.log(`[${channelName}] routing through orchestrator`);
@@ -40241,6 +40593,7 @@ var init_coachAgent = __esm({
     init_livingContextRouter();
     init_queryClassifier();
     init_buildIntentRouter();
+    init_autonomyRuntime();
     init_topicContext();
     FORMAT_HINTS = {
       Telegram: "You're responding via Telegram. Match response length to the request: short and direct for simple questions, but complete and thorough for research, analysis, planning, or anything that needs a full answer. Never truncate or redirect the user to the app \u2014 deliver the full response here. Plain text, no markdown headers.",

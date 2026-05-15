@@ -8,6 +8,9 @@ const tsxCli = path.join(projectRoot, "node_modules", "tsx", "dist", "cli.mjs");
 
 const tests = [
   { file: "server/diagnostics/__tests__/osReadiness.test.ts" },
+  { file: "server/agent/__tests__/autonomyPolicy.test.ts" },
+  { file: "server/agent/__tests__/autonomyRuntime.test.ts" },
+  { file: "server/agent/__tests__/osSmoke.test.ts" },
   { file: "server/agent/__tests__/manifestFilter.assert.ts" },
   { file: "server/agent/__tests__/modelRouter.assert.ts" },
   { file: "server/agent/__tests__/codexOAuth.assert.ts" },

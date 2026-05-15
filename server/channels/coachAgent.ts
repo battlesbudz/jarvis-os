@@ -20,6 +20,7 @@ import { contextRegistry } from "../agent/contextRegistry";
 import { processLivingContextUpdate } from "../workspace/livingContextRouter";
 import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
+import { routeAutonomyRequest } from "../agent/autonomyRuntime";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -697,6 +698,44 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     logInteraction(userId, channelLower as any, "outbound", resumeReply).catch(() => {});
     console.log(`[${channelName}] build-session resume detected — sending ack with BUILD_ACK_MARKER`);
     return { reply: resumeReply, rawReply: resumeReply, attachments: [], sdkSessionId: activeSessionId };
+  }
+
+  // ── Autonomy-policy short-circuit ─────────────────────────────────────────
+  // Before falling through to the model orchestrator, give the deterministic OS
+  // policy first refusal on obvious autonomous work. This prevents the live
+  // coach from answering "I can't do that" when the correct behavior is to
+  // queue a background deliverable or pause for approval.
+  if (userText) {
+    try {
+      const autonomyResult = await routeAutonomyRequest({
+        userId,
+        userText,
+        channelName,
+      });
+
+      if (autonomyResult.handled && autonomyResult.reply) {
+        const autonomyReply = autonomyResult.reply;
+        const autonomyTs = Date.now();
+        const userMsgEntry = { id: autonomyTs.toString(), role: "user", content: userText };
+        const asstMsgEntry = { id: (autonomyTs + 1).toString(), role: "assistant", content: autonomyReply };
+        const updatedChatAutonomy = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
+        db.insert(schema.chatHistory)
+          .values({ userId, data: updatedChatAutonomy })
+          .onConflictDoUpdate({
+            target: schema.chatHistory.userId,
+            set: { data: updatedChatAutonomy, updatedAt: new Date() },
+          })
+          .catch((err: unknown) => console.error("[coach] autonomy-policy chat history persist failed:", err));
+        logInteraction(userId, channelLower as any, "outbound", autonomyReply).catch(() => {});
+        console.log(
+          `[${channelName}] autonomy-policy handled mode=${autonomyResult.decision.mode}` +
+          (autonomyResult.jobId ? ` job=${autonomyResult.jobId}` : ""),
+        );
+        return { reply: autonomyReply, rawReply: autonomyReply, attachments: [], sdkSessionId: activeSessionId };
+      }
+    } catch (autonomyErr) {
+      console.error(`[${channelName}] autonomy-policy handling failed (falling through to orchestrator):`, autonomyErr);
+    }
   }
 
   // ── Build-session context-switch detection ────────────────────────────────
