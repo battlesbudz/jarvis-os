@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { saveUserToken, deleteUserToken, getUserOAuthStatus } from './userTokenStore';
 import { getPublicBaseUrl } from './publicUrl';
+import { handleMobileAuthCallback, isMobileAuthState } from './mobileAuthRoutes';
 
 export const oauthRouter = Router();
 export const oauthCallbackRouter = Router();
@@ -111,6 +112,10 @@ oauthRouter.get('/google/authorize', (req: Request, res: Response) => {
 
 oauthCallbackRouter.get('/google/callback', async (req: Request, res: Response) => {
   const { code, state: userId, error } = req.query as Record<string, string>;
+
+  if (isMobileAuthState(userId)) {
+    return handleMobileAuthCallback(req, res);
+  }
 
   if (error || !code || !userId) {
     return res.send(errorHtml(error || 'Authorization was cancelled.'));

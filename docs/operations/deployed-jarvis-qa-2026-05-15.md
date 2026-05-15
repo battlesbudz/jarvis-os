@@ -488,11 +488,17 @@ Verification:
 | Endpoint QA harness | Blocked | `node scripts/deployed-jarvis-endpoint-qa.mjs` exits with `Missing JARVIS_QA_AUTH_TOKEN`. |
 | Google readiness wording | Improved and deployed | Capability checks now understand `GOOGLE_WEB_CLIENT_ID` as the deployed client id. After deployment, Railway startup logs no longer listed calendar/email/drive as unhealthy due to generic missing Google OAuth credentials; the remaining Google blocker is the missing client secret plus redirect URI configuration. |
 
+Follow-up correction:
+
+- Web login now tries the original Google popup token login first. This preserves the path that worked without `GOOGLE_CLIENT_SECRET`.
+- The redirect fallback now reuses the existing Google callback URI, `https://gameplanjarvisai.up.railway.app/api/oauth/google/callback`, instead of introducing `/api/auth/mobile/callback`.
+- Production fallback URL was checked with `curl.exe -I /api/auth/mobile/start...`; the Google `redirect_uri` is now `/api/oauth/google/callback`.
+- If the popup is blocked and the fallback is used, Railway still needs `GOOGLE_CLIENT_SECRET` to exchange the authorization code.
+
 New/remaining blockers:
 
-1. Add this exact authorized redirect URI to the Google Cloud OAuth web client used by `GOOGLE_WEB_CLIENT_ID`: `https://gameplanjarvisai.up.railway.app/api/auth/mobile/callback`.
-2. Add the matching OAuth client secret to Railway as `GOOGLE_CLIENT_SECRET`. Without this, `/api/auth/mobile/callback` cannot exchange Google's auth code for tokens.
-3. Consider setting `GOOGLE_CLIENT_ID` to the same web client id, or update the Google capability checks to treat `GOOGLE_WEB_CLIENT_ID` as the canonical client id. Current readiness checks still look for `GOOGLE_CLIENT_ID`.
-4. Run the endpoint QA harness with `JARVIS_QA_AUTH_TOKEN` after login works, then rerun with `JARVIS_QA_RUN_CHAT=1` for chat/tool/background probes.
-5. Re-check Usage, Agents, Visual, and Jarvis chat in the deployed browser session after authentication succeeds.
-6. Follow up on the Railway prestart Drizzle warning: `column "active" cannot be cast automatically to type boolean`. The server still starts, but schema push is not fully clean.
+1. For popup-based web login, no new Google redirect URI is needed.
+2. For redirect fallback and Google tool integrations, add the matching OAuth client secret to Railway as `GOOGLE_CLIENT_SECRET`. Without this, `/api/oauth/google/callback` cannot exchange Google's auth code for tokens.
+3. Run the endpoint QA harness with `JARVIS_QA_AUTH_TOKEN` after login works, then rerun with `JARVIS_QA_RUN_CHAT=1` for chat/tool/background probes.
+4. Re-check Usage, Agents, Visual, and Jarvis chat in the deployed browser session after authentication succeeds.
+5. Follow up on the Railway prestart Drizzle warning: `column "active" cannot be cast automatically to type boolean`. The server still starts, but schema push is not fully clean.

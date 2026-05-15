@@ -83,10 +83,18 @@ function parseCompleteTokenValue(value: string): { pollHash: string; bindHash: s
   return { pollHash, bindHash, token };
 }
 
-function getCallbackUrl(req: Request): string {
+function getRequestOrigin(req: Request): string {
   const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol;
   const host = (req.headers["x-forwarded-host"] as string) || req.get("host") || "";
-  return `${proto}://${host}/api/auth/mobile/callback`;
+  return `${proto}://${host}`;
+}
+
+export function getMobileAuthCallbackUrl(req: Request): string {
+  return `${getRequestOrigin(req)}/api/oauth/google/callback`;
+}
+
+export function isMobileAuthState(value: string | undefined): boolean {
+  return typeof value === "string" && parseOauthState(value) !== null;
 }
 
 function successHtml(token: string): string {
@@ -205,10 +213,10 @@ mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
     secure: req.secure || req.headers["x-forwarded-proto"] === "https",
     sameSite: "lax",
     maxAge: 10 * 60 * 1000,
-    path: "/api/auth/mobile",
+    path: "/",
   });
 
-  const callbackUrl = getCallbackUrl(req);
+  const callbackUrl = getMobileAuthCallbackUrl(req);
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: callbackUrl,
@@ -223,7 +231,7 @@ mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
 
-mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
+export async function handleMobileAuthCallback(req: Request, res: Response) {
   const { code, state, error } = req.query as Record<string, string>;
 
   if (error || !code || !state) {
@@ -242,7 +250,7 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
     return res.send(errorHtml("OAuth credentials not configured on the server."));
   }
 
-  const callbackUrl = getCallbackUrl(req);
+  const callbackUrl = getMobileAuthCallbackUrl(req);
 
   try {
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -330,7 +338,9 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
     console.error("Mobile auth callback error:", err);
     return res.send(errorHtml("An unexpected error occurred. Please try again."));
   }
-});
+}
+
+mobileAuthRouter.get("/callback", handleMobileAuthCallback);
 
 mobileAuthRouter.get("/poll", async (req: Request, res: Response) => {
   const { session_id, poll_secret } = req.query as Record<string, string>;
