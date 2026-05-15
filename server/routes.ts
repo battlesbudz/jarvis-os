@@ -80,6 +80,7 @@ import {
   runLocalCodexDelegation,
 } from "./agent/codexDelegation";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
+import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 
 function providerLabelForModel(model: string): string {
   const normalized = model.toLowerCase();
@@ -3103,6 +3104,47 @@ Answer (yes/no):`,
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
+      }
+
+      const autonomyResult = await routeAppCoachChatAutonomy(
+        {
+          userId,
+          messages,
+          originChannel,
+        },
+        {
+          saveChatHistory: async ({ userId: historyUserId, data }) => {
+            await db.insert(schema.chatHistory)
+              .values({ userId: historyUserId, data })
+              .onConflictDoUpdate({
+                target: schema.chatHistory.userId,
+                set: { data, updatedAt: new Date() },
+              });
+          },
+          logInteraction: async ({ userId: interactionUserId, channel, direction, text }) => {
+            await logInteraction(interactionUserId, channel, direction, text);
+          },
+        },
+      );
+
+      if (autonomyResult.handled && autonomyResult.reply) {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.flushHeaders();
+        res.write(`data: ${JSON.stringify({ content: autonomyResult.reply })}\n\n`);
+        if (autonomyResult.jobId) {
+          res.write(`data: ${JSON.stringify({ type: "background_job", jobId: autonomyResult.jobId, agentType: autonomyResult.decision.agentType })}\n\n`);
+        }
+        res.write('data: [DONE]\n\n');
+        res.end();
+        if (userId) {
+          extractProfileInBackground(userId, messages);
+          detectAndRecordBehaviorSignals(userId, messages);
+          markProactiveQuestionsAnswered(userId, messages).catch(() => {});
+        }
+        return;
       }
 
       // ── Session-aware system-prompt data ──────────────────────────────────────

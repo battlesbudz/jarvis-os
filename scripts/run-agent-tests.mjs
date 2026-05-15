@@ -10,6 +10,7 @@ const tests = [
   { file: "server/diagnostics/__tests__/osReadiness.test.ts" },
   { file: "server/agent/__tests__/autonomyPolicy.test.ts" },
   { file: "server/agent/__tests__/autonomyRuntime.test.ts" },
+  { file: "server/agent/__tests__/appCoachChatAutonomy.test.ts" },
   { file: "server/agent/__tests__/topLevelApprovalContinuation.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },
   { file: "server/agent/__tests__/manifestFilter.assert.ts" },

@@ -1,4 +1,9 @@
-import { decideAutonomyMode, type AutonomyPolicyDecision, type AutonomyReadiness } from "./autonomyPolicy";
+import {
+  decideAutonomyMode,
+  type AutonomyMode,
+  type AutonomyPolicyDecision,
+  type AutonomyReadiness,
+} from "./autonomyPolicy";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
 
 export interface AutonomyRuntimeInput {
@@ -14,6 +19,7 @@ export interface AutonomyRuntimeDeps {
   submitJob?: (input: SubmitJobInput) => Promise<SubmitJobResult>;
   requestApproval?: (request: TopLevelApprovalRequest) => Promise<{ id: string; status: string }>;
   notifyApproval?: (userId: string, text: string, gateId: string) => Promise<void>;
+  observeDecision?: (observation: AutonomyRuntimeObservation) => void | Promise<void>;
 }
 
 export interface AutonomyRuntimeResult {
@@ -32,6 +38,20 @@ export interface TopLevelApprovalRequest {
   toolArgs: Record<string, unknown>;
   description: string;
   initiatedBy: "user" | "jarvis";
+}
+
+export interface AutonomyRuntimeObservation {
+  mode: AutonomyMode;
+  userId: string;
+  originChannel: string;
+  readinessStatus: AutonomyReadiness | "not_checked";
+  readinessReady: boolean;
+  agentType?: AgentJobType;
+  jobId?: string;
+  approvalBoundary?: "top_level_external_action";
+  approvalToolName?: string;
+  approvalGateId?: string;
+  error?: string;
 }
 
 const APPROVAL_PHRASES = [
@@ -89,6 +109,29 @@ async function defaultNotifyApproval(userId: string, text: string, gateId: strin
   await notifyUser(userId, "approval_request", text, { gateId });
 }
 
+async function observeAutonomyDecision(
+  deps: AutonomyRuntimeDeps,
+  observation: AutonomyRuntimeObservation,
+): Promise<void> {
+  const observer = deps.observeDecision ?? defaultObserveDecision;
+
+  try {
+    await observer(observation);
+  } catch (err) {
+    console.warn("[autonomyRuntime] observability callback failed:", err);
+  }
+}
+
+function defaultObserveDecision(observation: AutonomyRuntimeObservation): void {
+  if (process.env.NODE_ENV !== "production") return;
+  console.info("[autonomyRuntime] autonomy decision", observation);
+}
+
+function observationError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  return String(err);
+}
+
 function inferApprovalToolName(text: string): string {
   if (/\bemail\b|\bgmail\b/i.test(text)) return "send_email";
   if (/\bpost\b|\bdiscord\b|\bslack\b|\btelegram\b/i.test(text)) return "discord_post";
@@ -134,6 +177,13 @@ export async function routeAutonomyRequest(
   });
 
   if (!userText || preliminary.mode === "answer_inline") {
+    await observeAutonomyDecision(deps, {
+      mode: preliminary.mode,
+      userId: input.userId,
+      originChannel: input.channelName,
+      readinessStatus: "not_checked",
+      readinessReady: false,
+    });
     return { handled: false, decision: preliminary };
   }
 
@@ -145,10 +195,24 @@ export async function routeAutonomyRequest(
   });
 
   if (decision.mode === "answer_inline") {
+    await observeAutonomyDecision(deps, {
+      mode: decision.mode,
+      userId: input.userId,
+      originChannel: input.channelName,
+      readinessStatus: readiness,
+      readinessReady: readiness === "ready",
+    });
     return { handled: false, decision };
   }
 
   if (decision.mode === "blocked_by_setup") {
+    await observeAutonomyDecision(deps, {
+      mode: decision.mode,
+      userId: input.userId,
+      originChannel: input.channelName,
+      readinessStatus: readiness,
+      readinessReady: readiness === "ready",
+    });
     return {
       handled: true,
       decision,
@@ -161,20 +225,46 @@ export async function routeAutonomyRequest(
     const description = approvalDescription(userText, input.channelName);
     const requestApproval = deps.requestApproval ?? defaultRequestApproval;
     const notifyApproval = deps.notifyApproval ?? defaultNotifyApproval;
-    const gate = await requestApproval({
-      agentId: "coach",
+    let gate: { id: string; status: string } | undefined;
+    try {
+      gate = await requestApproval({
+        agentId: "coach",
+        userId: input.userId,
+        toolName,
+        toolArgs: {
+          topLevelAutonomy: true,
+          userText,
+          channelName: input.channelName,
+        },
+        description,
+        initiatedBy: "user",
+      });
+      const notificationText = `Approval required\n\n${description}\n\nGate ID: ${gate.id}`;
+      await notifyApproval(input.userId, notificationText, gate.id);
+    } catch (err) {
+      await observeAutonomyDecision(deps, {
+        mode: decision.mode,
+        userId: input.userId,
+        originChannel: input.channelName,
+        readinessStatus: readiness,
+        readinessReady: readiness === "ready",
+        approvalBoundary: "top_level_external_action",
+        approvalToolName: toolName,
+        approvalGateId: gate?.id,
+        error: observationError(err),
+      });
+      throw err;
+    }
+    await observeAutonomyDecision(deps, {
+      mode: decision.mode,
       userId: input.userId,
-      toolName,
-      toolArgs: {
-        topLevelAutonomy: true,
-        userText,
-        channelName: input.channelName,
-      },
-      description,
-      initiatedBy: "user",
+      originChannel: input.channelName,
+      readinessStatus: readiness,
+      readinessReady: readiness === "ready",
+      approvalBoundary: "top_level_external_action",
+      approvalToolName: toolName,
+      approvalGateId: gate.id,
     });
-    const notificationText = `Approval required\n\n${description}\n\nGate ID: ${gate.id}`;
-    await notifyApproval(input.userId, notificationText, gate.id);
 
     return {
       handled: true,
@@ -187,15 +277,38 @@ export async function routeAutonomyRequest(
   const agentType = (decision.agentType || "research") as AgentJobType;
   const title = deriveAutonomyTitle(userText);
   const submitJob = deps.submitJob ?? defaultSubmitJob;
-  const job = await submitJob({
-    userId: input.userId,
-    agentType,
-    title,
-    prompt: userText,
-    input: {
+  let job: SubmitJobResult;
+  try {
+    job = await submitJob({
+      userId: input.userId,
+      agentType,
+      title,
+      prompt: userText,
+      input: {
+        originChannel: input.channelName,
+        autonomyPolicy: true,
+      },
+    });
+  } catch (err) {
+    await observeAutonomyDecision(deps, {
+      mode: decision.mode,
+      userId: input.userId,
       originChannel: input.channelName,
-      autonomyPolicy: true,
-    },
+      readinessStatus: readiness,
+      readinessReady: readiness === "ready",
+      agentType,
+      error: observationError(err),
+    });
+    throw err;
+  }
+  await observeAutonomyDecision(deps, {
+    mode: decision.mode,
+    userId: input.userId,
+    originChannel: input.channelName,
+    readinessStatus: readiness,
+    readinessReady: readiness === "ready",
+    agentType,
+    jobId: job.id,
   });
 
   return {
