@@ -131,6 +131,7 @@ import { runTournamentTool } from "./runTournamentTool";
 import { listGithubPrsTool, getGithubPrTool, mergeGithubPrTool } from "./githubPrTools";
 import { projectShellTool } from "./projectShellTool";
 import { deployAppTool } from "./deployApp";
+import { delegateToCodexTool } from "./delegateToCodex";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -376,4 +377,5 @@ export {
   mergeGithubPrTool,
   projectShellTool,
   deployAppTool,
+  delegateToCodexTool,
 };

@@ -90,6 +90,8 @@ const HIGH_RISK_TOOLS = new Set([
   "setup_named_agent",
   // OS / system actions via daemon
   "daemon_action",
+  // Delegating to Codex may transitively reach local MCP/CLI capabilities.
+  "delegate_to_codex",
 ]);
 
 /** Return true if this tool requires an approval gate before running. */
