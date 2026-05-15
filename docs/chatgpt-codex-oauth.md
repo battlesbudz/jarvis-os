@@ -35,8 +35,30 @@ Then start the gateway:
 npm.cmd run jarvis:oauth:gateway
 ```
 
+## Hosted Jarvis calling the gateway
+
+For Railway/hosted Jarvis, keep Codex authenticated on the gateway host and set these variables on both sides:
+
+Gateway host:
+
+```txt
+JARVIS_CODEX_OAUTH_ENABLED=true
+JARVIS_CODEX_GATEWAY_TOKEN=<long random shared secret>
+```
+
+Hosted Jarvis:
+
+```txt
+JARVIS_CODEX_GATEWAY_URL=https://your-codex-gateway-host.example.com
+JARVIS_CODEX_GATEWAY_TOKEN=<same shared secret>
+```
+
+With `JARVIS_CODEX_GATEWAY_URL` set, hosted Jarvis exposes `delegate_to_codex` and forwards the scoped task to `/api/codex/delegate` on the gateway. The gateway runs `codex exec` using its local ChatGPT/Codex OAuth login and returns the result.
+
 ## Guardrails
 
 - Jarvis never reads or exposes Codex OAuth tokens.
-- This path is for no-tool text turns. Jarvis tool-calling turns are filtered away from this provider because Codex CLI cannot return Jarvis function calls in the same structured format as the model APIs.
-- Railway will not be able to use this unless the Railway container has Codex installed and authenticated, which is usually not the right deployment shape. Use it on a persistent local/private gateway host.
+- Jarvis can use `chatgpt-codex-oauth` as a model provider for normal turns and can request Jarvis-native tools through the JSON protocol in `server/agent/providers/codexOAuth.ts`.
+- Jarvis also has an owner-only `delegate_to_codex` tool. It either calls the configured gateway or shells out locally to `codex exec` so Codex can use the gateway host's configured Codex OAuth, MCP servers, and CLI context for a scoped task.
+- `delegate_to_codex` defaults to `read-only`, keeps the working directory inside the Jarvis workspace, and tells Codex not to send, post, delete, purchase, deploy, merge, commit, or mutate external systems unless the user explicitly approved that exact action.
+- Railway does not need Codex installed when `JARVIS_CODEX_GATEWAY_URL` is set. Without a gateway URL, direct local delegation only works on a persistent host that has Codex installed and authenticated.

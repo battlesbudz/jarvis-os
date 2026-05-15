@@ -72,6 +72,13 @@ import type { ProviderTurnResult } from "./agent/providers/base";
 import { getPublicBaseUrl } from "./publicUrl";
 import { estimateModelUsage, getModelUsageSummary, recordModelUsage } from "./agent/modelUsage";
 import type { AgentTool, ToolContext } from "./agent/types";
+import {
+  isCodexDelegationEnabled,
+  normalizeCodexDelegationSandbox,
+  normalizeCodexDelegationTimeoutMs,
+  resolveCodexDelegationCwd,
+  runLocalCodexDelegation,
+} from "./agent/codexDelegation";
 
 function providerLabelForModel(model: string): string {
   const normalized = model.toLowerCase();
@@ -1255,6 +1262,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error redeeming webchat invite token:", error);
       return res.status(500).json({ error: "Failed to redeem invite token" });
+    }
+  });
+
+  app.post("/api/codex/delegate", async (req: Request, res: Response) => {
+    try {
+      const expectedToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim();
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+      if (!expectedToken || token !== expectedToken) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const task = String(req.body?.task ?? "").trim();
+      if (!task) return res.status(400).json({ error: "task is required" });
+
+      let cwd: string;
+      try {
+        cwd = resolveCodexDelegationCwd(req.body?.working_directory);
+      } catch (err) {
+        return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+      }
+
+      const result = await runLocalCodexDelegation({
+        task,
+        context: typeof req.body?.context === "string" ? req.body.context : undefined,
+        allowExternalSideEffects: req.body?.allow_external_side_effects === true,
+        cwd,
+        sandbox: normalizeCodexDelegationSandbox(req.body?.sandbox),
+        timeoutMs: normalizeCodexDelegationTimeoutMs(req.body?.timeout_seconds),
+      });
+
+      return res.json(result);
+    } catch (error) {
+      console.error("[CodexGateway] delegation failed:", error);
+      return res.status(500).json({
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   });
 
@@ -3275,8 +3319,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ? await buildYouTubeContextBlock(lastUserOrigText).catch(() => "")
         : "";
 
+      const codexDelegationEnabled = isCodexDelegationEnabled();
+      const buildInstruction = codexDelegationEnabled
+        ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work."
+        : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
+
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
+        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
         ...messages.map((m: { role: string; content: string }, idx: number) => {
           const isLast = idx === messages.length - 1;
           const content = (isLast && m.role === 'user' && youtubeCtxBlock)
@@ -3356,7 +3405,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             requestTools.push(toOpenAIChatTool(tool));
           }
         };
-        [
+        const directAgentToolNames = [
           "search_web",
           "research_topic",
           "weather_lookup",
@@ -3368,7 +3417,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           "list_source_files",
           "read_source_file",
           "propose_code_change",
-        ].forEach((name) => addAgentTool(getTool(name)));
+        ];
+        if (codexDelegationEnabled) directAgentToolNames.push("delegate_to_codex");
+        directAgentToolNames.forEach((name) => addAgentTool(getTool(name)));
         const mcpAgentToolsMap = new Map<string, import("./agent/types").AgentTool>();
         try {
           const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
@@ -3728,6 +3779,19 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               const agentTool = agentToolMap.get(tc.function.name)!;
               mcpToolCtx.state.pendingAttachments = [];
               try {
+                if (agentTool.name === "delegate_to_codex") {
+                  if (!res.headersSent) {
+                    res.setHeader('Content-Type', 'text/event-stream');
+                    res.setHeader('Cache-Control', 'no-cache, no-transform');
+                    res.setHeader('X-Accel-Buffering', 'no');
+                    res.setHeader('Access-Control-Allow-Origin', '*');
+                    res.flushHeaders();
+                  }
+                  startKeepalive();
+                  try {
+                    res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: 'Handing this off to Codex...' })}\n\n`);
+                  } catch {}
+                }
                 const toolResult = await agentTool.execute(args, mcpToolCtx as ToolContext);
                 execResult = {
                   result: toolResult.ok ? 'success' : 'error',
