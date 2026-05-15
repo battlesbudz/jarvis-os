@@ -7117,14 +7117,22 @@ Return ONLY the JSON object.`;
 
       // ── Approval gate: unblock the waiting agent tool call ───────────────
       if (d.type === "approval_gate") {
-        const { approveGate } = await import("./agent/agentApproval");
+        const { approveGate, getGate } = await import("./agent/agentApproval");
+        const { continueTopLevelApproval } = await import("./agent/topLevelApprovalContinuation");
         const meta = (d.meta as { gateId?: string }) || {};
+        const gate = meta.gateId ? await getGate(meta.gateId) : undefined;
         if (meta.gateId) await approveGate(meta.gateId, userId);
+        const continuation = gate
+          ? await continueTopLevelApproval(gate).catch((err) => {
+              console.error("[deliverables] top-level approval continuation failed:", err);
+              return { continued: false, reason: "Continuation failed after approval." };
+            })
+          : { continued: false, reason: "Approval gate not found." };
         await db
           .update(schema.deliverables)
           .set({ status: "approved", actedAt: new Date() })
           .where(eq(schema.deliverables.id, id));
-        return res.json({ ok: true });
+        return res.json({ ok: true, continuation });
       }
 
       if (d.type === "email_draft") {

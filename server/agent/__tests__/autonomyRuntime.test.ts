@@ -70,6 +70,7 @@ async function main(): Promise<void> {
     assert.equal(approvalRequests[0].agentId, "coach");
     assert.equal(approvalRequests[0].userId, "user_1");
     assert.equal(approvalRequests[0].toolName, "send_email");
+    assert.equal(approvalRequests[0].toolArgs.topLevelAutonomy, true);
     assert.equal(approvalRequests[0].toolArgs.userText, "Send this email to the regulator");
     assert.equal(approvalRequests[0].toolArgs.channelName, "Gateway");
     assert.equal(approvalRequests[0].initiatedBy, "user");
