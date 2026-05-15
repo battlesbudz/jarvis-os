@@ -13,6 +13,7 @@ import { discordAgents, users } from "@shared/schema";
 import { DEFAULT_AGENT_PERMISSIONS } from "@shared/schema";
 
 interface CoreAgentDef {
+  idForUser?: (userId: string) => string;
   name: string;
   role: string;
   persona: string;
@@ -26,7 +27,22 @@ interface CoreAgentDef {
   preferredModel?: string;
 }
 
+export function getCoachAppAgentId(userId: string): string {
+  return `coach_app:${userId}`;
+}
+
 const CORE_AGENTS: CoreAgentDef[] = [
+  {
+    idForUser: getCoachAppAgentId,
+    name: "Jarvis App Coach",
+    role: "coach",
+    persona:
+      "I am Jarvis's in-app coach and primary user-facing conversation surface. I help the user think clearly, use tools safely, queue durable work, and keep the app chat grounded in the user's goals, memories, and operating context.",
+    platforms: ["in_app"],
+    loopEnabled: false,
+    loopIntervalMinutes: 60,
+    preferredModel: "chatgpt-codex-oauth/auto",
+  },
   {
     name: "Jarvis Telegram Bot",
     role: "support",
@@ -63,14 +79,16 @@ export const CORE_AGENT_NAMES = new Set(CORE_AGENTS.map((a) => a.name.toLowerCas
 
 export async function seedCoreAgentsForUser(userId: string): Promise<void> {
   const existing = await db
-    .select({ name: discordAgents.name })
+    .select({ id: discordAgents.id, name: discordAgents.name })
     .from(discordAgents)
     .where(eq(discordAgents.userId, userId));
 
+  const existingIds = new Set(existing.map((a) => a.id));
   const existingNames = new Set(existing.map((a) => a.name.toLowerCase()));
 
   for (const def of CORE_AGENTS) {
-    if (existingNames.has(def.name.toLowerCase())) {
+    const explicitId = def.idForUser?.(userId);
+    if ((explicitId && existingIds.has(explicitId)) || existingNames.has(def.name.toLowerCase())) {
       // Always sync preferredModel so model routing changes propagate to
       // existing agents (not just newly-seeded ones).
       if (def.preferredModel) {
@@ -89,6 +107,7 @@ export async function seedCoreAgentsForUser(userId: string): Promise<void> {
     }
 
     await db.insert(discordAgents).values({
+      ...(explicitId ? { id: explicitId } : {}),
       userId,
       name: def.name,
       role: def.role,

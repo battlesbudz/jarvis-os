@@ -84,6 +84,7 @@ import { runCodexOAuthPrompt } from "./agent/providers/codexOAuth";
 import { getCodexOAuthCommand } from "./agent/providers/env";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
+import { getCoachAppAgentId } from "./agent/coreAgentSeed";
 
 function providerLabelForModel(model: string): string {
   const normalized = model.toLowerCase();
@@ -3646,7 +3647,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               if (userId) {
                 try {
                   const { initSession, appendToSession } = await import("./agent/providers/claude");
-                  const COACH_APP_AGENT_ID = "coach_app";
+                  const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
                   let appSessionId: string | undefined;
                   if (incomingAppSessionId) {
                     const exchangeMsgs = [
@@ -4148,7 +4149,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       if (userId && fullStreamedReply && !clientDisconnected) {
         try {
           const { initSession, appendToSession } = await import("./agent/providers/claude");
-          const COACH_APP_AGENT_ID = "coach_app";
+          const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
           const lastUserMsgForSession = [...messages].reverse().find((m: any) => m.role === 'user');
           let appSessionId: string | undefined;
           if (incomingAppSessionId) {
