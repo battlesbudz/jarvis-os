@@ -19,6 +19,9 @@
 
 // ── Context ────────────────────────────────────────────────────────────────────
 
+import type { ApprovalReceipt } from "./approvalReceipt";
+import { approvalReceiptCoversToolCall } from "./approvalReceipt";
+
 export type ToolCallHookContext = {
   toolName: string;
   params: Record<string, unknown>;
@@ -33,6 +36,8 @@ export type ToolCallHookContext = {
   initiatedBy?: "user" | "jarvis";
   /** AbortSignal from the parent run — approval waiter respects cancellation. */
   signal?: AbortSignal;
+  /** Scoped receipt from an already-approved top-level action. */
+  approvalReceipt?: ApprovalReceipt;
 };
 
 // ── Handler return types ───────────────────────────────────────────────────────
@@ -197,6 +202,14 @@ async function runApprovalFlow(
   ctx: ToolCallHookContext,
   approval: NonNullable<ToolCallHookResult["requireApproval"]>,
 ): Promise<boolean> {
+  if (approvalReceiptCoversToolCall(ctx.approvalReceipt, { userId: ctx.userId, toolName: ctx.toolName })) {
+    console.log(
+      `[ToolCallHooks] approval receipt accepted: gate=${ctx.approvalReceipt?.gateId} tool=${ctx.toolName}`,
+    );
+    approval.onResolution?.("allow");
+    return true;
+  }
+
   const { requestApproval, awaitApproval } = await import("./agentApproval");
   const { logAgentEvent } = await import("./agentLogger");
 

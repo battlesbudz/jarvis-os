@@ -37,6 +37,7 @@ import { createRoutedOpenAIChatShim } from "./routedChatCompletion";
 import type { DiscordAgent } from "@shared/schema";
 import type { ChannelAttachment } from "../channels/types";
 import type OpenAI from "openai";
+import type { ApprovalReceipt } from "./approvalReceipt";
 
 // ── Errors ─────────────────────────────────────────────────────────────────────
 
@@ -186,6 +187,8 @@ export interface RunNamedAgentOptions {
    * Prevents infinite recursion — the quality checker is skipped on revision passes.
    */
   isRevisionPass?: boolean;
+  /** Scoped receipt from a previously-approved top-level action. */
+  approvalReceipt?: ApprovalReceipt;
 }
 
 export interface NamedAgentResult {
@@ -471,6 +474,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
         channelId: opts.channelId,
         initiatedBy,
         signal,
+        approvalReceipt: opts.approvalReceipt,
       });
       return { allowed: result.allowed, reason: result.reason, params: result.params };
     };
