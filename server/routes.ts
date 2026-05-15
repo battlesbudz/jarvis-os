@@ -7123,6 +7123,45 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.post("/api/agent-jobs/:id/retry", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = _p(req.params.id);
+      const [job] = await db
+        .select()
+        .from(schema.agentJobs)
+        .where(and(eq(schema.agentJobs.id, id), eq(schema.agentJobs.userId, userId)))
+        .limit(1);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      if (!["failed", "cancelled"].includes(job.status)) {
+        return res.status(400).json({ error: "Only failed or cancelled jobs can be retried" });
+      }
+
+      const { submitAgentJob } = await import("./agent/jobQueue");
+      const input = job.input && typeof job.input === "object" && !Array.isArray(job.input)
+        ? { ...(job.input as Record<string, unknown>) }
+        : {};
+      delete input.retryCount;
+      const retry = await submitAgentJob({
+        userId,
+        agentType: job.agentType as any,
+        title: job.title,
+        prompt: job.prompt,
+        input: {
+          ...input,
+          retryOfJobId: job.id,
+          retriedAt: new Date().toISOString(),
+        },
+      });
+
+      res.json({ ok: true, jobId: retry.id, isDuplicate: retry.isDuplicate, status: "queued" });
+    } catch (err) {
+      console.error("Error retrying agent job:", err);
+      res.status(500).json({ error: "Failed to retry job" });
+    }
+  });
+
   app.get("/api/deliverables", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
@@ -7314,6 +7353,91 @@ Return ONLY the JSON object.`;
     } catch (err) {
       console.error("Error editing deliverable:", err);
       res.status(500).json({ error: "Failed to edit deliverable" });
+    }
+  });
+
+  app.post("/api/deliverables/:id/revise", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = _p(req.params.id);
+      const instructions = typeof req.body?.instructions === "string" ? req.body.instructions.trim() : "";
+      if (!instructions) return res.status(400).json({ error: "Revision instructions are required" });
+
+      const [d] = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+        .limit(1);
+      if (!d) return res.status(404).json({ error: "Deliverable not found" });
+      if (d.status !== "pending_approval") {
+        return res.status(400).json({ error: "Only pending deliverables can be revised" });
+      }
+      if (d.type === "approval_gate") {
+        return res.status(400).json({ error: "Approval requests cannot be revised; approve or decline them" });
+      }
+
+      const [job] = d.jobId
+        ? await db
+            .select()
+            .from(schema.agentJobs)
+            .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.userId, userId)))
+            .limit(1)
+        : [];
+
+      const { submitAgentJob } = await import("./agent/jobQueue");
+      const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input)
+        ? { ...(job.input as Record<string, unknown>) }
+        : {};
+      delete baseInput.retryCount;
+
+      const revisionPrompt = [
+        "Revise this Jarvis deliverable according to the user's requested changes.",
+        "",
+        `Original task: ${job?.prompt || d.title}`,
+        "",
+        "Current deliverable:",
+        d.body.slice(0, 30000),
+        "",
+        "Requested changes:",
+        instructions,
+        "",
+        "Return a complete replacement deliverable, not a patch note.",
+      ].join("\n");
+
+      const revision = await submitAgentJob({
+        userId,
+        agentType: d.agentType as any,
+        title: `Revision: ${d.title}`.slice(0, 200),
+        prompt: revisionPrompt,
+        input: {
+          ...baseInput,
+          revisionOfDeliverableId: d.id,
+          revisionOfJobId: d.jobId,
+          revisionInstructions: instructions.slice(0, 2000),
+        },
+      });
+
+      await db
+        .update(schema.deliverables)
+        .set({
+          status: "discarded",
+          actedAt: new Date(),
+          triageNote: `Revision requested: ${instructions.slice(0, 500)}`,
+        })
+        .where(eq(schema.deliverables.id, id));
+
+      if (d.jobId) {
+        await db
+          .update(schema.agentJobs)
+          .set({ status: "delivered" })
+          .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.status, "complete")));
+      }
+
+      res.json({ ok: true, jobId: revision.id, isDuplicate: revision.isDuplicate, status: "queued" });
+    } catch (err) {
+      console.error("Error requesting deliverable revision:", err);
+      res.status(500).json({ error: "Failed to request revision" });
     }
   });
 
