@@ -9,7 +9,17 @@ try {
 }
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-const child = spawn(npx, ["drizzle-kit", "push", ...process.argv.slice(2)], {
+const args = process.argv.slice(2);
+const runningOnRailway =
+  Boolean(process.env.RAILWAY_ENVIRONMENT) ||
+  Boolean(process.env.RAILWAY_PROJECT_ID) ||
+  Boolean(process.env.RAILWAY_SERVICE_ID);
+
+if (runningOnRailway && !args.includes("--force")) {
+  args.push("--force");
+}
+
+const child = spawn(npx, ["drizzle-kit", "push", ...args], {
   stdio: "inherit",
   shell: false,
 });
