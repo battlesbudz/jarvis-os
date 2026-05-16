@@ -20,6 +20,7 @@ import { queryClient, apiRequest } from "@/lib/query-client";
 import { runMigrations, isOnboardingComplete } from "@/lib/storage";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { WakeWordProvider } from "@/lib/wake-word-context";
+import { useAndroidApkUpdateCheck } from "@/lib/app-update";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -185,6 +186,7 @@ function AppNavigator() {
   useDeepLinkAuth();
   useDeepLinkNavigation();
   useExpoPushTokenRegistration();
+  useAndroidApkUpdateCheck();
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
