@@ -50,6 +50,7 @@ import { useAuth, authFetch } from '@/lib/auth-context';
 import * as WebBrowser from 'expo-web-browser';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
+import { checkAndroidApkUpdate } from '@/lib/app-update';
 
 interface UserDocument {
   id: string;
@@ -235,6 +236,7 @@ export default function ProfileScreen() {
   const [webhookResetting, setWebhookResetting] = useState(false);
   const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
+  const [appUpdateChecking, setAppUpdateChecking] = useState(false);
   const [channelData, setChannelData] = useState<{
     channels: { name: string; configured: boolean; connected: boolean }[];
     connected: Record<string, boolean>;
@@ -1792,6 +1794,19 @@ export default function ProfileScreen() {
       setConnectingId(null);
     }
   }, []);
+
+  const handleCheckAppUpdate = useCallback(async () => {
+    if (appUpdateChecking) return;
+    setAppUpdateChecking(true);
+    try {
+      await checkAndroidApkUpdate({ showUpToDateAlert: true });
+    } catch (error) {
+      console.error('App update check error:', error);
+      Alert.alert('Could not check updates', 'Jarvis could not check for a new APK right now. Try again in a minute.');
+    } finally {
+      setAppUpdateChecking(false);
+    }
+  }, [appUpdateChecking]);
 
   const handleConnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack') => {
     setConnectingId(provider);
@@ -5098,6 +5113,26 @@ export default function ProfileScreen() {
 
         <Animated.View entering={FadeInDown.duration(400).delay(500)} style={styles.versionRow}>
           <Text style={styles.versionText}>GamePlan v1.0.0</Text>
+          {Platform.OS === 'android' && (
+            <Pressable
+              onPress={handleCheckAppUpdate}
+              disabled={appUpdateChecking}
+              style={({ pressed }) => [
+                styles.updateButton,
+                pressed && !appUpdateChecking && styles.updateButtonPressed,
+                appUpdateChecking && styles.updateButtonDisabled,
+              ]}
+            >
+              {appUpdateChecking ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <Ionicons name="download-outline" size={17} color={Colors.primary} />
+              )}
+              <Text style={styles.updateButtonText}>
+                {appUpdateChecking ? 'Checking...' : 'Check for APK update'}
+              </Text>
+            </Pressable>
+          )}
         </Animated.View>
       </ScrollView>
 
@@ -5812,6 +5847,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
+  },
+  updateButton: {
+    marginTop: 12,
+    minHeight: 42,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + '10',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  updateButtonPressed: {
+    opacity: 0.82,
+  },
+  updateButtonDisabled: {
+    opacity: 0.7,
+  },
+  updateButtonText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
 
   /* Rewards */
