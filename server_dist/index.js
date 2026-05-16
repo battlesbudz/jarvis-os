@@ -2061,8 +2061,8 @@ async function ensureTablesExist() {
         scope VARCHAR NOT NULL DEFAULT 'all',
         pattern TEXT NOT NULL,
         match_hints JSONB NOT NULL DEFAULT '{}'::jsonb,
-        active VARCHAR NOT NULL DEFAULT 'true',
-        match_count VARCHAR NOT NULL DEFAULT '0',
+        active BOOLEAN NOT NULL DEFAULT true,
+        match_count INTEGER NOT NULL DEFAULT 0,
         source VARCHAR NOT NULL DEFAULT 'user',
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
@@ -20795,8 +20795,12 @@ async function handleMobileAuthCallback(req, res) {
     const pendingRows = await db.select().from(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, sessionId)).limit(1);
     const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
     const bindNonce = readCookie(req, BIND_COOKIE_NAME);
-    if (pending && bindNonce && timingSafeEqual2(pending.stateHash, sha256(state)) && timingSafeEqual2(pending.bindHash, sha256(bindNonce))) {
-      await db.update(mobileAuthSessions).set({ token: completeTokenValue(pending.pollHash, pending.bindHash, token), expiresAt }).where(eq20(mobileAuthSessions.sessionId, sessionId));
+    let bindHash = NATIVE_BIND_HASH;
+    if (pending && bindNonce && timingSafeEqual2(pending.bindHash, sha256(bindNonce))) {
+      bindHash = pending.bindHash;
+    }
+    if (pending && timingSafeEqual2(pending.stateHash, sha256(state))) {
+      await db.update(mobileAuthSessions).set({ token: completeTokenValue(pending.pollHash, bindHash, token), expiresAt }).where(eq20(mobileAuthSessions.sessionId, sessionId));
     }
     return res.send(successHtml(token));
   } catch (err2) {
@@ -20804,7 +20808,7 @@ async function handleMobileAuthCallback(req, res) {
     return res.send(errorHtml("An unexpected error occurred. Please try again."));
   }
 }
-var mobileAuthRouter, PENDING_TOKEN_PREFIX, COMPLETE_TOKEN_PREFIX, POLL_SECRET_BYTES, BIND_COOKIE_NAME;
+var mobileAuthRouter, PENDING_TOKEN_PREFIX, COMPLETE_TOKEN_PREFIX, POLL_SECRET_BYTES, BIND_COOKIE_NAME, NATIVE_BIND_HASH;
 var init_mobileAuthRoutes = __esm({
   "server/mobileAuthRoutes.ts"() {
     "use strict";
@@ -20816,6 +20820,7 @@ var init_mobileAuthRoutes = __esm({
     COMPLETE_TOKEN_PREFIX = "__COMPLETE__:";
     POLL_SECRET_BYTES = 24;
     BIND_COOKIE_NAME = "mobile_auth_bind";
+    NATIVE_BIND_HASH = "native";
     mobileAuthRouter.get("/start", async (req, res) => {
       const { session_id, poll_secret } = req.query;
       if (!session_id) return res.status(400).json({ error: "session_id required" });
@@ -20879,7 +20884,9 @@ var init_mobileAuthRoutes = __esm({
         }
         const completed = parseCompleteTokenValue(session.token);
         const bindNonce = readCookie(req, BIND_COOKIE_NAME);
-        if (!completed || !bindNonce || !timingSafeEqual2(completed.pollHash, sha256(poll_secret)) || !timingSafeEqual2(completed.bindHash, sha256(bindNonce))) {
+        const bindMatches = Boolean(completed && bindNonce && timingSafeEqual2(completed.bindHash, sha256(bindNonce)));
+        const nativeMobileSession = completed?.bindHash === NATIVE_BIND_HASH;
+        if (!completed || !timingSafeEqual2(completed.pollHash, sha256(poll_secret)) || !bindMatches && !nativeMobileSession) {
           return res.status(404).json({ ready: false });
         }
         await db.delete(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, session_id));
