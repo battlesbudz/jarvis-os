@@ -41,6 +41,7 @@ interface Project {
   autonomousMode: boolean;
   questionPending: string | null;
   lastProgressAt: string | null;
+  workspaceDir?: string | null;
   appFramework: string | null;
   lastSessionSummary: string | null;
   githubRepoUrl: string | null;
@@ -57,7 +58,28 @@ interface ProjectDetail {
   nextStep: ProjectPlanStep | null;
 }
 
-type ProjectStatus = Project["status"];
+type ProjectKind = "app" | "general";
+type ProjectFramework = "nextjs" | "react-vite" | "node-express" | "custom";
+
+interface ProjectFile {
+  path: string;
+  name: string;
+  type: "file" | "directory";
+  size: number;
+  updatedAt: string;
+}
+
+interface ProjectFilesResponse {
+  workspaceDir: string | null;
+  files: ProjectFile[];
+}
+
+interface ProjectFileContent {
+  path: string;
+  content: string;
+  size: number;
+  updatedAt: string;
+}
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = {
   draft: { label: "Draft", color: "#6B7280", icon: "document-outline" },
@@ -86,6 +108,21 @@ function useProjectDetail(id: string | null) {
     queryKey: ["/api/projects", id],
     enabled: !!id,
     refetchInterval: 15000,
+  });
+}
+
+function useProjectFiles(id: string | null, enabled: boolean) {
+  return useQuery<ProjectFilesResponse>({
+    queryKey: ["/api/projects", id, "files"],
+    enabled: !!id && enabled,
+    refetchInterval: enabled ? 15000 : false,
+  });
+}
+
+function useProjectFileContent(projectId: string | null, filePath: string | null) {
+  return useQuery<ProjectFileContent>({
+    queryKey: [`/api/projects/${projectId}/files/content?path=${encodeURIComponent(filePath ?? "")}`],
+    enabled: !!projectId && !!filePath,
   });
 }
 
@@ -236,11 +273,22 @@ function NewProjectModal({ visible, onClose, onCreated }: {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [goal, setGoal] = useState("");
-  const [autonomousMode, setAutonomousMode] = useState(false);
+  const [projectKind, setProjectKind] = useState<ProjectKind>("app");
+  const [framework, setFramework] = useState<ProjectFramework>("nextjs");
+  const [autonomousMode, setAutonomousMode] = useState(true);
+  const isAppProject = projectKind === "app";
 
   const { mutate: createProject, isPending } = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/projects", { title, description, goal, autonomousMode, originChannel: "app" });
+      const res = await apiRequest("POST", "/api/projects", {
+        title,
+        description,
+        goal,
+        autonomousMode,
+        projectKind,
+        framework: isAppProject ? framework : undefined,
+        originChannel: "app",
+      });
       return res.json() as Promise<{ projectId: string }>;
     },
     onSuccess: (data) => {
@@ -248,7 +296,9 @@ function NewProjectModal({ visible, onClose, onCreated }: {
       setTitle("");
       setDescription("");
       setGoal("");
-      setAutonomousMode(false);
+      setProjectKind("app");
+      setFramework("nextjs");
+      setAutonomousMode(true);
       onCreated(data.projectId);
     },
     onError: (err) => {
@@ -272,6 +322,59 @@ function NewProjectModal({ visible, onClose, onCreated }: {
         </View>
 
         <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+          <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Project Type</Text>
+          <View style={[styles.segmentedControl, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <TouchableOpacity
+              style={[styles.segmentOption, projectKind === "app" && styles.segmentOptionActive]}
+              onPress={() => {
+                setProjectKind("app");
+                setAutonomousMode(true);
+              }}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="code-slash" size={16} color={projectKind === "app" ? "#fff" : colors.textSecondary} />
+              <Text style={[styles.segmentText, { color: projectKind === "app" ? "#fff" : colors.textSecondary }]}>App / Website</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.segmentOption, projectKind === "general" && styles.segmentOptionActive]}
+              onPress={() => {
+                setProjectKind("general");
+                setAutonomousMode(false);
+              }}
+              activeOpacity={0.75}
+            >
+              <Ionicons name="list-outline" size={16} color={projectKind === "general" ? "#fff" : colors.textSecondary} />
+              <Text style={[styles.segmentText, { color: projectKind === "general" ? "#fff" : colors.textSecondary }]}>Plan / Tracker</Text>
+            </TouchableOpacity>
+          </View>
+
+          {isAppProject && (
+            <>
+              <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Framework</Text>
+              <View style={styles.frameworkGrid}>
+                {([
+                  ["nextjs", "Next.js"],
+                  ["react-vite", "React/Vite"],
+                  ["node-express", "Node API"],
+                  ["custom", "Custom"],
+                ] as const).map(([value, label]) => (
+                  <TouchableOpacity
+                    key={value}
+                    style={[
+                      styles.frameworkBtn,
+                      { backgroundColor: colors.surface, borderColor: framework === value ? "#3B82F6" : colors.border },
+                      framework === value && styles.frameworkBtnActive,
+                    ]}
+                    onPress={() => setFramework(value)}
+                    activeOpacity={0.75}
+                  >
+                    <Text style={[styles.frameworkText, { color: framework === value ? "#3B82F6" : colors.textSecondary }]}>{label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </>
+          )}
+
           <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Project Title *</Text>
           <TextInput
             style={[styles.input, { backgroundColor: colors.surface, color: colors.text, borderColor: colors.border }]}
@@ -309,8 +412,10 @@ function NewProjectModal({ visible, onClose, onCreated }: {
             activeOpacity={0.75}
           >
             <View>
-              <Text style={[styles.toggleLabel, { color: colors.text }]}>24/7 Autonomous Mode</Text>
-              <Text style={[styles.toggleDesc, { color: colors.textSecondary }]}>Jarvis keeps building every 30 min — even while you sleep</Text>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>Autonomous Mode</Text>
+              <Text style={[styles.toggleDesc, { color: colors.textSecondary }]}>
+                {isAppProject ? "Jarvis keeps building every 30 min until the app is complete" : "Jarvis continues the plan in scheduled sessions"}
+              </Text>
             </View>
             <View style={[styles.toggleSwitch, { backgroundColor: autonomousMode ? "#3B82F6" : colors.border }]}>
               <View style={[styles.toggleThumb, { left: autonomousMode ? 22 : 2 }]} />
@@ -433,6 +538,130 @@ function GitHubPushModal({ visible, project, onClose, onPushed }: {
   );
 }
 
+function AppWorkspaceSection({ project }: { project: Project }) {
+  const colors = useColors();
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
+  const filesQuery = useProjectFiles(project.id, !!project.appFramework);
+  const contentQuery = useProjectFileContent(project.id, selectedFile);
+  const files = filesQuery.data?.files ?? [];
+  const selectedFileMeta = selectedFile ? files.find((file) => file.path === selectedFile) : null;
+  const fileCount = files.filter((file) => file.type === "file").length;
+
+  const handleDownload = useCallback(async () => {
+    setDownloading(true);
+    try {
+      const res = await apiRequest("GET", `/api/projects/${project.id}/download-url`);
+      const data = await res.json() as { downloadUrl?: string };
+      if (!data.downloadUrl) {
+        Alert.alert("Download not ready", "Jarvis has not packaged this project yet.");
+        return;
+      }
+      await Linking.openURL(data.downloadUrl);
+    } catch (err) {
+      Alert.alert("Download not ready", err instanceof Error ? err.message : "The project zip is not available yet.");
+    } finally {
+      setDownloading(false);
+    }
+  }, [project.id]);
+
+  return (
+    <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={styles.workspaceHeader}>
+        <View style={styles.workspaceTitleBlock}>
+          <Text style={[styles.sectionTitle, { color: colors.text, paddingBottom: 2 }]}>App Workspace</Text>
+          <Text style={[styles.workspaceMeta, { color: colors.textTertiary }]}>
+            {project.appFramework} {fileCount > 0 ? `- ${fileCount} files` : "- waiting for scaffold"}
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.actionBtn, { backgroundColor: project.status === "complete" ? "#10B98122" : "#6B728022", opacity: downloading ? 0.6 : 1 }]}
+          onPress={handleDownload}
+          disabled={downloading}
+        >
+          <Ionicons name="download-outline" size={14} color={project.status === "complete" ? "#10B981" : colors.textSecondary} />
+          <Text style={[styles.actionBtnText, { color: project.status === "complete" ? "#10B981" : colors.textSecondary }]}>
+            {downloading ? "Opening..." : "Zip"}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {!!filesQuery.data?.workspaceDir && (
+        <Text style={[styles.workspacePath, { color: colors.textTertiary }]} numberOfLines={1}>
+          {filesQuery.data.workspaceDir}
+        </Text>
+      )}
+
+      {filesQuery.isLoading && (
+        <Text style={[styles.workspaceEmpty, { color: colors.textTertiary }]}>Loading workspace...</Text>
+      )}
+
+      {!filesQuery.isLoading && files.length === 0 && (
+        <Text style={[styles.workspaceEmpty, { color: colors.textTertiary }]}>
+          Files will show here after Jarvis scaffolds the project.
+        </Text>
+      )}
+
+      {files.length > 0 && (
+        <View style={[styles.fileList, { borderTopColor: colors.border }]}>
+          {files.slice(0, 80).map((file) => {
+            const isSelected = selectedFile === file.path;
+            const depth = Math.max(0, file.path.split("/").length - 1);
+            return (
+              <TouchableOpacity
+                key={file.path}
+                style={[
+                  styles.fileRow,
+                  { paddingLeft: 14 + depth * 12, borderBottomColor: colors.border },
+                  isSelected && { backgroundColor: "#3B82F611" },
+                ]}
+                onPress={() => file.type === "file" && setSelectedFile(file.path)}
+                activeOpacity={file.type === "file" ? 0.75 : 1}
+              >
+                <Ionicons
+                  name={file.type === "directory" ? "folder-outline" : "document-text-outline"}
+                  size={15}
+                  color={file.type === "directory" ? colors.textTertiary : colors.textSecondary}
+                />
+                <Text
+                  style={[
+                    styles.fileName,
+                    { color: file.type === "directory" ? colors.textTertiary : colors.text },
+                    isSelected && { color: "#3B82F6", fontWeight: "600" },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {file.name}
+                </Text>
+                {file.type === "file" && (
+                  <Text style={[styles.fileSize, { color: colors.textTertiary }]}>{Math.max(1, Math.round(file.size / 1024))} KB</Text>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      )}
+
+      {selectedFile && (
+        <View style={[styles.filePreview, { borderTopColor: colors.border, backgroundColor: colors.background }]}>
+          <Text style={[styles.filePreviewTitle, { color: colors.text }]} numberOfLines={1}>
+            {selectedFileMeta?.path ?? selectedFile}
+          </Text>
+          {contentQuery.isLoading ? (
+            <Text style={[styles.workspaceEmpty, { color: colors.textTertiary }]}>Loading file...</Text>
+          ) : contentQuery.data?.content ? (
+            <ScrollView horizontal style={styles.fileCodeScroll}>
+              <Text style={[styles.fileCode, { color: colors.textSecondary }]}>{contentQuery.data.content}</Text>
+            </ScrollView>
+          ) : (
+            <Text style={[styles.workspaceEmpty, { color: colors.textTertiary }]}>Could not preview this file.</Text>
+          )}
+        </View>
+      )}
+    </View>
+  );
+}
+
 function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: () => void }) {
   const colors = useColors();
   const queryClient = useQueryClient();
@@ -473,7 +702,7 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
             await apiRequest("DELETE", `/api/projects/${projectId}`);
             queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
             onBack();
-          } catch (err) {
+          } catch {
             Alert.alert("Error", "Failed to delete project");
           }
         },
@@ -501,7 +730,7 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
     );
   }
 
-  const { project, sessions, completedCount, totalCount, nextStep } = data;
+  const { project, sessions, completedCount, totalCount } = data;
   const cfg = STATUS_CONFIG[project.status] ?? STATUS_CONFIG.draft;
   const phases = [...new Set((project.plan ?? []).map((s) => s.phase))];
   const isComplete = project.status === "complete";
@@ -569,7 +798,9 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
           </View>
         </View>
 
-        {isComplete && (
+        {!!project.appFramework && <AppWorkspaceSection project={project} />}
+
+        {isComplete && !!project.appFramework && (
           <View style={[styles.githubCard, { backgroundColor: colors.surface, borderColor: project.githubRepoUrl ? "#10B98133" : colors.border }]}>
             {project.githubRepoUrl ? (
               <>
@@ -836,6 +1067,14 @@ const styles = StyleSheet.create({
   modalSave: { fontSize: 16, fontWeight: "600" },
   modalBody: { padding: 16 },
   fieldLabel: { fontSize: 13, fontWeight: "500", marginBottom: 6, marginTop: 16 },
+  segmentedControl: { flexDirection: "row", borderRadius: 12, borderWidth: 1, padding: 4, gap: 4 },
+  segmentOption: { flex: 1, minHeight: 42, borderRadius: 9, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 },
+  segmentOptionActive: { backgroundColor: "#3B82F6" },
+  segmentText: { fontSize: 13, fontWeight: "600" },
+  frameworkGrid: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  frameworkBtn: { width: "48%", minHeight: 40, borderRadius: 10, borderWidth: 1, alignItems: "center", justifyContent: "center" },
+  frameworkBtnActive: { backgroundColor: "#3B82F611" },
+  frameworkText: { fontSize: 13, fontWeight: "600" },
   input: {
     borderWidth: 1,
     borderRadius: 10,
@@ -884,6 +1123,19 @@ const styles = StyleSheet.create({
 
   section: { borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, overflow: "hidden" },
   sectionTitle: { fontSize: 15, fontWeight: "600", padding: 14, paddingBottom: 10 },
+  workspaceHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingRight: 14 },
+  workspaceTitleBlock: { flex: 1 },
+  workspaceMeta: { fontSize: 12, paddingHorizontal: 14, paddingBottom: 10 },
+  workspacePath: { fontSize: 11, paddingHorizontal: 14, paddingBottom: 10 },
+  workspaceEmpty: { fontSize: 13, lineHeight: 18, paddingHorizontal: 14, paddingBottom: 14 },
+  fileList: { borderTopWidth: StyleSheet.hairlineWidth },
+  fileRow: { flexDirection: "row", alignItems: "center", gap: 8, minHeight: 38, paddingRight: 12, borderBottomWidth: StyleSheet.hairlineWidth },
+  fileName: { flex: 1, fontSize: 13 },
+  fileSize: { fontSize: 11 },
+  filePreview: { borderTopWidth: StyleSheet.hairlineWidth, padding: 12, gap: 8 },
+  filePreviewTitle: { fontSize: 12, fontWeight: "600" },
+  fileCodeScroll: { maxHeight: 280 },
+  fileCode: { fontFamily: Platform.select({ ios: "Menlo", android: "monospace", default: "monospace" }), fontSize: 11, lineHeight: 16 },
 
   stepRow: { flexDirection: "row", gap: 10, paddingHorizontal: 14, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#E5E7EB" },
   stepContent: { flex: 1, gap: 2 },
