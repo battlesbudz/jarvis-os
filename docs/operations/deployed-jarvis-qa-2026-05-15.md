@@ -602,3 +602,21 @@ Remaining after this pass:
 1. Continue monitoring future startup logs for new schema drift. This pass confirmed `[railway-db-repair] Database compatibility repair complete`, Drizzle `[✓] Changes applied`, and no repeat of the old `active` boolean cast warning or the follow-up `mention_patterns` null error.
 2. Run `npm run jarvis:qa:endpoints` and `npm run jarvis:qa:cleanup` with a real `JARVIS_QA_AUTH_TOKEN`.
 3. Browser-confirm the mobile/native OAuth fallback on the actual device flow.
+
+## Fix Pass 7 - Native OAuth Polling and Authenticated Endpoint QA
+
+Date: 2026-05-15
+
+Status: complete and deployed.
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Native/mobile OAuth polling | Fixed and browser-confirmed | A fresh `/api/auth/mobile/start?session_id=...&poll_secret=...` flow through Chrome completed Google auth, then `/api/auth/mobile/poll` returned `200`, `ready=true`, and an authenticated bearer token. |
+| Endpoint QA without chat | Passed | `npm.cmd run jarvis:qa:endpoints` passed `18/18` deployed endpoint checks using the native poll token. |
+| Endpoint QA with chat | Passed | `JARVIS_QA_RUN_CHAT=1 npm.cmd run jarvis:qa:endpoints` passed `19/19`; `chat.basic` returned exactly `QA_ENDPOINT_OK`. |
+| Provider routing visibility | Confirmed | Endpoint QA reported provider health `allOk codex=enabled primary=chatgpt-codex-oauth/chatgpt-codex-oauth/auto`. |
+
+Remaining after this pass:
+
+1. Optional cleanup dry-run: `npm run jarvis:qa:cleanup` with a fresh owner token, then `--apply` only if the dry-run lists only known QA artifacts.
+2. Missing optional integrations remain intentionally out of scope for this pass.
