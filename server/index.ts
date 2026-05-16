@@ -8,7 +8,7 @@ import { registerTelegramWebhook, startProactiveScheduler, startTelegramPolling,
 import { startMomentumExpiryScheduler } from "./momentumCoach";
 import { startHeartbeat } from "./heartbeat";
 import { startJobQueueWorker } from "./agent/jobQueue";
-import { isTelegramConfigured, logTelegramStatus, deleteWebhook, ensureWebhook, getExpectedWebhookUrl } from "./integrations/telegram";
+import { isTelegramConfigured, logTelegramStatus, deleteWebhook, ensureWebhook, getExpectedWebhookUrl, ensureMiniAppMenuButton, getExpectedMiniAppUrl } from "./integrations/telegram";
 import { startScheduler } from "./scheduler";
 import { startTriageRunner, runStartupTriagePass } from "./inboxTriage";
 import { startCuriosityScanner } from "./curiosityScanner";
@@ -536,6 +536,28 @@ function setupErrorHandler(app: express.Application) {
             }).catch(err => {
               console.error("[Telegram] Failed to ensure webhook on boot:", err);
             });
+
+            const miniAppUrl = getExpectedMiniAppUrl();
+            if (miniAppUrl) {
+              ensureMiniAppMenuButton(miniAppUrl).catch(err => {
+                console.error("[Telegram] Failed to ensure Mini App menu button on boot:", err);
+              });
+              db.select({ chatId: telegramLinks.chatId })
+                .from(telegramLinks)
+                .then((links) => Promise.allSettled(
+                  links
+                    .map((link) => link.chatId)
+                    .filter((chatId): chatId is string => Boolean(chatId))
+                    .map((chatId) => ensureMiniAppMenuButton(miniAppUrl, chatId)),
+                ))
+                .then((results) => {
+                  const failed = results.filter((result) => result.status === "rejected").length;
+                  if (failed > 0) console.warn(`[Telegram] Mini App menu button failed for ${failed} linked chat(s)`);
+                })
+                .catch(err => {
+                  console.error("[Telegram] Failed to ensure linked-chat Mini App buttons on boot:", err);
+                });
+            }
 
             // Periodic health check: every 30 minutes, verify and auto-repair if needed.
             const WEBHOOK_CHECK_INTERVAL_MS = 30 * 60 * 1000;
