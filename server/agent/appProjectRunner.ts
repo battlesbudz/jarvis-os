@@ -719,7 +719,12 @@ async function runAppPlanningSession(
   } else {
     await db
       .update(schema.jarvisProjects)
-      .set({ plan, status: "building", updatedAt: new Date() })
+      .set({
+        plan,
+        status: "building",
+        nextRunAt: new Date(Date.now() + 10_000),
+        updatedAt: new Date(),
+      })
       .where(eq(schema.jarvisProjects.id, project.id));
 
     await sendAppProjectMessage(
@@ -731,13 +736,7 @@ async function runAppPlanningSession(
       `Starting build now — I'll update you every ${AUTONOMOUS_INTERVAL_MINUTES} minutes.`,
     );
 
-    await submitAgentJob({
-      userId: project.userId,
-      agentType: "app_project",
-      title: `Build: ${project.title} (session 1)`,
-      prompt: `Continue building app project ${project.id}`,
-      input: { projectId: project.id },
-    });
+    console.log(`[AppProjectRunner] scheduled first build session for ${project.id}`);
   }
 
   await db.insert(schema.jarvisProjectSessions).values({
