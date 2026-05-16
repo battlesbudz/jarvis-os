@@ -2836,7 +2836,7 @@ async function ensureTablesExist() {
     });
     await db.execute(sql2`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS preferred_model TEXT`).catch(() => {
     });
-    await db.execute(sql2`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS mention_patterns JSONB`).catch(() => {
+    await db.execute(sql2`ALTER TABLE discord_agents ADD COLUMN IF NOT EXISTS mention_patterns JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(() => {
     });
     await db.execute(sql2`
       CREATE TABLE IF NOT EXISTS agent_memories (

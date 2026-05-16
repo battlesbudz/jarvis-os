@@ -595,6 +595,7 @@ Status: local code and tests complete. Railway CLI upload created deployment `de
 | Railway prestart repair duplication | Cleaned up locally | `scripts/railway-prestart.mjs` now reuses the shared repair helper instead of carrying a separate SQL list. | `node --check scripts\railway-prestart.mjs` passed. |
 | QA artifact cleanup | Added locally | Added `scripts/deployed-jarvis-qa-cleanup.mjs` and `npm run jarvis:qa:cleanup` for dry-run-first cleanup of exact QA scheduled task, deliverable, and memory markers. | `npm.cmd run jarvis:qa:cleanup -- --help` passed; missing-token guard exits with guidance. |
 | Mobile/native OAuth polling | Improved locally | Mobile OAuth completion can now fall back to a native poll binding when the callback browser does not preserve the bind cookie, while still requiring the state hash and poll secret. | Covered by `npm.cmd test` and `npm.cmd run server:build`; needs real device/browser confirmation later. |
+| Discord agent mention patterns | Follow-up fix after deploy logs | Production deploy logs exposed the next Drizzle schema mismatch: existing `discord_agents.mention_patterns` rows contained nulls while the app schema requires `[]`. The repair script now fills nulls with `[]`, sets the default, and applies `NOT NULL`; bootstrap DDL now creates the column with the same default. | `node --check scripts\railway-db-repair.mjs`, `npm.cmd test`, and `npm.cmd run server:build` passed locally. |
 
 Remaining after this pass:
 
