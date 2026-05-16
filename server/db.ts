@@ -393,8 +393,8 @@ export async function ensureTablesExist() {
         scope VARCHAR NOT NULL DEFAULT 'all',
         pattern TEXT NOT NULL,
         match_hints JSONB NOT NULL DEFAULT '{}'::jsonb,
-        active VARCHAR NOT NULL DEFAULT 'true',
-        match_count VARCHAR NOT NULL DEFAULT '0',
+        active BOOLEAN NOT NULL DEFAULT true,
+        match_count INTEGER NOT NULL DEFAULT 0,
         source VARCHAR NOT NULL DEFAULT 'user',
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()

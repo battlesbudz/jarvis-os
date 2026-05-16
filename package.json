@@ -14,7 +14,7 @@
     "expo:static:build": "node scripts/build.js",
     "server:build": "node scripts/patch-coach-route.cjs && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outdir=server_dist",
     "server:prod": "NODE_ENV=production node server_dist/index.js",
-    "db:push": "drizzle-kit push",
+    "db:push": "node scripts/railway-db-push.mjs",
     "start": "npx expo start",
     "android:apk": "npx --yes eas-cli@latest build --platform android --profile apk",
     "android:aab": "npx --yes eas-cli@latest build --platform android --profile production",
@@ -27,6 +27,7 @@
     "jarvis:oauth:gateway:install-startup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-jarvis-oauth-gateway-startup.ps1",
     "jarvis:oauth:gateway:uninstall-startup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-jarvis-oauth-gateway-startup.ps1",
     "jarvis:qa:endpoints": "node scripts/deployed-jarvis-endpoint-qa.mjs",
+    "jarvis:qa:cleanup": "node scripts/deployed-jarvis-qa-cleanup.mjs",
     "jarvis:check": "npm run jarvis:doctor && npm test",
     "test": "node scripts/run-agent-tests.mjs"
   },

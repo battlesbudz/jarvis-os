@@ -3,13 +3,26 @@
 const DEFAULT_BASE_URL = "https://gameplanjarvisai.up.railway.app";
 
 const baseUrl = (process.env.JARVIS_QA_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
-const token = process.env.JARVIS_QA_AUTH_TOKEN || process.env.EXPO_PUBLIC_AUTH_TOKEN || "";
+const token = process.env.JARVIS_QA_AUTH_TOKEN || "";
 const runChat = process.env.JARVIS_QA_RUN_CHAT === "1";
 const chatPrompt = process.env.JARVIS_QA_CHAT_PROMPT
   || "QA_ENDPOINT_OK: reply with exactly QA_ENDPOINT_OK and do not create tasks, jobs, memories, or deliverables.";
 
 if (!token) {
-  console.error("Missing JARVIS_QA_AUTH_TOKEN. Set it to a logged-in Jarvis bearer token before running endpoint QA.");
+  console.error([
+    "Missing JARVIS_QA_AUTH_TOKEN.",
+    "",
+    "Set it to an authenticated Jarvis bearer token before running endpoint QA.",
+    "Do not scrape browser localStorage/sessionStorage for this value.",
+    "",
+    "Preferred options:",
+    "  1. Use a manually issued owner QA token if the deployment provides one.",
+    "  2. Log in through a supported auth flow and copy the returned bearer token from the API response.",
+    "",
+    "PowerShell example:",
+    "  $env:JARVIS_QA_AUTH_TOKEN = '<bearer-token-without-Bearer-prefix>'",
+    "  npm run jarvis:qa:endpoints",
+  ].join("\n"));
   process.exit(2);
 }
 
