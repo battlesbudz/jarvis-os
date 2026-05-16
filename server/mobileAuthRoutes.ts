@@ -12,6 +12,7 @@ const PENDING_TOKEN_PREFIX = "__PENDING__:";
 const COMPLETE_TOKEN_PREFIX = "__COMPLETE__:";
 const POLL_SECRET_BYTES = 24;
 const BIND_COOKIE_NAME = "mobile_auth_bind";
+const NATIVE_BIND_HASH = "native";
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -327,9 +328,14 @@ export async function handleMobileAuthCallback(req: Request, res: Response) {
     const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
     const bindNonce = readCookie(req, BIND_COOKIE_NAME);
 
-    if (pending && bindNonce && timingSafeEqual(pending.stateHash, sha256(state)) && timingSafeEqual(pending.bindHash, sha256(bindNonce))) {
+    let bindHash = NATIVE_BIND_HASH;
+    if (pending && bindNonce && timingSafeEqual(pending.bindHash, sha256(bindNonce))) {
+      bindHash = pending.bindHash;
+    }
+
+    if (pending && timingSafeEqual(pending.stateHash, sha256(state))) {
       await db.update(mobileAuthSessions)
-        .set({ token: completeTokenValue(pending.pollHash, pending.bindHash, token), expiresAt })
+        .set({ token: completeTokenValue(pending.pollHash, bindHash, token), expiresAt })
         .where(eq(mobileAuthSessions.sessionId, sessionId));
     }
 
@@ -367,12 +373,9 @@ mobileAuthRouter.get("/poll", async (req: Request, res: Response) => {
 
     const completed = parseCompleteTokenValue(session.token);
     const bindNonce = readCookie(req, BIND_COOKIE_NAME);
-    if (
-      !completed ||
-      !bindNonce ||
-      !timingSafeEqual(completed.pollHash, sha256(poll_secret)) ||
-      !timingSafeEqual(completed.bindHash, sha256(bindNonce))
-    ) {
+    const bindMatches = Boolean(completed && bindNonce && timingSafeEqual(completed.bindHash, sha256(bindNonce)));
+    const nativeMobileSession = completed?.bindHash === NATIVE_BIND_HASH;
+    if (!completed || !timingSafeEqual(completed.pollHash, sha256(poll_secret)) || (!bindMatches && !nativeMobileSession)) {
       return res.status(404).json({ ready: false });
     }
 
