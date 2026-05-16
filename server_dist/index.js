@@ -81165,7 +81165,7 @@ function setupErrorHandler(app2) {
         });
       }, 3e4);
       import("playwright").then(({ chromium }) => {
-        chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"] }).then((b) => b.close().then(() => log("[Browser] Chromium ready \xE2\u0153\u201C"))).catch((err2) => console.error("[Browser] Chromium unavailable \xE2\u20AC\u201D run `npx playwright install chromium`:", err2.message.split("\n")[0]));
+        chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] }).then((b) => b.close().then(() => log("[Browser] Chromium ready \xE2\u0153\u201C"))).catch((err2) => console.error("[Browser] Chromium unavailable \xE2\u20AC\u201D run `npx playwright install chromium`:", err2.message.split("\n")[0]));
       }).catch(() => {
       });
     }
