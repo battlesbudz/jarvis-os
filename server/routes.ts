@@ -3391,7 +3391,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       const codexDelegationEnabled = isCodexDelegationEnabled();
       const buildInstruction = codexDelegationEnabled
-        ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work."
+        ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work. If the user explicitly asks for the change to be permanent, pushed, published, deployed, or on GitHub, delegate that commit/push/publish requirement to Codex too and set allow_external_side_effects=true only for that exact requested action. If the user did not explicitly ask for commit/push/deploy, keep the work local and say that it still needs approval to be pushed."
         : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
       const toolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
       const toolAwareInstruction = toolAwareRoute.shouldPreferTool
