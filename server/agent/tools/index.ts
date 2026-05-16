@@ -130,7 +130,7 @@ import { livingContextUpdateTool } from "./livingContextUpdateTool";
 import { listCustomAgentsTool } from "./listCustomAgents";
 import { runTournamentTool } from "./runTournamentTool";
 import { listGithubPrsTool, getGithubPrTool, mergeGithubPrTool } from "./githubPrTools";
-import { projectShellTool } from "./projectShellTool";
+import { projectShellTool, projectWriteFileTool } from "./projectShellTool";
 import { deployAppTool } from "./deployApp";
 import { delegateToCodexTool } from "./delegateToCodex";
 
@@ -155,7 +155,7 @@ export type ToolGroup =
   | "mcp"         // auto-discovered tools from connected MCP servers
   | "compute"     // run_python — sandboxed code execution
   | "github"      // list_github_prs, get_github_pr, merge_github_pr
-  | "app_build"   // project_shell — sandboxed shell for standalone app projects
+  | "app_build"   // project_shell/project_write_file — sandboxed standalone app project tools
 
 // ── Registry-derived data (single source of truth for capability tools) ────────
 // GOOGLE_GATED and TOOL_GROUP_MAP come entirely from the capability registry.
@@ -192,6 +192,7 @@ export const ALL_TOOLS: AgentTool[] = [
   listCustomAgentsTool,
   runTournamentTool,
   projectShellTool,
+  projectWriteFileTool,
   deployAppTool,
 ];
 
@@ -202,6 +203,7 @@ const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 TOOL_GROUP_MAP[listCustomAgentsTool.name] = ["coaching"];
 TOOL_GROUP_MAP[runTournamentTool.name] = ["system"];
 TOOL_GROUP_MAP[projectShellTool.name] = ["app_build"];
+TOOL_GROUP_MAP[projectWriteFileTool.name] = ["app_build"];
 TOOL_GROUP_MAP[deployAppTool.name] = ["app_build", "coaching"];
 
 // Wire the resolver so testToolTool can look up tools without a circular import.
@@ -378,6 +380,7 @@ export {
   getGithubPrTool,
   mergeGithubPrTool,
   projectShellTool,
+  projectWriteFileTool,
   deployAppTool,
   delegateToCodexTool,
 };

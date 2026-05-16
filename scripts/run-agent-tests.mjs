@@ -11,6 +11,7 @@ const tests = [
   { file: "server/agent/__tests__/autonomyPolicy.test.ts" },
   { file: "server/agent/__tests__/autonomyRuntime.test.ts" },
   { file: "server/agent/__tests__/appCoachChatAutonomy.test.ts" },
+  { file: "server/agent/__tests__/appProjectRunner.test.ts" },
   { file: "server/agent/__tests__/topLevelApprovalContinuation.test.ts" },
   { file: "server/agent/__tests__/reviewLoop.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },

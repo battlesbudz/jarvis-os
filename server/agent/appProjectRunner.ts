@@ -27,6 +27,7 @@ import { stopProjectServer } from "./tools/projectShellTool";
 import { getAndClearAppProjectScreenshotCount } from "./tools/browserTools";
 import { sendToDiscordUser } from "../discord/manager";
 import { getProjectWorkspaceDir } from "../projectStorage";
+import { normalizePlanningQuestions } from "./appProjectPlanning";
 
 export type AppFramework = "nextjs" | "react-vite" | "node-express" | "custom";
 
@@ -39,12 +40,12 @@ const MAX_CONSECUTIVE_ERRORS = 3;
 
 function appToolGroupsForPhase(phase: string): ToolGroup[] {
   const p = phase.toUpperCase();
-  if (p === "SCAFFOLD") return ["app_build", "research"];
-  if (p.startsWith("IMPLEMENT")) return ["app_build", "self_edit", "research", "memory"];
-  if (p === "INTEGRATE") return ["app_build", "research"];
-  if (p === "TEST_UI") return ["app_build", "browser", "research"];
+  if (p === "SCAFFOLD") return ["app_build"];
+  if (p.startsWith("IMPLEMENT")) return ["app_build"];
+  if (p === "INTEGRATE") return ["app_build"];
+  if (p === "TEST_UI") return ["app_build", "browser"];
   if (p === "PACKAGE") return ["app_build"];
-  return ["app_build", "research"];
+  return ["app_build"];
 }
 
 // ── Deterministic phase verification ───────────────────────────────────────────
@@ -167,8 +168,12 @@ Each step must have specific acceptance_criteria. The plan must include PACKAGE.
 Include TEST_UI for visual projects. For static frontend projects, SCAFFOLD,
 IMPLEMENT_FRONTEND, TEST_UI, and PACKAGE are usually enough.
 
-Use project_shell to run all commands. The project workspace will be created automatically.
+For react-vite projects, target these files unless the goal requires otherwise:
+package.json, index.html, src/main.jsx, src/App.jsx, src/App.css.
+Use project_shell for commands and project_write_file for source/config files.
+The project workspace will be created automatically.
 Do NOT use phases outside the 6 listed above.
+questions MUST be an array of plain strings, never objects.
 
 Return JSON only:
 {
@@ -234,7 +239,10 @@ function buildAppStepPrompt(
 **Goal:** ${project.goal}
 
 CRITICAL: All code changes must go inside ${workspaceDir}.
-Use project_shell to run commands. NEVER touch Jarvis's own source files.
+Use project_write_file to create or replace files.
+Use project_shell only for commands such as npm install, npm run build, npm run dev, ls, and cat.
+Do not use shell redirection, heredocs, pipes, &&, or command chaining.
+NEVER touch Jarvis's own source files.
 
 **Session history:**
 ${sessionHistory || "(this is the first session)"}
@@ -250,6 +258,7 @@ Acceptance criteria: ${step.acceptance_criteria || "step completed successfully"
 Execute this step using your available tools. When using project_shell:
 - All commands run in the workspace directory automatically
 - Use npm, npx, node, git, zip, ls, cat, mkdir, cp, mv, rm, echo, curl
+- Use project_write_file for package.json, index.html, src/App.jsx, CSS, and config files
 - For dev servers: set background=true
 
 Produce a clear, detailed output that satisfies the acceptance criteria.
@@ -670,7 +679,7 @@ async function runAppPlanningSession(
     maxTurns: 3,
   });
 
-  let planData: { plan: Omit<ProjectPlanStep, "status">[]; questions?: string[]; summary?: string } | null = null;
+  let planData: { plan: Omit<ProjectPlanStep, "status">[]; questions?: unknown; summary?: string } | null = null;
   try {
     const jsonMatch = result.reply.match(/\{[\s\S]*\}/);
     if (jsonMatch) {
@@ -694,7 +703,7 @@ async function runAppPlanningSession(
     status: "pending",
   }));
 
-  const questions = planData.questions?.filter(Boolean) ?? [];
+  const questions = normalizePlanningQuestions(planData.questions);
   const durationMs = Date.now() - startTime;
 
   if (questions.length > 0) {
