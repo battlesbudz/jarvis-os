@@ -17,6 +17,7 @@ import { generateDownloadToken } from "./agent/appDelivery";
 import { authMiddleware } from "./auth";
 import { getGitHubSettings, createGitHubRepo, pushWorkspaceToGitHub } from "./integrations/github";
 import { getPublicBaseUrl } from "./publicUrl";
+import { getProjectDownloadsDir } from "./projectStorage";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -172,7 +173,7 @@ export function registerProjectRoutes(app: Express): void {
       if (!project) return res.status(404).json({ error: "Project not found" });
       if (project.status !== "complete") return res.status(409).json({ error: "Project is not complete yet" });
 
-      const zipPath = path.join(process.cwd(), "server", "static", "downloads", `${id}.zip`);
+      const zipPath = path.join(getProjectDownloadsDir(), `${id}.zip`);
       if (!fs.existsSync(zipPath)) return res.status(404).json({ error: "Project zip not yet available" });
 
       const token = generateDownloadToken(id);

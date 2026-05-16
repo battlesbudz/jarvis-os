@@ -19,8 +19,9 @@ import { stopProjectServer } from "./tools/projectShellTool";
 import { sendToDiscordUser } from "../discord/manager";
 import { hasGitHubPAT } from "../integrations/github";
 import { getPublicBaseUrl } from "../publicUrl";
+import { getProjectDownloadsDir } from "../projectStorage";
 
-const DOWNLOADS_DIR = path.join(process.cwd(), "server", "static", "downloads");
+const DOWNLOADS_DIR = getProjectDownloadsDir();
 const ZIP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // ── Download token registry ──────────────────────────────────────────────────
