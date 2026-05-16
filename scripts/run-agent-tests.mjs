@@ -14,6 +14,8 @@ const tests = [
   { file: "server/agent/__tests__/appProjectRunner.test.ts" },
   { file: "server/agent/__tests__/topLevelApprovalContinuation.test.ts" },
   { file: "server/agent/__tests__/reviewLoop.test.ts" },
+  { file: "server/agent/__tests__/deliverableReviewActions.test.ts" },
+  { file: "server/agent/__tests__/deliverableReviewHttpRoutes.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },
   { file: "server/agent/__tests__/manifestFilter.assert.ts" },
   { file: "server/agent/__tests__/toolAwareRouting.assert.ts" },

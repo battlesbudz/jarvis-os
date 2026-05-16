@@ -50,8 +50,22 @@ export interface DeliverableReviewState {
   canRevise: boolean;
   canDiscard: boolean;
   canReject: boolean;
+  canSaveToDrive: boolean;
   preview: string;
   approvalGateId?: string;
+}
+
+export type DeliverableReviewAction =
+  | "approve"
+  | "reject"
+  | "edit"
+  | "revise"
+  | "discard"
+  | "save_to_drive";
+
+export interface DeliverableReviewActionPolicy {
+  allowed: boolean;
+  reason?: string;
 }
 
 function asRecord(value: unknown): JsonRecord {
@@ -169,6 +183,7 @@ export function buildDeliverableReviewState(deliverable: ReviewLoopDeliverableIn
       canRevise: false,
       canDiscard: false,
       canReject: true,
+      canSaveToDrive: false,
       preview,
       approvalGateId,
     };
@@ -184,6 +199,7 @@ export function buildDeliverableReviewState(deliverable: ReviewLoopDeliverableIn
       canRevise: true,
       canDiscard: true,
       canReject: false,
+      canSaveToDrive: true,
       preview,
       approvalGateId,
     };
@@ -199,6 +215,7 @@ export function buildDeliverableReviewState(deliverable: ReviewLoopDeliverableIn
       canRevise: false,
       canDiscard: false,
       canReject: false,
+      canSaveToDrive: false,
       preview,
       approvalGateId,
     };
@@ -213,9 +230,53 @@ export function buildDeliverableReviewState(deliverable: ReviewLoopDeliverableIn
     canRevise: false,
     canDiscard: false,
     canReject: false,
+    canSaveToDrive: deliverable.status === "approved" && deliverable.type !== "approval_gate",
     preview,
     approvalGateId,
   };
+}
+
+export function getDeliverableReviewActionPolicy(
+  deliverable: ReviewLoopDeliverableInput,
+  action: DeliverableReviewAction,
+): DeliverableReviewActionPolicy {
+  const isApprovalGate = deliverable.type === "approval_gate";
+  const isPending = deliverable.status === "pending_approval";
+  const isApproved = deliverable.status === "approved";
+
+  if (isApprovalGate) {
+    if (isPending && (action === "approve" || action === "reject")) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: "Approval requests can only use approve or decline.",
+    };
+  }
+
+  if (action === "reject") {
+    return {
+      allowed: false,
+      reason: "Decline is only available for approval requests.",
+    };
+  }
+
+  if (action === "save_to_drive") {
+    if (isPending || isApproved) return { allowed: true };
+    return {
+      allowed: false,
+      reason: "Only pending or approved deliverables can be saved to Drive.",
+    };
+  }
+
+  if (!isPending) {
+    return {
+      allowed: false,
+      reason: "Only pending deliverables can be reviewed.",
+    };
+  }
+
+  return { allowed: true };
 }
 
 export function attachJobReviewState<T extends ReviewLoopJobInput>(job: T): T & { review: JobReviewState } {

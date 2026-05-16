@@ -201,8 +201,11 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Inbox tab surfaces deliverables, active jobs, failed jobs, email drafts, approval gates, and auto-handled items
 - [x] Deliverables support approve, discard, edit, revise, and save-to-Drive flows
 - [x] Approval gates are stored as deliverables and can continue approved work
+- [x] Deliverable review actions now share a tested policy so approval gates cannot be edited, revised, discarded, or saved to Drive through direct API calls
+- [x] DB-backed deliverable review action guard proves valid and invalid actions against real persisted deliverables when `DATABASE_URL` is available
+- [x] Deliverable review endpoints can now be mounted as a slim HTTP route slice for focused API-boundary tests
 - [ ] Polish mobile/web UX for long deliverables and revision history
-- [ ] Add stronger tests around approve/edit/revise across deliverable types
+- [ ] Expand HTTP route coverage to approval-gate approve/decline continuations and revision job queueing with mocked side-effect dependencies
 
 ---
 

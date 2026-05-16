@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   buildDeliverableReviewState,
   buildJobReviewState,
+  getDeliverableReviewActionPolicy,
 } from "../reviewLoop";
 
 {
@@ -76,6 +77,7 @@ import {
   assert.equal(review.canRevise, true);
   assert.equal(review.canDiscard, true);
   assert.equal(review.canReject, false);
+  assert.equal(review.canSaveToDrive, true);
   assert.equal(review.nextAction, "Approve, revise, edit, or discard");
   assert.equal(review.preview, "A concise operating plan.");
 }
@@ -103,8 +105,85 @@ import {
   assert.equal(review.canReject, true);
   assert.equal(review.canRevise, false);
   assert.equal(review.canEdit, false);
+  assert.equal(review.canSaveToDrive, false);
   assert.equal(review.nextAction, "Approve or decline");
   assert.equal(review.approvalGateId, "gate_123");
+}
+
+{
+  const approvalGate = {
+    id: "gate_action_policy",
+    agentType: "coach",
+    type: "approval_gate",
+    title: "Approval required",
+    summary: null,
+    body: "Send an external email?",
+    meta: { gateId: "gate_456" },
+    status: "pending_approval",
+    triageStatus: "needs_attention",
+    triageNote: null,
+    driveLink: null,
+    createdAt: new Date("2026-05-16T10:00:00.000Z"),
+    actedAt: null,
+  };
+
+  assert.equal(getDeliverableReviewActionPolicy(approvalGate, "approve").allowed, true);
+  assert.equal(getDeliverableReviewActionPolicy(approvalGate, "reject").allowed, true);
+  assert.equal(getDeliverableReviewActionPolicy(approvalGate, "edit").allowed, false);
+  assert.equal(getDeliverableReviewActionPolicy(approvalGate, "revise").allowed, false);
+  assert.equal(getDeliverableReviewActionPolicy(approvalGate, "discard").allowed, false);
+  assert.equal(getDeliverableReviewActionPolicy(approvalGate, "save_to_drive").allowed, false);
+  assert.match(getDeliverableReviewActionPolicy(approvalGate, "discard").reason, /approve or decline/i);
+}
+
+{
+  const normalDeliverable = {
+    id: "doc_action_policy",
+    agentType: "writing",
+    type: "document",
+    title: "Draft plan",
+    summary: "A concise operating plan.",
+    body: "Full body.",
+    meta: {},
+    status: "pending_approval",
+    triageStatus: "needs_attention",
+    triageNote: null,
+    driveLink: null,
+    createdAt: new Date("2026-05-16T10:00:00.000Z"),
+    actedAt: null,
+  };
+
+  assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "approve").allowed, true);
+  assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "edit").allowed, true);
+  assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "revise").allowed, true);
+  assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "discard").allowed, true);
+  assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "save_to_drive").allowed, true);
+  assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "reject").allowed, false);
+  assert.match(getDeliverableReviewActionPolicy(normalDeliverable, "reject").reason, /approval requests/i);
+}
+
+{
+  const approvedDeliverable = {
+    id: "approved_action_policy",
+    agentType: "writing",
+    type: "document",
+    title: "Accepted plan",
+    summary: "Accepted.",
+    body: "Accepted body.",
+    meta: {},
+    status: "approved",
+    triageStatus: "auto_handled",
+    triageNote: null,
+    driveLink: null,
+    createdAt: new Date("2026-05-16T10:00:00.000Z"),
+    actedAt: new Date("2026-05-16T10:05:00.000Z"),
+  };
+
+  assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "approve").allowed, false);
+  assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "edit").allowed, false);
+  assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "revise").allowed, false);
+  assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "discard").allowed, false);
+  assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "save_to_drive").allowed, true);
 }
 
 console.log("All autonomy review loop assertions passed.");
