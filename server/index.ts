@@ -669,7 +669,7 @@ function setupErrorHandler(app: express.Application) {
 
       // Verify Playwright/Chromium is usable on startup â€” logs a warning if not.
       import("playwright").then(({ chromium }) => {
-        chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--single-process"] })
+        chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] })
           .then((b) => b.close().then(() => log("[Browser] Chromium ready âœ“")))
           .catch((err: Error) => console.error("[Browser] Chromium unavailable â€” run `npx playwright install chromium`:", err.message.split("\n")[0]));
       }).catch(() => { /* playwright not installed â€” silently skip */ });
