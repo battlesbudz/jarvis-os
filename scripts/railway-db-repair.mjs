@@ -76,6 +76,16 @@ const statements = [
 
   `DO $$
   BEGIN
+    IF to_regclass('public.discord_agents') IS NOT NULL THEN
+      ALTER TABLE public.discord_agents ADD COLUMN IF NOT EXISTS mention_patterns jsonb;
+      UPDATE public.discord_agents SET mention_patterns = '[]'::jsonb WHERE mention_patterns IS NULL;
+      ALTER TABLE public.discord_agents ALTER COLUMN mention_patterns SET DEFAULT '[]'::jsonb;
+      ALTER TABLE public.discord_agents ALTER COLUMN mention_patterns SET NOT NULL;
+    END IF;
+  END$$`,
+
+  `DO $$
+  BEGIN
     IF to_regclass('public.users') IS NOT NULL THEN
       CREATE TABLE IF NOT EXISTS public.transcript_jobs (
         id serial PRIMARY KEY,
