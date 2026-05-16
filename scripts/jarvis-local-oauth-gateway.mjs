@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { execFile, spawn } from "node:child_process";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const isWindows = process.platform === "win32";
-const codexCommand = process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND || "codex";
 
 function loadEnvFile(path) {
   if (!existsSync(path)) return;
@@ -28,9 +28,39 @@ function loadEnvFile(path) {
   }
 }
 
+function findInstalledCodexCommand() {
+  const configured = process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND;
+  if (configured && configured !== "codex") return configured;
+
+  const candidates = [];
+  if (isWindows) {
+    if (process.env.LOCALAPPDATA) {
+      candidates.push(join(process.env.LOCALAPPDATA, "OpenAI", "Codex", "bin", "codex.exe"));
+      candidates.push(join(process.env.LOCALAPPDATA, "Microsoft", "WindowsApps", "codex.exe"));
+    }
+
+    const windowsApps = "C:\\Program Files\\WindowsApps";
+    try {
+      for (const entry of readdirSync(windowsApps)) {
+        if (/^OpenAI\.Codex_/i.test(entry)) {
+          candidates.push(join(windowsApps, entry, "app", "resources", "codex.exe"));
+        }
+      }
+    } catch {
+      // WindowsApps may be unreadable in some contexts. Fall back to PATH.
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (candidate && existsSync(candidate)) return candidate;
+  }
+
+  return configured || "codex";
+}
+
 async function assertCodexOAuthReady() {
   try {
-    const result = await execFileAsync(codexCommand, ["login", "status"], { timeout: 30_000 });
+    const result = await execFileAsync(process.env.JARVIS_CODEX_COMMAND, ["login", "status"], { timeout: 30_000 });
     const output = `${result.stdout}\n${result.stderr}`;
     if (/ChatGPT OAuth|Authenticated:\s*Yes|Logged in using ChatGPT/i.test(output)) return;
     throw new Error("Codex is installed but not logged in with ChatGPT.");
@@ -43,11 +73,11 @@ async function assertCodexOAuthReady() {
 loadEnvFile(".env");
 loadEnvFile(".env.local");
 
+process.env.JARVIS_CODEX_COMMAND = findInstalledCodexCommand();
 process.env.NODE_ENV ||= "development";
 process.env.HOST ||= "127.0.0.1";
 process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
 process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
-process.env.JARVIS_CODEX_COMMAND ||= codexCommand;
 
 if (!process.env.DATABASE_URL) {
   console.error("DATABASE_URL is not set. Put your Railway Postgres public URL in .env.local first.");
