@@ -24136,12 +24136,12 @@ ${opts.task}`;
 }
 async function getTournamentRunners(userId, tournamentId) {
   try {
-    const { eq: eq128, and: and99, desc: desc46 } = await import("drizzle-orm");
+    const { eq: eq130, and: and101, desc: desc46 } = await import("drizzle-orm");
     let rows;
     if (tournamentId) {
-      rows = await db.select().from(tournamentRuns).where(and99(eq128(tournamentRuns.id, tournamentId), eq128(tournamentRuns.userId, userId))).limit(1);
+      rows = await db.select().from(tournamentRuns).where(and101(eq130(tournamentRuns.id, tournamentId), eq130(tournamentRuns.userId, userId))).limit(1);
     } else {
-      rows = await db.select().from(tournamentRuns).where(eq128(tournamentRuns.userId, userId)).orderBy(desc46(tournamentRuns.createdAt)).limit(1);
+      rows = await db.select().from(tournamentRuns).where(eq130(tournamentRuns.userId, userId)).orderBy(desc46(tournamentRuns.createdAt)).limit(1);
     }
     if (!rows[0]) return { found: false };
     return { found: true, run: rows[0] };
@@ -53296,9 +53296,9 @@ ${skillBlock}`;
     }
     try {
       const { userSkills: userSkillsTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq128, and: and99 } = await import("drizzle-orm");
+      const { eq: eq130, and: and101 } = await import("drizzle-orm");
       const { db: dbImport } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const activeSkills = await dbImport.select().from(userSkillsTable).where(and99(eq128(userSkillsTable.userId, context.userId), eq128(userSkillsTable.isActive, true)));
+      const activeSkills = await dbImport.select().from(userSkillsTable).where(and101(eq130(userSkillsTable.userId, context.userId), eq130(userSkillsTable.isActive, true)));
       if (activeSkills.length > 0) {
         const skillBlock = activeSkills.map((s) => `### ${s.emoji} ${s.name}
 ${s.instructions}`).join("\n\n");
@@ -60937,8 +60937,8 @@ function registerChannelRoutes(app2) {
         if (Object.keys(updates).length > 0) {
           const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
           const { discordChannelSchedules: discordChannelSchedules2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-          const { eq: eq128, and: and99 } = await import("drizzle-orm");
-          await db2.update(discordChannelSchedules2).set(updates).where(and99(eq128(discordChannelSchedules2.id, id), eq128(discordChannelSchedules2.userId, userId)));
+          const { eq: eq130, and: and101 } = await import("drizzle-orm");
+          await db2.update(discordChannelSchedules2).set(updates).where(and101(eq130(discordChannelSchedules2.id, id), eq130(discordChannelSchedules2.userId, userId)));
         }
       }
       const schedules = await listSchedules(userId);
@@ -66820,7 +66820,8 @@ __export(reviewLoop_exports, {
   attachDeliverableReviewState: () => attachDeliverableReviewState,
   attachJobReviewState: () => attachJobReviewState,
   buildDeliverableReviewState: () => buildDeliverableReviewState,
-  buildJobReviewState: () => buildJobReviewState
+  buildJobReviewState: () => buildJobReviewState,
+  getDeliverableReviewActionPolicy: () => getDeliverableReviewActionPolicy
 });
 function asRecord(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -66925,6 +66926,7 @@ function buildDeliverableReviewState(deliverable) {
       canRevise: false,
       canDiscard: false,
       canReject: true,
+      canSaveToDrive: false,
       preview,
       approvalGateId
     };
@@ -66939,6 +66941,7 @@ function buildDeliverableReviewState(deliverable) {
       canRevise: true,
       canDiscard: true,
       canReject: false,
+      canSaveToDrive: true,
       preview,
       approvalGateId
     };
@@ -66953,6 +66956,7 @@ function buildDeliverableReviewState(deliverable) {
       canRevise: false,
       canDiscard: false,
       canReject: false,
+      canSaveToDrive: false,
       preview,
       approvalGateId
     };
@@ -66966,9 +66970,44 @@ function buildDeliverableReviewState(deliverable) {
     canRevise: false,
     canDiscard: false,
     canReject: false,
+    canSaveToDrive: deliverable.status === "approved" && deliverable.type !== "approval_gate",
     preview,
     approvalGateId
   };
+}
+function getDeliverableReviewActionPolicy(deliverable, action) {
+  const isApprovalGate = deliverable.type === "approval_gate";
+  const isPending = deliverable.status === "pending_approval";
+  const isApproved = deliverable.status === "approved";
+  if (isApprovalGate) {
+    if (isPending && (action === "approve" || action === "reject")) {
+      return { allowed: true };
+    }
+    return {
+      allowed: false,
+      reason: "Approval requests can only use approve or decline."
+    };
+  }
+  if (action === "reject") {
+    return {
+      allowed: false,
+      reason: "Decline is only available for approval requests."
+    };
+  }
+  if (action === "save_to_drive") {
+    if (isPending || isApproved) return { allowed: true };
+    return {
+      allowed: false,
+      reason: "Only pending or approved deliverables can be saved to Drive."
+    };
+  }
+  if (!isPending) {
+    return {
+      allowed: false,
+      reason: "Only pending deliverables can be reviewed."
+    };
+  }
+  return { allowed: true };
 }
 function attachJobReviewState(job) {
   return { ...job, review: buildJobReviewState(job) };
@@ -66982,6 +67021,255 @@ var init_reviewLoop = __esm({
   }
 });
 
+// server/agent/deliverableReviewActions.ts
+import { and as and81, eq as eq106 } from "drizzle-orm";
+async function loadDeliverableForReviewAction(db2, userId, deliverableId, action) {
+  const [deliverable] = await db2.select().from(deliverables).where(and81(eq106(deliverables.id, deliverableId), eq106(deliverables.userId, userId))).limit(1);
+  if (!deliverable) {
+    return { ok: false, status: 404, error: "Deliverable not found" };
+  }
+  const policy = getDeliverableReviewActionPolicy(deliverable, action);
+  if (!policy.allowed) {
+    return {
+      ok: false,
+      status: 400,
+      error: policy.reason || "This deliverable action is not allowed"
+    };
+  }
+  return { ok: true, deliverable };
+}
+var init_deliverableReviewActions = __esm({
+  "server/agent/deliverableReviewActions.ts"() {
+    "use strict";
+    init_schema();
+    init_reviewLoop();
+  }
+});
+
+// server/agent/deliverableReviewHttpRoutes.ts
+var deliverableReviewHttpRoutes_exports = {};
+__export(deliverableReviewHttpRoutes_exports, {
+  registerDeliverableReviewRoutes: () => registerDeliverableReviewRoutes
+});
+import { and as and82, eq as eq107 } from "drizzle-orm";
+function registerDeliverableReviewRoutes(app2, deps) {
+  const { db: db2 } = deps;
+  app2.post("/api/deliverables/:id/approve", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "approve");
+      if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
+      const d = reviewAction.deliverable;
+      let resultExtra = {};
+      if (d.type === "approval_gate") {
+        const { approveGate: approveGate2, getGate: getGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
+        const { continueTopLevelApproval: continueTopLevelApproval2 } = await Promise.resolve().then(() => (init_topLevelApprovalContinuation(), topLevelApprovalContinuation_exports));
+        const meta = d.meta || {};
+        const gate = meta.gateId ? await getGate2(meta.gateId) : void 0;
+        if (meta.gateId) await approveGate2(meta.gateId, userId);
+        const continuation = gate ? await continueTopLevelApproval2(gate).catch((err2) => {
+          console.error("[deliverables] top-level approval continuation failed:", err2);
+          return { continued: false, reason: "Continuation failed after approval." };
+        }) : { continued: false, reason: "Approval gate not found." };
+        await db2.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq107(deliverables.id, id));
+        return res.json({ ok: true, continuation });
+      }
+      if (d.type === "email_draft") {
+        const meta = d.meta || {};
+        const to = meta.to?.trim() || "";
+        if (!to || !to.includes("@")) {
+          return res.status(400).json({ error: "Email draft missing valid recipient" });
+        }
+        const { getValidGoogleTokens: getValidGoogleTokens2 } = await Promise.resolve().then(() => (init_userTokenStore(), userTokenStore_exports));
+        const tokens = await getValidGoogleTokens2(userId);
+        const token = tokens?.[0];
+        if (!token) return res.status(400).json({ error: "Gmail not connected" });
+        const { createGmailDraft: createGmailDraft2 } = await Promise.resolve().then(() => (init_gmail(), gmail_exports));
+        const result = await createGmailDraft2(token, to, meta.subject || d.title, meta.emailBody || d.body);
+        resultExtra = { gmailDraftUrl: result.gmailUrl, gmailDraftId: result.draftId };
+      } else {
+        await db2.insert(userDocuments).values({
+          userId,
+          name: d.title.slice(0, 200),
+          mimeType: "text/markdown",
+          sizeBytes: Buffer.byteLength(d.body, "utf8"),
+          status: "ready",
+          extractedText: d.body,
+          summary: d.summary || null
+        });
+      }
+      await db2.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq107(deliverables.id, id));
+      if (d.jobId) {
+        await db2.update(agentJobs).set({ status: "delivered" }).where(and82(eq107(agentJobs.id, d.jobId), eq107(agentJobs.status, "complete")));
+      }
+      res.json({ ok: true, ...resultExtra });
+    } catch (err2) {
+      console.error("Error approving deliverable:", err2);
+      res.status(500).json({ error: "Failed to approve deliverable" });
+    }
+  });
+  app2.post("/api/deliverables/:id/reject", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "reject");
+      if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
+      const d = reviewAction.deliverable;
+      if (d.type === "approval_gate") {
+        const { rejectGate: rejectGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
+        const meta = d.meta || {};
+        if (meta.gateId) await rejectGate2(meta.gateId, userId);
+      }
+      await db2.update(deliverables).set({ status: "rejected", actedAt: /* @__PURE__ */ new Date() }).where(eq107(deliverables.id, id));
+      res.json({ ok: true });
+    } catch (err2) {
+      console.error("Error rejecting deliverable:", err2);
+      res.status(500).json({ error: "Failed to reject deliverable" });
+    }
+  });
+  app2.put("/api/deliverables/:id", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const { title, summary, body, meta } = req.body;
+      const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "edit");
+      if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
+      const existing = reviewAction.deliverable;
+      const patch = {};
+      if (typeof title === "string" && title.trim().length > 0) patch.title = title.trim().slice(0, 300);
+      if (typeof summary === "string") patch.summary = summary.slice(0, 1e3);
+      if (typeof body === "string" && body.trim().length > 0) patch.body = body.slice(0, 1e5);
+      if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+        patch.meta = { ...existing.meta, ...meta };
+      }
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ error: "No editable fields provided" });
+      }
+      const [updated] = await db2.update(deliverables).set(patch).where(eq107(deliverables.id, id)).returning();
+      res.json({ ok: true, deliverable: updated });
+    } catch (err2) {
+      console.error("Error editing deliverable:", err2);
+      res.status(500).json({ error: "Failed to edit deliverable" });
+    }
+  });
+  app2.post("/api/deliverables/:id/revise", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const instructions = typeof req.body?.instructions === "string" ? req.body.instructions.trim() : "";
+      if (!instructions) return res.status(400).json({ error: "Revision instructions are required" });
+      const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "revise");
+      if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
+      const d = reviewAction.deliverable;
+      const [job] = d.jobId ? await db2.select().from(agentJobs).where(and82(eq107(agentJobs.id, d.jobId), eq107(agentJobs.userId, userId))).limit(1) : [];
+      const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
+      const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
+      delete baseInput.retryCount;
+      const revisionPrompt = [
+        "Revise this Jarvis deliverable according to the user's requested changes.",
+        "",
+        `Original task: ${job?.prompt || d.title}`,
+        "",
+        "Current deliverable:",
+        d.body.slice(0, 3e4),
+        "",
+        "Requested changes:",
+        instructions,
+        "",
+        "Return a complete replacement deliverable, not a patch note."
+      ].join("\n");
+      const revision = await submitAgentJob3({
+        userId,
+        agentType: d.agentType,
+        title: `Revision: ${d.title}`.slice(0, 200),
+        prompt: revisionPrompt,
+        input: {
+          ...baseInput,
+          revisionOfDeliverableId: d.id,
+          revisionOfJobId: d.jobId,
+          revisionInstructions: instructions.slice(0, 2e3)
+        }
+      });
+      await db2.update(deliverables).set({
+        status: "discarded",
+        actedAt: /* @__PURE__ */ new Date(),
+        triageNote: `Revision requested: ${instructions.slice(0, 500)}`
+      }).where(eq107(deliverables.id, id));
+      if (d.jobId) {
+        await db2.update(agentJobs).set({ status: "delivered" }).where(and82(eq107(agentJobs.id, d.jobId), eq107(agentJobs.status, "complete")));
+      }
+      res.json({ ok: true, jobId: revision.id, isDuplicate: revision.isDuplicate, status: "queued" });
+    } catch (err2) {
+      console.error("Error requesting deliverable revision:", err2);
+      res.status(500).json({ error: "Failed to request revision" });
+    }
+  });
+  app2.post("/api/deliverables/:id/discard", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "discard");
+      if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
+      const d = reviewAction.deliverable;
+      await db2.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and82(eq107(deliverables.id, id), eq107(deliverables.userId, userId)));
+      if (d?.jobId) {
+        await db2.update(agentJobs).set({ status: "delivered" }).where(and82(eq107(agentJobs.id, d.jobId), eq107(agentJobs.status, "complete")));
+      }
+      res.json({ ok: true });
+    } catch (err2) {
+      console.error("Error discarding deliverable:", err2);
+      res.status(500).json({ error: "Failed to discard deliverable" });
+    }
+  });
+  app2.post("/api/deliverables/:id/save-to-drive", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "save_to_drive");
+      if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
+      const d = reviewAction.deliverable;
+      if (d.driveLink) return res.json({ ok: true, driveLink: d.driveLink });
+      const { getUserDriveSettings: getUserDriveSettings2 } = await Promise.resolve().then(() => (init_driveRoutes(), driveRoutes_exports));
+      const { createDriveTextFile: createDriveTextFile2 } = await Promise.resolve().then(() => (init_googleDrive(), googleDrive_exports));
+      const drive = await getUserDriveSettings2(userId);
+      if (!drive.enabled || !drive.accessToken) {
+        return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings.", code: "DRIVE_NOT_CONNECTED" });
+      }
+      const content = d.body || d.summary || d.title;
+      const baseName = (d.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "");
+      const fileName = `${baseName}.md`;
+      const created = await createDriveTextFile2(
+        drive.accessToken,
+        fileName,
+        content,
+        { folderId: drive.folderId || void 0 }
+      );
+      const [updated] = await db2.update(deliverables).set({ driveLink: created.webViewLink }).where(eq107(deliverables.id, id)).returning();
+      res.json({ ok: true, driveLink: created.webViewLink, deliverable: updated });
+    } catch (err2) {
+      console.error("Error saving deliverable to Drive:", err2);
+      res.status(500).json({ error: "Failed to save to Drive" });
+    }
+  });
+}
+var paramValue;
+var init_deliverableReviewHttpRoutes = __esm({
+  "server/agent/deliverableReviewHttpRoutes.ts"() {
+    "use strict";
+    init_schema();
+    init_schema();
+    init_deliverableReviewActions();
+    paramValue = (value) => Array.isArray(value) ? value[0] ?? "" : value;
+  }
+});
+
 // server/intelligence/gut.ts
 var gut_exports = {};
 __export(gut_exports, {
@@ -66992,7 +67280,7 @@ __export(gut_exports, {
   respondToGutSignal: () => respondToGutSignal,
   runGutScanForUser: () => runGutScanForUser
 });
-import { eq as eq106, and as and81, desc as desc35, gte as gte21, sql as sql38, inArray as inArray8 } from "drizzle-orm";
+import { eq as eq108, and as and83, desc as desc35, gte as gte21, sql as sql38, inArray as inArray8 } from "drizzle-orm";
 function getCachedBaseline(userId) {
   const entry = baselineCache.get(userId);
   if (!entry || Date.now() > entry.expiresAt) return null;
@@ -67019,9 +67307,9 @@ async function computeBaseline2(userId, token) {
   if (cached) return cached;
   const baseline = { ...DEFAULT_BASELINE };
   try {
-    const past = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(and81(
-      eq106(userMemories.userId, userId),
-      eq106(userMemories.category, "work_patterns")
+    const past = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(and83(
+      eq108(userMemories.userId, userId),
+      eq108(userMemories.category, "work_patterns")
     )).limit(30);
     const workText = past.map((m) => m.content).join(" ").toLowerCase();
     if (/deep work|focus block|protected time/.test(workText)) {
@@ -67033,7 +67321,7 @@ async function computeBaseline2(userId, token) {
   } catch {
   }
   try {
-    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq106(plans.userId, userId)).orderBy(desc35(plans.date)).limit(14);
+    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq108(plans.userId, userId)).orderBy(desc35(plans.date)).limit(14);
     const totalTasks = historicPlans.reduce((sum, p) => {
       const tasks = p.data?.tasks || [];
       return sum + tasks.filter((t) => t.completed).length;
@@ -67056,13 +67344,13 @@ async function computeBaseline2(userId, token) {
   } catch {
   }
   try {
-    const confirmed = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
-      eq106(gutSignals.userId, userId),
-      eq106(gutSignals.userResponse, "confirmed")
+    const confirmed = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and83(
+      eq108(gutSignals.userId, userId),
+      eq108(gutSignals.userResponse, "confirmed")
     ));
-    const dismissed = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
-      eq106(gutSignals.userId, userId),
-      eq106(gutSignals.userResponse, "dismissed")
+    const dismissed = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and83(
+      eq108(gutSignals.userId, userId),
+      eq108(gutSignals.userResponse, "dismissed")
     ));
     const c = Number(confirmed[0]?.count ?? 0);
     const d = Number(dismissed[0]?.count ?? 0);
@@ -67075,7 +67363,7 @@ async function computeBaseline2(userId, token) {
   }
   let usedStoredCalibration = false;
   try {
-    const storedCalibration = await db.select().from(gutCalibration).where(eq106(gutCalibration.userId, userId));
+    const storedCalibration = await db.select().from(gutCalibration).where(eq108(gutCalibration.userId, userId));
     if (storedCalibration.length > 0) {
       for (const row of storedCalibration) {
         const st = row.signalType;
@@ -67096,15 +67384,15 @@ async function computeBaseline2(userId, token) {
         "relationship_anomaly"
       ];
       for (const st of allSignalTypes) {
-        const [tc] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
-          eq106(gutSignals.userId, userId),
-          eq106(gutSignals.signalType, st),
-          eq106(gutSignals.userResponse, "confirmed")
+        const [tc] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and83(
+          eq108(gutSignals.userId, userId),
+          eq108(gutSignals.signalType, st),
+          eq108(gutSignals.userResponse, "confirmed")
         ));
-        const [td] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
-          eq106(gutSignals.userId, userId),
-          eq106(gutSignals.signalType, st),
-          eq106(gutSignals.userResponse, "dismissed")
+        const [td] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and83(
+          eq108(gutSignals.userId, userId),
+          eq108(gutSignals.signalType, st),
+          eq108(gutSignals.userResponse, "dismissed")
         ));
         const tc_ = Number(tc?.count ?? 0);
         const td_ = Number(td?.count ?? 0);
@@ -67123,9 +67411,9 @@ async function detectCalendarAnomalies(userId, events, baseline, userEmail) {
   const signals = [];
   const now = /* @__PURE__ */ new Date();
   const sevenDaysMs = 7 * 24 * 60 * 60 * 1e3;
-  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and81(
-    eq106(gutSignals.userId, userId),
-    eq106(gutSignals.signalType, "calendar_anomaly"),
+  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and83(
+    eq108(gutSignals.userId, userId),
+    eq108(gutSignals.signalType, "calendar_anomaly"),
     gte21(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
   )).limit(100);
   const flaggedRefs = new Set(existing.map((r) => r.itemRef).filter(Boolean));
@@ -67181,9 +67469,9 @@ async function detectCalendarAnomalies(userId, events, baseline, userEmail) {
 }
 async function detectDeepWorkErosion(userId, events, baseline) {
   try {
-    const already = await db.select({ id: gutSignals.id }).from(gutSignals).where(and81(
-      eq106(gutSignals.userId, userId),
-      eq106(gutSignals.signalType, "deep_work_erosion"),
+    const already = await db.select({ id: gutSignals.id }).from(gutSignals).where(and83(
+      eq108(gutSignals.userId, userId),
+      eq108(gutSignals.signalType, "deep_work_erosion"),
       gte21(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
     )).limit(1);
     if (already.length > 0) return null;
@@ -67227,9 +67515,9 @@ async function detectDeepWorkErosion(userId, events, baseline) {
 }
 async function detectEmailPatterns(userId, baseline, inboxItems3) {
   const signals = [];
-  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and81(
-    eq106(gutSignals.userId, userId),
-    eq106(gutSignals.signalType, "email_pattern"),
+  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and83(
+    eq108(gutSignals.userId, userId),
+    eq108(gutSignals.signalType, "email_pattern"),
     gte21(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
   )).limit(100);
   const flagged = new Set(existing.map((r) => r.itemRef).filter(Boolean));
@@ -67268,15 +67556,15 @@ function getSenderName(sender) {
 async function detectProjectDrift(userId, baseline) {
   const signals = [];
   try {
-    const existing = await db.select({ id: gutSignals.id }).from(gutSignals).where(and81(
-      eq106(gutSignals.userId, userId),
-      eq106(gutSignals.signalType, "project_drift"),
+    const existing = await db.select({ id: gutSignals.id }).from(gutSignals).where(and83(
+      eq108(gutSignals.userId, userId),
+      eq108(gutSignals.signalType, "project_drift"),
       gte21(gutSignals.createdAt, new Date(Date.now() - 72 * 60 * 60 * 1e3))
     )).limit(1);
     if (existing.length > 0) return signals;
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString().slice(0, 10);
-    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and81(eq106(plans.userId, userId), gte21(plans.date, sevenDaysAgo))).orderBy(desc35(plans.date)).limit(7);
+    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and83(eq108(plans.userId, userId), gte21(plans.date, sevenDaysAgo))).orderBy(desc35(plans.date)).limit(7);
     if (recentPlans.length < 3) return signals;
     const completedPerDay = recentPlans.map((p) => {
       const tasks = p.data?.tasks || [];
@@ -67307,13 +67595,13 @@ async function detectProjectDrift(userId, baseline) {
 async function detectRelationshipAnomalies(userId, inboxItems3, baseline) {
   const signals = [];
   try {
-    const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and81(
-      eq106(gutSignals.userId, userId),
-      eq106(gutSignals.signalType, "relationship_anomaly"),
+    const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and83(
+      eq108(gutSignals.userId, userId),
+      eq108(gutSignals.signalType, "relationship_anomaly"),
       gte21(gutSignals.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1e3))
     )).limit(50);
     const flagged = new Set(existing.map((r) => r.itemRef).filter(Boolean));
-    const people2 = await db.select().from(people).where(eq106(people.userId, userId));
+    const people2 = await db.select().from(people).where(eq108(people.userId, userId));
     const dormantCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1e3);
     for (const item of inboxItems3.slice(0, 10)) {
       if (flagged.has(item.id) || !item.sender) continue;
@@ -67386,9 +67674,9 @@ async function runGutScanForUser(userId, userEmail, now) {
   candidates.push(...driftSignals);
   let recentInboxItems = [];
   try {
-    recentInboxItems = await db.select({ id: inboxItems.id, sourceId: inboxItems.sourceId, sender: inboxItems.sender, snippet: inboxItems.snippet, subject: inboxItems.subject }).from(inboxItems).where(and81(
-      eq106(inboxItems.userId, userId),
-      eq106(inboxItems.status, "pending"),
+    recentInboxItems = await db.select({ id: inboxItems.id, sourceId: inboxItems.sourceId, sender: inboxItems.sender, snippet: inboxItems.snippet, subject: inboxItems.subject }).from(inboxItems).where(and83(
+      eq108(inboxItems.userId, userId),
+      eq108(inboxItems.status, "pending"),
       gte21(inboxItems.surfacedAt, new Date(now.getTime() - 24 * 60 * 60 * 1e3))
     )).orderBy(desc35(inboxItems.surfacedAt)).limit(30);
   } catch {
@@ -67408,20 +67696,20 @@ async function runGutScanForUser(userId, userEmail, now) {
 }
 async function getGutSignalsForUser(userId, opts) {
   const limit = opts?.limit ?? 50;
-  const conditions = [eq106(gutSignals.userId, userId)];
+  const conditions = [eq108(gutSignals.userId, userId)];
   if (opts?.itemRef) {
-    conditions.push(eq106(gutSignals.itemRef, opts.itemRef));
+    conditions.push(eq108(gutSignals.itemRef, opts.itemRef));
   }
   if (!opts?.includeResponded) {
     conditions.push(
       sql38`(${gutSignals.userResponse} is null or ${gutSignals.userResponse} = 'ignored')`
     );
   }
-  const rows = await db.select().from(gutSignals).where(and81(...conditions)).orderBy(desc35(gutSignals.createdAt)).limit(limit);
+  const rows = await db.select().from(gutSignals).where(and83(...conditions)).orderBy(desc35(gutSignals.createdAt)).limit(limit);
   return rows;
 }
 async function respondToGutSignal(userId, signalId, response) {
-  await db.update(gutSignals).set({ userResponse: response, respondedAt: /* @__PURE__ */ new Date() }).where(and81(eq106(gutSignals.id, signalId), eq106(gutSignals.userId, userId)));
+  await db.update(gutSignals).set({ userResponse: response, respondedAt: /* @__PURE__ */ new Date() }).where(and83(eq108(gutSignals.id, signalId), eq108(gutSignals.userId, userId)));
   baselineCache.delete(userId);
   console.log(`[Gut] user ${userId} responded ${response} to signal ${signalId}`);
   calibrateGutForUser(userId).catch(
@@ -67430,9 +67718,9 @@ async function respondToGutSignal(userId, signalId, response) {
 }
 async function getAndMarkMorningBriefSignals(userId) {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1e3);
-  const rows = await db.select().from(gutSignals).where(and81(
-    eq106(gutSignals.userId, userId),
-    eq106(gutSignals.deliveredInMorningBrief, false),
+  const rows = await db.select().from(gutSignals).where(and83(
+    eq108(gutSignals.userId, userId),
+    eq108(gutSignals.deliveredInMorningBrief, false),
     gte21(gutSignals.createdAt, since),
     sql38`${gutSignals.userResponse} IS NULL`
   )).orderBy(desc35(gutSignals.confidenceScore)).limit(3);
@@ -67452,20 +67740,20 @@ async function calibrateGutForUser(userId) {
   ];
   for (const signalType of allSignalTypes) {
     try {
-      const [tcRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
-        eq106(gutSignals.userId, userId),
-        eq106(gutSignals.signalType, signalType),
-        eq106(gutSignals.userResponse, "confirmed")
+      const [tcRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and83(
+        eq108(gutSignals.userId, userId),
+        eq108(gutSignals.signalType, signalType),
+        eq108(gutSignals.userResponse, "confirmed")
       ));
-      const [tdRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
-        eq106(gutSignals.userId, userId),
-        eq106(gutSignals.signalType, signalType),
-        eq106(gutSignals.userResponse, "dismissed")
+      const [tdRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and83(
+        eq108(gutSignals.userId, userId),
+        eq108(gutSignals.signalType, signalType),
+        eq108(gutSignals.userResponse, "dismissed")
       ));
-      const [tiRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
-        eq106(gutSignals.userId, userId),
-        eq106(gutSignals.signalType, signalType),
-        eq106(gutSignals.userResponse, "ignored")
+      const [tiRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and83(
+        eq108(gutSignals.userId, userId),
+        eq108(gutSignals.signalType, signalType),
+        eq108(gutSignals.userResponse, "ignored")
       ));
       const confirmedCount = Number(tcRow?.count ?? 0);
       const dismissedCount = Number(tdRow?.count ?? 0);
@@ -67554,12 +67842,12 @@ __export(mcpApiKeys_exports, {
 import crypto9 from "crypto";
 import bcrypt2 from "bcryptjs";
 import { sql as sql39 } from "drizzle-orm";
-import { eq as eq107 } from "drizzle-orm";
+import { eq as eq109 } from "drizzle-orm";
 async function generateMcpApiKey(userId) {
   const rawKey = `jarvis_${crypto9.randomBytes(20).toString("hex")}`;
   const prefix = rawKey.slice(0, KEY_PREFIX_LEN);
   const keyHash = await bcrypt2.hash(rawKey, BCRYPT_ROUNDS);
-  await db.delete(mcpApiKeys).where(eq107(mcpApiKeys.userId, userId));
+  await db.delete(mcpApiKeys).where(eq109(mcpApiKeys.userId, userId));
   await db.insert(mcpApiKeys).values({
     userId,
     keyHash,
@@ -67568,7 +67856,7 @@ async function generateMcpApiKey(userId) {
   return { rawKey, prefix };
 }
 async function revokeMcpApiKeys(userId) {
-  await db.delete(mcpApiKeys).where(eq107(mcpApiKeys.userId, userId));
+  await db.delete(mcpApiKeys).where(eq109(mcpApiKeys.userId, userId));
 }
 async function verifyMcpApiKey(rawKey) {
   if (!rawKey.startsWith("jarvis_") || rawKey.length < KEY_PREFIX_LEN) return null;
@@ -67576,13 +67864,13 @@ async function verifyMcpApiKey(rawKey) {
   if (!await checkCounter("pre-auth", prefix, PRE_AUTH_MAX, PRE_AUTH_WINDOW_MS)) {
     return null;
   }
-  const rows = await db.select().from(mcpApiKeys).where(eq107(mcpApiKeys.keyPrefix, prefix));
+  const rows = await db.select().from(mcpApiKeys).where(eq109(mcpApiKeys.keyPrefix, prefix));
   for (const row of rows) {
     const valid = await bcrypt2.compare(rawKey, row.keyHash);
     if (valid) {
       resetCounter("pre-auth", prefix).catch(() => {
       });
-      db.update(mcpApiKeys).set({ lastUsedAt: /* @__PURE__ */ new Date() }).where(eq107(mcpApiKeys.id, row.id)).catch(() => {
+      db.update(mcpApiKeys).set({ lastUsedAt: /* @__PURE__ */ new Date() }).where(eq109(mcpApiKeys.id, row.id)).catch(() => {
       });
       return { userId: row.userId, keyId: row.id, prefix };
     }
@@ -67620,7 +67908,7 @@ async function resetCounter(namespace, key) {
   await db.execute(sql39`DELETE FROM mcp_rate_limits WHERE bucket = ${bucket}`);
 }
 async function getMcpKeyInfo(userId) {
-  const rows = await db.select().from(mcpApiKeys).where(eq107(mcpApiKeys.userId, userId)).limit(1);
+  const rows = await db.select().from(mcpApiKeys).where(eq109(mcpApiKeys.userId, userId)).limit(1);
   if (rows.length === 0) return null;
   const row = rows[0];
   return {
@@ -67937,7 +68225,7 @@ __export(voiceRelayRoutes_exports, {
 });
 import { WebSocketServer as WebSocketServer2, WebSocket as WebSocket2 } from "ws";
 import { randomBytes as randomBytes3 } from "crypto";
-import { eq as eq108, desc as desc36 } from "drizzle-orm";
+import { eq as eq110, desc as desc36 } from "drizzle-orm";
 function createRelayTicket(userId) {
   const ticket = randomBytes3(24).toString("hex");
   ticketStore.set(ticket, {
@@ -67992,7 +68280,7 @@ async function loadUserMemories(userId, maxLines = 50) {
       content: userMemories.content,
       category: userMemories.category,
       confidence: userMemories.confidence
-    }).from(userMemories).where(eq108(userMemories.userId, userId)).orderBy(desc36(userMemories.confidence)).limit(30);
+    }).from(userMemories).where(eq110(userMemories.userId, userId)).orderBy(desc36(userMemories.confidence)).limit(30);
     if (!rows.length) return "";
     const lines = [];
     for (const row of rows) {
@@ -68228,7 +68516,7 @@ var storage_exports = {};
 __export(storage_exports, {
   chatStorage: () => chatStorage
 });
-import { eq as eq109, desc as desc37 } from "drizzle-orm";
+import { eq as eq111, desc as desc37 } from "drizzle-orm";
 var chatStorage;
 var init_storage = __esm({
   "server/replit_integrations/chat/storage.ts"() {
@@ -68237,7 +68525,7 @@ var init_storage = __esm({
     init_schema();
     chatStorage = {
       async getConversation(id) {
-        const [conversation] = await db.select().from(conversations).where(eq109(conversations.id, id));
+        const [conversation] = await db.select().from(conversations).where(eq111(conversations.id, id));
         return conversation;
       },
       async getAllConversations() {
@@ -68248,11 +68536,11 @@ var init_storage = __esm({
         return conversation;
       },
       async deleteConversation(id) {
-        await db.delete(messages).where(eq109(messages.conversationId, id));
-        await db.delete(conversations).where(eq109(conversations.id, id));
+        await db.delete(messages).where(eq111(messages.conversationId, id));
+        await db.delete(conversations).where(eq111(conversations.id, id));
       },
       async getMessagesByConversation(conversationId) {
-        return db.select().from(messages).where(eq109(messages.conversationId, conversationId)).orderBy(messages.createdAt);
+        return db.select().from(messages).where(eq111(messages.conversationId, conversationId)).orderBy(messages.createdAt);
       },
       async createMessage(conversationId, role, content) {
         const [message] = await db.insert(messages).values({ conversationId, role, content }).returning();
@@ -68274,7 +68562,7 @@ import fs21 from "fs";
 import path27 from "path";
 import { createServer } from "node:http";
 import OpenAI11 from "openai";
-import { eq as eq110, and as and82, desc as desc38, sql as sql40, gte as gte22, asc as asc7 } from "drizzle-orm";
+import { eq as eq112, and as and84, desc as desc38, sql as sql40, gte as gte22, asc as asc7 } from "drizzle-orm";
 import ytSearch from "yt-search";
 function providerLabelForModel(model) {
   const normalized = model.toLowerCase();
@@ -68384,7 +68672,7 @@ function getPersonaBlock(coachingMode) {
 }
 async function getUserLocalDate(userId) {
   try {
-    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
+    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)).limit(1);
     const tz = prefs[0]?.data?.timezone || "America/New_York";
     return (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: tz });
   } catch {
@@ -68399,8 +68687,8 @@ async function getMorningNoteSummary(userId) {
     const thirtyDaysAgo = /* @__PURE__ */ new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const cutoffDate = thirtyDaysAgo.toISOString().slice(0, 10);
-    const notes = await db.select().from(morningVoiceNotes).where(and82(
-      eq110(morningVoiceNotes.userId, userId),
+    const notes = await db.select().from(morningVoiceNotes).where(and84(
+      eq112(morningVoiceNotes.userId, userId),
       gte22(morningVoiceNotes.recordedAt, cutoffDate)
     )).orderBy(desc38(morningVoiceNotes.recordedAt)).limit(30);
     if (notes.length === 0) return "";
@@ -68682,12 +68970,12 @@ async function buildPlanForUser(userId) {
   try {
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const [goalsRow, historyRow, brainDumpRow, lifeContextRow, prefsRow, energyRow] = await Promise.all([
-      db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId)),
-      db.select({ data: completionHistory.data }).from(completionHistory).where(eq110(completionHistory.userId, userId)),
-      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq110(brainDumpInbox.userId, userId)),
-      db.select({ data: lifeContext.data }).from(lifeContext).where(eq110(lifeContext.userId, userId)),
-      db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)),
-      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and82(eq110(energyCheckins.userId, userId), eq110(energyCheckins.date, today)))
+      db.select({ data: goals.data }).from(goals).where(eq112(goals.userId, userId)),
+      db.select({ data: completionHistory.data }).from(completionHistory).where(eq112(completionHistory.userId, userId)),
+      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq112(brainDumpInbox.userId, userId)),
+      db.select({ data: lifeContext.data }).from(lifeContext).where(eq112(lifeContext.userId, userId)),
+      db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)),
+      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and84(eq112(energyCheckins.userId, userId), eq112(energyCheckins.date, today)))
     ]);
     const goals2 = goalsRow[0]?.data || [];
     const completionHistory2 = historyRow[0]?.data || [];
@@ -68788,7 +69076,7 @@ async function registerRoutes(app2) {
   if (process.env.NODE_ENV !== "production") {
     app2.patch("/api/dev/projects/:id/complete", async (req, res) => {
       try {
-        await db.update(jarvisProjects).set({ status: "complete" }).where(eq110(jarvisProjects.id, req.params.id));
+        await db.update(jarvisProjects).set({ status: "complete" }).where(eq112(jarvisProjects.id, req.params.id));
         res.json({ ok: true });
       } catch (err2) {
         res.status(500).json({ error: String(err2) });
@@ -69075,7 +69363,7 @@ async function registerRoutes(app2) {
     try {
       const { token } = req.query;
       if (!token) return res.status(400).json({ error: "token is required" });
-      const [row] = await db.select().from(webchatInviteTokens).where(eq110(webchatInviteTokens.token, token)).limit(1);
+      const [row] = await db.select().from(webchatInviteTokens).where(eq112(webchatInviteTokens.token, token)).limit(1);
       if (!row) return res.status(404).json({ error: "Invite link not found" });
       if (row.expiresAt < /* @__PURE__ */ new Date()) {
         return res.status(410).json({ error: "This invite link has expired" });
@@ -69159,7 +69447,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId)).limit(1);
+      const row = await db.select({ data: goals.data }).from(goals).where(eq112(goals.userId, userId)).limit(1);
       const raw = row[0]?.data ?? [];
       const goals2 = raw.map((g) => {
         const current = Number(g.current ?? 0);
@@ -69204,7 +69492,7 @@ async function registerRoutes(app2) {
       const { analyseEgo: analyseEgo2, getISOWeekMonday: getISOWeekMonday2 } = await Promise.resolve().then(() => (init_ego(), ego_exports));
       const weekOf = getISOWeekMonday2(/* @__PURE__ */ new Date());
       const analysis = await analyseEgo2(userId, weekOf);
-      const latestReport = await db.select().from(egoWeeklyReports).where(eq110(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(1);
+      const latestReport = await db.select().from(egoWeeklyReports).where(eq112(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(1);
       res.json({
         analysis,
         latestReport: latestReport[0] ?? null
@@ -69218,7 +69506,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const reports = await db.select().from(egoWeeklyReports).where(eq110(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(12);
+      const reports = await db.select().from(egoWeeklyReports).where(eq112(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(12);
       res.json({ reports });
     } catch (err2) {
       console.error("[Ego] reports failed:", err2);
@@ -69247,7 +69535,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const links = await db.select().from(channelLinks).where(and82(eq110(channelLinks.userId, userId), eq110(channelLinks.channel, "discord")));
+      const links = await db.select().from(channelLinks).where(and84(eq112(channelLinks.userId, userId), eq112(channelLinks.channel, "discord")));
       const link = links[0];
       const meta = link?.metadata;
       res.json({
@@ -69810,7 +70098,7 @@ Rules:
     try {
       switch (toolName) {
         case "add_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and82(eq110(plans.userId, userId), eq110(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and84(eq112(plans.userId, userId), eq112(plans.date, todayKey)));
           const plan = planResult.length > 0 ? planResult[0].data : { date: todayKey, tasks: [], greeting: "", insight: "" };
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
           const catMap = { health: "fitness", work: "career", learning: "personal" };
@@ -69831,7 +70119,7 @@ Rules:
           return { result: "success", label: `Task added to today`, detail: `Added "${args.title}"` };
         }
         case "add_to_brain_dump": {
-          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq110(brainDumpInbox.userId, userId));
+          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq112(brainDumpInbox.userId, userId));
           const items = bdResult.length > 0 ? Array.isArray(bdResult[0].data) ? bdResult[0].data : [] : [];
           items.unshift({
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -69845,7 +70133,7 @@ Rules:
           return { result: "success", label: `Added to brain dump`, detail: `Added "${args.text}"` };
         }
         case "log_goal_progress": {
-          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId));
+          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq112(goals.userId, userId));
           if (goalsResult.length === 0) return { result: "error", label: "No goals found", detail: "User has no goals set" };
           const goalsList = Array.isArray(goalsResult[0].data) ? goalsResult[0].data : [];
           const matched = goalsList.find((g) => fuzzyMatch(args.goalTitle, g.title));
@@ -69859,7 +70147,7 @@ Rules:
           return { result: "success", label: `Progress logged`, detail: `Added ${args.amount} to "${matched.title}"` };
         }
         case "update_life_context": {
-          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq110(lifeContext.userId, userId));
+          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq112(lifeContext.userId, userId));
           const existing = lcResult.length > 0 ? lcResult[0].data : {};
           const merged = { ...existing };
           if (args.priorityGoal) merged.priorityGoal = args.priorityGoal;
@@ -69876,7 +70164,7 @@ Rules:
           return { result: "success", label: `Context updated`, detail: `Updated: ${updatedFields}` };
         }
         case "complete_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and82(eq110(plans.userId, userId), eq110(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and84(eq112(plans.userId, userId), eq112(plans.date, todayKey)));
           if (planResult.length === 0) return { result: "error", label: "No plan today", detail: "No plan found for today" };
           const plan = planResult[0].data;
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
@@ -69935,8 +70223,8 @@ Rules:
             getValidGoogleToken(userId).catch(() => null),
             getValidMicrosoftToken(userId).catch(() => null),
             getUserOAuthStatus(userId).catch(() => ({})),
-            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq110(telegramLinks.userId, userId)).limit(1),
-            db.select().from(channelLinks).where(eq110(channelLinks.userId, userId))
+            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq112(telegramLinks.userId, userId)).limit(1),
+            db.select().from(channelLinks).where(eq112(channelLinks.userId, userId))
           ]);
           const daemonOnline = isUserPaired(userId);
           const isAndroid = isAndroidDaemonActive(userId);
@@ -70741,8 +71029,8 @@ ${text2}`
     try {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
       const unanswered = await db.select().from(proactiveQuestionsSent).where(
-        and82(
-          eq110(proactiveQuestionsSent.userId, userId),
+        and84(
+          eq112(proactiveQuestionsSent.userId, userId),
           sql40`${proactiveQuestionsSent.answeredAt} IS NULL`,
           sql40`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
         )
@@ -70765,7 +71053,7 @@ Answer (yes/no):`
         });
         const answer = (checkResponse.choices[0]?.message?.content || "").trim().toLowerCase();
         if (answer.startsWith("yes")) {
-          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq110(proactiveQuestionsSent.id, unanswered[0].id));
+          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq112(proactiveQuestionsSent.id, unanswered[0].id));
           console.log(`[Profile] Marked proactive question as answered via coach chat: ${unanswered[0].id}`);
         }
       }
@@ -70882,7 +71170,7 @@ Answer (yes/no):`
         userCommitments = [];
         if (userId) {
           try {
-            userCommitments = await db.select().from(commitments).where(and82(eq110(commitments.userId, userId), eq110(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(20);
+            userCommitments = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(20);
           } catch {
           }
         }
@@ -70892,7 +71180,7 @@ Answer (yes/no):`
         if (userId) {
           try {
             const [rows, noteSummary, docsCtx] = await Promise.all([
-              db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq110(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt)).limit(50),
+              db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq112(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt)).limit(50),
               getMorningNoteSummary(userId),
               getUserDocumentContext(userId)
             ]);
@@ -70907,8 +71195,8 @@ Answer (yes/no):`
           try {
             const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
             const recentUnanswered = await db.select().from(proactiveQuestionsSent).where(
-              and82(
-                eq110(proactiveQuestionsSent.userId, userId),
+              and84(
+                eq112(proactiveQuestionsSent.userId, userId),
                 sql40`${proactiveQuestionsSent.answeredAt} IS NULL`,
                 sql40`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
               )
@@ -71994,7 +72282,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
   app2.get("/api/webchat/invite/active", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const [row] = await db.select().from(webchatInviteTokens).where(and82(eq110(webchatInviteTokens.userId, userId), gte22(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
+      const [row] = await db.select().from(webchatInviteTokens).where(and84(eq112(webchatInviteTokens.userId, userId), gte22(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
       if (!row) return res.json({ active: false });
       const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
       const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
@@ -72010,7 +72298,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       const userId = req.userId;
       const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
       const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
-      const [existing] = await db.select().from(webchatInviteTokens).where(and82(eq110(webchatInviteTokens.userId, userId), gte22(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
+      const [existing] = await db.select().from(webchatInviteTokens).where(and84(eq112(webchatInviteTokens.userId, userId), gte22(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
       if (existing) {
         const url2 = `${protocol}://${host}/chat?invite=${existing.token}`;
         return res.json({ token: existing.token, url: url2, expiresAt: existing.expiresAt });
@@ -72030,10 +72318,10 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
     try {
       const userId = req.userId;
       const token = _p9(req.params.token);
-      const [row] = await db.select().from(webchatInviteTokens).where(eq110(webchatInviteTokens.token, token)).limit(1);
+      const [row] = await db.select().from(webchatInviteTokens).where(eq112(webchatInviteTokens.token, token)).limit(1);
       if (!row) return res.status(404).json({ error: "Token not found" });
       if (row.userId !== userId) return res.status(403).json({ error: "Forbidden" });
-      await db.delete(webchatInviteTokens).where(eq110(webchatInviteTokens.token, token));
+      await db.delete(webchatInviteTokens).where(eq112(webchatInviteTokens.token, token));
       return res.json({ ok: true });
     } catch (error) {
       console.error("Error revoking webchat invite token:", error);
@@ -72195,7 +72483,7 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
       let commitmentText = "";
       if (userId) {
         try {
-          const pendingCommitments = await db.select().from(commitments).where(and82(eq110(commitments.userId, userId), eq110(commitments.status, "pending"))).limit(5);
+          const pendingCommitments = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).limit(5);
           if (pendingCommitments.length > 0) {
             commitmentText = `
 - Open commitments: ${pendingCommitments.map((c) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join(", ")}`;
@@ -72722,7 +73010,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(commitments).where(and82(eq110(commitments.userId, userId), eq110(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt));
+      const rows = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt));
       res.json({ commitments: rows });
     } catch (error) {
       console.error("Error fetching commitments:", error);
@@ -72738,7 +73026,7 @@ Return ONLY the JSON object.`;
       if (!status || !["done", "skipped", "pending"].includes(status)) {
         return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
       }
-      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and82(eq110(commitments.id, id), eq110(commitments.userId, userId)));
+      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and84(eq112(commitments.id, id), eq112(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating commitment:", error);
@@ -72750,7 +73038,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.delete(commitments).where(and82(eq110(commitments.id, id), eq110(commitments.userId, userId)));
+      await db.delete(commitments).where(and84(eq112(commitments.id, id), eq112(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting commitment:", error);
@@ -72802,7 +73090,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       if (!context) return res.status(400).json({ error: "context is required" });
       let userCommitments = [];
       try {
-        userCommitments = await db.select().from(commitments).where(and82(eq110(commitments.userId, userId), eq110(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(10);
+        userCommitments = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(10);
       } catch {
       }
       const soulBlock = await getSoulPromptBlock(userId ?? "");
@@ -72850,7 +73138,7 @@ ${context}` },
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId));
       const prefs = rows[0]?.data || {};
       const brief = prefs.morningBrief;
       if (brief && brief.date === today && brief.text) {
@@ -72864,7 +73152,7 @@ ${context}` },
   });
   async function savePendingResponse(userId, text2, screenshotUrl) {
     const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId));
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId));
     const prefs = rows[0]?.data || {};
     const payload = { id, text: text2, createdAt: Date.now() };
     if (screenshotUrl) payload.screenshotUrl = screenshotUrl;
@@ -72874,13 +73162,13 @@ ${context}` },
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId));
       const prefs = rows[0]?.data || {};
       const pending = prefs.pendingResponse;
       const ONE_HOUR = 60 * 60 * 1e3;
       if (pending && pending.createdAt && Date.now() - pending.createdAt < ONE_HOUR && pending.text) {
         const updated = { ...prefs, pendingResponse: null };
-        await db.update(userPreferences).set({ data: updated }).where(eq110(userPreferences.userId, userId));
+        await db.update(userPreferences).set({ data: updated }).where(eq112(userPreferences.userId, userId));
         return res.json({ id: pending.id, text: pending.text, screenshotUrl: pending.screenshotUrl || null });
       }
       return res.json({ text: null });
@@ -72898,7 +73186,7 @@ ${context}` },
       try {
         const sevenDaysAgo = /* @__PURE__ */ new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db.select().from(commitments).where(eq110(commitments.userId, userId)).orderBy(desc38(commitments.extractedAt)).limit(30);
+        weekCommitments = await db.select().from(commitments).where(eq112(commitments.userId, userId)).orderBy(desc38(commitments.extractedAt)).limit(30);
         weekCommitments = weekCommitments.filter(
           (c) => new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
         );
@@ -72957,7 +73245,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(userMemories).where(eq110(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt));
+      const rows = await db.select().from(userMemories).where(eq112(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt));
       res.json({ memories: rows });
     } catch (error) {
       console.error("Error fetching memories:", error);
@@ -73391,7 +73679,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(weeklyInsights).where(eq110(weeklyInsights.userId, userId)).orderBy(desc38(weeklyInsights.createdAt)).limit(4);
+      const rows = await db.select().from(weeklyInsights).where(eq112(weeklyInsights.userId, userId)).orderBy(desc38(weeklyInsights.createdAt)).limit(4);
       return res.json({ insights: rows });
     } catch (error) {
       console.error("Error getting weekly insights:", error);
@@ -73402,7 +73690,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(dreamInsights).where(eq110(dreamInsights.userId, userId)).orderBy(desc38(dreamInsights.createdAt)).limit(50);
+      const rows = await db.select().from(dreamInsights).where(eq112(dreamInsights.userId, userId)).orderBy(desc38(dreamInsights.createdAt)).limit(50);
       return res.json({ insights: rows });
     } catch (error) {
       console.error("Error getting dream insights:", error);
@@ -73416,10 +73704,10 @@ Return ONLY the JSON object.`;
       const dreamDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const manualKey = `dream_manual:${dreamDate}`;
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and82(
-          eq110(proactiveScheduleLog.userId, userId),
-          eq110(proactiveScheduleLog.messageType, manualKey),
-          eq110(proactiveScheduleLog.sentDate, dreamDate)
+        and84(
+          eq112(proactiveScheduleLog.userId, userId),
+          eq112(proactiveScheduleLog.messageType, manualKey),
+          eq112(proactiveScheduleLog.sentDate, dreamDate)
         )
       ).limit(1);
       if (existing.length > 0) {
@@ -73452,9 +73740,9 @@ Return ONLY the JSON object.`;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const insightId = _p9(req.params.insightId);
       const insightRows = await db.select({ sourceMemoryIds: dreamInsights.sourceMemoryIds }).from(dreamInsights).where(
-        and82(
-          eq110(dreamInsights.id, insightId),
-          eq110(dreamInsights.userId, userId)
+        and84(
+          eq112(dreamInsights.id, insightId),
+          eq112(dreamInsights.userId, userId)
         )
       ).limit(1);
       if (insightRows.length === 0) return res.status(404).json({ error: "Not found" });
@@ -73468,8 +73756,8 @@ Return ONLY the JSON object.`;
         confidence: userMemories.confidence,
         extractedAt: userMemories.extractedAt
       }).from(userMemories).where(
-        and82(
-          eq110(userMemories.userId, userId),
+        and84(
+          eq112(userMemories.userId, userId),
           inArray12(userMemories.id, ids.slice(0, 50))
         )
       ).limit(10);
@@ -73546,7 +73834,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
+      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)).limit(1);
       return res.json(row[0]?.data || {});
     } catch (error) {
       console.error("Error getting preferences:", error);
@@ -73558,7 +73846,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
+      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
       await db.insert(userPreferences).values({ userId, data: merged }).onConflictDoUpdate({
@@ -73576,7 +73864,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq110(lifeContext.userId, userId)).limit(1);
+      const existing = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq112(lifeContext.userId, userId)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
       await db.insert(lifeContext).values({ userId, data: merged, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
@@ -73594,7 +73882,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const limit = parseInt(req.query.limit) || 30;
-      const notes = await db.select().from(morningVoiceNotes).where(eq110(morningVoiceNotes.userId, userId)).orderBy(desc38(morningVoiceNotes.recordedAt)).limit(limit);
+      const notes = await db.select().from(morningVoiceNotes).where(eq112(morningVoiceNotes.userId, userId)).orderBy(desc38(morningVoiceNotes.recordedAt)).limit(limit);
       res.json({ notes });
     } catch (error) {
       console.error("Error fetching morning voice notes:", error);
@@ -73606,7 +73894,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const today = await getUserLocalDate(userId);
-      const notes = await db.select().from(morningVoiceNotes).where(and82(eq110(morningVoiceNotes.userId, userId), eq110(morningVoiceNotes.recordedAt, today))).limit(1);
+      const notes = await db.select().from(morningVoiceNotes).where(and84(eq112(morningVoiceNotes.userId, userId), eq112(morningVoiceNotes.recordedAt, today))).limit(1);
       res.json({ note: notes[0] || null });
     } catch (error) {
       console.error("Error fetching today's morning voice note:", error);
@@ -73671,7 +73959,7 @@ Return ONLY the JSON object.`;
         return res.status(400).json({ error: "transcript is required" });
       }
       const today = await getUserLocalDate(userId);
-      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and82(eq110(morningVoiceNotes.userId, userId), eq110(morningVoiceNotes.recordedAt, today))).limit(1);
+      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and84(eq112(morningVoiceNotes.userId, userId), eq112(morningVoiceNotes.recordedAt, today))).limit(1);
       if (existing.length > 0) {
         return res.status(409).json({ error: "Morning note already recorded today" });
       }
@@ -73737,11 +74025,11 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const statusFilter = typeof req.query.status === "string" ? req.query.status : "pending";
-      const whereClause = statusFilter === "dismissed" ? and82(
-        eq110(inboxItems.userId, userId),
-        eq110(inboxItems.status, statusFilter),
+      const whereClause = statusFilter === "dismissed" ? and84(
+        eq112(inboxItems.userId, userId),
+        eq112(inboxItems.status, statusFilter),
         sql40`${inboxItems.jarvisReason} IS NOT NULL`
-      ) : and82(eq110(inboxItems.userId, userId), eq110(inboxItems.status, statusFilter));
+      ) : and84(eq112(inboxItems.userId, userId), eq112(inboxItems.status, statusFilter));
       const items = await db.select().from(inboxItems).where(whereClause).orderBy(desc38(inboxItems.surfacedAt)).limit(50);
       res.json(items);
     } catch (error) {
@@ -73754,7 +74042,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      const [item] = await db.select().from(inboxItems).where(and82(eq110(inboxItems.id, id), eq110(inboxItems.userId, userId)));
+      const [item] = await db.select().from(inboxItems).where(and84(eq112(inboxItems.id, id), eq112(inboxItems.userId, userId)));
       if (!item) return res.status(404).json({ error: "Item not found" });
       if (item.sourceType === "email" || item.sourceType === "gmail") {
         const senderPart = item.sender ? `emails from ${item.sender}` : item.subject ? `emails with subject "${item.subject}"` : "this type of email";
@@ -73796,7 +74084,7 @@ Return ONLY the JSON object.`;
           }
         }
       }
-      await db.update(inboxItems).set({ status: "important", actedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(inboxItems.id, id), eq110(inboxItems.userId, userId)));
+      await db.update(inboxItems).set({ status: "important", actedAt: /* @__PURE__ */ new Date() }).where(and84(eq112(inboxItems.id, id), eq112(inboxItems.userId, userId)));
       res.json({ success: true, message: "Saved to Jarvis memory" });
     } catch (error) {
       console.error("Error marking inbox item as important:", error);
@@ -73807,7 +74095,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const tasks = await db.select().from(jarvisScheduledTasks).where(eq110(jarvisScheduledTasks.userId, userId)).orderBy(jarvisScheduledTasks.scheduledAt);
+      const tasks = await db.select().from(jarvisScheduledTasks).where(eq112(jarvisScheduledTasks.userId, userId)).orderBy(jarvisScheduledTasks.scheduledAt);
       res.json(tasks);
     } catch (err2) {
       console.error("Error fetching jarvis scheduled tasks:", err2);
@@ -73884,7 +74172,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId)));
+      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and84(eq112(jarvisScheduledTasks.id, id), eq112(jarvisScheduledTasks.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("Error completing jarvis scheduled task:", err2);
@@ -73903,7 +74191,7 @@ Return ONLY the JSON object.`;
       if (req.body.scheduledAt) updates.scheduledAt = new Date(req.body.scheduledAt);
       if (req.body.recurrence !== void 0) updates.recurrence = req.body.recurrence || null;
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No updatable fields provided" });
-      const [task] = await db.update(jarvisScheduledTasks).set(updates).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId))).returning();
+      const [task] = await db.update(jarvisScheduledTasks).set(updates).where(and84(eq112(jarvisScheduledTasks.id, id), eq112(jarvisScheduledTasks.userId, userId))).returning();
       if (!task) return res.status(404).json({ error: "Task not found" });
       res.json(task);
     } catch (err2) {
@@ -73918,11 +74206,11 @@ Return ONLY the JSON object.`;
       const id = _p9(req.params.id);
       const { attentionQuestion } = req.body;
       if (!attentionQuestion) return res.status(400).json({ error: "attentionQuestion is required" });
-      const [task] = await db.select().from(jarvisScheduledTasks).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId))).limit(1);
+      const [task] = await db.select().from(jarvisScheduledTasks).where(and84(eq112(jarvisScheduledTasks.id, id), eq112(jarvisScheduledTasks.userId, userId))).limit(1);
       if (!task) return res.status(404).json({ error: "Task not found" });
-      await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion }).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId)));
+      await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion }).where(and84(eq112(jarvisScheduledTasks.id, id), eq112(jarvisScheduledTasks.userId, userId)));
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq110(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq112(telegramLinks.userId, userId));
         if (link?.chatId) {
           const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
           await sendLongMessage2(
@@ -73958,7 +74246,7 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.status(404).json({ error: result.reason === "not_found" ? "Task not found" : "Task does not need attention" });
       }
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq110(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq112(telegramLinks.userId, userId));
         if (link?.chatId) {
           const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
           await sendLongMessage2(
@@ -73980,7 +74268,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.delete(jarvisScheduledTasks).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId)));
+      await db.delete(jarvisScheduledTasks).where(and84(eq112(jarvisScheduledTasks.id, id), eq112(jarvisScheduledTasks.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("Error deleting jarvis scheduled task:", err2);
@@ -73992,7 +74280,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      const [task] = await db.select().from(jarvisScheduledTasks).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId))).limit(1);
+      const [task] = await db.select().from(jarvisScheduledTasks).where(and84(eq112(jarvisScheduledTasks.id, id), eq112(jarvisScheduledTasks.userId, userId))).limit(1);
       if (!task) return res.status(404).json({ error: "Task not found" });
       if (!task.shellCommand) return res.status(400).json({ error: "Task has no shell command" });
       const { sendDaemonOp: sendDaemonOp2, isDesktopDaemonActive: isDesktopDaemonActive2, isDaemonActionAllowed: isDaemonActionAllowed2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
@@ -74040,7 +74328,7 @@ Reply directly to this message with your answer and I'll take it from there.
         durationMs: runResult.durationMs,
         ranAt
       };
-      await db.update(jarvisScheduledTasks).set({ lastShellResult: shellResult }).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId)));
+      await db.update(jarvisScheduledTasks).set({ lastShellResult: shellResult }).where(and84(eq112(jarvisScheduledTasks.id, id), eq112(jarvisScheduledTasks.userId, userId)));
       console.log(`[Routes] Manual run: task id=${id} exit=${runResult.exitCode} dur=${runResult.durationMs}ms`);
       res.json({ ok: true, result: shellResult, error: runResult.error });
     } catch (err2) {
@@ -74129,7 +74417,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (!actionType) return res.status(400).json({ error: "actionType is required" });
       let telegramChatId;
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq110(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq112(telegramLinks.userId, userId));
         telegramChatId = link?.chatId;
       } catch {
       }
@@ -74137,7 +74425,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const result = await executeInboxAction2(userId, id, actionType, telegramChatId);
       if (result.success) {
         const egoOutcome = actionType === "dismiss" || actionType === "never_again" ? "dismissed" : "acted_on";
-        db.select({ sourceId: inboxItems.sourceId }).from(inboxItems).where(eq110(inboxItems.id, id)).then(([item]) => {
+        db.select({ sourceId: inboxItems.sourceId }).from(inboxItems).where(eq112(inboxItems.id, id)).then(([item]) => {
           if (!item?.sourceId) return;
           Promise.resolve().then(() => (init_actionLog(), actionLog_exports)).then(({ resolveActionByMetadataKey: resolveActionByMetadataKey2 }) => {
             resolveActionByMetadataKey2(userId, "proactive_message", "sourceId", item.sourceId, egoOutcome).catch(() => {
@@ -74157,7 +74445,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rules = await db.select().from(inboxRules).where(eq110(inboxRules.userId, userId));
+      const rules = await db.select().from(inboxRules).where(eq112(inboxRules.userId, userId));
       res.json(rules);
     } catch (error) {
       console.error("Error fetching inbox rules:", error);
@@ -74185,7 +74473,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.delete(inboxRules).where(and82(eq110(inboxRules.id, id), eq110(inboxRules.userId, userId)));
+      await db.delete(inboxRules).where(and84(eq112(inboxRules.id, id), eq112(inboxRules.userId, userId)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting inbox rule:", error);
@@ -74199,7 +74487,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const id = _p9(req.params.id);
       const { active } = req.body;
       const isActive = active === true || active === "true" || active === 1;
-      await db.update(inboxRules).set({ active: isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(inboxRules.id, id), eq110(inboxRules.userId, userId)));
+      await db.update(inboxRules).set({ active: isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and84(eq112(inboxRules.id, id), eq112(inboxRules.userId, userId)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error updating inbox rule:", error);
@@ -74210,7 +74498,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const drafts = await db.select().from(emailDrafts).where(and82(eq110(emailDrafts.userId, userId), eq110(emailDrafts.status, "pending_approval"))).orderBy(desc38(emailDrafts.createdAt));
+      const drafts = await db.select().from(emailDrafts).where(and84(eq112(emailDrafts.userId, userId), eq112(emailDrafts.status, "pending_approval"))).orderBy(desc38(emailDrafts.createdAt));
       res.json(drafts);
     } catch (error) {
       console.error("Error fetching email drafts:", error);
@@ -74223,7 +74511,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
       const { editedSubject, editedBody } = req.body;
-      const [draft] = await db.select().from(emailDrafts).where(and82(eq110(emailDrafts.id, id), eq110(emailDrafts.userId, userId))).limit(1);
+      const [draft] = await db.select().from(emailDrafts).where(and84(eq112(emailDrafts.id, id), eq112(emailDrafts.userId, userId))).limit(1);
       if (!draft) return res.status(404).json({ error: "Draft not found" });
       if (draft.status !== "pending_approval") return res.status(400).json({ error: "Draft already actioned" });
       const subject = editedSubject?.trim() || draft.draftSubject;
@@ -74245,7 +74533,7 @@ Reply directly to this message with your answer and I'll take it from there.
         actedAt: /* @__PURE__ */ new Date(),
         draftSubject: subject,
         draftBody: body
-      }).where(eq110(emailDrafts.id, id));
+      }).where(eq112(emailDrafts.id, id));
       res.json({ success: true, gmailDraftUrl: result.gmailUrl });
     } catch (error) {
       console.error("Error approving email draft:", error);
@@ -74257,7 +74545,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(emailDrafts.id, id), eq110(emailDrafts.userId, userId)));
+      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and84(eq112(emailDrafts.id, id), eq112(emailDrafts.userId, userId)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error discarding email draft:", error);
@@ -74268,7 +74556,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const [row] = await db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId)).limit(1);
+      const [row] = await db.select({ data: goals.data }).from(goals).where(eq112(goals.userId, userId)).limit(1);
       res.json({ goals: row?.data ?? [] });
     } catch (err2) {
       console.error("Error fetching goals:", err2);
@@ -74280,7 +74568,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const goalId = _p9(req.params.id);
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId)).limit(1);
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq112(goals.userId, userId)).limit(1);
       const goalsList = goalsRow?.data || [];
       const goal = goalsList.find((g) => g.id === goalId);
       if (!goal) return res.status(404).json({ error: "Goal not found" });
@@ -74297,7 +74585,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const goalId = _p9(req.params.id);
-      const [tree] = await db.select().from(goalTrees).where(and82(eq110(goalTrees.userId, userId), eq110(goalTrees.goalId, goalId))).limit(1);
+      const [tree] = await db.select().from(goalTrees).where(and84(eq112(goalTrees.userId, userId), eq112(goalTrees.goalId, goalId))).limit(1);
       if (!tree) return res.status(200).json({ hasTree: false });
       res.json({ hasTree: true, ...tree });
     } catch (err2) {
@@ -74337,7 +74625,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
       const status = typeof req.query.status === "string" ? req.query.status : null;
-      const where = status ? and82(eq110(agentJobs.userId, userId), eq110(agentJobs.status, status)) : eq110(agentJobs.userId, userId);
+      const where = status ? and84(eq112(agentJobs.userId, userId), eq112(agentJobs.status, status)) : eq112(agentJobs.userId, userId);
       const jobs = await db.select().from(agentJobs).where(where).orderBy(desc38(agentJobs.createdAt)).limit(limit);
       const { attachJobReviewState: attachJobReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
       res.json(jobs.map(attachJobReviewState2));
@@ -74351,8 +74639,8 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const jobs = await db.select().from(agentJobs).where(
-        and82(
-          eq110(agentJobs.userId, userId),
+        and84(
+          eq112(agentJobs.userId, userId),
           sql40`${agentJobs.status} IN ('queued', 'running', 'cancelling')`
         )
       ).orderBy(asc7(agentJobs.createdAt)).limit(20);
@@ -74368,7 +74656,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      const [job] = await db.select().from(agentJobs).where(and82(eq110(agentJobs.id, id), eq110(agentJobs.userId, userId))).limit(1);
+      const [job] = await db.select().from(agentJobs).where(and84(eq112(agentJobs.id, id), eq112(agentJobs.userId, userId))).limit(1);
       if (!job) return res.status(404).json({ error: "Job not found" });
       if (job.status === "complete" || job.status === "failed") {
         return res.status(400).json({ error: "Job is already finished" });
@@ -74377,7 +74665,7 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.json({ ok: true, status: job.status });
       }
       const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
-      await db.update(agentJobs).set({ status: newStatus, completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0 }).where(eq110(agentJobs.id, id));
+      await db.update(agentJobs).set({ status: newStatus, completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0 }).where(eq112(agentJobs.id, id));
       res.json({ ok: true, status: newStatus });
     } catch (err2) {
       console.error("Error cancelling agent job:", err2);
@@ -74389,7 +74677,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      const [job] = await db.select().from(agentJobs).where(and82(eq110(agentJobs.id, id), eq110(agentJobs.userId, userId))).limit(1);
+      const [job] = await db.select().from(agentJobs).where(and84(eq112(agentJobs.id, id), eq112(agentJobs.userId, userId))).limit(1);
       if (!job) return res.status(404).json({ error: "Job not found" });
       if (!["failed", "cancelled"].includes(job.status)) {
         return res.status(400).json({ error: "Only failed or cancelled jobs can be retried" });
@@ -74422,9 +74710,9 @@ Reply directly to this message with your answer and I'll take it from there.
       if (triageSection === "auto_handled") {
         const since = new Date(Date.now() - 48 * 60 * 60 * 1e3);
         const items2 = await db.select().from(deliverables).where(
-          and82(
-            eq110(deliverables.userId, userId),
-            eq110(deliverables.status, "approved"),
+          and84(
+            eq112(deliverables.userId, userId),
+            eq112(deliverables.status, "approved"),
             gte22(deliverables.actedAt, since),
             sql40`${deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
           )
@@ -74433,7 +74721,7 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.json(items2.map(attachDeliverableReviewState3));
       }
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
-      const items = await db.select().from(deliverables).where(and82(eq110(deliverables.userId, userId), eq110(deliverables.status, status))).orderBy(desc38(deliverables.createdAt)).limit(50);
+      const items = await db.select().from(deliverables).where(and84(eq112(deliverables.userId, userId), eq112(deliverables.status, status))).orderBy(desc38(deliverables.createdAt)).limit(50);
       const { attachDeliverableReviewState: attachDeliverableReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
       res.json(items.map(attachDeliverableReviewState2));
     } catch (err2) {
@@ -74441,217 +74729,8 @@ Reply directly to this message with your answer and I'll take it from there.
       res.status(500).json({ error: "Failed to list deliverables" });
     }
   });
-  app2.post("/api/deliverables/:id/approve", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const [d] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
-      if (!d) return res.status(404).json({ error: "Deliverable not found" });
-      if (d.status !== "pending_approval") {
-        return res.status(400).json({ error: "Already actioned" });
-      }
-      let resultExtra = {};
-      if (d.type === "approval_gate") {
-        const { approveGate: approveGate2, getGate: getGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
-        const { continueTopLevelApproval: continueTopLevelApproval2 } = await Promise.resolve().then(() => (init_topLevelApprovalContinuation(), topLevelApprovalContinuation_exports));
-        const meta = d.meta || {};
-        const gate = meta.gateId ? await getGate2(meta.gateId) : void 0;
-        if (meta.gateId) await approveGate2(meta.gateId, userId);
-        const continuation = gate ? await continueTopLevelApproval2(gate).catch((err2) => {
-          console.error("[deliverables] top-level approval continuation failed:", err2);
-          return { continued: false, reason: "Continuation failed after approval." };
-        }) : { continued: false, reason: "Approval gate not found." };
-        await db.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq110(deliverables.id, id));
-        return res.json({ ok: true, continuation });
-      }
-      if (d.type === "email_draft") {
-        const meta = d.meta || {};
-        const to = meta.to?.trim() || "";
-        if (!to || !to.includes("@")) {
-          return res.status(400).json({ error: "Email draft missing valid recipient" });
-        }
-        const tokens = await getValidGoogleTokens(userId);
-        const token = tokens?.[0];
-        if (!token) return res.status(400).json({ error: "Gmail not connected" });
-        const { createGmailDraft: createGmailDraft2 } = await Promise.resolve().then(() => (init_gmail(), gmail_exports));
-        const result = await createGmailDraft2(token, to, meta.subject || d.title, meta.emailBody || d.body);
-        resultExtra = { gmailDraftUrl: result.gmailUrl, gmailDraftId: result.draftId };
-      } else {
-        await db.insert(userDocuments).values({
-          userId,
-          name: d.title.slice(0, 200),
-          mimeType: "text/markdown",
-          sizeBytes: Buffer.byteLength(d.body, "utf8"),
-          status: "ready",
-          extractedText: d.body,
-          summary: d.summary || null
-        });
-      }
-      await db.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq110(deliverables.id, id));
-      if (d.jobId) {
-        await db.update(agentJobs).set({ status: "delivered" }).where(and82(eq110(agentJobs.id, d.jobId), eq110(agentJobs.status, "complete")));
-      }
-      res.json({ ok: true, ...resultExtra });
-    } catch (err2) {
-      console.error("Error approving deliverable:", err2);
-      res.status(500).json({ error: "Failed to approve deliverable" });
-    }
-  });
-  app2.post("/api/deliverables/:id/reject", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const [d] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
-      if (!d) return res.status(404).json({ error: "Deliverable not found" });
-      if (d.status !== "pending_approval") {
-        return res.status(400).json({ error: "Already actioned" });
-      }
-      if (d.type === "approval_gate") {
-        const { rejectGate: rejectGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
-        const meta = d.meta || {};
-        if (meta.gateId) await rejectGate2(meta.gateId, userId);
-      }
-      await db.update(deliverables).set({ status: "rejected", actedAt: /* @__PURE__ */ new Date() }).where(eq110(deliverables.id, id));
-      res.json({ ok: true });
-    } catch (err2) {
-      console.error("Error rejecting deliverable:", err2);
-      res.status(500).json({ error: "Failed to reject deliverable" });
-    }
-  });
-  app2.put("/api/deliverables/:id", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const { title, summary, body, meta } = req.body;
-      const [existing] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
-      if (!existing) return res.status(404).json({ error: "Deliverable not found" });
-      if (existing.status !== "pending_approval") {
-        return res.status(400).json({ error: "Only pending deliverables can be edited" });
-      }
-      const patch = {};
-      if (typeof title === "string" && title.trim().length > 0) patch.title = title.trim().slice(0, 300);
-      if (typeof summary === "string") patch.summary = summary.slice(0, 1e3);
-      if (typeof body === "string" && body.trim().length > 0) patch.body = body.slice(0, 1e5);
-      if (meta && typeof meta === "object" && !Array.isArray(meta)) {
-        patch.meta = { ...existing.meta, ...meta };
-      }
-      if (Object.keys(patch).length === 0) {
-        return res.status(400).json({ error: "No editable fields provided" });
-      }
-      const [updated] = await db.update(deliverables).set(patch).where(eq110(deliverables.id, id)).returning();
-      res.json({ ok: true, deliverable: updated });
-    } catch (err2) {
-      console.error("Error editing deliverable:", err2);
-      res.status(500).json({ error: "Failed to edit deliverable" });
-    }
-  });
-  app2.post("/api/deliverables/:id/revise", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const instructions = typeof req.body?.instructions === "string" ? req.body.instructions.trim() : "";
-      if (!instructions) return res.status(400).json({ error: "Revision instructions are required" });
-      const [d] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
-      if (!d) return res.status(404).json({ error: "Deliverable not found" });
-      if (d.status !== "pending_approval") {
-        return res.status(400).json({ error: "Only pending deliverables can be revised" });
-      }
-      if (d.type === "approval_gate") {
-        return res.status(400).json({ error: "Approval requests cannot be revised; approve or decline them" });
-      }
-      const [job] = d.jobId ? await db.select().from(agentJobs).where(and82(eq110(agentJobs.id, d.jobId), eq110(agentJobs.userId, userId))).limit(1) : [];
-      const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
-      const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
-      delete baseInput.retryCount;
-      const revisionPrompt = [
-        "Revise this Jarvis deliverable according to the user's requested changes.",
-        "",
-        `Original task: ${job?.prompt || d.title}`,
-        "",
-        "Current deliverable:",
-        d.body.slice(0, 3e4),
-        "",
-        "Requested changes:",
-        instructions,
-        "",
-        "Return a complete replacement deliverable, not a patch note."
-      ].join("\n");
-      const revision = await submitAgentJob3({
-        userId,
-        agentType: d.agentType,
-        title: `Revision: ${d.title}`.slice(0, 200),
-        prompt: revisionPrompt,
-        input: {
-          ...baseInput,
-          revisionOfDeliverableId: d.id,
-          revisionOfJobId: d.jobId,
-          revisionInstructions: instructions.slice(0, 2e3)
-        }
-      });
-      await db.update(deliverables).set({
-        status: "discarded",
-        actedAt: /* @__PURE__ */ new Date(),
-        triageNote: `Revision requested: ${instructions.slice(0, 500)}`
-      }).where(eq110(deliverables.id, id));
-      if (d.jobId) {
-        await db.update(agentJobs).set({ status: "delivered" }).where(and82(eq110(agentJobs.id, d.jobId), eq110(agentJobs.status, "complete")));
-      }
-      res.json({ ok: true, jobId: revision.id, isDuplicate: revision.isDuplicate, status: "queued" });
-    } catch (err2) {
-      console.error("Error requesting deliverable revision:", err2);
-      res.status(500).json({ error: "Failed to request revision" });
-    }
-  });
-  app2.post("/api/deliverables/:id/discard", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const [d] = await db.select({ jobId: deliverables.jobId }).from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
-      await db.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId)));
-      if (d?.jobId) {
-        await db.update(agentJobs).set({ status: "delivered" }).where(and82(eq110(agentJobs.id, d.jobId), eq110(agentJobs.status, "complete")));
-      }
-      res.json({ ok: true });
-    } catch (err2) {
-      console.error("Error discarding deliverable:", err2);
-      res.status(500).json({ error: "Failed to discard deliverable" });
-    }
-  });
-  app2.post("/api/deliverables/:id/save-to-drive", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const [d] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
-      if (!d) return res.status(404).json({ error: "Deliverable not found" });
-      if (d.driveLink) return res.json({ ok: true, driveLink: d.driveLink });
-      const { getUserDriveSettings: getUserDriveSettings2 } = await Promise.resolve().then(() => (init_driveRoutes(), driveRoutes_exports));
-      const { createDriveTextFile: createDriveTextFile2 } = await Promise.resolve().then(() => (init_googleDrive(), googleDrive_exports));
-      const drive = await getUserDriveSettings2(userId);
-      if (!drive.enabled || !drive.accessToken) {
-        return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings.", code: "DRIVE_NOT_CONNECTED" });
-      }
-      const content = d.body || d.summary || d.title;
-      const baseName = (d.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "");
-      const fileName = `${baseName}.md`;
-      const created = await createDriveTextFile2(
-        drive.accessToken,
-        fileName,
-        content,
-        { folderId: drive.folderId || void 0 }
-      );
-      const [updated] = await db.update(deliverables).set({ driveLink: created.webViewLink }).where(eq110(deliverables.id, id)).returning();
-      res.json({ ok: true, driveLink: created.webViewLink, deliverable: updated });
-    } catch (err2) {
-      console.error("Error saving deliverable to Drive:", err2);
-      res.status(500).json({ error: "Failed to save to Drive" });
-    }
-  });
+  const { registerDeliverableReviewRoutes: registerDeliverableReviewRoutes2 } = await Promise.resolve().then(() => (init_deliverableReviewHttpRoutes(), deliverableReviewHttpRoutes_exports));
+  registerDeliverableReviewRoutes2(app2, { db });
   app2.get("/api/documents", async (req, res) => {
     try {
       const userId = req.userId;
@@ -74664,7 +74743,7 @@ Reply directly to this message with your answer and I'll take it from there.
         status: userDocuments.status,
         summary: userDocuments.summary,
         uploadedAt: userDocuments.uploadedAt
-      }).from(userDocuments).where(eq110(userDocuments.userId, userId)).orderBy(desc38(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+      }).from(userDocuments).where(eq112(userDocuments.userId, userId)).orderBy(desc38(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
       res.json({ documents: docs });
     } catch (error) {
       console.error("Error fetching documents:", error);
@@ -74682,7 +74761,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (!SUPPORTED_MIME_TYPES.includes(mimeType)) {
         return res.status(400).json({ error: `Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}` });
       }
-      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq110(userDocuments.userId, userId));
+      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq112(userDocuments.userId, userId));
       if (existing.length >= MAX_DOCS_PER_USER) {
         return res.status(400).json({ error: `Maximum ${MAX_DOCS_PER_USER} documents allowed. Delete some to upload more.` });
       }
@@ -74706,7 +74785,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.delete(userDocuments).where(and82(eq110(userDocuments.id, id), eq110(userDocuments.userId, userId)));
+      await db.delete(userDocuments).where(and84(eq112(userDocuments.id, id), eq112(userDocuments.userId, userId)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting document:", error);
@@ -74740,7 +74819,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(websiteCrawls).where(eq110(websiteCrawls.userId, userId)).limit(1);
+      const rows = await db.select().from(websiteCrawls).where(eq112(websiteCrawls.userId, userId)).limit(1);
       if (rows.length === 0) return res.json({ status: "idle" });
       const row = rows[0];
       res.json({
@@ -74759,7 +74838,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(websiteCrawls).where(eq110(websiteCrawls.userId, userId));
+      await db.delete(websiteCrawls).where(eq112(websiteCrawls.userId, userId));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting website crawl:", error);
@@ -74770,7 +74849,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(chatgptImports).where(eq110(chatgptImports.userId, userId));
+      const rows = await db.select().from(chatgptImports).where(eq112(chatgptImports.userId, userId));
       if (rows.length === 0) {
         return res.json({ imported: false });
       }
@@ -74821,7 +74900,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (allTexts.length === 0) {
         return res.status(400).json({ error: "No readable conversations found in the file." });
       }
-      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq110(userMemories.userId, userId));
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq112(userMemories.userId, userId));
       const existingMemories = existingRows.map((r) => r.content);
       const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
       const batchSize = 10;
@@ -74903,7 +74982,7 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const rows = await db.select().from(openclawBuildLog).where(eq110(openclawBuildLog.userId, userId)).orderBy(desc38(openclawBuildLog.createdAt)).limit(50);
+      const rows = await db.select().from(openclawBuildLog).where(eq112(openclawBuildLog.userId, userId)).orderBy(desc38(openclawBuildLog.createdAt)).limit(50);
       res.json({ builds: rows });
     } catch (err2) {
       console.error("[jarvis] GET builds failed:", err2);
@@ -74914,7 +74993,7 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const watches = await db.select().from(nervousSystemWatches).where(eq110(nervousSystemWatches.userId, userId)).orderBy(nervousSystemWatches.createdAt);
+      const watches = await db.select().from(nervousSystemWatches).where(eq112(nervousSystemWatches.userId, userId)).orderBy(nervousSystemWatches.createdAt);
       res.json(watches);
     } catch (err2) {
       console.error("[NervousSystem] watches fetch failed:", err2);
@@ -74951,7 +75030,7 @@ Extract up to 8 memories per batch.`;
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "No valid fields to update" });
       }
-      const [updated] = await db.update(nervousSystemWatches).set(updates).where(and82(eq110(nervousSystemWatches.id, id), eq110(nervousSystemWatches.userId, userId))).returning();
+      const [updated] = await db.update(nervousSystemWatches).set(updates).where(and84(eq112(nervousSystemWatches.id, id), eq112(nervousSystemWatches.userId, userId))).returning();
       if (!updated) return res.status(404).json({ error: "Watch not found" });
       res.json(updated);
     } catch (err2) {
@@ -74964,7 +75043,7 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const id = _p9(req.params.id);
     try {
-      await db.delete(nervousSystemWatches).where(and82(eq110(nervousSystemWatches.id, id), eq110(nervousSystemWatches.userId, userId)));
+      await db.delete(nervousSystemWatches).where(and84(eq112(nervousSystemWatches.id, id), eq112(nervousSystemWatches.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[NervousSystem] watch delete failed:", err2);
@@ -74977,7 +75056,7 @@ Extract up to 8 memories per batch.`;
     const parsedLimit = parseInt(req.query.limit || "20", 10);
     const limit = Math.min(50, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 20 : parsedLimit);
     try {
-      const signals = await db.select().from(nervousSystemSignals).where(eq110(nervousSystemSignals.userId, userId)).orderBy(sql40`${nervousSystemSignals.createdAt} DESC`).limit(limit);
+      const signals = await db.select().from(nervousSystemSignals).where(eq112(nervousSystemSignals.userId, userId)).orderBy(sql40`${nervousSystemSignals.createdAt} DESC`).limit(limit);
       res.json(signals);
     } catch (err2) {
       console.error("[NervousSystem] signals fetch failed:", err2);
@@ -75036,7 +75115,7 @@ Extract up to 8 memories per batch.`;
     const parsedLimit = parseInt(req.query.limit || "30", 10);
     const limit = Math.min(100, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 30 : parsedLimit);
     try {
-      const rows = await db.select().from(gutSignals).where(eq110(gutSignals.userId, userId)).orderBy(desc38(gutSignals.createdAt)).limit(limit);
+      const rows = await db.select().from(gutSignals).where(eq112(gutSignals.userId, userId)).orderBy(desc38(gutSignals.createdAt)).limit(limit);
       res.json(rows);
     } catch (err2) {
       console.error("[Gut] threat-log fetch failed:", err2);
@@ -75048,7 +75127,7 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { AVAILABLE_MODELS: AVAILABLE_MODELS2, MODEL_DEFAULTS: MODEL_DEFAULTS2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)).limit(1);
       const prefs = rows[0]?.data;
       const stored = prefs?.modelPreferences ?? {};
       const categories = Object.keys(MODEL_DEFAULTS2);
@@ -75076,7 +75155,7 @@ Extract up to 8 memories per batch.`;
       if (!isValidModelForCategory2(model, category)) {
         return res.status(400).json({ error: "Invalid model for this category" });
       }
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)).limit(1);
       const existing = rows[0]?.data ?? {};
       const existingModelPrefs = existing.modelPreferences ?? {};
       const updated = {
@@ -75095,7 +75174,7 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { ORCHESTRATOR_MODELS: ORCHESTRATOR_MODELS2, MODEL_DEFAULTS: MODEL_DEFAULTS2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)).limit(1);
       const prefs = rows[0]?.data;
       const storedModel = prefs?.modelPreferences?.orchestrator;
       const orchestratorModel = ORCHESTRATOR_MODELS2.find((m) => m.value === storedModel) ? storedModel : MODEL_DEFAULTS2.orchestrator;
@@ -75111,7 +75190,7 @@ Extract up to 8 memories per batch.`;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { model } = req.body;
       const { ORCHESTRATOR_MODELS: ORCHESTRATOR_MODELS2, MODEL_DEFAULTS: MODEL_DEFAULTS2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)).limit(1);
       const existing = rows[0]?.data ?? {};
       const existingModelPrefs = existing.modelPreferences ?? {};
       const update = { ...existing };
@@ -75177,7 +75256,7 @@ Extract up to 8 memories per batch.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
-      const traces = await db.select().from(orchestrationTraces).where(eq110(orchestrationTraces.userId, userId)).orderBy(desc38(orchestrationTraces.createdAt)).limit(20);
+      const traces = await db.select().from(orchestrationTraces).where(eq112(orchestrationTraces.userId, userId)).orderBy(desc38(orchestrationTraces.createdAt)).limit(20);
       res.json({ traces });
     } catch (err2) {
       console.error("[Orchestrator] traces GET failed:", err2);
@@ -75338,8 +75417,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq128 } = await import("drizzle-orm");
-      const existing = await db.select().from(userSkills2).where(eq128(userSkills2.userId, userId));
+      const { eq: eq130 } = await import("drizzle-orm");
+      const existing = await db.select().from(userSkills2).where(eq130(userSkills2.userId, userId));
       const existingBuiltInNames = new Set(
         existing.filter((s) => s.isBuiltIn).map((s) => s.name)
       );
@@ -75356,7 +75435,7 @@ Extract up to 8 memories per batch.`;
             isActive: false
           }))
         ).onConflictDoNothing();
-        const fresh = await db.select().from(userSkills2).where(eq128(userSkills2.userId, userId));
+        const fresh = await db.select().from(userSkills2).where(eq130(userSkills2.userId, userId));
         return res.json({ skills: fresh });
       }
       res.json({ skills: existing });
@@ -75395,10 +75474,10 @@ Extract up to 8 memories per batch.`;
     const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq128, and: and99 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).limit(1);
+      const { eq: eq130, and: and101 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and101(eq130(userSkills2.id, id), eq130(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
-      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and101(eq130(userSkills2.id, id), eq130(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH toggle failed:", err2);
@@ -75412,8 +75491,8 @@ Extract up to 8 memories per batch.`;
     const { name, description, instructions, emoji } = req.body;
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq128, and: and99 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).limit(1);
+      const { eq: eq130, and: and101 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and101(eq130(userSkills2.id, id), eq130(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be modified" });
       const updates = {};
@@ -75422,7 +75501,7 @@ Extract up to 8 memories per batch.`;
       if (instructions?.trim()) updates.instructions = instructions.trim().slice(0, 3e3);
       if (emoji?.trim()) updates.emoji = emoji.trim().slice(0, 8);
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
-      const [updated] = await db.update(userSkills2).set(updates).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set(updates).where(and101(eq130(userSkills2.id, id), eq130(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH update failed:", err2);
@@ -75435,11 +75514,11 @@ Extract up to 8 memories per batch.`;
     const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq128, and: and99 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).limit(1);
+      const { eq: eq130, and: and101 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and101(eq130(userSkills2.id, id), eq130(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be deleted" });
-      await db.delete(userSkills2).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId)));
+      await db.delete(userSkills2).where(and101(eq130(userSkills2.id, id), eq130(userSkills2.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[UserSkills] DELETE failed:", err2);
@@ -75451,8 +75530,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { skillCandidates: skillCandidates2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq128, and: and99 } = await import("drizzle-orm");
-      const rows = await db.select().from(skillCandidates2).where(and99(eq128(skillCandidates2.userId, userId), eq128(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
+      const { eq: eq130, and: and101 } = await import("drizzle-orm");
+      const rows = await db.select().from(skillCandidates2).where(and101(eq130(skillCandidates2.userId, userId), eq130(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
       res.json({ candidates: rows });
     } catch (err2) {
       console.error("[SkillCandidates] GET failed:", err2);
@@ -75471,15 +75550,15 @@ Extract up to 8 memories per batch.`;
     }
     try {
       const { skillCandidates: skillCandidates2, userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq128, and: and99 } = await import("drizzle-orm");
-      const [candidate] = await db.select().from(skillCandidates2).where(and99(eq128(skillCandidates2.id, id), eq128(skillCandidates2.userId, userId))).limit(1);
+      const { eq: eq130, and: and101 } = await import("drizzle-orm");
+      const [candidate] = await db.select().from(skillCandidates2).where(and101(eq130(skillCandidates2.id, id), eq130(skillCandidates2.userId, userId))).limit(1);
       if (!candidate) return res.status(404).json({ error: "Candidate not found" });
       if (candidate.status !== "pending") {
         return res.status(409).json({ error: "Candidate has already been reviewed" });
       }
       const newStatus = action === "accept" ? "accepted" : action === "edit" ? "edited" : "dismissed";
       await db.transaction(async (tx) => {
-        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq128(skillCandidates2.id, id));
+        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq130(skillCandidates2.id, id));
         if (action === "accept" || action === "edit") {
           const finalName = name?.trim() ? name.trim().slice(0, 80) : candidate.name;
           const finalInstructions = instructionText?.trim() ? instructionText.trim().slice(0, 3e3) : candidate.instructionText;
@@ -75508,8 +75587,8 @@ Extract up to 8 memories per batch.`;
     try {
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { integrationStatus: integrationStatus2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq128, sql: sql47 } = await import("drizzle-orm");
-      const rows = await db2.select().from(integrationStatus2).where(eq128(integrationStatus2.userId, userId));
+      const { eq: eq130, sql: sql47 } = await import("drizzle-orm");
+      const rows = await db2.select().from(integrationStatus2).where(eq130(integrationStatus2.userId, userId));
       const linkedRaw = await db2.execute(sql47`
         SELECT DISTINCT integration FROM (
           SELECT 'telegram' AS integration FROM telegram_links WHERE user_id = ${userId}
@@ -76027,8 +76106,8 @@ Extract up to 8 memories per batch.`;
           scheduledAt: jarvisScheduledTasks.scheduledAt,
           completedAt: jarvisScheduledTasks.completedAt
         }).from(jarvisScheduledTasks).where(
-          and82(
-            eq110(jarvisScheduledTasks.userId, userId),
+          and84(
+            eq112(jarvisScheduledTasks.userId, userId),
             sql40`DATE(${jarvisScheduledTasks.scheduledAt}) = ${today}`
           )
         ).limit(10);
@@ -76144,7 +76223,7 @@ Extract up to 8 memories per batch.`;
   app2.get("/api/button-locations", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const rows = await db.select().from(buttonLocations).where(eq110(buttonLocations.userId, userId)).orderBy(desc38(buttonLocations.updatedAt));
+      const rows = await db.select().from(buttonLocations).where(eq112(buttonLocations.userId, userId)).orderBy(desc38(buttonLocations.updatedAt));
       res.json({ entries: rows });
     } catch (err2) {
       console.error("[button-locations] GET error:", err2);
@@ -76180,9 +76259,9 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select({ id: buttonLocations.id, userId: buttonLocations.userId }).from(buttonLocations).where(eq110(buttonLocations.id, id)).limit(1);
+      const rows = await db.select({ id: buttonLocations.id, userId: buttonLocations.userId }).from(buttonLocations).where(eq112(buttonLocations.id, id)).limit(1);
       if (!rows.length || rows[0].userId !== userId) return res.status(404).json({ error: "Not found" });
-      await db.delete(buttonLocations).where(eq110(buttonLocations.id, id));
+      await db.delete(buttonLocations).where(eq112(buttonLocations.id, id));
       res.json({ deleted: true });
     } catch (err2) {
       console.error("[button-locations] DELETE error:", err2);
@@ -76194,7 +76273,7 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select().from(buttonLocations).where(and82(eq110(buttonLocations.id, id), eq110(buttonLocations.userId, userId))).limit(1);
+      const rows = await db.select().from(buttonLocations).where(and84(eq112(buttonLocations.id, id), eq112(buttonLocations.userId, userId))).limit(1);
       if (!rows.length) return res.status(404).json({ error: "Not found" });
       const current = rows[0];
       const newConfidence = Math.min(1, current.confidence + 0.15);
@@ -76204,7 +76283,7 @@ Extract up to 8 memories per batch.`;
         failCount: 0,
         lastConfirmedAt: /* @__PURE__ */ new Date(),
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq110(buttonLocations.id, id)).returning();
+      }).where(eq112(buttonLocations.id, id)).returning();
       res.json({ entry: updated });
     } catch (err2) {
       console.error("[button-locations] PATCH confirm error:", err2);
@@ -76216,7 +76295,7 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select().from(buttonLocations).where(and82(eq110(buttonLocations.id, id), eq110(buttonLocations.userId, userId))).limit(1);
+      const rows = await db.select().from(buttonLocations).where(and84(eq112(buttonLocations.id, id), eq112(buttonLocations.userId, userId))).limit(1);
       if (!rows.length) return res.status(404).json({ error: "Not found" });
       const current = rows[0];
       const newConfidence = Math.max(0, current.confidence - 0.2);
@@ -76227,7 +76306,7 @@ Extract up to 8 memories per batch.`;
         stale: nowStale,
         failCount: newFailCount,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq110(buttonLocations.id, id)).returning();
+      }).where(eq112(buttonLocations.id, id)).returning();
       res.json({ entry: updated });
     } catch (err2) {
       console.error("[button-locations] PATCH deny error:", err2);
@@ -76358,8 +76437,8 @@ Extract up to 8 memories per batch.`;
         addressed: sql40`BOOL_AND(${capabilityGaps.addressed})`,
         latestCreatedAt: sql40`MAX(${capabilityGaps.createdAt})::text`
       }).from(capabilityGaps).where(
-        and82(
-          eq110(capabilityGaps.userId, userId),
+        and84(
+          eq112(capabilityGaps.userId, userId),
           gte22(capabilityGaps.createdAt, sevenDaysAgo)
         )
       ).groupBy(
@@ -76380,10 +76459,10 @@ Extract up to 8 memories per batch.`;
         return res.status(400).json({ error: "userMessage and detectedReason are required" });
       }
       await db.update(capabilityGaps).set({ addressed: true }).where(
-        and82(
-          eq110(capabilityGaps.userId, userId),
-          eq110(capabilityGaps.userMessage, userMessage),
-          eq110(capabilityGaps.detectedReason, detectedReason)
+        and84(
+          eq112(capabilityGaps.userId, userId),
+          eq112(capabilityGaps.userMessage, userMessage),
+          eq112(capabilityGaps.detectedReason, detectedReason)
         )
       );
       res.json({ ok: true });
@@ -76559,7 +76638,7 @@ __export(decay_exports, {
   reinforceMemories: () => reinforceMemories,
   runDailyDecay: () => runDailyDecay
 });
-import { eq as eq111, sql as sql41, and as and83 } from "drizzle-orm";
+import { eq as eq113, sql as sql41, and as and85 } from "drizzle-orm";
 function utcDayKey2(d) {
   return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
 }
@@ -76606,7 +76685,7 @@ async function reinforceMemories(userId, ids) {
     await db.update(userMemories).set({
       relevanceScore: sql41`LEAST(100, ${userMemories.relevanceScore} + 5)`,
       lastReferencedAt: /* @__PURE__ */ new Date()
-    }).where(and83(eq111(userMemories.userId, userId), sql41`${userMemories.id} = ANY(${ids})`));
+    }).where(and85(eq113(userMemories.userId, userId), sql41`${userMemories.id} = ANY(${ids})`));
   } catch (err2) {
     console.error("[MemoryDecay] reinforce failed:", err2);
   }
@@ -76631,7 +76710,7 @@ __export(scanner_exports, {
   runNervousSystemScan: () => runNervousSystemScan
 });
 import crypto10 from "crypto";
-import { eq as eq112, and as and84 } from "drizzle-orm";
+import { eq as eq114, and as and86 } from "drizzle-orm";
 function contentHash(userId, headline, url) {
   return crypto10.createHash("sha256").update(`${userId}::${headline.toLowerCase().trim()}::${url.toLowerCase().trim()}`).digest("hex").slice(0, 64);
 }
@@ -76690,7 +76769,7 @@ ${items}`;
   }
 }
 async function scanWatchTopic(userId, watch3) {
-  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq112(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
+  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq114(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
   let searchResults = [];
   try {
     const query = `${watch3.label} news latest`;
@@ -76769,7 +76848,7 @@ ${hit.url}` : ""}`;
       const deliveryResults = await notifyUser(userId, "nervous_system", msgText);
       const anyDelivered = deliveryResults.some((r) => r.result.ok && r.channel !== "in_app");
       if (anyDelivered) {
-        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and84(eq112(nervousSystemSignals.userId, userId), eq112(nervousSystemSignals.contentHash, hash)));
+        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and86(eq114(nervousSystemSignals.userId, userId), eq114(nervousSystemSignals.contentHash, hash)));
         logInteraction(userId, "notification", "outbound", msgText, "nervous_system").catch(() => {
         });
       }
@@ -76785,7 +76864,7 @@ async function runNervousSystemScan() {
   const now = Date.now();
   let watches = [];
   try {
-    watches = await db.select().from(nervousSystemWatches).where(eq112(nervousSystemWatches.active, true));
+    watches = await db.select().from(nervousSystemWatches).where(eq114(nervousSystemWatches.active, true));
   } catch (err2) {
     console.error("[NervousSystem] failed to load watches:", err2);
     return;
@@ -76841,7 +76920,7 @@ var peopleSync_exports = {};
 __export(peopleSync_exports, {
   syncPeopleFromGoogle: () => syncPeopleFromGoogle
 });
-import { eq as eq113, and as and85 } from "drizzle-orm";
+import { eq as eq115, and as and87 } from "drizzle-orm";
 function parseSender(from) {
   const angle = from.match(/^"?([^"<]+?)"?\s*<([^>]+)>$/);
   if (angle) return { name: angle[1].trim(), email: angle[2].trim().toLowerCase() };
@@ -76916,7 +76995,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
   for (const obs of byEmail.values()) {
     const upc = upcoming.get(obs.email);
     try {
-      const [existing] = await db.select().from(people).where(and85(eq113(people.userId, userId), eq113(people.email, obs.email))).limit(1);
+      const [existing] = await db.select().from(people).where(and87(eq115(people.userId, userId), eq115(people.email, obs.email))).limit(1);
       const relationshipHint = obs.source === "calendar" ? `calendar attendee \u2014 ${obs.context}` : `email correspondent \u2014 re: ${obs.context}`;
       if (existing) {
         await db.update(people).set({
@@ -76927,7 +77006,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
           nextInteractionAt: upc?.nearest ?? null,
           upcomingCount: upc?.count ?? 0,
           updatedAt: /* @__PURE__ */ new Date()
-        }).where(eq113(people.id, existing.id));
+        }).where(eq115(people.id, existing.id));
       } else {
         await db.insert(people).values({
           userId,
@@ -76973,7 +77052,7 @@ var flagTaskNeedsAttention_exports = {};
 __export(flagTaskNeedsAttention_exports, {
   buildFlagTaskNeedsAttentionTool: () => buildFlagTaskNeedsAttentionTool
 });
-import { and as and88, eq as eq116 } from "drizzle-orm";
+import { and as and90, eq as eq118 } from "drizzle-orm";
 function buildFlagTaskNeedsAttentionTool(taskId) {
   return {
     name: "flag_task_needs_attention",
@@ -76995,22 +77074,22 @@ function buildFlagTaskNeedsAttentionTool(taskId) {
       }
       try {
         const [task] = await db.select().from(jarvisScheduledTasks).where(
-          and88(
-            eq116(jarvisScheduledTasks.id, taskId),
-            eq116(jarvisScheduledTasks.userId, ctx.userId)
+          and90(
+            eq118(jarvisScheduledTasks.id, taskId),
+            eq118(jarvisScheduledTasks.userId, ctx.userId)
           )
         ).limit(1);
         if (!task) {
           return { ok: false, content: `Scheduled task id=${taskId} not found.`, label: "Task not found" };
         }
         await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion: question }).where(
-          and88(
-            eq116(jarvisScheduledTasks.id, taskId),
-            eq116(jarvisScheduledTasks.userId, ctx.userId)
+          and90(
+            eq118(jarvisScheduledTasks.id, taskId),
+            eq118(jarvisScheduledTasks.userId, ctx.userId)
           )
         );
         try {
-          const [link] = await db.select().from(telegramLinks).where(eq116(telegramLinks.userId, ctx.userId));
+          const [link] = await db.select().from(telegramLinks).where(eq118(telegramLinks.userId, ctx.userId));
           if (link?.chatId) {
             const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
             await sendLongMessage2(
@@ -77455,7 +77534,7 @@ __export(primeIdentityAudit_exports, {
 });
 import * as fs24 from "fs/promises";
 import * as path30 from "path";
-import { eq as eq118, and as and90, desc as desc41, inArray as inArray9, gte as gte26 } from "drizzle-orm";
+import { eq as eq120, and as and92, desc as desc41, inArray as inArray9, gte as gte26 } from "drizzle-orm";
 function currentMonthKey() {
   const now = /* @__PURE__ */ new Date();
   const y = now.getUTCFullYear();
@@ -77465,10 +77544,10 @@ function currentMonthKey() {
 async function auditAlreadyRan(userId, monthKey) {
   try {
     const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-      and90(
-        eq118(proactiveScheduleLog.userId, userId),
-        eq118(proactiveScheduleLog.messageType, "prime_identity_audit"),
-        eq118(proactiveScheduleLog.sentDate, monthKey)
+      and92(
+        eq120(proactiveScheduleLog.userId, userId),
+        eq120(proactiveScheduleLog.messageType, "prime_identity_audit"),
+        eq120(proactiveScheduleLog.sentDate, monthKey)
       )
     ).limit(1);
     return rows.length > 0;
@@ -77494,9 +77573,9 @@ async function runPrimeIdentityAudit(userId) {
       label: interactionLog.label,
       createdAt: interactionLog.createdAt
     }).from(interactionLog).where(
-      and90(
-        eq118(interactionLog.userId, userId),
-        eq118(interactionLog.direction, "outbound"),
+      and92(
+        eq120(interactionLog.userId, userId),
+        eq120(interactionLog.direction, "outbound"),
         inArray9(interactionLog.channel, ["telegram", "app_chat"]),
         gte26(interactionLog.createdAt, cutoff)
       )
@@ -77731,7 +77810,7 @@ init_diagnosticsService();
 init_routedChatCompletion();
 import * as fs22 from "fs";
 import * as path28 from "path";
-import { eq as eq114, and as and86, sql as sql43, desc as desc39, gte as gte23 } from "drizzle-orm";
+import { eq as eq116, and as and88, sql as sql43, desc as desc39, gte as gte23 } from "drizzle-orm";
 var openai19 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 var CHECKLIST_PATH = path28.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
@@ -77837,7 +77916,7 @@ async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEm
     try {
       const emails = externalAttendees.map((a) => a.email.toLowerCase()).filter(Boolean);
       if (emails.length > 0) {
-        const peopleRows = await db.select().from(people).where(and86(eq114(people.userId, userId), sql43`lower(${people.email}) = ANY(${emails})`));
+        const peopleRows = await db.select().from(people).where(and88(eq116(people.userId, userId), sql43`lower(${people.email}) = ANY(${emails})`));
         if (peopleRows.length > 0) {
           peopleContext = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -77924,10 +78003,10 @@ async function runEmailDrafts(userId, chatId, token, now) {
   let urgentItems = [];
   try {
     urgentItems = await db.select().from(inboxItems).where(
-      and86(
-        eq114(inboxItems.userId, userId),
-        eq114(inboxItems.sourceType, "email"),
-        eq114(inboxItems.status, "pending"),
+      and88(
+        eq116(inboxItems.userId, userId),
+        eq116(inboxItems.sourceType, "email"),
+        eq116(inboxItems.status, "pending"),
         sql43`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
         sql43`${inboxItems.jarvisReason} IS NOT NULL`,
         sql43`${inboxItems.matchedRuleId} IS NULL`
@@ -77952,9 +78031,9 @@ async function runEmailDrafts(userId, chatId, token, now) {
     if (!sourceMessageId) continue;
     try {
       const existing = await db.select({ id: emailDrafts.id }).from(emailDrafts).where(
-        and86(
-          eq114(emailDrafts.userId, userId),
-          eq114(emailDrafts.sourceMessageId, sourceMessageId)
+        and88(
+          eq116(emailDrafts.userId, userId),
+          eq116(emailDrafts.sourceMessageId, sourceMessageId)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -78047,7 +78126,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   if (!await claimAndMark(userId, messageType, localKey)) return false;
   let tasks = [];
   try {
-    const planRows = await db.select().from(plans).where(and86(eq114(plans.userId, userId), eq114(plans.date, localKey))).limit(1);
+    const planRows = await db.select().from(plans).where(and88(eq116(plans.userId, userId), eq116(plans.date, localKey))).limit(1);
     const data = planRows[0]?.data || {};
     tasks = Array.isArray(data.tasks) ? data.tasks : [];
   } catch {
@@ -78055,7 +78134,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   let statsData = {};
   let statsRowExists = false;
   try {
-    const statsRows = await db.select().from(stats).where(eq114(stats.userId, userId)).limit(1);
+    const statsRows = await db.select().from(stats).where(eq116(stats.userId, userId)).limit(1);
     if (statsRows.length > 0) {
       statsData = statsRows[0].data || {};
       statsRowExists = true;
@@ -78094,7 +78173,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
           lastStreakDate: localKey
         },
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq114(stats.userId, userId));
+      }).where(eq116(stats.userId, userId));
       statsData = {
         ...statsData,
         streak: newStreak,
@@ -78166,7 +78245,7 @@ ${summary}`);
       d.setDate(d.getDate() + 1);
       return localDateKey3(d, tz);
     })();
-    const prefRows = await db.select().from(userPreferences).where(eq114(userPreferences.userId, userId)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq116(userPreferences.userId, userId)).limit(1);
     const prefData = prefRows[0]?.data || {};
     const tomorrowSeed = {
       date: tomorrowKey,
@@ -78175,7 +78254,7 @@ ${summary}`);
       observation,
       tomorrowPrompt
     };
-    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq114(userPreferences.userId, userId));
+    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq116(userPreferences.userId, userId));
     console.log(`[Heartbeat] tomorrow seed written for ${userId} (date: ${tomorrowKey})`);
   } catch (err2) {
     console.error(`[Heartbeat] tomorrow seed write failed (non-fatal):`, err2);
@@ -78214,9 +78293,9 @@ async function enqueueNewInboxItemsForPrime(userId) {
   let items = [];
   try {
     items = await db.select().from(inboxItems).where(
-      and86(
-        eq114(inboxItems.userId, userId),
-        eq114(inboxItems.status, "pending"),
+      and88(
+        eq116(inboxItems.userId, userId),
+        eq116(inboxItems.status, "pending"),
         sql43`${inboxItems.actedAt} IS NULL`,
         sql43`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
       )
@@ -78355,7 +78434,7 @@ async function runHeartbeatTick() {
     }
     let memories = [];
     try {
-      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq114(userMemories.userId, link.userId)).orderBy(desc39(userMemories.extractedAt)).limit(30);
+      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq116(userMemories.userId, link.userId)).orderBy(desc39(userMemories.extractedAt)).limit(30);
     } catch {
     }
     let actionsFired = 0;
@@ -78448,7 +78527,7 @@ async function runHeartbeatMemoryPass(userId, googleToken, now) {
   lastHeartbeatExtractAt[userId] = now.getTime();
   const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
   try {
-    const recentMessages = await db.select().from(telegramGroupMessages).where(and86(eq114(telegramGroupMessages.userId, userId), gte23(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc39(telegramGroupMessages.messageDate)).limit(20);
+    const recentMessages = await db.select().from(telegramGroupMessages).where(and88(eq116(telegramGroupMessages.userId, userId), gte23(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc39(telegramGroupMessages.messageDate)).limit(20);
     if (recentMessages.length > 0) {
       const text2 = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4e3);
       const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
@@ -78484,7 +78563,7 @@ async function runAgentHealthCheck() {
     const { logAgentEvent: logAgentEvent2 } = await Promise.resolve().then(() => (init_agentLogger(), agentLogger_exports));
     const now = /* @__PURE__ */ new Date();
     const THIRTY_MIN_MS = 30 * 60 * 1e3;
-    const allActive = await db.select().from(discordAgents3).where(eq114(discordAgents3.isActive, 1));
+    const allActive = await db.select().from(discordAgents3).where(eq116(discordAgents3.isActive, 1));
     const summaryByUser = /* @__PURE__ */ new Map();
     for (const agent of allActive) {
       const configIssues = [];
@@ -78510,7 +78589,7 @@ async function runAgentHealthCheck() {
           const newFailCount = (agent.heartbeatFailCount ?? 0) + 1;
           if (newFailCount >= 3) {
             await disableAgent2(agent.id);
-            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq114(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq116(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] auto-disabled stuck agent ${agent.name} (${agent.id}), fails=${newFailCount}`);
             logAgentEvent2({
               event: "agent_disabled_stuck",
@@ -78520,7 +78599,7 @@ async function runAgentHealthCheck() {
             });
             addSummary2(agent.userId, `\u{1F534} Agent "${agent.name}" was auto-disabled after ${newFailCount} missed heartbeats.`);
           } else {
-            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq114(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq116(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] agent ${agent.name} (${agent.id}) stale \u2014 fail ${newFailCount}/3`);
             logAgentEvent2({
               event: "heartbeat_check",
@@ -78531,7 +78610,7 @@ async function runAgentHealthCheck() {
             addSummary2(agent.userId, `\u{1F7E1} Agent "${agent.name}" missed heartbeat (${newFailCount}/3 before auto-disable).`);
           }
         } else {
-          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq114(discordAgents3.id, agent.id));
+          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq116(discordAgents3.id, agent.id));
         }
       }
       const agentPlatforms = agent.platforms ?? ["discord"];
@@ -78647,28 +78726,28 @@ init_routes2();
 init_goalScheduler();
 init_weeklyJob();
 init_schedules();
-import { eq as eq119, and as and91, lt as lt9, lte as lte2, or as or5, sql as sql45, isNull as isNull5 } from "drizzle-orm";
+import { eq as eq121, and as and93, lt as lt9, lte as lte2, or as or5, sql as sql45, isNull as isNull5 } from "drizzle-orm";
 
 // server/discord/digest.ts
 init_db();
 init_schema();
 init_schedules();
-import { eq as eq115, and as and87 } from "drizzle-orm";
+import { eq as eq117, and as and89 } from "drizzle-orm";
 async function buildDailyDigest(userId) {
   const now = /* @__PURE__ */ new Date();
   const midnight = new Date(now);
   midnight.setHours(0, 0, 0, 0);
-  const allSchedules = await db.select().from(discordChannelSchedules).where(eq115(discordChannelSchedules.userId, userId));
+  const allSchedules = await db.select().from(discordChannelSchedules).where(eq117(discordChannelSchedules.userId, userId));
   const completedToday = allSchedules.filter(
     (s) => s.lastRun && s.lastRun >= midnight
   );
   const pendingApprovals = await db.select().from(discordPendingApprovals).where(
-    and87(
-      eq115(discordPendingApprovals.userId, userId),
-      eq115(discordPendingApprovals.status, "pending")
+    and89(
+      eq117(discordPendingApprovals.userId, userId),
+      eq117(discordPendingApprovals.status, "pending")
     )
   );
-  const agents = await db.select().from(discordAgents).where(eq115(discordAgents.userId, userId));
+  const agents = await db.select().from(discordAgents).where(eq117(discordAgents.userId, userId));
   const upcoming = allSchedules.filter((s) => s.enabled).map((s) => ({ schedule: s, next: nextRunTime(s.cronExpression) })).filter((x) => x.next !== null && x.next <= new Date(now.getTime() + 24 * 60 * 60 * 1e3)).sort((a, b) => a.next.getTime() - b.next.getTime());
   const dateStr = now.toLocaleDateString("en-US", {
     weekday: "long",
@@ -78869,7 +78948,7 @@ function sundayKey(d) {
 }
 async function runDiscordSchedules(now) {
   try {
-    const schedules = await db.select().from(discordChannelSchedules).where(eq119(discordChannelSchedules.enabled, true));
+    const schedules = await db.select().from(discordChannelSchedules).where(eq121(discordChannelSchedules.enabled, true));
     for (const schedule of schedules) {
       if (matchesCron(schedule.cronExpression, now)) {
         console.log(`[Scheduler] Firing Discord schedule "${schedule.label}" (${schedule.id})`);
@@ -78884,9 +78963,9 @@ async function runDiscordSchedules(now) {
 }
 async function runAgentLoops(now) {
   try {
-    const agents = await db.select().from(discordAgents).where(and91(
-      eq119(discordAgents.isActive, 1),
-      eq119(discordAgents.loopEnabled, 1)
+    const agents = await db.select().from(discordAgents).where(and93(
+      eq121(discordAgents.isActive, 1),
+      eq121(discordAgents.loopEnabled, 1)
     ));
     for (const agent of agents) {
       const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1e3;
@@ -78922,11 +79001,11 @@ ${prompt}`,
   if (result && agent.channelName) {
     await postToDiscordChannel2(agent.userId, agent.channelName, agent.channelId, result);
   }
-  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq119(discordAgents.id, agent.id));
+  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq121(discordAgents.id, agent.id));
 }
 async function runDailyDigests() {
   try {
-    const links = await db.select().from(channelLinks).where(eq119(channelLinks.channel, "discord"));
+    const links = await db.select().from(channelLinks).where(eq121(channelLinks.channel, "discord"));
     for (const link of links) {
       try {
         const meta = link.metadata;
@@ -79138,11 +79217,11 @@ async function runDueScheduledTasks(now) {
   let claimed = [];
   try {
     claimed = await db.update(jarvisScheduledTasks).set({ inProgressAt: now }).where(
-      and91(
+      and93(
         lte2(jarvisScheduledTasks.scheduledAt, now),
         isNull5(jarvisScheduledTasks.completedAt),
-        eq119(jarvisScheduledTasks.active, true),
-        eq119(jarvisScheduledTasks.needsAttention, false),
+        eq121(jarvisScheduledTasks.active, true),
+        eq121(jarvisScheduledTasks.needsAttention, false),
         or5(
           isNull5(jarvisScheduledTasks.inProgressAt),
           lt9(jarvisScheduledTasks.inProgressAt, staleThreshold)
@@ -79156,7 +79235,7 @@ async function runDueScheduledTasks(now) {
   for (const task of claimed) {
     handleDueTask(task, now).catch((err2) => {
       console.error(`[Scheduler] handleDueTask id=${task.id} failed:`, err2);
-      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id)).catch(() => {
+      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq121(jarvisScheduledTasks.id, task.id)).catch(() => {
       });
     });
   }
@@ -79167,7 +79246,7 @@ async function appendVoiceCallKeyboardOnTelegram(userId, notificationType) {
     if (!activeChannels.includes("telegram")) return;
     const { buildVoiceCallKeyboard: buildVoiceCallKeyboard2, isTelegramConfigured: isTelegramConfigured2, sendMessage: tgSend } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
     if (!isTelegramConfigured2()) return;
-    const links = await db.select().from(telegramLinks).where(eq119(telegramLinks.userId, userId)).limit(1);
+    const links = await db.select().from(telegramLinks).where(eq121(telegramLinks.userId, userId)).limit(1);
     const chatId = links[0]?.chatId;
     if (!chatId) return;
     const keyboard = buildVoiceCallKeyboard2({ includeTextReplyButton: true });
@@ -79211,12 +79290,12 @@ ${relevant.map((m) => `- ${m.content}`).join("\n")}
     if (isRecurring) {
       const nextRun = computeNextRun(task.recurrence, firedAt);
       if (nextRun) {
-        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq121(jarvisScheduledTasks.id, task.id));
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq121(jarvisScheduledTasks.id, task.id));
       }
     } else {
-      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq121(jarvisScheduledTasks.id, task.id));
     }
     let notifText;
     if (!result.ok && result.error) {
@@ -79266,20 +79345,20 @@ If you encounter a blocker or need the user's input to proceed, call the flag_ta
     } catch (err2) {
       agentReply = `\u26A0\uFE0F Scheduled task "${task.title}" encountered an error: ${err2 instanceof Error ? err2.message : String(err2)}`;
     }
-    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq119(jarvisScheduledTasks.id, task.id)).limit(1);
+    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq121(jarvisScheduledTasks.id, task.id)).limit(1);
     if (freshTask?.needsAttention) {
-      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq121(jarvisScheduledTasks.id, task.id));
       console.log(`[Scheduler] Agent task id=${task.id} paused \u2014 needsAttention=true, skipping completion`);
     } else {
       if (isRecurring) {
         const nextRun = computeNextRun(task.recurrence, firedAt);
         if (nextRun) {
-          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq121(jarvisScheduledTasks.id, task.id));
         } else {
-          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq121(jarvisScheduledTasks.id, task.id));
         }
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq121(jarvisScheduledTasks.id, task.id));
       }
       if (agentReply) {
         try {
@@ -79448,11 +79527,11 @@ function startScheduler() {
 async function runDueAutonomousProjectSessions() {
   const now = /* @__PURE__ */ new Date();
   const due = await db.update(jarvisProjects).set({ nextRunAt: null }).where(
-    and91(
-      eq119(jarvisProjects.autonomousMode, true),
+    and93(
+      eq121(jarvisProjects.autonomousMode, true),
       or5(
-        eq119(jarvisProjects.status, "building"),
-        eq119(jarvisProjects.status, "waiting_for_input")
+        eq121(jarvisProjects.status, "building"),
+        eq121(jarvisProjects.status, "waiting_for_input")
       ),
       lte2(jarvisProjects.nextRunAt, now)
     )
@@ -79513,7 +79592,7 @@ async function runMorningPlanBuild() {
   console.log(`[Scheduler] Processing ${allUsers.length} user(s) for auto-plan build`);
   for (const user of allUsers) {
     try {
-      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and91(eq119(plans.userId, user.id), eq119(plans.date, today)));
+      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and93(eq121(plans.userId, user.id), eq121(plans.date, today)));
       const existingTasks = existingPlan[0]?.data?.tasks || [];
       if (existingTasks.length > 0) {
         console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, skipping`);
@@ -79626,7 +79705,7 @@ async function runMorningPlanBuild() {
         console.error(`[Scheduler] prediction fetch failed for ${user.id}:`, predErr);
       }
       const topTask = newTasks[0];
-      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq119(userPreferences.userId, user.id));
+      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq121(userPreferences.userId, user.id));
       const currentPrefs = existingPrefs[0]?.data || {};
       const lastDreamCycle = currentPrefs.lastDreamCycle || null;
       const updatedPrefs = {
@@ -79791,10 +79870,10 @@ async function runDreamCycleForAllUsers(now) {
     const messageType = `dream_cycle:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and91(
-          eq119(proactiveScheduleLog.userId, user.id),
-          eq119(proactiveScheduleLog.messageType, messageType),
-          eq119(proactiveScheduleLog.sentDate, localDate)
+        and93(
+          eq121(proactiveScheduleLog.userId, user.id),
+          eq121(proactiveScheduleLog.messageType, messageType),
+          eq121(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -79812,7 +79891,7 @@ async function runDreamCycleForAllUsers(now) {
         );
       }
       try {
-        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq119(userPreferences.userId, user.id));
+        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq121(userPreferences.userId, user.id));
         const existingPrefs = existingPrefsRows[0]?.data || {};
         const updatedPrefsWithDream = {
           ...existingPrefs,
@@ -79864,10 +79943,10 @@ async function runDreamDeliveryForAllUsers(now) {
     const messageType = `dream_delivery:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and91(
-          eq119(proactiveScheduleLog.userId, user.id),
-          eq119(proactiveScheduleLog.messageType, messageType),
-          eq119(proactiveScheduleLog.sentDate, localDate)
+        and93(
+          eq121(proactiveScheduleLog.userId, user.id),
+          eq121(proactiveScheduleLog.messageType, messageType),
+          eq121(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -79939,7 +80018,7 @@ init_schema();
 init_soul();
 init_agentApproval();
 init_routedChatCompletion();
-import { eq as eq120, and as and92, sql as drizzleSql2 } from "drizzle-orm";
+import { eq as eq122, and as and94, sql as drizzleSql2 } from "drizzle-orm";
 
 // server/inboxTriageConfig.ts
 function isInboxTriageEnabled(env = process.env) {
@@ -80045,9 +80124,9 @@ Jarvis reason: ${item.jarvisReason || "(none)"}`;
 }
 async function triageInboxItemsForUser(userId) {
   const pendingItems = await db.select().from(inboxItems).where(
-    and92(
-      eq120(inboxItems.userId, userId),
-      eq120(inboxItems.status, "pending")
+    and94(
+      eq122(inboxItems.userId, userId),
+      eq122(inboxItems.status, "pending")
     )
   ).limit(15);
   for (const item of pendingItems) {
@@ -80058,7 +80137,7 @@ async function triageInboxItemsForUser(userId) {
           status: "dismissed",
           actedAt: /* @__PURE__ */ new Date(),
           jarvisReason: reason || "Auto-dismissed \u2014 not actionable"
-        }).where(eq120(inboxItems.id, item.id));
+        }).where(eq122(inboxItems.id, item.id));
         console.log(`[InboxTriage] auto-dismissed inbox item: ${item.id} (${(item.subject || "").slice(0, 60)}) \u2014 ${reason}`);
       }
     } catch (err2) {
@@ -80068,10 +80147,10 @@ async function triageInboxItemsForUser(userId) {
 }
 async function runTriagePassForUser(userId) {
   const pending = await db.select().from(deliverables).where(
-    and92(
-      eq120(deliverables.userId, userId),
-      eq120(deliverables.status, "pending_approval"),
-      eq120(deliverables.triageStatus, "needs_attention")
+    and94(
+      eq122(deliverables.userId, userId),
+      eq122(deliverables.status, "pending_approval"),
+      eq122(deliverables.triageStatus, "needs_attention")
     )
   ).limit(20);
   for (const d of pending) {
@@ -80083,7 +80162,7 @@ async function runTriagePassForUser(userId) {
           if (meta.gateId) {
             const gateOk = await approveGate(meta.gateId, userId).catch(() => false);
             if (!gateOk) {
-              await db.update(deliverables).set({ triageNote: "Auto-approve attempted but gate not found / already resolved" }).where(eq120(deliverables.id, d.id));
+              await db.update(deliverables).set({ triageNote: "Auto-approve attempted but gate not found / already resolved" }).where(eq122(deliverables.id, d.id));
               console.warn(`[InboxTriage] approveGate failed for ${d.id} \u2014 gate may already be resolved`);
               continue;
             }
@@ -80094,7 +80173,7 @@ async function runTriagePassForUser(userId) {
           triageStatus: "auto_handled",
           triageNote: note || "Auto-handled by Jarvis",
           actedAt: /* @__PURE__ */ new Date()
-        }).where(eq120(deliverables.id, d.id));
+        }).where(eq122(deliverables.id, d.id));
         console.log(`[InboxTriage] auto-handled: ${d.id} (${d.title.slice(0, 60)})`);
       } else if (verdict === "promote_memory") {
         await promoteToMemory(userId, d);
@@ -80103,10 +80182,10 @@ async function runTriagePassForUser(userId) {
           triageStatus: "promoted_memory",
           triageNote: note || "Saved to long-term memory by Jarvis",
           actedAt: /* @__PURE__ */ new Date()
-        }).where(eq120(deliverables.id, d.id));
+        }).where(eq122(deliverables.id, d.id));
         console.log(`[InboxTriage] promoted to memory: ${d.id} (${d.title.slice(0, 60)})`);
       } else {
-        await db.update(deliverables).set({ triageStatus: "escalated", triageNote: note || void 0 }).where(eq120(deliverables.id, d.id));
+        await db.update(deliverables).set({ triageStatus: "escalated", triageNote: note || void 0 }).where(eq122(deliverables.id, d.id));
         console.log(`[InboxTriage] escalated to user: ${d.id} (${d.title.slice(0, 60)})`);
       }
     } catch (err2) {
@@ -80116,10 +80195,10 @@ async function runTriagePassForUser(userId) {
   await triageInboxItemsForUser(userId);
   try {
     const orphanedGates = await db.select().from(agentApprovalGates).where(
-      and92(
-        eq120(agentApprovalGates.userId, userId),
-        eq120(agentApprovalGates.status, "pending"),
-        eq120(agentApprovalGates.initiatedBy, "jarvis"),
+      and94(
+        eq122(agentApprovalGates.userId, userId),
+        eq122(agentApprovalGates.status, "pending"),
+        eq122(agentApprovalGates.initiatedBy, "jarvis"),
         drizzleSql2`${agentApprovalGates.expiresAt} > NOW()`
       )
     ).limit(10);
@@ -80186,15 +80265,15 @@ init_outlook();
 init_interactionLog();
 init_actionLog();
 init_routedChatCompletion();
-import { eq as eq121, and as and93, gt as gt6, lt as lt10, inArray as inArray10 } from "drizzle-orm";
+import { eq as eq123, and as and95, gt as gt6, lt as lt10, inArray as inArray10 } from "drizzle-orm";
 var CURIOSITY_SCAN_LOCK_ID = 7654321098;
 var scannerStarted = false;
 var ALREADY_ASKED_WINDOW_DAYS = 30;
 async function getAlreadyAskedSourceIds(userId) {
   const windowStart = new Date(Date.now() - ALREADY_ASKED_WINDOW_DAYS * 24 * 60 * 60 * 1e3);
   const rows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and93(
-      eq121(proactiveQuestionsSent.userId, userId),
+    and95(
+      eq123(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, windowStart)
     )
   );
@@ -80213,16 +80292,16 @@ function extractSenderKey(sender) {
 var EMAIL_SOURCE_TYPES = ["email", "gmail", "outlook_email"];
 async function getRecentlySurfacedSenders(userId, since) {
   const sentRows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and93(
-      eq121(proactiveQuestionsSent.userId, userId),
+    and95(
+      eq123(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, since)
     )
   );
   if (sentRows.length === 0) return /* @__PURE__ */ new Set();
   const sentSourceIds = sentRows.map((r) => r.sourceId);
   const inboxRows = await db.select({ sender: inboxItems.sender }).from(inboxItems).where(
-    and93(
-      eq121(inboxItems.userId, userId),
+    and95(
+      eq123(inboxItems.userId, userId),
       inArray10(inboxItems.sourceId, sentSourceIds),
       inArray10(inboxItems.sourceType, [...EMAIL_SOURCE_TYPES])
     )
@@ -80238,7 +80317,7 @@ async function getUserMemories(userId) {
   return db.select({
     content: userMemories.content,
     category: userMemories.category
-  }).from(userMemories).where(eq121(userMemories.userId, userId));
+  }).from(userMemories).where(eq123(userMemories.userId, userId));
 }
 async function generateCuriosityQuestions(items, memories, userId) {
   if (items.length === 0) return [];
@@ -80697,7 +80776,7 @@ init_schema();
 init_coachAgent();
 init_whatsappChannel();
 init_sessionStore();
-import { eq as eq122, and as and94, sql as sql46 } from "drizzle-orm";
+import { eq as eq124, and as and96, sql as sql46 } from "drizzle-orm";
 import express2 from "express";
 import * as crypto11 from "crypto";
 function verifyTwilioSignature(req) {
@@ -80721,7 +80800,7 @@ function verifyTwilioSignature(req) {
 }
 async function findUserByPhone(phone) {
   try {
-    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and94(eq122(channelLinks.channel, "whatsapp"), eq122(channelLinks.address, phone))).limit(1);
+    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and96(eq124(channelLinks.channel, "whatsapp"), eq124(channelLinks.address, phone))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err2) {
     console.error("[whatsapp] user lookup failed:", err2);
@@ -80730,11 +80809,11 @@ async function findUserByPhone(phone) {
 }
 async function tryConsumeLinkCode(code, phone) {
   try {
-    const rows = await db.select().from(channelLinkCodes).where(and94(eq122(channelLinkCodes.code, code), eq122(channelLinkCodes.channel, "whatsapp"))).limit(1);
+    const rows = await db.select().from(channelLinkCodes).where(and96(eq124(channelLinkCodes.code, code), eq124(channelLinkCodes.channel, "whatsapp"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-      await db.delete(channelLinkCodes).where(eq122(channelLinkCodes.code, code));
+      await db.delete(channelLinkCodes).where(eq124(channelLinkCodes.code, code));
       return null;
     }
     await db.insert(channelLinks).values({
@@ -80746,7 +80825,7 @@ async function tryConsumeLinkCode(code, phone) {
       target: [channelLinks.channel, channelLinks.address],
       set: { userId: row.userId, lastSeenAt: /* @__PURE__ */ new Date() }
     });
-    await db.delete(channelLinkCodes).where(eq122(channelLinkCodes.code, code));
+    await db.delete(channelLinkCodes).where(eq124(channelLinkCodes.code, code));
     return row.userId;
   } catch (err2) {
     console.error("[whatsapp] link code consume failed:", err2);
@@ -80800,7 +80879,7 @@ function registerWhatsAppWebhook(app2) {
     }
   });
   const cleanup = setInterval(() => {
-    db.delete(channelLinkCodes).where(and94(eq122(channelLinkCodes.channel, "whatsapp"), sql46`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[whatsapp] code cleanup failed:", err2));
+    db.delete(channelLinkCodes).where(and96(eq124(channelLinkCodes.channel, "whatsapp"), sql46`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[whatsapp] code cleanup failed:", err2));
   }, 5 * 60 * 1e3);
   cleanup.unref();
 }
@@ -80818,13 +80897,13 @@ init_bridge();
 import fs25 from "fs";
 import path31 from "path";
 import { WebSocket as WebSocket3, WebSocketServer as WebSocketServer3 } from "ws";
-import { and as and97, desc as desc45, eq as eq126 } from "drizzle-orm";
+import { and as and99, desc as desc45, eq as eq128 } from "drizzle-orm";
 
 // server/gateway/devicePairing.ts
 init_db();
 init_schema();
 import { createHash as createHash8, randomBytes as randomBytes4 } from "crypto";
-import { and as and95, desc as desc42, eq as eq123, isNull as isNull6 } from "drizzle-orm";
+import { and as and97, desc as desc42, eq as eq125, isNull as isNull6 } from "drizzle-orm";
 var JWT_GATEWAY_SCOPES = [
   "operator.admin",
   "operator.read",
@@ -80860,10 +80939,10 @@ function requireGatewayScope(principal, scope) {
 async function authenticateGatewayDeviceToken(token) {
   if (!token?.startsWith("jgwd_")) return null;
   const hash = tokenHash(token);
-  const rows = await db.select().from(gatewayDevices).where(and95(eq123(gatewayDevices.tokenHash, hash), isNull6(gatewayDevices.revokedAt))).limit(1).catch(() => []);
+  const rows = await db.select().from(gatewayDevices).where(and97(eq125(gatewayDevices.tokenHash, hash), isNull6(gatewayDevices.revokedAt))).limit(1).catch(() => []);
   const device = rows[0];
   if (!device) return null;
-  db.update(gatewayDevices).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevices.id, device.id)).catch(() => {
+  db.update(gatewayDevices).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq125(gatewayDevices.id, device.id)).catch(() => {
   });
   return {
     userId: device.userId,
@@ -80896,7 +80975,7 @@ async function createGatewayPairingRequest({
   return row;
 }
 async function listGatewayPairingRequests(userId, limit = 25) {
-  return db.select().from(gatewayDevicePairingRequests).where(eq123(gatewayDevicePairingRequests.userId, userId)).orderBy(desc42(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
+  return db.select().from(gatewayDevicePairingRequests).where(eq125(gatewayDevicePairingRequests.userId, userId)).orderBy(desc42(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
 }
 async function approveGatewayPairingRequest({
   userId,
@@ -80904,12 +80983,12 @@ async function approveGatewayPairingRequest({
   code,
   scopes
 }) {
-  const rows = requestId ? await db.select().from(gatewayDevicePairingRequests).where(eq123(gatewayDevicePairingRequests.id, requestId)).limit(1) : await db.select().from(gatewayDevicePairingRequests).where(eq123(gatewayDevicePairingRequests.code, code || "")).limit(1);
+  const rows = requestId ? await db.select().from(gatewayDevicePairingRequests).where(eq125(gatewayDevicePairingRequests.id, requestId)).limit(1) : await db.select().from(gatewayDevicePairingRequests).where(eq125(gatewayDevicePairingRequests.code, code || "")).limit(1);
   const request = rows[0];
   if (!request || request.userId !== userId) throw new Error("Pairing request not found");
   if (request.status !== "pending") throw new Error(`Pairing request is ${request.status}`);
   if (new Date(request.expiresAt).getTime() < Date.now()) {
-    await db.update(gatewayDevicePairingRequests).set({ status: "expired", resolvedAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevicePairingRequests.id, request.id)).catch(() => {
+    await db.update(gatewayDevicePairingRequests).set({ status: "expired", resolvedAt: /* @__PURE__ */ new Date() }).where(eq125(gatewayDevicePairingRequests.id, request.id)).catch(() => {
     });
     throw new Error("Pairing request expired");
   }
@@ -80927,26 +81006,26 @@ async function approveGatewayPairingRequest({
       pairedFromRequestId: request.id
     }
   }).returning();
-  await db.update(gatewayDevicePairingRequests).set({ status: "approved", deviceId: device.id, resolvedAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevicePairingRequests.id, request.id));
+  await db.update(gatewayDevicePairingRequests).set({ status: "approved", deviceId: device.id, resolvedAt: /* @__PURE__ */ new Date() }).where(eq125(gatewayDevicePairingRequests.id, request.id));
   return {
     device: { ...device, tokenHash: void 0 },
     token: rawToken
   };
 }
 async function rejectGatewayPairingRequest(userId, requestId) {
-  const [request] = await db.select().from(gatewayDevicePairingRequests).where(eq123(gatewayDevicePairingRequests.id, requestId)).limit(1);
+  const [request] = await db.select().from(gatewayDevicePairingRequests).where(eq125(gatewayDevicePairingRequests.id, requestId)).limit(1);
   if (!request || request.userId !== userId) throw new Error("Pairing request not found");
-  await db.update(gatewayDevicePairingRequests).set({ status: "rejected", resolvedAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevicePairingRequests.id, request.id));
+  await db.update(gatewayDevicePairingRequests).set({ status: "rejected", resolvedAt: /* @__PURE__ */ new Date() }).where(eq125(gatewayDevicePairingRequests.id, request.id));
   return { ok: true };
 }
 async function listGatewayDevices(userId, includeRevoked = false, limit = 50) {
-  const rows = await db.select().from(gatewayDevices).where(eq123(gatewayDevices.userId, userId)).orderBy(desc42(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
+  const rows = await db.select().from(gatewayDevices).where(eq125(gatewayDevices.userId, userId)).orderBy(desc42(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
   return rows.filter((device) => includeRevoked || !device.revokedAt).map((device) => ({ ...device, tokenHash: void 0 }));
 }
 async function revokeGatewayDevice(userId, deviceId) {
-  const [device] = await db.select().from(gatewayDevices).where(eq123(gatewayDevices.id, deviceId)).limit(1);
+  const [device] = await db.select().from(gatewayDevices).where(eq125(gatewayDevices.id, deviceId)).limit(1);
   if (!device || device.userId !== userId) throw new Error("Gateway device not found");
-  await db.update(gatewayDevices).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevices.id, deviceId));
+  await db.update(gatewayDevices).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq125(gatewayDevices.id, deviceId));
   return { ok: true };
 }
 
@@ -80954,7 +81033,7 @@ async function revokeGatewayDevice(userId, deviceId) {
 init_db();
 init_schema();
 import { EventEmitter as EventEmitter2 } from "events";
-import { desc as desc43, eq as eq124 } from "drizzle-orm";
+import { desc as desc43, eq as eq126 } from "drizzle-orm";
 var emitter = new EventEmitter2();
 emitter.setMaxListeners(100);
 function onGatewayEvent(listener) {
@@ -80986,7 +81065,7 @@ async function recordGatewayEvent(input) {
 async function listGatewayEvents(userId, limit) {
   const query = db.select().from(gatewayEvents).orderBy(desc43(gatewayEvents.createdAt)).limit(limit);
   if (!userId) return query.catch(() => []);
-  return db.select().from(gatewayEvents).where(eq124(gatewayEvents.userId, userId)).orderBy(desc43(gatewayEvents.createdAt)).limit(limit).catch(() => []);
+  return db.select().from(gatewayEvents).where(eq126(gatewayEvents.userId, userId)).orderBy(desc43(gatewayEvents.createdAt)).limit(limit).catch(() => []);
 }
 
 // server/gateway/nodeRegistry.ts
@@ -80994,7 +81073,7 @@ init_db();
 init_registry();
 init_bridge();
 init_schema();
-import { and as and96, desc as desc44, eq as eq125, inArray as inArray11 } from "drizzle-orm";
+import { and as and98, desc as desc44, eq as eq127, inArray as inArray11 } from "drizzle-orm";
 var SERVER_CAPABILITIES = [
   "gateway.health",
   "gateway.status",
@@ -81071,8 +81150,8 @@ async function listGatewayNodes(userId, limit = 50) {
   }
   if (!userId) return nodes;
   const [gatewayDevices2, activeJobs] = await Promise.all([
-    db.select().from(gatewayDevices).where(eq125(gatewayDevices.userId, userId)).orderBy(desc44(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
-    db.select().from(agentJobs).where(and96(eq125(agentJobs.userId, userId), inArray11(agentJobs.status, ["queued", "running"]))).orderBy(desc44(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
+    db.select().from(gatewayDevices).where(eq127(gatewayDevices.userId, userId)).orderBy(desc44(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
+    db.select().from(agentJobs).where(and98(eq127(agentJobs.userId, userId), inArray11(agentJobs.status, ["queued", "running"]))).orderBy(desc44(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
   ]);
   for (const device of gatewayDevices2) {
     const scopes = device.scopes || [];
@@ -81235,19 +81314,19 @@ async function channelState(userId, limit) {
     configured: channel.isConfigured(),
     toolGroups: channel.toolGroups
   }));
-  const linked = userId ? await db.select().from(channelLinks).where(eq126(channelLinks.userId, userId)).limit(limit).catch(() => []) : [];
+  const linked = userId ? await db.select().from(channelLinks).where(eq128(channelLinks.userId, userId)).limit(limit).catch(() => []) : [];
   return { registered, linked };
 }
 async function sessionState(userId, limit) {
   const [coachSessions, agentSessions] = await Promise.all([
-    db.select().from(coachChannelSessions).where(eq126(coachChannelSessions.userId, userId)).limit(limit).catch(() => []),
+    db.select().from(coachChannelSessions).where(eq128(coachChannelSessions.userId, userId)).limit(limit).catch(() => []),
     db.select({
       sdkSessionId: agentChatSessions.sdkSessionId,
       agentId: agentChatSessions.agentId,
       createdAt: agentChatSessions.createdAt,
       updatedAt: agentChatSessions.updatedAt,
       expiresAt: agentChatSessions.expiresAt
-    }).from(agentChatSessions).where(eq126(agentChatSessions.userId, userId)).orderBy(desc45(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
+    }).from(agentChatSessions).where(eq128(agentChatSessions.userId, userId)).orderBy(desc45(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
   ]);
   return { coachSessions, agentSessions };
 }
@@ -81266,16 +81345,16 @@ async function daemonState(userId) {
 }
 async function agentState(userId, limit) {
   const [discordAgents3, customAgents2] = await Promise.all([
-    db.select().from(discordAgents).where(eq126(discordAgents.userId, userId)).limit(limit).catch(() => []),
-    db.select().from(customAgents).where(eq126(customAgents.userId, userId)).limit(limit).catch(() => [])
+    db.select().from(discordAgents).where(eq128(discordAgents.userId, userId)).limit(limit).catch(() => []),
+    db.select().from(customAgents).where(eq128(customAgents.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { discordAgents: discordAgents3, customAgents: customAgents2 };
 }
 async function cronState(userId, limit) {
   const [scheduledTasks, workflows, jobs] = await Promise.all([
-    db.select().from(jarvisScheduledTasks).where(eq126(jarvisScheduledTasks.userId, userId)).orderBy(desc45(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentWorkflows).where(eq126(agentWorkflows.userId, userId)).orderBy(desc45(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
-    db.select().from(agentJobs).where(eq126(agentJobs.userId, userId)).orderBy(desc45(agentJobs.createdAt)).limit(limit).catch(() => [])
+    db.select().from(jarvisScheduledTasks).where(eq128(jarvisScheduledTasks.userId, userId)).orderBy(desc45(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentWorkflows).where(eq128(agentWorkflows.userId, userId)).orderBy(desc45(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
+    db.select().from(agentJobs).where(eq128(agentJobs.userId, userId)).orderBy(desc45(agentJobs.createdAt)).limit(limit).catch(() => [])
   ]);
   return { scheduledTasks, workflows, jobs };
 }
@@ -81344,11 +81423,11 @@ async function jobCreate(userId, params) {
 async function jobCancel(userId, params) {
   const jobId = typeof params.jobId === "string" ? params.jobId.trim() : "";
   if (!jobId) throw new Error("jobId is required");
-  const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(and97(eq126(agentJobs.id, jobId), eq126(agentJobs.userId, userId))).limit(1);
+  const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(and99(eq128(agentJobs.id, jobId), eq128(agentJobs.userId, userId))).limit(1);
   if (!row) throw new Error("Job not found");
   if (!["queued", "running"].includes(row.status)) throw new Error(`Job is already ${row.status}`);
   const nextStatus = row.status === "running" ? "cancelling" : "cancelled";
-  const [updated] = await db.update(agentJobs).set({ status: nextStatus, ...nextStatus === "cancelled" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(and97(eq126(agentJobs.id, jobId), eq126(agentJobs.userId, userId))).returning({ id: agentJobs.id, status: agentJobs.status });
+  const [updated] = await db.update(agentJobs).set({ status: nextStatus, ...nextStatus === "cancelled" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(and99(eq128(agentJobs.id, jobId), eq128(agentJobs.userId, userId))).returning({ id: agentJobs.id, status: agentJobs.status });
   recordGatewayEvent({
     userId,
     type: "job.cancelled",
@@ -81418,8 +81497,8 @@ async function daemonTest(userId, params) {
 }
 async function approvalState(userId, limit) {
   const [gates, policies] = await Promise.all([
-    db.select().from(agentApprovalGates).where(eq126(agentApprovalGates.userId, userId)).orderBy(desc45(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentApprovalPolicies).where(eq126(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
+    db.select().from(agentApprovalGates).where(eq128(agentApprovalGates.userId, userId)).orderBy(desc45(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentApprovalPolicies).where(eq128(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { gates, policies };
 }
@@ -81448,8 +81527,8 @@ async function resolveApprovalGate(userId, params, decision) {
 async function skillState(userId, limit) {
   const [skillPacks2, mcpServers2, userSkills2] = await Promise.all([
     db.select().from(skillPacks).limit(limit).catch(() => []),
-    userId ? db.select().from(mcpServers).where(eq126(mcpServers.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([]),
-    userId ? db.select().from(userSkills).where(eq126(userSkills.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([])
+    userId ? db.select().from(mcpServers).where(eq128(mcpServers.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([]),
+    userId ? db.select().from(userSkills).where(eq128(userSkills.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([])
   ]);
   return { skillPacks: skillPacks2, mcpServers: mcpServers2, userSkills: userSkills2 };
 }
@@ -81919,7 +81998,7 @@ init_manager();
 init_applyCodeChangeTool();
 init_schema();
 init_publicUrl();
-import { eq as eq127, and as and98 } from "drizzle-orm";
+import { eq as eq129, and as and100 } from "drizzle-orm";
 import * as fs26 from "fs";
 import * as path32 from "path";
 async function alertTelegramUsersWebhookDown() {
@@ -81929,11 +82008,11 @@ async function alertTelegramUsersWebhookDown() {
     let alertedCount = 0;
     for (const userId of uniqueUserIds) {
       const existing = await db.select({ id: inboxItems.id }).from(inboxItems).where(
-        and98(
-          eq127(inboxItems.userId, userId),
-          eq127(inboxItems.sourceType, "other"),
-          eq127(inboxItems.status, "pending"),
-          eq127(inboxItems.subject, "Telegram bot is offline")
+        and100(
+          eq129(inboxItems.userId, userId),
+          eq129(inboxItems.sourceType, "other"),
+          eq129(inboxItems.status, "pending"),
+          eq129(inboxItems.subject, "Telegram bot is offline")
         )
       ).limit(1);
       if (existing.length > 0) continue;

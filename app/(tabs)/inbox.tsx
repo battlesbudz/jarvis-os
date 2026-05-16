@@ -104,6 +104,7 @@ interface Deliverable {
     canRevise: boolean;
     canDiscard: boolean;
     canReject: boolean;
+    canSaveToDrive: boolean;
     preview: string;
     approvalGateId?: string;
   };
@@ -699,6 +700,7 @@ export default function InboxScreen() {
           const icon = DELIVERABLE_ICON[d.type] || 'document-text';
           const typeLabel = DELIVERABLE_LABEL[d.type] || d.type;
           const review = d.review;
+          const canSaveToDrive = review?.canSaveToDrive !== false;
           const busy =
             (approveDeliverableMutation.isPending && approveDeliverableMutation.variables === d.id) ||
             (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id) ||
@@ -800,7 +802,7 @@ export default function InboxScreen() {
                   </Text>
                 </View>
 
-                {d.driveLink ? (
+                {canSaveToDrive && d.driveLink ? (
                   <Pressable
                     style={styles.driveLinkRow}
                     onPress={() => Linking.openURL(d.driveLink!)}
@@ -810,7 +812,7 @@ export default function InboxScreen() {
                     <Text style={styles.driveLinkText}>Open in Drive</Text>
                     <Ionicons name="open-outline" size={13} color={Colors.primary} />
                   </Pressable>
-                ) : (
+                ) : canSaveToDrive ? (
                   <Pressable
                     style={styles.saveToDriveRow}
                     onPress={() => saveToDriveMutation.mutate(d.id)}
@@ -824,7 +826,7 @@ export default function InboxScreen() {
                     )}
                     <Text style={styles.driveLinkText}>Save to Drive</Text>
                   </Pressable>
-                )}
+                ) : null}
 
                 <View style={styles.actionsRow}>
                   {d.type === 'approval_gate' ? (
