@@ -17,7 +17,8 @@ import { generateDownloadToken } from "./agent/appDelivery";
 import { authMiddleware } from "./auth";
 import { getGitHubSettings, createGitHubRepo, pushWorkspaceToGitHub } from "./integrations/github";
 import { getPublicBaseUrl } from "./publicUrl";
-import { getProjectDownloadsDir } from "./projectStorage";
+import { getProjectDownloadsDir, getProjectWorkspaceDir } from "./projectStorage";
+import { hydrateProjectWorkspace, listProjectSnapshot, readProjectArchive, readProjectSnapshotFile } from "./projectArtifacts";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -99,9 +100,11 @@ export function registerProjectRoutes(app: Express): void {
 
       if (!project) return res.status(404).json({ error: "Project not found" });
       if (!project.workspaceDir || !fs.existsSync(project.workspaceDir)) {
-        return res.json({ workspaceDir: project.workspaceDir ?? null, files: [] });
+        const files = await listProjectSnapshot(id);
+        return res.json({ workspaceDir: project.workspaceDir ?? null, files });
       }
 
+      await hydrateProjectWorkspace(id, project.workspaceDir).catch(() => undefined);
       const root = path.resolve(project.workspaceDir);
       const blocked = new Set([".git", "node_modules", ".next", ".expo", "dist", "build"]);
       const files: Array<{ path: string; name: string; type: "file" | "directory"; size: number; updatedAt: string }> = [];
@@ -144,11 +147,20 @@ export function registerProjectRoutes(app: Express): void {
         .where(and(eq(schema.jarvisProjects.id, id), eq(schema.jarvisProjects.userId, userId)))
         .limit(1);
 
-      if (!project?.workspaceDir) return res.status(404).json({ error: "Project workspace not found" });
+      if (!project?.workspaceDir) {
+        const snapshot = await readProjectSnapshotFile(id, requestedPath);
+        if (!snapshot) return res.status(404).json({ error: "Project workspace not found" });
+        return res.json(snapshot);
+      }
+      await hydrateProjectWorkspace(id, project.workspaceDir).catch(() => undefined);
       const root = path.resolve(project.workspaceDir);
       const fullPath = path.resolve(root, requestedPath);
       if (!fullPath.startsWith(root + path.sep)) return res.status(400).json({ error: "Invalid file path" });
-      if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) return res.status(404).json({ error: "File not found" });
+      if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+        const snapshot = await readProjectSnapshotFile(id, requestedPath);
+        if (!snapshot) return res.status(404).json({ error: "File not found" });
+        return res.json(snapshot);
+      }
       const stat = fs.statSync(fullPath);
       if (stat.size > 200_000) return res.status(413).json({ error: "File is too large to preview" });
 
@@ -174,7 +186,10 @@ export function registerProjectRoutes(app: Express): void {
       if (project.status !== "complete") return res.status(409).json({ error: "Project is not complete yet" });
 
       const zipPath = path.join(getProjectDownloadsDir(), `${id}.zip`);
-      if (!fs.existsSync(zipPath)) return res.status(404).json({ error: "Project zip not yet available" });
+      if (!fs.existsSync(zipPath)) {
+        const archive = await readProjectArchive(id);
+        if (!archive) return res.status(404).json({ error: "Project zip not yet available" });
+      }
 
       const token = generateDownloadToken(id);
       const downloadUrl = `${getPublicBaseUrl(req)}/api/downloads/project/${id}?token=${token}`;
@@ -289,7 +304,18 @@ export function registerProjectRoutes(app: Express): void {
         return res.status(400).json({ error: "Project must be complete before pushing to GitHub" });
       }
 
-      if (!project.workspaceDir || !fs.existsSync(project.workspaceDir)) {
+      let workspaceDir = project.workspaceDir;
+      if (!workspaceDir) {
+        workspaceDir = getProjectWorkspaceDir(id);
+        await db
+          .update(schema.jarvisProjects)
+          .set({ workspaceDir, updatedAt: new Date() })
+          .where(eq(schema.jarvisProjects.id, id));
+      }
+
+      await hydrateProjectWorkspace(id, workspaceDir).catch(() => undefined);
+
+      if (!fs.existsSync(workspaceDir)) {
         return res.status(400).json({ error: "Project workspace directory not found" });
       }
 
@@ -323,7 +349,7 @@ export function registerProjectRoutes(app: Express): void {
           settings.pat,
           owner,
           repo,
-          project.workspaceDir,
+          workspaceDir,
           syncMessage,
         );
 
@@ -356,7 +382,7 @@ export function registerProjectRoutes(app: Express): void {
         settings.pat,
         createResult.owner,
         createResult.repoName,
-        project.workspaceDir,
+        workspaceDir,
         `Initial commit: ${project.title ?? "Jarvis project"}`,
       );
 

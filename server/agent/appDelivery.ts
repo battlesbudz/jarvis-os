@@ -20,6 +20,7 @@ import { sendToDiscordUser } from "../discord/manager";
 import { hasGitHubPAT } from "../integrations/github";
 import { getPublicBaseUrl } from "../publicUrl";
 import { getProjectDownloadsDir } from "../projectStorage";
+import { hydrateProjectWorkspace, saveProjectArchive, snapshotProjectWorkspace } from "../projectArtifacts";
 
 const DOWNLOADS_DIR = getProjectDownloadsDir();
 const ZIP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -126,6 +127,22 @@ export function cleanupExpiredZips(): void {
  * Logs a warning and continues if the build fails (zip is still created).
  */
 function runProductionBuild(workspaceDir: string, framework: string): void {
+  const packageJson = path.join(workspaceDir, "package.json");
+  const nodeModules = path.join(workspaceDir, "node_modules");
+  if (fs.existsSync(packageJson) && !fs.existsSync(nodeModules)) {
+    console.log(`[AppDelivery] node_modules missing; running npm install in ${workspaceDir}`);
+    const install = spawnSync("npm", ["install"], {
+      cwd: workspaceDir,
+      env: { ...process.env, HOME: os.homedir(), CI: "true" },
+      encoding: "utf8",
+      timeout: 300_000,
+      stdio: "pipe",
+    });
+    if (install.status !== 0) {
+      console.warn(`[AppDelivery] npm install exited ${install.status}; build may fail. STDERR: ${(install.stderr ?? "").slice(0, 800)}`);
+    }
+  }
+
   const buildCmds: Record<string, string[]> = {
     nextjs: ["npm", "run", "build"],
     "react-vite": ["npm", "run", "build"],
@@ -175,11 +192,16 @@ export async function packageAndDeliverApp(
   if (!project) throw new Error(`Project ${projectId} not found`);
 
   const workspaceDir = project.workspaceDir;
-  if (!workspaceDir || !fs.existsSync(workspaceDir)) {
+  if (!workspaceDir) {
+    throw new Error(`Workspace directory not found for project ${projectId}`);
+  }
+  await hydrateProjectWorkspace(projectId, workspaceDir);
+  if (!fs.existsSync(workspaceDir)) {
     throw new Error(`Workspace directory not found for project ${projectId}`);
   }
 
   stopProjectServer(projectId);
+  await snapshotProjectWorkspace(projectId, workspaceDir).catch(() => undefined);
 
   const framework = project.appFramework ?? "custom";
 
@@ -213,6 +235,7 @@ export async function packageAndDeliverApp(
   }
 
   scheduleZipCleanup(zipPath);
+  await saveProjectArchive(projectId, zipPath);
 
   const zipSizeMb = getZipSizeMb(zipPath);
   const fileCount = countFiles(workspaceDir);
