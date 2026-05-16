@@ -393,6 +393,67 @@ Temporary local files from this QA pass, if still present:
 
 These files may contain production response data but should not contain secrets. Do not commit them.
 
+## Authenticated Endpoint QA Procedure
+
+Use `npm run jarvis:qa:endpoints` for deployed endpoint QA. The harness is intentionally bearer-token based and does not read browser local/session storage.
+
+Required environment:
+
+```powershell
+$env:JARVIS_QA_BASE_URL = "https://gameplanjarvisai.up.railway.app"
+$env:JARVIS_QA_AUTH_TOKEN = "<authenticated-owner-bearer-token-without-Bearer-prefix>"
+npm run jarvis:qa:endpoints
+```
+
+Optional chat probe:
+
+```powershell
+$env:JARVIS_QA_RUN_CHAT = "1"
+$env:JARVIS_QA_CHAT_PROMPT = "QA_ENDPOINT_OK: reply with exactly QA_ENDPOINT_OK and do not create tasks, jobs, memories, or deliverables."
+npm run jarvis:qa:endpoints
+```
+
+Token guidance:
+
+- Preferred: use a manually issued owner QA token if the deployed app adds a server-side `JARVIS_QA_AUTH_TOKEN` mechanism in the future.
+- Current safe path: obtain a normal authenticated bearer token from a supported login/API response and pass it manually as `JARVIS_QA_AUTH_TOKEN`.
+- Do not scrape browser `localStorage` or `sessionStorage`; it couples QA to implementation details and risks collecting unrelated session state.
+- Because this branch's allowed write scope excludes core auth/server route changes, no new owner-only token mint endpoint was added in this pass.
+
+## QA Artifact Cleanup Procedure
+
+Use `npm run jarvis:qa:cleanup` to inspect the known QA artifacts created during this pass. It defaults to dry-run.
+
+```powershell
+$env:JARVIS_QA_BASE_URL = "https://gameplanjarvisai.up.railway.app"
+$env:JARVIS_QA_AUTH_TOKEN = "<authenticated-owner-bearer-token-without-Bearer-prefix>"
+npm run jarvis:qa:cleanup
+```
+
+Apply targeted cleanup only after reviewing the dry-run output:
+
+```powershell
+npm run jarvis:qa:cleanup -- --apply
+```
+
+What the cleanup helper can safely target with existing authenticated APIs:
+
+- Scheduled tasks with exact title `Browser QA scheduled probe` via `DELETE /api/jarvis/scheduled-tasks/:id`.
+- Pending deliverables with exact title `Browser QA Probe Deliverable` via `POST /api/deliverables/:id/discard`.
+- Memories containing configured QA markers via `DELETE /api/memories/:id`.
+
+What it only reports:
+
+- Chat history messages containing QA markers. The app currently exposes whole-history JSON replacement/deletion for `/api/data/chat-history`, not a safe per-message delete endpoint, so the cleanup helper leaves chat history unchanged.
+
+Configurable cleanup markers:
+
+```powershell
+$env:JARVIS_QA_CLEANUP_TITLE = "Browser QA scheduled probe"
+$env:JARVIS_QA_CLEANUP_DELIVERABLE_TITLE = "Browser QA Probe Deliverable"
+$env:JARVIS_QA_CLEANUP_MARKERS = "Browser QA,QA_ENDPOINT_OK,QA_SEND_OK,QA_WEATHER_DONE"
+```
+
 ## Fix Pass 1 - Local Branch
 
 Date: 2026-05-15
@@ -502,3 +563,41 @@ New/remaining blockers:
 3. Run the endpoint QA harness with `JARVIS_QA_AUTH_TOKEN` after login works, then rerun with `JARVIS_QA_RUN_CHAT=1` for chat/tool/background probes.
 4. Re-check Usage, Agents, Visual, and Jarvis chat in the deployed browser session after authentication succeeds.
 5. Follow up on the Railway prestart Drizzle warning: `column "active" cannot be cast automatically to type boolean`. The server still starts, but schema push is not fully clean.
+
+## Fix Pass 5 - QA Harness and Artifact Cleanup
+
+Date: 2026-05-15
+
+Status: local harness/docs cleanup pass complete. Production cleanup still requires an authenticated owner token and an explicit dry-run review.
+
+| Area | Status | Local change | Verification |
+| --- | --- | --- | --- |
+| Endpoint QA auth | Clarified locally | `scripts/deployed-jarvis-endpoint-qa.mjs` now prints explicit setup guidance for manual `JARVIS_QA_AUTH_TOKEN` usage and says not to scrape browser storage. | Missing-token path exits with guidance. |
+| Owner-only QA token endpoint | Not implemented | The safe server-side approach would be an owner-only token mint/check endpoint gated by a dedicated env var, but this pass stayed within the requested non-core auth/schema/UI write scope. | Documented manual token path instead. |
+| QA artifact cleanup | Added locally | Added `npm run jarvis:qa:cleanup`, a dry-run-first helper that uses existing authenticated APIs to delete exact QA scheduled-task matches, discard exact pending QA deliverable matches, and delete QA-marker memories only when `--apply` is supplied. | Script help and missing-token paths verified locally. |
+| Chat artifacts | Report-only | Cleanup helper counts QA-marker chat messages but does not rewrite or delete chat history because existing APIs only support whole-history JSON write/delete. | Documented as an intentional safety limit. |
+
+Next steps:
+
+1. Run `npm run jarvis:qa:endpoints` with `JARVIS_QA_AUTH_TOKEN` after the next production auth path is available.
+2. Run `npm run jarvis:qa:cleanup` and review the dry-run output.
+3. If the dry-run only lists the known QA artifacts, run `npm run jarvis:qa:cleanup -- --apply`.
+
+## Fix Pass 6 - Schema Repair and Native Auth Reliability
+
+Date: 2026-05-15
+
+Status: local code and tests complete. Railway CLI upload created deployment `de54eb59-6395-4576-ad47-f4b203f4b3b8`, but Railway failed before build with `Failed to create code snapshot`, so production was left on the prior successful deployment until the GitHub-linked deploy picks up the pushed commit.
+
+| Area | Status | Local change | Verification |
+| --- | --- | --- | --- |
+| Railway Drizzle `inbox_rules.active` warning | Fixed locally | `npm run db:push` now runs a compatibility repair before `drizzle-kit push`, converting existing `inbox_rules.active` values to boolean and `match_count` values to integer before Drizzle compares schema. New bootstrap SQL now creates those columns with the correct boolean/integer types. | `node --check` passed for the repair scripts; `npm.cmd test` and `npm.cmd run server:build` passed. |
+| Railway prestart repair duplication | Cleaned up locally | `scripts/railway-prestart.mjs` now reuses the shared repair helper instead of carrying a separate SQL list. | `node --check scripts\railway-prestart.mjs` passed. |
+| QA artifact cleanup | Added locally | Added `scripts/deployed-jarvis-qa-cleanup.mjs` and `npm run jarvis:qa:cleanup` for dry-run-first cleanup of exact QA scheduled task, deliverable, and memory markers. | `npm.cmd run jarvis:qa:cleanup -- --help` passed; missing-token guard exits with guidance. |
+| Mobile/native OAuth polling | Improved locally | Mobile OAuth completion can now fall back to a native poll binding when the callback browser does not preserve the bind cookie, while still requiring the state hash and poll secret. | Covered by `npm.cmd test` and `npm.cmd run server:build`; needs real device/browser confirmation later. |
+
+Remaining after this pass:
+
+1. Let Railway deploy the pushed GitHub commit, then check startup logs for `[railway-db-repair] Database compatibility repair complete` and absence of the old `active` boolean cast warning.
+2. Run `npm run jarvis:qa:endpoints` and `npm run jarvis:qa:cleanup` with a real `JARVIS_QA_AUTH_TOKEN`.
+3. Browser-confirm the mobile/native OAuth fallback on the actual device flow.
