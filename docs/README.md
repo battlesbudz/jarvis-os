@@ -25,4 +25,3 @@ This folder contains the context future agents should read before changing Jarvi
 - Prefer the repo copies over Desktop copies. The Desktop files were used as source/reference, but repo docs may include newer updates.
 - Do not overwrite repo docs from Desktop blindly; compare normalized contents first.
 - Keep high-level context in docs and implementation-specific details near the code that owns them.
-

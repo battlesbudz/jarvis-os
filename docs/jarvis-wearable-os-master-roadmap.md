@@ -622,4 +622,3 @@ Jarvis is fundamentally a persistent intelligence layer that happens to use wear
 The future likely belongs not to the company with the fanciest glasses, but to the company that builds the best persistent intelligence layer across all wearable devices.
 
 Jarvis should aim to become a cross-device ambient cognitive operating system.
-

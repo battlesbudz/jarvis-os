@@ -323,4 +323,3 @@ This phase was not in the original roadmap, but the repo now includes meaningful
 - Email sends, calendar changes, public posts, daemon actions, deploys, purchases, compliance/business-finance actions, memory rewrites, and code changes require approval boundaries.
 - Phase order is no longer strictly linear because later-phase primitives have already been partially implemented.
 - The next best work is not "start Phase 3"; it is hardening the in-progress Phase 3-6 surfaces into tested, observable product flows.
-
