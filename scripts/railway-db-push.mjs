@@ -10,12 +10,21 @@ try {
 
 const npx = process.platform === "win32" ? "npx.cmd" : "npx";
 const args = process.argv.slice(2);
+const railwayEnvKeys = [
+  "RAILWAY_ENVIRONMENT",
+  "RAILWAY_ENVIRONMENT_ID",
+  "RAILWAY_PROJECT_ID",
+  "RAILWAY_SERVICE_ID",
+  "RAILWAY_DEPLOYMENT_ID",
+  "RAILWAY_REPLICA_ID",
+  "RAILWAY_PUBLIC_DOMAIN",
+  "RAILWAY_PRIVATE_DOMAIN",
+];
 const runningOnRailway =
-  Boolean(process.env.RAILWAY_ENVIRONMENT) ||
-  Boolean(process.env.RAILWAY_PROJECT_ID) ||
-  Boolean(process.env.RAILWAY_SERVICE_ID);
+  railwayEnvKeys.some((key) => Boolean(process.env[key])) || process.cwd() === "/app";
 
 if (runningOnRailway && !args.includes("--force")) {
+  console.log("[railway-db-push] Railway runtime detected; adding --force for noninteractive deploy.");
   args.push("--force");
 }
 
