@@ -375,6 +375,8 @@ __export(schema_exports, {
   interactionLog: () => interactionLog,
   jarvisActionLog: () => jarvisActionLog,
   jarvisPredictions: () => jarvisPredictions,
+  jarvisProjectArchives: () => jarvisProjectArchives,
+  jarvisProjectFiles: () => jarvisProjectFiles,
   jarvisProjectSessions: () => jarvisProjectSessions,
   jarvisProjects: () => jarvisProjects,
   jarvisScheduledTasks: () => jarvisScheduledTasks,
@@ -429,7 +431,7 @@ __export(schema_exports, {
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, MEMORY_TIERS, MEMORY_TYPES, MEMORY_CATEGORIES, people, jarvisSouls, livingContextUpdates, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, websiteCrawls, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, buildSessions, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, SIMPLE_ORIGIN_CHANNELS, discordChannelSchedules, interactionLog, discordPendingApprovals, DEFAULT_AGENT_PERMISSIONS, discordAgents, agentMemories, AGENT_MESSAGE_TYPES, AGENT_MESSAGE_STATUSES, agentMessages, AGENT_APPROVAL_STATUSES, agentApprovalGates, AGENT_POLICY_SCOPES, agentApprovalPolicies, agentApprovalAllowlist, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, mcpApiKeys, mcpRateLimits, jarvisActionLog, openclawBuildLog, egoWeeklyReports, INTEGRATION_NAMES, integrationStatus, skillPacks, DIAGNOSTIC_SUBSYSTEMS, DIAGNOSTIC_SEVERITIES, diagnosticEvents, orchestrationTraces, agentChatMessages, agentChatSessions, coachChannelSessions, userSkillPacks, systemErrorLog, CODE_PROPOSAL_STATUSES, codeProposals, MCP_CREDENTIAL_MODES, userSkills, skillCandidates, mcpServers, writeBudgetLog, writeBudgetWarnings, conversations, messages, learningSynthesisLog, discordConfirmTokens, webchatInviteTokens, GATEWAY_DEVICE_SCOPES, gatewayDevicePairingRequests, gatewayDevices, gatewayEvents, CUSTOM_AGENT_BASE_TYPES, customAgents, insertCustomAgentSchema, jarvisProjects, jarvisProjectSessions, selfHealAuditLog, searchBarLocations, buttonLocations, tournamentRuns, VAULT_SLUGS, VAULT_PAGE_TYPES, knowledgeVaultPages, wikiLintLog, transcriptJobs, capabilityGaps;
+var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, MEMORY_TIERS, MEMORY_TYPES, MEMORY_CATEGORIES, people, jarvisSouls, livingContextUpdates, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, websiteCrawls, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, buildSessions, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, SIMPLE_ORIGIN_CHANNELS, discordChannelSchedules, interactionLog, discordPendingApprovals, DEFAULT_AGENT_PERMISSIONS, discordAgents, agentMemories, AGENT_MESSAGE_TYPES, AGENT_MESSAGE_STATUSES, agentMessages, AGENT_APPROVAL_STATUSES, agentApprovalGates, AGENT_POLICY_SCOPES, agentApprovalPolicies, agentApprovalAllowlist, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, mcpApiKeys, mcpRateLimits, jarvisActionLog, openclawBuildLog, egoWeeklyReports, INTEGRATION_NAMES, integrationStatus, skillPacks, DIAGNOSTIC_SUBSYSTEMS, DIAGNOSTIC_SEVERITIES, diagnosticEvents, orchestrationTraces, agentChatMessages, agentChatSessions, coachChannelSessions, userSkillPacks, systemErrorLog, CODE_PROPOSAL_STATUSES, codeProposals, MCP_CREDENTIAL_MODES, userSkills, skillCandidates, mcpServers, writeBudgetLog, writeBudgetWarnings, conversations, messages, learningSynthesisLog, discordConfirmTokens, webchatInviteTokens, GATEWAY_DEVICE_SCOPES, gatewayDevicePairingRequests, gatewayDevices, gatewayEvents, CUSTOM_AGENT_BASE_TYPES, customAgents, insertCustomAgentSchema, jarvisProjects, jarvisProjectSessions, jarvisProjectFiles, jarvisProjectArchives, selfHealAuditLog, searchBarLocations, buttonLocations, tournamentRuns, VAULT_SLUGS, VAULT_PAGE_TYPES, knowledgeVaultPages, wikiLintLog, transcriptJobs, capabilityGaps;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1551,6 +1553,22 @@ var init_schema = __esm({
       status: varchar("status").notNull().default("complete"),
       summary: text("summary"),
       createdAt: timestamp("created_at").defaultNow().notNull()
+    });
+    jarvisProjectFiles = pgTable("jarvis_project_files", {
+      projectId: varchar("project_id").notNull().references(() => jarvisProjects.id, { onDelete: "cascade" }),
+      filePath: text("file_path").notNull(),
+      contentBase64: text("content_base64").notNull(),
+      sizeBytes: integer("size_bytes").notNull().default(0),
+      updatedAt: timestamp("updated_at").defaultNow().notNull()
+    }, (table) => [
+      primaryKey({ columns: [table.projectId, table.filePath] })
+    ]);
+    jarvisProjectArchives = pgTable("jarvis_project_archives", {
+      projectId: varchar("project_id").primaryKey().references(() => jarvisProjects.id, { onDelete: "cascade" }),
+      zipBase64: text("zip_base64").notNull(),
+      sizeBytes: integer("size_bytes").notNull().default(0),
+      createdAt: timestamp("created_at").defaultNow().notNull(),
+      updatedAt: timestamp("updated_at").defaultNow().notNull()
     });
     selfHealAuditLog = pgTable("self_heal_audit_log", {
       id: serial("id").primaryKey(),
@@ -3263,6 +3281,27 @@ async function ensureTablesExist() {
     `).catch(() => {
     });
     await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS jarvis_project_files (
+        project_id     VARCHAR NOT NULL REFERENCES jarvis_projects(id) ON DELETE CASCADE,
+        file_path      TEXT NOT NULL,
+        content_base64 TEXT NOT NULL,
+        size_bytes     INTEGER NOT NULL DEFAULT 0,
+        updated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (project_id, file_path)
+      )
+    `).catch(() => {
+    });
+    await db.execute(sql2`
+      CREATE TABLE IF NOT EXISTS jarvis_project_archives (
+        project_id     VARCHAR PRIMARY KEY REFERENCES jarvis_projects(id) ON DELETE CASCADE,
+        zip_base64     TEXT NOT NULL,
+        size_bytes     INTEGER NOT NULL DEFAULT 0,
+        created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {
+    });
+    await db.execute(sql2`
       CREATE TABLE IF NOT EXISTS search_bar_locations (
         user_id     VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         app_package VARCHAR(256) NOT NULL,
@@ -4201,7 +4240,7 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
   const dir = await mkdtemp(join(tmpdir(), "jarvis-codex-oauth-"));
   const outputPath = join(dir, "answer.txt");
   try {
-    await new Promise((resolve9, reject) => {
+    await new Promise((resolve10, reject) => {
       const child = spawn(
         command,
         ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", outputPath, "-"],
@@ -4233,7 +4272,7 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
       });
       child.on("close", (code) => {
         finish(() => {
-          if (code === 0) resolve9();
+          if (code === 0) resolve10();
           else reject(new Error(stderr || `Codex OAuth provider exited with ${code}.`));
         });
       });
@@ -4858,10 +4897,10 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   let patched = false;
   if (!clientProto[CLIENT_POST_PATCHED] && typeof clientProto.post === "function") {
     const originalPost = clientProto.post;
-    clientProto.post = function patchedPost(path32, opts) {
+    clientProto.post = function patchedPost(path33, opts) {
       const body = opts?.body;
-      if (path32 !== "/chat/completions" || !shouldRoute(body)) {
-        return originalPost.call(this, path32, opts);
+      if (path33 !== "/chat/completions" || !shouldRoute(body)) {
+        return originalPost.call(this, path33, opts);
       }
       return routeBody(body, opts?.signal, postLogPrefix);
     };
@@ -4870,10 +4909,10 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   }
   if (!clientProto[CLIENT_METHOD_PATCHED] && typeof clientProto.methodRequest === "function") {
     const originalMethodRequest = clientProto.methodRequest;
-    clientProto.methodRequest = function patchedMethodRequest(method, path32, opts) {
+    clientProto.methodRequest = function patchedMethodRequest(method, path33, opts) {
       const body = opts?.body;
-      if (method !== "post" || path32 !== "/chat/completions" || !shouldRoute(body)) {
-        return originalMethodRequest.call(this, method, path32, opts);
+      if (method !== "post" || path33 !== "/chat/completions" || !shouldRoute(body)) {
+        return originalMethodRequest.call(this, method, path33, opts);
       }
       return routeBody(body, opts?.signal, methodLogPrefix);
     };
@@ -4882,9 +4921,9 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   }
   return patched;
 }
-function optionalRequire(path32) {
+function optionalRequire(path33) {
   try {
-    return require2(path32);
+    return require2(path33);
   } catch {
     return null;
   }
@@ -5112,9 +5151,9 @@ import OpenAI4 from "openai";
 import { eq as eq4, desc as desc2 } from "drizzle-orm";
 async function extractFromPdfWithPdfjs(buffer) {
   const { pathToFileURL } = await import("url");
-  const { resolve: resolve9 } = await import("path");
+  const { resolve: resolve10 } = await import("path");
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const workerPath = resolve9("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  const workerPath = resolve10("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   const uint8 = new Uint8Array(buffer);
   const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
@@ -8346,11 +8385,11 @@ async function appendAudit(auditLogPath, entry) {
 async function withDb(fn) {
   if (!process.env.DATABASE_URL) return null;
   try {
-    const [{ db: db2 }, { sql: sql46 }] = await Promise.all([
+    const [{ db: db2 }, { sql: sql47 }] = await Promise.all([
       Promise.resolve().then(() => (init_db(), db_exports)),
       import("drizzle-orm")
     ]);
-    return await fn(db2, sql46);
+    return await fn(db2, sql47);
   } catch {
     return null;
   }
@@ -8390,8 +8429,8 @@ function formatLearning(args, now) {
   return { block: lines.join("\n"), learned, status: finalStatus, confidence, sourceType };
 }
 async function persistLivingContextUpdate(input) {
-  await withDb(async (db2, sql46) => {
-    await db2.execute(sql46`
+  await withDb(async (db2, sql47) => {
+    await db2.execute(sql47`
       INSERT INTO living_context_updates (
         user_id,
         target,
@@ -8430,8 +8469,8 @@ async function persistLivingContextUpdate(input) {
 }
 async function syncPersistedUpdatesToFile(input) {
   const existing = await fs3.readFile(input.abs, "utf-8").catch(() => "");
-  const rows = await withDb(async (db2, sql46) => {
-    const result = await db2.execute(sql46`
+  const rows = await withDb(async (db2, sql47) => {
+    const result = await db2.execute(sql47`
       SELECT block
       FROM living_context_updates
       WHERE user_id = ${input.userId}
@@ -9639,9 +9678,9 @@ function isIngestableDocument(mimeType, filename) {
 }
 async function extractPdf(buffer) {
   const { pathToFileURL } = await import("url");
-  const { resolve: resolve9 } = await import("path");
+  const { resolve: resolve10 } = await import("path");
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const workerPath = resolve9("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  const workerPath = resolve10("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   const uint8 = new Uint8Array(buffer);
   const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
@@ -9678,9 +9717,9 @@ async function renderPageToPngBase64(pdf, pageNum) {
 async function extractPdfViaVision(buffer) {
   try {
     const { pathToFileURL } = await import("url");
-    const { resolve: resolve9 } = await import("path");
+    const { resolve: resolve10 } = await import("path");
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const workerPath = resolve9("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+    const workerPath = resolve10("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
     pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
     const uint8 = new Uint8Array(buffer);
     const pdf = await pdfjs.getDocument({ data: uint8, useSystemFonts: true }).promise;
@@ -9921,7 +9960,7 @@ async function convertToWav(audioBuffer) {
   const outputPath = join2(tmpdir2(), `output-${randomUUID2()}.wav`);
   try {
     await writeFile(inputPath, audioBuffer);
-    await new Promise((resolve9, reject) => {
+    await new Promise((resolve10, reject) => {
       const ffmpeg = spawn2("ffmpeg", [
         "-i",
         inputPath,
@@ -9944,7 +9983,7 @@ async function convertToWav(audioBuffer) {
       ffmpeg.stderr.on("data", () => {
       });
       ffmpeg.on("close", (code) => {
-        if (code === 0) resolve9();
+        if (code === 0) resolve10();
         else reject(new Error(`ffmpeg exited with code ${code}`));
       });
       ffmpeg.on("error", reject);
@@ -11307,7 +11346,7 @@ var init_mcpClient = __esm({
       }
       // ── stdio transport ──────────────────────────────────────────────────────────
       _initStdio() {
-        return new Promise((resolve9, reject) => {
+        return new Promise((resolve10, reject) => {
           const { command, args = [], env } = this.transport;
           this.proc = spawn3(command, args, {
             stdio: ["pipe", "pipe", "pipe"],
@@ -11355,7 +11394,7 @@ var init_mcpClient = __esm({
             }
             this._stdioSend({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
             console.log(`[McpClient] stdio connected: ${command}`);
-            resolve9();
+            resolve10();
           }).catch(reject);
         });
       }
@@ -11385,15 +11424,15 @@ var init_mcpClient = __esm({
         }
       }
       _stdioRequest(method, params) {
-        return new Promise((resolve9) => {
+        return new Promise((resolve10) => {
           const id = ++this.counter;
           const timer = setTimeout(() => {
             this.pending.delete(id);
-            resolve9({ id, jsonrpc: "2.0", error: { code: -32e3, message: `Timeout calling ${method}` } });
+            resolve10({ id, jsonrpc: "2.0", error: { code: -32e3, message: `Timeout calling ${method}` } });
           }, this.timeoutMs);
           this.pending.set(id, (r) => {
             clearTimeout(timer);
-            resolve9(r);
+            resolve10(r);
           });
           this._stdioSend({ jsonrpc: "2.0", id, method, params });
         });
@@ -11738,7 +11777,7 @@ function getRecentPhoneNotifications(userId, limit = 20) {
   return arr.slice(0, limit);
 }
 function waitForTrainingTap(userId, label, timeoutMs = 6e4) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve10, reject) => {
     const prior = trainingWaiters.get(userId);
     if (prior) {
       clearTimeout(prior.timer);
@@ -11748,7 +11787,7 @@ function waitForTrainingTap(userId, label, timeoutMs = 6e4) {
       trainingWaiters.delete(userId);
       reject("Training timed out \u2014 no tap received within the allowed time.");
     }, timeoutMs);
-    trainingWaiters.set(userId, { label, resolve: resolve9, reject, timer });
+    trainingWaiters.set(userId, { label, resolve: resolve10, reject, timer });
   });
 }
 function subscribeWakeWordTrigger(userId, cb) {
@@ -12039,7 +12078,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
   }
   console.log(`[daemon] op SENT userId=${userId} op=${op.type}`, "packageName" in op ? `pkg=${op.packageName}` : "");
   const sentAt = Date.now();
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const id = nextOpId();
     const timer = setTimeout(() => {
       const map = pendingByUser.get(pendingKey);
@@ -12047,7 +12086,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
-      resolve9({ ok: false, error: "daemon timeout" });
+      resolve10({ ok: false, error: "daemon timeout" });
     }, timeoutMs);
     let userMap = pendingByUser.get(pendingKey);
     if (!userMap) {
@@ -12063,7 +12102,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
           console.log(`[daemon] op RESULT userId=${userId} op=${op.type} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
         }
         recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
-        resolve9(result);
+        resolve10(result);
       },
       timer
     });
@@ -12074,7 +12113,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       userMap.delete(id);
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: String(err2), durationMs });
-      resolve9({ ok: false, error: String(err2) });
+      resolve10({ ok: false, error: String(err2) });
     }
   });
 }
@@ -13329,11 +13368,11 @@ var init_googleDrive = __esm({
 import { eq as eq16, and as and12 } from "drizzle-orm";
 async function markdownToPdfBuffer(title, markdown) {
   const PDFDocument = (await import("pdfkit")).default;
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve10, reject) => {
     const doc = new PDFDocument({ margin: 72, size: "A4" });
     const chunks = [];
     doc.on("data", (chunk) => chunks.push(chunk));
-    doc.on("end", () => resolve9(Buffer.concat(chunks)));
+    doc.on("end", () => resolve10(Buffer.concat(chunks)));
     doc.on("error", reject);
     const COLORS = {
       title: "#1a1a2e",
@@ -16144,7 +16183,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_swipe_element] element "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve9) => setTimeout(resolve9, 400));
+          await new Promise((resolve10) => setTimeout(resolve10, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -16185,7 +16224,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve9) => setTimeout(resolve9, 500));
+            await new Promise((resolve10) => setTimeout(resolve10, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -16293,7 +16332,7 @@ ${elementList || "  (none)"}`,
           };
         }
         const SWIPE_SETTLE_MS = 400;
-        await new Promise((resolve9) => setTimeout(resolve9, SWIPE_SETTLE_MS));
+        await new Promise((resolve10) => setTimeout(resolve10, SWIPE_SETTLE_MS));
         let screenChanged = false;
         let hashDistance = null;
         if (preSwipeHash !== null) {
@@ -16780,7 +16819,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_tap_element] element "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve9) => setTimeout(resolve9, 400));
+          await new Promise((resolve10) => setTimeout(resolve10, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -16816,7 +16855,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve9) => setTimeout(resolve9, 500));
+            await new Promise((resolve10) => setTimeout(resolve10, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -16929,7 +16968,7 @@ ${elementList || "  (none)"}`,
             if (attempt < MAX_ATTEMPTS) continue;
             break;
           }
-          await new Promise((resolve9) => setTimeout(resolve9, SETTLE_MS));
+          await new Promise((resolve10) => setTimeout(resolve10, SETTLE_MS));
           if (preTapHash !== null) {
             try {
               const postScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17140,7 +17179,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_long_press_element] element "${label}" not found on initial screen \u2014 resetting to top of page`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve9) => setTimeout(resolve9, 400));
+          await new Promise((resolve10) => setTimeout(resolve10, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -17176,7 +17215,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve9) => setTimeout(resolve9, 500));
+            await new Promise((resolve10) => setTimeout(resolve10, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17402,7 +17441,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!dropdownBest || dropdownScore === 0) && resetScroll) {
           console.log(`[android_select_option] dropdown "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve9) => setTimeout(resolve9, 400));
+          await new Promise((resolve10) => setTimeout(resolve10, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             dropdownBest = null;
@@ -17438,7 +17477,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve9) => setTimeout(resolve9, 500));
+            await new Promise((resolve10) => setTimeout(resolve10, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17562,7 +17601,7 @@ ${elementList || "  (none)"}`,
               break;
             }
             optionScrollsPerformed = scroll + 1;
-            await new Promise((resolve9) => setTimeout(resolve9, 500));
+            await new Promise((resolve10) => setTimeout(resolve10, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17866,7 +17905,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!fromElement || fromScore === 0) && resetScroll) {
           console.log(`[android_drag_element] element "${fromLabel}" not found on initial screen \u2014 resetting to top of page`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve9) => setTimeout(resolve9, 400));
+          await new Promise((resolve10) => setTimeout(resolve10, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             fromElement = null;
@@ -17902,7 +17941,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve9) => setTimeout(resolve9, 500));
+            await new Promise((resolve10) => setTimeout(resolve10, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               try {
@@ -17989,7 +18028,7 @@ ${elementList || "  (none)"}`,
                 break;
               }
               scrollsPerformed = scrollsPerformed + 1;
-              await new Promise((resolve9) => setTimeout(resolve9, 500));
+              await new Promise((resolve10) => setTimeout(resolve10, 500));
               let screenshotCheckConclusive = false;
               if (preScrollScreenshot) {
                 try {
@@ -18035,7 +18074,7 @@ ${elementList || "  (none)"}`,
           if ((!toElement || toScore === 0) && resetScroll && maxScrollAttempts > 0) {
             console.log(`[android_drag_element] destination "${toLabel}" not found after downward scan \u2014 resetting to top to search upward coverage`);
             await scrollToTop(ctx.userId, 5, ctx);
-            await new Promise((resolve9) => setTimeout(resolve9, 400));
+            await new Promise((resolve10) => setTimeout(resolve10, 400));
             const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
             if (afterResetResult.ok) {
               screenElements = afterResetResult.elements;
@@ -18070,7 +18109,7 @@ ${elementList || "  (none)"}`,
                   break;
                 }
                 scrollsPerformed = scrollsPerformed + 1;
-                await new Promise((resolve9) => setTimeout(resolve9, 500));
+                await new Promise((resolve10) => setTimeout(resolve10, 500));
                 let screenshotCheckConclusive = false;
                 if (preScrollScreenshot) {
                   try {
@@ -18145,7 +18184,7 @@ ${elementList || "  (none)"}`,
             } else {
               console.log(`[android_drag_element] source "${fromLabel}" no longer visible after destination scroll \u2014 resetting to top`);
               await scrollToTop(ctx.userId, 5, ctx);
-              await new Promise((resolve9) => setTimeout(resolve9, 400));
+              await new Promise((resolve10) => setTimeout(resolve10, 400));
               const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
               if (afterResetResult.ok) {
                 screenElements = afterResetResult.elements;
@@ -22155,9 +22194,9 @@ async function requestApproval(req) {
   };
 }
 function awaitApproval(gateId, ttlMs, signal) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     if (signal?.aborted) {
-      resolve9(false);
+      resolve10(false);
       return;
     }
     const timeout = ttlMs ?? DEFAULT_TTL_MS + 5e3;
@@ -22165,7 +22204,7 @@ function awaitApproval(gateId, ttlMs, signal) {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       gateEmitter.removeAllListeners(gateId);
-      resolve9(result);
+      resolve10(result);
     };
     const timer = setTimeout(() => cleanup(false), timeout);
     const onAbort = () => cleanup(false);
@@ -22173,7 +22212,7 @@ function awaitApproval(gateId, ttlMs, signal) {
     gateEmitter.once(gateId, (result) => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      resolve9(result.approved);
+      resolve10(result.approved);
     });
   });
 }
@@ -24097,12 +24136,12 @@ ${opts.task}`;
 }
 async function getTournamentRunners(userId, tournamentId) {
   try {
-    const { eq: eq127, and: and98, desc: desc46 } = await import("drizzle-orm");
+    const { eq: eq128, and: and99, desc: desc46 } = await import("drizzle-orm");
     let rows;
     if (tournamentId) {
-      rows = await db.select().from(tournamentRuns).where(and98(eq127(tournamentRuns.id, tournamentId), eq127(tournamentRuns.userId, userId))).limit(1);
+      rows = await db.select().from(tournamentRuns).where(and99(eq128(tournamentRuns.id, tournamentId), eq128(tournamentRuns.userId, userId))).limit(1);
     } else {
-      rows = await db.select().from(tournamentRuns).where(eq127(tournamentRuns.userId, userId)).orderBy(desc46(tournamentRuns.createdAt)).limit(1);
+      rows = await db.select().from(tournamentRuns).where(eq128(tournamentRuns.userId, userId)).orderBy(desc46(tournamentRuns.createdAt)).limit(1);
     }
     if (!rows[0]) return { found: false };
     return { found: true, run: rows[0] };
@@ -24778,12 +24817,14 @@ var init_jobClient = __esm({
 });
 
 // server/projectStorage.ts
-import * as fs7 from "fs";
+import * as os3 from "os";
 import * as path8 from "path";
 function getDataRoot() {
   const configured = process.env.JARVIS_DATA_DIR?.trim();
   if (configured) return configured;
-  if (fs7.existsSync("/data")) return "/data";
+  if (process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID) {
+    return path8.join(os3.tmpdir(), "jarvis-data");
+  }
   return process.cwd();
 }
 function getProjectWorkspaceRoot() {
@@ -24801,6 +24842,158 @@ var init_projectStorage = __esm({
   }
 });
 
+// server/projectArtifacts.ts
+import * as fs7 from "fs";
+import * as path9 from "path";
+import { and as and26, eq as eq34, notInArray } from "drizzle-orm";
+function toProjectPath(root, fullPath) {
+  return path9.relative(root, fullPath).replace(/\\/g, "/");
+}
+function ensureInside(root, fullPath) {
+  const resolvedRoot = path9.resolve(root);
+  const resolvedPath = path9.resolve(fullPath);
+  return resolvedPath === resolvedRoot || resolvedPath.startsWith(resolvedRoot + path9.sep);
+}
+function isWorkspaceEmpty(workspaceDir) {
+  if (!fs7.existsSync(workspaceDir)) return true;
+  const entries = fs7.readdirSync(workspaceDir).filter((entry) => entry !== ".jarvis-dev-server.json");
+  return entries.length === 0;
+}
+function listSnapshotFiles(workspaceDir) {
+  const root = path9.resolve(workspaceDir);
+  const files = [];
+  let totalBytes = 0;
+  const walk = (dir) => {
+    for (const entry of fs7.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.isDirectory() && SNAPSHOT_BLOCKED_DIRS.has(entry.name)) continue;
+      if (entry.isFile() && SNAPSHOT_BLOCKED_FILES.has(entry.name)) continue;
+      const fullPath = path9.join(dir, entry.name);
+      if (!ensureInside(root, fullPath)) continue;
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      const stat = fs7.statSync(fullPath);
+      if (stat.size > MAX_FILE_BYTES2) continue;
+      if (totalBytes + stat.size > MAX_TOTAL_BYTES) continue;
+      totalBytes += stat.size;
+      files.push({ filePath: toProjectPath(root, fullPath), fullPath, sizeBytes: stat.size });
+    }
+  };
+  if (fs7.existsSync(root)) walk(root);
+  return files;
+}
+async function snapshotProjectWorkspace(projectId, workspaceDir) {
+  if (!fs7.existsSync(workspaceDir)) return;
+  const files = listSnapshotFiles(workspaceDir);
+  const seenPaths = files.map((file) => file.filePath);
+  for (const file of files) {
+    const contentBase64 = fs7.readFileSync(file.fullPath).toString("base64");
+    await db.insert(jarvisProjectFiles).values({
+      projectId,
+      filePath: file.filePath,
+      contentBase64,
+      sizeBytes: file.sizeBytes,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).onConflictDoUpdate({
+      target: [jarvisProjectFiles.projectId, jarvisProjectFiles.filePath],
+      set: {
+        contentBase64,
+        sizeBytes: file.sizeBytes,
+        updatedAt: /* @__PURE__ */ new Date()
+      }
+    });
+  }
+  if (seenPaths.length === 0) {
+    await db.delete(jarvisProjectFiles).where(eq34(jarvisProjectFiles.projectId, projectId));
+  } else {
+    await db.delete(jarvisProjectFiles).where(and26(
+      eq34(jarvisProjectFiles.projectId, projectId),
+      notInArray(jarvisProjectFiles.filePath, seenPaths)
+    ));
+  }
+}
+async function hydrateProjectWorkspace(projectId, workspaceDir) {
+  if (!isWorkspaceEmpty(workspaceDir)) return false;
+  const rows = await db.select().from(jarvisProjectFiles).where(eq34(jarvisProjectFiles.projectId, projectId));
+  if (rows.length === 0) return false;
+  const root = path9.resolve(workspaceDir);
+  fs7.mkdirSync(root, { recursive: true });
+  for (const row of rows) {
+    const fullPath = path9.resolve(root, row.filePath);
+    if (!ensureInside(root, fullPath)) continue;
+    fs7.mkdirSync(path9.dirname(fullPath), { recursive: true });
+    fs7.writeFileSync(fullPath, Buffer.from(row.contentBase64, "base64"));
+  }
+  console.log(`[ProjectArtifacts] hydrated ${rows.length} file(s) for project ${projectId}`);
+  return true;
+}
+async function listProjectSnapshot(projectId) {
+  const rows = await db.select().from(jarvisProjectFiles).where(eq34(jarvisProjectFiles.projectId, projectId));
+  return rows.map((row) => ({
+    path: row.filePath,
+    name: path9.basename(row.filePath),
+    type: "file",
+    size: row.sizeBytes,
+    updatedAt: row.updatedAt.toISOString()
+  }));
+}
+async function readProjectSnapshotFile(projectId, filePath) {
+  const [row] = await db.select().from(jarvisProjectFiles).where(and26(eq34(jarvisProjectFiles.projectId, projectId), eq34(jarvisProjectFiles.filePath, filePath))).limit(1);
+  if (!row) return null;
+  const buffer = Buffer.from(row.contentBase64, "base64");
+  return {
+    path: filePath,
+    content: buffer.toString("utf8"),
+    size: row.sizeBytes,
+    updatedAt: row.updatedAt.toISOString()
+  };
+}
+async function saveProjectArchive(projectId, zipPath) {
+  const zip = fs7.readFileSync(zipPath);
+  await db.insert(jarvisProjectArchives).values({
+    projectId,
+    zipBase64: zip.toString("base64"),
+    sizeBytes: zip.length,
+    updatedAt: /* @__PURE__ */ new Date()
+  }).onConflictDoUpdate({
+    target: jarvisProjectArchives.projectId,
+    set: {
+      zipBase64: zip.toString("base64"),
+      sizeBytes: zip.length,
+      updatedAt: /* @__PURE__ */ new Date()
+    }
+  });
+}
+async function readProjectArchive(projectId) {
+  const [archive] = await db.select().from(jarvisProjectArchives).where(eq34(jarvisProjectArchives.projectId, projectId)).limit(1);
+  if (!archive) return null;
+  return { data: Buffer.from(archive.zipBase64, "base64"), sizeBytes: archive.sizeBytes };
+}
+var SNAPSHOT_BLOCKED_DIRS, SNAPSHOT_BLOCKED_FILES, MAX_FILE_BYTES2, MAX_TOTAL_BYTES;
+var init_projectArtifacts = __esm({
+  "server/projectArtifacts.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    SNAPSHOT_BLOCKED_DIRS = /* @__PURE__ */ new Set([
+      ".git",
+      ".next",
+      ".expo",
+      "build",
+      "dist",
+      "node_modules",
+      "coverage"
+    ]);
+    SNAPSHOT_BLOCKED_FILES = /* @__PURE__ */ new Set([
+      ".jarvis-dev-server.json"
+    ]);
+    MAX_FILE_BYTES2 = 1e6;
+    MAX_TOTAL_BYTES = 25e6;
+  }
+});
+
 // server/agent/tools/projectShellTool.ts
 var projectShellTool_exports = {};
 __export(projectShellTool_exports, {
@@ -24810,11 +25003,11 @@ __export(projectShellTool_exports, {
 });
 import { spawn as spawn4, execSync } from "child_process";
 import * as fs8 from "fs";
-import * as path9 from "path";
-import * as os3 from "os";
-import { eq as eq34 } from "drizzle-orm";
+import * as path10 from "path";
+import * as os4 from "os";
+import { eq as eq35 } from "drizzle-orm";
 function pidFilePath(workspaceDir) {
-  return path9.join(workspaceDir, ".jarvis-dev-server.json");
+  return path10.join(workspaceDir, ".jarvis-dev-server.json");
 }
 function writePidFile(workspaceDir, pid, port) {
   try {
@@ -24838,7 +25031,7 @@ function cleanupOrphanedDevServers() {
     return;
   }
   for (const entry of entries) {
-    const pidFile = path9.join(projectsRoot, entry, ".jarvis-dev-server.json");
+    const pidFile = path10.join(projectsRoot, entry, ".jarvis-dev-server.json");
     if (!fs8.existsSync(pidFile)) continue;
     let data = {};
     try {
@@ -24887,24 +25080,24 @@ function hasCdOutside(command, workspaceDir) {
   const cdMatch = command.match(/(?:^|\s)cd\s+([^\s;&|]+)/);
   if (!cdMatch) return false;
   const target = cdMatch[1];
-  const resolvedWorkspace = path9.resolve(workspaceDir);
-  const resolvedTarget = path9.resolve(workspaceDir, target);
-  return !resolvedTarget.startsWith(resolvedWorkspace + path9.sep) && resolvedTarget !== resolvedWorkspace;
+  const resolvedWorkspace = path10.resolve(workspaceDir);
+  const resolvedTarget = path10.resolve(workspaceDir, target);
+  return !resolvedTarget.startsWith(resolvedWorkspace + path10.sep) && resolvedTarget !== resolvedWorkspace;
 }
 function looksLikePath(value) {
   return value.startsWith("/") || value === ".." || value.startsWith("../") || value.includes("/..") || value.startsWith("~/");
 }
 function resolvePathValue(value, workspaceDir) {
   if (value.startsWith("~/")) {
-    return path9.resolve(os3.homedir(), value.slice(2));
+    return path10.resolve(os4.homedir(), value.slice(2));
   }
-  return path9.resolve(workspaceDir, value);
+  return path10.resolve(workspaceDir, value);
 }
 function hasUnsafePathArgs(command, workspaceDir) {
   const tokens = command.trim().split(/\s+/).slice(1);
-  const resolvedWorkspace = path9.resolve(workspaceDir);
+  const resolvedWorkspace = path10.resolve(workspaceDir);
   function isOutside(resolved) {
-    return !resolved.startsWith(resolvedWorkspace + path9.sep) && resolved !== resolvedWorkspace;
+    return !resolved.startsWith(resolvedWorkspace + path10.sep) && resolved !== resolvedWorkspace;
   }
   for (const token of tokens) {
     if (!token) continue;
@@ -24923,13 +25116,13 @@ function hasUnsafePathArgs(command, workspaceDir) {
   return false;
 }
 async function runCommand(command, cwd, timeoutSeconds) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const tokens = command.trim().split(/\s+/);
     const executable = tokens[0];
     const args = tokens.slice(1);
     const child = spawn4(executable, args, {
       cwd,
-      env: { ...process.env, HOME: os3.homedir(), PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin" },
+      env: { ...process.env, HOME: os4.homedir(), PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin" },
       stdio: ["ignore", "pipe", "pipe"],
       shell: false
     });
@@ -24949,7 +25142,7 @@ async function runCommand(command, cwd, timeoutSeconds) {
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve9({
+      resolve10({
         stdout: stdout.slice(0, 8e3),
         stderr: stderr.slice(0, 4e3),
         exitCode: timedOut ? -1 : code ?? 0
@@ -24958,10 +25151,10 @@ async function runCommand(command, cwd, timeoutSeconds) {
   });
 }
 async function runDevServer(command, cwd, projectId, port) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const env = {
       ...process.env,
-      HOME: os3.homedir(),
+      HOME: os4.homedir(),
       PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
       PORT: String(port)
     };
@@ -24982,7 +25175,7 @@ async function runDevServer(command, cwd, projectId, port) {
       settled = true;
       runningServers.set(projectId, { pid, port, workspaceDir: cwd });
       writePidFile(cwd, pid, port);
-      resolve9({ pid, url: `http://localhost:${port}` });
+      resolve10({ pid, url: `http://localhost:${port}` });
     };
     child.stdout.on("data", (d) => {
       const text2 = d.toString();
@@ -25018,6 +25211,7 @@ var init_projectShellTool = __esm({
     init_db();
     init_schema();
     init_projectStorage();
+    init_projectArtifacts();
     ALLOWED_EXECUTABLES = /* @__PURE__ */ new Set([
       "npm",
       "npx",
@@ -25092,7 +25286,7 @@ The tool returns the local URL where the app is running so you can immediately t
         if (!projectId) {
           return { ok: false, content: "project_shell requires a projectId in context", label: "No project context" };
         }
-        const [project] = await db.select().from(jarvisProjects).where(eq34(jarvisProjects.id, projectId)).limit(1);
+        const [project] = await db.select().from(jarvisProjects).where(eq35(jarvisProjects.id, projectId)).limit(1);
         if (!project) {
           return { ok: false, content: `Project ${projectId} not found`, label: "Project not found" };
         }
@@ -25100,11 +25294,14 @@ The tool returns the local URL where the app is running so you can immediately t
         if (!workspaceDir) {
           workspaceDir = getProjectWorkspaceDir(projectId);
           fs8.mkdirSync(workspaceDir, { recursive: true });
-          await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq34(jarvisProjects.id, projectId));
+          await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
         }
         if (!fs8.existsSync(workspaceDir)) {
           fs8.mkdirSync(workspaceDir, { recursive: true });
         }
+        await hydrateProjectWorkspace(projectId, workspaceDir).catch((err2) => {
+          console.warn(`[ProjectShell] failed to hydrate workspace for ${projectId}:`, err2);
+        });
         const executable = parseExecutable(command);
         if (!ALLOWED_EXECUTABLES.has(executable)) {
           return {
@@ -25138,7 +25335,7 @@ The tool returns the local URL where the app is running so you can immediately t
           let port = project.devServerPort ?? 0;
           if (!port || port < PORT_RANGE_START || port > PORT_RANGE_END) {
             port = findAvailablePort();
-            await db.update(jarvisProjects).set({ devServerPort: port, updatedAt: /* @__PURE__ */ new Date() }).where(eq34(jarvisProjects.id, projectId));
+            await db.update(jarvisProjects).set({ devServerPort: port, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
           }
           stopProjectServer(projectId);
           const { pid, url } = await runDevServer(command, workspaceDir, projectId, port);
@@ -25152,6 +25349,9 @@ The tool returns the local URL where the app is running so you can immediately t
           };
         }
         const { stdout, stderr, exitCode } = await runCommand(command, workspaceDir, timeoutSeconds);
+        await snapshotProjectWorkspace(projectId, workspaceDir).catch((err2) => {
+          console.warn(`[ProjectShell] failed to snapshot workspace for ${projectId}:`, err2);
+        });
         const success = exitCode === 0;
         console.log(
           `[ProjectShell] project=${projectId} cmd="${command.slice(0, 80)}" exit=${exitCode} stdout=${stdout.length}b`
@@ -26542,11 +26742,11 @@ __export(appProjectRunner_exports, {
   runAppProjectSession: () => runAppProjectSession,
   startAppProject: () => startAppProject
 });
-import * as path10 from "path";
+import * as path11 from "path";
 import * as fs9 from "fs";
 import { spawnSync } from "child_process";
-import * as os4 from "os";
-import { eq as eq35, asc as asc2 } from "drizzle-orm";
+import * as os5 from "os";
+import { eq as eq36, asc as asc2 } from "drizzle-orm";
 function appToolGroupsForPhase(phase) {
   const p = phase.toUpperCase();
   if (p === "SCAFFOLD") return ["app_build", "research"];
@@ -26559,11 +26759,11 @@ function appToolGroupsForPhase(phase) {
 async function runDeterministicVerification(phase, workspaceDir, reply, projectId) {
   const p = phase.toUpperCase();
   if (p.startsWith("IMPLEMENT") || p === "INTEGRATE") {
-    const tsconfigPath = path10.join(workspaceDir, "tsconfig.json");
+    const tsconfigPath = path11.join(workspaceDir, "tsconfig.json");
     if (!fs9.existsSync(tsconfigPath)) return null;
     const result = spawnSync("npx", ["tsc", "--noEmit", "--skipLibCheck"], {
       cwd: workspaceDir,
-      env: { ...process.env, HOME: os4.homedir() },
+      env: { ...process.env, HOME: os5.homedir() },
       encoding: "utf8",
       timeout: 12e4
     });
@@ -26577,14 +26777,14 @@ ${errors}`;
   if (p === "TEST_UI") {
     const screenshotCount = projectId ? getAndClearAppProjectScreenshotCount(projectId) : 0;
     if (screenshotCount === 0) {
-      const packagePath = path10.join(workspaceDir, "package.json");
+      const packagePath = path11.join(workspaceDir, "package.json");
       if (!fs9.existsSync(packagePath)) return null;
       try {
         const pkg = JSON.parse(fs9.readFileSync(packagePath, "utf8"));
         if (pkg.scripts?.build) {
           const result = spawnSync("npm", ["run", "build"], {
             cwd: workspaceDir,
-            env: { ...process.env, HOME: os4.homedir() },
+            env: { ...process.env, HOME: os5.homedir() },
             encoding: "utf8",
             timeout: 18e4
           });
@@ -26770,7 +26970,7 @@ async function startAppProject(input) {
   const projectId = project.id;
   const realWorkspaceDir = getProjectWorkspaceDir(projectId);
   fs9.mkdirSync(realWorkspaceDir, { recursive: true });
-  await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
+  await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
   console.log(`[AppProjectRunner] startAppProject: created project ${projectId} for user ${input.userId} framework=${input.framework}`);
   await submitAgentJob2({
     userId: input.userId,
@@ -26783,12 +26983,12 @@ async function startAppProject(input) {
 }
 async function runAppProjectSession(projectId, _sessionNumber, userAnswer) {
   const startTime = Date.now();
-  const [project] = await db.select().from(jarvisProjects).where(eq35(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`App project ${projectId} not found`);
   if (project.status === "paused" || project.status === "complete" || project.status === "failed") {
     return { status: project.status, stepsCompleted: 0, summary: `Project is ${project.status}` };
   }
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq35(jarvisProjectSessions.projectId, projectId)).orderBy(asc2(jarvisProjectSessions.sessionNumber));
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq36(jarvisProjectSessions.projectId, projectId)).orderBy(asc2(jarvisProjectSessions.sessionNumber));
   const sessionNumber = sessions2.length + 1;
   const sessionHistory = sessions2.slice(-3).map((s) => `Session ${s.sessionNumber}: ${s.summary || "completed"}`).join("\n");
   if (project.status === "planning") {
@@ -26804,7 +27004,7 @@ ${project.questionPending}`
     );
     if (project.autonomousMode) {
       const nextReminder = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES * 60 * 1e3);
-      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
     }
     return { status: "waiting_for_input", stepsCompleted: 0, summary: "Waiting for user input" };
   }
@@ -26893,7 +27093,7 @@ Acceptance criteria: ${acceptanceCriteria}`,
       console.error(`[AppProjectRunner] step "${step.label}" threw error:`, err2);
       const newErrors = (project.consecutiveErrors ?? 0) + 1;
       if (newErrors >= MAX_CONSECUTIVE_ERRORS) {
-        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
+        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
         await sendAppProjectMessage(
           project.userId,
           project.originChannel ?? void 0,
@@ -26903,7 +27103,7 @@ Last error: ${String(err2).slice(0, 200)}`
         );
         return { status: "paused", stepsCompleted: completedLabels.length, summary: "Paused after too many errors" };
       }
-      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
       continue;
     }
     if (reply.startsWith("QUESTION:")) {
@@ -26921,7 +27121,7 @@ ${question}`
         status: "waiting_for_input",
         consecutiveErrors: 0,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq35(jarvisProjects.id, projectId));
+      }).where(eq36(jarvisProjects.id, projectId));
       const durationMs2 = Date.now() - startTime;
       await db.insert(jarvisProjectSessions).values({
         projectId,
@@ -26948,7 +27148,7 @@ ${question}`
       lastProgressAt: /* @__PURE__ */ new Date(),
       consecutiveErrors: 0,
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq35(jarvisProjects.id, projectId));
+    }).where(eq36(jarvisProjects.id, projectId));
     completedLabels.push(step.label);
     sessionSummary = stepOutput;
     console.log(`[AppProjectRunner] completed step "${step.label}" for project ${projectId}`);
@@ -26979,7 +27179,7 @@ ${question}`
   await sendAppProjectMessage(project.userId, project.originChannel ?? void 0, progressMsg);
   if (project.autonomousMode) {
     const nextRunAt = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES * 60 * 1e3);
-    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
+    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
     console.log(`[AppProjectRunner] autonomous project ${projectId} scheduled for ${nextRunAt.toISOString()}`);
   }
   return {
@@ -27027,7 +27227,7 @@ async function runAppPlanningSession(project, sessionNumber, startTime) {
     console.error(`[AppProjectRunner] failed to parse planning response for project ${project.id}`);
   }
   if (!planData?.plan?.length) {
-    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, project.id));
     return { status: "failed", stepsCompleted: 0, summary: "Planning failed: could not generate a plan" };
   }
   const plan = planData.plan.map((s, i) => ({
@@ -27056,14 +27256,14 @@ ${questionText}`
 ${questionText}`,
       questionAskedAt: /* @__PURE__ */ new Date(),
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq35(jarvisProjects.id, project.id));
+    }).where(eq36(jarvisProjects.id, project.id));
   } else {
     await db.update(jarvisProjects).set({
       plan,
       status: "building",
       nextRunAt: new Date(Date.now() + 1e4),
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq35(jarvisProjects.id, project.id));
+    }).where(eq36(jarvisProjects.id, project.id));
     await sendAppProjectMessage(
       project.userId,
       project.originChannel ?? void 0,
@@ -27090,18 +27290,18 @@ Starting build now \u2014 I'll update you every ${AUTONOMOUS_INTERVAL_MINUTES} m
 }
 async function markAppProjectComplete(project, sessionNumber) {
   stopProjectServer(project.id);
-  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, project.id));
+  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, project.id));
   console.log(`[AppProjectRunner] project ${project.id} complete \u2014 handing off to appDelivery`);
 }
 async function answerAppProjectQuestion(projectId, answer) {
-  const [project] = await db.select().from(jarvisProjects).where(eq35(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`App project ${projectId} not found`);
   await db.update(jarvisProjects).set({
     questionPending: null,
     questionAskedAt: null,
     status: "building",
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq35(jarvisProjects.id, projectId));
+  }).where(eq36(jarvisProjects.id, projectId));
   await submitAgentJob2({
     userId: project.userId,
     agentType: "app_project",
@@ -27145,7 +27345,7 @@ __export(projectRunner_exports, {
   setAutonomousMode: () => setAutonomousMode,
   startProject: () => startProject
 });
-import { eq as eq36, asc as asc3, desc as desc10, inArray as inArray4 } from "drizzle-orm";
+import { eq as eq37, asc as asc3, desc as desc10, inArray as inArray4 } from "drizzle-orm";
 function toolGroupsForPhase(phase) {
   const normalized = phase.toLowerCase();
   if (normalized.includes("implement") || normalized.includes("test") || normalized.includes("deploy")) {
@@ -27257,12 +27457,12 @@ async function startProject(userId, title, description, goal, originChannel) {
 }
 async function runProjectSession(projectId, userAnswer) {
   const startTime = Date.now();
-  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq37(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`Project ${projectId} not found`);
   if (project.status === "paused" || project.status === "complete" || project.status === "failed") {
     return { status: project.status, stepsCompleted: 0, summary: `Project is ${project.status}` };
   }
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq36(jarvisProjectSessions.projectId, projectId)).orderBy(asc3(jarvisProjectSessions.sessionNumber));
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq37(jarvisProjectSessions.projectId, projectId)).orderBy(asc3(jarvisProjectSessions.sessionNumber));
   const sessionNumber = sessions2.length + 1;
   const sessionHistory = sessions2.slice(-3).map((s) => `Session ${s.sessionNumber}: ${s.summary || "completed"}`).join("\n");
   if (project.status === "planning") {
@@ -27280,7 +27480,7 @@ Reply to my earlier message or use: \`/project answer ${projectId} <your answer>
     );
     if (project.autonomousMode) {
       const nextReminder = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES2 * 60 * 1e3);
-      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, projectId));
     }
     return { status: "waiting_for_input", stepsCompleted: 0, summary: "Waiting for user input" };
   }
@@ -27351,7 +27551,7 @@ Acceptance criteria: ${step.acceptance_criteria || "step completed successfully"
       console.error(`[ProjectRunner] step "${step.label}" threw error:`, err2);
       const newErrors = (project.consecutiveErrors ?? 0) + 1;
       if (newErrors >= MAX_CONSECUTIVE_ERRORS2) {
-        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, projectId));
         await sendProjectMessage(
           project.userId,
           project.originChannel ?? void 0,
@@ -27363,7 +27563,7 @@ Use \`/project resume ${projectId}\` to retry.`
         );
         return { status: "paused", stepsCompleted: completedLabels.length, summary: "Paused after too many errors" };
       }
-      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, projectId));
       continue;
     }
     if (reply.startsWith("QUESTION:")) {
@@ -27384,7 +27584,7 @@ Reply to this message or use: \`/project answer ${projectId} <your answer>\``
         status: "waiting_for_input",
         consecutiveErrors: 0,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq36(jarvisProjects.id, projectId));
+      }).where(eq37(jarvisProjects.id, projectId));
       const durationMs2 = Date.now() - startTime;
       await db.insert(jarvisProjectSessions).values({
         projectId,
@@ -27414,7 +27614,7 @@ Reply to this message or use: \`/project answer ${projectId} <your answer>\``
       lastProgressAt: /* @__PURE__ */ new Date(),
       consecutiveErrors: 0,
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq36(jarvisProjects.id, projectId));
+    }).where(eq37(jarvisProjects.id, projectId));
     completedLabels.push(step.label);
     sessionSummary = stepOutput;
     console.log(`[ProjectRunner] completed step "${step.label}" for project ${projectId}`);
@@ -27445,7 +27645,7 @@ Reply to this message or use: \`/project answer ${projectId} <your answer>\``
   await sendProjectMessage(project.userId, project.originChannel ?? void 0, progressMsg);
   if (project.autonomousMode) {
     const nextRunAt = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES2 * 60 * 1e3);
-    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, projectId));
     console.log(`[ProjectRunner] autonomous project ${projectId} scheduled for ${nextRunAt.toISOString()}`);
   }
   return {
@@ -27490,7 +27690,7 @@ async function runPlanningSession(project, sessionNumber, startTime) {
     console.error(`[ProjectRunner] failed to parse planning response for project ${project.id}`);
   }
   if (!planData?.plan?.length) {
-    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, project.id));
     return { status: "failed", stepsCompleted: 0, summary: "Planning failed: could not generate a plan" };
   }
   const plan = planData.plan.map((s, i) => ({
@@ -27524,9 +27724,9 @@ Please answer as many as you can.`,
       questionAskedAt: /* @__PURE__ */ new Date(),
       questionMeta: planningQuestionMeta,
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq36(jarvisProjects.id, project.id));
+    }).where(eq37(jarvisProjects.id, project.id));
   } else {
-    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, project.id));
     await sendProjectMessage(
       project.userId,
       project.originChannel ?? void 0,
@@ -27559,7 +27759,7 @@ Starting first session now...`
 }
 async function markProjectComplete(project, sessionNumber) {
   const plan = asPlan2(project.plan);
-  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, project.id));
+  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, project.id));
   await sendProjectMessage(
     project.userId,
     project.originChannel ?? void 0,
@@ -27572,14 +27772,14 @@ Open the Projects tab to review all outputs.`
   console.log(`[ProjectRunner] project ${project.id} complete`);
 }
 async function answerProjectQuestion(projectId, answer) {
-  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq37(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`Project ${projectId} not found`);
   await db.update(jarvisProjects).set({
     questionPending: null,
     questionAskedAt: null,
     status: "building",
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq36(jarvisProjects.id, projectId));
+  }).where(eq37(jarvisProjects.id, projectId));
   console.log(`[ProjectRunner] answerProjectQuestion: project ${projectId} unblocked with answer`);
   await submitAgentJob2({
     userId: project.userId,
@@ -27590,11 +27790,11 @@ async function answerProjectQuestion(projectId, answer) {
   });
 }
 async function pauseProject(projectId) {
-  await db.update(jarvisProjects).set({ status: "paused", autonomousMode: false, nextRunAt: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+  await db.update(jarvisProjects).set({ status: "paused", autonomousMode: false, nextRunAt: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, projectId));
 }
 async function resumeProject(projectId) {
-  await db.update(jarvisProjects).set({ status: "building", consecutiveErrors: 0, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
-  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  await db.update(jarvisProjects).set({ status: "building", consecutiveErrors: 0, updatedAt: /* @__PURE__ */ new Date() }).where(eq37(jarvisProjects.id, projectId));
+  const [project] = await db.select().from(jarvisProjects).where(eq37(jarvisProjects.id, projectId)).limit(1);
   if (project) {
     await submitAgentJob2({
       userId: project.userId,
@@ -27613,24 +27813,24 @@ async function setAutonomousMode(projectId, enabled) {
   if (!enabled) {
     updates.nextRunAt = null;
   }
-  await db.update(jarvisProjects).set(updates).where(eq36(jarvisProjects.id, projectId));
+  await db.update(jarvisProjects).set(updates).where(eq37(jarvisProjects.id, projectId));
   if (enabled) {
     await db.update(jarvisProjects).set({ nextRunAt: new Date(Date.now() + 10 * 1e3) }).where(
-      eq36(jarvisProjects.id, projectId)
+      eq37(jarvisProjects.id, projectId)
     );
   }
 }
 async function getProjectStatus(projectId) {
-  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq37(jarvisProjects.id, projectId)).limit(1);
   if (!project) return null;
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq36(jarvisProjectSessions.projectId, projectId)).orderBy(desc10(jarvisProjectSessions.sessionNumber));
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq37(jarvisProjectSessions.projectId, projectId)).orderBy(desc10(jarvisProjectSessions.sessionNumber));
   const plan = asPlan2(project.plan);
   const completedCount = plan.filter((s) => s.status === "complete").length;
   const nextStep = plan.find((s) => s.status === "pending") ?? null;
   return { project, sessions: sessions2, plan, completedCount, totalCount: plan.length, nextStep };
 }
 async function getUserProjects(userId) {
-  const projects = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.userId, userId)).orderBy(desc10(jarvisProjects.updatedAt));
+  const projects = await db.select().from(jarvisProjects).where(eq37(jarvisProjects.userId, userId)).orderBy(desc10(jarvisProjects.updatedAt));
   if (projects.length === 0) return [];
   const projectIds = projects.map((p) => p.id);
   const recentSessions = await db.select({
@@ -27674,7 +27874,7 @@ async function sendProjectQuestion(userId, originChannel, message) {
     const origin = (originChannel ?? "").toLowerCase();
     if (origin === "telegram") {
       const { sendMessageGetId: sendMessageGetId2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
-      const linkRows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq36(telegramLinks.userId, userId)).limit(1);
+      const linkRows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq37(telegramLinks.userId, userId)).limit(1);
       const chatId = linkRows[0]?.chatId;
       if (chatId) {
         const msgId = await sendMessageGetId2(chatId, message).catch(() => null);
@@ -27828,7 +28028,7 @@ __export(discordConfirmStore_exports, {
   seedConfirmTokenCache: () => seedConfirmTokenCache,
   setConfirmToken: () => setConfirmToken
 });
-import { eq as eq37, lt as lt3, and as and26, gt as gt3 } from "drizzle-orm";
+import { eq as eq38, lt as lt3, and as and27, gt as gt3 } from "drizzle-orm";
 async function setConfirmToken(userId, action) {
   const expiresAt = new Date(Date.now() + TTL_MS);
   _cache.set(userId, { action, expiresAt: expiresAt.getTime() });
@@ -27852,7 +28052,7 @@ async function consumeConfirmToken(userId, action) {
     }
     if (cached.action !== action) return false;
     try {
-      await db.delete(discordConfirmTokens).where(eq37(discordConfirmTokens.userId, userId));
+      await db.delete(discordConfirmTokens).where(eq38(discordConfirmTokens.userId, userId));
     } catch (err2) {
       console.error("[DiscordConfirmStore] consumeConfirmToken DB delete failed (L1 path):", err2);
     }
@@ -27860,9 +28060,9 @@ async function consumeConfirmToken(userId, action) {
   }
   try {
     const deleted = await db.delete(discordConfirmTokens).where(
-      and26(
-        eq37(discordConfirmTokens.userId, userId),
-        eq37(discordConfirmTokens.action, action),
+      and27(
+        eq38(discordConfirmTokens.userId, userId),
+        eq38(discordConfirmTokens.action, action),
         gt3(discordConfirmTokens.expiresAt, new Date(now))
       )
     ).returning({ userId: discordConfirmTokens.userId });
@@ -27877,7 +28077,7 @@ async function clearConfirmToken(userId) {
   _deleteFromDb(userId);
 }
 function _deleteFromDb(userId) {
-  db.delete(discordConfirmTokens).where(eq37(discordConfirmTokens.userId, userId)).catch((err2) => console.error("[DiscordConfirmStore] DB delete failed:", err2));
+  db.delete(discordConfirmTokens).where(eq38(discordConfirmTokens.userId, userId)).catch((err2) => console.error("[DiscordConfirmStore] DB delete failed:", err2));
 }
 async function seedConfirmTokenCache() {
   try {
@@ -28159,7 +28359,7 @@ Which one should I delete? Please confirm the channel ID and I'll remove it.`,
 });
 
 // server/agent/tools/discordListChannels.ts
-import { eq as eq38, and as and27 } from "drizzle-orm";
+import { eq as eq39, and as and28 } from "drizzle-orm";
 var discordListChannelsTool;
 var init_discordListChannels = __esm({
   "server/agent/tools/discordListChannels.ts"() {
@@ -28184,7 +28384,7 @@ var init_discordListChannels = __esm({
         const { userId } = ctx;
         let resolvedGuildId = args.guildId;
         if (!resolvedGuildId) {
-          const linkRow = await db.select().from(channelLinks).where(and27(eq38(channelLinks.userId, userId), eq38(channelLinks.channel, "discord"))).limit(1);
+          const linkRow = await db.select().from(channelLinks).where(and28(eq39(channelLinks.userId, userId), eq39(channelLinks.channel, "discord"))).limit(1);
           const linkMeta = linkRow[0]?.metadata ?? {};
           resolvedGuildId = linkMeta.workspace?.guildId;
         }
@@ -28248,7 +28448,7 @@ ${allLines}`,
 });
 
 // server/jarvisScheduledTasks.ts
-import { and as and28, eq as eq39, isNull as isNull2, sql as sql13 } from "drizzle-orm";
+import { and as and29, eq as eq40, isNull as isNull2, sql as sql13 } from "drizzle-orm";
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
@@ -28256,14 +28456,14 @@ async function createJarvisScheduledTask(input) {
   const title = normalizeText(input.title);
   const description = normalizeText(input.description) || null;
   const recurrence = normalizeText(input.recurrence) || null;
-  const recurrencePredicate = recurrence ? eq39(jarvisScheduledTasks.recurrence, recurrence) : isNull2(jarvisScheduledTasks.recurrence);
-  const [existing] = await db.select().from(jarvisScheduledTasks).where(and28(
-    eq39(jarvisScheduledTasks.userId, input.userId),
+  const recurrencePredicate = recurrence ? eq40(jarvisScheduledTasks.recurrence, recurrence) : isNull2(jarvisScheduledTasks.recurrence);
+  const [existing] = await db.select().from(jarvisScheduledTasks).where(and29(
+    eq40(jarvisScheduledTasks.userId, input.userId),
     sql13`LOWER(TRIM(${jarvisScheduledTasks.title})) = ${title.toLowerCase()}`,
-    eq39(jarvisScheduledTasks.scheduledAt, input.scheduledAt),
+    eq40(jarvisScheduledTasks.scheduledAt, input.scheduledAt),
     recurrencePredicate,
     isNull2(jarvisScheduledTasks.completedAt),
-    eq39(jarvisScheduledTasks.active, true)
+    eq40(jarvisScheduledTasks.active, true)
   )).limit(1);
   if (existing) {
     return { task: existing, deduped: true };
@@ -28365,7 +28565,7 @@ var init_scheduleJarvisTask = __esm({
 });
 
 // server/discord/schedules.ts
-import { eq as eq40, and as and29 } from "drizzle-orm";
+import { eq as eq41, and as and30 } from "drizzle-orm";
 function detectTemplate(input) {
   const lower = input.toLowerCase();
   for (const tpl of Object.values(SCHEDULE_TEMPLATES)) {
@@ -28390,25 +28590,25 @@ async function createSchedule(userId, params) {
   return row;
 }
 async function listSchedules(userId) {
-  return db.select().from(discordChannelSchedules).where(eq40(discordChannelSchedules.userId, userId));
+  return db.select().from(discordChannelSchedules).where(eq41(discordChannelSchedules.userId, userId));
 }
 async function getSchedule(id) {
-  const rows = await db.select().from(discordChannelSchedules).where(eq40(discordChannelSchedules.id, id)).limit(1);
+  const rows = await db.select().from(discordChannelSchedules).where(eq41(discordChannelSchedules.id, id)).limit(1);
   return rows[0] ?? null;
 }
 async function deleteSchedule(userId, id) {
   await db.delete(discordChannelSchedules).where(
-    and29(
-      eq40(discordChannelSchedules.id, id),
-      eq40(discordChannelSchedules.userId, userId)
+    and30(
+      eq41(discordChannelSchedules.id, id),
+      eq41(discordChannelSchedules.userId, userId)
     )
   );
 }
 async function toggleSchedule(userId, id, enabled) {
   await db.update(discordChannelSchedules).set({ enabled }).where(
-    and29(
-      eq40(discordChannelSchedules.id, id),
-      eq40(discordChannelSchedules.userId, userId)
+    and30(
+      eq41(discordChannelSchedules.id, id),
+      eq41(discordChannelSchedules.userId, userId)
     )
   );
 }
@@ -28505,7 +28705,7 @@ async function runSchedule(id, previousOutput) {
       }
     }
   }
-  await db.update(discordChannelSchedules).set({ lastRun: /* @__PURE__ */ new Date(), lastOutput: result.slice(0, 5e3) }).where(eq40(discordChannelSchedules.id, id));
+  await db.update(discordChannelSchedules).set({ lastRun: /* @__PURE__ */ new Date(), lastOutput: result.slice(0, 5e3) }).where(eq41(discordChannelSchedules.id, id));
   if (schedule.pipelineNext) {
     console.log(`[DiscordSchedules] Chaining to pipeline stage ${schedule.pipelineNext}`);
     setTimeout(() => {
@@ -29371,14 +29571,14 @@ var init_geminiTranscript = __esm({
 });
 
 // server/channels/telegramChannel.ts
-import { eq as eq41 } from "drizzle-orm";
+import { eq as eq42 } from "drizzle-orm";
 async function lookupChatId(userId) {
   const ts = linkCacheTimestamps.get(userId);
   if (ts && Date.now() - ts < LINK_CACHE_TTL) {
     return linkCache.get(userId) ?? null;
   }
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq41(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq42(telegramLinks.userId, userId)).limit(1);
     const chatId = rows[0]?.chatId ?? null;
     linkCache.set(userId, chatId);
     linkCacheTimestamps.set(userId, Date.now());
@@ -29445,7 +29645,7 @@ ${markdownExtra}` : markdownExtra : text2;
 });
 
 // server/channels/whatsappChannel.ts
-import { eq as eq42, and as and30 } from "drizzle-orm";
+import { eq as eq43, and as and31 } from "drizzle-orm";
 function isTwilioConfigured() {
   return !!(TWILIO_SID && TWILIO_TOKEN && TWILIO_FROM);
 }
@@ -29475,7 +29675,7 @@ async function sendWhatsAppMessage(toAddress, body) {
 }
 async function lookupAddress(userId) {
   try {
-    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and30(eq42(channelLinks.userId, userId), eq42(channelLinks.channel, "whatsapp"))).limit(1);
+    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and31(eq43(channelLinks.userId, userId), eq43(channelLinks.channel, "whatsapp"))).limit(1);
     return rows[0]?.address ?? null;
   } catch (err2) {
     console.error("[whatsappChannel] link lookup failed:", err2);
@@ -29514,10 +29714,10 @@ var init_whatsappChannel = __esm({
 });
 
 // server/channels/daemonChannel.ts
-import { eq as eq43, and as and31 } from "drizzle-orm";
+import { eq as eq44, and as and32 } from "drizzle-orm";
 async function lookupDaemon(userId) {
   try {
-    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and31(eq43(channelLinks.userId, userId), eq43(channelLinks.channel, "daemon"))).limit(1);
+    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and32(eq44(channelLinks.userId, userId), eq44(channelLinks.channel, "daemon"))).limit(1);
     return rows.length > 0;
   } catch (err2) {
     console.error("[daemonChannel] link lookup failed:", err2);
@@ -29558,10 +29758,10 @@ var init_daemonChannel = __esm({
 });
 
 // server/channels/discordChannel.ts
-import { eq as eq44, and as and32 } from "drizzle-orm";
+import { eq as eq45, and as and33 } from "drizzle-orm";
 async function isDiscordRecentlyActive(userId) {
   try {
-    const rows = await db.select({ lastSeenAt: channelLinks.lastSeenAt }).from(channelLinks).where(and32(eq44(channelLinks.userId, userId), eq44(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select({ lastSeenAt: channelLinks.lastSeenAt }).from(channelLinks).where(and33(eq45(channelLinks.userId, userId), eq45(channelLinks.channel, "discord"))).limit(1);
     const ts = rows[0]?.lastSeenAt;
     if (!ts) return false;
     return Date.now() - new Date(ts).getTime() < DISCORD_ACTIVE_TTL_MS;
@@ -29591,7 +29791,7 @@ var init_discordChannel = __esm({
         try {
           const [tok, link] = await Promise.all([
             getUserToken(userId, "discord_bot"),
-            db.select({ id: channelLinks.id }).from(channelLinks).where(and32(eq44(channelLinks.userId, userId), eq44(channelLinks.channel, "discord"))).limit(1)
+            db.select({ id: channelLinks.id }).from(channelLinks).where(and33(eq45(channelLinks.userId, userId), eq45(channelLinks.channel, "discord"))).limit(1)
           ]);
           return !!(tok && link.length > 0 && getBotStatus(userId) === "running");
         } catch {
@@ -29718,7 +29918,7 @@ __export(transcriptJobTracker_exports, {
   runBackgroundPoller: () => runBackgroundPoller,
   startSupadataJob: () => startSupadataJob
 });
-import { eq as eq45, and as and33 } from "drizzle-orm";
+import { eq as eq46, and as and34 } from "drizzle-orm";
 async function startSupadataJob(userId, videoId, supadataJobId) {
   await db.insert(transcriptJobs).values({
     userId,
@@ -29730,10 +29930,10 @@ async function startSupadataJob(userId, videoId, supadataJobId) {
 }
 async function getCompletedTranscript(userId, videoId) {
   const rows = await db.select().from(transcriptJobs).where(
-    and33(
-      eq45(transcriptJobs.userId, userId),
-      eq45(transcriptJobs.videoId, videoId),
-      eq45(transcriptJobs.status, "completed")
+    and34(
+      eq46(transcriptJobs.userId, userId),
+      eq46(transcriptJobs.videoId, videoId),
+      eq46(transcriptJobs.status, "completed")
     )
   ).limit(1);
   if (rows.length === 0 || !rows[0].result) return null;
@@ -29747,9 +29947,9 @@ async function getCompletedTranscript(userId, videoId) {
 }
 async function cancelUserTranscriptJobs(userId) {
   const result = await db.update(transcriptJobs).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(
-    and33(
-      eq45(transcriptJobs.userId, userId),
-      eq45(transcriptJobs.status, "pending")
+    and34(
+      eq46(transcriptJobs.userId, userId),
+      eq46(transcriptJobs.status, "pending")
     )
   );
   return result.rowCount ?? 0;
@@ -29780,7 +29980,7 @@ async function checkAndFinishJob(row) {
         status: "completed",
         result: JSON.stringify(segments),
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq45(transcriptJobs.id, row.id));
+      }).where(eq46(transcriptJobs.id, row.id));
       console.log(`[transcriptJobTracker] Job ${row.supadataJobId} completed \u2014 ${segments.length} segs for video ${row.videoId}`);
       return segments;
     }
@@ -29788,7 +29988,7 @@ async function checkAndFinishJob(row) {
       await db.update(transcriptJobs).set({
         status: "failed",
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq45(transcriptJobs.id, row.id));
+      }).where(eq46(transcriptJobs.id, row.id));
       console.warn(`[transcriptJobTracker] Job ${row.supadataJobId} failed for video ${row.videoId}`);
       return null;
     }
@@ -29804,7 +30004,7 @@ function runBackgroundPoller() {
   const POLL_INTERVAL_MS = 3e4;
   const poll = async () => {
     try {
-      const pending = await db.select().from(transcriptJobs).where(eq45(transcriptJobs.status, "pending"));
+      const pending = await db.select().from(transcriptJobs).where(eq46(transcriptJobs.status, "pending"));
       if (pending.length === 0) return;
       console.log(`[transcriptJobTracker] Polling ${pending.length} pending job(s)`);
       for (const row of pending) {
@@ -29996,7 +30196,7 @@ async function pollSupadataJob(apiKey, jobId, videoId, signal) {
   );
 }
 function sleep2(ms) {
-  return new Promise((resolve9) => setTimeout(resolve9, ms));
+  return new Promise((resolve10) => setTimeout(resolve10, ms));
 }
 var BASE2, JOB_POLL_TIMEOUT_MS, JOB_POLL_INTERVAL_START_MS, JOB_POLL_INTERVAL_MAX_MS, JOB_POLL_LOG_INTERVAL_MS, SupadataJobPendingError;
 var init_supadataTranscript = __esm({
@@ -30036,10 +30236,10 @@ import { exec, spawn as spawn5 } from "child_process";
 import { promisify } from "util";
 import { readdir, readFile as readFile3, rm as rm2, stat as fsStat, writeFile as writeFile2 } from "fs/promises";
 import { mkdtempSync } from "fs";
-import path11 from "path";
-import os5 from "os";
+import path12 from "path";
+import os6 from "os";
 function spawnYtdlp(cmd, timeoutMs) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve10, reject) => {
     const child = spawn5(cmd, { shell: true, stdio: ["ignore", "pipe", "pipe"] });
     const startMs = Date.now();
     const stderrChunks = [];
@@ -30088,7 +30288,7 @@ function spawnYtdlp(cmd, timeoutMs) {
           { stderr: fullStderr }
         ));
       } else {
-        resolve9();
+        resolve10();
       }
     });
     child.on("error", (err2) => {
@@ -30259,12 +30459,12 @@ async function fetchYtDlpTranscript(videoId) {
   }
   let tmpDir;
   try {
-    tmpDir = mkdtempSync(path11.join(os5.tmpdir(), `ytdlp-${videoId}-`));
+    tmpDir = mkdtempSync(path12.join(os6.tmpdir(), `ytdlp-${videoId}-`));
   } catch {
     return [];
   }
   try {
-    const outputTemplate = path11.join(tmpDir, "%(id)s");
+    const outputTemplate = path12.join(tmpDir, "%(id)s");
     const url = `https://www.youtube.com/watch?v=${videoId}`;
     await execAsync(
       `yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en.*,en" --convert-subs srt --no-playlist --no-warnings --quiet --no-progress --output "${outputTemplate}" -- "${url}"`,
@@ -30274,7 +30474,7 @@ async function fetchYtDlpTranscript(videoId) {
     const srtFiles = files.filter((f) => f.endsWith(".srt"));
     if (srtFiles.length === 0) return [];
     const best = srtFiles.find((f) => /\.(en|en-US|en-GB)\[.*manual\]\.srt$/.test(f)) ?? srtFiles.find((f) => /\.(en|en-US|en-GB)\.srt$/.test(f)) ?? srtFiles.find((f) => /\.en/.test(f)) ?? srtFiles[0];
-    const content = await readFile3(path11.join(tmpDir, best), "utf-8");
+    const content = await readFile3(path12.join(tmpDir, best), "utf-8");
     const segments = parseSrt(content);
     if (segments.length > 0) {
       console.log(
@@ -30400,12 +30600,12 @@ async function fetchAudioTranscript(videoId, originalInput) {
   }
   let tmpDir;
   try {
-    tmpDir = mkdtempSync(path11.join(os5.tmpdir(), `ytaudio-${videoId}-`));
+    tmpDir = mkdtempSync(path12.join(os6.tmpdir(), `ytaudio-${videoId}-`));
   } catch {
     return [];
   }
   try {
-    const outputTemplate = path11.join(tmpDir, "%(id)s.%(ext)s");
+    const outputTemplate = path12.join(tmpDir, "%(id)s.%(ext)s");
     const isShorts = originalInput ? /\/shorts\//i.test(originalInput) : false;
     const urlCandidates = isShorts ? [
       `https://www.youtube.com/shorts/${videoId}`,
@@ -30478,7 +30678,7 @@ ${stderrMsg}`
       return [];
     }
     const mp3File = downloadedFile;
-    const mp3Path = path11.join(tmpDir, mp3File);
+    const mp3Path = path12.join(tmpDir, mp3File);
     const mp3Stat = await fsStat(mp3Path);
     if (mp3Stat.size > AUDIO_MAX_BYTES) {
       console.warn(
@@ -30486,7 +30686,7 @@ ${stderrMsg}`
       );
       return [];
     }
-    const wavPath = path11.join(tmpDir, `${videoId}.wav`);
+    const wavPath = path12.join(tmpDir, `${videoId}.wav`);
     await execAsync(
       `ffmpeg -i "${mp3Path}" -ar 16000 -ac 1 -acodec pcm_s16le -y "${wavPath}"`,
       { timeout: 12e4 }
@@ -30510,7 +30710,7 @@ ${stderrMsg}`
         let offset = 0;
         let chunkNum = 0;
         while (offset < totalDuration) {
-          const chunkPath = path11.join(tmpDir, `chunk-${chunkNum}.wav`);
+          const chunkPath = path12.join(tmpDir, `chunk-${chunkNum}.wav`);
           await execAsync(
             `ffmpeg -i "${wavPath}" -ss ${offset} -t ${AUDIO_CHUNK_SECS} -ar 16000 -ac 1 -acodec pcm_s16le -y "${chunkPath}"`,
             { timeout: 6e4 }
@@ -31075,7 +31275,7 @@ var init_transcriptCache = __esm({
     ytdlpCmd = "yt-dlp";
     ytdlpSupportsImpersonate = false;
     ytdlpAvailable = false;
-    YTDLP_FLAGS_PATH = path11.join(process.cwd(), ".ytdlp-flags.json");
+    YTDLP_FLAGS_PATH = path12.join(process.cwd(), ".ytdlp-flags.json");
     MIN_IMPERSONATE_VERSION = "2023.11.16";
     TTL_MS2 = 24 * 60 * 60 * 1e3;
     MAX_ENTRIES = 500;
@@ -31192,8 +31392,8 @@ import { exec as exec2 } from "child_process";
 import { promisify as promisify2 } from "util";
 import { readdir as readdir2, readFile as readFile4, rm as rm3 } from "fs/promises";
 import { mkdtempSync as mkdtempSync2 } from "fs";
-import path12 from "path";
-import os6 from "os";
+import path13 from "path";
+import os7 from "os";
 function evictExpiredVisual() {
   const now = Date.now();
   for (const [id, entry] of visualSummaryCache) {
@@ -31245,7 +31445,7 @@ async function extractFrameAt(videoPath, timestampSec, outputPath) {
 async function extractKeyframes(videoId, intervalSecs) {
   let tmpDir;
   try {
-    tmpDir = mkdtempSync2(path12.join(os6.tmpdir(), `ytviz-${videoId}-`));
+    tmpDir = mkdtempSync2(path13.join(os7.tmpdir(), `ytviz-${videoId}-`));
   } catch {
     return [];
   }
@@ -31253,7 +31453,7 @@ async function extractKeyframes(videoId, intervalSecs) {
     await ensureYtdlpUpgraded();
     const cmd = getYtdlpCmd();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const videoPath = path12.join(tmpDir, `${videoId}.mp4`);
+    const videoPath = path13.join(tmpDir, `${videoId}.mp4`);
     await execAsync2(
       `${cmd} -f "worstvideo[ext=mp4]/worstvideo/worst[ext=mp4]/worst" --no-playlist --no-warnings --quiet --no-progress --max-filesize 150M --output "${videoPath}" -- "${url}"`,
       { timeout: 12e4 }
@@ -31263,9 +31463,9 @@ async function extractKeyframes(videoId, intervalSecs) {
       (f) => f.endsWith(".mp4") || f.endsWith(".webm") || f.endsWith(".mkv")
     );
     if (!videoFile) return [];
-    const actualVideoPath = path12.join(tmpDir, videoFile);
+    const actualVideoPath = path13.join(tmpDir, videoFile);
     const duration = await getVideoDuration(actualVideoPath);
-    const framesDir = path12.join(tmpDir, "frames");
+    const framesDir = path13.join(tmpDir, "frames");
     await execAsync2(`mkdir -p "${framesDir}"`, { timeout: 5e3 });
     const keyframes = [];
     if (duration > 0 && duration < 90) {
@@ -31276,7 +31476,7 @@ async function extractKeyframes(videoId, intervalSecs) {
       }
       for (let i = 0; i < timestamps.length; i++) {
         const ts = timestamps[i];
-        const framePath = path12.join(framesDir, `frame-${String(i + 1).padStart(4, "0")}.jpg`);
+        const framePath = path13.join(framesDir, `frame-${String(i + 1).padStart(4, "0")}.jpg`);
         const buf = await extractFrameAt(actualVideoPath, ts, framePath);
         if (buf) keyframes.push({ timestampSec: ts, jpegBuffer: buf });
       }
@@ -31292,7 +31492,7 @@ async function extractKeyframes(videoId, intervalSecs) {
       for (let i = 0; i < frameFiles.length; i++) {
         const timestampSec = i * interval;
         try {
-          const buf = await readFile4(path12.join(framesDir, frameFiles[i]));
+          const buf = await readFile4(path13.join(framesDir, frameFiles[i]));
           keyframes.push({ timestampSec, jpegBuffer: buf });
         } catch {
         }
@@ -31464,9 +31664,9 @@ function isWorkerOnline(userId) {
   return Date.now() - reg.lastSeen < WORKER_ONLINE_WINDOW_MS;
 }
 function queueTranscriptJob(userId, url, timeoutMs = 3e4) {
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve10, reject) => {
     const id = `lwj_${Date.now()}_${crypto6.randomBytes(4).toString("hex")}`;
-    const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve9, reject };
+    const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve10, reject };
     jobStore.set(id, job);
     setTimeout(() => {
       if (jobStore.has(id)) {
@@ -32977,7 +33177,7 @@ For each topic, research the story more deeply: what happened, why audiences in 
 });
 
 // server/agent/tools/setupDiscordWorkspace.ts
-import { eq as eq46, and as and34 } from "drizzle-orm";
+import { eq as eq47, and as and35 } from "drizzle-orm";
 var ALL_CHANNELS, channelList, setupDiscordWorkspaceTool;
 var init_setupDiscordWorkspace = __esm({
   "server/agent/tools/setupDiscordWorkspace.ts"() {
@@ -33018,7 +33218,7 @@ var init_setupDiscordWorkspace = __esm({
           }
           guildId = guilds[0].id;
         }
-        const rows = await db.select().from(channelLinks).where(and34(eq46(channelLinks.userId, userId), eq46(channelLinks.channel, "discord"))).limit(1);
+        const rows = await db.select().from(channelLinks).where(and35(eq47(channelLinks.userId, userId), eq47(channelLinks.channel, "discord"))).limit(1);
         const existingMeta = rows[0]?.metadata ?? {};
         const existingWorkspace = existingMeta.workspace;
         if (existingWorkspace && existingWorkspace.guildId === guildId) {
@@ -33551,7 +33751,7 @@ var init_weatherLookup = __esm({
 });
 
 // server/agent/tools/sessionTools.ts
-import { eq as eq47, and as and35, desc as desc11 } from "drizzle-orm";
+import { eq as eq48, and as and36, desc as desc11 } from "drizzle-orm";
 function formatAge(date2) {
   if (!date2) return "unknown";
   const diffMs = Date.now() - new Date(date2).getTime();
@@ -33610,9 +33810,9 @@ var init_sessionTools = __esm({
             turns: agentJobs.turns,
             toolCallsCount: agentJobs.toolCallsCount
           }).from(agentJobs).where(
-            and35(
-              eq47(agentJobs.userId, ctx.userId),
-              eq47(agentJobs.status, statusFilter)
+            and36(
+              eq48(agentJobs.userId, ctx.userId),
+              eq48(agentJobs.status, statusFilter)
             )
           ).orderBy(desc11(agentJobs.createdAt)).limit(limit) : await db.select({
             id: agentJobs.id,
@@ -33623,7 +33823,7 @@ var init_sessionTools = __esm({
             completedAt: agentJobs.completedAt,
             turns: agentJobs.turns,
             toolCallsCount: agentJobs.toolCallsCount
-          }).from(agentJobs).where(eq47(agentJobs.userId, ctx.userId)).orderBy(desc11(agentJobs.createdAt)).limit(limit);
+          }).from(agentJobs).where(eq48(agentJobs.userId, ctx.userId)).orderBy(desc11(agentJobs.createdAt)).limit(limit);
           if (rows.length === 0) {
             return {
               ok: true,
@@ -33674,9 +33874,9 @@ ${lines.join("\n")}`;
         }
         try {
           const [job] = await db.select().from(agentJobs).where(
-            and35(
-              eq47(agentJobs.id, jobId),
-              eq47(agentJobs.userId, ctx.userId)
+            and36(
+              eq48(agentJobs.id, jobId),
+              eq48(agentJobs.userId, ctx.userId)
             )
           ).limit(1);
           if (!job) {
@@ -33716,7 +33916,7 @@ ${JSON.stringify(r, null, 2)}`);
             summary: deliverables.summary,
             body: deliverables.body,
             status: deliverables.status
-          }).from(deliverables).where(eq47(deliverables.jobId, jobId)).limit(1);
+          }).from(deliverables).where(eq48(deliverables.jobId, jobId)).limit(1);
           const del = deliverables2[0];
           if (del) {
             parts.push(
@@ -33856,7 +34056,7 @@ The agent is now running. You can check its status with sessions_list or read it
           return { ok: false, content: "No job_id provided.", label: "sessions_cancel: no ID" };
         }
         try {
-          const [job] = await db.select().from(agentJobs).where(and35(eq47(agentJobs.id, jobId), eq47(agentJobs.userId, ctx.userId))).limit(1);
+          const [job] = await db.select().from(agentJobs).where(and36(eq48(agentJobs.id, jobId), eq48(agentJobs.userId, ctx.userId))).limit(1);
           if (!job) {
             return {
               ok: false,
@@ -33882,7 +34082,7 @@ The agent is now running. You can check its status with sessions_list or read it
           await db.update(agentJobs).set({
             status: newStatus,
             completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0
-          }).where(eq47(agentJobs.id, jobId));
+          }).where(eq48(agentJobs.id, jobId));
           const msg = newStatus === "cancelled" ? `Job "${job.title}" cancelled immediately \u2014 it was still queued and never started.` : `Job "${job.title}" marked for cancellation. It will stop at the next checkpoint (usually within seconds).`;
           console.log(
             `[${ctx.channel || "Agent"}] sessions_cancel job=${jobId} "${job.title}" \u2192 ${newStatus}`
@@ -33899,10 +34099,10 @@ The agent is now running. You can check its status with sessions_list or read it
 
 // server/agent/tools/imageGenerate.ts
 import OpenAI7 from "openai";
-import { eq as eq48 } from "drizzle-orm";
+import { eq as eq49 } from "drizzle-orm";
 async function getTelegramChatId(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq48(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq49(telegramLinks.userId, userId)).limit(1);
     return rows[0]?.chatId ?? null;
   } catch {
     return null;
@@ -34283,10 +34483,10 @@ var init_imageGenerate = __esm({
 });
 
 // server/agent/tools/videoGenerate.ts
-import { eq as eq49 } from "drizzle-orm";
+import { eq as eq50 } from "drizzle-orm";
 async function getTelegramChatId2(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq49(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq50(telegramLinks.userId, userId)).limit(1);
     return rows[0]?.chatId ?? null;
   } catch {
     return null;
@@ -34564,7 +34764,7 @@ __export(cronTools_exports, {
   parseNaturalTime: () => parseNaturalTime,
   parseRecurringExpr: () => parseRecurringExpr
 });
-import { eq as eq50, and as and36, or as or2, desc as desc12, gte as gte5, isNotNull } from "drizzle-orm";
+import { eq as eq51, and as and37, or as or2, desc as desc12, gte as gte5, isNotNull } from "drizzle-orm";
 function parseTimeOfDay(str) {
   const m = str.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
   if (!m) return null;
@@ -34878,12 +35078,12 @@ Job ID: ${task.id}
         try {
           const now = /* @__PURE__ */ new Date();
           const recentWindow = new Date(now.getTime() - 24 * 3600 * 1e3);
-          const rows = includeCompleted ? await db.select().from(jarvisScheduledTasks).where(eq50(jarvisScheduledTasks.userId, ctx.userId)).orderBy(desc12(jarvisScheduledTasks.scheduledAt)).limit(limit) : await db.select().from(jarvisScheduledTasks).where(
-            and36(
-              eq50(jarvisScheduledTasks.userId, ctx.userId),
+          const rows = includeCompleted ? await db.select().from(jarvisScheduledTasks).where(eq51(jarvisScheduledTasks.userId, ctx.userId)).orderBy(desc12(jarvisScheduledTasks.scheduledAt)).limit(limit) : await db.select().from(jarvisScheduledTasks).where(
+            and37(
+              eq51(jarvisScheduledTasks.userId, ctx.userId),
               or2(
                 gte5(jarvisScheduledTasks.scheduledAt, now),
-                and36(
+                and37(
                   isNotNull(jarvisScheduledTasks.completedAt),
                   gte5(jarvisScheduledTasks.completedAt, recentWindow)
                 )
@@ -34940,9 +35140,9 @@ ${lines.join("\n")}`;
         if (!jobId) return { ok: false, content: "job_id is required.", label: "cron_delete: no ID" };
         try {
           const existing = await db.select({ id: jarvisScheduledTasks.id, title: jarvisScheduledTasks.title }).from(jarvisScheduledTasks).where(
-            and36(
-              eq50(jarvisScheduledTasks.id, jobId),
-              eq50(jarvisScheduledTasks.userId, ctx.userId)
+            and37(
+              eq51(jarvisScheduledTasks.id, jobId),
+              eq51(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).limit(1);
           if (existing.length === 0) {
@@ -34953,9 +35153,9 @@ ${lines.join("\n")}`;
             };
           }
           await db.delete(jarvisScheduledTasks).where(
-            and36(
-              eq50(jarvisScheduledTasks.id, jobId),
-              eq50(jarvisScheduledTasks.userId, ctx.userId)
+            and37(
+              eq51(jarvisScheduledTasks.id, jobId),
+              eq51(jarvisScheduledTasks.userId, ctx.userId)
             )
           );
           console.log(`[${ctx.channel || "Agent"}] cron_delete id=${jobId} title="${existing[0].title}"`);
@@ -35008,9 +35208,9 @@ ${lines.join("\n")}`;
         if (!jobId) return { ok: false, content: "job_id is required.", label: "cron_update: no ID" };
         try {
           const existing = await db.select().from(jarvisScheduledTasks).where(
-            and36(
-              eq50(jarvisScheduledTasks.id, jobId),
-              eq50(jarvisScheduledTasks.userId, ctx.userId)
+            and37(
+              eq51(jarvisScheduledTasks.id, jobId),
+              eq51(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).limit(1);
           if (existing.length === 0) {
@@ -35062,9 +35262,9 @@ ${lines.join("\n")}`;
             };
           }
           const [updated] = await db.update(jarvisScheduledTasks).set(patch).where(
-            and36(
-              eq50(jarvisScheduledTasks.id, jobId),
-              eq50(jarvisScheduledTasks.userId, ctx.userId)
+            and37(
+              eq51(jarvisScheduledTasks.id, jobId),
+              eq51(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).returning();
           const title = updated.title;
@@ -35088,7 +35288,7 @@ Shell command: \`${updated.shellCommand}\`` : patch.shellCommand === null ? "\nS
 });
 
 // server/agent/workflowEngine.ts
-import { eq as eq51 } from "drizzle-orm";
+import { eq as eq52 } from "drizzle-orm";
 function buildStepPrompt2(workflow, stepIdx) {
   const steps = workflow.steps;
   const step = steps[stepIdx];
@@ -35130,14 +35330,14 @@ async function executeWorkflowStep(workflow, stepIdx) {
     currentStepIndex: stepIdx,
     status: "paused_waiting",
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq51(agentWorkflows.id, workflow.id));
+  }).where(eq52(agentWorkflows.id, workflow.id));
   console.log(
     `[Workflow] queued step ${stepIdx + 1}/${workflow.steps.length} workflow="${workflow.title}" job=${jobId}`
   );
   return jobId;
 }
 async function onWorkflowJobComplete(workflowId, stepIndex, _jobId, output) {
-  const [workflow] = await db.select().from(agentWorkflows).where(eq51(agentWorkflows.id, workflowId)).limit(1);
+  const [workflow] = await db.select().from(agentWorkflows).where(eq52(agentWorkflows.id, workflowId)).limit(1);
   if (!workflow) {
     console.warn(`[Workflow] onJobComplete: workflow ${workflowId} not found`);
     return;
@@ -35147,14 +35347,14 @@ async function onWorkflowJobComplete(workflowId, stepIndex, _jobId, output) {
   );
   const nextPendingIdx = steps.findIndex((s) => s.status === "pending");
   if (workflow.status !== "paused_waiting") {
-    await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, workflowId));
+    await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, workflowId));
     console.log(
       `[Workflow] step ${stepIndex + 1} complete (workflow paused \u2014 not advancing)`
     );
     return;
   }
   if (nextPendingIdx === -1) {
-    await db.update(agentWorkflows).set({ steps, status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, workflowId));
+    await db.update(agentWorkflows).set({ steps, status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, workflowId));
     console.log(`[Workflow] "${workflow.title}" complete \u2014 all steps done`);
     await notifyUser(
       workflow.userId,
@@ -35174,19 +35374,19 @@ All ${steps.length} step(s) finished.`
     return;
   }
   const updatedWorkflow = { ...workflow, steps };
-  await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, workflowId));
+  await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, workflowId));
   const nextJobId = await executeWorkflowStep(updatedWorkflow, nextPendingIdx);
   console.log(
     `[Workflow] "${workflow.title}" auto-advanced \u2192 step ${nextPendingIdx + 1} job=${nextJobId}`
   );
 }
 async function onWorkflowJobFail(workflowId, stepIndex, error) {
-  const [workflow] = await db.select().from(agentWorkflows).where(eq51(agentWorkflows.id, workflowId)).limit(1);
+  const [workflow] = await db.select().from(agentWorkflows).where(eq52(agentWorkflows.id, workflowId)).limit(1);
   if (!workflow) return;
   const steps = workflow.steps.map(
     (s, i) => i === stepIndex ? { ...s, status: "failed", output: `Error: ${error}`, completedAt: (/* @__PURE__ */ new Date()).toISOString() } : s
   );
-  await db.update(agentWorkflows).set({ steps, status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, workflowId));
+  await db.update(agentWorkflows).set({ steps, status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, workflowId));
   await notifyUser(
     workflow.userId,
     "approval_request",
@@ -35216,7 +35416,7 @@ var init_workflowEngine = __esm({
 });
 
 // server/agent/tools/workflowTools.ts
-import { eq as eq52, and as and37, desc as desc13 } from "drizzle-orm";
+import { eq as eq53, and as and38, desc as desc13 } from "drizzle-orm";
 function stepStatusIcon(s) {
   switch (s.status) {
     case "complete":
@@ -35242,7 +35442,7 @@ function workflowSummary(w) {
   return lines.join("\n");
 }
 async function loadWorkflow(workflowId, userId) {
-  const [row] = await db.select().from(agentWorkflows).where(and37(eq52(agentWorkflows.id, workflowId), eq52(agentWorkflows.userId, userId))).limit(1);
+  const [row] = await db.select().from(agentWorkflows).where(and38(eq53(agentWorkflows.id, workflowId), eq53(agentWorkflows.userId, userId))).limit(1);
   return row || null;
 }
 var workflowCreateTool, workflowRunTool, workflowStatusTool, workflowPauseTool, workflowResumeTool, workflowListTool;
@@ -35346,7 +35546,7 @@ Call workflow_run with this ID to start execution.`,
         const steps = wf.steps;
         const nextIdx = steps.findIndex((s) => s.status === "pending");
         if (nextIdx === -1) {
-          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, wf.id));
+          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq53(agentWorkflows.id, wf.id));
           return { ok: true, content: "All steps were already complete. Workflow marked done.", label: "workflow_run: already done" };
         }
         try {
@@ -35422,7 +35622,7 @@ ${s.output.slice(0, 2e3)}`);
         if (wf.status === "paused") {
           return { ok: true, content: "Workflow is already paused.", label: "workflow_pause: already paused" };
         }
-        await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(and37(eq52(agentWorkflows.id, workflowId), eq52(agentWorkflows.userId, ctx.userId)));
+        await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(and38(eq53(agentWorkflows.id, workflowId), eq53(agentWorkflows.userId, ctx.userId)));
         console.log(`[${ctx.channel || "Agent"}] workflow_pause wf=${workflowId}`);
         return {
           ok: true,
@@ -35456,10 +35656,10 @@ ${s.output.slice(0, 2e3)}`);
         const steps = wf.steps;
         const nextIdx = steps.findIndex((s) => s.status === "pending");
         if (nextIdx === -1) {
-          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, wf.id));
+          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq53(agentWorkflows.id, wf.id));
           return { ok: true, content: "All steps were already complete. Workflow marked done.", label: "workflow_resume: done" };
         }
-        await db.update(agentWorkflows).set({ status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, wf.id));
+        await db.update(agentWorkflows).set({ status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq53(agentWorkflows.id, wf.id));
         try {
           const jobId = await executeWorkflowStep({ ...wf, status: "active" }, nextIdx);
           console.log(`[${ctx.channel || "Agent"}] workflow_resume wf=${workflowId} step=${nextIdx + 1} job=${jobId}`);
@@ -35488,7 +35688,7 @@ Background job queued: ${jobId}`,
       },
       async execute(args, ctx) {
         const includeComplete = args.include_complete === true;
-        const rows = await db.select().from(agentWorkflows).where(eq52(agentWorkflows.userId, ctx.userId)).orderBy(desc13(agentWorkflows.updatedAt)).limit(20);
+        const rows = await db.select().from(agentWorkflows).where(eq53(agentWorkflows.userId, ctx.userId)).orderBy(desc13(agentWorkflows.updatedAt)).limit(20);
         const filtered = includeComplete ? rows : rows.filter((w) => !["complete", "failed"].includes(w.status));
         if (filtered.length === 0) {
           return {
@@ -35535,14 +35735,14 @@ __export(safeWritePolicy_exports, {
   resetCircuitBreaker: () => resetCircuitBreaker,
   writeBudgetSummary: () => writeBudgetSummary
 });
-import path13 from "path";
+import path14 from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sql as sql15 } from "drizzle-orm";
 function isProtectedFile(filePath) {
-  return PROTECTED_FILES.has(path13.normalize(filePath));
+  return PROTECTED_FILES.has(path14.normalize(filePath));
 }
 function isDangerousPath(filePath) {
-  const normalised = path13.normalize(filePath);
+  const normalised = path14.normalize(filePath);
   if (PROTECTED_FILES.has(normalised)) {
     return { dangerous: true, reason: `'${filePath}' is a hard-protected file that requires user approval` };
   }
@@ -35554,18 +35754,18 @@ function isDangerousPath(filePath) {
   return { dangerous: false };
 }
 function isPathAllowed(filePath) {
-  const normalised = path13.normalize(filePath);
-  if (path13.isAbsolute(normalised)) return false;
+  const normalised = path14.normalize(filePath);
+  if (path14.isAbsolute(normalised)) return false;
   if (normalised.startsWith("..")) return false;
   if (PROTECTED_FILES.has(normalised)) return false;
-  const firstSegment = normalised.split(path13.sep)[0];
+  const firstSegment = normalised.split(path14.sep)[0];
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 function isPathAllowedForProposal(filePath) {
-  const normalised = path13.normalize(filePath);
-  if (path13.isAbsolute(normalised)) return false;
+  const normalised = path14.normalize(filePath);
+  if (path14.isAbsolute(normalised)) return false;
   if (normalised.startsWith("..")) return false;
-  const firstSegment = normalised.split(path13.sep)[0];
+  const firstSegment = normalised.split(path14.sep)[0];
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 function _statusFromTimestamps(timestamps) {
@@ -35804,7 +36004,7 @@ var init_safeWritePolicy = __esm({
 });
 
 // server/agent/tools/buildFeatureTool.ts
-import { and as and38, desc as desc14, eq as eq53, isNotNull as isNotNull2 } from "drizzle-orm";
+import { and as and39, desc as desc14, eq as eq54, isNotNull as isNotNull2 } from "drizzle-orm";
 function initToolResolver(resolver) {
   _toolResolver = resolver;
 }
@@ -35819,7 +36019,7 @@ function toCamelCase(snake) {
 }
 async function applyToolCode(featureName, toolCode, routeCode) {
   const { promises: fs27 } = await import("fs");
-  const path32 = await import("path");
+  const path33 = await import("path");
   const applied = [];
   const warnings = [];
   const circuit = await checkCircuitBreaker();
@@ -35832,8 +36032,8 @@ async function applyToolCode(featureName, toolCode, routeCode) {
   const toolFilePath = `server/agent/tools/${featureName}.ts`;
   const routeFilePath = `server/${featureName}Routes.ts`;
   try {
-    await fs27.mkdir(path32.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
-    await fs27.writeFile(path32.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
+    await fs27.mkdir(path33.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
+    await fs27.writeFile(path33.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
     await recordAutonomousWrite(toolFilePath);
     applied.push(toolFilePath);
   } catch (err2) {
@@ -35843,8 +36043,8 @@ async function applyToolCode(featureName, toolCode, routeCode) {
   }
   if (routeCode) {
     try {
-      await fs27.mkdir(path32.resolve(process.cwd(), "server"), { recursive: true });
-      await fs27.writeFile(path32.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
+      await fs27.mkdir(path33.resolve(process.cwd(), "server"), { recursive: true });
+      await fs27.writeFile(path33.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
       await recordAutonomousWrite(routeFilePath);
       applied.push(routeFilePath);
     } catch (err2) {
@@ -35870,7 +36070,7 @@ async function applyToolCode(featureName, toolCode, routeCode) {
         );
       }
     }
-    const indexAbsPath = path32.resolve(process.cwd(), "server/agent/tools/index.ts");
+    const indexAbsPath = path33.resolve(process.cwd(), "server/agent/tools/index.ts");
     let idx = await fs27.readFile(indexAbsPath, "utf8");
     let modified = false;
     const importLine = `import { ${actualExportName} } from "./${featureName}";`;
@@ -36087,10 +36287,10 @@ Constraints: no uuid package; use Math.random().toString(36) for IDs; handle err
         let priorPassingArgs = null;
         try {
           const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
-            and38(
-              eq53(openclawBuildLog.userId, ctx.userId),
-              eq53(openclawBuildLog.featureName, featureName),
-              eq53(openclawBuildLog.smokeTestPassed, true)
+            and39(
+              eq54(openclawBuildLog.userId, ctx.userId),
+              eq54(openclawBuildLog.featureName, featureName),
+              eq54(openclawBuildLog.smokeTestPassed, true)
             )
           ).orderBy(desc14(openclawBuildLog.createdAt)).limit(1);
           const stored = priorRows[0]?.smokeTestArgs;
@@ -36222,10 +36422,10 @@ Fix the tool_code and call build_feature again with the corrected code.`,
         let priorPassingArgs = null;
         try {
           const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
-            and38(
-              eq53(openclawBuildLog.userId, ctx.userId),
-              eq53(openclawBuildLog.featureName, toolName),
-              eq53(openclawBuildLog.smokeTestPassed, true),
+            and39(
+              eq54(openclawBuildLog.userId, ctx.userId),
+              eq54(openclawBuildLog.featureName, toolName),
+              eq54(openclawBuildLog.smokeTestPassed, true),
               isNotNull2(openclawBuildLog.smokeTestArgs)
             )
           ).orderBy(desc14(openclawBuildLog.createdAt)).limit(1);
@@ -36385,7 +36585,7 @@ __export(capabilityGapAnalyzer_exports, {
   markCapabilityGapEntriesAddressed: () => markCapabilityGapEntriesAddressed,
   runCapabilityGapAnalysis: () => runCapabilityGapAnalysis
 });
-import { eq as eq54, and as and39, gte as gte6, or as or3, sql as sql16 } from "drizzle-orm";
+import { eq as eq55, and as and40, gte as gte6, or as or3, sql as sql16 } from "drizzle-orm";
 async function createGapInboxItem(userId, cluster) {
   try {
     const proposal = cluster.toolProposal;
@@ -36424,16 +36624,16 @@ function markCapabilityGapEntriesAddressed(userId, entries) {
   if (entries.length === 0) return;
   setImmediate(() => {
     const pairConditions = entries.map(
-      (e) => and39(
-        eq54(capabilityGaps.userMessage, e.userMessage),
-        eq54(capabilityGaps.detectedReason, e.detectedReason)
+      (e) => and40(
+        eq55(capabilityGaps.userMessage, e.userMessage),
+        eq55(capabilityGaps.detectedReason, e.detectedReason)
       )
     );
     const pairFilter = pairConditions.length === 1 ? pairConditions[0] : or3(...pairConditions);
     db.update(capabilityGaps).set({ addressed: true }).where(
-      and39(
-        eq54(capabilityGaps.userId, userId),
-        eq54(capabilityGaps.addressed, false),
+      and40(
+        eq55(capabilityGaps.userId, userId),
+        eq55(capabilityGaps.addressed, false),
         pairFilter
       )
     ).catch((err2) => {
@@ -36457,10 +36657,10 @@ async function _runAnalysisInner(userId) {
     detectedReason: capabilityGaps.detectedReason,
     count: sql16`COUNT(*)::int`
   }).from(capabilityGaps).where(
-    and39(
-      eq54(capabilityGaps.userId, userId),
+    and40(
+      eq55(capabilityGaps.userId, userId),
       gte6(capabilityGaps.createdAt, sevenDaysAgo),
-      eq54(capabilityGaps.addressed, false)
+      eq55(capabilityGaps.addressed, false)
     )
   ).groupBy(
     capabilityGaps.userMessage,
@@ -36685,8 +36885,8 @@ var init_runGapAnalysisTool = __esm({
 
 // server/agent/tools/selfEditTools.ts
 import fs10 from "fs/promises";
-import path14 from "path";
-import { desc as desc15, and as and40, eq as eq55, gte as gte7 } from "drizzle-orm";
+import path15 from "path";
+import { desc as desc15, and as and41, eq as eq56, gte as gte7 } from "drizzle-orm";
 async function collectSourceFiles(absDir, root) {
   const results = [];
   let entries;
@@ -36696,13 +36896,13 @@ async function collectSourceFiles(absDir, root) {
     return results;
   }
   for (const entry of entries) {
-    const abs = path14.join(absDir, entry.name);
+    const abs = path15.join(absDir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
       const sub = await collectSourceFiles(abs, root);
       results.push(...sub);
     } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
-      results.push(path14.relative(root, abs));
+      results.push(path15.relative(root, abs));
     }
   }
   return results;
@@ -36743,7 +36943,7 @@ var init_selfEditTools = __esm({
           };
         }
         try {
-          const absDir = path14.join(PROJECT_ROOT, dir);
+          const absDir = path15.join(PROJECT_ROOT, dir);
           const files = await collectSourceFiles(absDir, PROJECT_ROOT);
           if (files.length === 0) {
             return { ok: true, content: `No .ts/.tsx files found in '${dir}'.`, label: "list_source_files: empty" };
@@ -36794,7 +36994,7 @@ ${files.join("\n")}`,
           };
         }
         try {
-          const absPath = path14.join(PROJECT_ROOT, filePath);
+          const absPath = path15.join(PROJECT_ROOT, filePath);
           const raw = await fs10.readFile(absPath, "utf-8");
           const allLines = raw.split("\n");
           const totalLines = allLines.length;
@@ -36950,10 +37150,10 @@ ${formatted}`,
         if (!proposedContent) return { ok: false, content: "proposed_content is required.", label: "propose_code_change: error" };
         try {
           const existing = await db.select({ id: codeProposals.id }).from(codeProposals).where(
-            and40(
-              eq55(codeProposals.userId, ctx.userId),
-              eq55(codeProposals.filePath, filePath),
-              eq55(codeProposals.status, "pending")
+            and41(
+              eq56(codeProposals.userId, ctx.userId),
+              eq56(codeProposals.filePath, filePath),
+              eq56(codeProposals.status, "pending")
             )
           ).limit(1);
           if (existing.length > 0) {
@@ -36967,7 +37167,7 @@ ${formatted}`,
         }
         let originalContent = "";
         try {
-          const absPath = path14.join(PROJECT_ROOT, filePath);
+          const absPath = path15.join(PROJECT_ROOT, filePath);
           originalContent = await fs10.readFile(absPath, "utf-8");
         } catch (err2) {
           return {
@@ -37050,8 +37250,8 @@ __export(applyCodeChangeTool_exports, {
   recordVerificationResult: () => recordVerificationResult
 });
 import fs11 from "fs/promises";
-import path15 from "path";
-import { and as and41, eq as eq56 } from "drizzle-orm";
+import path16 from "path";
+import { and as and42, eq as eq57 } from "drizzle-orm";
 function _setAuditTimestampForTest(fp, ts) {
   lastAuditTimestamp.set(fp, ts);
 }
@@ -37072,16 +37272,16 @@ async function rotateAuditLogIfNeeded() {
     const stat = await fs11.stat(AUDIT_LOG_PATH).catch(() => null);
     if (!stat || stat.size < AUDIT_LOG_MAX_BYTES) return;
     const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-    const rotatedPath = path15.join(
+    const rotatedPath = path16.join(
       PROJECT_ROOT2,
       `server/self-heal-audit.${ts}.log`
     );
     await fs11.rename(AUDIT_LOG_PATH, rotatedPath);
     console.log(`[SelfHeal] audit log rotated \u2192 ${rotatedPath}`);
     try {
-      const serverDir = path15.join(PROJECT_ROOT2, "server");
+      const serverDir = path16.join(PROJECT_ROOT2, "server");
       const entries = await fs11.readdir(serverDir);
-      const archives = entries.filter((name) => /^self-heal-audit\..+\.log$/.test(name)).sort().map((name) => path15.join(serverDir, name));
+      const archives = entries.filter((name) => /^self-heal-audit\..+\.log$/.test(name)).sort().map((name) => path16.join(serverDir, name));
       const toDelete = archives.slice(0, Math.max(0, archives.length - AUDIT_LOG_MAX_ARCHIVES));
       for (const archivePath of toDelete) {
         await fs11.unlink(archivePath);
@@ -37094,9 +37294,9 @@ async function rotateAuditLogIfNeeded() {
 }
 async function pruneAuditLogArchivesOnStartup() {
   try {
-    const serverDir = path15.join(PROJECT_ROOT2, "server");
+    const serverDir = path16.join(PROJECT_ROOT2, "server");
     const entries = await fs11.readdir(serverDir);
-    const archives = entries.filter((name) => /^self-heal-audit\..+\.log$/.test(name)).sort().map((name) => path15.join(serverDir, name));
+    const archives = entries.filter((name) => /^self-heal-audit\..+\.log$/.test(name)).sort().map((name) => path16.join(serverDir, name));
     const toDelete = archives.slice(0, Math.max(0, archives.length - AUDIT_LOG_MAX_ARCHIVES));
     for (const archivePath of toDelete) {
       await fs11.unlink(archivePath);
@@ -37133,12 +37333,12 @@ function computeSimpleDiff(before, after) {
   return [`+${added} -${removed} lines`, ...diff];
 }
 async function appendAuditLog(entry) {
-  const sep4 = "\u2500".repeat(72);
+  const sep5 = "\u2500".repeat(72);
   const ts = (/* @__PURE__ */ new Date()).toISOString();
   const diff = computeSimpleDiff(entry.before, entry.after);
   const capped = diff.length > AUDIT_MAX_DIFF_LINES ? [...diff.slice(0, AUDIT_MAX_DIFF_LINES), `\u2026[diff truncated at ${AUDIT_MAX_DIFF_LINES} lines]`] : diff;
   const block = [
-    sep4,
+    sep5,
     `Timestamp : ${ts}`,
     `File      : ${entry.filePath}`,
     `Reason    : ${entry.reason}`,
@@ -37184,7 +37384,7 @@ async function recordVerificationResult(filePaths, result, summary, userId) {
     const ts = lastAuditTimestamp.get(fp);
     if (!ts) continue;
     const summaryPart = summary ? ` \u2014 ${summary}` : "";
-    db.update(selfHealAuditLog).set({ verified: `${result}${summaryPart}` }).where(and41(eq56(selfHealAuditLog.timestamp, ts), eq56(selfHealAuditLog.file, fp))).catch(() => {
+    db.update(selfHealAuditLog).set({ verified: `${result}${summaryPart}` }).where(and42(eq57(selfHealAuditLog.timestamp, ts), eq57(selfHealAuditLog.file, fp))).catch(() => {
     });
   }
   let resolvedUserId = userId;
@@ -37256,7 +37456,7 @@ var init_applyCodeChangeTool = __esm({
     init_db();
     init_schema();
     PROJECT_ROOT2 = process.cwd();
-    AUDIT_LOG_PATH = path15.join(PROJECT_ROOT2, "server/self-heal-audit.log");
+    AUDIT_LOG_PATH = path16.join(PROJECT_ROOT2, "server/self-heal-audit.log");
     AUDIT_MAX_DIFF_LINES = 300;
     AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024;
     AUDIT_LOG_MAX_ARCHIVES = 5;
@@ -37373,7 +37573,7 @@ ${proposalContent}` : `'${filePath}' matches a dangerous-change pattern ("${dang
         }
         let originalContent = "";
         try {
-          const absPath = path15.join(PROJECT_ROOT2, filePath);
+          const absPath = path16.join(PROJECT_ROOT2, filePath);
           originalContent = await fs11.readFile(absPath, "utf-8");
         } catch {
         }
@@ -37386,8 +37586,8 @@ ${proposalContent}` : `'${filePath}' matches a dangerous-change pattern ("${dang
           };
         }
         try {
-          const absPath = path15.join(PROJECT_ROOT2, filePath);
-          await fs11.mkdir(path15.dirname(absPath), { recursive: true });
+          const absPath = path16.join(PROJECT_ROOT2, filePath);
+          await fs11.mkdir(path16.dirname(absPath), { recursive: true });
           await fs11.writeFile(absPath, newContent, "utf-8");
           await recordAutonomousWrite(filePath);
           const newCount = circuit.count + 1;
@@ -37428,9 +37628,9 @@ __export(runShellTool_exports, {
 import { spawn as spawn6 } from "child_process";
 import http from "http";
 function httpGet(url, timeoutMs = 5e3) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const timer = setTimeout(() => {
-      resolve9({ status: -1, body: "Request timed out" });
+      resolve10({ status: -1, body: "Request timed out" });
     }, timeoutMs);
     http.get(url, (res) => {
       const chunks = [];
@@ -37438,20 +37638,20 @@ function httpGet(url, timeoutMs = 5e3) {
       res.on("end", () => {
         clearTimeout(timer);
         const body = Buffer.concat(chunks).toString("utf8").slice(0, 500);
-        resolve9({ status: res.statusCode ?? 0, body });
+        resolve10({ status: res.statusCode ?? 0, body });
       });
       res.on("error", (err2) => {
         clearTimeout(timer);
-        resolve9({ status: -1, body: err2.message });
+        resolve10({ status: -1, body: err2.message });
       });
     }).on("error", (err2) => {
       clearTimeout(timer);
-      resolve9({ status: -1, body: err2.message });
+      resolve10({ status: -1, body: err2.message });
     });
   });
 }
 function runProcess(bin, args, timeoutMs) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const chunks = [];
     let timedOut = false;
     const child = spawn6(bin, args, {
@@ -37470,11 +37670,11 @@ function runProcess(bin, args, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > MAX_OUTPUT_CHARS ? raw.slice(0, MAX_OUTPUT_CHARS) + "\n\u2026[output truncated]" : raw;
-      resolve9({ stdout, exitCode: code, timedOut });
+      resolve10({ stdout, exitCode: code, timedOut });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve9({ stdout: `Failed to spawn '${bin}': ${err2.message}`, exitCode: -1, timedOut: false });
+      resolve10({ stdout: `Failed to spawn '${bin}': ${err2.message}`, exitCode: -1, timedOut: false });
     });
   });
 }
@@ -37609,7 +37809,7 @@ __export(selfHealTool_exports, {
   selfHealTool: () => selfHealTool
 });
 import fs12 from "fs/promises";
-import path16 from "path";
+import path17 from "path";
 function fileNameToToolName(filename) {
   const base = filename.replace(/Tool\.tsx?$/, "");
   if (base === filename.replace(/\.tsx?$/, "")) return null;
@@ -37617,7 +37817,7 @@ function fileNameToToolName(filename) {
 }
 async function readFileSafe2(filePath) {
   try {
-    const abs = path16.join(PROJECT_ROOT4, filePath);
+    const abs = path17.join(PROJECT_ROOT4, filePath);
     const raw = await fs12.readFile(abs, "utf-8");
     const lines = raw.split("\n");
     if (lines.length > MAX_FILE_LINES2) {
@@ -37630,10 +37830,10 @@ async function readFileSafe2(filePath) {
   }
 }
 async function collectTsFilesFromDir(dirRelative) {
-  const abs = path16.join(PROJECT_ROOT4, dirRelative);
+  const abs = path17.join(PROJECT_ROOT4, dirRelative);
   try {
     const entries = await fs12.readdir(abs, { withFileTypes: true });
-    return entries.filter((e) => e.isFile() && (e.name.endsWith(".ts") || e.name.endsWith(".tsx"))).map((e) => path16.join(dirRelative, e.name));
+    return entries.filter((e) => e.isFile() && (e.name.endsWith(".ts") || e.name.endsWith(".tsx"))).map((e) => path17.join(dirRelative, e.name));
   } catch {
     return [];
   }
@@ -37642,9 +37842,9 @@ async function findRelevantFiles(description, affectedPaths) {
   const candidates = [];
   if (affectedPaths && affectedPaths.length > 0) {
     for (const p of affectedPaths) {
-      const norm = path16.normalize(p);
+      const norm = path17.normalize(p);
       if (!isPathAllowed(norm)) continue;
-      const abs = path16.join(PROJECT_ROOT4, norm);
+      const abs = path17.join(PROJECT_ROOT4, norm);
       try {
         const stat = await fs12.stat(abs);
         if (stat.isDirectory()) {
@@ -37676,7 +37876,7 @@ async function findRelevantFiles(description, affectedPaths) {
   const seen = /* @__PURE__ */ new Set();
   const result = [];
   for (const fp of candidates) {
-    const norm = path16.normalize(fp);
+    const norm = path17.normalize(fp);
     if (seen.has(norm)) continue;
     if (!isPathAllowed(norm) || isProtectedFile(norm)) continue;
     seen.add(norm);
@@ -37991,7 +38191,7 @@ ${await writeBudgetSummary()}`,
             }
             let originalLineCount = 0;
             try {
-              const abs = path16.join(PROJECT_ROOT4, change.file_path);
+              const abs = path17.join(PROJECT_ROOT4, change.file_path);
               const orig = await fs12.readFile(abs, "utf-8").catch(() => "");
               originalLineCount = orig.split("\n").length;
             } catch {
@@ -38104,7 +38304,7 @@ ${testResult.content}`;
             continue;
           }
           const smokeResults = [];
-          const toolNamesFromFiles = applyResults.filter((r) => r.ok && r.filePath.startsWith("server/agent/tools/")).map((r) => fileNameToToolName(path16.basename(r.filePath))).filter((n) => n !== null);
+          const toolNamesFromFiles = applyResults.filter((r) => r.ok && r.filePath.startsWith("server/agent/tools/")).map((r) => fileNameToToolName(path17.basename(r.filePath))).filter((n) => n !== null);
           const affectedToolNames = Array.isArray(plan.affected_tools) ? plan.affected_tools.filter((t) => typeof t === "string" && t.trim().length > 0) : [];
           const allToolNames = [.../* @__PURE__ */ new Set([...toolNamesFromFiles, ...affectedToolNames])];
           if (allToolNames.length > 0) {
@@ -38319,7 +38519,7 @@ ${await writeBudgetSummary()}`,
 
 // server/agent/tools/workspaceUpdateTool.ts
 import fs13 from "fs/promises";
-import path17 from "path";
+import path18 from "path";
 async function appendAudit2(entry) {
   try {
     await fs13.appendFile(AUDIT_LOG, entry + "\n", "utf-8");
@@ -38332,7 +38532,7 @@ var init_workspaceUpdateTool = __esm({
     "use strict";
     init_integrationOwner();
     init_loader();
-    AUDIT_LOG = path17.join(process.cwd(), "server", "self-heal-audit.log");
+    AUDIT_LOG = path18.join(process.cwd(), "server", "self-heal-audit.log");
     VALID_FILES = [
       "soul",
       "agents",
@@ -38427,7 +38627,7 @@ var init_workspaceUpdateTool = __esm({
 });
 
 // server/agent/tools/listCustomAgents.ts
-import { eq as eq57 } from "drizzle-orm";
+import { eq as eq58 } from "drizzle-orm";
 var listCustomAgentsTool;
 var init_listCustomAgents = __esm({
   "server/agent/tools/listCustomAgents.ts"() {
@@ -38464,7 +38664,7 @@ If the user says "run my X agent", find the matching slug here, then queue a cus
       },
       execute: async (args, context) => {
         const { userId } = context;
-        const agents = await db.select().from(customAgents).where(eq57(customAgents.userId, userId)).orderBy(customAgents.createdAt);
+        const agents = await db.select().from(customAgents).where(eq58(customAgents.userId, userId)).orderBy(customAgents.createdAt);
         if (agents.length === 0) {
           return {
             ok: true,
@@ -38695,7 +38895,7 @@ __export(github_exports, {
   pushWorkspaceToGitHub: () => pushWorkspaceToGitHub,
   saveGitHubSettings: () => saveGitHubSettings
 });
-import { eq as eq58 } from "drizzle-orm";
+import { eq as eq59 } from "drizzle-orm";
 async function getGitHubUser(token) {
   try {
     const res = await githubRequest(token, "/user");
@@ -38710,7 +38910,7 @@ async function getGitHubSettings(userId) {
   const token = await getUserToken(userId, "github").catch(() => null);
   const pat = token?.accessToken || null;
   const tokenType = token?.accountEmail === "oauth" ? "oauth" : pat ? "pat" : void 0;
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq58(userPreferences.userId, userId)).limit(1);
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq59(userPreferences.userId, userId)).limit(1);
   const prefs = rows[0]?.data || {};
   return {
     pat,
@@ -38733,7 +38933,7 @@ async function saveGitHubSettings(userId, patch) {
   }
   const needsPrefsUpdate = patch.repos !== void 0 || patch.username !== void 0;
   if (needsPrefsUpdate) {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq58(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq59(userPreferences.userId, userId)).limit(1);
     const current = rows[0]?.data || {};
     const updated = { ...current };
     if (patch.repos !== void 0) updated.github_repos = patch.repos;
@@ -38750,8 +38950,8 @@ async function saveGitHubSettings(userId, patch) {
     });
   }
 }
-async function githubRequest(pat, path32, options = {}) {
-  const url = `https://api.github.com${path32}`;
+async function githubRequest(pat, path33, options = {}) {
+  const url = `https://api.github.com${path33}`;
   return fetch(url, {
     ...options,
     headers: {
@@ -38926,13 +39126,13 @@ async function pushWorkspaceToGitHub(pat, owner, repoName, workspaceDir, commitM
   const { spawnSync: spawnSync4 } = await import("child_process");
   const pathMod = await import("path");
   const fsMod = await import("fs");
-  const os10 = await import("os");
+  const os11 = await import("os");
   const credentialUrl = `https://x-access-token:${pat}@github.com/${owner}/${repoName}.git`;
   const cleanUrl = `https://github.com/${owner}/${repoName}.git`;
   const sanitize = (s) => (s ?? "").replace(new RegExp(pat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "***").slice(0, 500);
   const env = {
     ...process.env,
-    HOME: os10.homedir(),
+    HOME: os11.homedir(),
     GIT_AUTHOR_NAME: "Jarvis",
     GIT_AUTHOR_EMAIL: "jarvis@replit.app",
     GIT_COMMITTER_NAME: "Jarvis",
@@ -39218,10 +39418,10 @@ On Telegram/in-app: ask the user to confirm, then call merge_github_pr again wit
 
 // server/agent/cloudDeploy.ts
 import * as fs14 from "fs";
-import * as path18 from "path";
+import * as path19 from "path";
 import * as crypto7 from "crypto";
 import { spawnSync as spawnSync2 } from "child_process";
-import * as os7 from "os";
+import * as os8 from "os";
 function slugify(title, maxLen = 50) {
   return title.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, maxLen) || "jarvis-app";
 }
@@ -39230,7 +39430,7 @@ function shouldExclude(relPath) {
   for (const part of parts) {
     if (EXCLUDE_DIRS.has(part)) return true;
     if (EXCLUDE_FILENAMES.has(part)) return true;
-    if (EXCLUDE_EXTENSIONS.has(path18.extname(part))) return true;
+    if (EXCLUDE_EXTENSIONS.has(path19.extname(part))) return true;
   }
   return false;
 }
@@ -39244,8 +39444,8 @@ function collectFiles(dir, baseDir, results, counter) {
   }
   for (const entry of entries) {
     if (counter.n >= MAX_TOTAL_FILES) break;
-    const fullPath = path18.join(dir, entry.name);
-    const relPath = path18.relative(baseDir, fullPath).split(path18.sep).join("/");
+    const fullPath = path19.join(dir, entry.name);
+    const relPath = path19.relative(baseDir, fullPath).split(path19.sep).join("/");
     if (shouldExclude(relPath)) continue;
     if (entry.isDirectory()) {
       collectFiles(fullPath, baseDir, results, counter);
@@ -39479,7 +39679,7 @@ async function deployToRailway(workspaceDir, projectTitle) {
     ["--yes", "@railway/cli@3", "up", "--detach", "--project", projectId],
     {
       cwd: workspaceDir,
-      env: { ...process.env, RAILWAY_TOKEN: token, HOME: os7.homedir(), CI: "true" },
+      env: { ...process.env, RAILWAY_TOKEN: token, HOME: os8.homedir(), CI: "true" },
       encoding: "utf8",
       timeout: 6e5,
       stdio: "pipe"
@@ -39575,7 +39775,7 @@ var init_cloudDeploy = __esm({
 });
 
 // server/agent/tools/deployApp.ts
-import { desc as desc16, eq as eq59 } from "drizzle-orm";
+import { desc as desc16, eq as eq60 } from "drizzle-orm";
 var deployAppTool;
 var init_deployApp = __esm({
   "server/agent/tools/deployApp.ts"() {
@@ -39608,7 +39808,7 @@ var init_deployApp = __esm({
         const provider = rawProvider === "vercel" ? "vercel" : rawProvider === "railway" ? "railway" : "auto";
         let project;
         if (providedProjectId) {
-          const rows = await db.select().from(jarvisProjects).where(eq59(jarvisProjects.id, providedProjectId)).limit(1);
+          const rows = await db.select().from(jarvisProjects).where(eq60(jarvisProjects.id, providedProjectId)).limit(1);
           project = rows[0];
           if (!project) {
             return { ok: false, content: `Project "${providedProjectId}" not found.` };
@@ -39617,7 +39817,7 @@ var init_deployApp = __esm({
             return { ok: false, content: "You don't have access to that project." };
           }
         } else {
-          const rows = await db.select().from(jarvisProjects).where(eq59(jarvisProjects.userId, userId)).orderBy(desc16(jarvisProjects.updatedAt)).limit(20);
+          const rows = await db.select().from(jarvisProjects).where(eq60(jarvisProjects.userId, userId)).orderBy(desc16(jarvisProjects.updatedAt)).limit(20);
           project = rows.find((r) => r.status === "complete");
           if (!project) {
             const latest = rows[0];
@@ -39708,8 +39908,8 @@ Share this link with anyone \u2014 the app is publicly accessible.`,
 // server/agent/codexDelegation.ts
 import { spawn as spawn7 } from "node:child_process";
 import { mkdtemp as mkdtemp2, readFile as readFile5, rm as rm4 } from "node:fs/promises";
-import { tmpdir as tmpdir4 } from "node:os";
-import path19 from "node:path";
+import { tmpdir as tmpdir5 } from "node:os";
+import path20 from "node:path";
 function isCodexDelegationEnabled() {
   return Boolean(getCodexGatewayUrl2()) || isLocalCodexDelegationEnabled();
 }
@@ -39757,12 +39957,12 @@ function buildCodexDelegationPrompt(input) {
   ].join("\n");
 }
 function resolveCodexDelegationCwd(requestedCwd) {
-  const projectRoot = path19.resolve(process.cwd());
+  const projectRoot = path20.resolve(process.cwd());
   const raw = typeof requestedCwd === "string" ? requestedCwd.trim() : "";
   if (!raw) return projectRoot;
-  const resolved = path19.resolve(projectRoot, raw);
-  const relative3 = path19.relative(projectRoot, resolved);
-  if (relative3.startsWith("..") || path19.isAbsolute(relative3)) {
+  const resolved = path20.resolve(projectRoot, raw);
+  const relative4 = path20.relative(projectRoot, resolved);
+  if (relative4.startsWith("..") || path20.isAbsolute(relative4)) {
     throw new Error("Codex delegation working_directory resolves outside the Jarvis workspace.");
   }
   return resolved;
@@ -39780,8 +39980,8 @@ async function runRemoteCodexDelegation(gatewayUrl, request) {
   if (!token) {
     throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
   }
-  const relativeCwd = path19.relative(path19.resolve(process.cwd()), request.cwd);
-  const workingDirectory = relativeCwd && !relativeCwd.startsWith("..") && !path19.isAbsolute(relativeCwd) ? relativeCwd : "";
+  const relativeCwd = path20.relative(path20.resolve(process.cwd()), request.cwd);
+  const workingDirectory = relativeCwd && !relativeCwd.startsWith("..") && !path20.isAbsolute(relativeCwd) ? relativeCwd : "";
   const response = await fetch(`${gatewayUrl}/api/codex/delegate`, {
     method: "POST",
     headers: {
@@ -39820,11 +40020,11 @@ async function runLocalCodexDelegation(request) {
     throw new Error("Codex delegation is not enabled on this host.");
   }
   const startedAt = Date.now();
-  const dir = await mkdtemp2(path19.join(tmpdir4(), "jarvis-codex-delegate-"));
-  const outputPath = path19.join(dir, "answer.txt");
+  const dir = await mkdtemp2(path20.join(tmpdir5(), "jarvis-codex-delegate-"));
+  const outputPath = path20.join(dir, "answer.txt");
   const prompt = buildCodexDelegationPrompt(request);
   try {
-    const stdout = await new Promise((resolve9, reject) => {
+    const stdout = await new Promise((resolve10, reject) => {
       const child = spawn7(
         getCodexOAuthCommand(),
         [
@@ -39875,7 +40075,7 @@ async function runLocalCodexDelegation(request) {
       });
       child.on("close", (code) => {
         finish(() => {
-          if (code === 0) resolve9(stdoutText);
+          if (code === 0) resolve10(stdoutText);
           else reject(new Error((stderrText || stdoutText || `Codex delegation exited with ${code}.`).trim()));
         });
       });
@@ -40426,7 +40626,7 @@ var init_youtubeAutoFetch = __esm({
 function withTimeout(promise, ms, fallback) {
   return Promise.race([
     promise,
-    new Promise((resolve9) => setTimeout(() => resolve9(fallback), ms))
+    new Promise((resolve10) => setTimeout(() => resolve10(fallback), ms))
   ]);
 }
 async function preThink(userMessage, briefContext, orchestratorModel) {
@@ -40997,7 +41197,7 @@ __export(websiteCrawler_exports, {
   startWebsiteCrawl: () => startWebsiteCrawl
 });
 import * as cheerio2 from "cheerio";
-import { eq as eq60 } from "drizzle-orm";
+import { eq as eq61 } from "drizzle-orm";
 import * as dns from "node:dns/promises";
 import * as net from "node:net";
 function isPrivateIp(ip) {
@@ -41201,17 +41401,17 @@ ${text2}`);
     if (combinedText.trim()) {
       summary = await distillSummary(url, combinedText);
     }
-    await db.update(websiteCrawls).set({ status: "done", pageCount, summary, crawledAt: /* @__PURE__ */ new Date() }).where(eq60(websiteCrawls.userId, userId));
+    await db.update(websiteCrawls).set({ status: "done", pageCount, summary, crawledAt: /* @__PURE__ */ new Date() }).where(eq61(websiteCrawls.userId, userId));
     console.log(`[websiteCrawler] done for user ${userId}: ${pageCount} pages`);
   } catch (err2) {
     const msg = err2 instanceof Error ? err2.message : String(err2);
     console.error("[websiteCrawler] error:", msg);
-    await db.update(websiteCrawls).set({ status: "error" }).where(eq60(websiteCrawls.userId, userId));
+    await db.update(websiteCrawls).set({ status: "error" }).where(eq61(websiteCrawls.userId, userId));
   }
 }
 async function getWebsiteCrawlSummaryBlock(userId) {
   try {
-    const rows = await db.select().from(websiteCrawls).where(eq60(websiteCrawls.userId, userId)).limit(1);
+    const rows = await db.select().from(websiteCrawls).where(eq61(websiteCrawls.userId, userId)).limit(1);
     const row = rows[0];
     if (!row || row.status !== "done" || !row.summary) return "";
     return `
@@ -41305,16 +41505,16 @@ __export(vaultWriter_exports, {
   lintWikiForAllUsers: () => lintWikiForAllUsers,
   maybeRegenerateVault: () => maybeRegenerateVault
 });
-import { eq as eq61, and as and42, desc as desc17, gte as gte8, sql as sql17, count, isNull as isNull3 } from "drizzle-orm";
+import { eq as eq62, and as and43, desc as desc17, gte as gte8, sql as sql17, count, isNull as isNull3 } from "drizzle-orm";
 async function buildAboutYouSource(userId) {
   const [soulRows, memRows] = await Promise.all([
-    db.select({ content: jarvisSouls.content }).from(jarvisSouls).where(eq61(jarvisSouls.userId, userId)).limit(1),
+    db.select({ content: jarvisSouls.content }).from(jarvisSouls).where(eq62(jarvisSouls.userId, userId)).limit(1),
     db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(
-      and42(
-        eq61(userMemories.userId, userId),
-        eq61(userMemories.tier, "long_term"),
+      and43(
+        eq62(userMemories.userId, userId),
+        eq62(userMemories.tier, "long_term"),
         sql17`${userMemories.category} IN ('values','communication_style','preferences','fact')`,
-        eq61(userMemories.reviewStatus, "active")
+        eq62(userMemories.reviewStatus, "active")
       )
     ).orderBy(desc17(userMemories.extractedAt)).limit(80)
   ]);
@@ -41329,14 +41529,14 @@ ${memList}`;
 async function buildProjectsSource(userId) {
   const [memRows, goalRows] = await Promise.all([
     db.select({ content: userMemories.content }).from(userMemories).where(
-      and42(
-        eq61(userMemories.userId, userId),
-        eq61(userMemories.tier, "long_term"),
+      and43(
+        eq62(userMemories.userId, userId),
+        eq62(userMemories.tier, "long_term"),
         sql17`${userMemories.category} IN ('goals_history','accomplishments')`,
-        eq61(userMemories.reviewStatus, "active")
+        eq62(userMemories.reviewStatus, "active")
       )
     ).orderBy(desc17(userMemories.extractedAt)).limit(60),
-    db.select({ data: goals.data }).from(goals).where(eq61(goals.userId, userId)).limit(1)
+    db.select({ data: goals.data }).from(goals).where(eq62(goals.userId, userId)).limit(1)
   ]);
   const memList = memRows.map((m) => `- ${m.content}`).join("\n");
   const goalData = goalRows[0]?.data;
@@ -41356,12 +41556,12 @@ async function buildPeopleSource(userId) {
       notes: people.notes,
       interactionCount: people.interactionCount,
       lastInteractionAt: people.lastInteractionAt
-    }).from(people).where(eq61(people.userId, userId)).orderBy(desc17(people.interactionCount)).limit(50),
+    }).from(people).where(eq62(people.userId, userId)).orderBy(desc17(people.interactionCount)).limit(50),
     db.select({ content: userMemories.content }).from(userMemories).where(
-      and42(
-        eq61(userMemories.userId, userId),
-        eq61(userMemories.category, "relationships"),
-        eq61(userMemories.reviewStatus, "active")
+      and43(
+        eq62(userMemories.userId, userId),
+        eq62(userMemories.category, "relationships"),
+        eq62(userMemories.reviewStatus, "active")
       )
     ).orderBy(desc17(userMemories.extractedAt)).limit(40)
   ]);
@@ -41382,8 +41582,8 @@ ${memList}`;
 }
 async function buildPatternsSource(userId) {
   const [weeklyRows, dreamRows] = await Promise.all([
-    db.select({ patterns: weeklyInsights.patterns, summary: weeklyInsights.summary, weekOf: weeklyInsights.weekOf }).from(weeklyInsights).where(eq61(weeklyInsights.userId, userId)).orderBy(desc17(weeklyInsights.createdAt)).limit(6),
-    db.select({ insightText: dreamInsights.insightText, confidenceScore: dreamInsights.confidenceScore }).from(dreamInsights).where(eq61(dreamInsights.userId, userId)).orderBy(desc17(dreamInsights.createdAt)).limit(20)
+    db.select({ patterns: weeklyInsights.patterns, summary: weeklyInsights.summary, weekOf: weeklyInsights.weekOf }).from(weeklyInsights).where(eq62(weeklyInsights.userId, userId)).orderBy(desc17(weeklyInsights.createdAt)).limit(6),
+    db.select({ insightText: dreamInsights.insightText, confidenceScore: dreamInsights.confidenceScore }).from(dreamInsights).where(eq62(dreamInsights.userId, userId)).orderBy(desc17(dreamInsights.createdAt)).limit(20)
   ]);
   const weeklyText = weeklyRows.map((row) => {
     const pats = Array.isArray(row.patterns) ? row.patterns : [];
@@ -41400,11 +41600,11 @@ ${dreamText || "No dream insights yet."}`;
 }
 async function buildDecisionsSource(userId) {
   const rows = await db.select({ content: userMemories.content, category: userMemories.category, extractedAt: userMemories.extractedAt }).from(userMemories).where(
-    and42(
-      eq61(userMemories.userId, userId),
+    and43(
+      eq62(userMemories.userId, userId),
       sql17`${userMemories.category} IN ('goals_history','values','blockers')`,
-      eq61(userMemories.tier, "long_term"),
-      eq61(userMemories.reviewStatus, "active")
+      eq62(userMemories.tier, "long_term"),
+      eq62(userMemories.reviewStatus, "active")
     )
   ).orderBy(desc17(userMemories.extractedAt)).limit(80);
   const grouped = {};
@@ -41420,8 +41620,8 @@ ${sections || "No decision memories recorded yet."}`;
 async function isVaultStale(userId) {
   try {
     const pages = await db.select({ slug: knowledgeVaultPages.slug, generatedAt: knowledgeVaultPages.generatedAt }).from(knowledgeVaultPages).where(
-      and42(
-        eq61(knowledgeVaultPages.userId, userId),
+      and43(
+        eq62(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -41435,8 +41635,8 @@ async function isVaultStale(userId) {
     const ageMs = Date.now() - oldestGeneratedAt.getTime();
     if (ageMs > VAULT_TTL_MS) return true;
     const newMemories = await db.select({ count: count() }).from(userMemories).where(
-      and42(
-        eq61(userMemories.userId, userId),
+      and43(
+        eq62(userMemories.userId, userId),
         gte8(userMemories.extractedAt, oldestGeneratedAt)
       )
     );
@@ -41528,8 +41728,8 @@ async function generateWikiIndex(userId, model) {
       crossRefs: knowledgeVaultPages.crossRefs,
       archivedAt: knowledgeVaultPages.archivedAt
     }).from(knowledgeVaultPages).where(
-      and42(
-        eq61(knowledgeVaultPages.userId, userId),
+      and43(
+        eq62(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     ).orderBy(knowledgeVaultPages.pageType, knowledgeVaultPages.slug);
@@ -41546,7 +41746,7 @@ async function generateWikiIndex(userId, model) {
       return `- [${p.pageType}] [[${p.slug}]] \u2014 ${p.title} (updated: ${date2})`;
     }).join("\n");
     const top5 = Object.entries(backlinkCount).sort(([, a], [, b]) => b - a).slice(0, 5).map(([slug, cnt]) => `- [[${slug}]] (${cnt} reference${cnt !== 1 ? "s" : ""})`).join("\n");
-    const lintRows = await db.select({ ranAt: wikiLintLog.ranAt, summary: wikiLintLog.summary }).from(wikiLintLog).where(eq61(wikiLintLog.userId, userId)).orderBy(desc17(wikiLintLog.ranAt)).limit(1);
+    const lintRows = await db.select({ ranAt: wikiLintLog.ranAt, summary: wikiLintLog.summary }).from(wikiLintLog).where(eq62(wikiLintLog.userId, userId)).orderBy(desc17(wikiLintLog.ranAt)).limit(1);
     const lintLogSection = lintRows.length > 0 ? `
 
 ## Lint Log
@@ -41609,8 +41809,8 @@ async function ingestSource(userId, sourceText, sourceType) {
       pageType: knowledgeVaultPages.pageType,
       crossRefs: knowledgeVaultPages.crossRefs
     }).from(knowledgeVaultPages).where(
-      and42(
-        eq61(knowledgeVaultPages.userId, userId),
+      and43(
+        eq62(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -41815,16 +42015,16 @@ A: ${answer.slice(0, 600)}`
     const safeSlug = `queries/${slugBody}`;
     const title = typeof parsed.title === "string" ? parsed.title : question.slice(0, 80);
     const existingPages = await db.select({ slug: knowledgeVaultPages.slug }).from(knowledgeVaultPages).where(
-      and42(
-        eq61(knowledgeVaultPages.userId, userId),
+      and43(
+        eq62(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
     const allSlugs = existingPages.map((p) => p.slug);
     const existing = await db.select({ content: knowledgeVaultPages.content, crossRefs: knowledgeVaultPages.crossRefs }).from(knowledgeVaultPages).where(
-      and42(
-        eq61(knowledgeVaultPages.userId, userId),
-        eq61(knowledgeVaultPages.slug, safeSlug)
+      and43(
+        eq62(knowledgeVaultPages.userId, userId),
+        eq62(knowledgeVaultPages.slug, safeSlug)
       )
     ).limit(1);
     const slugsBlock = allSlugs.length > 0 ? `Other wiki pages you can cross-link:
@@ -41901,8 +42101,8 @@ async function lintWiki(userId) {
     const model = await getModel2(userId, "memory");
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
     const pages = await db.select().from(knowledgeVaultPages).where(
-      and42(
-        eq61(knowledgeVaultPages.userId, userId),
+      and43(
+        eq62(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -41919,9 +42119,9 @@ async function lintWiki(userId) {
       );
       if (lastActivity < thirtyDaysAgo) {
         await db.update(knowledgeVaultPages).set({ archivedAt: /* @__PURE__ */ new Date() }).where(
-          and42(
-            eq61(knowledgeVaultPages.userId, userId),
-            eq61(knowledgeVaultPages.slug, page.slug)
+          and43(
+            eq62(knowledgeVaultPages.userId, userId),
+            eq62(knowledgeVaultPages.slug, page.slug)
           )
         );
         stats2.pagesArchived++;
@@ -41989,9 +42189,9 @@ Return {"corrections": []} if no issues found. Only include entries where revisi
           crossRefs,
           updatedAt: /* @__PURE__ */ new Date()
         }).where(
-          and42(
-            eq61(knowledgeVaultPages.userId, userId),
-            eq61(knowledgeVaultPages.slug, correction.slug)
+          and43(
+            eq62(knowledgeVaultPages.userId, userId),
+            eq62(knowledgeVaultPages.slug, correction.slug)
           )
         );
         stats2.pagesUpdated++;
@@ -42130,7 +42330,7 @@ var coachAgent_exports = {};
 __export(coachAgent_exports, {
   runCoachAgent: () => runCoachAgent
 });
-import { eq as eq62, and as and43, desc as desc18, gte as gte9 } from "drizzle-orm";
+import { eq as eq63, and as and44, desc as desc18, gte as gte9 } from "drizzle-orm";
 function getMaxTokensForChannel(channelName) {
   if (channelName.startsWith("Discord")) return 1200;
   if (channelName === "Daemon") return 200;
@@ -42197,14 +42397,14 @@ async function runCoachAgent(input) {
     return null;
   });
   const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, prefsRow, recentInteractionsResult, surfacedItemsResult, soulBlockResult, websiteCrawlResult, todayPlanRow, orchestratorModelResult, preThinkResult] = await Promise.allSettled([
-    db.select().from(goals).where(eq62(goals.userId, userId)).limit(1),
-    db.select().from(stats).where(eq62(stats.userId, userId)).limit(1),
-    db.select().from(lifeContext).where(eq62(lifeContext.userId, userId)).limit(1),
+    db.select().from(goals).where(eq63(goals.userId, userId)).limit(1),
+    db.select().from(stats).where(eq63(stats.userId, userId)).limit(1),
+    db.select().from(lifeContext).where(eq63(lifeContext.userId, userId)).limit(1),
     // Skip chat_history fetch when the session cache is warm — the cached
     // message list replaces the rolling 10-message DB window.
-    sessionResumed ? Promise.resolve([]) : db.select().from(chatHistory).where(eq62(chatHistory.userId, userId)).limit(1),
-    db.select().from(commitments).where(and43(eq62(commitments.userId, userId), eq62(commitments.status, "pending"))).orderBy(desc18(commitments.extractedAt)).limit(10),
-    db.select().from(userPreferences).where(eq62(userPreferences.userId, userId)).limit(1),
+    sessionResumed ? Promise.resolve([]) : db.select().from(chatHistory).where(eq63(chatHistory.userId, userId)).limit(1),
+    db.select().from(commitments).where(and44(eq63(commitments.userId, userId), eq63(commitments.status, "pending"))).orderBy(desc18(commitments.extractedAt)).limit(10),
+    db.select().from(userPreferences).where(eq63(userPreferences.userId, userId)).limit(1),
     getRecentInteractions(userId, 20),
     db.select({
       sourceType: inboxItems.sourceType,
@@ -42213,8 +42413,8 @@ async function runCoachAgent(input) {
       snippet: inboxItems.snippet,
       jarvisReason: inboxItems.jarvisReason,
       surfacedAt: inboxItems.surfacedAt
-    }).from(inboxItems).where(and43(
-      eq62(inboxItems.userId, userId),
+    }).from(inboxItems).where(and44(
+      eq63(inboxItems.userId, userId),
       gte9(inboxItems.surfacedAt, twentyFourHoursAgo)
     )).orderBy(desc18(inboxItems.surfacedAt)).limit(5),
     // Soul and website crawl blocks are independent of DB results — run them
@@ -42231,7 +42431,7 @@ async function runCoachAgent(input) {
     // todayPlan — fetched with tentative UTC date key so it runs in the
     // parallel batch; reconciled below if the user's timezone-adjusted date
     // differs from the UTC date (rare, only near day boundaries).
-    db.select().from(plans).where(and43(eq62(plans.userId, userId), eq62(plans.date, tentativeDateKey))).limit(1),
+    db.select().from(plans).where(and44(eq63(plans.userId, userId), eq63(plans.date, tentativeDateKey))).limit(1),
     // Resolved per-user orchestrator model (already fired above).
     _orchestratorModelPromise,
     // Pre-think fires as soon as the model resolves (already chained above).
@@ -42272,7 +42472,7 @@ async function runCoachAgent(input) {
   }
   if (dateKey !== tentativeDateKey) {
     try {
-      const planRows = await db.select().from(plans).where(and43(eq62(plans.userId, userId), eq62(plans.date, dateKey))).limit(1);
+      const planRows = await db.select().from(plans).where(and44(eq63(plans.userId, userId), eq63(plans.date, dateKey))).limit(1);
       todayPlan = planRows[0]?.data || null;
     } catch (err2) {
       console.error("[coach] plan re-fetch (timezone reconcile) failed:", err2);
@@ -42728,7 +42928,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
       let storedSession = null;
       let storedSessionId = null;
       try {
-        const rows = await db.select().from(buildSessions).where(eq62(buildSessions.userId, userId)).orderBy(desc18(buildSessions.createdAt)).limit(1);
+        const rows = await db.select().from(buildSessions).where(eq63(buildSessions.userId, userId)).orderBy(desc18(buildSessions.createdAt)).limit(1);
         if (rows.length > 0) {
           const row = rows[0];
           storedSessionId = row.id;
@@ -42759,7 +42959,7 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
           `[${channelName}] suspended-build reminder appended (ackAge=${Math.round(ackAgeMs / 36e5)}h, build="${buildDescription.slice(0, 60)}")`
         );
         if (storedSessionId) {
-          db.update(buildSessions).set({ reminded: true }).where(eq62(buildSessions.id, storedSessionId)).catch((err2) => console.error("[coach] build-session remind flag update failed:", err2));
+          db.update(buildSessions).set({ reminded: true }).where(eq63(buildSessions.id, storedSessionId)).catch((err2) => console.error("[coach] build-session remind flag update failed:", err2));
         }
       }
     } catch (reminderErr) {
@@ -43156,13 +43356,13 @@ async function opusChunksToWav(opusChunks) {
   const SAMPLE_RATE = 48e3;
   const CHANNELS = 2;
   const FRAME_SIZE = 960;
-  return new Promise((resolve9, reject) => {
+  return new Promise((resolve10, reject) => {
     const decoder = new prism.opus.Decoder({ rate: SAMPLE_RATE, channels: CHANNELS, frameSize: FRAME_SIZE });
     const pcmChunks = [];
     decoder.on("data", (chunk) => pcmChunks.push(chunk));
     decoder.on("end", () => {
       const pcm = Buffer.concat(pcmChunks);
-      resolve9(buildWavBuffer(pcm, SAMPLE_RATE, CHANNELS));
+      resolve10(buildWavBuffer(pcm, SAMPLE_RATE, CHANNELS));
     });
     decoder.on("error", reject);
     for (const chunk of opusChunks) {
@@ -43333,7 +43533,7 @@ var init_approvalActions = __esm({
 });
 
 // server/agent/tools/getCapabilityGaps.ts
-import { eq as eq63, and as and44, gte as gte10, desc as desc19, sql as sql19 } from "drizzle-orm";
+import { eq as eq64, and as and45, gte as gte10, desc as desc19, sql as sql19 } from "drizzle-orm";
 function formatGapsText(groups) {
   if (groups.length === 0) {
     return "No capability gaps logged this week. Jarvis handled everything it was asked!";
@@ -43399,10 +43599,10 @@ var init_getCapabilityGaps = __esm({
           const reason = args.dismiss_detected_reason ? String(args.dismiss_detected_reason).trim() : null;
           if (userMsg && reason) {
             await db.update(capabilityGaps).set({ addressed: true }).where(
-              and44(
-                eq63(capabilityGaps.userId, ctx.userId),
-                eq63(capabilityGaps.userMessage, userMsg),
-                eq63(capabilityGaps.detectedReason, reason)
+              and45(
+                eq64(capabilityGaps.userId, ctx.userId),
+                eq64(capabilityGaps.userMessage, userMsg),
+                eq64(capabilityGaps.detectedReason, reason)
               )
             );
             const content2 = `Gap dismissed \u2014 it won't be included in Sunday's analysis.`;
@@ -43417,8 +43617,8 @@ var init_getCapabilityGaps = __esm({
             addressed: sql19`BOOL_AND(${capabilityGaps.addressed})`,
             latestCreatedAt: sql19`MAX(${capabilityGaps.createdAt})::text`
           }).from(capabilityGaps).where(
-            and44(
-              eq63(capabilityGaps.userId, ctx.userId),
+            and45(
+              eq64(capabilityGaps.userId, ctx.userId),
               gte10(capabilityGaps.createdAt, sevenDaysAgo)
             )
           ).groupBy(
@@ -44224,7 +44424,7 @@ __export(selfHealAudit_exports, {
   readAuditEntries: () => readAuditEntries
 });
 import fs15 from "fs/promises";
-import path20 from "path";
+import path21 from "path";
 import { asc as asc4 } from "drizzle-orm";
 function parseAuditLog(raw) {
   const verifyUpdates = /* @__PURE__ */ new Map();
@@ -44313,7 +44513,7 @@ async function restoreFromDB() {
     ].join("\n");
     blocks.push(block);
   }
-  await fs15.mkdir(path20.dirname(AUDIT_LOG_PATH2), { recursive: true });
+  await fs15.mkdir(path21.dirname(AUDIT_LOG_PATH2), { recursive: true });
   await fs15.writeFile(AUDIT_LOG_PATH2, blocks.join(""), "utf-8");
   console.log(`[selfHealAudit] Restored ${rows.length} audit entries from DB.`);
 }
@@ -44367,7 +44567,7 @@ var init_selfHealAudit = __esm({
     "use strict";
     init_db();
     init_schema();
-    AUDIT_LOG_PATH2 = path20.join(process.cwd(), "server/self-heal-audit.log");
+    AUDIT_LOG_PATH2 = path21.join(process.cwd(), "server/self-heal-audit.log");
     SEPARATOR_CHAR = "\u2500";
     SEPARATOR_LENGTH = 72;
     SEPARATOR = SEPARATOR_CHAR.repeat(SEPARATOR_LENGTH);
@@ -44383,7 +44583,7 @@ __export(slashCommands_exports, {
   verifyDiscordSignature: () => verifyDiscordSignature
 });
 import * as crypto8 from "node:crypto";
-import { eq as eq64, and as and45, desc as desc20 } from "drizzle-orm";
+import { eq as eq65, and as and46, desc as desc20 } from "drizzle-orm";
 function verifyDiscordSignature(publicKeyHex, signatureHex, timestamp2, rawBody) {
   try {
     const derPrefix = Buffer.from("302a300506032b6570032100", "hex");
@@ -44479,9 +44679,9 @@ async function registerSlashCommands() {
 async function lookupUserByDiscordId(discordUserId) {
   try {
     const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(
-      and45(
-        eq64(channelLinks.channel, "discord"),
-        eq64(channelLinks.address, discordUserId)
+      and46(
+        eq65(channelLinks.channel, "discord"),
+        eq65(channelLinks.address, discordUserId)
       )
     ).limit(1);
     return rows[0] ?? null;
@@ -44601,7 +44801,7 @@ async function handleStatus(appId, interaction, userId) {
       id: agentJobs.id,
       title: agentJobs.title,
       status: agentJobs.status
-    }).from(agentJobs).where(eq64(agentJobs.userId, userId)).orderBy(desc20(agentJobs.createdAt)).limit(20);
+    }).from(agentJobs).where(eq65(agentJobs.userId, userId)).orderBy(desc20(agentJobs.createdAt)).limit(20);
     const active = jobs.filter((j) => j.status === "queued" || j.status === "running");
     const lastDone = jobs.find((j) => j.status === "complete" || j.status === "failed");
     let summary;
@@ -45653,14 +45853,14 @@ __export(manager_exports, {
   updateChannelAgentType: () => updateChannelAgentType
 });
 import { Client as Client4, GatewayIntentBits, Events, Partials, DMChannel, AttachmentBuilder } from "discord.js";
-import { eq as eq65, and as and46, sql as sql20 } from "drizzle-orm";
+import { eq as eq66, and as and47, sql as sql20 } from "drizzle-orm";
 function getClientForUser(userId) {
   return botClients.get(userId) ?? botClients.get(SHARED_BOT_KEY);
 }
 async function claimMessageId(messageId) {
   const seenAt = Date.now();
   seenMessageIds.set(messageId, seenAt);
-  const timeout = new Promise((resolve9) => setTimeout(() => resolve9(null), 2e3));
+  const timeout = new Promise((resolve10) => setTimeout(() => resolve10(null), 2e3));
   try {
     const dbCall = db.execute(sql20`
       INSERT INTO discord_seen_messages (message_id, seen_at)
@@ -45713,7 +45913,7 @@ function generateCode2(len = 6) {
 }
 async function lookupLink2(userId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { address: row.address, meta: row.metadata || {} };
@@ -45724,7 +45924,7 @@ async function lookupLink2(userId) {
 }
 async function lookupUserByDiscordId2(discordUserId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and46(eq65(channelLinks.channel, "discord"), eq65(channelLinks.address, discordUserId))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and47(eq66(channelLinks.channel, "discord"), eq66(channelLinks.address, discordUserId))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { userId: row.userId, meta: row.metadata || {} };
@@ -45734,7 +45934,7 @@ async function lookupUserByDiscordId2(discordUserId) {
   }
 }
 async function updateChannelAgentType(userId, channelId, agentType) {
-  const rows = await db.select().from(channelLinks).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).limit(1);
+  const rows = await db.select().from(channelLinks).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord"))).limit(1);
   const existing = rows[0]?.metadata ?? {};
   const channelAgents = { ...existing.channelAgents ?? {} };
   if (agentType === null) {
@@ -45743,7 +45943,7 @@ async function updateChannelAgentType(userId, channelId, agentType) {
     channelAgents[channelId] = agentType;
   }
   const updated = { ...existing, channelAgents };
-  await db.update(channelLinks).set({ metadata: updated }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord")));
+  await db.update(channelLinks).set({ metadata: updated }).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord")));
 }
 async function getChannelAgentAssignment(userId, channelId) {
   const link = await lookupLink2(userId);
@@ -45899,7 +46099,7 @@ To link this Discord account:
       try {
         const { answerProjectQuestion: answerProjectQuestion2 } = await Promise.resolve().then(() => (init_projectRunner(), projectRunner_exports));
         const { jarvisProjects: jarvisProjects2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-        const pendingProjects = await db.select().from(jarvisProjects2).where(and46(eq65(jarvisProjects2.userId, userId), eq65(jarvisProjects2.status, "waiting_for_input")));
+        const pendingProjects = await db.select().from(jarvisProjects2).where(and47(eq66(jarvisProjects2.userId, userId), eq66(jarvisProjects2.status, "waiting_for_input")));
         const matched = pendingProjects.find((p) => {
           const meta = p.questionMeta;
           return meta?.discordMessageId === replyRefMsgId && meta?.discordChannelId === replyRefChannelId;
@@ -45923,8 +46123,8 @@ To link this Discord account:
     }
     const prevLock = userProcessingLocks.get(userId) ?? Promise.resolve();
     let releaseLock;
-    const thisLock = new Promise((resolve9) => {
-      releaseLock = resolve9;
+    const thisLock = new Promise((resolve10) => {
+      releaseLock = resolve10;
     });
     const chainedLock = prevLock.then(() => thisLock).catch(() => thisLock);
     userProcessingLocks.set(userId, chainedLock);
@@ -45933,7 +46133,7 @@ To link this Discord account:
     } catch {
     }
     try {
-      db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).catch(() => {
+      db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord"))).catch(() => {
       });
       const incomingGuildId = message.guild?.id;
       if (!isDM && incomingGuildId && !pairedUser.meta.workspace?.guildId) {
@@ -45948,7 +46148,7 @@ To link this Discord account:
             channels: pairedUser.meta.workspace?.channels ?? {}
           }
         };
-        await db.update(channelLinks).set({ metadata: updatedMeta }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).then(async () => {
+        await db.update(channelLinks).set({ metadata: updatedMeta }).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord"))).then(async () => {
           console.log(`[DiscordManager] auto-saved guildId=${incomingGuildId} for user ${userId}`);
           const dmChannelId = pairedUser.meta.dmChannelId;
           if (dmChannelId) {
@@ -46546,9 +46746,9 @@ async function bootAllBots() {
   try {
     await seedSeenMessageIds();
     const { db: _db } = await Promise.resolve().then(() => (init_db(), db_exports));
-    const { sql: sql46 } = await import("drizzle-orm");
+    const { sql: sql47 } = await import("drizzle-orm");
     const rows = await _db.execute(
-      sql46`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
+      sql47`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
     );
     const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
     let started = 0;
@@ -46606,10 +46806,10 @@ async function completePairing(userId, code) {
       allowlistedGuilds: []
     };
     await db.delete(channelLinks).where(
-      and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))
+      and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord"))
     );
     await db.delete(channelLinks).where(
-      and46(eq65(channelLinks.channel, "discord"), eq65(channelLinks.address, rec.discordUserId))
+      and47(eq66(channelLinks.channel, "discord"), eq66(channelLinks.address, rec.discordUserId))
     );
     await db.insert(channelLinks).values({
       userId,
@@ -46653,7 +46853,7 @@ async function sendToDiscordUserGetId(userId, text2) {
       const discordUser = await client.users.fetch(discordUserId);
       const dm = await discordUser.createDM();
       dmChannelId = dm.id;
-      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord")));
     }
     const channel = await client.channels.fetch(dmChannelId);
     if (!channel) return { sent: false };
@@ -46683,7 +46883,7 @@ async function sendFileToDiscordUser(userId, filename, content, description) {
       const discordUser = await client.users.fetch(discordUserId);
       const dm = await discordUser.createDM();
       dmChannelId = dm.id;
-      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...link.meta, dmChannelId } }).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord")));
     }
     const channel = await client.channels.fetch(dmChannelId);
     if (!channel) return false;
@@ -46716,7 +46916,7 @@ async function createDiscordChannel(userId, opts) {
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
-  const linkRow = await db.select().from(channelLinks).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).limit(1);
+  const linkRow = await db.select().from(channelLinks).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord"))).limit(1);
   const linkMeta = linkRow[0]?.metadata ?? {};
   const linkedGuildId = linkMeta.workspace?.guildId;
   const resolvedGuildId = linkedGuildId ?? opts.ctxGuildId;
@@ -46776,7 +46976,7 @@ async function deleteDiscordChannel(userId, opts) {
   if (!client || !client.isReady()) {
     return { ok: false, error: "Discord bot is not running." };
   }
-  const linkRow = await db.select().from(channelLinks).where(and46(eq65(channelLinks.userId, userId), eq65(channelLinks.channel, "discord"))).limit(1);
+  const linkRow = await db.select().from(channelLinks).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "discord"))).limit(1);
   const linkMeta = linkRow[0]?.metadata ?? {};
   const linkedGuildId = linkMeta.workspace?.guildId;
   const resolvedGuildId = linkedGuildId ?? opts.ctxGuildId;
@@ -47011,10 +47211,10 @@ function buildReactionHandler(botOwnerId) {
         effectiveUserId = reactorPaired.userId;
       }
       const rows = await db.select().from(discordPendingApprovals).where(
-        and46(
-          eq65(discordPendingApprovals.messageId, messageId),
-          eq65(discordPendingApprovals.userId, effectiveUserId),
-          eq65(discordPendingApprovals.status, "pending")
+        and47(
+          eq66(discordPendingApprovals.messageId, messageId),
+          eq66(discordPendingApprovals.userId, effectiveUserId),
+          eq66(discordPendingApprovals.status, "pending")
         )
       ).limit(1);
       if (!rows[0]) return;
@@ -47023,7 +47223,7 @@ function buildReactionHandler(botOwnerId) {
       const isReject = emoji === approval.rejectEmoji;
       if (!isApprove && !isReject) return;
       const newStatus = isApprove ? "approved" : "rejected";
-      await db.update(discordPendingApprovals).set({ status: newStatus, resolvedAt: /* @__PURE__ */ new Date() }).where(eq65(discordPendingApprovals.messageId, messageId));
+      await db.update(discordPendingApprovals).set({ status: newStatus, resolvedAt: /* @__PURE__ */ new Date() }).where(eq66(discordPendingApprovals.messageId, messageId));
       console.log(`[DiscordManager] Approval ${messageId} ${newStatus} via reaction`);
       const { recordApprovalSignal: recordApprovalSignal2 } = await Promise.resolve().then(() => (init_approvalLearning(), approvalLearning_exports));
       recordApprovalSignal2({
@@ -47057,10 +47257,10 @@ function buildReactionHandler(botOwnerId) {
 async function getNamedAgentForChannel(userId, channelId) {
   try {
     const rows = await db.select().from(discordAgents).where(
-      and46(
-        eq65(discordAgents.userId, userId),
-        eq65(discordAgents.channelId, channelId),
-        eq65(discordAgents.isActive, 1)
+      and47(
+        eq66(discordAgents.userId, userId),
+        eq66(discordAgents.channelId, channelId),
+        eq66(discordAgents.isActive, 1)
       )
     ).limit(1);
     const agent = rows[0];
@@ -47186,9 +47386,9 @@ __export(tts_exports, {
 import { spawn as spawn8 } from "child_process";
 import { writeFile as writeFile3, unlink as unlink2, readFile as readFile6 } from "fs/promises";
 import { randomUUID as randomUUID3 } from "crypto";
-import { tmpdir as tmpdir5 } from "os";
-import { join as join8 } from "path";
-import { eq as eq66, and as and47 } from "drizzle-orm";
+import { tmpdir as tmpdir6 } from "os";
+import { join as join9 } from "path";
+import { eq as eq67, and as and48 } from "drizzle-orm";
 function storeTempAudio(buffer, mimeType = "audio/mpeg") {
   const token = randomUUID3();
   tempAudioStore.set(token, { buffer, mimeType, expiresAt: Date.now() + 5 * 6e4 });
@@ -47207,11 +47407,11 @@ function consumeTempAudio(token) {
   return entry;
 }
 async function mp3ToOggOpus(mp3Buffer) {
-  const inputPath = join8(tmpdir5(), `tts-in-${randomUUID3()}.mp3`);
-  const outputPath = join8(tmpdir5(), `tts-out-${randomUUID3()}.ogg`);
+  const inputPath = join9(tmpdir6(), `tts-in-${randomUUID3()}.mp3`);
+  const outputPath = join9(tmpdir6(), `tts-out-${randomUUID3()}.ogg`);
   try {
     await writeFile3(inputPath, mp3Buffer);
-    await new Promise((resolve9, reject) => {
+    await new Promise((resolve10, reject) => {
       const ff = spawn8("ffmpeg", [
         "-i",
         inputPath,
@@ -47228,7 +47428,7 @@ async function mp3ToOggOpus(mp3Buffer) {
       ]);
       ff.stderr.on("data", () => {
       });
-      ff.on("close", (code) => code === 0 ? resolve9() : reject(new Error(`ffmpeg exited ${code}`)));
+      ff.on("close", (code) => code === 0 ? resolve10() : reject(new Error(`ffmpeg exited ${code}`)));
       ff.on("error", reject);
     });
     return await readFile6(outputPath);
@@ -47241,7 +47441,7 @@ async function mp3ToOggOpus(mp3Buffer) {
 }
 async function getTelegramChatId3(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq66(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq67(telegramLinks.userId, userId)).limit(1);
     return rows[0]?.chatId ?? null;
   } catch {
     return null;
@@ -47249,7 +47449,7 @@ async function getTelegramChatId3(userId) {
 }
 async function getUserTtsPrefs(userId) {
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq66(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq67(userPreferences.userId, userId)).limit(1);
     const data = rows[0]?.data || {};
     const rawTier = data.ttsLatencyTier;
     const latencyTier = typeof rawTier === "number" && [0, 1, 2, 3, 4].includes(rawTier) ? rawTier : 2;
@@ -47263,7 +47463,7 @@ async function getUserTtsPrefs(userId) {
   }
 }
 async function setUserTtsPref(userId, patch) {
-  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq66(userPreferences.userId, userId)).limit(1);
+  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq67(userPreferences.userId, userId)).limit(1);
   const current = existing[0]?.data || {};
   const updated = { ...current };
   if (patch.enabled !== void 0) updated.ttsEnabled = patch.enabled;
@@ -47273,7 +47473,7 @@ async function setUserTtsPref(userId, patch) {
 }
 async function getUserTtsChannels(userId) {
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq66(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq67(userPreferences.userId, userId)).limit(1);
     const data = rows[0]?.data || {};
     if (Array.isArray(data.ttsChannels)) return data.ttsChannels;
     if (data.ttsEnabled === true) return ["telegram"];
@@ -47283,14 +47483,14 @@ async function getUserTtsChannels(userId) {
   }
 }
 async function setTtsChannels(userId, channels2) {
-  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq66(userPreferences.userId, userId)).limit(1);
+  const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq67(userPreferences.userId, userId)).limit(1);
   const current = existing[0]?.data || {};
   const updated = { ...current, ttsChannels: channels2 };
   await db.insert(userPreferences).values({ userId, data: updated }).onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated } });
 }
 async function getWhatsAppAddress(userId) {
   try {
-    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and47(eq66(channelLinks.userId, userId), eq66(channelLinks.channel, "whatsapp"))).limit(1);
+    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and48(eq67(channelLinks.userId, userId), eq67(channelLinks.channel, "whatsapp"))).limit(1);
     return rows[0]?.address ?? null;
   } catch {
     return null;
@@ -47470,7 +47670,7 @@ var init_tts = __esm({
 });
 
 // server/momentumCoach.ts
-import { eq as eq67, and as and48, lt as lt5 } from "drizzle-orm";
+import { eq as eq68, and as and49, lt as lt5 } from "drizzle-orm";
 async function generateMomentumSteps(userId, context) {
   const incompleteTasks = (context.tasks || []).filter((t) => !t.completed);
   const taskList = incompleteTasks.slice(0, 5).map((t) => t.title).join(", ") || "no specific tasks planned";
@@ -47555,7 +47755,7 @@ async function startMomentumSession(userId, chatId, context) {
   console.log(`[Momentum] Session started for user ${userId}, step 0`);
 }
 async function handleMomentumDone(userId, chatId, stepIndex) {
-  const rows = await db.select().from(momentumSessions).where(eq67(momentumSessions.userId, userId)).limit(1);
+  const rows = await db.select().from(momentumSessions).where(eq68(momentumSessions.userId, userId)).limit(1);
   if (rows.length === 0) return;
   const session = rows[0];
   if (session.status === "expired") {
@@ -47576,7 +47776,7 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
     completedSteps: newCompletedSteps,
     status: isFinished ? "completed" : "active",
     lastStepAt: /* @__PURE__ */ new Date()
-  }).where(eq67(momentumSessions.userId, userId));
+  }).where(eq68(momentumSessions.userId, userId));
   const ackMessages = {
     implementation_intention: `Done \u2014 +${xpEarned} XP. That first step is always the hardest.`,
     identity_framing: `Locked in \u2014 +${xpEarned} XP. That's exactly who you are.`,
@@ -47592,7 +47792,7 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
   }
   setTimeout(async () => {
     try {
-      const freshRows = await db.select().from(momentumSessions).where(eq67(momentumSessions.userId, userId)).limit(1);
+      const freshRows = await db.select().from(momentumSessions).where(eq68(momentumSessions.userId, userId)).limit(1);
       if (freshRows.length === 0 || freshRows[0].currentStep !== nextStep) return;
       const freshSession = freshRows[0];
       if (freshSession.status !== "active") return;
@@ -47612,37 +47812,37 @@ async function handleMomentumDone(userId, chatId, stepIndex) {
   }, STEP_DELAY_MS);
 }
 async function expireSession2(userId, chatId) {
-  await db.update(momentumSessions).set({ status: "expired" }).where(eq67(momentumSessions.userId, userId));
+  await db.update(momentumSessions).set({ status: "expired" }).where(eq68(momentumSessions.userId, userId));
   await sendMessage(chatId, "No worries \u2014 we'll pick it back up tomorrow.");
   console.log(`[Momentum] Session expired for user ${userId}`);
 }
 async function awardXp(userId, amount) {
   try {
-    const rows = await db.select().from(stats).where(eq67(stats.userId, userId)).limit(1);
+    const rows = await db.select().from(stats).where(eq68(stats.userId, userId)).limit(1);
     if (rows.length === 0) return;
     const data = rows[0].data ?? {};
     const currentXp = Number(data.xp ?? 0);
-    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq67(stats.userId, userId));
+    await db.update(stats).set({ data: { ...data, xp: currentXp + amount }, updatedAt: /* @__PURE__ */ new Date() }).where(eq68(stats.userId, userId));
   } catch (err2) {
     console.error("[Momentum] Failed to award XP:", err2);
   }
 }
 async function hasMomentumSessionToday(userId, dateKey) {
-  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq67(momentumSessions.userId, userId)).limit(1);
+  const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq68(momentumSessions.userId, userId)).limit(1);
   return rows.length > 0 && rows[0].sessionDate === dateKey;
 }
 async function expireStaleMomentumSessions() {
   try {
     const cutoff = new Date(Date.now() - SESSION_TIMEOUT_MS);
     const staleSessions = await db.select().from(momentumSessions).where(
-      and48(
-        eq67(momentumSessions.status, "active"),
+      and49(
+        eq68(momentumSessions.status, "active"),
         lt5(momentumSessions.lastStepAt, cutoff)
       )
     );
     for (const session of staleSessions) {
-      const links = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq67(telegramLinks.userId, session.userId)).limit(1);
-      await db.update(momentumSessions).set({ status: "expired" }).where(eq67(momentumSessions.userId, session.userId));
+      const links = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq68(telegramLinks.userId, session.userId)).limit(1);
+      await db.update(momentumSessions).set({ status: "expired" }).where(eq68(momentumSessions.userId, session.userId));
       if (links.length > 0) {
         await sendMessage(links[0].chatId, "No worries \u2014 we'll pick it back up tomorrow.").catch(() => {
         });
@@ -47680,10 +47880,10 @@ __export(extractor_exports, {
   MEMORY_CATEGORIES: () => MEMORY_CATEGORIES,
   extractAndStore: () => extractAndStore
 });
-import { eq as eq68, desc as desc21 } from "drizzle-orm";
+import { eq as eq69, desc as desc21 } from "drizzle-orm";
 async function isMemoryReviewEnabledForUser(userId) {
   try {
-    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq68(lifeContext.userId, userId)).limit(1);
+    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq69(lifeContext.userId, userId)).limit(1);
     const data = rows[0]?.data;
     if (data && typeof data.memoryReviewEnabled === "boolean") return data.memoryReviewEnabled;
     return true;
@@ -47748,7 +47948,7 @@ async function extractAndStore(input) {
   let stored = [];
   let hadAnyError = false;
   try {
-    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq68(userMemories.userId, userId)).orderBy(desc21(userMemories.extractedAt)).limit(150);
+    const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq69(userMemories.userId, userId)).orderBy(desc21(userMemories.extractedAt)).limit(150);
     const existingMemories = existingRows.map((r) => r.content);
     const seen = new Set(existingMemories.map(normalizeForDedup2));
     const existingList = existingMemories.length > 0 ? `
@@ -47964,12 +48164,12 @@ var taskResolver_exports = {};
 __export(taskResolver_exports, {
   resolveScheduledTaskAttention: () => resolveScheduledTaskAttention
 });
-import { eq as eq69, and as and49 } from "drizzle-orm";
+import { eq as eq70, and as and50 } from "drizzle-orm";
 async function resolveScheduledTaskAttention(userId, taskId, userAnswer) {
   const [task] = await db.select().from(jarvisScheduledTasks).where(
-    and49(
-      eq69(jarvisScheduledTasks.id, taskId),
-      eq69(jarvisScheduledTasks.userId, userId)
+    and50(
+      eq70(jarvisScheduledTasks.id, taskId),
+      eq70(jarvisScheduledTasks.userId, userId)
     )
   ).limit(1);
   if (!task) return { ok: false, reason: "not_found" };
@@ -47985,9 +48185,9 @@ async function resolveScheduledTaskAttention(userId, taskId, userAnswer) {
     sourceRef: task.id
   });
   await db.update(jarvisScheduledTasks).set({ needsAttention: false, attentionQuestion: null }).where(
-    and49(
-      eq69(jarvisScheduledTasks.id, taskId),
-      eq69(jarvisScheduledTasks.userId, userId)
+    and50(
+      eq70(jarvisScheduledTasks.id, taskId),
+      eq70(jarvisScheduledTasks.userId, userId)
     )
   );
   return { ok: true, taskTitle: task.title };
@@ -48008,7 +48208,7 @@ __export(inboxRules_exports, {
   learnFromDismissal: () => learnFromDismissal,
   matchItemAgainstRules: () => matchItemAgainstRules
 });
-import { eq as eq70, and as and50 } from "drizzle-orm";
+import { eq as eq71, and as and51 } from "drizzle-orm";
 function normalizeForMatch(text2) {
   return (text2 || "").toLowerCase().trim();
 }
@@ -48049,7 +48249,7 @@ function incrementMatchCount(rule) {
   db.update(inboxRules).set({
     matchCount: (rule.matchCount ?? 0) + 1,
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq70(inboxRules.id, rule.id)).catch(() => {
+  }).where(eq71(inboxRules.id, rule.id)).catch(() => {
   });
 }
 function matchItemAgainstRules(item, rules) {
@@ -48079,20 +48279,20 @@ function matchItemAgainstRules(item, rules) {
   return { verdict: "default" };
 }
 async function getUserInboxRules(userId) {
-  return db.select().from(inboxRules).where(eq70(inboxRules.userId, userId));
+  return db.select().from(inboxRules).where(eq71(inboxRules.userId, userId));
 }
 async function learnFromDismissal(userId, itemId, telegramChatId) {
-  const [item] = await db.select().from(inboxItems).where(and50(eq70(inboxItems.id, itemId), eq70(inboxItems.userId, userId)));
+  const [item] = await db.select().from(inboxItems).where(and51(eq71(inboxItems.id, itemId), eq71(inboxItems.userId, userId)));
   if (!item) return { learned: false };
   if (item.sourceType !== "email") return { learned: false };
   const newCount = (item.dismissCount ?? 0) + 1;
-  await db.update(inboxItems).set({ dismissCount: newCount, status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq70(inboxItems.id, itemId));
+  await db.update(inboxItems).set({ dismissCount: newCount, status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq71(inboxItems.id, itemId));
   const senderDomain = item.sender ? extractDomain(item.sender) : "";
   if (!senderDomain) return { learned: false };
   const dismissed = await db.select().from(inboxItems).where(
-    and50(
-      eq70(inboxItems.userId, userId),
-      eq70(inboxItems.status, "dismissed")
+    and51(
+      eq71(inboxItems.userId, userId),
+      eq71(inboxItems.status, "dismissed")
     )
   );
   const domainDismissals = dismissed.filter(
@@ -48100,10 +48300,10 @@ async function learnFromDismissal(userId, itemId, telegramChatId) {
   ).length;
   if (domainDismissals >= 3) {
     const existing = await db.select().from(inboxRules).where(
-      and50(
-        eq70(inboxRules.userId, userId),
-        eq70(inboxRules.type, "suppress"),
-        eq70(inboxRules.source, "learned")
+      and51(
+        eq71(inboxRules.userId, userId),
+        eq71(inboxRules.type, "suppress"),
+        eq71(inboxRules.source, "learned")
       )
     );
     const alreadyHas = existing.some((r) => {
@@ -48197,7 +48397,7 @@ __export(telegramRoutes_exports, {
   startProactiveScheduler: () => startProactiveScheduler,
   startTelegramPolling: () => startTelegramPolling
 });
-import { eq as eq71, and as and51, desc as desc22, sql as sql22, gte as gte11, lte } from "drizzle-orm";
+import { eq as eq72, and as and52, desc as desc22, sql as sql22, gte as gte11, lte } from "drizzle-orm";
 import OpenAI8 from "openai";
 function generateLinkCode() {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -48498,8 +48698,8 @@ async function extractProfileFromTelegram(userId, userText) {
   try {
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
     const unanswered = await db.select().from(proactiveQuestionsSent).where(
-      and51(
-        eq71(proactiveQuestionsSent.userId, userId),
+      and52(
+        eq72(proactiveQuestionsSent.userId, userId),
         sql22`${proactiveQuestionsSent.answeredAt} IS NULL`,
         sql22`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
       )
@@ -48509,7 +48709,7 @@ async function extractProfileFromTelegram(userId, userText) {
       const mostRecent = unanswered[0];
       const isReply = await isReplyToProactiveQuestion(userText, mostRecent.question);
       if (isReply) {
-        await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq71(proactiveQuestionsSent.id, mostRecent.id));
+        await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq72(proactiveQuestionsSent.id, mostRecent.id));
         contextHint = `User is answering proactive question: "${mostRecent.question}"`;
         console.log(`[Profile] Marked proactive question as answered: ${mostRecent.id}`);
       }
@@ -48542,7 +48742,7 @@ async function handleCallbackQuery(callbackQuery) {
     const parts = data.split(":");
     const claimedUserId = parts[1] ?? "";
     const stepIndex = parseInt(parts[2] ?? "0", 10);
-    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq71(telegramLinks.chatId, chatId)).limit(1);
+    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq72(telegramLinks.chatId, chatId)).limit(1);
     if (links.length === 0 || links[0].userId !== claimedUserId) {
       await answerCallbackQuery(queryId, "Session not found \u2014 please re-link your account.");
       console.warn(`[Momentum] Ownership mismatch: claimed=${claimedUserId}, actual=${links[0]?.userId ?? "none"}, chatId=${chatId}`);
@@ -48561,7 +48761,7 @@ async function handleCallbackQuery(callbackQuery) {
     const lastColon = rest.lastIndexOf(":");
     const fullRepo = lastColon >= 0 ? rest.slice(0, lastColon) : rest;
     const prNumber = lastColon >= 0 ? parseInt(rest.slice(lastColon + 1), 10) : 0;
-    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq71(telegramLinks.chatId, chatId)).limit(1);
+    const links = await db.select({ userId: telegramLinks.userId }).from(telegramLinks).where(eq72(telegramLinks.chatId, chatId)).limit(1);
     if (links.length === 0) {
       await answerCallbackQuery(queryId, "Session not found.");
       return;
@@ -48626,7 +48826,7 @@ async function processUpdate(update) {
               const chatIdStr = chat.id.toString();
               if (!currentGroups.includes(chatIdStr)) {
                 currentGroups.push(chatIdStr);
-                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq71(telegramLinks.userId, link[0].userId));
+                await db.update(telegramLinks).set({ groupChatIds: currentGroups }).where(eq72(telegramLinks.userId, link[0].userId));
               }
             }
           } catch (err2) {
@@ -48649,7 +48849,7 @@ async function processUpdate(update) {
     if (taskTagMatch && text2) {
       const taskId = taskTagMatch[1];
       try {
-        const links = await db.select().from(telegramLinks).where(eq71(telegramLinks.chatId, chatId)).limit(1);
+        const links = await db.select().from(telegramLinks).where(eq72(telegramLinks.chatId, chatId)).limit(1);
         if (links[0]) {
           const resolveUserId2 = links[0].userId;
           const result = await resolveScheduledTaskAttention(resolveUserId2, taskId, text2);
@@ -48790,7 +48990,7 @@ ${text2}` : contextBlock;
     if (text2.startsWith("/start ") || text2.length === 6 && /^[A-Z0-9]+$/.test(text2)) {
       const code = text2.startsWith("/start ") ? text2.slice(7).trim() : text2;
       try {
-        const codeRows = await db.select().from(telegramLinkCodes).where(eq71(telegramLinkCodes.code, code));
+        const codeRows = await db.select().from(telegramLinkCodes).where(eq72(telegramLinkCodes.code, code));
         if (codeRows.length === 0) {
           await sendMessage(chatId, "Invalid or expired link code. Please generate a new one from the app.");
           return;
@@ -48798,18 +48998,18 @@ ${text2}` : contextBlock;
         const { userId } = codeRows[0];
         const thirtyMinAgo = new Date(Date.now() - 30 * 60 * 1e3);
         if (codeRows[0].createdAt < thirtyMinAgo) {
-          await db.delete(telegramLinkCodes).where(eq71(telegramLinkCodes.code, code));
+          await db.delete(telegramLinkCodes).where(eq72(telegramLinkCodes.code, code));
           await sendMessage(chatId, "This link code has expired. Please ask Jarvis to connect Telegram again or use Profile \u2192 Connections to get a new one.");
           return;
         }
         await db.delete(telegramLinks).where(
-          and51(eq71(telegramLinks.chatId, chatId), sql22`${telegramLinks.userId} != ${userId}`)
+          and52(eq72(telegramLinks.chatId, chatId), sql22`${telegramLinks.userId} != ${userId}`)
         );
         await db.insert(telegramLinks).values({ userId, chatId, username: message.from?.username || message.from?.first_name || null }).onConflictDoUpdate({
           target: telegramLinks.userId,
           set: { chatId, username: message.from?.username || message.from?.first_name || null, linkedAt: /* @__PURE__ */ new Date() }
         });
-        await db.delete(telegramLinkCodes).where(eq71(telegramLinkCodes.code, code));
+        await db.delete(telegramLinkCodes).where(eq72(telegramLinkCodes.code, code));
         await sendMessage(chatId, "\u2705 You're connected to GamePlan! Jarvis will send you morning check-ins and you can chat anytime right here.");
         console.log(`[Telegram] Linked user ${userId} to chat ${chatId}`);
       } catch (err2) {
@@ -48823,7 +49023,7 @@ ${text2}` : contextBlock;
       return;
     }
     try {
-      const link = await db.select().from(telegramLinks).where(eq71(telegramLinks.chatId, chatId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq72(telegramLinks.chatId, chatId)).limit(1);
       if (link.length === 0) {
         await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
@@ -48845,9 +49045,9 @@ ${text2}` : contextBlock;
         try {
           const { answerProjectQuestion: answerProjectQuestion2 } = await Promise.resolve().then(() => (init_projectRunner(), projectRunner_exports));
           const pendingProjects = await db.select().from(jarvisProjects).where(
-            and51(
-              eq71(jarvisProjects.userId, link[0].userId),
-              eq71(jarvisProjects.status, "waiting_for_input")
+            and52(
+              eq72(jarvisProjects.userId, link[0].userId),
+              eq72(jarvisProjects.status, "waiting_for_input")
             )
           );
           const matched = pendingProjects.find((p) => {
@@ -49476,9 +49676,9 @@ id: \`${status.project.id.slice(0, 8)}\``;
       if (rawUserText && !taskTagMatch && !rawUserText.startsWith("/")) {
         try {
           const needsTasks = await db.select().from(jarvisScheduledTasks).where(
-            and51(
-              eq71(jarvisScheduledTasks.userId, userId),
-              eq71(jarvisScheduledTasks.needsAttention, true)
+            and52(
+              eq72(jarvisScheduledTasks.userId, userId),
+              eq72(jarvisScheduledTasks.needsAttention, true)
             )
           ).orderBy(desc22(jarvisScheduledTasks.createdAt));
           if (needsTasks.length === 1) {
@@ -49572,7 +49772,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq71(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq72(telegramLinks.userId, userId)).limit(1);
       const isProduction2 = process.env.NODE_ENV === "production";
       if (isProduction2 && isTelegramConfigured()) {
         const currentHealth = getWebhookHealth();
@@ -49635,7 +49835,7 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(telegramLinks).where(eq71(telegramLinks.userId, userId));
+      await db.delete(telegramLinks).where(eq72(telegramLinks.userId, userId));
       res.json({ success: true });
     } catch (error) {
       console.error("Error disconnecting Telegram:", error);
@@ -49646,13 +49846,13 @@ function registerTelegramRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const link = await db.select().from(telegramLinks).where(eq71(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq72(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ connected: false, messages: [] });
       }
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
-      const messages2 = await db.select().from(telegramGroupMessages).where(and51(
-        eq71(telegramGroupMessages.userId, userId),
+      const messages2 = await db.select().from(telegramGroupMessages).where(and52(
+        eq72(telegramGroupMessages.userId, userId),
         gte11(telegramGroupMessages.messageDate, sevenDaysAgo)
       )).orderBy(desc22(telegramGroupMessages.messageDate)).limit(50);
       res.json({
@@ -49675,7 +49875,7 @@ function registerTelegramRoutes(app2) {
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { type, message: msgText } = req.body;
       if (!msgText) return res.status(400).json({ error: "message is required" });
-      const link = await db.select().from(telegramLinks).where(eq71(telegramLinks.userId, userId)).limit(1);
+      const link = await db.select().from(telegramLinks).where(eq72(telegramLinks.userId, userId)).limit(1);
       if (link.length === 0) {
         return res.json({ sent: false, reason: "Not linked" });
       }
@@ -49689,15 +49889,15 @@ function registerTelegramRoutes(app2) {
 }
 async function getCommitmentsForUser(userId) {
   try {
-    return await db.select().from(commitments).where(and51(eq71(commitments.userId, userId), eq71(commitments.status, "pending"))).orderBy(desc22(commitments.extractedAt)).limit(20);
+    return await db.select().from(commitments).where(and52(eq72(commitments.userId, userId), eq72(commitments.status, "pending"))).orderBy(desc22(commitments.extractedAt)).limit(20);
   } catch {
     return [];
   }
 }
 async function getPlansForDateRange(userId, startDate, endDate) {
   try {
-    const rows = await db.select().from(plans).where(and51(
-      eq71(plans.userId, userId),
+    const rows = await db.select().from(plans).where(and52(
+      eq72(plans.userId, userId),
       gte11(plans.date, startDate),
       lte(plans.date, endDate)
     ));
@@ -49907,7 +50107,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
       const catSummary = Object.entries(categoryBreakdown).map(([cat, v]) => `  ${cat}: ${v.done}/${v.total} (${Math.round(v.done / v.total * 100)}%)`).join("\n");
       const droppedTypeEntries = Object.entries(droppedCategories).sort((a, b) => b[1] - a[1]);
       const droppedSummary = droppedTypeEntries.length > 0 ? `Top dropped task types: ${droppedTypeEntries.slice(0, 5).map(([cat, count2]) => `${cat} (${count2})`).join(", ")}` : "No incomplete tasks this week";
-      const allWeekCommitments = await db.select().from(commitments).where(eq71(commitments.userId, userId)).limit(200);
+      const allWeekCommitments = await db.select().from(commitments).where(eq72(commitments.userId, userId)).limit(200);
       const weekDueCommitments = allWeekCommitments.filter(
         (c) => c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate
       );
@@ -49944,7 +50144,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
         thirtyDaysAgoDate.setDate(thirtyDaysAgoDate.getDate() - 30);
         const thirtyDayStart = thirtyDaysAgoDate.toISOString().slice(0, 10);
         const allPlans = await getPlansForDateRange(userId, thirtyDayStart, endDate);
-        const allCommitmentsRaw = await db.select().from(commitments).where(eq71(commitments.userId, userId)).limit(200);
+        const allCommitmentsRaw = await db.select().from(commitments).where(eq72(commitments.userId, userId)).limit(200);
         const scopedCommitments30d = allCommitmentsRaw.filter(
           (c) => c.dueDate && c.dueDate >= thirtyDayStart && c.dueDate <= endDate || c.extractedAt && c.extractedAt >= new Date(thirtyDayStart) && c.extractedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59") || c.resolvedAt && c.resolvedAt >= new Date(thirtyDayStart) && c.resolvedAt <= /* @__PURE__ */ new Date(endDate + "T23:59:59")
         );
@@ -50045,9 +50245,9 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
     return;
   }
   const [goalsRow, planRow, statsRow] = await Promise.allSettled([
-    db.select().from(goals).where(eq71(goals.userId, link.userId)).limit(1),
-    db.select().from(plans).where(and51(eq71(plans.userId, link.userId), eq71(plans.date, dateKey))).limit(1),
-    db.select().from(stats).where(eq71(stats.userId, link.userId)).limit(1)
+    db.select().from(goals).where(eq72(goals.userId, link.userId)).limit(1),
+    db.select().from(plans).where(and52(eq72(plans.userId, link.userId), eq72(plans.date, dateKey))).limit(1),
+    db.select().from(stats).where(eq72(stats.userId, link.userId)).limit(1)
   ]);
   const userGoals = goalsRow.status === "fulfilled" ? goalsRow.value[0]?.data || [] : [];
   const todayPlan = planRow.status === "fulfilled" ? planRow.value[0]?.data : null;
@@ -50081,7 +50281,7 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
     console.log(`[Proactive] Sending ${schedule.type} to user ${link.userId} (${timezone})`);
     if (schedule.type === "morning") {
       try {
-        const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq71(userPreferences.userId, link.userId));
+        const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq72(userPreferences.userId, link.userId));
         const currentPrefs = existingPrefs[0]?.data || {};
         await db.insert(userPreferences).values({
           userId: link.userId,
@@ -50565,7 +50765,7 @@ var init_telegramRoutes = __esm({
 });
 
 // server/agent/tools/manageTasks.ts
-import { and as and52, eq as eq72, desc as desc23 } from "drizzle-orm";
+import { and as and53, eq as eq73, desc as desc23 } from "drizzle-orm";
 async function loadPatternHelpers() {
   const mod = await Promise.resolve().then(() => (init_telegramRoutes(), telegramRoutes_exports));
   return {
@@ -50654,10 +50854,10 @@ var init_manageTasks = __esm({
                 return { ok: false, content: "Error: commitment_id is required for complete_commitment", label: "Missing id" };
               }
               const updated = await db.update(commitments).set({ status: "done", resolvedAt: /* @__PURE__ */ new Date() }).where(
-                and52(
-                  eq72(commitments.id, String(args.commitment_id ?? "")),
-                  eq72(commitments.userId, userId),
-                  eq72(commitments.status, "pending")
+                and53(
+                  eq73(commitments.id, String(args.commitment_id ?? "")),
+                  eq73(commitments.userId, userId),
+                  eq73(commitments.status, "pending")
                 )
               ).returning({ id: commitments.id });
               if (updated.length === 0) {
@@ -50677,7 +50877,7 @@ var init_manageTasks = __esm({
             case "list_tasks": {
               const todayPlan = ctx.state?.todayPlan ?? null;
               const planTasks = todayPlan?.tasks ?? [];
-              const pendingCommitments = await db.select().from(commitments).where(and52(eq72(commitments.userId, userId), eq72(commitments.status, "pending"))).orderBy(desc23(commitments.extractedAt)).limit(10);
+              const pendingCommitments = await db.select().from(commitments).where(and53(eq73(commitments.userId, userId), eq73(commitments.status, "pending"))).orderBy(desc23(commitments.extractedAt)).limit(10);
               let listing = "";
               listing += planTasks.length > 0 ? "Today's Plan:\n" + planTasks.map((t) => `- ${t.completed ? "\u2705" : "\u2B1C"} ${t.title}`).join("\n") : "Today's Plan: No tasks yet.";
               listing += "\n\n";
@@ -50698,7 +50898,7 @@ var init_manageTasks = __esm({
               if (plans2.length < 3) {
                 return { ok: true, content: "Not enough data yet for pattern analysis (need at least a few days).", label: "Not enough data" };
               }
-              const allCommitments = await db.select().from(commitments).where(eq72(commitments.userId, userId)).limit(200);
+              const allCommitments = await db.select().from(commitments).where(eq73(commitments.userId, userId)).limit(200);
               const startDt = new Date(start);
               const endDt = /* @__PURE__ */ new Date(end + "T23:59:59");
               const scopedCommitments = allCommitments.filter(
@@ -51192,7 +51392,7 @@ ${task}` : task;
 });
 
 // server/agent/tools/reviewAgentTask.ts
-import { eq as eq73 } from "drizzle-orm";
+import { eq as eq74 } from "drizzle-orm";
 var reviewAgentTaskTool;
 var init_reviewAgentTask = __esm({
   "server/agent/tools/reviewAgentTask.ts"() {
@@ -51232,7 +51432,7 @@ var init_reviewAgentTask = __esm({
         if (verdict === "revision_needed" && !String(args.feedback ?? "").trim()) {
           return { ok: false, content: "feedback is required when verdict is revision_needed.", label: "Missing feedback" };
         }
-        const [job] = await db.select().from(agentJobs).where(eq73(agentJobs.id, jobId)).limit(1);
+        const [job] = await db.select().from(agentJobs).where(eq74(agentJobs.id, jobId)).limit(1);
         if (!job) return { ok: false, content: `Job ${jobId} not found.`, label: "Job not found" };
         if (job.userId !== ctx.userId) return { ok: false, content: "Job does not belong to you.", label: "Permission denied" };
         if (!["complete", "delivered"].includes(job.status)) {
@@ -51249,7 +51449,7 @@ var init_reviewAgentTask = __esm({
         const previousOutput = String(job.result?.output ?? "");
         const modelOverride = typeof input.model === "string" ? input.model : void 0;
         if (verdict === "approved") {
-          await db.update(agentJobs).set({ status: "delivered" }).where(eq73(agentJobs.id, jobId));
+          await db.update(agentJobs).set({ status: "delivered" }).where(eq74(agentJobs.id, jobId));
           return {
             ok: true,
             content: `Task approved. **${agentName}** completed the job in ${iterationCount + 1} iteration(s). Marked as delivered.`,
@@ -51362,8 +51562,8 @@ __export(codeExecution_exports, {
 });
 import { spawn as spawn9 } from "child_process";
 import fs16 from "fs/promises";
-import path21 from "path";
-import os8 from "os";
+import path22 from "path";
+import os9 from "os";
 function buildScript(userCode) {
   const b64 = Buffer.from(userCode, "utf8").toString("base64");
   const blocked = JSON.stringify(BLOCKED_MODULES);
@@ -51529,7 +51729,7 @@ print(_buf.getvalue(), end='')
 `;
 }
 function runPythonSandbox(code, timeoutMs) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const script = buildScript(code);
     const chunks = [];
     let timedOut = false;
@@ -51554,11 +51754,11 @@ function runPythonSandbox(code, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > MAX_OUTPUT_CHARS3 ? raw.slice(0, MAX_OUTPUT_CHARS3) + "\n\u2026 [output truncated]" : raw;
-      resolve9({ stdout, timedOut, exitCode });
+      resolve10({ stdout, timedOut, exitCode });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve9({
+      resolve10({
         stdout: `Failed to start Python: ${err2.message}`,
         timedOut: false,
         exitCode: -1
@@ -51569,7 +51769,7 @@ function runPythonSandbox(code, timeoutMs) {
 async function getOrCreateWorkspace(jobId) {
   const existing = _jobWorkspaces.get(jobId);
   if (existing) return existing;
-  const dir = await fs16.mkdtemp(path21.join(os8.tmpdir(), `jarvis-build-${jobId}-`));
+  const dir = await fs16.mkdtemp(path22.join(os9.tmpdir(), `jarvis-build-${jobId}-`));
   _jobWorkspaces.set(jobId, dir);
   return dir;
 }
@@ -51781,7 +51981,7 @@ print(_buf.getvalue(), end='')
 `;
 }
 function runPythonInWorkspace(workspaceDir, code, timeoutMs) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const script = buildWorkspaceScript(code, workspaceDir);
     const chunks = [];
     let timedOut = false;
@@ -51807,11 +52007,11 @@ function runPythonInWorkspace(workspaceDir, code, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > WORKSPACE_MAX_OUTPUT_CHARS ? raw.slice(0, WORKSPACE_MAX_OUTPUT_CHARS) + "\n\u2026 [output truncated]" : raw;
-      resolve9({ stdout, timedOut, exitCode });
+      resolve10({ stdout, timedOut, exitCode });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve9({ stdout: `Failed to start Python: ${err2.message}`, timedOut: false, exitCode: -1 });
+      resolve10({ stdout: `Failed to start Python: ${err2.message}`, timedOut: false, exitCode: -1 });
     });
   });
 }
@@ -52163,12 +52363,12 @@ ${trimmed}
         }
         if (action === "write_file") {
           if (!filePath) return { ok: false, content: "file_path is required for write_file.", label: "exec_in_workspace: error" };
-          const absPath = path21.resolve(workspace, filePath);
-          if (!absPath.startsWith(workspace + path21.sep) && absPath !== workspace) {
+          const absPath = path22.resolve(workspace, filePath);
+          if (!absPath.startsWith(workspace + path22.sep) && absPath !== workspace) {
             return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
           }
           try {
-            await fs16.mkdir(path21.dirname(absPath), { recursive: true });
+            await fs16.mkdir(path22.dirname(absPath), { recursive: true });
             await fs16.writeFile(absPath, content, "utf8");
             return { ok: true, content: `Written ${filePath} (${content.length} bytes) to workspace.`, label: "exec_in_workspace: write_file" };
           } catch (err2) {
@@ -52177,8 +52377,8 @@ ${trimmed}
         }
         if (action === "read_file") {
           if (!filePath) return { ok: false, content: "file_path is required for read_file.", label: "exec_in_workspace: error" };
-          const absPath = path21.resolve(workspace, filePath);
-          if (!absPath.startsWith(workspace + path21.sep) && absPath !== workspace) {
+          const absPath = path22.resolve(workspace, filePath);
+          if (!absPath.startsWith(workspace + path22.sep) && absPath !== workspace) {
             return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
           }
           try {
@@ -52192,8 +52392,8 @@ ${trimmed}
         if (action === "run_python") {
           let codeToRun = content;
           if (!codeToRun && filePath) {
-            const absPath = path21.resolve(workspace, filePath);
-            if (!absPath.startsWith(workspace + path21.sep) && absPath !== workspace) {
+            const absPath = path22.resolve(workspace, filePath);
+            if (!absPath.startsWith(workspace + path22.sep) && absPath !== workspace) {
               return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
             }
             try {
@@ -52463,9 +52663,9 @@ ${skillBlock}`;
     }
     try {
       const { userSkills: userSkillsTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq127, and: and98 } = await import("drizzle-orm");
+      const { eq: eq128, and: and99 } = await import("drizzle-orm");
       const { db: dbImport } = await Promise.resolve().then(() => (init_db(), db_exports));
-      const activeSkills = await dbImport.select().from(userSkillsTable).where(and98(eq127(userSkillsTable.userId, context.userId), eq127(userSkillsTable.isActive, true)));
+      const activeSkills = await dbImport.select().from(userSkillsTable).where(and99(eq128(userSkillsTable.userId, context.userId), eq128(userSkillsTable.isActive, true)));
       if (activeSkills.length > 0) {
         const skillBlock = activeSkills.map((s) => `### ${s.emoji} ${s.name}
 ${s.instructions}`).join("\n\n");
@@ -53321,7 +53521,7 @@ var init_harness = __esm({
 });
 
 // server/agent/subagents.ts
-import { and as and53, eq as eq74, sql as sql23 } from "drizzle-orm";
+import { and as and54, eq as eq75, sql as sql23 } from "drizzle-orm";
 function summarize(body, fallback, max = 240) {
   const stripped = body.replace(/^#.*$/gm, "").replace(/^---EMAIL DRAFT---[\s\S]*?Body:\s*/m, "").replace(/^---END DRAFT---/m, "").replace(/\n+/g, " ").replace(/\s+/g, " ").trim();
   if (!stripped) return fallback;
@@ -53380,7 +53580,7 @@ ${soulText.trim()}`);
     try {
       const emailMatches = Array.from(opts.prompt.matchAll(/[\w.+-]+@[\w-]+\.[\w.-]+/g)).map((m) => m[0].toLowerCase());
       if (emailMatches.length > 0) {
-        const peopleRows = await db.select().from(people).where(and53(eq74(people.userId, opts.context.userId), sql23`lower(${people.email}) = ANY(${emailMatches})`));
+        const peopleRows = await db.select().from(people).where(and54(eq75(people.userId, opts.context.userId), sql23`lower(${people.email}) = ANY(${emailMatches})`));
         if (peopleRows.length > 0) {
           const lines = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -53613,7 +53813,7 @@ __export(goalDecomposer_exports, {
   enqueueGoalDecomposition: () => enqueueGoalDecomposition,
   runGoalDecomposition: () => runGoalDecomposition
 });
-import { eq as eq75, and as and54 } from "drizzle-orm";
+import { eq as eq76, and as and55 } from "drizzle-orm";
 function newId(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -53668,7 +53868,7 @@ function normaliseTree(raw, fallbackTitle) {
   };
 }
 async function loadGoal(userId, goalId) {
-  const [row] = await db.select({ data: goals.data }).from(goals).where(eq75(goals.userId, userId)).limit(1);
+  const [row] = await db.select({ data: goals.data }).from(goals).where(eq76(goals.userId, userId)).limit(1);
   const list = row?.data || [];
   return list.find((g) => g.id === goalId) || null;
 }
@@ -53751,11 +53951,11 @@ async function runGoalDecomposition(job) {
   if (tree.phases.length === 0) {
     throw new Error("Decomposition returned no phases");
   }
-  const existing = await db.select({ id: goalTrees.id }).from(goalTrees).where(and54(eq75(goalTrees.userId, job.userId), eq75(goalTrees.goalId, goalId))).limit(1);
+  const existing = await db.select({ id: goalTrees.id }).from(goalTrees).where(and55(eq76(goalTrees.userId, job.userId), eq76(goalTrees.goalId, goalId))).limit(1);
   let goalTreeId;
   if (existing.length > 0) {
     goalTreeId = existing[0].id;
-    await db.update(goalTrees).set({ tree, title: goal.title, status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq75(goalTrees.id, goalTreeId));
+    await db.update(goalTrees).set({ tree, title: goal.title, status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq76(goalTrees.id, goalTreeId));
   } else {
     const inserted = await db.insert(goalTrees).values({
       userId: job.userId,
@@ -53802,12 +54002,12 @@ __export(driveRoutes_exports, {
   getUserDriveSettings: () => getUserDriveSettings
 });
 import { Router as Router4 } from "express";
-import { eq as eq76 } from "drizzle-orm";
+import { eq as eq77 } from "drizzle-orm";
 function getBaseUrl2(req) {
   return getPublicBaseUrl(req);
 }
 async function getUserDrivePrefs(userId) {
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq76(userPreferences.userId, userId)).limit(1);
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq77(userPreferences.userId, userId)).limit(1);
   const data = rows[0]?.data || {};
   return {
     driveEnabled: !!data.driveEnabled,
@@ -53818,7 +54018,7 @@ async function getUserDrivePrefs(userId) {
   };
 }
 async function patchUserPrefs(userId, patch) {
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq76(userPreferences.userId, userId)).limit(1);
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq77(userPreferences.userId, userId)).limit(1);
   const current = rows[0]?.data || {};
   const updated = { ...current, ...patch };
   await db.insert(userPreferences).values({ userId, data: updated }).onConflictDoUpdate({
@@ -53968,10 +54168,10 @@ var init_driveRoutes = __esm({
 });
 
 // server/memory/weeklyJob.ts
-import { eq as eq77, and as and55, gte as gte12, desc as desc24, sql as sql24 } from "drizzle-orm";
+import { eq as eq78, and as and56, gte as gte12, desc as desc24, sql as sql24 } from "drizzle-orm";
 async function isMemoryReviewEnabledForUser2(userId) {
   try {
-    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq77(lifeContext.userId, userId)).limit(1);
+    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq78(lifeContext.userId, userId)).limit(1);
     const data = rows[0]?.data;
     if (data && typeof data.memoryReviewEnabled === "boolean") return data.memoryReviewEnabled;
     return true;
@@ -54019,11 +54219,11 @@ async function runWeeklyPatternJob(userId) {
   const sevenDaysAgo = windowStart;
   const weekOf = weekOfKey(now);
   const [completionRow, brainRow, chatRow, telegramRows, energyRows] = await Promise.allSettled([
-    db.select().from(completionHistory).where(eq77(completionHistory.userId, userId)).limit(1),
-    db.select().from(brainDumpInbox).where(eq77(brainDumpInbox.userId, userId)).limit(1),
-    db.select().from(chatHistory).where(eq77(chatHistory.userId, userId)).limit(1),
-    db.select().from(telegramGroupMessages).where(and55(eq77(telegramGroupMessages.userId, userId), gte12(telegramGroupMessages.messageDate, sevenDaysAgo))).orderBy(desc24(telegramGroupMessages.messageDate)).limit(50),
-    db.select().from(energyCheckins).where(and55(eq77(energyCheckins.userId, userId), gte12(energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10)))).orderBy(desc24(energyCheckins.date)).limit(60)
+    db.select().from(completionHistory).where(eq78(completionHistory.userId, userId)).limit(1),
+    db.select().from(brainDumpInbox).where(eq78(brainDumpInbox.userId, userId)).limit(1),
+    db.select().from(chatHistory).where(eq78(chatHistory.userId, userId)).limit(1),
+    db.select().from(telegramGroupMessages).where(and56(eq78(telegramGroupMessages.userId, userId), gte12(telegramGroupMessages.messageDate, sevenDaysAgo))).orderBy(desc24(telegramGroupMessages.messageDate)).limit(50),
+    db.select().from(energyCheckins).where(and56(eq78(energyCheckins.userId, userId), gte12(energyCheckins.date, sevenDaysAgo.toISOString().slice(0, 10)))).orderBy(desc24(energyCheckins.date)).limit(60)
   ]);
   const completionData = completionRow.status === "fulfilled" ? asArray(completionRow.value[0]?.data) : [];
   const brainData = brainRow.status === "fulfilled" ? asArray(brainRow.value[0]?.data) : [];
@@ -54374,10 +54574,10 @@ __export(appDelivery_exports, {
   validateDownloadToken: () => validateDownloadToken
 });
 import * as fs17 from "fs";
-import * as path22 from "path";
+import * as path23 from "path";
 import { execSync as execSync2, spawnSync as spawnSync3 } from "child_process";
-import * as os9 from "os";
-import { eq as eq78 } from "drizzle-orm";
+import * as os10 from "os";
+import { eq as eq79 } from "drizzle-orm";
 function generateDownloadToken(projectId) {
   const token = Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   downloadTokens.set(projectId, { token, expiresAt: Date.now() + ZIP_TTL_MS });
@@ -54433,7 +54633,7 @@ function cleanupExpiredZips() {
     const cutoff = Date.now() - ZIP_TTL_MS;
     for (const file of fs17.readdirSync(DOWNLOADS_DIR)) {
       if (!file.endsWith(".zip")) continue;
-      const fullPath = path22.join(DOWNLOADS_DIR, file);
+      const fullPath = path23.join(DOWNLOADS_DIR, file);
       try {
         const { mtimeMs } = fs17.statSync(fullPath);
         if (mtimeMs < cutoff) {
@@ -54447,6 +54647,21 @@ function cleanupExpiredZips() {
   }
 }
 function runProductionBuild(workspaceDir, framework) {
+  const packageJson = path23.join(workspaceDir, "package.json");
+  const nodeModules = path23.join(workspaceDir, "node_modules");
+  if (fs17.existsSync(packageJson) && !fs17.existsSync(nodeModules)) {
+    console.log(`[AppDelivery] node_modules missing; running npm install in ${workspaceDir}`);
+    const install = spawnSync3("npm", ["install"], {
+      cwd: workspaceDir,
+      env: { ...process.env, HOME: os10.homedir(), CI: "true" },
+      encoding: "utf8",
+      timeout: 3e5,
+      stdio: "pipe"
+    });
+    if (install.status !== 0) {
+      console.warn(`[AppDelivery] npm install exited ${install.status}; build may fail. STDERR: ${(install.stderr ?? "").slice(0, 800)}`);
+    }
+  }
   const buildCmds = {
     nextjs: ["npm", "run", "build"],
     "react-vite": ["npm", "run", "build"],
@@ -54458,7 +54673,7 @@ function runProductionBuild(workspaceDir, framework) {
     console.log(`[AppDelivery] framework=${framework} \u2014 no build step needed, skipping`);
     return;
   }
-  const env = { ...process.env, HOME: os9.homedir(), CI: "true", NODE_ENV: "production" };
+  const env = { ...process.env, HOME: os10.homedir(), CI: "true", NODE_ENV: "production" };
   console.log(`[AppDelivery] running production build: ${args.join(" ")} in ${workspaceDir}`);
   const result = spawnSync3(args[0], args.slice(1), {
     cwd: workspaceDir,
@@ -54478,17 +54693,22 @@ STDERR: ${stderr}`
   }
 }
 async function packageAndDeliverApp(projectId, userId, originChannel) {
-  const [project] = await db.select().from(jarvisProjects).where(eq78(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq79(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`Project ${projectId} not found`);
   const workspaceDir = project.workspaceDir;
-  if (!workspaceDir || !fs17.existsSync(workspaceDir)) {
+  if (!workspaceDir) {
+    throw new Error(`Workspace directory not found for project ${projectId}`);
+  }
+  await hydrateProjectWorkspace(projectId, workspaceDir);
+  if (!fs17.existsSync(workspaceDir)) {
     throw new Error(`Workspace directory not found for project ${projectId}`);
   }
   stopProjectServer(projectId);
+  await snapshotProjectWorkspace(projectId, workspaceDir).catch(() => void 0);
   const framework = project.appFramework ?? "custom";
   runProductionBuild(workspaceDir, framework);
   ensureDownloadsDir();
-  const zipPath = path22.join(DOWNLOADS_DIR, `${projectId}.zip`);
+  const zipPath = path23.join(DOWNLOADS_DIR, `${projectId}.zip`);
   if (fs17.existsSync(zipPath)) {
     fs17.unlinkSync(zipPath);
   }
@@ -54509,6 +54729,7 @@ async function packageAndDeliverApp(projectId, userId, originChannel) {
     throw new Error("Zip file was not created \u2014 zip command may have failed silently");
   }
   scheduleZipCleanup(zipPath);
+  await saveProjectArchive(projectId, zipPath);
   const zipSizeMb = getZipSizeMb(zipPath);
   const fileCount = countFiles(workspaceDir);
   const signedToken = generateDownloadToken(projectId);
@@ -54580,6 +54801,7 @@ var init_appDelivery = __esm({
     init_github();
     init_publicUrl();
     init_projectStorage();
+    init_projectArtifacts();
     DOWNLOADS_DIR = getProjectDownloadsDir();
     ZIP_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
     downloadTokens = /* @__PURE__ */ new Map();
@@ -54659,7 +54881,7 @@ __export(jobQueue_exports, {
   stopJobQueueWorker: () => stopJobQueueWorker,
   submitAgentJob: () => submitAgentJob
 });
-import { eq as eq79, and as and56, sql as sql25, gte as gte13, asc as asc5 } from "drizzle-orm";
+import { eq as eq80, and as and57, sql as sql25, gte as gte13, asc as asc5 } from "drizzle-orm";
 async function notifyJobComplete(userId, agentType, title, body, originChannel, originDiscordChannelId, opts = {}) {
   const text2 = `Jarvis (${agentType}): ${title}
 
@@ -54795,10 +55017,10 @@ async function flushResearchBatch(key) {
     const windowStart = new Date(anchorTime - SIBLING_WINDOW_MS);
     const windowEnd = new Date(anchorTime + SIBLING_WINDOW_MS);
     const allSiblings = await db.select({ id: agentJobs.id, title: agentJobs.title }).from(agentJobs).where(
-      and56(
-        eq79(agentJobs.userId, userId),
-        eq79(agentJobs.agentType, "research"),
-        eq79(agentJobs.status, "complete"),
+      and57(
+        eq80(agentJobs.userId, userId),
+        eq80(agentJobs.agentType, "research"),
+        eq80(agentJobs.status, "complete"),
         gte13(agentJobs.createdAt, windowStart),
         sql25`${agentJobs.createdAt} <= ${windowEnd}`
       )
@@ -54852,8 +55074,8 @@ async function flushResearchBatch(key) {
   if (allSiblingJobIds.length > 0) {
     try {
       const siblingDeliverables = await db.select().from(deliverables).where(
-        and56(
-          eq79(deliverables.userId, userId),
+        and57(
+          eq80(deliverables.userId, userId),
           sql25`${deliverables.jobId} = ANY(${allSiblingJobIds})`
         )
       ).orderBy(asc5(deliverables.createdAt));
@@ -54871,18 +55093,18 @@ async function flushResearchBatch(key) {
         mergedBody = sections.join("").trim();
         mergedTitle = `Research: ${siblingDeliverables[0].title}`;
         const firstId = siblingDeliverables[0].id;
-        await db.update(deliverables).set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${siblingDeliverables.length} research threads.` }).where(eq79(deliverables.id, firstId));
+        await db.update(deliverables).set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${siblingDeliverables.length} research threads.` }).where(eq80(deliverables.id, firstId));
         mergedDeliverableId = firstId;
         for (const d of siblingDeliverables.slice(1)) {
           try {
-            const [sibJob] = await db.select().from(agentJobs).where(eq79(agentJobs.id, d.jobId ?? "")).limit(1);
+            const [sibJob] = await db.select().from(agentJobs).where(eq80(agentJobs.id, d.jobId ?? "")).limit(1);
             if (sibJob) {
               const currentResult = sibJob.result ?? {};
-              await db.update(agentJobs).set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } }).where(eq79(agentJobs.id, sibJob.id));
+              await db.update(agentJobs).set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } }).where(eq80(agentJobs.id, sibJob.id));
             }
           } catch {
           }
-          await db.delete(deliverables).where(eq79(deliverables.id, d.id));
+          await db.delete(deliverables).where(eq80(deliverables.id, d.id));
         }
         console.log(`[JobQueue] consolidated ${siblingDeliverables.length} research deliverables \u2192 ${firstId}`);
       } else if (siblingDeliverables.length === 1) {
@@ -54957,7 +55179,7 @@ async function flushResearchBatch(key) {
     }
   }
   if (batchDriveLink && mergedDeliverableId) {
-    await db.update(deliverables).set({ driveLink: batchDriveLink }).where(eq79(deliverables.id, mergedDeliverableId)).catch((e) => console.error("[JobQueue] failed to save driveLink on deliverable:", e));
+    await db.update(deliverables).set({ driveLink: batchDriveLink }).where(eq80(deliverables.id, mergedDeliverableId)).catch((e) => console.error("[JobQueue] failed to save driveLink on deliverable:", e));
   }
   const bodiedJobs = jobs.filter((j) => j.body);
   const notifyBody = (bodiedJobs[0]?.body ?? jobs[0].body) + pdfNote;
@@ -55049,12 +55271,12 @@ async function claimNextJob2() {
   `);
   const claimedId = claimed.rows?.[0]?.id;
   if (!claimedId) return null;
-  const [row] = await db.select().from(agentJobs).where(eq79(agentJobs.id, claimedId)).limit(1);
+  const [row] = await db.select().from(agentJobs).where(eq80(agentJobs.id, claimedId)).limit(1);
   return row || null;
 }
 async function failJob2(jobId, message, userId) {
   try {
-    await db.update(agentJobs).set({ status: "failed", error: message.slice(0, 2e3), completedAt: /* @__PURE__ */ new Date() }).where(eq79(agentJobs.id, jobId));
+    await db.update(agentJobs).set({ status: "failed", error: message.slice(0, 2e3), completedAt: /* @__PURE__ */ new Date() }).where(eq80(agentJobs.id, jobId));
   } catch (err2) {
     console.error(`[JobQueue] failJob ${jobId} write failed:`, err2);
   }
@@ -55102,7 +55324,7 @@ async function completeJob2(jobId, payload) {
     turns: payload.turns,
     toolCallsCount: payload.toolCallsCount,
     completedAt: /* @__PURE__ */ new Date()
-  }).where(eq79(agentJobs.id, jobId));
+  }).where(eq80(agentJobs.id, jobId));
 }
 async function processJob(job) {
   console.log(`[JobQueue] running job ${job.id} type=${job.agentType} user=${job.userId}`);
@@ -55531,7 +55753,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       };
       const persistProgress = async (updates) => {
         const merged = { ...jobInput, ...updates };
-        await db.update(agentJobs).set({ input: merged }).where(eq79(agentJobs.id, job.id));
+        await db.update(agentJobs).set({ input: merged }).where(eq80(agentJobs.id, job.id));
         Object.assign(jobInput, updates);
       };
       const sendBuildPing = (text2) => notifyJobComplete(job.userId, "build_feature", job.title, text2, originChannel, originDiscordChannelId);
@@ -55560,13 +55782,13 @@ Latest request: ${baseFeatureDescription}` : baseFeatureDescription;
         const researchPollStart = Date.now();
         let researchStatus = "";
         while (Date.now() - researchPollStart < RESEARCH_MAX_WAIT_MS) {
-          const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq79(agentJobs.id, researchJobId)).limit(1);
+          const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq80(agentJobs.id, researchJobId)).limit(1);
           researchStatus = row?.status ?? "unknown";
           if (researchStatus === "complete" || researchStatus === "failed") break;
           await new Promise((r) => setTimeout(r, RESEARCH_POLL_INTERVAL_MS));
         }
         if (researchStatus === "complete") {
-          const [deliv] = await db.select({ body: deliverables.body }).from(deliverables).where(eq79(deliverables.jobId, researchJobId)).limit(1);
+          const [deliv] = await db.select({ body: deliverables.body }).from(deliverables).where(eq80(deliverables.jobId, researchJobId)).limit(1);
           if (deliv?.body) {
             researchBody = deliv.body.slice(0, 4e3);
             await persistProgress({ researchBody });
@@ -55908,12 +56130,12 @@ Acceptance criteria: ${step.acceptance_criteria}`,
         while (Date.now() - pollStart < maxWaitMs && results.size < childIds.length) {
           for (const childId of childIds) {
             if (results.has(childId)) continue;
-            const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq79(agentJobs.id, childId)).limit(1);
+            const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq80(agentJobs.id, childId)).limit(1);
             const status = row?.status ?? "unknown";
             if (status === "complete" || status === "failed") {
               let body = "";
               if (status === "complete") {
-                const [deliv] = await db.select({ body: deliverables.body }).from(deliverables).where(eq79(deliverables.jobId, childId)).limit(1);
+                const [deliv] = await db.select({ body: deliverables.body }).from(deliverables).where(eq80(deliverables.jobId, childId)).limit(1);
                 body = deliv?.body ?? "";
               }
               results.set(childId, { status, body });
@@ -56348,7 +56570,7 @@ ${sub.body?.slice(0, 1200) || ""}`.trim();
           startedAt: null,
           error: `Retry ${nextRetry}/${MAX_RETRIES}: ${msg}`.slice(0, 2e3),
           input: { ...jobInput, retryCount: nextRetry }
-        }).where(eq79(agentJobs.id, job.id));
+        }).where(eq80(agentJobs.id, job.id));
       } catch (retryErr) {
         console.error(`[JobQueue] failed to re-queue job ${job.id}:`, retryErr);
         await failJob2(job.id, msg, job.userId);
@@ -56380,11 +56602,11 @@ async function tick() {
 }
 async function recoverStaleJobs() {
   try {
-    const requeued = await db.update(agentJobs).set({ status: "queued", startedAt: null }).where(eq79(agentJobs.status, "running")).returning({ id: agentJobs.id });
+    const requeued = await db.update(agentJobs).set({ status: "queued", startedAt: null }).where(eq80(agentJobs.status, "running")).returning({ id: agentJobs.id });
     if (requeued.length > 0) {
       console.log(`[JobQueue] recovered ${requeued.length} stale running job(s) from previous process`);
     }
-    const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(eq79(agentJobs.status, "cancelling")).returning({ id: agentJobs.id });
+    const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(eq80(agentJobs.status, "cancelling")).returning({ id: agentJobs.id });
     if (cancelled.length > 0) {
       console.log(`[JobQueue] cancelled ${cancelled.length} stale cancelling job(s) from previous process`);
     }
@@ -56477,7 +56699,7 @@ __export(integrationValidator_exports, {
   startIntegrationValidator: () => startIntegrationValidator,
   validateUserIntegrations: () => validateUserIntegrations
 });
-import { eq as eq80, and as and57, sql as sql26 } from "drizzle-orm";
+import { eq as eq81, and as and58, sql as sql26 } from "drizzle-orm";
 import { ReplitConnectors } from "@replit/connectors-sdk";
 async function checkOAuthIntegration(userId, provider) {
   try {
@@ -56698,7 +56920,7 @@ async function checkTelegramWebhookState() {
 }
 async function checkTelegram(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq80(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq81(telegramLinks.userId, userId)).limit(1);
     if (rows.length === 0) return { status: "unconfigured" };
     const botOk = await checkSystemCredential("telegram_bot", pingTelegramBot);
     if (!botOk) {
@@ -56729,9 +56951,9 @@ async function pingDiscordBotGuilds() {
 }
 async function checkDiscord(userId) {
   try {
-    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and57(
-      eq80(channelLinks.userId, userId),
-      eq80(channelLinks.channel, "discord")
+    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and58(
+      eq81(channelLinks.userId, userId),
+      eq81(channelLinks.channel, "discord")
     )).limit(1);
     if (rows.length === 0) return { status: "unconfigured" };
     const botOk = await checkSystemCredential("discord_bot", pingDiscordBot);
@@ -56775,9 +56997,9 @@ async function checkSlack(userId) {
       }
       return { status: "healthy", expiresAt: expiresAt ?? void 0 };
     }
-    const channelRows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and57(
-      eq80(channelLinks.userId, userId),
-      eq80(channelLinks.channel, "slack")
+    const channelRows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and58(
+      eq81(channelLinks.userId, userId),
+      eq81(channelLinks.channel, "slack")
     )).limit(1);
     if (channelRows.length === 0) return { status: "unconfigured" };
     const tokenOk = await checkSystemCredential("slack_token", pingSlack);
@@ -56793,16 +57015,16 @@ async function checkWhatsApp(userId) {
   try {
     const twilioOk = await checkSystemCredential("twilio", pingTwilio);
     if (!twilioOk) {
-      const rows2 = await db.select({ id: channelLinks.id }).from(channelLinks).where(and57(
-        eq80(channelLinks.userId, userId),
-        eq80(channelLinks.channel, "whatsapp")
+      const rows2 = await db.select({ id: channelLinks.id }).from(channelLinks).where(and58(
+        eq81(channelLinks.userId, userId),
+        eq81(channelLinks.channel, "whatsapp")
       )).limit(1);
       if (rows2.length === 0) return { status: "unconfigured" };
       return { status: "broken", errorMessage: "Twilio credentials missing or invalid" };
     }
-    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and57(
-      eq80(channelLinks.userId, userId),
-      eq80(channelLinks.channel, "whatsapp")
+    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and58(
+      eq81(channelLinks.userId, userId),
+      eq81(channelLinks.channel, "whatsapp")
     )).limit(1);
     return rows.length > 0 ? { status: "healthy" } : { status: "unconfigured" };
   } catch {
@@ -57035,7 +57257,7 @@ async function getUserIntegrationStatuses(userId) {
     whatsapp: "unconfigured"
   };
   try {
-    const rows = await db.select().from(integrationStatus).where(eq80(integrationStatus.userId, userId));
+    const rows = await db.select().from(integrationStatus).where(eq81(integrationStatus.userId, userId));
     for (const row of rows) {
       defaults[row.integration] = row.status;
     }
@@ -57243,7 +57465,7 @@ __export(diagnosticsService_exports, {
   runAIDiagnosis: () => runAIDiagnosis,
   runHealthCheck: () => runHealthCheck
 });
-import { eq as eq81, and as and58, desc as desc25, gte as gte14, sql as sqlExpr } from "drizzle-orm";
+import { eq as eq82, and as and59, desc as desc25, gte as gte14, sql as sqlExpr } from "drizzle-orm";
 import Anthropic4 from "@anthropic-ai/sdk";
 async function emit(opts) {
   try {
@@ -57268,14 +57490,14 @@ async function isDegradedInDB(subsystem, userId) {
   try {
     const since = new Date(Date.now() - 4 * 60 * 60 * 1e3);
     const conditions = [
-      eq81(diagnosticEvents.subsystem, subsystem),
-      eq81(diagnosticEvents.severity, "critical"),
-      eq81(diagnosticEvents.resolved, false),
+      eq82(diagnosticEvents.subsystem, subsystem),
+      eq82(diagnosticEvents.severity, "critical"),
+      eq82(diagnosticEvents.resolved, false),
       gte14(diagnosticEvents.createdAt, since),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') = 'pattern_detected'`
     ];
-    if (userId) conditions.push(eq81(diagnosticEvents.userId, userId));
-    const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and58(...conditions)).limit(1);
+    if (userId) conditions.push(eq82(diagnosticEvents.userId, userId));
+    const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and59(...conditions)).limit(1);
     return rows.length > 0;
   } catch {
     return false;
@@ -57285,12 +57507,12 @@ async function detectDegradation(subsystem, userId) {
   try {
     const windowStart = new Date(Date.now() - 15 * 60 * 1e3);
     const errorConditions = [
-      eq81(diagnosticEvents.subsystem, subsystem),
+      eq82(diagnosticEvents.subsystem, subsystem),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
       gte14(diagnosticEvents.createdAt, windowStart)
     ];
-    if (userId) errorConditions.push(eq81(diagnosticEvents.userId, userId));
-    const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and58(...errorConditions)).limit(5);
+    if (userId) errorConditions.push(eq82(diagnosticEvents.userId, userId));
+    const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and59(...errorConditions)).limit(5);
     if (rows.length < 3) return;
     const alreadyDegraded = await isDegradedInDB(subsystem, userId);
     if (alreadyDegraded) return;
@@ -57329,12 +57551,12 @@ async function clearDegradation(subsystem, userId) {
     if (!isDegraded) return;
     const since = new Date(Date.now() - 4 * 60 * 60 * 1e3);
     const conditions = [
-      eq81(diagnosticEvents.subsystem, subsystem),
-      eq81(diagnosticEvents.resolved, false),
+      eq82(diagnosticEvents.subsystem, subsystem),
+      eq82(diagnosticEvents.resolved, false),
       gte14(diagnosticEvents.createdAt, since)
     ];
-    if (userId) conditions.push(eq81(diagnosticEvents.userId, userId));
-    await db.update(diagnosticEvents).set({ resolved: true }).where(and58(...conditions)).catch(() => {
+    if (userId) conditions.push(eq82(diagnosticEvents.userId, userId));
+    await db.update(diagnosticEvents).set({ resolved: true }).where(and59(...conditions)).catch(() => {
     });
     console.log(`[Diagnostics] subsystem RECOVERED: ${subsystem}`);
   } catch (err2) {
@@ -57346,14 +57568,14 @@ async function attemptAutoRecovery(subsystem, userId) {
     if (subsystem === "job_queue") {
       const staleThreshold = new Date(Date.now() - 10 * 60 * 1e3);
       const staleJobs = await db.select({ id: agentJobs.id, agentType: agentJobs.agentType }).from(agentJobs).where(
-        and58(
-          eq81(agentJobs.userId, userId),
-          eq81(agentJobs.status, "running"),
+        and59(
+          eq82(agentJobs.userId, userId),
+          eq82(agentJobs.status, "running"),
           sqlExpr`${agentJobs.startedAt} < ${staleThreshold}`
         )
       ).limit(5);
       for (const job of staleJobs) {
-        await db.update(agentJobs).set({ status: "queued", startedAt: null, error: "Auto-re-enqueued: exceeded watchdog timeout" }).where(eq81(agentJobs.id, job.id)).catch(() => {
+        await db.update(agentJobs).set({ status: "queued", startedAt: null, error: "Auto-re-enqueued: exceeded watchdog timeout" }).where(eq82(agentJobs.id, job.id)).catch(() => {
         });
         await emit({
           userId,
@@ -57368,14 +57590,14 @@ async function attemptAutoRecovery(subsystem, userId) {
     if (subsystem === "workflow_engine") {
       const staleThreshold = new Date(Date.now() - 30 * 60 * 1e3);
       const stuckWorkflows = await db.select({ id: agentWorkflows.id, title: agentWorkflows.title }).from(agentWorkflows).where(
-        and58(
-          eq81(agentWorkflows.userId, userId),
-          eq81(agentWorkflows.status, "running"),
+        and59(
+          eq82(agentWorkflows.userId, userId),
+          eq82(agentWorkflows.status, "running"),
           sqlExpr`${agentWorkflows.updatedAt} < ${staleThreshold}`
         )
       ).limit(3);
       for (const wf of stuckWorkflows) {
-        await db.update(agentWorkflows).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq81(agentWorkflows.id, wf.id)).catch(() => {
+        await db.update(agentWorkflows).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq82(agentWorkflows.id, wf.id)).catch(() => {
         });
         await emit({
           userId,
@@ -57459,9 +57681,9 @@ async function getRecentEvents(opts) {
   const { userId, subsystem, severity, limit = 50, sinceMinutes, excludePatternDetected = false } = opts;
   try {
     const conditions = [];
-    if (userId) conditions.push(eq81(diagnosticEvents.userId, userId));
-    if (subsystem) conditions.push(eq81(diagnosticEvents.subsystem, subsystem));
-    if (severity) conditions.push(eq81(diagnosticEvents.severity, severity));
+    if (userId) conditions.push(eq82(diagnosticEvents.userId, userId));
+    if (subsystem) conditions.push(eq82(diagnosticEvents.subsystem, subsystem));
+    if (severity) conditions.push(eq82(diagnosticEvents.severity, severity));
     if (sinceMinutes) {
       const since = new Date(Date.now() - sinceMinutes * 60 * 1e3);
       conditions.push(gte14(diagnosticEvents.createdAt, since));
@@ -57471,7 +57693,7 @@ async function getRecentEvents(opts) {
         sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`
       );
     }
-    return await db.select().from(diagnosticEvents).where(conditions.length ? and58(...conditions) : void 0).orderBy(desc25(diagnosticEvents.createdAt)).limit(limit);
+    return await db.select().from(diagnosticEvents).where(conditions.length ? and59(...conditions) : void 0).orderBy(desc25(diagnosticEvents.createdAt)).limit(limit);
   } catch {
     return [];
   }
@@ -57485,16 +57707,16 @@ async function runHealthCheck(userId) {
   let stuckWorkflowCount = 0;
   try {
     const [depthRows, staleRows, stuckWfRows] = await Promise.all([
-      db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(eq81(agentJobs.status, "queued")),
+      db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(eq82(agentJobs.status, "queued")),
       db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(
-        and58(
-          eq81(agentJobs.status, "running"),
+        and59(
+          eq82(agentJobs.status, "running"),
           sqlExpr`${agentJobs.startedAt} < ${new Date(now.getTime() - 10 * 60 * 1e3)}`
         )
       ),
       db.select({ count: sqlExpr`count(*)::int` }).from(agentWorkflows).where(
-        and58(
-          eq81(agentWorkflows.status, "running"),
+        and59(
+          eq82(agentWorkflows.status, "running"),
           sqlExpr`${agentWorkflows.updatedAt} < ${new Date(now.getTime() - 30 * 60 * 1e3)}`
         )
       )
@@ -57562,18 +57784,18 @@ async function runHealthCheck(userId) {
     DIAGNOSTIC_SUBSYSTEMS.map(async (sub) => {
       try {
         const errorConditions = [
-          eq81(diagnosticEvents.subsystem, sub),
-          eq81(diagnosticEvents.resolved, false),
+          eq82(diagnosticEvents.subsystem, sub),
+          eq82(diagnosticEvents.resolved, false),
           gte14(diagnosticEvents.createdAt, windowStart),
           sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
           sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`
         ];
-        if (userId) errorConditions.push(eq81(diagnosticEvents.userId, userId));
-        const lastEventConditions = [eq81(diagnosticEvents.subsystem, sub)];
-        if (userId) lastEventConditions.push(eq81(diagnosticEvents.userId, userId));
+        if (userId) errorConditions.push(eq82(diagnosticEvents.userId, userId));
+        const lastEventConditions = [eq82(diagnosticEvents.subsystem, sub)];
+        if (userId) lastEventConditions.push(eq82(diagnosticEvents.userId, userId));
         const [recentErrorRows, lastEventRows] = await Promise.all([
-          db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and58(...errorConditions)),
-          db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and58(...lastEventConditions)).orderBy(desc25(diagnosticEvents.createdAt)).limit(1)
+          db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and59(...errorConditions)),
+          db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and59(...lastEventConditions)).orderBy(desc25(diagnosticEvents.createdAt)).limit(1)
         ]);
         const errorCount = recentErrorRows[0]?.count ?? 0;
         const isDegraded = await isDegradedInDB(sub, userId);
@@ -57650,28 +57872,28 @@ async function runHealthCheck(userId) {
   let memoryReadErrors15m = 0;
   try {
     const memWriteConditions = [
-      eq81(diagnosticEvents.subsystem, "memory"),
-      eq81(diagnosticEvents.resolved, false),
+      eq82(diagnosticEvents.subsystem, "memory"),
+      eq82(diagnosticEvents.resolved, false),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
       gte14(diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
       sqlExpr`(${diagnosticEvents.metadata}->>'operation') = ANY(ARRAY[${MEMORY_WRITE_OPS.map((op) => `'${op}'`).join(",")}])`
     ];
     const memReadConditions = [
-      eq81(diagnosticEvents.subsystem, "memory"),
-      eq81(diagnosticEvents.resolved, false),
+      eq82(diagnosticEvents.subsystem, "memory"),
+      eq82(diagnosticEvents.resolved, false),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
       gte14(diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
       sqlExpr`(${diagnosticEvents.metadata}->>'operation') = ANY(ARRAY[${MEMORY_READ_OPS.map((op) => `'${op}'`).join(",")}])`
     ];
     if (userId) {
-      memWriteConditions.push(eq81(diagnosticEvents.userId, userId));
-      memReadConditions.push(eq81(diagnosticEvents.userId, userId));
+      memWriteConditions.push(eq82(diagnosticEvents.userId, userId));
+      memReadConditions.push(eq82(diagnosticEvents.userId, userId));
     }
     const [writeRows, readRows] = await Promise.all([
-      db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and58(...memWriteConditions)),
-      db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and58(...memReadConditions))
+      db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and59(...memWriteConditions)),
+      db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and59(...memReadConditions))
     ]);
     memoryWriteErrors15m = writeRows[0]?.count ?? 0;
     memoryReadErrors15m = readRows[0]?.count ?? 0;
@@ -57970,7 +58192,7 @@ __export(emotional_state_exports, {
   pruneEmotionalStateHistory: () => pruneEmotionalStateHistory,
   setManualStateOverride: () => setManualStateOverride
 });
-import { eq as eq82, desc as desc26, and as and59, gte as gte15, sql as sql28 } from "drizzle-orm";
+import { eq as eq83, desc as desc26, and as and60, gte as gte15, sql as sql28 } from "drizzle-orm";
 function clamp(n, min, max) {
   return Math.max(min, Math.min(max, n));
 }
@@ -58016,7 +58238,7 @@ async function gatherSignals(userId, tz, now) {
   } catch {
   }
   try {
-    const rows = await db.select().from(energyCheckins).where(eq82(energyCheckins.userId, userId)).orderBy(desc26(energyCheckins.updatedAt)).limit(3);
+    const rows = await db.select().from(energyCheckins).where(eq83(energyCheckins.userId, userId)).orderBy(desc26(energyCheckins.updatedAt)).limit(3);
     if (rows.length > 0) {
       const scores = [];
       for (const row of rows) {
@@ -58033,7 +58255,7 @@ async function gatherSignals(userId, tz, now) {
   }
   try {
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3);
-    const recentPlans = await db.select().from(plans).where(eq82(plans.userId, userId)).orderBy(desc26(plans.updatedAt)).limit(7);
+    const recentPlans = await db.select().from(plans).where(eq83(plans.userId, userId)).orderBy(desc26(plans.updatedAt)).limit(7);
     let totalTasks = 0;
     let completedTasks = 0;
     for (const plan of recentPlans) {
@@ -58056,8 +58278,8 @@ async function gatherSignals(userId, tz, now) {
     } else {
       const windowStart = new Date(now.getTime() - 16 * 60 * 60 * 1e3);
       const recentActivity = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
-        and59(
-          eq82(interactionLog.userId, userId),
+        and60(
+          eq83(interactionLog.userId, userId),
           gte15(interactionLog.createdAt, windowStart)
         )
       ).orderBy(desc26(interactionLog.createdAt)).limit(20);
@@ -58074,9 +58296,9 @@ async function gatherSignals(userId, tz, now) {
   }
   try {
     const recent = await db.select({ content: interactionLog.content }).from(interactionLog).where(
-      and59(
-        eq82(interactionLog.userId, userId),
-        eq82(interactionLog.direction, "inbound")
+      and60(
+        eq83(interactionLog.userId, userId),
+        eq83(interactionLog.direction, "inbound")
       )
     ).orderBy(desc26(interactionLog.createdAt)).limit(10);
     if (recent.length > 0) {
@@ -58159,8 +58381,8 @@ async function computeBaseline(userId, now, tz) {
       flowScore: userEmotionalStateHistory.flowScore,
       dayOfWeek: userEmotionalStateHistory.dayOfWeek
     }).from(userEmotionalStateHistory).where(
-      and59(
-        eq82(userEmotionalStateHistory.userId, userId),
+      and60(
+        eq83(userEmotionalStateHistory.userId, userId),
         gte15(userEmotionalStateHistory.recordedAt, windowStart)
       )
     ).orderBy(desc26(userEmotionalStateHistory.recordedAt)).limit(500);
@@ -58201,7 +58423,7 @@ async function computeAndStoreEmotionalState(userId, tz, now) {
   await appendToHistory(userId, stressScore, flowScore, label, now, tz);
   let prevState = null;
   try {
-    const rows = await db.select().from(userEmotionalState).where(eq82(userEmotionalState.userId, userId)).limit(1);
+    const rows = await db.select().from(userEmotionalState).where(eq83(userEmotionalState.userId, userId)).limit(1);
     prevState = rows[0] ?? null;
   } catch {
   }
@@ -58293,7 +58515,7 @@ async function computeAndStoreEmotionalState(userId, tz, now) {
         await notifyUser(userId, "stress_checkin", msg);
         logInteraction(userId, "notification", "outbound", msg, "stress_checkin").catch(() => {
         });
-        await db.update(userEmotionalState).set({ lastStressCheckinAt: now, updatedAt: now }).where(eq82(userEmotionalState.userId, userId));
+        await db.update(userEmotionalState).set({ lastStressCheckinAt: now, updatedAt: now }).where(eq83(userEmotionalState.userId, userId));
         console.log(`[EmotionalState] stress check-in sent to ${userId}`);
       } catch (err2) {
         console.error("[EmotionalState] stress check-in send failed:", err2);
@@ -58310,7 +58532,7 @@ async function computeAndStoreEmotionalState(userId, tz, now) {
 }
 async function getEmotionalState(userId) {
   try {
-    const rows = await db.select().from(userEmotionalState).where(eq82(userEmotionalState.userId, userId)).limit(1);
+    const rows = await db.select().from(userEmotionalState).where(eq83(userEmotionalState.userId, userId)).limit(1);
     return rows[0] ?? null;
   } catch {
     return null;
@@ -58448,7 +58670,7 @@ __export(promptContext_exports, {
   EMPTY_AI_CONTEXT: () => EMPTY_AI_CONTEXT,
   buildAiContextSections: () => buildAiContextSections
 });
-import { eq as eq83, sql as sql29 } from "drizzle-orm";
+import { eq as eq84, sql as sql29 } from "drizzle-orm";
 async function buildAiContextSections(userId, seedQuery) {
   if (!userId) return EMPTY_AI_CONTEXT;
   const out = { ...EMPTY_AI_CONTEXT };
@@ -58536,7 +58758,7 @@ Relevant memories:
     console.error("[promptContext] emotional state load failed", err2);
   }
   try {
-    const vaultPages = await db.select({ slug: knowledgeVaultPages.slug, content: knowledgeVaultPages.content }).from(knowledgeVaultPages).where(eq83(knowledgeVaultPages.userId, userId));
+    const vaultPages = await db.select({ slug: knowledgeVaultPages.slug, content: knowledgeVaultPages.content }).from(knowledgeVaultPages).where(eq84(knowledgeVaultPages.userId, userId));
     const aboutYou = vaultPages.find((p) => p.slug === "about-you");
     const patterns = vaultPages.find((p) => p.slug === "patterns");
     const parts = [];
@@ -58862,7 +59084,7 @@ __export(goalScheduler_exports, {
   markTasksInjected: () => markTasksInjected,
   markTreeTaskComplete: () => markTreeTaskComplete
 });
-import { eq as eq84, and as and60 } from "drizzle-orm";
+import { eq as eq85, and as and61 } from "drizzle-orm";
 function isTaskActionable(t) {
   return t.status === "ready" || t.status === "in_progress";
 }
@@ -58886,7 +59108,7 @@ function nextActionableTasksFromTree(tree) {
 }
 async function recentCompletionRate(userId) {
   try {
-    const [row] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq84(completionHistory.userId, userId)).limit(1);
+    const [row] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq85(completionHistory.userId, userId)).limit(1);
     const arr = row?.data || [];
     if (arr.length === 0) return 1;
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1e3;
@@ -58902,7 +59124,7 @@ async function recentCompletionRate(userId) {
   }
 }
 async function getInjectableGoalTasks(userId, dateKey) {
-  const trees = await db.select().from(goalTrees).where(and60(eq84(goalTrees.userId, userId), eq84(goalTrees.status, "active")));
+  const trees = await db.select().from(goalTrees).where(and61(eq85(goalTrees.userId, userId), eq85(goalTrees.status, "active")));
   if (trees.length === 0) return [];
   const rate = await recentCompletionRate(userId);
   const dailyCap = rate < 0.5 ? 1 : 3;
@@ -58947,7 +59169,7 @@ async function markTasksInjected(userId, picks, dateKey) {
     byTree.set(p.goalTreeId, list);
   }
   for (const [treeId, items] of byTree.entries()) {
-    const [row] = await db.select().from(goalTrees).where(and60(eq84(goalTrees.id, treeId), eq84(goalTrees.userId, userId))).limit(1);
+    const [row] = await db.select().from(goalTrees).where(and61(eq85(goalTrees.id, treeId), eq85(goalTrees.userId, userId))).limit(1);
     if (!row) continue;
     const tree = row.tree || { phases: [] };
     const ids = new Set(items.map((i) => i.taskId));
@@ -58970,12 +59192,12 @@ async function markTasksInjected(userId, picks, dateKey) {
       }
     }
     if (mutated) {
-      await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(eq84(goalTrees.id, treeId));
+      await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(eq85(goalTrees.id, treeId));
     }
   }
 }
 async function markTreeTaskComplete(userId, goalTreeId, taskId) {
-  const [row] = await db.select().from(goalTrees).where(and60(eq84(goalTrees.id, goalTreeId), eq84(goalTrees.userId, userId))).limit(1);
+  const [row] = await db.select().from(goalTrees).where(and61(eq85(goalTrees.id, goalTreeId), eq85(goalTrees.userId, userId))).limit(1);
   if (!row) return;
   const tree = row.tree || { phases: [] };
   let mutated = false;
@@ -59023,7 +59245,7 @@ async function markTreeTaskComplete(userId, goalTreeId, taskId) {
     }
   }
   if (mutated) {
-    await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(eq84(goalTrees.id, goalTreeId));
+    await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(eq85(goalTrees.id, goalTreeId));
   }
 }
 var init_goalScheduler = __esm({
@@ -59035,7 +59257,7 @@ var init_goalScheduler = __esm({
 });
 
 // server/dataRoutes.ts
-import { eq as eq85, and as and61 } from "drizzle-orm";
+import { eq as eq86, and as and62 } from "drizzle-orm";
 function requireUserId(req, res) {
   const userId = req.userId;
   if (!userId) {
@@ -59044,20 +59266,20 @@ function requireUserId(req, res) {
   }
   return userId;
 }
-function registerSimpleJsonCrud(app2, path32, table) {
-  app2.get(`/api/data/${path32}`, async (req, res) => {
+function registerSimpleJsonCrud(app2, path33, table) {
+  app2.get(`/api/data/${path33}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const result = await db.select({ data: table.data }).from(table).where(eq85(table.userId, userId));
+      const result = await db.select({ data: table.data }).from(table).where(eq86(table.userId, userId));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
-      console.error(`Error fetching ${path32}:`, e);
-      res.status(500).json({ error: `Failed to fetch ${path32}` });
+      console.error(`Error fetching ${path33}:`, e);
+      res.status(500).json({ error: `Failed to fetch ${path33}` });
     }
   });
-  app2.put(`/api/data/${path32}`, async (req, res) => {
+  app2.put(`/api/data/${path33}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
@@ -59068,19 +59290,19 @@ function registerSimpleJsonCrud(app2, path32, table) {
       });
       res.json({ ok: true });
     } catch (e) {
-      console.error(`Error saving ${path32}:`, e);
-      res.status(500).json({ error: `Failed to save ${path32}` });
+      console.error(`Error saving ${path33}:`, e);
+      res.status(500).json({ error: `Failed to save ${path33}` });
     }
   });
-  app2.delete(`/api/data/${path32}`, async (req, res) => {
+  app2.delete(`/api/data/${path33}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      await db.delete(table).where(eq85(table.userId, userId));
+      await db.delete(table).where(eq86(table.userId, userId));
       res.json({ ok: true });
     } catch (e) {
-      console.error(`Error deleting ${path32}:`, e);
-      res.status(500).json({ error: `Failed to delete ${path32}` });
+      console.error(`Error deleting ${path33}:`, e);
+      res.status(500).json({ error: `Failed to delete ${path33}` });
     }
   });
 }
@@ -59090,7 +59312,7 @@ function registerDataRoutes(app2) {
       const userId = requireUserId(req, res);
       if (!userId) return;
       const date2 = _p(req.params.date);
-      const result = await db.select().from(plans).where(and61(eq85(plans.userId, userId), eq85(plans.date, date2)));
+      const result = await db.select().from(plans).where(and62(eq86(plans.userId, userId), eq86(plans.date, date2)));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -59102,7 +59324,7 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const result = await db.select().from(plans).where(eq85(plans.userId, userId));
+      const result = await db.select().from(plans).where(eq86(plans.userId, userId));
       const plansMap = {};
       for (const row of result) {
         plansMap[row.date] = row.data;
@@ -59120,7 +59342,7 @@ function registerDataRoutes(app2) {
       const date2 = _p(req.params.date);
       const { data } = req.body;
       try {
-        const [prev] = await db.select({ data: plans.data }).from(plans).where(and61(eq85(plans.userId, userId), eq85(plans.date, date2))).limit(1);
+        const [prev] = await db.select({ data: plans.data }).from(plans).where(and62(eq86(plans.userId, userId), eq86(plans.date, date2))).limit(1);
         const prevTasks = prev?.data?.tasks || [];
         const newTasks = data?.tasks || [];
         const prevById = new Map(prevTasks.map((t) => [t.id, t]));
@@ -59153,7 +59375,7 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const result = await db.select({ data: goals.data }).from(goals).where(eq85(goals.userId, userId));
+      const result = await db.select({ data: goals.data }).from(goals).where(eq86(goals.userId, userId));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -59165,7 +59387,7 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      await db.delete(goals).where(eq85(goals.userId, userId));
+      await db.delete(goals).where(eq86(goals.userId, userId));
       res.json({ ok: true });
     } catch (e) {
       console.error("Error deleting goals:", e);
@@ -59178,7 +59400,7 @@ function registerDataRoutes(app2) {
       if (!userId) return;
       const { data } = req.body;
       const incoming = Array.isArray(data) ? data : [];
-      const [prev] = await db.select({ data: goals.data }).from(goals).where(eq85(goals.userId, userId)).limit(1);
+      const [prev] = await db.select({ data: goals.data }).from(goals).where(eq86(goals.userId, userId)).limit(1);
       const prevList = prev?.data || [];
       const prevById = new Map(prevList.map((g) => [g.id, g]));
       const incomingTyped = incoming;
@@ -59202,7 +59424,7 @@ function registerDataRoutes(app2) {
       if (removedIds.length > 0) {
         try {
           for (const removedId of removedIds) {
-            await db.delete(goalTrees).where(and61(eq85(goalTrees.userId, userId), eq85(goalTrees.goalId, removedId)));
+            await db.delete(goalTrees).where(and62(eq86(goalTrees.userId, userId), eq86(goalTrees.goalId, removedId)));
           }
           console.log(`[Goals] removed ${removedIds.length} stale goal tree(s) user=${userId}`);
         } catch (e) {
@@ -59236,7 +59458,7 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq85(userPreferences.userId, userId));
+      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq86(userPreferences.userId, userId));
       const prefs = result[0]?.data || {};
       res.json({ sdkSessionId: prefs._coachSessionId || null });
     } catch (e) {
@@ -59252,7 +59474,7 @@ function registerDataRoutes(app2) {
       if (sdkSessionId !== null && sdkSessionId !== void 0 && typeof sdkSessionId !== "string") {
         return res.status(400).json({ error: "sdkSessionId must be a string or null" });
       }
-      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq85(userPreferences.userId, userId));
+      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq86(userPreferences.userId, userId));
       const prefs = result[0]?.data || {};
       prefs._coachSessionId = sdkSessionId || null;
       await db.insert(userPreferences).values({ userId, data: prefs, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
@@ -59269,7 +59491,7 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq85(userPreferences.userId, userId));
+      const result = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq86(userPreferences.userId, userId));
       const currentPrefs = result[0]?.data || {};
       if (currentPrefs.autoBuiltPlan) {
         currentPrefs.autoBuiltPlan.dismissed = true;
@@ -59292,7 +59514,7 @@ function registerDataRoutes(app2) {
       const userId = requireUserId(req, res);
       if (!userId) return;
       const date2 = _p(req.params.date);
-      const result = await db.select().from(energyCheckins).where(and61(eq85(energyCheckins.userId, userId), eq85(energyCheckins.date, date2)));
+      const result = await db.select().from(energyCheckins).where(and62(eq86(energyCheckins.userId, userId), eq86(energyCheckins.date, date2)));
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -59321,7 +59543,7 @@ function registerDataRoutes(app2) {
       const userId = requireUserId(req, res);
       if (!userId) return;
       const date2 = _p(req.params.date);
-      const result = await db.select().from(completedCalendarIds).where(and61(eq85(completedCalendarIds.userId, userId), eq85(completedCalendarIds.date, date2)));
+      const result = await db.select().from(completedCalendarIds).where(and62(eq86(completedCalendarIds.userId, userId), eq86(completedCalendarIds.date, date2)));
       if (result.length === 0) return res.json({ data: [] });
       res.json({ data: result[0].data });
     } catch (e) {
@@ -59349,27 +59571,27 @@ function registerDataRoutes(app2) {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq85(goals.userId, userId));
-      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq85(stats.userId, userId));
-      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq85(lifeContext.userId, userId));
-      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq85(userPreferences.userId, userId));
-      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq85(chatHistory.userId, userId));
-      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq85(timerSettings.userId, userId));
-      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq85(brainDumpInbox.userId, userId));
-      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq85(completionHistory.userId, userId));
-      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq85(blockedTasks.userId, userId));
-      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq85(planSnapshots.userId, userId));
-      const plansRows = await db.select().from(plans).where(eq85(plans.userId, userId));
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq86(goals.userId, userId));
+      const [statsRow] = await db.select({ data: stats.data }).from(stats).where(eq86(stats.userId, userId));
+      const [lifeContextRow] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq86(lifeContext.userId, userId));
+      const [userPrefsRow] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq86(userPreferences.userId, userId));
+      const [chatHistoryRow] = await db.select({ data: chatHistory.data }).from(chatHistory).where(eq86(chatHistory.userId, userId));
+      const [timerSettingsRow] = await db.select({ data: timerSettings.data }).from(timerSettings).where(eq86(timerSettings.userId, userId));
+      const [brainDumpRow] = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq86(brainDumpInbox.userId, userId));
+      const [completionHistoryRow] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq86(completionHistory.userId, userId));
+      const [blockedTasksRow] = await db.select({ data: blockedTasks.data }).from(blockedTasks).where(eq86(blockedTasks.userId, userId));
+      const [planSnapshotsRow] = await db.select({ data: planSnapshots.data }).from(planSnapshots).where(eq86(planSnapshots.userId, userId));
+      const plansRows = await db.select().from(plans).where(eq86(plans.userId, userId));
       const plans2 = {};
       for (const row of plansRows) {
         plans2[row.date] = row.data;
       }
-      const energyRows = await db.select().from(energyCheckins).where(eq85(energyCheckins.userId, userId));
+      const energyRows = await db.select().from(energyCheckins).where(eq86(energyCheckins.userId, userId));
       const energyCheckins2 = {};
       for (const row of energyRows) {
         energyCheckins2[row.date] = row.data;
       }
-      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq85(completedCalendarIds.userId, userId));
+      const calendarIdRows = await db.select().from(completedCalendarIds).where(eq86(completedCalendarIds.userId, userId));
       const completedCalendarIds2 = {};
       for (const row of calendarIdRows) {
         completedCalendarIds2[row.date] = row.data;
@@ -59408,7 +59630,7 @@ function registerDataRoutes(app2) {
       await db.transaction(async (tx) => {
         const replaceSimple = async (table, value) => {
           if (value === null || value === void 0) {
-            await tx.delete(table).where(eq85(table.userId, userId));
+            await tx.delete(table).where(eq86(table.userId, userId));
             return;
           }
           await tx.insert(table).values({ userId, data: value, updatedAt: now }).onConflictDoUpdate({ target: [table.userId], set: { data: value, updatedAt: now } });
@@ -59424,19 +59646,19 @@ function registerDataRoutes(app2) {
         await replaceSimple(planSnapshots, data.planSnapshots);
         await replaceSimple(userPreferences, data.userPreferences);
         if (data.plans && typeof data.plans === "object") {
-          await tx.delete(plans).where(eq85(plans.userId, userId));
+          await tx.delete(plans).where(eq86(plans.userId, userId));
           for (const [date2, planData] of Object.entries(data.plans)) {
             await tx.insert(plans).values({ userId, date: date2, data: planData, updatedAt: now });
           }
         }
         if (data.energyCheckins && typeof data.energyCheckins === "object") {
-          await tx.delete(energyCheckins).where(eq85(energyCheckins.userId, userId));
+          await tx.delete(energyCheckins).where(eq86(energyCheckins.userId, userId));
           for (const [date2, checkinData] of Object.entries(data.energyCheckins)) {
             await tx.insert(energyCheckins).values({ userId, date: date2, data: checkinData, updatedAt: now });
           }
         }
         if (data.completedCalendarIds && typeof data.completedCalendarIds === "object") {
-          await tx.delete(completedCalendarIds).where(eq85(completedCalendarIds.userId, userId));
+          await tx.delete(completedCalendarIds).where(eq86(completedCalendarIds.userId, userId));
           for (const [date2, idsData] of Object.entries(data.completedCalendarIds)) {
             await tx.insert(completedCalendarIds).values({ userId, date: date2, data: idsData, updatedAt: now });
           }
@@ -59460,7 +59682,7 @@ var init_dataRoutes = __esm({
 });
 
 // server/channels/routes.ts
-import { eq as eq86, and as and62 } from "drizzle-orm";
+import { eq as eq87, and as and63 } from "drizzle-orm";
 function generateCode3(len = 6) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -59472,8 +59694,8 @@ function registerChannelRoutes(app2) {
     const userId = req.userId;
     try {
       const [tgRows, channelRows, prefs] = await Promise.all([
-        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq86(telegramLinks.userId, userId)).limit(1),
-        db.select().from(channelLinks).where(eq86(channelLinks.userId, userId)),
+        db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq87(telegramLinks.userId, userId)).limit(1),
+        db.select().from(channelLinks).where(eq87(channelLinks.userId, userId)),
         getAllPreferences(userId)
       ]);
       const discordTok = await getUserToken(userId, "discord_bot").catch(() => null);
@@ -59575,8 +59797,8 @@ function registerChannelRoutes(app2) {
     try {
       if (!isMute) {
         const [tgRows, chRows] = await Promise.all([
-          db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq86(telegramLinks.userId, userId)).limit(1).catch(() => []),
-          db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq86(channelLinks.userId, userId)).catch(() => [])
+          db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq87(telegramLinks.userId, userId)).limit(1).catch(() => []),
+          db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq87(channelLinks.userId, userId)).catch(() => [])
         ]);
         const connectedSet = /* @__PURE__ */ new Set(["in_app"]);
         if (tgRows.length > 0) connectedSet.add("telegram");
@@ -59615,8 +59837,8 @@ function registerChannelRoutes(app2) {
     const errors = [];
     const saved = {};
     const [tgRows, chRows] = await Promise.all([
-      db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq86(telegramLinks.userId, userId)).limit(1).catch(() => []),
-      db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq86(channelLinks.userId, userId)).catch(() => [])
+      db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq87(telegramLinks.userId, userId)).limit(1).catch(() => []),
+      db.select({ channel: channelLinks.channel }).from(channelLinks).where(eq87(channelLinks.userId, userId)).catch(() => [])
     ]);
     const connectedSet = /* @__PURE__ */ new Set();
     connectedSet.add("in_app");
@@ -59677,12 +59899,12 @@ function registerChannelRoutes(app2) {
     const userId = req.userId;
     try {
       closeUserDaemon(userId, "desktop");
-      const rows = await db.select().from(channelLinks).where(and62(eq86(channelLinks.userId, userId), eq86(channelLinks.channel, "daemon")));
+      const rows = await db.select().from(channelLinks).where(and63(eq87(channelLinks.userId, userId), eq87(channelLinks.channel, "daemon")));
       for (const row of rows) {
         const meta = row.metadata || {};
         const p = meta.platform || "desktop";
         if (p === "desktop") {
-          await db.delete(channelLinks).where(eq86(channelLinks.id, row.id));
+          await db.delete(channelLinks).where(eq87(channelLinks.id, row.id));
         }
       }
       res.json({ ok: true });
@@ -59695,12 +59917,12 @@ function registerChannelRoutes(app2) {
     const userId = req.userId;
     try {
       closeUserDaemon(userId, "android");
-      const rows = await db.select().from(channelLinks).where(and62(eq86(channelLinks.userId, userId), eq86(channelLinks.channel, "daemon")));
+      const rows = await db.select().from(channelLinks).where(and63(eq87(channelLinks.userId, userId), eq87(channelLinks.channel, "daemon")));
       for (const row of rows) {
         const meta = row.metadata || {};
         const p = meta.platform || "desktop";
         if (p === "android") {
-          await db.delete(channelLinks).where(eq86(channelLinks.id, row.id));
+          await db.delete(channelLinks).where(eq87(channelLinks.id, row.id));
         }
       }
       res.json({ ok: true });
@@ -59723,10 +59945,10 @@ function registerChannelRoutes(app2) {
         stopUserBot(userId);
         await deleteUserToken(userId, "discord_bot").catch(() => {
         });
-        await db.delete(channelLinkCodes).where(and62(eq86(channelLinkCodes.userId, userId), eq86(channelLinkCodes.channel, "discord"))).catch(() => {
+        await db.delete(channelLinkCodes).where(and63(eq87(channelLinkCodes.userId, userId), eq87(channelLinkCodes.channel, "discord"))).catch(() => {
         });
       }
-      await db.delete(channelLinks).where(and62(eq86(channelLinks.userId, userId), eq86(channelLinks.channel, channel)));
+      await db.delete(channelLinks).where(and63(eq87(channelLinks.userId, userId), eq87(channelLinks.channel, channel)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[channels] unlink failed:", err2);
@@ -59881,7 +60103,7 @@ function registerChannelRoutes(app2) {
       return res.status(400).json({ error: "guildId and channelId required" });
     }
     try {
-      const rows = await db.select().from(channelLinks).where(and62(eq86(channelLinks.userId, userId), eq86(channelLinks.channel, "discord"))).limit(1);
+      const rows = await db.select().from(channelLinks).where(and63(eq87(channelLinks.userId, userId), eq87(channelLinks.channel, "discord"))).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
       const meta = rows[0].metadata || {};
       const guilds = meta.allowlistedGuilds || [];
@@ -59898,7 +60120,7 @@ function registerChannelRoutes(app2) {
       } else {
         guilds.push(entry);
       }
-      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and62(eq86(channelLinks.userId, userId), eq86(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and63(eq87(channelLinks.userId, userId), eq87(channelLinks.channel, "discord")));
       res.json({ ok: true, allowlistedGuilds: guilds });
     } catch (err2) {
       console.error("[channels] discord allowlist update failed:", err2);
@@ -59909,13 +60131,13 @@ function registerChannelRoutes(app2) {
     const userId = req.userId;
     const { guildId, channelId } = req.params;
     try {
-      const rows = await db.select().from(channelLinks).where(and62(eq86(channelLinks.userId, userId), eq86(channelLinks.channel, "discord"))).limit(1);
+      const rows = await db.select().from(channelLinks).where(and63(eq87(channelLinks.userId, userId), eq87(channelLinks.channel, "discord"))).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Discord account not linked" });
       const meta = rows[0].metadata || {};
       const guilds = (meta.allowlistedGuilds || []).filter(
         (g) => !(g.guildId === guildId && g.channelId === channelId)
       );
-      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and62(eq86(channelLinks.userId, userId), eq86(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...meta, allowlistedGuilds: guilds } }).where(and63(eq87(channelLinks.userId, userId), eq87(channelLinks.channel, "discord")));
       res.json({ ok: true, allowlistedGuilds: guilds });
     } catch (err2) {
       console.error("[channels] discord allowlist delete failed:", err2);
@@ -59990,8 +60212,8 @@ function registerChannelRoutes(app2) {
         if (Object.keys(updates).length > 0) {
           const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
           const { discordChannelSchedules: discordChannelSchedules2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-          const { eq: eq127, and: and98 } = await import("drizzle-orm");
-          await db2.update(discordChannelSchedules2).set(updates).where(and98(eq127(discordChannelSchedules2.id, id), eq127(discordChannelSchedules2.userId, userId)));
+          const { eq: eq128, and: and99 } = await import("drizzle-orm");
+          await db2.update(discordChannelSchedules2).set(updates).where(and99(eq128(discordChannelSchedules2.id, id), eq128(discordChannelSchedules2.userId, userId)));
         }
       }
       const schedules = await listSchedules(userId);
@@ -60031,9 +60253,9 @@ function registerChannelRoutes(app2) {
     const userId = req.userId;
     try {
       const approvals = await db.select().from(discordPendingApprovals).where(
-        and62(
-          eq86(discordPendingApprovals.userId, userId),
-          eq86(discordPendingApprovals.status, "pending")
+        and63(
+          eq87(discordPendingApprovals.userId, userId),
+          eq87(discordPendingApprovals.status, "pending")
         )
       );
       res.json({ approvals });
@@ -60051,16 +60273,16 @@ function registerChannelRoutes(app2) {
     }
     try {
       const rows = await db.select().from(discordPendingApprovals).where(
-        and62(
-          eq86(discordPendingApprovals.messageId, messageId),
-          eq86(discordPendingApprovals.userId, userId),
-          eq86(discordPendingApprovals.status, "pending")
+        and63(
+          eq87(discordPendingApprovals.messageId, messageId),
+          eq87(discordPendingApprovals.userId, userId),
+          eq87(discordPendingApprovals.status, "pending")
         )
       ).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Approval not found or already resolved" });
       const approval = rows[0];
       const newStatus = action === "approve" ? "approved" : "rejected";
-      await db.update(discordPendingApprovals).set({ status: newStatus, resolvedAt: /* @__PURE__ */ new Date() }).where(eq86(discordPendingApprovals.messageId, messageId));
+      await db.update(discordPendingApprovals).set({ status: newStatus, resolvedAt: /* @__PURE__ */ new Date() }).where(eq87(discordPendingApprovals.messageId, messageId));
       const { recordApprovalSignal: recordApprovalSignal2 } = await Promise.resolve().then(() => (init_approvalLearning(), approvalLearning_exports));
       recordApprovalSignal2({
         userId,
@@ -60090,7 +60312,7 @@ function registerChannelRoutes(app2) {
   app2.get("/api/discord/agents", authMiddleware, async (req, res) => {
     const userId = req.userId;
     try {
-      const agents = await db.select().from(discordAgents).where(eq86(discordAgents.userId, userId));
+      const agents = await db.select().from(discordAgents).where(eq87(discordAgents.userId, userId));
       res.json({ agents });
     } catch (err2) {
       console.error("[channels] discord agents list failed:", err2);
@@ -60102,8 +60324,8 @@ function registerChannelRoutes(app2) {
     const id = _p2(req.params.id);
     const { loopEnabled } = req.body || {};
     try {
-      await db.update(discordAgents).set({ loopEnabled: loopEnabled ? 1 : 0 }).where(and62(eq86(discordAgents.id, id), eq86(discordAgents.userId, userId)));
-      const rows = await db.select().from(discordAgents).where(eq86(discordAgents.id, id)).limit(1);
+      await db.update(discordAgents).set({ loopEnabled: loopEnabled ? 1 : 0 }).where(and63(eq87(discordAgents.id, id), eq87(discordAgents.userId, userId)));
+      const rows = await db.select().from(discordAgents).where(eq87(discordAgents.id, id)).limit(1);
       res.json({ ok: true, agent: rows[0] ?? null });
     } catch (err2) {
       console.error("[channels] discord agent toggle failed:", err2);
@@ -60114,8 +60336,8 @@ function registerChannelRoutes(app2) {
     const userId = req.userId;
     try {
       const [schedules, agents] = await Promise.all([
-        db.select().from(discordChannelSchedules).where(eq86(discordChannelSchedules.userId, userId)),
-        db.select().from(discordAgents).where(eq86(discordAgents.userId, userId))
+        db.select().from(discordChannelSchedules).where(eq87(discordChannelSchedules.userId, userId)),
+        db.select().from(discordAgents).where(eq87(discordAgents.userId, userId))
       ]);
       const items = [];
       for (const s of schedules) {
@@ -60148,7 +60370,7 @@ function registerChannelRoutes(app2) {
   app2.get("/api/voice/wake-settings", authMiddleware, async (req, res) => {
     const userId = req.userId;
     try {
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq86(userPreferences.userId, userId));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq87(userPreferences.userId, userId));
       const prefs = rows[0]?.data ?? {};
       res.json({
         wakeWordEnabled: prefs.wakeWordEnabled ?? false,
@@ -60164,7 +60386,7 @@ function registerChannelRoutes(app2) {
     const userId = req.userId;
     const { wakeWordEnabled, talkModeEnabled, wakeWords } = req.body;
     try {
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq86(userPreferences.userId, userId));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq87(userPreferences.userId, userId));
       const existing = rows[0]?.data ?? {};
       const updated = {
         ...existing,
@@ -60259,7 +60481,7 @@ var init_routes = __esm({
 });
 
 // server/discord/schedulesRoutes.ts
-import { eq as eq87, and as and63, desc as desc27 } from "drizzle-orm";
+import { eq as eq88, and as and64, desc as desc27 } from "drizzle-orm";
 function registerDiscordScheduleRoutes(app2) {
   app2.get("/api/discord/schedules", authMiddleware, async (req, res) => {
     const userId = req.userId;
@@ -60324,7 +60546,7 @@ function registerDiscordScheduleRoutes(app2) {
     const userId = req.userId;
     const id = _p3(req.params.id);
     try {
-      const rows = await db.select().from(discordChannelSchedules).where(and63(eq87(discordChannelSchedules.id, id), eq87(discordChannelSchedules.userId, userId))).limit(1);
+      const rows = await db.select().from(discordChannelSchedules).where(and64(eq88(discordChannelSchedules.id, id), eq88(discordChannelSchedules.userId, userId))).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Schedule not found" });
       res.json({ ok: true, message: "Schedule run started" });
       runSchedule(id).catch((err2) => console.error("[DiscordSchedules] manual run failed:", err2));
@@ -60337,9 +60559,9 @@ function registerDiscordScheduleRoutes(app2) {
     const userId = req.userId;
     try {
       const approvals = await db.select().from(discordPendingApprovals).where(
-        and63(
-          eq87(discordPendingApprovals.userId, userId),
-          eq87(discordPendingApprovals.status, "pending")
+        and64(
+          eq88(discordPendingApprovals.userId, userId),
+          eq88(discordPendingApprovals.status, "pending")
         )
       );
       res.json({ approvals });
@@ -60354,9 +60576,9 @@ function registerDiscordScheduleRoutes(app2) {
     const { action } = req.body;
     try {
       const rows = await db.select().from(discordPendingApprovals).where(
-        and63(
-          eq87(discordPendingApprovals.messageId, messageId),
-          eq87(discordPendingApprovals.userId, userId)
+        and64(
+          eq88(discordPendingApprovals.messageId, messageId),
+          eq88(discordPendingApprovals.userId, userId)
         )
       ).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Approval not found" });
@@ -60367,7 +60589,7 @@ function registerDiscordScheduleRoutes(app2) {
       await db.update(discordPendingApprovals).set({
         status: action === "approve" ? "approved" : "rejected",
         resolvedAt: /* @__PURE__ */ new Date()
-      }).where(eq87(discordPendingApprovals.messageId, messageId));
+      }).where(eq88(discordPendingApprovals.messageId, messageId));
       res.json({ ok: true });
       const actionData = action === "approve" ? approval.onApprove : approval.onReject;
       if (actionData) {
@@ -60383,7 +60605,7 @@ function registerDiscordScheduleRoutes(app2) {
   app2.get("/api/discord/agents", authMiddleware, async (req, res) => {
     const userId = req.userId;
     try {
-      const agents = await db.select().from(discordAgents).where(eq87(discordAgents.userId, userId));
+      const agents = await db.select().from(discordAgents).where(eq88(discordAgents.userId, userId));
       res.json({ agents });
     } catch (err2) {
       console.error("[DiscordSchedules] GET /api/discord/agents failed:", err2);
@@ -60395,9 +60617,9 @@ function registerDiscordScheduleRoutes(app2) {
     const id = _p3(req.params.id);
     const { loopEnabled } = req.body;
     try {
-      const rows = await db.select().from(discordAgents).where(and63(eq87(discordAgents.id, id), eq87(discordAgents.userId, userId))).limit(1);
+      const rows = await db.select().from(discordAgents).where(and64(eq88(discordAgents.id, id), eq88(discordAgents.userId, userId))).limit(1);
       if (!rows[0]) return res.status(404).json({ error: "Agent not found" });
-      await db.update(discordAgents).set({ loopEnabled: loopEnabled ? 1 : 0 }).where(eq87(discordAgents.id, id));
+      await db.update(discordAgents).set({ loopEnabled: loopEnabled ? 1 : 0 }).where(eq88(discordAgents.id, id));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[DiscordSchedules] toggle agent failed:", err2);
@@ -60409,9 +60631,9 @@ function registerDiscordScheduleRoutes(app2) {
     try {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1e3);
       const logs = await db.select().from(interactionLog).where(
-        and63(
-          eq87(interactionLog.userId, userId),
-          eq87(interactionLog.channel, "discord")
+        and64(
+          eq88(interactionLog.userId, userId),
+          eq88(interactionLog.channel, "discord")
         )
       ).orderBy(desc27(interactionLog.createdAt)).limit(50);
       res.json({ activity: logs });
@@ -60435,10 +60657,10 @@ var init_schedulesRoutes = __esm({
 });
 
 // server/agent/agentBus.ts
-import { eq as eq88, and as and64, desc as desc28 } from "drizzle-orm";
+import { eq as eq89, and as and65, desc as desc28 } from "drizzle-orm";
 import { sql as sql30 } from "drizzle-orm";
 async function getAgentMessages(toAgentId, userId, limit = 20) {
-  return db.select().from(agentMessages).where(and64(eq88(agentMessages.toAgentId, toAgentId), eq88(agentMessages.userId, userId))).orderBy(desc28(agentMessages.createdAt)).limit(limit);
+  return db.select().from(agentMessages).where(and65(eq89(agentMessages.toAgentId, toAgentId), eq89(agentMessages.userId, userId))).orderBy(desc28(agentMessages.createdAt)).limit(limit);
 }
 async function getMessageStats(agentId, userId) {
   const result = await db.execute(sql30`
@@ -60570,8 +60792,8 @@ function validateAgentConfig(raw) {
     return { ok: true, errors: [], warnings };
   }
   const errors = result.error.issues.map((issue) => {
-    const path32 = issue.path.length > 0 ? `'${issue.path.join(".")}': ` : "";
-    return `${path32}${issue.message}`;
+    const path33 = issue.path.length > 0 ? `'${issue.path.join(".")}': ` : "";
+    return `${path33}${issue.message}`;
   });
   return { ok: false, errors, warnings: [] };
 }
@@ -60696,12 +60918,12 @@ __export(coreAgentSeed_exports, {
   seedCoreAgentsForAllUsers: () => seedCoreAgentsForAllUsers,
   seedCoreAgentsForUser: () => seedCoreAgentsForUser
 });
-import { and as and65, eq as eq89 } from "drizzle-orm";
+import { and as and66, eq as eq90 } from "drizzle-orm";
 function getCoachAppAgentId(userId) {
   return `coach_app:${userId}`;
 }
 async function seedCoreAgentsForUser(userId) {
-  const existing = await db.select({ id: discordAgents.id, name: discordAgents.name }).from(discordAgents).where(eq89(discordAgents.userId, userId));
+  const existing = await db.select({ id: discordAgents.id, name: discordAgents.name }).from(discordAgents).where(eq90(discordAgents.userId, userId));
   const existingIds = new Set(existing.map((a) => a.id));
   const existingNames = new Set(existing.map((a) => a.name.toLowerCase()));
   for (const def of CORE_AGENTS) {
@@ -60709,9 +60931,9 @@ async function seedCoreAgentsForUser(userId) {
     if (explicitId && existingIds.has(explicitId) || existingNames.has(def.name.toLowerCase())) {
       if (def.preferredModel) {
         await db.update(discordAgents).set({ preferredModel: def.preferredModel }).where(
-          and65(
-            eq89(discordAgents.userId, userId),
-            eq89(discordAgents.name, def.name)
+          and66(
+            eq90(discordAgents.userId, userId),
+            eq90(discordAgents.name, def.name)
           )
         ).catch(() => {
         });
@@ -60807,7 +61029,7 @@ var init_coreAgentSeed = __esm({
 
 // server/agent/agentRoutes.ts
 import { randomUUID as randomUUID4 } from "crypto";
-import { eq as eq90, sql as sql31, desc as desc29, and as and66 } from "drizzle-orm";
+import { eq as eq91, sql as sql31, desc as desc29, and as and67 } from "drizzle-orm";
 function formatRelative(date2) {
   const diffMs = Date.now() - date2.getTime();
   const diffMin = Math.floor(diffMs / 6e4);
@@ -60865,15 +61087,15 @@ function registerAgentRoutes(app2) {
       const memoryCounts = await db.select({
         agentId: agentMemories.agentId,
         count: sql31`cast(count(*) as int)`
-      }).from(agentMemories).where(eq90(agentMemories.userId, userId)).groupBy(agentMemories.agentId);
+      }).from(agentMemories).where(eq91(agentMemories.userId, userId)).groupBy(agentMemories.agentId);
       const memoryCountMap = /* @__PURE__ */ new Map();
       for (const row of memoryCounts) {
         memoryCountMap.set(row.agentId, Number(row.count));
       }
       const recentJobs = await db.select().from(agentJobs).where(
-        and66(
-          eq90(agentJobs.userId, userId),
-          eq90(agentJobs.agentType, "named_agent_task")
+        and67(
+          eq91(agentJobs.userId, userId),
+          eq91(agentJobs.agentType, "named_agent_task")
         )
       ).orderBy(desc29(agentJobs.createdAt)).limit(50);
       const now = Date.now();
@@ -61658,7 +61880,7 @@ var init_agentRoutes = __esm({
 });
 
 // server/agent/customAgentRoutes.ts
-import { eq as eq91, and as and67 } from "drizzle-orm";
+import { eq as eq92, and as and68 } from "drizzle-orm";
 function toSlug(name) {
   return name.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, "").replace(/[\s]+/g, "-").replace(/-+/g, "-").slice(0, 64);
 }
@@ -61677,7 +61899,7 @@ function registerCustomAgentRoutes(app2) {
   app2.get("/api/custom-agents", async (req, res) => {
     try {
       const userId = req.userId;
-      const agents = await db.select().from(customAgents).where(eq91(customAgents.userId, userId)).orderBy(customAgents.createdAt);
+      const agents = await db.select().from(customAgents).where(eq92(customAgents.userId, userId)).orderBy(customAgents.createdAt);
       res.json({ agents });
     } catch (err2) {
       handleError2(res, err2);
@@ -61698,7 +61920,7 @@ function registerCustomAgentRoutes(app2) {
         return;
       }
       const slug = typeof body.slug === "string" && body.slug.trim() ? toSlug(body.slug.trim()) : toSlug(name);
-      const existing = await db.select({ id: customAgents.id }).from(customAgents).where(and67(eq91(customAgents.userId, userId), eq91(customAgents.slug, slug))).limit(1);
+      const existing = await db.select({ id: customAgents.id }).from(customAgents).where(and68(eq92(customAgents.userId, userId), eq92(customAgents.slug, slug))).limit(1);
       if (existing.length > 0) {
         res.status(409).json({ error: `A custom agent with slug "${slug}" already exists` });
         return;
@@ -61721,7 +61943,7 @@ function registerCustomAgentRoutes(app2) {
   app2.get("/api/custom-agents/:id", async (req, res) => {
     try {
       const userId = req.userId;
-      const [agent] = await db.select().from(customAgents).where(and67(eq91(customAgents.id, _p5(req.params.id)), eq91(customAgents.userId, userId))).limit(1);
+      const [agent] = await db.select().from(customAgents).where(and68(eq92(customAgents.id, _p5(req.params.id)), eq92(customAgents.userId, userId))).limit(1);
       if (!agent) {
         res.status(404).json({ error: "Custom agent not found" });
         return;
@@ -61735,7 +61957,7 @@ function registerCustomAgentRoutes(app2) {
     try {
       const userId = req.userId;
       const body = req.body;
-      const [existing] = await db.select().from(customAgents).where(and67(eq91(customAgents.id, _p5(req.params.id)), eq91(customAgents.userId, userId))).limit(1);
+      const [existing] = await db.select().from(customAgents).where(and68(eq92(customAgents.id, _p5(req.params.id)), eq92(customAgents.userId, userId))).limit(1);
       if (!existing) {
         res.status(404).json({ error: "Custom agent not found" });
         return;
@@ -61749,7 +61971,7 @@ function registerCustomAgentRoutes(app2) {
       if (typeof body.slug === "string" && body.slug.trim()) {
         const newSlug = toSlug(body.slug.trim());
         if (newSlug !== existing.slug) {
-          const conflict = await db.select({ id: customAgents.id }).from(customAgents).where(and67(eq91(customAgents.userId, userId), eq91(customAgents.slug, newSlug))).limit(1);
+          const conflict = await db.select({ id: customAgents.id }).from(customAgents).where(and68(eq92(customAgents.userId, userId), eq92(customAgents.slug, newSlug))).limit(1);
           if (conflict.length > 0) {
             res.status(409).json({ error: `A custom agent with slug "${newSlug}" already exists` });
             return;
@@ -61772,7 +61994,7 @@ function registerCustomAgentRoutes(app2) {
       if (body.model !== void 0) {
         patch.model = typeof body.model === "string" ? body.model.trim() || null : null;
       }
-      const [updated] = await db.update(customAgents).set(patch).where(eq91(customAgents.id, _p5(req.params.id))).returning();
+      const [updated] = await db.update(customAgents).set(patch).where(eq92(customAgents.id, _p5(req.params.id))).returning();
       res.json({ agent: updated });
     } catch (err2) {
       handleError2(res, err2);
@@ -61781,12 +62003,12 @@ function registerCustomAgentRoutes(app2) {
   app2.delete("/api/custom-agents/:id", async (req, res) => {
     try {
       const userId = req.userId;
-      const [existing] = await db.select({ id: customAgents.id }).from(customAgents).where(and67(eq91(customAgents.id, _p5(req.params.id)), eq91(customAgents.userId, userId))).limit(1);
+      const [existing] = await db.select({ id: customAgents.id }).from(customAgents).where(and68(eq92(customAgents.id, _p5(req.params.id)), eq92(customAgents.userId, userId))).limit(1);
       if (!existing) {
         res.status(404).json({ error: "Custom agent not found" });
         return;
       }
-      await db.delete(customAgents).where(eq91(customAgents.id, _p5(req.params.id)));
+      await db.delete(customAgents).where(eq92(customAgents.id, _p5(req.params.id)));
       res.json({ ok: true });
     } catch (err2) {
       handleError2(res, err2);
@@ -61796,7 +62018,7 @@ function registerCustomAgentRoutes(app2) {
     try {
       const userId = req.userId;
       const body = req.body;
-      const [agent] = await db.select().from(customAgents).where(and67(eq91(customAgents.id, _p5(req.params.id)), eq91(customAgents.userId, userId))).limit(1);
+      const [agent] = await db.select().from(customAgents).where(and68(eq92(customAgents.id, _p5(req.params.id)), eq92(customAgents.userId, userId))).limit(1);
       if (!agent) {
         res.status(404).json({ error: "Custom agent not found" });
         return;
@@ -61826,7 +62048,7 @@ function registerCustomAgentRoutes(app2) {
   app2.get("/api/custom-agents/by-slug/:slug", async (req, res) => {
     try {
       const userId = req.userId;
-      const [agent] = await db.select().from(customAgents).where(and67(eq91(customAgents.slug, _p5(req.params.slug)), eq91(customAgents.userId, userId))).limit(1);
+      const [agent] = await db.select().from(customAgents).where(and68(eq92(customAgents.slug, _p5(req.params.slug)), eq92(customAgents.userId, userId))).limit(1);
       if (!agent) {
         res.status(404).json({ error: "Custom agent not found" });
         return;
@@ -61849,11 +62071,11 @@ var init_customAgentRoutes = __esm({
 });
 
 // server/agent/codeProposalsRoutes.ts
-import { eq as eq92, and as and68, desc as desc30 } from "drizzle-orm";
+import { eq as eq93, and as and69, desc as desc30 } from "drizzle-orm";
 import fs18 from "fs/promises";
-import path23 from "path";
+import path24 from "path";
 async function schedulePostFixVerification(userId, proposalId, filePath, debugCtx) {
-  await new Promise((resolve9) => setTimeout(resolve9, 8e3));
+  await new Promise((resolve10) => setTimeout(resolve10, 8e3));
   try {
     const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
     const brief = [
@@ -61911,7 +62133,7 @@ function registerCodeProposalsRoutes(app2) {
         debugContext: codeProposals.debugContext,
         createdAt: codeProposals.createdAt,
         appliedAt: codeProposals.appliedAt
-      }).from(codeProposals).where(eq92(codeProposals.userId, userId)).orderBy(desc30(codeProposals.createdAt));
+      }).from(codeProposals).where(eq93(codeProposals.userId, userId)).orderBy(desc30(codeProposals.createdAt));
       return res.json(rows);
     } catch (err2) {
       console.error("[CodeProposals] list error:", err2);
@@ -61923,7 +62145,7 @@ function registerCodeProposalsRoutes(app2) {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     if (!await requireOwner(userId, res)) return;
     try {
-      const [row] = await db.select().from(codeProposals).where(and68(eq92(codeProposals.id, _p6(req.params.id)), eq92(codeProposals.userId, userId))).limit(1);
+      const [row] = await db.select().from(codeProposals).where(and69(eq93(codeProposals.id, _p6(req.params.id)), eq93(codeProposals.userId, userId))).limit(1);
       if (!row) return res.status(404).json({ error: "Proposal not found" });
       return res.json(row);
     } catch (err2) {
@@ -61936,7 +62158,7 @@ function registerCodeProposalsRoutes(app2) {
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     if (!await requireOwner(userId, res)) return;
     try {
-      const [row] = await db.select().from(codeProposals).where(and68(eq92(codeProposals.id, _p6(req.params.id)), eq92(codeProposals.userId, userId))).limit(1);
+      const [row] = await db.select().from(codeProposals).where(and69(eq93(codeProposals.id, _p6(req.params.id)), eq93(codeProposals.userId, userId))).limit(1);
       if (!row) return res.status(404).json({ error: "Proposal not found" });
       if (row.status !== "pending") {
         return res.status(409).json({ error: `Proposal is already ${row.status}` });
@@ -61944,10 +62166,10 @@ function registerCodeProposalsRoutes(app2) {
       if (!isPathAllowedForProposal(row.filePath)) {
         return res.status(403).json({ error: "Stored file path is outside the allowed source directories. This proposal cannot be applied." });
       }
-      const absPath = path23.join(PROJECT_ROOT5, row.filePath);
-      await fs18.mkdir(path23.dirname(absPath), { recursive: true });
+      const absPath = path24.join(PROJECT_ROOT5, row.filePath);
+      await fs18.mkdir(path24.dirname(absPath), { recursive: true });
       await fs18.writeFile(absPath, row.proposedContent, "utf-8");
-      await db.update(codeProposals).set({ status: "approved", appliedAt: /* @__PURE__ */ new Date() }).where(eq92(codeProposals.id, row.id));
+      await db.update(codeProposals).set({ status: "approved", appliedAt: /* @__PURE__ */ new Date() }).where(eq93(codeProposals.id, row.id));
       console.log(`[CodeProposals] approved proposal ${row.id} \u2192 wrote ${row.filePath}`);
       const debugCtx = row.debugContext;
       if (debugCtx) {
@@ -61971,12 +62193,12 @@ function registerCodeProposalsRoutes(app2) {
     if (!await requireOwner(userId, res)) return;
     const note = typeof req.body?.note === "string" ? req.body.note.trim() : null;
     try {
-      const [row] = await db.select({ id: codeProposals.id, status: codeProposals.status }).from(codeProposals).where(and68(eq92(codeProposals.id, _p6(req.params.id)), eq92(codeProposals.userId, userId))).limit(1);
+      const [row] = await db.select({ id: codeProposals.id, status: codeProposals.status }).from(codeProposals).where(and69(eq93(codeProposals.id, _p6(req.params.id)), eq93(codeProposals.userId, userId))).limit(1);
       if (!row) return res.status(404).json({ error: "Proposal not found" });
       if (row.status !== "pending") {
         return res.status(409).json({ error: `Proposal is already ${row.status}` });
       }
-      await db.update(codeProposals).set({ status: "rejected", rejectionNote: note }).where(eq92(codeProposals.id, row.id));
+      await db.update(codeProposals).set({ status: "rejected", rejectionNote: note }).where(eq93(codeProposals.id, row.id));
       console.log(`[CodeProposals] rejected proposal ${row.id}${note ? ` (note: ${note})` : ""}`);
       return res.json({ ok: true });
     } catch (err2) {
@@ -62065,9 +62287,9 @@ var init_projectCreateRequest = __esm({
 });
 
 // server/projectRoutes.ts
-import { eq as eq93, and as and69 } from "drizzle-orm";
+import { eq as eq94, and as and70, sql as sql32 } from "drizzle-orm";
 import * as fs19 from "fs";
-import * as path24 from "path";
+import * as path25 from "path";
 function registerProjectRoutes(app2) {
   app2.get("/api/projects", authMiddleware, async (req, res) => {
     try {
@@ -62124,21 +62346,23 @@ function registerProjectRoutes(app2) {
     try {
       const userId = req.userId;
       const id = _p7(req.params.id);
-      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
+      const [project] = await db.select().from(jarvisProjects).where(and70(eq94(jarvisProjects.id, id), eq94(jarvisProjects.userId, userId))).limit(1);
       if (!project) return res.status(404).json({ error: "Project not found" });
       if (!project.workspaceDir || !fs19.existsSync(project.workspaceDir)) {
-        return res.json({ workspaceDir: project.workspaceDir ?? null, files: [] });
+        const files2 = await listProjectSnapshot(id);
+        return res.json({ workspaceDir: project.workspaceDir ?? null, files: files2 });
       }
-      const root = path24.resolve(project.workspaceDir);
+      await hydrateProjectWorkspace(id, project.workspaceDir).catch(() => void 0);
+      const root = path25.resolve(project.workspaceDir);
       const blocked = /* @__PURE__ */ new Set([".git", "node_modules", ".next", ".expo", "dist", "build"]);
       const files = [];
       const walk = (dir, depth) => {
         if (depth > 4 || files.length >= 250) return;
         for (const entry of fs19.readdirSync(dir, { withFileTypes: true })) {
           if (blocked.has(entry.name)) continue;
-          const full = path24.join(dir, entry.name);
+          const full = path25.join(dir, entry.name);
           const stat = fs19.statSync(full);
-          const rel = path24.relative(root, full).replace(/\\/g, "/");
+          const rel = path25.relative(root, full).replace(/\\/g, "/");
           files.push({
             path: rel,
             name: entry.name,
@@ -62163,12 +62387,21 @@ function registerProjectRoutes(app2) {
       const id = _p7(req.params.id);
       const requestedPath = typeof req.query.path === "string" ? req.query.path : "";
       if (!isSafeProjectFilePath(requestedPath)) return res.status(400).json({ error: "Invalid file path" });
-      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
-      if (!project?.workspaceDir) return res.status(404).json({ error: "Project workspace not found" });
-      const root = path24.resolve(project.workspaceDir);
-      const fullPath = path24.resolve(root, requestedPath);
-      if (!fullPath.startsWith(root + path24.sep)) return res.status(400).json({ error: "Invalid file path" });
-      if (!fs19.existsSync(fullPath) || !fs19.statSync(fullPath).isFile()) return res.status(404).json({ error: "File not found" });
+      const [project] = await db.select().from(jarvisProjects).where(and70(eq94(jarvisProjects.id, id), eq94(jarvisProjects.userId, userId))).limit(1);
+      if (!project?.workspaceDir) {
+        const snapshot = await readProjectSnapshotFile(id, requestedPath);
+        if (!snapshot) return res.status(404).json({ error: "Project workspace not found" });
+        return res.json(snapshot);
+      }
+      await hydrateProjectWorkspace(id, project.workspaceDir).catch(() => void 0);
+      const root = path25.resolve(project.workspaceDir);
+      const fullPath = path25.resolve(root, requestedPath);
+      if (!fullPath.startsWith(root + path25.sep)) return res.status(400).json({ error: "Invalid file path" });
+      if (!fs19.existsSync(fullPath) || !fs19.statSync(fullPath).isFile()) {
+        const snapshot = await readProjectSnapshotFile(id, requestedPath);
+        if (!snapshot) return res.status(404).json({ error: "File not found" });
+        return res.json(snapshot);
+      }
       const stat = fs19.statSync(fullPath);
       if (stat.size > 2e5) return res.status(413).json({ error: "File is too large to preview" });
       const content = fs19.readFileSync(fullPath, "utf8");
@@ -62182,11 +62415,14 @@ function registerProjectRoutes(app2) {
     try {
       const userId = req.userId;
       const id = _p7(req.params.id);
-      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
+      const [project] = await db.select().from(jarvisProjects).where(and70(eq94(jarvisProjects.id, id), eq94(jarvisProjects.userId, userId))).limit(1);
       if (!project) return res.status(404).json({ error: "Project not found" });
       if (project.status !== "complete") return res.status(409).json({ error: "Project is not complete yet" });
-      const zipPath = path24.join(getProjectDownloadsDir(), `${id}.zip`);
-      if (!fs19.existsSync(zipPath)) return res.status(404).json({ error: "Project zip not yet available" });
+      const zipPath = path25.join(getProjectDownloadsDir(), `${id}.zip`);
+      if (!fs19.existsSync(zipPath)) {
+        const archive = await readProjectArchive(id);
+        if (!archive) return res.status(404).json({ error: "Project zip not yet available" });
+      }
       const token = generateDownloadToken(id);
       const downloadUrl = `${getPublicBaseUrl(req)}/api/downloads/project/${id}?token=${token}`;
       res.json({ downloadUrl });
@@ -62200,7 +62436,7 @@ function registerProjectRoutes(app2) {
       const userId = req.userId;
       const id = _p7(req.params.id);
       const { action, answer, autonomousMode } = req.body;
-      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
+      const [project] = await db.select().from(jarvisProjects).where(and70(eq94(jarvisProjects.id, id), eq94(jarvisProjects.userId, userId))).limit(1);
       if (!project) return res.status(404).json({ error: "Project not found" });
       if (action === "pause") {
         await pauseProject(id);
@@ -62232,9 +62468,18 @@ function registerProjectRoutes(app2) {
     try {
       const userId = req.userId;
       const id = _p7(req.params.id);
-      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
+      const [project] = await db.select().from(jarvisProjects).where(and70(eq94(jarvisProjects.id, id), eq94(jarvisProjects.userId, userId))).limit(1);
       if (!project) return res.status(404).json({ error: "Project not found" });
-      await db.delete(jarvisProjects).where(eq93(jarvisProjects.id, id));
+      await db.update(agentJobs).set({
+        status: "cancelled",
+        error: "Project deleted",
+        completedAt: /* @__PURE__ */ new Date()
+      }).where(and70(
+        eq94(agentJobs.userId, userId),
+        sql32`${agentJobs.input}->>'projectId' = ${id}`,
+        sql32`${agentJobs.status} IN ('queued', 'running')`
+      ));
+      await db.delete(jarvisProjects).where(eq94(jarvisProjects.id, id));
       res.json({ deleted: true });
     } catch (err2) {
       console.error("[ProjectRoutes] DELETE /api/projects/:id failed:", err2);
@@ -62250,12 +62495,18 @@ function registerProjectRoutes(app2) {
       if (!isSyncMode && !repoName) {
         return res.status(400).json({ error: "repoName is required" });
       }
-      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
+      const [project] = await db.select().from(jarvisProjects).where(and70(eq94(jarvisProjects.id, id), eq94(jarvisProjects.userId, userId))).limit(1);
       if (!project) return res.status(404).json({ error: "Project not found" });
       if (project.status !== "complete") {
         return res.status(400).json({ error: "Project must be complete before pushing to GitHub" });
       }
-      if (!project.workspaceDir || !fs19.existsSync(project.workspaceDir)) {
+      let workspaceDir = project.workspaceDir;
+      if (!workspaceDir) {
+        workspaceDir = getProjectWorkspaceDir(id);
+        await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq94(jarvisProjects.id, id));
+      }
+      await hydrateProjectWorkspace(id, workspaceDir).catch(() => void 0);
+      if (!fs19.existsSync(workspaceDir)) {
         return res.status(400).json({ error: "Project workspace directory not found" });
       }
       const settings = await getGitHubSettings(userId);
@@ -62279,7 +62530,7 @@ function registerProjectRoutes(app2) {
           settings.pat,
           owner,
           repo,
-          project.workspaceDir,
+          workspaceDir,
           syncMessage
         );
         if (!pushResult2.ok) {
@@ -62305,7 +62556,7 @@ function registerProjectRoutes(app2) {
         settings.pat,
         createResult.owner,
         createResult.repoName,
-        project.workspaceDir,
+        workspaceDir,
         `Initial commit: ${project.title ?? "Jarvis project"}`
       );
       if (!pushResult.ok) {
@@ -62324,7 +62575,7 @@ function registerProjectRoutes(app2) {
         }
         return res.status(500).json({ error: pushResult.error ?? "Failed to push code to GitHub" });
       }
-      await db.update(jarvisProjects).set({ githubRepoUrl: createResult.repoUrl, updatedAt: /* @__PURE__ */ new Date() }).where(eq93(jarvisProjects.id, id));
+      await db.update(jarvisProjects).set({ githubRepoUrl: createResult.repoUrl, updatedAt: /* @__PURE__ */ new Date() }).where(eq94(jarvisProjects.id, id));
       console.log(`[ProjectRoutes] pushed project ${id} to GitHub: ${createResult.repoUrl}`);
       res.json({ repoUrl: createResult.repoUrl });
     } catch (err2) {
@@ -62347,12 +62598,13 @@ var init_projectRoutes = __esm({
     init_github();
     init_publicUrl();
     init_projectStorage();
+    init_projectArtifacts();
     _p7 = (v) => Array.isArray(v) ? v[0] ?? "" : v;
   }
 });
 
 // server/doctor/doctorScan.ts
-import { eq as eq94, and as and70, lt as lt6, isNotNull as isNotNull3, gt as gt4 } from "drizzle-orm";
+import { eq as eq95, and as and71, lt as lt6, isNotNull as isNotNull3, gt as gt4 } from "drizzle-orm";
 import https from "https";
 import http2 from "http";
 function pass(id, label, message) {
@@ -62365,19 +62617,19 @@ function fail2(id, label, message, settingsPath) {
   return { id, label, status: "fail", message, settingsPath };
 }
 async function httpsGet(url, timeoutMs = 5e3, headers) {
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const req = https.get(url, { timeout: timeoutMs, headers }, (res) => {
       res.resume();
-      resolve9({
+      resolve10({
         statusCode: res.statusCode ?? 0,
         ok: (res.statusCode ?? 0) < 500,
         networkError: false
       });
     });
-    req.on("error", () => resolve9({ statusCode: 0, ok: false, networkError: true }));
+    req.on("error", () => resolve10({ statusCode: 0, ok: false, networkError: true }));
     req.on("timeout", () => {
       req.destroy();
-      resolve9({ statusCode: 0, ok: false, networkError: true });
+      resolve10({ statusCode: 0, ok: false, networkError: true });
     });
   });
 }
@@ -62385,8 +62637,8 @@ async function checkDatabaseConnectivity() {
   const id = "database_connectivity";
   const label = "Database Connectivity";
   try {
-    const { sql: sql46 } = await import("drizzle-orm");
-    await db.execute(sql46`SELECT 1`);
+    const { sql: sql47 } = await import("drizzle-orm");
+    await db.execute(sql47`SELECT 1`);
     return pass(id, label, "Database is reachable and responding.");
   } catch (err2) {
     const msg = err2 instanceof Error ? err2.message : String(err2);
@@ -62576,7 +62828,7 @@ async function checkMcpEndpointAuth() {
   const id = "mcp_endpoint_auth";
   const label = "MCP Endpoint Authentication";
   const port = parseInt(process.env.PORT ?? "5000", 10);
-  return new Promise((resolve9) => {
+  return new Promise((resolve10) => {
     const body = JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1, params: {} });
     const options = {
       hostname: "127.0.0.1",
@@ -62593,27 +62845,27 @@ async function checkMcpEndpointAuth() {
       res.resume();
       const code = res.statusCode ?? 0;
       if (code === 401 || code === 403) {
-        resolve9(pass(id, label, "MCP endpoint correctly rejects unauthenticated requests."));
+        resolve10(pass(id, label, "MCP endpoint correctly rejects unauthenticated requests."));
       } else if (code === 200 || code === 202) {
-        resolve9(fail2(id, label, "MCP endpoint accepted a request with no Authorization header \u2014 endpoint may be unauthenticated.", "/(tabs)/settings"));
+        resolve10(fail2(id, label, "MCP endpoint accepted a request with no Authorization header \u2014 endpoint may be unauthenticated.", "/(tabs)/settings"));
       } else if (code === 404) {
-        resolve9(warn(id, label, "MCP endpoint returned 404 \u2014 path may be misconfigured or MCP is not enabled.", "/(tabs)/settings"));
+        resolve10(warn(id, label, "MCP endpoint returned 404 \u2014 path may be misconfigured or MCP is not enabled.", "/(tabs)/settings"));
       } else if (code >= 500) {
-        resolve9(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 server-side error; auth posture cannot be confirmed.`, "/(tabs)/settings"));
+        resolve10(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 server-side error; auth posture cannot be confirmed.`, "/(tabs)/settings"));
       } else {
-        resolve9(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 unexpected status; verify MCP is configured correctly.`, "/(tabs)/settings"));
+        resolve10(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 unexpected status; verify MCP is configured correctly.`, "/(tabs)/settings"));
       }
     });
     req.on("error", (err2) => {
       if (err2.code === "ECONNREFUSED") {
-        resolve9(warn(id, label, "Could not connect to local MCP endpoint \u2014 server may still be starting."));
+        resolve10(warn(id, label, "Could not connect to local MCP endpoint \u2014 server may still be starting."));
       } else {
-        resolve9(warn(id, label, `MCP auth check failed: ${err2.message}`));
+        resolve10(warn(id, label, `MCP auth check failed: ${err2.message}`));
       }
     });
     req.on("timeout", () => {
       req.destroy();
-      resolve9(warn(id, label, "MCP auth check timed out."));
+      resolve10(warn(id, label, "MCP auth check timed out."));
     });
     req.write(body);
     req.end();
@@ -62623,7 +62875,7 @@ async function checkUserIntegrationCredentials(userId) {
   const id = "integration_credentials";
   const label = "Integration Credentials";
   try {
-    const rows = await db.select({ integration: integrationStatus.integration, status: integrationStatus.status }).from(integrationStatus).where(eq94(integrationStatus.userId, userId));
+    const rows = await db.select({ integration: integrationStatus.integration, status: integrationStatus.status }).from(integrationStatus).where(eq95(integrationStatus.userId, userId));
     if (rows.length === 0) {
       return warn(id, label, "No integrations have been configured yet.", "/(tabs)/settings");
     }
@@ -62669,16 +62921,16 @@ async function checkUserOAuthTokenExpiry(userId) {
     const sevenDaysFromNow = new Date(Date.now() + 7 * 24 * 60 * 60 * 1e3);
     const now = /* @__PURE__ */ new Date();
     const expiringSoon = await db.select({ integration: integrationStatus.integration, expiresAt: integrationStatus.expiresAt }).from(integrationStatus).where(
-      and70(
-        eq94(integrationStatus.userId, userId),
+      and71(
+        eq95(integrationStatus.userId, userId),
         isNotNull3(integrationStatus.expiresAt),
         gt4(integrationStatus.expiresAt, now),
         lt6(integrationStatus.expiresAt, sevenDaysFromNow)
       )
     );
     const alreadyExpired = await db.select({ integration: integrationStatus.integration }).from(integrationStatus).where(
-      and70(
-        eq94(integrationStatus.userId, userId),
+      and71(
+        eq95(integrationStatus.userId, userId),
         isNotNull3(integrationStatus.expiresAt),
         lt6(integrationStatus.expiresAt, now)
       )
@@ -62901,8 +63153,8 @@ var init_doctorRoutes = __esm({
 
 // server/downloadRoutes.ts
 import * as fs20 from "fs";
-import * as path25 from "path";
-import { eq as eq95 } from "drizzle-orm";
+import * as path26 from "path";
+import { eq as eq96 } from "drizzle-orm";
 function getFallbackUrl() {
   return process.env.ANDROID_APK_URL ?? null;
 }
@@ -62944,7 +63196,7 @@ function registerDownloadRoutes(app2) {
     res.json({ available: false });
   });
   app2.get("/api/downloads/project/:projectId", async (req, res) => {
-    const { projectId } = req.params;
+    const projectId = _p8(req.params.projectId);
     const queryToken = typeof req.query.token === "string" ? req.query.token : null;
     const tokenValid = queryToken ? validateDownloadToken(projectId, queryToken) : false;
     const bearerUserId = tokenValid ? null : await getUserIdFromRequest(req);
@@ -62952,19 +63204,29 @@ function registerDownloadRoutes(app2) {
       return res.status(401).json({ error: "Unauthorized \u2014 provide a valid token or authenticate" });
     }
     try {
-      const [project] = await db.select().from(jarvisProjects).where(eq95(jarvisProjects.id, projectId)).limit(1);
+      const [project] = await db.select().from(jarvisProjects).where(eq96(jarvisProjects.id, projectId)).limit(1);
       if (!project) {
         return res.status(404).json({ error: "Project not found" });
       }
       if (!tokenValid && project.userId !== bearerUserId) {
         return res.status(404).json({ error: "Project not found" });
       }
-      const zipPath = path25.join(DOWNLOADS_DIR2, `${projectId}.zip`);
+      const zipPath = path26.join(DOWNLOADS_DIR2, `${projectId}.zip`);
       if (!fs20.existsSync(zipPath)) {
-        return res.status(404).json({
-          error: "Project zip not yet available",
-          detail: "The project may still be building. You will receive a notification when the download is ready."
-        });
+        const archive = await readProjectArchive(projectId);
+        if (!archive) {
+          return res.status(404).json({
+            error: "Project zip not yet available",
+            detail: "The project may still be building. You will receive a notification when the download is ready."
+          });
+        }
+        const safeName2 = (project.title ?? projectId).replace(/[^a-z0-9]/gi, "-").toLowerCase();
+        const filename2 = `${safeName2}.zip`;
+        res.setHeader("Content-Type", "application/zip");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename2}"`);
+        res.setHeader("Content-Length", archive.sizeBytes);
+        res.setHeader("Cache-Control", "no-cache");
+        return res.end(archive.data);
       }
       const stat = fs20.statSync(zipPath);
       const safeName = (project.title ?? projectId).replace(/[^a-z0-9]/gi, "-").toLowerCase();
@@ -62980,7 +63242,7 @@ function registerDownloadRoutes(app2) {
     }
   });
 }
-var APK_PATH, DOWNLOADS_DIR2;
+var APK_PATH, DOWNLOADS_DIR2, _p8;
 var init_downloadRoutes = __esm({
   "server/downloadRoutes.ts"() {
     "use strict";
@@ -62989,13 +63251,15 @@ var init_downloadRoutes = __esm({
     init_auth();
     init_appDelivery();
     init_projectStorage();
-    APK_PATH = path25.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
+    init_projectArtifacts();
+    APK_PATH = path26.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
     DOWNLOADS_DIR2 = getProjectDownloadsDir();
+    _p8 = (v) => Array.isArray(v) ? v[0] ?? "" : v;
   }
 });
 
 // server/vaultRoutes.ts
-import { eq as eq96, and as and71, asc as asc6, isNull as isNull4 } from "drizzle-orm";
+import { eq as eq97, and as and72, asc as asc6, isNull as isNull4 } from "drizzle-orm";
 function registerVaultRoutes(app2) {
   app2.get("/api/vault/pages", authMiddleware, async (req, res) => {
     try {
@@ -63011,8 +63275,8 @@ function registerVaultRoutes(app2) {
         generatedAt: knowledgeVaultPages.generatedAt,
         updatedAt: knowledgeVaultPages.updatedAt
       }).from(knowledgeVaultPages).where(
-        and71(
-          eq96(knowledgeVaultPages.userId, userId),
+        and72(
+          eq97(knowledgeVaultPages.userId, userId),
           isNull4(knowledgeVaultPages.archivedAt)
         )
       ).orderBy(asc6(knowledgeVaultPages.slug));
@@ -63027,9 +63291,9 @@ function registerVaultRoutes(app2) {
       const userId = req.userId;
       const slug = req.query.slug || "";
       const rows = await db.select().from(knowledgeVaultPages).where(
-        and71(
-          eq96(knowledgeVaultPages.userId, userId),
-          eq96(knowledgeVaultPages.slug, slug),
+        and72(
+          eq97(knowledgeVaultPages.userId, userId),
+          eq97(knowledgeVaultPages.slug, slug),
           isNull4(knowledgeVaultPages.archivedAt)
         )
       ).limit(1);
@@ -63037,15 +63301,15 @@ function registerVaultRoutes(app2) {
         return res.status(404).json({ error: "Page not found" });
       }
       db.update(knowledgeVaultPages).set({ lastAccessedAt: /* @__PURE__ */ new Date() }).where(
-        and71(
-          eq96(knowledgeVaultPages.userId, userId),
-          eq96(knowledgeVaultPages.slug, slug)
+        and72(
+          eq97(knowledgeVaultPages.userId, userId),
+          eq97(knowledgeVaultPages.slug, slug)
         )
       ).catch(() => {
       });
       const allPages = await db.select({ slug: knowledgeVaultPages.slug, crossRefs: knowledgeVaultPages.crossRefs }).from(knowledgeVaultPages).where(
-        and71(
-          eq96(knowledgeVaultPages.userId, userId),
+        and72(
+          eq97(knowledgeVaultPages.userId, userId),
           isNull4(knowledgeVaultPages.archivedAt)
         )
       );
@@ -63105,12 +63369,12 @@ var init_vaultRoutes = __esm({
 });
 
 // server/memory/people.ts
-import { eq as eq97, and as and72, sql as sql32 } from "drizzle-orm";
+import { eq as eq98, and as and73, sql as sql33 } from "drizzle-orm";
 async function listPeople(userId) {
-  return db.select().from(people).where(eq97(people.userId, userId)).orderBy(sql32`COALESCE(${people.lastInteractionAt}, ${people.createdAt}) DESC`);
+  return db.select().from(people).where(eq98(people.userId, userId)).orderBy(sql33`COALESCE(${people.lastInteractionAt}, ${people.createdAt}) DESC`);
 }
 async function deletePerson(userId, id) {
-  await db.delete(people).where(and72(eq97(people.userId, userId), eq97(people.id, id)));
+  await db.delete(people).where(and73(eq98(people.userId, userId), eq98(people.id, id)));
 }
 var init_people = __esm({
   "server/memory/people.ts"() {
@@ -63245,26 +63509,26 @@ __export(pattern_analyser_exports, {
   analysePatterns: () => analysePatterns,
   detectBehaviorSignals: () => detectBehaviorSignals
 });
-import { eq as eq98, and as and73, gte as gte16, desc as desc31 } from "drizzle-orm";
+import { eq as eq99, and as and74, gte as gte16, desc as desc31 } from "drizzle-orm";
 async function analysePatterns(userId, windowDays = 60) {
   const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1e3);
   const analysedAt = /* @__PURE__ */ new Date();
   const [energyRows, planRows, goalTreeRows, inboxItemRows] = await Promise.all([
-    db.select().from(energyCheckins).where(and73(
-      eq98(energyCheckins.userId, userId),
+    db.select().from(energyCheckins).where(and74(
+      eq99(energyCheckins.userId, userId),
       gte16(energyCheckins.date, cutoff.toISOString().slice(0, 10))
     )).orderBy(desc31(energyCheckins.date)).limit(200),
-    db.select().from(plans).where(and73(
-      eq98(plans.userId, userId),
+    db.select().from(plans).where(and74(
+      eq99(plans.userId, userId),
       gte16(plans.date, cutoff.toISOString().slice(0, 10))
     )).orderBy(desc31(plans.date)).limit(120),
-    db.select().from(goalTrees).where(and73(
-      eq98(goalTrees.userId, userId),
-      eq98(goalTrees.status, "active")
+    db.select().from(goalTrees).where(and74(
+      eq99(goalTrees.userId, userId),
+      eq99(goalTrees.status, "active")
     )).limit(20),
-    db.select().from(inboxItems).where(and73(
-      eq98(inboxItems.userId, userId),
-      eq98(inboxItems.sourceType, "email"),
+    db.select().from(inboxItems).where(and74(
+      eq99(inboxItems.userId, userId),
+      eq99(inboxItems.sourceType, "email"),
       gte16(inboxItems.surfacedAt, cutoff)
     )).orderBy(desc31(inboxItems.surfacedAt)).limit(200)
   ]);
@@ -63760,7 +64024,7 @@ __export(ego_exports, {
   runEgoForAllUsers: () => runEgoForAllUsers,
   runEgoForUser: () => runEgoForUser
 });
-import { eq as eq99, and as and74, gte as gte17, lt as lt7 } from "drizzle-orm";
+import { eq as eq100, and as and75, gte as gte17, lt as lt7 } from "drizzle-orm";
 function getISOWeekMonday(date2 = /* @__PURE__ */ new Date()) {
   const d = new Date(Date.UTC(date2.getUTCFullYear(), date2.getUTCMonth(), date2.getUTCDate()));
   const dayOfWeek = (d.getUTCDay() + 6) % 7;
@@ -63772,15 +64036,15 @@ async function analyseEgo(userId, weekOf) {
   const weekEnd = new Date(weekStart.getTime() + ONE_WEEK_MS);
   const prevWeekStart = new Date(weekStart.getTime() - ONE_WEEK_MS);
   const actions = await db.select().from(jarvisActionLog).where(
-    and74(
-      eq99(jarvisActionLog.userId, userId),
+    and75(
+      eq100(jarvisActionLog.userId, userId),
       gte17(jarvisActionLog.createdAt, weekStart),
       lt7(jarvisActionLog.createdAt, weekEnd)
     )
   );
   const allTwoWeekActions = await db.select().from(jarvisActionLog).where(
-    and74(
-      eq99(jarvisActionLog.userId, userId),
+    and75(
+      eq100(jarvisActionLog.userId, userId),
       gte17(jarvisActionLog.createdAt, prevWeekStart),
       lt7(jarvisActionLog.createdAt, weekEnd)
     )
@@ -63812,15 +64076,15 @@ async function analyseEgo(userId, weekOf) {
   const mostEffective = Object.entries(breakdown).filter(([, v]) => v.total >= 2 && v.actedOn / v.total >= 0.6).sort(([, a], [, b]) => b.actedOn / b.total - a.actedOn / a.total).slice(0, 3).map(([k]) => k);
   const leastEffective = Object.entries(twoWeekBreakdown).filter(([, v]) => v.total >= 3 && v.actedOn / v.total < SELF_CORRECTION_THRESHOLD).sort(([, a], [, b]) => a.actedOn / a.total - b.actedOn / b.total).slice(0, 3).map(([k]) => k);
   const recentInteractions = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
-    and74(
-      eq99(interactionLog.userId, userId),
+    and75(
+      eq100(interactionLog.userId, userId),
       gte17(interactionLog.createdAt, weekStart),
       lt7(interactionLog.createdAt, weekEnd)
     )
   );
   const prevWeekInteractions = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
-    and74(
-      eq99(interactionLog.userId, userId),
+    and75(
+      eq100(interactionLog.userId, userId),
       gte17(interactionLog.createdAt, prevWeekStart),
       lt7(interactionLog.createdAt, weekStart)
     )
@@ -63888,7 +64152,7 @@ async function analyseEgo(userId, weekOf) {
 async function applySelfCorrections(userId, leastEffective, actionBreakdown) {
   if (leastEffective.length === 0 && Object.keys(actionBreakdown).length === 0) return;
   try {
-    const prefRows = await db.select().from(userPreferences).where(eq99(userPreferences.userId, userId)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq100(userPreferences.userId, userId)).limit(1);
     const prefData = prefRows[0]?.data || {};
     let suppressedActions = prefData.jarvisSuppressedActions || [];
     for (const actionType of leastEffective) {
@@ -64023,7 +64287,7 @@ async function recordSkillSignals(userId, analysis) {
 }
 async function runEgoForUser(userId, weekOf) {
   try {
-    const existing = await db.select({ id: egoWeeklyReports.id, deliveredAt: egoWeeklyReports.deliveredAt, reportText: egoWeeklyReports.reportText }).from(egoWeeklyReports).where(and74(eq99(egoWeeklyReports.userId, userId), eq99(egoWeeklyReports.weekOf, weekOf))).limit(1);
+    const existing = await db.select({ id: egoWeeklyReports.id, deliveredAt: egoWeeklyReports.deliveredAt, reportText: egoWeeklyReports.reportText }).from(egoWeeklyReports).where(and75(eq100(egoWeeklyReports.userId, userId), eq100(egoWeeklyReports.weekOf, weekOf))).limit(1);
     if (existing.length > 0) {
       if (existing[0].deliveredAt) return false;
       const storedText = existing[0].reportText;
@@ -64034,7 +64298,7 @@ ${storedText}`;
         const retryResults = await notifyUser(userId, "ego_report", msg2).catch(() => []);
         const anyDelivered = retryResults.some((r) => r.result.ok);
         if (anyDelivered) {
-          await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(eq99(egoWeeklyReports.id, existing[0].id));
+          await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(eq100(egoWeeklyReports.id, existing[0].id));
           logInteraction(userId, "notification", "outbound", msg2, "ego_report").catch(() => {
           });
           console.log(`[Ego] retry delivery succeeded for user ${userId} (${weekOf})`);
@@ -64076,7 +64340,7 @@ ${reportText}`;
     const deliveryResults = await notifyUser(userId, "ego_report", msg);
     delivered = deliveryResults.some((r) => r.result.ok);
     if (delivered) {
-      await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and74(eq99(egoWeeklyReports.userId, userId), eq99(egoWeeklyReports.weekOf, weekOf)));
+      await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and75(eq100(egoWeeklyReports.userId, userId), eq100(egoWeeklyReports.weekOf, weekOf)));
       logInteraction(userId, "notification", "outbound", msg, "ego_report").catch(() => {
       });
       console.log(`[Ego] report delivered for user ${userId} (${weekOf})`);
@@ -64130,7 +64394,7 @@ __export(actionLog_exports, {
   resolveActionByTaskId: () => resolveActionByTaskId,
   resolvePendingActions: () => resolvePendingActions
 });
-import { eq as eq100, and as and75, gte as gte18, sql as sql35 } from "drizzle-orm";
+import { eq as eq101, and as and76, gte as gte18, sql as sql36 } from "drizzle-orm";
 function emitSkillSignal(userId, actionType, outcome) {
   if (outcome !== "acted_on" && outcome !== "completed") return;
   const patternId = `acted_on:${actionType}`;
@@ -64149,8 +64413,8 @@ async function logAction(userId, actionType, metadata = {}) {
 }
 async function resolveAction(actionId, outcome) {
   try {
-    const rows = await db.select({ userId: jarvisActionLog.userId, actionType: jarvisActionLog.actionType }).from(jarvisActionLog).where(eq100(jarvisActionLog.id, actionId)).limit(1);
-    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(eq100(jarvisActionLog.id, actionId));
+    const rows = await db.select({ userId: jarvisActionLog.userId, actionType: jarvisActionLog.actionType }).from(jarvisActionLog).where(eq101(jarvisActionLog.id, actionId)).limit(1);
+    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(eq101(jarvisActionLog.id, actionId));
     if (rows[0]) {
       emitSkillSignal(rows[0].userId, rows[0].actionType, outcome);
     }
@@ -64162,10 +64426,10 @@ async function resolvePendingActions(userId, actionType, outcome, withinMs = 7 *
   try {
     const cutoff = new Date(Date.now() - withinMs);
     await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(
-      and75(
-        eq100(jarvisActionLog.userId, userId),
-        eq100(jarvisActionLog.actionType, actionType),
-        eq100(jarvisActionLog.outcome, "pending"),
+      and76(
+        eq101(jarvisActionLog.userId, userId),
+        eq101(jarvisActionLog.actionType, actionType),
+        eq101(jarvisActionLog.outcome, "pending"),
         gte18(jarvisActionLog.createdAt, cutoff)
       )
     );
@@ -64178,12 +64442,12 @@ async function resolveActionByMetadataKey(userId, actionType, metadataKey, metad
   try {
     const cutoff = new Date(Date.now() - withinMs);
     await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(
-      and75(
-        eq100(jarvisActionLog.userId, userId),
-        eq100(jarvisActionLog.actionType, actionType),
-        eq100(jarvisActionLog.outcome, "pending"),
+      and76(
+        eq101(jarvisActionLog.userId, userId),
+        eq101(jarvisActionLog.actionType, actionType),
+        eq101(jarvisActionLog.outcome, "pending"),
         gte18(jarvisActionLog.createdAt, cutoff),
-        sql35`${jarvisActionLog.metadata}->>${metadataKey} = ${metadataValue}`
+        sql36`${jarvisActionLog.metadata}->>${metadataKey} = ${metadataValue}`
       )
     );
     emitSkillSignal(userId, actionType, outcome);
@@ -64196,7 +64460,7 @@ async function resolveActionByTaskId(userId, actionType, taskId, outcome, within
 }
 async function isActionSuppressed(userId, actionType) {
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq100(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq101(userPreferences.userId, userId)).limit(1);
     if (!rows[0]) return false;
     const suppressed = rows[0].data?.jarvisSuppressedActions;
     if (!Array.isArray(suppressed)) return false;
@@ -64268,7 +64532,7 @@ var mcpServerRegistry_exports = {};
 __export(mcpServerRegistry_exports, {
   mcpServerRegistry: () => mcpServerRegistry
 });
-import { eq as eq101, and as and76 } from "drizzle-orm";
+import { eq as eq102, and as and77 } from "drizzle-orm";
 function assertNotSsrf(url) {
   if (PRIVATE_ADDR_RE.test(url)) {
     throw new Error(`Blocked: URL resolves to a private/internal address \u2014 ${url}`);
@@ -64568,7 +64832,7 @@ var init_mcpServerRegistry = __esm({
       }
       /** Enable or disable a server and reconnect/disconnect accordingly. */
       async setEnabled(id, enabled) {
-        await db.update(mcpServers).set({ enabled }).where(eq101(mcpServers.id, id));
+        await db.update(mcpServers).set({ enabled }).where(eq102(mcpServers.id, id));
         const row = this.rows.get(id);
         if (!row) return;
         row.enabled = enabled;
@@ -64582,7 +64846,7 @@ var init_mcpServerRegistry = __esm({
       async deleteServer(id, requestingUserId) {
         this._disconnectServer(id);
         this.rows.delete(id);
-        const condition = requestingUserId === null ? eq101(mcpServers.id, id) : and76(eq101(mcpServers.id, id), eq101(mcpServers.userId, requestingUserId));
+        const condition = requestingUserId === null ? eq102(mcpServers.id, id) : and77(eq102(mcpServers.id, id), eq102(mcpServers.userId, requestingUserId));
         const result = await db.delete(mcpServers).where(condition).returning();
         return result.length > 0;
       }
@@ -64618,19 +64882,19 @@ __export(skillCurator_exports, {
   emitSynthesiserCandidate: () => emitSynthesiserCandidate
 });
 import OpenAI10 from "openai";
-import { eq as eq102, and as and77, gte as gte19, desc as desc33 } from "drizzle-orm";
+import { eq as eq103, and as and78, gte as gte19, desc as desc33 } from "drizzle-orm";
 async function curateSkillsForUser(userId) {
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1e3);
   const [traces, interactions] = await Promise.all([
     db.select({ userRequest: orchestrationTraces.userRequest, createdAt: orchestrationTraces.createdAt }).from(orchestrationTraces).where(
-      and77(
-        eq102(orchestrationTraces.userId, userId),
+      and78(
+        eq103(orchestrationTraces.userId, userId),
         gte19(orchestrationTraces.createdAt, cutoff)
       )
     ).orderBy(desc33(orchestrationTraces.createdAt)).limit(100),
     db.select({ content: interactionLog.content, label: interactionLog.label, createdAt: interactionLog.createdAt }).from(interactionLog).where(
-      and77(
-        eq102(interactionLog.userId, userId),
+      and78(
+        eq103(interactionLog.userId, userId),
         gte19(interactionLog.createdAt, cutoff)
       )
     ).orderBy(desc33(interactionLog.createdAt)).limit(200)
@@ -64776,7 +65040,7 @@ If you cannot draft meaningful skills from the clusters, return an empty array: 
       skipReason: "LLM found no meaningful recurring patterns"
     };
   }
-  const existingPending = await db.select({ name: skillCandidates.name }).from(skillCandidates).where(and77(eq102(skillCandidates.userId, userId), eq102(skillCandidates.status, "pending")));
+  const existingPending = await db.select({ name: skillCandidates.name }).from(skillCandidates).where(and78(eq103(skillCandidates.userId, userId), eq103(skillCandidates.status, "pending")));
   const existingNormSet = new Set(existingPending.map((r) => r.name.toLowerCase().trim()));
   const toInsert = valid.slice(0, MAX_CANDIDATES_PER_RUN).filter((c) => !existingNormSet.has(c.name.toLowerCase().trim()));
   if (toInsert.length === 0) {
@@ -65016,10 +65280,10 @@ __export(dream_exports, {
   markDreamInsightsDelivered: () => markDreamInsightsDelivered,
   runDreamForUser: () => runDreamForUser
 });
-import { eq as eq103, desc as desc34, and as and78, gte as gte20, lt as lt8, sql as sql36, inArray as inArray7 } from "drizzle-orm";
+import { eq as eq104, desc as desc34, and as and79, gte as gte20, lt as lt8, sql as sql37, inArray as inArray7 } from "drizzle-orm";
 async function isMemoryReviewEnabledForUser3(userId) {
   try {
-    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq103(lifeContext.userId, userId)).limit(1);
+    const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq104(lifeContext.userId, userId)).limit(1);
     const data = rows[0]?.data;
     if (data && typeof data.memoryReviewEnabled === "boolean") return data.memoryReviewEnabled;
     return true;
@@ -65030,9 +65294,9 @@ async function isMemoryReviewEnabledForUser3(userId) {
 async function hasEnoughData(userId) {
   const cutoff = new Date(Date.now() - MINIMUM_MEMORY_AGE_DAYS * 24 * 60 * 60 * 1e3);
   const rows = await db.select({ id: userMemories.id }).from(userMemories).where(
-    and78(
-      eq103(userMemories.userId, userId),
-      sql36`${userMemories.extractedAt} < ${cutoff}`
+    and79(
+      eq104(userMemories.userId, userId),
+      sql37`${userMemories.extractedAt} < ${cutoff}`
     )
   ).limit(1);
   return rows.length > 0;
@@ -65050,22 +65314,22 @@ async function buildCorpus(userId) {
       confidence: userMemories.confidence,
       extractedAt: userMemories.extractedAt
     }).from(userMemories).where(
-      and78(
-        eq103(userMemories.userId, userId),
+      and79(
+        eq104(userMemories.userId, userId),
         gte20(userMemories.extractedAt, since90)
       )
     ).orderBy(desc34(userMemories.extractedAt)).limit(200),
-    db.select().from(weeklyInsights).where(eq103(weeklyInsights.userId, userId)).orderBy(desc34(weeklyInsights.createdAt)).limit(4),
+    db.select().from(weeklyInsights).where(eq104(weeklyInsights.userId, userId)).orderBy(desc34(weeklyInsights.createdAt)).limit(4),
     db.select().from(energyCheckins).where(
-      and78(
-        eq103(energyCheckins.userId, userId),
-        sql36`${energyCheckins.date} >= ${since30Key}`
+      and79(
+        eq104(energyCheckins.userId, userId),
+        sql37`${energyCheckins.date} >= ${since30Key}`
       )
     ).orderBy(desc34(energyCheckins.date)).limit(30),
     db.select({ date: plans.date, data: plans.data }).from(plans).where(
-      and78(
-        eq103(plans.userId, userId),
-        sql36`${plans.date} >= ${since30Key}`
+      and79(
+        eq104(plans.userId, userId),
+        sql37`${plans.date} >= ${since30Key}`
       )
     ).orderBy(desc34(plans.date)).limit(30)
   ]);
@@ -65155,11 +65419,11 @@ function parseConsolidationResponse(raw) {
 async function runConsolidationPass(userId, model) {
   const sixHoursAgo = new Date(Date.now() - 6 * 60 * 60 * 1e3);
   const allEligible = await db.select({ id: userMemories.id }).from(userMemories).where(
-    and78(
-      eq103(userMemories.userId, userId),
-      eq103(userMemories.tier, "short_term"),
+    and79(
+      eq104(userMemories.userId, userId),
+      eq104(userMemories.tier, "short_term"),
       lt8(userMemories.extractedAt, sixHoursAgo),
-      sql36`(${userMemories.expiresAt} IS NULL OR ${userMemories.expiresAt} > NOW())`
+      sql37`(${userMemories.expiresAt} IS NULL OR ${userMemories.expiresAt} > NOW())`
     )
   ).orderBy(userMemories.extractedAt);
   if (allEligible.length === 0) {
@@ -65178,8 +65442,8 @@ async function runConsolidationPass(userId, model) {
       category: userMemories.category,
       confidence: userMemories.confidence
     }).from(userMemories).where(
-      and78(
-        eq103(userMemories.userId, userId),
+      and79(
+        eq104(userMemories.userId, userId),
         inArray7(userMemories.id, batchIds)
       )
     );
@@ -65221,14 +65485,14 @@ Output JSON:
       }
       if (promotedIds.length > 0) {
         await db.update(userMemories).set({ tier: "long_term", expiresAt: null }).where(
-          and78(
-            eq103(userMemories.userId, userId),
+          and79(
+            eq104(userMemories.userId, userId),
             inArray7(userMemories.id, promotedIds)
           )
         );
         const reviewEnabled = await isMemoryReviewEnabledForUser3(userId);
         if (reviewEnabled) {
-          await db.execute(sql36`
+          await db.execute(sql37`
             UPDATE user_memories
             SET pending_review = TRUE, review_status = 'pending'
             WHERE user_id = ${userId}
@@ -65242,8 +65506,8 @@ Output JSON:
       }
       if (discardedIds.length > 0) {
         await db.update(userMemories).set({ expiresAt: /* @__PURE__ */ new Date() }).where(
-          and78(
-            eq103(userMemories.userId, userId),
+          and79(
+            eq104(userMemories.userId, userId),
             inArray7(userMemories.id, discardedIds)
           )
         );
@@ -65271,9 +65535,9 @@ async function runSemanticExtractionPass(userId, model) {
     content: userMemories.content,
     category: userMemories.category
   }).from(userMemories).where(
-    and78(
-      eq103(userMemories.userId, userId),
-      eq103(userMemories.memoryType, "episodic"),
+    and79(
+      eq104(userMemories.userId, userId),
+      eq104(userMemories.memoryType, "episodic"),
       gte20(userMemories.extractedAt, since7d)
     )
   ).orderBy(desc34(userMemories.extractedAt)).limit(120);
@@ -65357,7 +65621,7 @@ async function runRelevanceDecayPass(userId) {
   const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
   const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1e3);
   try {
-    const decayResult = await db.execute(sql36`
+    const decayResult = await db.execute(sql37`
       UPDATE user_memories
       SET relevance_score = GREATEST(10, relevance_score - 2)
       WHERE user_id = ${userId}
@@ -65366,7 +65630,7 @@ async function runRelevanceDecayPass(userId) {
       RETURNING id
     `);
     const decayed = (decayResult.rows ?? []).length;
-    const deleteResult = await db.execute(sql36`
+    const deleteResult = await db.execute(sql37`
       DELETE FROM user_memories
       WHERE user_id = ${userId}
         AND tier = 'long_term'
@@ -65392,10 +65656,10 @@ async function runRelevanceDecayPass(userId) {
 }
 async function runAccessReinforcementPass(userId) {
   try {
-    const prefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq103(userPreferences.userId, userId)).limit(1);
+    const prefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq104(userPreferences.userId, userId)).limit(1);
     const prefsData = prefsRows[0]?.data || {};
     const prevSnapshot = prefsData.dreamAccessSnapshot || {};
-    const memories = await db.select({ id: userMemories.id, accessCount: userMemories.accessCount }).from(userMemories).where(eq103(userMemories.userId, userId));
+    const memories = await db.select({ id: userMemories.id, accessCount: userMemories.accessCount }).from(userMemories).where(eq104(userMemories.userId, userId));
     const hasPriorSnapshot = Object.keys(prevSnapshot).length > 0;
     const boostIds = [];
     const newSnapshot = {};
@@ -65406,9 +65670,9 @@ async function runAccessReinforcementPass(userId) {
       newSnapshot[m.id] = m.accessCount;
     }
     if (boostIds.length > 0) {
-      await db.update(userMemories).set({ relevanceScore: sql36`LEAST(95, relevance_score + 1)` }).where(
-        and78(
-          eq103(userMemories.userId, userId),
+      await db.update(userMemories).set({ relevanceScore: sql37`LEAST(95, relevance_score + 1)` }).where(
+        and79(
+          eq104(userMemories.userId, userId),
           inArray7(userMemories.id, boostIds)
         )
       );
@@ -65622,9 +65886,9 @@ async function seedSoulFromDream(userId, insights) {
 }
 async function getPendingDreamInsights(userId) {
   return db.select().from(dreamInsights).where(
-    and78(
-      eq103(dreamInsights.userId, userId),
-      eq103(dreamInsights.shownToUser, false)
+    and79(
+      eq104(dreamInsights.userId, userId),
+      eq104(dreamInsights.shownToUser, false)
     )
   ).orderBy(desc34(dreamInsights.createdAt)).limit(3);
 }
@@ -65653,7 +65917,7 @@ var inboxActions_exports = {};
 __export(inboxActions_exports, {
   executeInboxAction: () => executeInboxAction
 });
-import { eq as eq104, and as and79 } from "drizzle-orm";
+import { eq as eq105, and as and80 } from "drizzle-orm";
 async function getGoogleToken(userId) {
   try {
     const tokens = await getValidGoogleTokens(userId);
@@ -65663,7 +65927,7 @@ async function getGoogleToken(userId) {
   }
 }
 async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
-  const [item] = await db.select().from(inboxItems).where(and79(eq104(inboxItems.id, itemId), eq104(inboxItems.userId, userId)));
+  const [item] = await db.select().from(inboxItems).where(and80(eq105(inboxItems.id, itemId), eq105(inboxItems.userId, userId)));
   if (!item) {
     return { success: false, message: "Item not found" };
   }
@@ -65678,7 +65942,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
         };
       }
       const newDismissCount = (item.dismissCount ?? 0) + 1;
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date(), dismissCount: newDismissCount }).where(eq104(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date(), dismissCount: newDismissCount }).where(eq105(inboxItems.id, itemId));
       return { success: true, message: "Dismissed" };
     }
     case "never_again": {
@@ -65694,7 +65958,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
         matchHints,
         source: "user"
       });
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
       return { success: true, message: "Rule created \u2014 you'll never see these again" };
     }
     case "archive": {
@@ -65708,7 +65972,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
       }
       try {
         await gmailModifyMessage(rawId, [], ["INBOX"], token);
-        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
         return { success: true, message: "Email archived" };
       } catch (err2) {
         return { success: false, message: `Archive failed: ${err2.message || "unknown error"}` };
@@ -65725,7 +65989,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
       }
       try {
         await gmailModifyMessage(rawId, ["STARRED"], [], token);
-        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
         return { success: true, message: "Email starred" };
       } catch (err2) {
         return { success: false, message: `Star failed: ${err2.message || "unknown error"}` };
@@ -65733,7 +65997,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
     }
     case "save_as_task": {
       const taskTitle = item.subject || item.snippet || "Untitled task";
-      const plans2 = await db.select().from(plans).where(eq104(plans.userId, userId));
+      const plans2 = await db.select().from(plans).where(eq105(plans.userId, userId));
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const existingPlan = plans2.find((p) => p.date === today);
       const planData = existingPlan?.data || { tasks: [] };
@@ -65752,7 +66016,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
         target: [plans.userId, plans.date],
         set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
       });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
       return { success: true, message: `Task added: "${taskTitle}"` };
     }
     case "add_prep_time": {
@@ -65762,7 +66026,7 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
       }
       const prepTitle = `Prep: ${item.subject || "upcoming meeting"}`;
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const plans2 = await db.select().from(plans).where(eq104(plans.userId, userId));
+      const plans2 = await db.select().from(plans).where(eq105(plans.userId, userId));
       const existingPlan = plans2.find((p) => p.date === today);
       const planData = existingPlan?.data || { tasks: [] };
       const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
@@ -65780,12 +66044,12 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
         target: [plans.userId, plans.date],
         set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
       });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
       return { success: true, message: `Prep task added: "${prepTitle}"` };
     }
     case "save_to_focus": {
       const contextText = `${item.subject || ""} \u2014 ${item.snippet || ""}`.trim();
-      const [existing] = await db.select().from(lifeContext).where(eq104(lifeContext.userId, userId));
+      const [existing] = await db.select().from(lifeContext).where(eq105(lifeContext.userId, userId));
       const data = existing?.data || {};
       const freeText = (data.freeText || "") + `
 [From ${item.sourceType}] ${contextText}`;
@@ -65794,19 +66058,19 @@ async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
         target: lifeContext.userId,
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
       return { success: true, message: "Saved to your life context" };
     }
     case "navigate_telegram_health": {
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
       return { success: true, message: "Opening Telegram health check" };
     }
     case "navigate_self_repair": {
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
       return { success: true, message: "Opening Self-Repair Log" };
     }
     case "review_approval": {
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq104(inboxItems.id, itemId));
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq105(inboxItems.id, itemId));
       return { success: true, message: "Opening approval request" };
     }
     default:
@@ -65825,6 +66089,174 @@ var init_inboxActions = __esm({
   }
 });
 
+// server/agent/reviewLoop.ts
+var reviewLoop_exports = {};
+__export(reviewLoop_exports, {
+  attachDeliverableReviewState: () => attachDeliverableReviewState,
+  attachJobReviewState: () => attachJobReviewState,
+  buildDeliverableReviewState: () => buildDeliverableReviewState,
+  buildJobReviewState: () => buildJobReviewState
+});
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function previewText(...candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.replace(/\s+/g, " ").trim();
+    if (normalized) return normalized.slice(0, 280);
+  }
+  return "";
+}
+function buildJobReviewState(job) {
+  const input = asRecord(job.input);
+  const originChannel = typeof input.originChannel === "string" ? input.originChannel : void 0;
+  const autonomyPolicy = input.autonomyPolicy === true;
+  const preview = previewText(job.error, job.prompt, job.title);
+  if (job.status === "queued") {
+    return {
+      stage: "queued",
+      label: "Queued",
+      nextAction: "Wait or cancel",
+      canCancel: true,
+      canRetry: false,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  if (job.status === "running" || job.status === "cancelling") {
+    return {
+      stage: "in_progress",
+      label: job.status === "cancelling" ? "Cancelling" : "Running",
+      nextAction: job.status === "cancelling" ? "Waiting for cancellation" : "Wait or cancel",
+      canCancel: job.status === "running",
+      canRetry: false,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  if (job.status === "failed") {
+    return {
+      stage: "needs_retry",
+      label: "Failed",
+      nextAction: "Retry job",
+      canCancel: false,
+      canRetry: true,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  if (job.status === "cancelled") {
+    return {
+      stage: "cancelled",
+      label: "Cancelled",
+      nextAction: "Retry if still needed",
+      canCancel: false,
+      canRetry: true,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  if (job.status === "complete") {
+    return {
+      stage: "review_ready",
+      label: "Ready for review",
+      nextAction: "Open deliverable",
+      canCancel: false,
+      canRetry: false,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  return {
+    stage: "reviewed",
+    label: "Reviewed",
+    nextAction: "No action needed",
+    canCancel: false,
+    canRetry: false,
+    preview,
+    originChannel,
+    autonomyPolicy
+  };
+}
+function buildDeliverableReviewState(deliverable) {
+  const meta = asRecord(deliverable.meta);
+  const preview = previewText(deliverable.summary, deliverable.body, deliverable.title);
+  const isPending = deliverable.status === "pending_approval";
+  const isApprovalGate = deliverable.type === "approval_gate";
+  const approvalGateId = typeof meta.gateId === "string" ? meta.gateId : void 0;
+  if (isPending && isApprovalGate) {
+    return {
+      stage: "approval_required",
+      label: "Approval required",
+      nextAction: "Approve or decline",
+      canApprove: true,
+      canEdit: false,
+      canRevise: false,
+      canDiscard: false,
+      canReject: true,
+      preview,
+      approvalGateId
+    };
+  }
+  if (isPending) {
+    return {
+      stage: "needs_review",
+      label: "Needs review",
+      nextAction: "Approve, revise, edit, or discard",
+      canApprove: true,
+      canEdit: true,
+      canRevise: true,
+      canDiscard: true,
+      canReject: false,
+      preview,
+      approvalGateId
+    };
+  }
+  if (deliverable.status === "discarded" || deliverable.status === "rejected") {
+    return {
+      stage: "discarded",
+      label: deliverable.status === "rejected" ? "Declined" : "Discarded",
+      nextAction: "No action needed",
+      canApprove: false,
+      canEdit: false,
+      canRevise: false,
+      canDiscard: false,
+      canReject: false,
+      preview,
+      approvalGateId
+    };
+  }
+  return {
+    stage: "reviewed",
+    label: "Reviewed",
+    nextAction: "No action needed",
+    canApprove: false,
+    canEdit: false,
+    canRevise: false,
+    canDiscard: false,
+    canReject: false,
+    preview,
+    approvalGateId
+  };
+}
+function attachJobReviewState(job) {
+  return { ...job, review: buildJobReviewState(job) };
+}
+function attachDeliverableReviewState(deliverable) {
+  return { ...deliverable, review: buildDeliverableReviewState(deliverable) };
+}
+var init_reviewLoop = __esm({
+  "server/agent/reviewLoop.ts"() {
+    "use strict";
+  }
+});
+
 // server/intelligence/gut.ts
 var gut_exports = {};
 __export(gut_exports, {
@@ -65835,7 +66267,7 @@ __export(gut_exports, {
   respondToGutSignal: () => respondToGutSignal,
   runGutScanForUser: () => runGutScanForUser
 });
-import { eq as eq105, and as and80, desc as desc35, gte as gte21, sql as sql37, inArray as inArray8 } from "drizzle-orm";
+import { eq as eq106, and as and81, desc as desc35, gte as gte21, sql as sql38, inArray as inArray8 } from "drizzle-orm";
 function getCachedBaseline(userId) {
   const entry = baselineCache.get(userId);
   if (!entry || Date.now() > entry.expiresAt) return null;
@@ -65862,9 +66294,9 @@ async function computeBaseline2(userId, token) {
   if (cached) return cached;
   const baseline = { ...DEFAULT_BASELINE };
   try {
-    const past = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(and80(
-      eq105(userMemories.userId, userId),
-      eq105(userMemories.category, "work_patterns")
+    const past = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(and81(
+      eq106(userMemories.userId, userId),
+      eq106(userMemories.category, "work_patterns")
     )).limit(30);
     const workText = past.map((m) => m.content).join(" ").toLowerCase();
     if (/deep work|focus block|protected time/.test(workText)) {
@@ -65876,7 +66308,7 @@ async function computeBaseline2(userId, token) {
   } catch {
   }
   try {
-    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq105(plans.userId, userId)).orderBy(desc35(plans.date)).limit(14);
+    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq106(plans.userId, userId)).orderBy(desc35(plans.date)).limit(14);
     const totalTasks = historicPlans.reduce((sum, p) => {
       const tasks = p.data?.tasks || [];
       return sum + tasks.filter((t) => t.completed).length;
@@ -65899,13 +66331,13 @@ async function computeBaseline2(userId, token) {
   } catch {
   }
   try {
-    const confirmed = await db.select({ count: sql37`count(*)` }).from(gutSignals).where(and80(
-      eq105(gutSignals.userId, userId),
-      eq105(gutSignals.userResponse, "confirmed")
+    const confirmed = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
+      eq106(gutSignals.userId, userId),
+      eq106(gutSignals.userResponse, "confirmed")
     ));
-    const dismissed = await db.select({ count: sql37`count(*)` }).from(gutSignals).where(and80(
-      eq105(gutSignals.userId, userId),
-      eq105(gutSignals.userResponse, "dismissed")
+    const dismissed = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
+      eq106(gutSignals.userId, userId),
+      eq106(gutSignals.userResponse, "dismissed")
     ));
     const c = Number(confirmed[0]?.count ?? 0);
     const d = Number(dismissed[0]?.count ?? 0);
@@ -65918,7 +66350,7 @@ async function computeBaseline2(userId, token) {
   }
   let usedStoredCalibration = false;
   try {
-    const storedCalibration = await db.select().from(gutCalibration).where(eq105(gutCalibration.userId, userId));
+    const storedCalibration = await db.select().from(gutCalibration).where(eq106(gutCalibration.userId, userId));
     if (storedCalibration.length > 0) {
       for (const row of storedCalibration) {
         const st = row.signalType;
@@ -65939,15 +66371,15 @@ async function computeBaseline2(userId, token) {
         "relationship_anomaly"
       ];
       for (const st of allSignalTypes) {
-        const [tc] = await db.select({ count: sql37`count(*)` }).from(gutSignals).where(and80(
-          eq105(gutSignals.userId, userId),
-          eq105(gutSignals.signalType, st),
-          eq105(gutSignals.userResponse, "confirmed")
+        const [tc] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
+          eq106(gutSignals.userId, userId),
+          eq106(gutSignals.signalType, st),
+          eq106(gutSignals.userResponse, "confirmed")
         ));
-        const [td] = await db.select({ count: sql37`count(*)` }).from(gutSignals).where(and80(
-          eq105(gutSignals.userId, userId),
-          eq105(gutSignals.signalType, st),
-          eq105(gutSignals.userResponse, "dismissed")
+        const [td] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
+          eq106(gutSignals.userId, userId),
+          eq106(gutSignals.signalType, st),
+          eq106(gutSignals.userResponse, "dismissed")
         ));
         const tc_ = Number(tc?.count ?? 0);
         const td_ = Number(td?.count ?? 0);
@@ -65966,9 +66398,9 @@ async function detectCalendarAnomalies(userId, events, baseline, userEmail) {
   const signals = [];
   const now = /* @__PURE__ */ new Date();
   const sevenDaysMs = 7 * 24 * 60 * 60 * 1e3;
-  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and80(
-    eq105(gutSignals.userId, userId),
-    eq105(gutSignals.signalType, "calendar_anomaly"),
+  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and81(
+    eq106(gutSignals.userId, userId),
+    eq106(gutSignals.signalType, "calendar_anomaly"),
     gte21(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
   )).limit(100);
   const flaggedRefs = new Set(existing.map((r) => r.itemRef).filter(Boolean));
@@ -66024,9 +66456,9 @@ async function detectCalendarAnomalies(userId, events, baseline, userEmail) {
 }
 async function detectDeepWorkErosion(userId, events, baseline) {
   try {
-    const already = await db.select({ id: gutSignals.id }).from(gutSignals).where(and80(
-      eq105(gutSignals.userId, userId),
-      eq105(gutSignals.signalType, "deep_work_erosion"),
+    const already = await db.select({ id: gutSignals.id }).from(gutSignals).where(and81(
+      eq106(gutSignals.userId, userId),
+      eq106(gutSignals.signalType, "deep_work_erosion"),
       gte21(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
     )).limit(1);
     if (already.length > 0) return null;
@@ -66070,9 +66502,9 @@ async function detectDeepWorkErosion(userId, events, baseline) {
 }
 async function detectEmailPatterns(userId, baseline, inboxItems3) {
   const signals = [];
-  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and80(
-    eq105(gutSignals.userId, userId),
-    eq105(gutSignals.signalType, "email_pattern"),
+  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and81(
+    eq106(gutSignals.userId, userId),
+    eq106(gutSignals.signalType, "email_pattern"),
     gte21(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
   )).limit(100);
   const flagged = new Set(existing.map((r) => r.itemRef).filter(Boolean));
@@ -66111,15 +66543,15 @@ function getSenderName(sender) {
 async function detectProjectDrift(userId, baseline) {
   const signals = [];
   try {
-    const existing = await db.select({ id: gutSignals.id }).from(gutSignals).where(and80(
-      eq105(gutSignals.userId, userId),
-      eq105(gutSignals.signalType, "project_drift"),
+    const existing = await db.select({ id: gutSignals.id }).from(gutSignals).where(and81(
+      eq106(gutSignals.userId, userId),
+      eq106(gutSignals.signalType, "project_drift"),
       gte21(gutSignals.createdAt, new Date(Date.now() - 72 * 60 * 60 * 1e3))
     )).limit(1);
     if (existing.length > 0) return signals;
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString().slice(0, 10);
-    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and80(eq105(plans.userId, userId), gte21(plans.date, sevenDaysAgo))).orderBy(desc35(plans.date)).limit(7);
+    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and81(eq106(plans.userId, userId), gte21(plans.date, sevenDaysAgo))).orderBy(desc35(plans.date)).limit(7);
     if (recentPlans.length < 3) return signals;
     const completedPerDay = recentPlans.map((p) => {
       const tasks = p.data?.tasks || [];
@@ -66150,13 +66582,13 @@ async function detectProjectDrift(userId, baseline) {
 async function detectRelationshipAnomalies(userId, inboxItems3, baseline) {
   const signals = [];
   try {
-    const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and80(
-      eq105(gutSignals.userId, userId),
-      eq105(gutSignals.signalType, "relationship_anomaly"),
+    const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and81(
+      eq106(gutSignals.userId, userId),
+      eq106(gutSignals.signalType, "relationship_anomaly"),
       gte21(gutSignals.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1e3))
     )).limit(50);
     const flagged = new Set(existing.map((r) => r.itemRef).filter(Boolean));
-    const people2 = await db.select().from(people).where(eq105(people.userId, userId));
+    const people2 = await db.select().from(people).where(eq106(people.userId, userId));
     const dormantCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1e3);
     for (const item of inboxItems3.slice(0, 10)) {
       if (flagged.has(item.id) || !item.sender) continue;
@@ -66229,9 +66661,9 @@ async function runGutScanForUser(userId, userEmail, now) {
   candidates.push(...driftSignals);
   let recentInboxItems = [];
   try {
-    recentInboxItems = await db.select({ id: inboxItems.id, sourceId: inboxItems.sourceId, sender: inboxItems.sender, snippet: inboxItems.snippet, subject: inboxItems.subject }).from(inboxItems).where(and80(
-      eq105(inboxItems.userId, userId),
-      eq105(inboxItems.status, "pending"),
+    recentInboxItems = await db.select({ id: inboxItems.id, sourceId: inboxItems.sourceId, sender: inboxItems.sender, snippet: inboxItems.snippet, subject: inboxItems.subject }).from(inboxItems).where(and81(
+      eq106(inboxItems.userId, userId),
+      eq106(inboxItems.status, "pending"),
       gte21(inboxItems.surfacedAt, new Date(now.getTime() - 24 * 60 * 60 * 1e3))
     )).orderBy(desc35(inboxItems.surfacedAt)).limit(30);
   } catch {
@@ -66251,20 +66683,20 @@ async function runGutScanForUser(userId, userEmail, now) {
 }
 async function getGutSignalsForUser(userId, opts) {
   const limit = opts?.limit ?? 50;
-  const conditions = [eq105(gutSignals.userId, userId)];
+  const conditions = [eq106(gutSignals.userId, userId)];
   if (opts?.itemRef) {
-    conditions.push(eq105(gutSignals.itemRef, opts.itemRef));
+    conditions.push(eq106(gutSignals.itemRef, opts.itemRef));
   }
   if (!opts?.includeResponded) {
     conditions.push(
-      sql37`(${gutSignals.userResponse} is null or ${gutSignals.userResponse} = 'ignored')`
+      sql38`(${gutSignals.userResponse} is null or ${gutSignals.userResponse} = 'ignored')`
     );
   }
-  const rows = await db.select().from(gutSignals).where(and80(...conditions)).orderBy(desc35(gutSignals.createdAt)).limit(limit);
+  const rows = await db.select().from(gutSignals).where(and81(...conditions)).orderBy(desc35(gutSignals.createdAt)).limit(limit);
   return rows;
 }
 async function respondToGutSignal(userId, signalId, response) {
-  await db.update(gutSignals).set({ userResponse: response, respondedAt: /* @__PURE__ */ new Date() }).where(and80(eq105(gutSignals.id, signalId), eq105(gutSignals.userId, userId)));
+  await db.update(gutSignals).set({ userResponse: response, respondedAt: /* @__PURE__ */ new Date() }).where(and81(eq106(gutSignals.id, signalId), eq106(gutSignals.userId, userId)));
   baselineCache.delete(userId);
   console.log(`[Gut] user ${userId} responded ${response} to signal ${signalId}`);
   calibrateGutForUser(userId).catch(
@@ -66273,11 +66705,11 @@ async function respondToGutSignal(userId, signalId, response) {
 }
 async function getAndMarkMorningBriefSignals(userId) {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1e3);
-  const rows = await db.select().from(gutSignals).where(and80(
-    eq105(gutSignals.userId, userId),
-    eq105(gutSignals.deliveredInMorningBrief, false),
+  const rows = await db.select().from(gutSignals).where(and81(
+    eq106(gutSignals.userId, userId),
+    eq106(gutSignals.deliveredInMorningBrief, false),
     gte21(gutSignals.createdAt, since),
-    sql37`${gutSignals.userResponse} IS NULL`
+    sql38`${gutSignals.userResponse} IS NULL`
   )).orderBy(desc35(gutSignals.confidenceScore)).limit(3);
   const highConf = rows.filter((r) => r.confidenceScore >= 60);
   if (highConf.length === 0) return [];
@@ -66295,20 +66727,20 @@ async function calibrateGutForUser(userId) {
   ];
   for (const signalType of allSignalTypes) {
     try {
-      const [tcRow] = await db.select({ count: sql37`count(*)` }).from(gutSignals).where(and80(
-        eq105(gutSignals.userId, userId),
-        eq105(gutSignals.signalType, signalType),
-        eq105(gutSignals.userResponse, "confirmed")
+      const [tcRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
+        eq106(gutSignals.userId, userId),
+        eq106(gutSignals.signalType, signalType),
+        eq106(gutSignals.userResponse, "confirmed")
       ));
-      const [tdRow] = await db.select({ count: sql37`count(*)` }).from(gutSignals).where(and80(
-        eq105(gutSignals.userId, userId),
-        eq105(gutSignals.signalType, signalType),
-        eq105(gutSignals.userResponse, "dismissed")
+      const [tdRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
+        eq106(gutSignals.userId, userId),
+        eq106(gutSignals.signalType, signalType),
+        eq106(gutSignals.userResponse, "dismissed")
       ));
-      const [tiRow] = await db.select({ count: sql37`count(*)` }).from(gutSignals).where(and80(
-        eq105(gutSignals.userId, userId),
-        eq105(gutSignals.signalType, signalType),
-        eq105(gutSignals.userResponse, "ignored")
+      const [tiRow] = await db.select({ count: sql38`count(*)` }).from(gutSignals).where(and81(
+        eq106(gutSignals.userId, userId),
+        eq106(gutSignals.signalType, signalType),
+        eq106(gutSignals.userResponse, "ignored")
       ));
       const confirmedCount = Number(tcRow?.count ?? 0);
       const dismissedCount = Number(tdRow?.count ?? 0);
@@ -66396,13 +66828,13 @@ __export(mcpApiKeys_exports, {
 });
 import crypto9 from "crypto";
 import bcrypt2 from "bcryptjs";
-import { sql as sql38 } from "drizzle-orm";
-import { eq as eq106 } from "drizzle-orm";
+import { sql as sql39 } from "drizzle-orm";
+import { eq as eq107 } from "drizzle-orm";
 async function generateMcpApiKey(userId) {
   const rawKey = `jarvis_${crypto9.randomBytes(20).toString("hex")}`;
   const prefix = rawKey.slice(0, KEY_PREFIX_LEN);
   const keyHash = await bcrypt2.hash(rawKey, BCRYPT_ROUNDS);
-  await db.delete(mcpApiKeys).where(eq106(mcpApiKeys.userId, userId));
+  await db.delete(mcpApiKeys).where(eq107(mcpApiKeys.userId, userId));
   await db.insert(mcpApiKeys).values({
     userId,
     keyHash,
@@ -66411,7 +66843,7 @@ async function generateMcpApiKey(userId) {
   return { rawKey, prefix };
 }
 async function revokeMcpApiKeys(userId) {
-  await db.delete(mcpApiKeys).where(eq106(mcpApiKeys.userId, userId));
+  await db.delete(mcpApiKeys).where(eq107(mcpApiKeys.userId, userId));
 }
 async function verifyMcpApiKey(rawKey) {
   if (!rawKey.startsWith("jarvis_") || rawKey.length < KEY_PREFIX_LEN) return null;
@@ -66419,13 +66851,13 @@ async function verifyMcpApiKey(rawKey) {
   if (!await checkCounter("pre-auth", prefix, PRE_AUTH_MAX, PRE_AUTH_WINDOW_MS)) {
     return null;
   }
-  const rows = await db.select().from(mcpApiKeys).where(eq106(mcpApiKeys.keyPrefix, prefix));
+  const rows = await db.select().from(mcpApiKeys).where(eq107(mcpApiKeys.keyPrefix, prefix));
   for (const row of rows) {
     const valid = await bcrypt2.compare(rawKey, row.keyHash);
     if (valid) {
       resetCounter("pre-auth", prefix).catch(() => {
       });
-      db.update(mcpApiKeys).set({ lastUsedAt: /* @__PURE__ */ new Date() }).where(eq106(mcpApiKeys.id, row.id)).catch(() => {
+      db.update(mcpApiKeys).set({ lastUsedAt: /* @__PURE__ */ new Date() }).where(eq107(mcpApiKeys.id, row.id)).catch(() => {
       });
       return { userId: row.userId, keyId: row.id, prefix };
     }
@@ -66438,7 +66870,7 @@ async function checkRateLimit(keyId) {
 async function checkCounter(namespace, key, max, windowMs) {
   const bucket = `${namespace}:${key}`;
   const now = Date.now();
-  const result = await db.execute(sql38`
+  const result = await db.execute(sql39`
     INSERT INTO mcp_rate_limits (bucket, count, window_start)
     VALUES (${bucket}, 1, ${now})
     ON CONFLICT (bucket) DO UPDATE
@@ -66460,10 +66892,10 @@ async function checkCounter(namespace, key, max, windowMs) {
 }
 async function resetCounter(namespace, key) {
   const bucket = `${namespace}:${key}`;
-  await db.execute(sql38`DELETE FROM mcp_rate_limits WHERE bucket = ${bucket}`);
+  await db.execute(sql39`DELETE FROM mcp_rate_limits WHERE bucket = ${bucket}`);
 }
 async function getMcpKeyInfo(userId) {
-  const rows = await db.select().from(mcpApiKeys).where(eq106(mcpApiKeys.userId, userId)).limit(1);
+  const rows = await db.select().from(mcpApiKeys).where(eq107(mcpApiKeys.userId, userId)).limit(1);
   if (rows.length === 0) return null;
   const row = rows[0];
   return {
@@ -66487,7 +66919,7 @@ var init_mcpApiKeys = __esm({
     EVICTION_INTERVAL_MS = 5 * 60 * 1e3;
     _mcpEvictTimer = setInterval(async () => {
       const now = Date.now();
-      await db.execute(sql38`
+      await db.execute(sql39`
     DELETE FROM mcp_rate_limits
     WHERE
       (bucket LIKE 'auth:%'     AND ${now} - window_start >= ${RATE_LIMIT_WINDOW_MS})
@@ -66780,7 +67212,7 @@ __export(voiceRelayRoutes_exports, {
 });
 import { WebSocketServer as WebSocketServer2, WebSocket as WebSocket2 } from "ws";
 import { randomBytes as randomBytes3 } from "crypto";
-import { eq as eq107, desc as desc36 } from "drizzle-orm";
+import { eq as eq108, desc as desc36 } from "drizzle-orm";
 function createRelayTicket(userId) {
   const ticket = randomBytes3(24).toString("hex");
   ticketStore.set(ticket, {
@@ -66835,7 +67267,7 @@ async function loadUserMemories(userId, maxLines = 50) {
       content: userMemories.content,
       category: userMemories.category,
       confidence: userMemories.confidence
-    }).from(userMemories).where(eq107(userMemories.userId, userId)).orderBy(desc36(userMemories.confidence)).limit(30);
+    }).from(userMemories).where(eq108(userMemories.userId, userId)).orderBy(desc36(userMemories.confidence)).limit(30);
     if (!rows.length) return "";
     const lines = [];
     for (const row of rows) {
@@ -67071,7 +67503,7 @@ var storage_exports = {};
 __export(storage_exports, {
   chatStorage: () => chatStorage
 });
-import { eq as eq108, desc as desc37 } from "drizzle-orm";
+import { eq as eq109, desc as desc37 } from "drizzle-orm";
 var chatStorage;
 var init_storage = __esm({
   "server/replit_integrations/chat/storage.ts"() {
@@ -67080,7 +67512,7 @@ var init_storage = __esm({
     init_schema();
     chatStorage = {
       async getConversation(id) {
-        const [conversation] = await db.select().from(conversations).where(eq108(conversations.id, id));
+        const [conversation] = await db.select().from(conversations).where(eq109(conversations.id, id));
         return conversation;
       },
       async getAllConversations() {
@@ -67091,11 +67523,11 @@ var init_storage = __esm({
         return conversation;
       },
       async deleteConversation(id) {
-        await db.delete(messages).where(eq108(messages.conversationId, id));
-        await db.delete(conversations).where(eq108(conversations.id, id));
+        await db.delete(messages).where(eq109(messages.conversationId, id));
+        await db.delete(conversations).where(eq109(conversations.id, id));
       },
       async getMessagesByConversation(conversationId) {
-        return db.select().from(messages).where(eq108(messages.conversationId, conversationId)).orderBy(messages.createdAt);
+        return db.select().from(messages).where(eq109(messages.conversationId, conversationId)).orderBy(messages.createdAt);
       },
       async createMessage(conversationId, role, content) {
         const [message] = await db.insert(messages).values({ conversationId, role, content }).returning();
@@ -67114,10 +67546,10 @@ __export(routes_exports, {
 });
 import { createHash as createHash7 } from "crypto";
 import fs21 from "fs";
-import path26 from "path";
+import path27 from "path";
 import { createServer } from "node:http";
 import OpenAI11 from "openai";
-import { eq as eq109, and as and81, desc as desc38, sql as sql39, gte as gte22, asc as asc7 } from "drizzle-orm";
+import { eq as eq110, and as and82, desc as desc38, sql as sql40, gte as gte22, asc as asc7 } from "drizzle-orm";
 import ytSearch from "yt-search";
 function providerLabelForModel(model) {
   const normalized = model.toLowerCase();
@@ -67132,12 +67564,12 @@ function providerLabelForModel(model) {
 }
 async function applyLivingContextReviewToFile(relPath, oldBlock, newBlock) {
   if (!relPath || !oldBlock) return;
-  if (path26.isAbsolute(relPath) || relPath.includes("..")) return;
+  if (path27.isAbsolute(relPath) || relPath.includes("..")) return;
   const rootDir = process.cwd();
-  const abs = path26.resolve(rootDir, relPath);
-  const allowedRoot = path26.resolve(rootDir, "workspaces", "battles");
-  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path26.sep))) return;
-  if (path26.extname(abs).toLowerCase() !== ".md") return;
+  const abs = path27.resolve(rootDir, relPath);
+  const allowedRoot = path27.resolve(rootDir, "workspaces", "battles");
+  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path27.sep))) return;
+  if (path27.extname(abs).toLowerCase() !== ".md") return;
   try {
     let content = await fs21.promises.readFile(abs, "utf-8");
     const replacement = newBlock ? `${newBlock}
@@ -67154,7 +67586,7 @@ ${newBlock}
   }
 }
 function loadPrimeSections() {
-  const filePath = path26.resolve(process.cwd(), "agents/PRIME.md");
+  const filePath = path27.resolve(process.cwd(), "agents/PRIME.md");
   let content;
   try {
     content = fs21.readFileSync(filePath, "utf8");
@@ -67191,8 +67623,8 @@ function loadPrimeSections() {
 }
 function readPromptDoc(relativePath, maxChars) {
   try {
-    const filePath = path26.resolve(process.cwd(), relativePath);
-    const root = path26.resolve(process.cwd());
+    const filePath = path27.resolve(process.cwd(), relativePath);
+    const root = path27.resolve(process.cwd());
     if (!filePath.startsWith(root)) return "";
     return fs21.readFileSync(filePath, "utf8").trim().slice(0, maxChars);
   } catch {
@@ -67227,7 +67659,7 @@ function getPersonaBlock(coachingMode) {
 }
 async function getUserLocalDate(userId) {
   try {
-    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)).limit(1);
+    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
     const tz = prefs[0]?.data?.timezone || "America/New_York";
     return (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: tz });
   } catch {
@@ -67242,8 +67674,8 @@ async function getMorningNoteSummary(userId) {
     const thirtyDaysAgo = /* @__PURE__ */ new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const cutoffDate = thirtyDaysAgo.toISOString().slice(0, 10);
-    const notes = await db.select().from(morningVoiceNotes).where(and81(
-      eq109(morningVoiceNotes.userId, userId),
+    const notes = await db.select().from(morningVoiceNotes).where(and82(
+      eq110(morningVoiceNotes.userId, userId),
       gte22(morningVoiceNotes.recordedAt, cutoffDate)
     )).orderBy(desc38(morningVoiceNotes.recordedAt)).limit(30);
     if (notes.length === 0) return "";
@@ -67525,12 +67957,12 @@ async function buildPlanForUser(userId) {
   try {
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const [goalsRow, historyRow, brainDumpRow, lifeContextRow, prefsRow, energyRow] = await Promise.all([
-      db.select({ data: goals.data }).from(goals).where(eq109(goals.userId, userId)),
-      db.select({ data: completionHistory.data }).from(completionHistory).where(eq109(completionHistory.userId, userId)),
-      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq109(brainDumpInbox.userId, userId)),
-      db.select({ data: lifeContext.data }).from(lifeContext).where(eq109(lifeContext.userId, userId)),
-      db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)),
-      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and81(eq109(energyCheckins.userId, userId), eq109(energyCheckins.date, today)))
+      db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId)),
+      db.select({ data: completionHistory.data }).from(completionHistory).where(eq110(completionHistory.userId, userId)),
+      db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq110(brainDumpInbox.userId, userId)),
+      db.select({ data: lifeContext.data }).from(lifeContext).where(eq110(lifeContext.userId, userId)),
+      db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)),
+      db.select({ data: energyCheckins.data }).from(energyCheckins).where(and82(eq110(energyCheckins.userId, userId), eq110(energyCheckins.date, today)))
     ]);
     const goals2 = goalsRow[0]?.data || [];
     const completionHistory2 = historyRow[0]?.data || [];
@@ -67631,7 +68063,7 @@ async function registerRoutes(app2) {
   if (process.env.NODE_ENV !== "production") {
     app2.patch("/api/dev/projects/:id/complete", async (req, res) => {
       try {
-        await db.update(jarvisProjects).set({ status: "complete" }).where(eq109(jarvisProjects.id, req.params.id));
+        await db.update(jarvisProjects).set({ status: "complete" }).where(eq110(jarvisProjects.id, req.params.id));
         res.json({ ok: true });
       } catch (err2) {
         res.status(500).json({ error: String(err2) });
@@ -67653,7 +68085,7 @@ async function registerRoutes(app2) {
     }, 300);
   });
   app2.get("/api/daemon/screenshot/:id", (req, res) => {
-    const entry = screenshotStore.get(_p8(req.params.id));
+    const entry = screenshotStore.get(_p9(req.params.id));
     if (!entry || entry.expires < Date.now()) {
       return res.status(404).json({ error: "Screenshot not found or expired" });
     }
@@ -67884,7 +68316,7 @@ async function registerRoutes(app2) {
     try {
       const { learnedResourceIds: learnedResourceIds2 } = await Promise.resolve().then(() => (init_daemonShellTool(), daemonShellTool_exports));
       const minConfidence = Math.max(1, parseInt(req.query.minConfidence ?? "1", 10) || 1);
-      const rows = await db.execute(sql39`
+      const rows = await db.execute(sql40`
         SELECT
           app_package,
           discovered_resource_id,
@@ -67918,7 +68350,7 @@ async function registerRoutes(app2) {
     try {
       const { token } = req.query;
       if (!token) return res.status(400).json({ error: "token is required" });
-      const [row] = await db.select().from(webchatInviteTokens).where(eq109(webchatInviteTokens.token, token)).limit(1);
+      const [row] = await db.select().from(webchatInviteTokens).where(eq110(webchatInviteTokens.token, token)).limit(1);
       if (!row) return res.status(404).json({ error: "Invite link not found" });
       if (row.expiresAt < /* @__PURE__ */ new Date()) {
         return res.status(410).json({ error: "This invite link has expired" });
@@ -68002,7 +68434,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: goals.data }).from(goals).where(eq109(goals.userId, userId)).limit(1);
+      const row = await db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId)).limit(1);
       const raw = row[0]?.data ?? [];
       const goals2 = raw.map((g) => {
         const current = Number(g.current ?? 0);
@@ -68047,7 +68479,7 @@ async function registerRoutes(app2) {
       const { analyseEgo: analyseEgo2, getISOWeekMonday: getISOWeekMonday2 } = await Promise.resolve().then(() => (init_ego(), ego_exports));
       const weekOf = getISOWeekMonday2(/* @__PURE__ */ new Date());
       const analysis = await analyseEgo2(userId, weekOf);
-      const latestReport = await db.select().from(egoWeeklyReports).where(eq109(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(1);
+      const latestReport = await db.select().from(egoWeeklyReports).where(eq110(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(1);
       res.json({
         analysis,
         latestReport: latestReport[0] ?? null
@@ -68061,7 +68493,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const reports = await db.select().from(egoWeeklyReports).where(eq109(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(12);
+      const reports = await db.select().from(egoWeeklyReports).where(eq110(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(12);
       res.json({ reports });
     } catch (err2) {
       console.error("[Ego] reports failed:", err2);
@@ -68090,7 +68522,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const links = await db.select().from(channelLinks).where(and81(eq109(channelLinks.userId, userId), eq109(channelLinks.channel, "discord")));
+      const links = await db.select().from(channelLinks).where(and82(eq110(channelLinks.userId, userId), eq110(channelLinks.channel, "discord")));
       const link = links[0];
       const meta = link?.metadata;
       res.json({
@@ -68653,7 +69085,7 @@ Rules:
     try {
       switch (toolName) {
         case "add_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and81(eq109(plans.userId, userId), eq109(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and82(eq110(plans.userId, userId), eq110(plans.date, todayKey)));
           const plan = planResult.length > 0 ? planResult[0].data : { date: todayKey, tasks: [], greeting: "", insight: "" };
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
           const catMap = { health: "fitness", work: "career", learning: "personal" };
@@ -68674,7 +69106,7 @@ Rules:
           return { result: "success", label: `Task added to today`, detail: `Added "${args.title}"` };
         }
         case "add_to_brain_dump": {
-          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq109(brainDumpInbox.userId, userId));
+          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq110(brainDumpInbox.userId, userId));
           const items = bdResult.length > 0 ? Array.isArray(bdResult[0].data) ? bdResult[0].data : [] : [];
           items.unshift({
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -68688,7 +69120,7 @@ Rules:
           return { result: "success", label: `Added to brain dump`, detail: `Added "${args.text}"` };
         }
         case "log_goal_progress": {
-          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq109(goals.userId, userId));
+          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId));
           if (goalsResult.length === 0) return { result: "error", label: "No goals found", detail: "User has no goals set" };
           const goalsList = Array.isArray(goalsResult[0].data) ? goalsResult[0].data : [];
           const matched = goalsList.find((g) => fuzzyMatch(args.goalTitle, g.title));
@@ -68702,7 +69134,7 @@ Rules:
           return { result: "success", label: `Progress logged`, detail: `Added ${args.amount} to "${matched.title}"` };
         }
         case "update_life_context": {
-          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq109(lifeContext.userId, userId));
+          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq110(lifeContext.userId, userId));
           const existing = lcResult.length > 0 ? lcResult[0].data : {};
           const merged = { ...existing };
           if (args.priorityGoal) merged.priorityGoal = args.priorityGoal;
@@ -68719,7 +69151,7 @@ Rules:
           return { result: "success", label: `Context updated`, detail: `Updated: ${updatedFields}` };
         }
         case "complete_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and81(eq109(plans.userId, userId), eq109(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and82(eq110(plans.userId, userId), eq110(plans.date, todayKey)));
           if (planResult.length === 0) return { result: "error", label: "No plan today", detail: "No plan found for today" };
           const plan = planResult[0].data;
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
@@ -68778,8 +69210,8 @@ Rules:
             getValidGoogleToken(userId).catch(() => null),
             getValidMicrosoftToken(userId).catch(() => null),
             getUserOAuthStatus(userId).catch(() => ({})),
-            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq109(telegramLinks.userId, userId)).limit(1),
-            db.select().from(channelLinks).where(eq109(channelLinks.userId, userId))
+            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq110(telegramLinks.userId, userId)).limit(1),
+            db.select().from(channelLinks).where(eq110(channelLinks.userId, userId))
           ]);
           const daemonOnline = isUserPaired(userId);
           const isAndroid = isAndroidDaemonActive(userId);
@@ -69083,7 +69515,7 @@ ${shadeText}`
               };
             } else if (action === "android_wait") {
               const ms = Math.min(Math.max(typeof args.ms === "number" ? args.ms : 1500, 200), 1e4);
-              await new Promise((resolve9) => setTimeout(resolve9, ms));
+              await new Promise((resolve10) => setTimeout(resolve10, ms));
               return { result: "success", label: `Waited ${ms}ms`, detail: `Paused ${ms}ms to let the phone UI settle.` };
             } else if (action === "android_swipe") {
               if (typeof args.x1 !== "number" || typeof args.y1 !== "number" || typeof args.x2 !== "number" || typeof args.y2 !== "number") return { result: "error", label: "coords required", detail: "Provide x1,y1,x2,y2 for android_swipe." };
@@ -69584,10 +70016,10 @@ ${text2}`
     try {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
       const unanswered = await db.select().from(proactiveQuestionsSent).where(
-        and81(
-          eq109(proactiveQuestionsSent.userId, userId),
-          sql39`${proactiveQuestionsSent.answeredAt} IS NULL`,
-          sql39`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+        and82(
+          eq110(proactiveQuestionsSent.userId, userId),
+          sql40`${proactiveQuestionsSent.answeredAt} IS NULL`,
+          sql40`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
         )
       ).orderBy(desc38(proactiveQuestionsSent.sentAt)).limit(1);
       if (unanswered.length > 0) {
@@ -69608,7 +70040,7 @@ Answer (yes/no):`
         });
         const answer = (checkResponse.choices[0]?.message?.content || "").trim().toLowerCase();
         if (answer.startsWith("yes")) {
-          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq109(proactiveQuestionsSent.id, unanswered[0].id));
+          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq110(proactiveQuestionsSent.id, unanswered[0].id));
           console.log(`[Profile] Marked proactive question as answered via coach chat: ${unanswered[0].id}`);
         }
       }
@@ -69725,7 +70157,7 @@ Answer (yes/no):`
         userCommitments = [];
         if (userId) {
           try {
-            userCommitments = await db.select().from(commitments).where(and81(eq109(commitments.userId, userId), eq109(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(20);
+            userCommitments = await db.select().from(commitments).where(and82(eq110(commitments.userId, userId), eq110(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(20);
           } catch {
           }
         }
@@ -69735,7 +70167,7 @@ Answer (yes/no):`
         if (userId) {
           try {
             const [rows, noteSummary, docsCtx] = await Promise.all([
-              db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq109(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt)).limit(50),
+              db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq110(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt)).limit(50),
               getMorningNoteSummary(userId),
               getUserDocumentContext(userId)
             ]);
@@ -69750,10 +70182,10 @@ Answer (yes/no):`
           try {
             const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
             const recentUnanswered = await db.select().from(proactiveQuestionsSent).where(
-              and81(
-                eq109(proactiveQuestionsSent.userId, userId),
-                sql39`${proactiveQuestionsSent.answeredAt} IS NULL`,
-                sql39`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+              and82(
+                eq110(proactiveQuestionsSent.userId, userId),
+                sql40`${proactiveQuestionsSent.answeredAt} IS NULL`,
+                sql40`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
               )
             ).orderBy(desc38(proactiveQuestionsSent.sentAt)).limit(3);
             if (recentUnanswered.length > 0) {
@@ -70837,7 +71269,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
   app2.get("/api/webchat/invite/active", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const [row] = await db.select().from(webchatInviteTokens).where(and81(eq109(webchatInviteTokens.userId, userId), gte22(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
+      const [row] = await db.select().from(webchatInviteTokens).where(and82(eq110(webchatInviteTokens.userId, userId), gte22(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
       if (!row) return res.json({ active: false });
       const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
       const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
@@ -70853,7 +71285,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       const userId = req.userId;
       const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
       const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
-      const [existing] = await db.select().from(webchatInviteTokens).where(and81(eq109(webchatInviteTokens.userId, userId), gte22(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
+      const [existing] = await db.select().from(webchatInviteTokens).where(and82(eq110(webchatInviteTokens.userId, userId), gte22(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
       if (existing) {
         const url2 = `${protocol}://${host}/chat?invite=${existing.token}`;
         return res.json({ token: existing.token, url: url2, expiresAt: existing.expiresAt });
@@ -70872,11 +71304,11 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
   app2.delete("/api/webchat/invite/:token", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const token = _p8(req.params.token);
-      const [row] = await db.select().from(webchatInviteTokens).where(eq109(webchatInviteTokens.token, token)).limit(1);
+      const token = _p9(req.params.token);
+      const [row] = await db.select().from(webchatInviteTokens).where(eq110(webchatInviteTokens.token, token)).limit(1);
       if (!row) return res.status(404).json({ error: "Token not found" });
       if (row.userId !== userId) return res.status(403).json({ error: "Forbidden" });
-      await db.delete(webchatInviteTokens).where(eq109(webchatInviteTokens.token, token));
+      await db.delete(webchatInviteTokens).where(eq110(webchatInviteTokens.token, token));
       return res.json({ ok: true });
     } catch (error) {
       console.error("Error revoking webchat invite token:", error);
@@ -71038,7 +71470,7 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
       let commitmentText = "";
       if (userId) {
         try {
-          const pendingCommitments = await db.select().from(commitments).where(and81(eq109(commitments.userId, userId), eq109(commitments.status, "pending"))).limit(5);
+          const pendingCommitments = await db.select().from(commitments).where(and82(eq110(commitments.userId, userId), eq110(commitments.status, "pending"))).limit(5);
           if (pendingCommitments.length > 0) {
             commitmentText = `
 - Open commitments: ${pendingCommitments.map((c) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join(", ")}`;
@@ -71565,7 +71997,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(commitments).where(and81(eq109(commitments.userId, userId), eq109(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt));
+      const rows = await db.select().from(commitments).where(and82(eq110(commitments.userId, userId), eq110(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt));
       res.json({ commitments: rows });
     } catch (error) {
       console.error("Error fetching commitments:", error);
@@ -71576,12 +72008,12 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { status } = req.body;
       if (!status || !["done", "skipped", "pending"].includes(status)) {
         return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
       }
-      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and81(eq109(commitments.id, id), eq109(commitments.userId, userId)));
+      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and82(eq110(commitments.id, id), eq110(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating commitment:", error);
@@ -71592,8 +72024,8 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      await db.delete(commitments).where(and81(eq109(commitments.id, id), eq109(commitments.userId, userId)));
+      const id = _p9(req.params.id);
+      await db.delete(commitments).where(and82(eq110(commitments.id, id), eq110(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting commitment:", error);
@@ -71645,7 +72077,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       if (!context) return res.status(400).json({ error: "context is required" });
       let userCommitments = [];
       try {
-        userCommitments = await db.select().from(commitments).where(and81(eq109(commitments.userId, userId), eq109(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(10);
+        userCommitments = await db.select().from(commitments).where(and82(eq110(commitments.userId, userId), eq110(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(10);
       } catch {
       }
       const soulBlock = await getSoulPromptBlock(userId ?? "");
@@ -71693,7 +72125,7 @@ ${context}` },
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId));
       const prefs = rows[0]?.data || {};
       const brief = prefs.morningBrief;
       if (brief && brief.date === today && brief.text) {
@@ -71707,7 +72139,7 @@ ${context}` },
   });
   async function savePendingResponse(userId, text2, screenshotUrl) {
     const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId));
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId));
     const prefs = rows[0]?.data || {};
     const payload = { id, text: text2, createdAt: Date.now() };
     if (screenshotUrl) payload.screenshotUrl = screenshotUrl;
@@ -71717,13 +72149,13 @@ ${context}` },
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId));
       const prefs = rows[0]?.data || {};
       const pending = prefs.pendingResponse;
       const ONE_HOUR = 60 * 60 * 1e3;
       if (pending && pending.createdAt && Date.now() - pending.createdAt < ONE_HOUR && pending.text) {
         const updated = { ...prefs, pendingResponse: null };
-        await db.update(userPreferences).set({ data: updated }).where(eq109(userPreferences.userId, userId));
+        await db.update(userPreferences).set({ data: updated }).where(eq110(userPreferences.userId, userId));
         return res.json({ id: pending.id, text: pending.text, screenshotUrl: pending.screenshotUrl || null });
       }
       return res.json({ text: null });
@@ -71741,7 +72173,7 @@ ${context}` },
       try {
         const sevenDaysAgo = /* @__PURE__ */ new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db.select().from(commitments).where(eq109(commitments.userId, userId)).orderBy(desc38(commitments.extractedAt)).limit(30);
+        weekCommitments = await db.select().from(commitments).where(eq110(commitments.userId, userId)).orderBy(desc38(commitments.extractedAt)).limit(30);
         weekCommitments = weekCommitments.filter(
           (c) => new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
         );
@@ -71800,7 +72232,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(userMemories).where(eq109(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt));
+      const rows = await db.select().from(userMemories).where(eq110(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt));
       res.json({ memories: rows });
     } catch (error) {
       console.error("Error fetching memories:", error);
@@ -71811,7 +72243,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.execute(sql39`
+      const rows = await db.execute(sql40`
         SELECT id, content, category, memory_type, tier, confidence, extracted_at
         FROM user_memories
         WHERE user_id = ${userId}
@@ -71830,13 +72262,13 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { action, updatedContent } = req.body;
       if (!["keep", "edit", "discard"].includes(action)) {
         return res.status(400).json({ error: "action must be keep, edit, or discard" });
       }
       if (action === "discard") {
-        const result2 = await db.execute(sql39`
+        const result2 = await db.execute(sql40`
           UPDATE user_memories
           SET review_status = 'discarded'
           WHERE id = ${id} AND user_id = ${userId} AND pending_review = TRUE AND review_status = 'pending'
@@ -71849,7 +72281,7 @@ Return ONLY the JSON object.`;
         if (!updatedContent || typeof updatedContent !== "string" || !updatedContent.trim()) {
           return res.status(400).json({ error: "updatedContent is required for edit action" });
         }
-        const result2 = await db.execute(sql39`
+        const result2 = await db.execute(sql40`
           UPDATE user_memories
           SET content = ${updatedContent.trim()}, pending_review = FALSE, review_status = 'edited'
           WHERE id = ${id} AND user_id = ${userId} AND pending_review = TRUE
@@ -71860,7 +72292,7 @@ Return ONLY the JSON object.`;
         });
         return res.json({ ok: true });
       }
-      const result = await db.execute(sql39`
+      const result = await db.execute(sql40`
         UPDATE user_memories
         SET pending_review = FALSE, review_status = 'kept'
         WHERE id = ${id} AND user_id = ${userId} AND pending_review = TRUE
@@ -71879,7 +72311,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const result = await db.execute(sql39`
+      const result = await db.execute(sql40`
         UPDATE user_memories
         SET pending_review = FALSE, review_status = 'kept'
         WHERE user_id = ${userId}
@@ -71902,7 +72334,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.execute(sql39`
+      const rows = await db.execute(sql40`
         SELECT id, target, path, topic, learned, source_type, source_ref, confidence,
                status, fills_question, approval_sensitive, created_at
         FROM living_context_updates
@@ -71921,13 +72353,13 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { action, updatedLearned } = req.body;
       if (!["keep", "edit", "discard"].includes(action)) {
         return res.status(400).json({ error: "action must be keep, edit, or discard" });
       }
       if (action === "discard") {
-        const result2 = await db.execute(sql39`
+        const result2 = await db.execute(sql40`
           UPDATE living_context_updates
           SET status = 'discarded'
           WHERE id = ${id} AND user_id = ${userId} AND status = 'needs_review'
@@ -71942,7 +72374,7 @@ Return ONLY the JSON object.`;
       if (action === "edit") {
         const learned = typeof updatedLearned === "string" ? updatedLearned.trim() : "";
         if (!learned) return res.status(400).json({ error: "updatedLearned is required for edit action" });
-        const existing = await db.execute(sql39`
+        const existing = await db.execute(sql40`
           SELECT topic, source_type, source_ref, confidence, fills_question, approval_sensitive, notes, created_at, path, block
           FROM living_context_updates
           WHERE id = ${id} AND user_id = ${userId} AND status = 'needs_review'
@@ -71967,7 +72399,7 @@ Return ONLY the JSON object.`;
         if (row.notes) blockLines.push(`- Notes: ${row.notes}`);
         const block = blockLines.join("\n");
         const normalized = createHash7("sha256").update(learned.toLowerCase().replace(/\s+/g, " ").trim()).digest("hex");
-        const result2 = await db.execute(sql39`
+        const result2 = await db.execute(sql40`
           UPDATE living_context_updates
           SET learned = ${learned},
               normalized_learned = ${normalized},
@@ -71981,7 +72413,7 @@ Return ONLY the JSON object.`;
         });
         return res.json({ ok: true });
       }
-      const result = await db.execute(sql39`
+      const result = await db.execute(sql40`
         UPDATE living_context_updates
         SET status = 'kept'
         WHERE id = ${id} AND user_id = ${userId} AND status = 'needs_review'
@@ -72000,7 +72432,7 @@ Return ONLY the JSON object.`;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
       const rows = await db.select().from(userMemories).where(
-        sql39`${userMemories.userId} = ${userId}
+        sql40`${userMemories.userId} = ${userId}
             AND ${userMemories.tier} = 'long_term'
             AND ${userMemories.relevanceScore} <= 30
             AND COALESCE(${userMemories.lastReferencedAt}, ${userMemories.extractedAt}) < ${thirtyDaysAgo}`
@@ -72015,8 +72447,8 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const result = await db.execute(sql39`
+      const id = _p9(req.params.id);
+      const result = await db.execute(sql40`
         UPDATE user_memories
         SET relevance_score = 50,
             last_referenced_at = NOW()
@@ -72037,8 +72469,8 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      await db.delete(userMemories).where(sql39`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId}`);
+      const id = _p9(req.params.id);
+      await db.delete(userMemories).where(sql40`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId}`);
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting memory:", error);
@@ -72173,7 +72605,7 @@ Return ONLY the JSON object.`;
       if (!await isIntegrationOwner2(userId)) {
         return res.status(403).json({ error: "Owner access required" });
       }
-      const fileParam = _p8(req.params.file);
+      const fileParam = _p9(req.params.file);
       if (!isWFKey(fileParam)) {
         return res.status(400).json({ error: `Invalid file key: ${fileParam}` });
       }
@@ -72193,7 +72625,7 @@ Return ONLY the JSON object.`;
       if (!await isIntegrationOwner2(userId)) {
         return res.status(403).json({ error: "Owner access required" });
       }
-      const fileParam = _p8(req.params.file);
+      const fileParam = _p9(req.params.file);
       if (!isWFKey(fileParam)) {
         return res.status(400).json({ error: `Invalid file key: ${fileParam}` });
       }
@@ -72223,7 +72655,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await deletePerson(userId, _p8(req.params.id));
+      await deletePerson(userId, _p9(req.params.id));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting person:", error);
@@ -72234,7 +72666,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(weeklyInsights).where(eq109(weeklyInsights.userId, userId)).orderBy(desc38(weeklyInsights.createdAt)).limit(4);
+      const rows = await db.select().from(weeklyInsights).where(eq110(weeklyInsights.userId, userId)).orderBy(desc38(weeklyInsights.createdAt)).limit(4);
       return res.json({ insights: rows });
     } catch (error) {
       console.error("Error getting weekly insights:", error);
@@ -72245,7 +72677,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(dreamInsights).where(eq109(dreamInsights.userId, userId)).orderBy(desc38(dreamInsights.createdAt)).limit(50);
+      const rows = await db.select().from(dreamInsights).where(eq110(dreamInsights.userId, userId)).orderBy(desc38(dreamInsights.createdAt)).limit(50);
       return res.json({ insights: rows });
     } catch (error) {
       console.error("Error getting dream insights:", error);
@@ -72259,10 +72691,10 @@ Return ONLY the JSON object.`;
       const dreamDate = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const manualKey = `dream_manual:${dreamDate}`;
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and81(
-          eq109(proactiveScheduleLog.userId, userId),
-          eq109(proactiveScheduleLog.messageType, manualKey),
-          eq109(proactiveScheduleLog.sentDate, dreamDate)
+        and82(
+          eq110(proactiveScheduleLog.userId, userId),
+          eq110(proactiveScheduleLog.messageType, manualKey),
+          eq110(proactiveScheduleLog.sentDate, dreamDate)
         )
       ).limit(1);
       if (existing.length > 0) {
@@ -72293,11 +72725,11 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const insightId = _p8(req.params.insightId);
+      const insightId = _p9(req.params.insightId);
       const insightRows = await db.select({ sourceMemoryIds: dreamInsights.sourceMemoryIds }).from(dreamInsights).where(
-        and81(
-          eq109(dreamInsights.id, insightId),
-          eq109(dreamInsights.userId, userId)
+        and82(
+          eq110(dreamInsights.id, insightId),
+          eq110(dreamInsights.userId, userId)
         )
       ).limit(1);
       if (insightRows.length === 0) return res.status(404).json({ error: "Not found" });
@@ -72311,8 +72743,8 @@ Return ONLY the JSON object.`;
         confidence: userMemories.confidence,
         extractedAt: userMemories.extractedAt
       }).from(userMemories).where(
-        and81(
-          eq109(userMemories.userId, userId),
+        and82(
+          eq110(userMemories.userId, userId),
           inArray12(userMemories.id, ids.slice(0, 50))
         )
       ).limit(10);
@@ -72389,7 +72821,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)).limit(1);
+      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
       return res.json(row[0]?.data || {});
     } catch (error) {
       console.error("Error getting preferences:", error);
@@ -72401,7 +72833,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)).limit(1);
+      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
       await db.insert(userPreferences).values({ userId, data: merged }).onConflictDoUpdate({
@@ -72419,7 +72851,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq109(lifeContext.userId, userId)).limit(1);
+      const existing = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq110(lifeContext.userId, userId)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
       await db.insert(lifeContext).values({ userId, data: merged, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
@@ -72437,7 +72869,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const limit = parseInt(req.query.limit) || 30;
-      const notes = await db.select().from(morningVoiceNotes).where(eq109(morningVoiceNotes.userId, userId)).orderBy(desc38(morningVoiceNotes.recordedAt)).limit(limit);
+      const notes = await db.select().from(morningVoiceNotes).where(eq110(morningVoiceNotes.userId, userId)).orderBy(desc38(morningVoiceNotes.recordedAt)).limit(limit);
       res.json({ notes });
     } catch (error) {
       console.error("Error fetching morning voice notes:", error);
@@ -72449,7 +72881,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const today = await getUserLocalDate(userId);
-      const notes = await db.select().from(morningVoiceNotes).where(and81(eq109(morningVoiceNotes.userId, userId), eq109(morningVoiceNotes.recordedAt, today))).limit(1);
+      const notes = await db.select().from(morningVoiceNotes).where(and82(eq110(morningVoiceNotes.userId, userId), eq110(morningVoiceNotes.recordedAt, today))).limit(1);
       res.json({ note: notes[0] || null });
     } catch (error) {
       console.error("Error fetching today's morning voice note:", error);
@@ -72514,7 +72946,7 @@ Return ONLY the JSON object.`;
         return res.status(400).json({ error: "transcript is required" });
       }
       const today = await getUserLocalDate(userId);
-      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and81(eq109(morningVoiceNotes.userId, userId), eq109(morningVoiceNotes.recordedAt, today))).limit(1);
+      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and82(eq110(morningVoiceNotes.userId, userId), eq110(morningVoiceNotes.recordedAt, today))).limit(1);
       if (existing.length > 0) {
         return res.status(409).json({ error: "Morning note already recorded today" });
       }
@@ -72580,11 +73012,11 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const statusFilter = typeof req.query.status === "string" ? req.query.status : "pending";
-      const whereClause = statusFilter === "dismissed" ? and81(
-        eq109(inboxItems.userId, userId),
-        eq109(inboxItems.status, statusFilter),
-        sql39`${inboxItems.jarvisReason} IS NOT NULL`
-      ) : and81(eq109(inboxItems.userId, userId), eq109(inboxItems.status, statusFilter));
+      const whereClause = statusFilter === "dismissed" ? and82(
+        eq110(inboxItems.userId, userId),
+        eq110(inboxItems.status, statusFilter),
+        sql40`${inboxItems.jarvisReason} IS NOT NULL`
+      ) : and82(eq110(inboxItems.userId, userId), eq110(inboxItems.status, statusFilter));
       const items = await db.select().from(inboxItems).where(whereClause).orderBy(desc38(inboxItems.surfacedAt)).limit(50);
       res.json(items);
     } catch (error) {
@@ -72596,8 +73028,8 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const [item] = await db.select().from(inboxItems).where(and81(eq109(inboxItems.id, id), eq109(inboxItems.userId, userId)));
+      const id = _p9(req.params.id);
+      const [item] = await db.select().from(inboxItems).where(and82(eq110(inboxItems.id, id), eq110(inboxItems.userId, userId)));
       if (!item) return res.status(404).json({ error: "Item not found" });
       if (item.sourceType === "email" || item.sourceType === "gmail") {
         const senderPart = item.sender ? `emails from ${item.sender}` : item.subject ? `emails with subject "${item.subject}"` : "this type of email";
@@ -72639,7 +73071,7 @@ Return ONLY the JSON object.`;
           }
         }
       }
-      await db.update(inboxItems).set({ status: "important", actedAt: /* @__PURE__ */ new Date() }).where(and81(eq109(inboxItems.id, id), eq109(inboxItems.userId, userId)));
+      await db.update(inboxItems).set({ status: "important", actedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(inboxItems.id, id), eq110(inboxItems.userId, userId)));
       res.json({ success: true, message: "Saved to Jarvis memory" });
     } catch (error) {
       console.error("Error marking inbox item as important:", error);
@@ -72650,7 +73082,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const tasks = await db.select().from(jarvisScheduledTasks).where(eq109(jarvisScheduledTasks.userId, userId)).orderBy(jarvisScheduledTasks.scheduledAt);
+      const tasks = await db.select().from(jarvisScheduledTasks).where(eq110(jarvisScheduledTasks.userId, userId)).orderBy(jarvisScheduledTasks.scheduledAt);
       res.json(tasks);
     } catch (err2) {
       console.error("Error fetching jarvis scheduled tasks:", err2);
@@ -72726,8 +73158,8 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and81(eq109(jarvisScheduledTasks.id, id), eq109(jarvisScheduledTasks.userId, userId)));
+      const id = _p9(req.params.id);
+      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("Error completing jarvis scheduled task:", err2);
@@ -72738,7 +73170,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const updates = {};
       if (typeof req.body.active === "boolean") updates.active = req.body.active;
       if (req.body.title) updates.title = req.body.title;
@@ -72746,7 +73178,7 @@ Return ONLY the JSON object.`;
       if (req.body.scheduledAt) updates.scheduledAt = new Date(req.body.scheduledAt);
       if (req.body.recurrence !== void 0) updates.recurrence = req.body.recurrence || null;
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No updatable fields provided" });
-      const [task] = await db.update(jarvisScheduledTasks).set(updates).where(and81(eq109(jarvisScheduledTasks.id, id), eq109(jarvisScheduledTasks.userId, userId))).returning();
+      const [task] = await db.update(jarvisScheduledTasks).set(updates).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId))).returning();
       if (!task) return res.status(404).json({ error: "Task not found" });
       res.json(task);
     } catch (err2) {
@@ -72758,14 +73190,14 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { attentionQuestion } = req.body;
       if (!attentionQuestion) return res.status(400).json({ error: "attentionQuestion is required" });
-      const [task] = await db.select().from(jarvisScheduledTasks).where(and81(eq109(jarvisScheduledTasks.id, id), eq109(jarvisScheduledTasks.userId, userId))).limit(1);
+      const [task] = await db.select().from(jarvisScheduledTasks).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId))).limit(1);
       if (!task) return res.status(404).json({ error: "Task not found" });
-      await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion }).where(and81(eq109(jarvisScheduledTasks.id, id), eq109(jarvisScheduledTasks.userId, userId)));
+      await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion }).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId)));
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq109(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq110(telegramLinks.userId, userId));
         if (link?.chatId) {
           const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
           await sendLongMessage2(
@@ -72792,7 +73224,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { userAnswer } = req.body;
       if (!userAnswer) return res.status(400).json({ error: "userAnswer is required" });
       const { resolveScheduledTaskAttention: resolveScheduledTaskAttention2 } = await Promise.resolve().then(() => (init_taskResolver(), taskResolver_exports));
@@ -72801,7 +73233,7 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.status(404).json({ error: result.reason === "not_found" ? "Task not found" : "Task does not need attention" });
       }
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq109(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq110(telegramLinks.userId, userId));
         if (link?.chatId) {
           const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
           await sendLongMessage2(
@@ -72822,8 +73254,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      await db.delete(jarvisScheduledTasks).where(and81(eq109(jarvisScheduledTasks.id, id), eq109(jarvisScheduledTasks.userId, userId)));
+      const id = _p9(req.params.id);
+      await db.delete(jarvisScheduledTasks).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("Error deleting jarvis scheduled task:", err2);
@@ -72834,8 +73266,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const [task] = await db.select().from(jarvisScheduledTasks).where(and81(eq109(jarvisScheduledTasks.id, id), eq109(jarvisScheduledTasks.userId, userId))).limit(1);
+      const id = _p9(req.params.id);
+      const [task] = await db.select().from(jarvisScheduledTasks).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId))).limit(1);
       if (!task) return res.status(404).json({ error: "Task not found" });
       if (!task.shellCommand) return res.status(400).json({ error: "Task has no shell command" });
       const { sendDaemonOp: sendDaemonOp2, isDesktopDaemonActive: isDesktopDaemonActive2, isDaemonActionAllowed: isDaemonActionAllowed2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
@@ -72883,7 +73315,7 @@ Reply directly to this message with your answer and I'll take it from there.
         durationMs: runResult.durationMs,
         ranAt
       };
-      await db.update(jarvisScheduledTasks).set({ lastShellResult: shellResult }).where(and81(eq109(jarvisScheduledTasks.id, id), eq109(jarvisScheduledTasks.userId, userId)));
+      await db.update(jarvisScheduledTasks).set({ lastShellResult: shellResult }).where(and82(eq110(jarvisScheduledTasks.id, id), eq110(jarvisScheduledTasks.userId, userId)));
       console.log(`[Routes] Manual run: task id=${id} exit=${runResult.exitCode} dur=${runResult.durationMs}ms`);
       res.json({ ok: true, result: shellResult, error: runResult.error });
     } catch (err2) {
@@ -72967,12 +73399,12 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { actionType } = req.body;
       if (!actionType) return res.status(400).json({ error: "actionType is required" });
       let telegramChatId;
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq109(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq110(telegramLinks.userId, userId));
         telegramChatId = link?.chatId;
       } catch {
       }
@@ -72980,7 +73412,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const result = await executeInboxAction2(userId, id, actionType, telegramChatId);
       if (result.success) {
         const egoOutcome = actionType === "dismiss" || actionType === "never_again" ? "dismissed" : "acted_on";
-        db.select({ sourceId: inboxItems.sourceId }).from(inboxItems).where(eq109(inboxItems.id, id)).then(([item]) => {
+        db.select({ sourceId: inboxItems.sourceId }).from(inboxItems).where(eq110(inboxItems.id, id)).then(([item]) => {
           if (!item?.sourceId) return;
           Promise.resolve().then(() => (init_actionLog(), actionLog_exports)).then(({ resolveActionByMetadataKey: resolveActionByMetadataKey2 }) => {
             resolveActionByMetadataKey2(userId, "proactive_message", "sourceId", item.sourceId, egoOutcome).catch(() => {
@@ -73000,7 +73432,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rules = await db.select().from(inboxRules).where(eq109(inboxRules.userId, userId));
+      const rules = await db.select().from(inboxRules).where(eq110(inboxRules.userId, userId));
       res.json(rules);
     } catch (error) {
       console.error("Error fetching inbox rules:", error);
@@ -73027,8 +73459,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      await db.delete(inboxRules).where(and81(eq109(inboxRules.id, id), eq109(inboxRules.userId, userId)));
+      const id = _p9(req.params.id);
+      await db.delete(inboxRules).where(and82(eq110(inboxRules.id, id), eq110(inboxRules.userId, userId)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting inbox rule:", error);
@@ -73039,10 +73471,10 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { active } = req.body;
       const isActive = active === true || active === "true" || active === 1;
-      await db.update(inboxRules).set({ active: isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and81(eq109(inboxRules.id, id), eq109(inboxRules.userId, userId)));
+      await db.update(inboxRules).set({ active: isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(inboxRules.id, id), eq110(inboxRules.userId, userId)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error updating inbox rule:", error);
@@ -73053,7 +73485,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const drafts = await db.select().from(emailDrafts).where(and81(eq109(emailDrafts.userId, userId), eq109(emailDrafts.status, "pending_approval"))).orderBy(desc38(emailDrafts.createdAt));
+      const drafts = await db.select().from(emailDrafts).where(and82(eq110(emailDrafts.userId, userId), eq110(emailDrafts.status, "pending_approval"))).orderBy(desc38(emailDrafts.createdAt));
       res.json(drafts);
     } catch (error) {
       console.error("Error fetching email drafts:", error);
@@ -73064,9 +73496,9 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { editedSubject, editedBody } = req.body;
-      const [draft] = await db.select().from(emailDrafts).where(and81(eq109(emailDrafts.id, id), eq109(emailDrafts.userId, userId))).limit(1);
+      const [draft] = await db.select().from(emailDrafts).where(and82(eq110(emailDrafts.id, id), eq110(emailDrafts.userId, userId))).limit(1);
       if (!draft) return res.status(404).json({ error: "Draft not found" });
       if (draft.status !== "pending_approval") return res.status(400).json({ error: "Draft already actioned" });
       const subject = editedSubject?.trim() || draft.draftSubject;
@@ -73088,7 +73520,7 @@ Reply directly to this message with your answer and I'll take it from there.
         actedAt: /* @__PURE__ */ new Date(),
         draftSubject: subject,
         draftBody: body
-      }).where(eq109(emailDrafts.id, id));
+      }).where(eq110(emailDrafts.id, id));
       res.json({ success: true, gmailDraftUrl: result.gmailUrl });
     } catch (error) {
       console.error("Error approving email draft:", error);
@@ -73099,8 +73531,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and81(eq109(emailDrafts.id, id), eq109(emailDrafts.userId, userId)));
+      const id = _p9(req.params.id);
+      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(emailDrafts.id, id), eq110(emailDrafts.userId, userId)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error discarding email draft:", error);
@@ -73111,7 +73543,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const [row] = await db.select({ data: goals.data }).from(goals).where(eq109(goals.userId, userId)).limit(1);
+      const [row] = await db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId)).limit(1);
       res.json({ goals: row?.data ?? [] });
     } catch (err2) {
       console.error("Error fetching goals:", err2);
@@ -73122,8 +73554,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const goalId = _p8(req.params.id);
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq109(goals.userId, userId)).limit(1);
+      const goalId = _p9(req.params.id);
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq110(goals.userId, userId)).limit(1);
       const goalsList = goalsRow?.data || [];
       const goal = goalsList.find((g) => g.id === goalId);
       if (!goal) return res.status(404).json({ error: "Goal not found" });
@@ -73139,8 +73571,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const goalId = _p8(req.params.id);
-      const [tree] = await db.select().from(goalTrees).where(and81(eq109(goalTrees.userId, userId), eq109(goalTrees.goalId, goalId))).limit(1);
+      const goalId = _p9(req.params.id);
+      const [tree] = await db.select().from(goalTrees).where(and82(eq110(goalTrees.userId, userId), eq110(goalTrees.goalId, goalId))).limit(1);
       if (!tree) return res.status(200).json({ hasTree: false });
       res.json({ hasTree: true, ...tree });
     } catch (err2) {
@@ -73180,9 +73612,10 @@ Reply directly to this message with your answer and I'll take it from there.
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
       const status = typeof req.query.status === "string" ? req.query.status : null;
-      const where = status ? and81(eq109(agentJobs.userId, userId), eq109(agentJobs.status, status)) : eq109(agentJobs.userId, userId);
+      const where = status ? and82(eq110(agentJobs.userId, userId), eq110(agentJobs.status, status)) : eq110(agentJobs.userId, userId);
       const jobs = await db.select().from(agentJobs).where(where).orderBy(desc38(agentJobs.createdAt)).limit(limit);
-      res.json(jobs);
+      const { attachJobReviewState: attachJobReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
+      res.json(jobs.map(attachJobReviewState2));
     } catch (err2) {
       console.error("Error listing agent jobs:", err2);
       res.status(500).json({ error: "Failed to list jobs" });
@@ -73193,12 +73626,13 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const jobs = await db.select().from(agentJobs).where(
-        and81(
-          eq109(agentJobs.userId, userId),
-          sql39`${agentJobs.status} IN ('queued', 'running', 'cancelling')`
+        and82(
+          eq110(agentJobs.userId, userId),
+          sql40`${agentJobs.status} IN ('queued', 'running', 'cancelling')`
         )
       ).orderBy(asc7(agentJobs.createdAt)).limit(20);
-      res.json(jobs);
+      const { attachJobReviewState: attachJobReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
+      res.json(jobs.map(attachJobReviewState2));
     } catch (err2) {
       console.error("Error listing active agent jobs:", err2);
       res.status(500).json({ error: "Failed to list active jobs" });
@@ -73208,8 +73642,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const [job] = await db.select().from(agentJobs).where(and81(eq109(agentJobs.id, id), eq109(agentJobs.userId, userId))).limit(1);
+      const id = _p9(req.params.id);
+      const [job] = await db.select().from(agentJobs).where(and82(eq110(agentJobs.id, id), eq110(agentJobs.userId, userId))).limit(1);
       if (!job) return res.status(404).json({ error: "Job not found" });
       if (job.status === "complete" || job.status === "failed") {
         return res.status(400).json({ error: "Job is already finished" });
@@ -73218,7 +73652,7 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.json({ ok: true, status: job.status });
       }
       const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
-      await db.update(agentJobs).set({ status: newStatus, completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0 }).where(eq109(agentJobs.id, id));
+      await db.update(agentJobs).set({ status: newStatus, completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0 }).where(eq110(agentJobs.id, id));
       res.json({ ok: true, status: newStatus });
     } catch (err2) {
       console.error("Error cancelling agent job:", err2);
@@ -73229,8 +73663,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const [job] = await db.select().from(agentJobs).where(and81(eq109(agentJobs.id, id), eq109(agentJobs.userId, userId))).limit(1);
+      const id = _p9(req.params.id);
+      const [job] = await db.select().from(agentJobs).where(and82(eq110(agentJobs.id, id), eq110(agentJobs.userId, userId))).limit(1);
       if (!job) return res.status(404).json({ error: "Job not found" });
       if (!["failed", "cancelled"].includes(job.status)) {
         return res.status(400).json({ error: "Only failed or cancelled jobs can be retried" });
@@ -73263,18 +73697,20 @@ Reply directly to this message with your answer and I'll take it from there.
       if (triageSection === "auto_handled") {
         const since = new Date(Date.now() - 48 * 60 * 60 * 1e3);
         const items2 = await db.select().from(deliverables).where(
-          and81(
-            eq109(deliverables.userId, userId),
-            eq109(deliverables.status, "approved"),
+          and82(
+            eq110(deliverables.userId, userId),
+            eq110(deliverables.status, "approved"),
             gte22(deliverables.actedAt, since),
-            sql39`${deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
+            sql40`${deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
           )
         ).orderBy(desc38(deliverables.createdAt)).limit(20);
-        return res.json(items2);
+        const { attachDeliverableReviewState: attachDeliverableReviewState3 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
+        return res.json(items2.map(attachDeliverableReviewState3));
       }
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
-      const items = await db.select().from(deliverables).where(and81(eq109(deliverables.userId, userId), eq109(deliverables.status, status))).orderBy(desc38(deliverables.createdAt)).limit(50);
-      res.json(items);
+      const items = await db.select().from(deliverables).where(and82(eq110(deliverables.userId, userId), eq110(deliverables.status, status))).orderBy(desc38(deliverables.createdAt)).limit(50);
+      const { attachDeliverableReviewState: attachDeliverableReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
+      res.json(items.map(attachDeliverableReviewState2));
     } catch (err2) {
       console.error("Error listing deliverables:", err2);
       res.status(500).json({ error: "Failed to list deliverables" });
@@ -73284,8 +73720,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const [d] = await db.select().from(deliverables).where(and81(eq109(deliverables.id, id), eq109(deliverables.userId, userId))).limit(1);
+      const id = _p9(req.params.id);
+      const [d] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
       if (!d) return res.status(404).json({ error: "Deliverable not found" });
       if (d.status !== "pending_approval") {
         return res.status(400).json({ error: "Already actioned" });
@@ -73301,7 +73737,7 @@ Reply directly to this message with your answer and I'll take it from there.
           console.error("[deliverables] top-level approval continuation failed:", err2);
           return { continued: false, reason: "Continuation failed after approval." };
         }) : { continued: false, reason: "Approval gate not found." };
-        await db.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq109(deliverables.id, id));
+        await db.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq110(deliverables.id, id));
         return res.json({ ok: true, continuation });
       }
       if (d.type === "email_draft") {
@@ -73327,9 +73763,9 @@ Reply directly to this message with your answer and I'll take it from there.
           summary: d.summary || null
         });
       }
-      await db.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq109(deliverables.id, id));
+      await db.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq110(deliverables.id, id));
       if (d.jobId) {
-        await db.update(agentJobs).set({ status: "delivered" }).where(and81(eq109(agentJobs.id, d.jobId), eq109(agentJobs.status, "complete")));
+        await db.update(agentJobs).set({ status: "delivered" }).where(and82(eq110(agentJobs.id, d.jobId), eq110(agentJobs.status, "complete")));
       }
       res.json({ ok: true, ...resultExtra });
     } catch (err2) {
@@ -73341,8 +73777,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const [d] = await db.select().from(deliverables).where(and81(eq109(deliverables.id, id), eq109(deliverables.userId, userId))).limit(1);
+      const id = _p9(req.params.id);
+      const [d] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
       if (!d) return res.status(404).json({ error: "Deliverable not found" });
       if (d.status !== "pending_approval") {
         return res.status(400).json({ error: "Already actioned" });
@@ -73352,7 +73788,7 @@ Reply directly to this message with your answer and I'll take it from there.
         const meta = d.meta || {};
         if (meta.gateId) await rejectGate2(meta.gateId, userId);
       }
-      await db.update(deliverables).set({ status: "rejected", actedAt: /* @__PURE__ */ new Date() }).where(eq109(deliverables.id, id));
+      await db.update(deliverables).set({ status: "rejected", actedAt: /* @__PURE__ */ new Date() }).where(eq110(deliverables.id, id));
       res.json({ ok: true });
     } catch (err2) {
       console.error("Error rejecting deliverable:", err2);
@@ -73363,9 +73799,9 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const { title, summary, body, meta } = req.body;
-      const [existing] = await db.select().from(deliverables).where(and81(eq109(deliverables.id, id), eq109(deliverables.userId, userId))).limit(1);
+      const [existing] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Deliverable not found" });
       if (existing.status !== "pending_approval") {
         return res.status(400).json({ error: "Only pending deliverables can be edited" });
@@ -73380,7 +73816,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No editable fields provided" });
       }
-      const [updated] = await db.update(deliverables).set(patch).where(eq109(deliverables.id, id)).returning();
+      const [updated] = await db.update(deliverables).set(patch).where(eq110(deliverables.id, id)).returning();
       res.json({ ok: true, deliverable: updated });
     } catch (err2) {
       console.error("Error editing deliverable:", err2);
@@ -73391,10 +73827,10 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
+      const id = _p9(req.params.id);
       const instructions = typeof req.body?.instructions === "string" ? req.body.instructions.trim() : "";
       if (!instructions) return res.status(400).json({ error: "Revision instructions are required" });
-      const [d] = await db.select().from(deliverables).where(and81(eq109(deliverables.id, id), eq109(deliverables.userId, userId))).limit(1);
+      const [d] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
       if (!d) return res.status(404).json({ error: "Deliverable not found" });
       if (d.status !== "pending_approval") {
         return res.status(400).json({ error: "Only pending deliverables can be revised" });
@@ -73402,7 +73838,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (d.type === "approval_gate") {
         return res.status(400).json({ error: "Approval requests cannot be revised; approve or decline them" });
       }
-      const [job] = d.jobId ? await db.select().from(agentJobs).where(and81(eq109(agentJobs.id, d.jobId), eq109(agentJobs.userId, userId))).limit(1) : [];
+      const [job] = d.jobId ? await db.select().from(agentJobs).where(and82(eq110(agentJobs.id, d.jobId), eq110(agentJobs.userId, userId))).limit(1) : [];
       const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
       const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
       delete baseInput.retryCount;
@@ -73435,9 +73871,9 @@ Reply directly to this message with your answer and I'll take it from there.
         status: "discarded",
         actedAt: /* @__PURE__ */ new Date(),
         triageNote: `Revision requested: ${instructions.slice(0, 500)}`
-      }).where(eq109(deliverables.id, id));
+      }).where(eq110(deliverables.id, id));
       if (d.jobId) {
-        await db.update(agentJobs).set({ status: "delivered" }).where(and81(eq109(agentJobs.id, d.jobId), eq109(agentJobs.status, "complete")));
+        await db.update(agentJobs).set({ status: "delivered" }).where(and82(eq110(agentJobs.id, d.jobId), eq110(agentJobs.status, "complete")));
       }
       res.json({ ok: true, jobId: revision.id, isDuplicate: revision.isDuplicate, status: "queued" });
     } catch (err2) {
@@ -73449,11 +73885,11 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const [d] = await db.select({ jobId: deliverables.jobId }).from(deliverables).where(and81(eq109(deliverables.id, id), eq109(deliverables.userId, userId))).limit(1);
-      await db.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and81(eq109(deliverables.id, id), eq109(deliverables.userId, userId)));
+      const id = _p9(req.params.id);
+      const [d] = await db.select({ jobId: deliverables.jobId }).from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
+      await db.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId)));
       if (d?.jobId) {
-        await db.update(agentJobs).set({ status: "delivered" }).where(and81(eq109(agentJobs.id, d.jobId), eq109(agentJobs.status, "complete")));
+        await db.update(agentJobs).set({ status: "delivered" }).where(and82(eq110(agentJobs.id, d.jobId), eq110(agentJobs.status, "complete")));
       }
       res.json({ ok: true });
     } catch (err2) {
@@ -73465,8 +73901,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      const [d] = await db.select().from(deliverables).where(and81(eq109(deliverables.id, id), eq109(deliverables.userId, userId))).limit(1);
+      const id = _p9(req.params.id);
+      const [d] = await db.select().from(deliverables).where(and82(eq110(deliverables.id, id), eq110(deliverables.userId, userId))).limit(1);
       if (!d) return res.status(404).json({ error: "Deliverable not found" });
       if (d.driveLink) return res.json({ ok: true, driveLink: d.driveLink });
       const { getUserDriveSettings: getUserDriveSettings2 } = await Promise.resolve().then(() => (init_driveRoutes(), driveRoutes_exports));
@@ -73484,7 +73920,7 @@ Reply directly to this message with your answer and I'll take it from there.
         content,
         { folderId: drive.folderId || void 0 }
       );
-      const [updated] = await db.update(deliverables).set({ driveLink: created.webViewLink }).where(eq109(deliverables.id, id)).returning();
+      const [updated] = await db.update(deliverables).set({ driveLink: created.webViewLink }).where(eq110(deliverables.id, id)).returning();
       res.json({ ok: true, driveLink: created.webViewLink, deliverable: updated });
     } catch (err2) {
       console.error("Error saving deliverable to Drive:", err2);
@@ -73503,7 +73939,7 @@ Reply directly to this message with your answer and I'll take it from there.
         status: userDocuments.status,
         summary: userDocuments.summary,
         uploadedAt: userDocuments.uploadedAt
-      }).from(userDocuments).where(eq109(userDocuments.userId, userId)).orderBy(desc38(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+      }).from(userDocuments).where(eq110(userDocuments.userId, userId)).orderBy(desc38(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
       res.json({ documents: docs });
     } catch (error) {
       console.error("Error fetching documents:", error);
@@ -73521,7 +73957,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (!SUPPORTED_MIME_TYPES.includes(mimeType)) {
         return res.status(400).json({ error: `Unsupported file type. Supported: ${SUPPORTED_EXTENSIONS.join(", ")}` });
       }
-      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq109(userDocuments.userId, userId));
+      const existing = await db.select({ id: userDocuments.id }).from(userDocuments).where(eq110(userDocuments.userId, userId));
       if (existing.length >= MAX_DOCS_PER_USER) {
         return res.status(400).json({ error: `Maximum ${MAX_DOCS_PER_USER} documents allowed. Delete some to upload more.` });
       }
@@ -73544,8 +73980,8 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p8(req.params.id);
-      await db.delete(userDocuments).where(and81(eq109(userDocuments.id, id), eq109(userDocuments.userId, userId)));
+      const id = _p9(req.params.id);
+      await db.delete(userDocuments).where(and82(eq110(userDocuments.id, id), eq110(userDocuments.userId, userId)));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting document:", error);
@@ -73579,7 +74015,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(websiteCrawls).where(eq109(websiteCrawls.userId, userId)).limit(1);
+      const rows = await db.select().from(websiteCrawls).where(eq110(websiteCrawls.userId, userId)).limit(1);
       if (rows.length === 0) return res.json({ status: "idle" });
       const row = rows[0];
       res.json({
@@ -73598,7 +74034,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(websiteCrawls).where(eq109(websiteCrawls.userId, userId));
+      await db.delete(websiteCrawls).where(eq110(websiteCrawls.userId, userId));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting website crawl:", error);
@@ -73609,7 +74045,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(chatgptImports).where(eq109(chatgptImports.userId, userId));
+      const rows = await db.select().from(chatgptImports).where(eq110(chatgptImports.userId, userId));
       if (rows.length === 0) {
         return res.json({ imported: false });
       }
@@ -73660,7 +74096,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (allTexts.length === 0) {
         return res.status(400).json({ error: "No readable conversations found in the file." });
       }
-      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq109(userMemories.userId, userId));
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq110(userMemories.userId, userId));
       const existingMemories = existingRows.map((r) => r.content);
       const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
       const batchSize = 10;
@@ -73742,7 +74178,7 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const rows = await db.select().from(openclawBuildLog).where(eq109(openclawBuildLog.userId, userId)).orderBy(desc38(openclawBuildLog.createdAt)).limit(50);
+      const rows = await db.select().from(openclawBuildLog).where(eq110(openclawBuildLog.userId, userId)).orderBy(desc38(openclawBuildLog.createdAt)).limit(50);
       res.json({ builds: rows });
     } catch (err2) {
       console.error("[jarvis] GET builds failed:", err2);
@@ -73753,7 +74189,7 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const watches = await db.select().from(nervousSystemWatches).where(eq109(nervousSystemWatches.userId, userId)).orderBy(nervousSystemWatches.createdAt);
+      const watches = await db.select().from(nervousSystemWatches).where(eq110(nervousSystemWatches.userId, userId)).orderBy(nervousSystemWatches.createdAt);
       res.json(watches);
     } catch (err2) {
       console.error("[NervousSystem] watches fetch failed:", err2);
@@ -73778,7 +74214,7 @@ Extract up to 8 memories per batch.`;
   app2.patch("/api/nervous-system/watches/:id", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     const { active, label, category } = req.body;
     try {
       const updates = {};
@@ -73790,7 +74226,7 @@ Extract up to 8 memories per batch.`;
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "No valid fields to update" });
       }
-      const [updated] = await db.update(nervousSystemWatches).set(updates).where(and81(eq109(nervousSystemWatches.id, id), eq109(nervousSystemWatches.userId, userId))).returning();
+      const [updated] = await db.update(nervousSystemWatches).set(updates).where(and82(eq110(nervousSystemWatches.id, id), eq110(nervousSystemWatches.userId, userId))).returning();
       if (!updated) return res.status(404).json({ error: "Watch not found" });
       res.json(updated);
     } catch (err2) {
@@ -73801,9 +74237,9 @@ Extract up to 8 memories per batch.`;
   app2.delete("/api/nervous-system/watches/:id", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     try {
-      await db.delete(nervousSystemWatches).where(and81(eq109(nervousSystemWatches.id, id), eq109(nervousSystemWatches.userId, userId)));
+      await db.delete(nervousSystemWatches).where(and82(eq110(nervousSystemWatches.id, id), eq110(nervousSystemWatches.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[NervousSystem] watch delete failed:", err2);
@@ -73816,7 +74252,7 @@ Extract up to 8 memories per batch.`;
     const parsedLimit = parseInt(req.query.limit || "20", 10);
     const limit = Math.min(50, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 20 : parsedLimit);
     try {
-      const signals = await db.select().from(nervousSystemSignals).where(eq109(nervousSystemSignals.userId, userId)).orderBy(sql39`${nervousSystemSignals.createdAt} DESC`).limit(limit);
+      const signals = await db.select().from(nervousSystemSignals).where(eq110(nervousSystemSignals.userId, userId)).orderBy(sql40`${nervousSystemSignals.createdAt} DESC`).limit(limit);
       res.json(signals);
     } catch (err2) {
       console.error("[NervousSystem] signals fetch failed:", err2);
@@ -73841,7 +74277,7 @@ Extract up to 8 memories per batch.`;
   app2.get("/api/gut/signals/item/:itemRef", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const itemRef = _p8(req.params.itemRef);
+    const itemRef = _p9(req.params.itemRef);
     try {
       const { getGutSignalsForUser: getGutSignalsForUser2 } = await Promise.resolve().then(() => (init_gut(), gut_exports));
       const signals = await getGutSignalsForUser2(userId, { itemRef, includeResponded: false });
@@ -73854,7 +74290,7 @@ Extract up to 8 memories per batch.`;
   app2.post("/api/gut/signals/:id/respond", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     const { response } = req.body;
     const VALID_RESPONSES = ["confirmed", "dismissed", "ignored"];
     if (!response || !VALID_RESPONSES.includes(response)) {
@@ -73875,7 +74311,7 @@ Extract up to 8 memories per batch.`;
     const parsedLimit = parseInt(req.query.limit || "30", 10);
     const limit = Math.min(100, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 30 : parsedLimit);
     try {
-      const rows = await db.select().from(gutSignals).where(eq109(gutSignals.userId, userId)).orderBy(desc38(gutSignals.createdAt)).limit(limit);
+      const rows = await db.select().from(gutSignals).where(eq110(gutSignals.userId, userId)).orderBy(desc38(gutSignals.createdAt)).limit(limit);
       res.json(rows);
     } catch (err2) {
       console.error("[Gut] threat-log fetch failed:", err2);
@@ -73887,7 +74323,7 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { AVAILABLE_MODELS: AVAILABLE_MODELS2, MODEL_DEFAULTS: MODEL_DEFAULTS2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)).limit(1);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
       const prefs = rows[0]?.data;
       const stored = prefs?.modelPreferences ?? {};
       const categories = Object.keys(MODEL_DEFAULTS2);
@@ -73915,7 +74351,7 @@ Extract up to 8 memories per batch.`;
       if (!isValidModelForCategory2(model, category)) {
         return res.status(400).json({ error: "Invalid model for this category" });
       }
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)).limit(1);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
       const existing = rows[0]?.data ?? {};
       const existingModelPrefs = existing.modelPreferences ?? {};
       const updated = {
@@ -73934,7 +74370,7 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { ORCHESTRATOR_MODELS: ORCHESTRATOR_MODELS2, MODEL_DEFAULTS: MODEL_DEFAULTS2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)).limit(1);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
       const prefs = rows[0]?.data;
       const storedModel = prefs?.modelPreferences?.orchestrator;
       const orchestratorModel = ORCHESTRATOR_MODELS2.find((m) => m.value === storedModel) ? storedModel : MODEL_DEFAULTS2.orchestrator;
@@ -73950,7 +74386,7 @@ Extract up to 8 memories per batch.`;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { model } = req.body;
       const { ORCHESTRATOR_MODELS: ORCHESTRATOR_MODELS2, MODEL_DEFAULTS: MODEL_DEFAULTS2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)).limit(1);
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
       const existing = rows[0]?.data ?? {};
       const existingModelPrefs = existing.modelPreferences ?? {};
       const update = { ...existing };
@@ -74016,7 +74452,7 @@ Extract up to 8 memories per batch.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
-      const traces = await db.select().from(orchestrationTraces).where(eq109(orchestrationTraces.userId, userId)).orderBy(desc38(orchestrationTraces.createdAt)).limit(20);
+      const traces = await db.select().from(orchestrationTraces).where(eq110(orchestrationTraces.userId, userId)).orderBy(desc38(orchestrationTraces.createdAt)).limit(20);
       res.json({ traces });
     } catch (err2) {
       console.error("[Orchestrator] traces GET failed:", err2);
@@ -74053,7 +74489,7 @@ Extract up to 8 memories per batch.`;
   app2.get("/api/skill-packs/:packId", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const packId = _p8(req.params.packId);
+    const packId = _p9(req.params.packId);
     try {
       const { getStorePackById: getStorePackById2 } = await Promise.resolve().then(() => (init_behaviorStore(), behaviorStore_exports));
       const pack = await getStorePackById2(packId, userId);
@@ -74067,7 +74503,7 @@ Extract up to 8 memories per batch.`;
   app2.post("/api/skill-packs/:packId/activate", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const packId = _p8(req.params.packId);
+    const packId = _p9(req.params.packId);
     try {
       const { setUserPackActive: setUserPackActive2 } = await Promise.resolve().then(() => (init_behaviorStore(), behaviorStore_exports));
       await setUserPackActive2(userId, packId, true);
@@ -74083,7 +74519,7 @@ Extract up to 8 memories per batch.`;
   app2.delete("/api/skill-packs/:packId/activate", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const packId = _p8(req.params.packId);
+    const packId = _p9(req.params.packId);
     try {
       const { setUserPackActive: setUserPackActive2 } = await Promise.resolve().then(() => (init_behaviorStore(), behaviorStore_exports));
       await setUserPackActive2(userId, packId, false);
@@ -74099,7 +74535,7 @@ Extract up to 8 memories per batch.`;
   app2.delete("/api/skills/:skillId", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const skillId = _p8(req.params.skillId);
+    const skillId = _p9(req.params.skillId);
     try {
       const { deleteSkill: deleteSkill2 } = await Promise.resolve().then(() => (init_skillWriter(), skillWriter_exports));
       const deleted = await deleteSkill2(userId, skillId);
@@ -74177,8 +74613,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq127 } = await import("drizzle-orm");
-      const existing = await db.select().from(userSkills2).where(eq127(userSkills2.userId, userId));
+      const { eq: eq128 } = await import("drizzle-orm");
+      const existing = await db.select().from(userSkills2).where(eq128(userSkills2.userId, userId));
       const existingBuiltInNames = new Set(
         existing.filter((s) => s.isBuiltIn).map((s) => s.name)
       );
@@ -74195,7 +74631,7 @@ Extract up to 8 memories per batch.`;
             isActive: false
           }))
         ).onConflictDoNothing();
-        const fresh = await db.select().from(userSkills2).where(eq127(userSkills2.userId, userId));
+        const fresh = await db.select().from(userSkills2).where(eq128(userSkills2.userId, userId));
         return res.json({ skills: fresh });
       }
       res.json({ skills: existing });
@@ -74231,13 +74667,13 @@ Extract up to 8 memories per batch.`;
   app2.patch("/api/user-skills/:id/toggle", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq127, and: and98 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and98(eq127(userSkills2.id, id), eq127(userSkills2.userId, userId))).limit(1);
+      const { eq: eq128, and: and99 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
-      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and98(eq127(userSkills2.id, id), eq127(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH toggle failed:", err2);
@@ -74247,12 +74683,12 @@ Extract up to 8 memories per batch.`;
   app2.patch("/api/user-skills/:id", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     const { name, description, instructions, emoji } = req.body;
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq127, and: and98 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and98(eq127(userSkills2.id, id), eq127(userSkills2.userId, userId))).limit(1);
+      const { eq: eq128, and: and99 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be modified" });
       const updates = {};
@@ -74261,7 +74697,7 @@ Extract up to 8 memories per batch.`;
       if (instructions?.trim()) updates.instructions = instructions.trim().slice(0, 3e3);
       if (emoji?.trim()) updates.emoji = emoji.trim().slice(0, 8);
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
-      const [updated] = await db.update(userSkills2).set(updates).where(and98(eq127(userSkills2.id, id), eq127(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set(updates).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH update failed:", err2);
@@ -74271,14 +74707,14 @@ Extract up to 8 memories per batch.`;
   app2.delete("/api/user-skills/:id", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq127, and: and98 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and98(eq127(userSkills2.id, id), eq127(userSkills2.userId, userId))).limit(1);
+      const { eq: eq128, and: and99 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be deleted" });
-      await db.delete(userSkills2).where(and98(eq127(userSkills2.id, id), eq127(userSkills2.userId, userId)));
+      await db.delete(userSkills2).where(and99(eq128(userSkills2.id, id), eq128(userSkills2.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[UserSkills] DELETE failed:", err2);
@@ -74290,8 +74726,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { skillCandidates: skillCandidates2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq127, and: and98 } = await import("drizzle-orm");
-      const rows = await db.select().from(skillCandidates2).where(and98(eq127(skillCandidates2.userId, userId), eq127(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
+      const { eq: eq128, and: and99 } = await import("drizzle-orm");
+      const rows = await db.select().from(skillCandidates2).where(and99(eq128(skillCandidates2.userId, userId), eq128(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
       res.json({ candidates: rows });
     } catch (err2) {
       console.error("[SkillCandidates] GET failed:", err2);
@@ -74303,22 +74739,22 @@ Extract up to 8 memories per batch.`;
   const skillCandidatesReviewHandler = async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     const { action, name, instructionText } = req.body;
     if (!action || !["accept", "edit", "dismiss"].includes(action)) {
       return res.status(400).json({ error: "action must be accept, edit, or dismiss" });
     }
     try {
       const { skillCandidates: skillCandidates2, userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq127, and: and98 } = await import("drizzle-orm");
-      const [candidate] = await db.select().from(skillCandidates2).where(and98(eq127(skillCandidates2.id, id), eq127(skillCandidates2.userId, userId))).limit(1);
+      const { eq: eq128, and: and99 } = await import("drizzle-orm");
+      const [candidate] = await db.select().from(skillCandidates2).where(and99(eq128(skillCandidates2.id, id), eq128(skillCandidates2.userId, userId))).limit(1);
       if (!candidate) return res.status(404).json({ error: "Candidate not found" });
       if (candidate.status !== "pending") {
         return res.status(409).json({ error: "Candidate has already been reviewed" });
       }
       const newStatus = action === "accept" ? "accepted" : action === "edit" ? "edited" : "dismissed";
       await db.transaction(async (tx) => {
-        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq127(skillCandidates2.id, id));
+        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq128(skillCandidates2.id, id));
         if (action === "accept" || action === "edit") {
           const finalName = name?.trim() ? name.trim().slice(0, 80) : candidate.name;
           const finalInstructions = instructionText?.trim() ? instructionText.trim().slice(0, 3e3) : candidate.instructionText;
@@ -74347,9 +74783,9 @@ Extract up to 8 memories per batch.`;
     try {
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { integrationStatus: integrationStatus2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq127, sql: sql46 } = await import("drizzle-orm");
-      const rows = await db2.select().from(integrationStatus2).where(eq127(integrationStatus2.userId, userId));
-      const linkedRaw = await db2.execute(sql46`
+      const { eq: eq128, sql: sql47 } = await import("drizzle-orm");
+      const rows = await db2.select().from(integrationStatus2).where(eq128(integrationStatus2.userId, userId));
+      const linkedRaw = await db2.execute(sql47`
         SELECT DISTINCT integration FROM (
           SELECT 'telegram' AS integration FROM telegram_links WHERE user_id = ${userId}
           UNION ALL
@@ -74535,7 +74971,7 @@ Extract up to 8 memories per batch.`;
   });
   app2.post("/api/local-worker/jobs/:id/complete", async (req, res) => {
     const token = String(req.query.token || req.body?.token || "");
-    const jobId = _p8(req.params.id);
+    const jobId = _p9(req.params.id);
     if (!token || !jobId) return res.status(400).json({ error: "token and id required" });
     const segments = req.body?.segments;
     if (!Array.isArray(segments)) return res.status(400).json({ error: "segments array required" });
@@ -74547,7 +74983,7 @@ Extract up to 8 memories per batch.`;
   });
   app2.post("/api/local-worker/jobs/:id/fail", async (req, res) => {
     const token = String(req.query.token || req.body?.token || "");
-    const jobId = _p8(req.params.id);
+    const jobId = _p9(req.params.id);
     if (!token || !jobId) return res.status(400).json({ error: "token and id required" });
     const error = String(req.body?.error || "unknown error");
     const { failJob: failJob3 } = await Promise.resolve().then(() => (init_localWorkerQueue(), localWorkerQueue_exports));
@@ -74715,7 +75151,7 @@ Extract up to 8 memories per batch.`;
   app2.delete("/api/mcp-servers/:id", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     try {
       const { mcpServerRegistry: mcpServerRegistry2 } = await Promise.resolve().then(() => (init_mcpServerRegistry(), mcpServerRegistry_exports));
       const deleted = await mcpServerRegistry2.deleteServer(id, userId);
@@ -74729,7 +75165,7 @@ Extract up to 8 memories per batch.`;
   app2.patch("/api/mcp-servers/:id/enabled", async (req, res) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p8(req.params.id);
+    const id = _p9(req.params.id);
     const { enabled } = req.body;
     if (typeof enabled !== "boolean") {
       return res.status(400).json({ error: "enabled must be a boolean" });
@@ -74866,9 +75302,9 @@ Extract up to 8 memories per batch.`;
           scheduledAt: jarvisScheduledTasks.scheduledAt,
           completedAt: jarvisScheduledTasks.completedAt
         }).from(jarvisScheduledTasks).where(
-          and81(
-            eq109(jarvisScheduledTasks.userId, userId),
-            sql39`DATE(${jarvisScheduledTasks.scheduledAt}) = ${today}`
+          and82(
+            eq110(jarvisScheduledTasks.userId, userId),
+            sql40`DATE(${jarvisScheduledTasks.scheduledAt}) = ${today}`
           )
         ).limit(10);
         return res.json({
@@ -74914,7 +75350,7 @@ Extract up to 8 memories per batch.`;
   });
   app2.post("/api/conversations/:id/voice-transcript", authMiddleware, async (req, res) => {
     try {
-      const conversationId = parseInt(_p8(req.params.id), 10);
+      const conversationId = parseInt(_p9(req.params.id), 10);
       const entries = req.body?.entries || [];
       if (!Array.isArray(entries) || entries.length === 0) {
         return res.status(400).json({ error: "entries array is required" });
@@ -74983,7 +75419,7 @@ Extract up to 8 memories per batch.`;
   app2.get("/api/button-locations", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const rows = await db.select().from(buttonLocations).where(eq109(buttonLocations.userId, userId)).orderBy(desc38(buttonLocations.updatedAt));
+      const rows = await db.select().from(buttonLocations).where(eq110(buttonLocations.userId, userId)).orderBy(desc38(buttonLocations.updatedAt));
       res.json({ entries: rows });
     } catch (err2) {
       console.error("[button-locations] GET error:", err2);
@@ -75017,11 +75453,11 @@ Extract up to 8 memories per batch.`;
   app2.delete("/api/button-locations/:id", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const id = parseInt(_p8(req.params.id), 10);
+      const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select({ id: buttonLocations.id, userId: buttonLocations.userId }).from(buttonLocations).where(eq109(buttonLocations.id, id)).limit(1);
+      const rows = await db.select({ id: buttonLocations.id, userId: buttonLocations.userId }).from(buttonLocations).where(eq110(buttonLocations.id, id)).limit(1);
       if (!rows.length || rows[0].userId !== userId) return res.status(404).json({ error: "Not found" });
-      await db.delete(buttonLocations).where(eq109(buttonLocations.id, id));
+      await db.delete(buttonLocations).where(eq110(buttonLocations.id, id));
       res.json({ deleted: true });
     } catch (err2) {
       console.error("[button-locations] DELETE error:", err2);
@@ -75031,9 +75467,9 @@ Extract up to 8 memories per batch.`;
   app2.patch("/api/button-locations/:id/confirm", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const id = parseInt(_p8(req.params.id), 10);
+      const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select().from(buttonLocations).where(and81(eq109(buttonLocations.id, id), eq109(buttonLocations.userId, userId))).limit(1);
+      const rows = await db.select().from(buttonLocations).where(and82(eq110(buttonLocations.id, id), eq110(buttonLocations.userId, userId))).limit(1);
       if (!rows.length) return res.status(404).json({ error: "Not found" });
       const current = rows[0];
       const newConfidence = Math.min(1, current.confidence + 0.15);
@@ -75043,7 +75479,7 @@ Extract up to 8 memories per batch.`;
         failCount: 0,
         lastConfirmedAt: /* @__PURE__ */ new Date(),
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq109(buttonLocations.id, id)).returning();
+      }).where(eq110(buttonLocations.id, id)).returning();
       res.json({ entry: updated });
     } catch (err2) {
       console.error("[button-locations] PATCH confirm error:", err2);
@@ -75053,9 +75489,9 @@ Extract up to 8 memories per batch.`;
   app2.patch("/api/button-locations/:id/deny", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const id = parseInt(_p8(req.params.id), 10);
+      const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select().from(buttonLocations).where(and81(eq109(buttonLocations.id, id), eq109(buttonLocations.userId, userId))).limit(1);
+      const rows = await db.select().from(buttonLocations).where(and82(eq110(buttonLocations.id, id), eq110(buttonLocations.userId, userId))).limit(1);
       if (!rows.length) return res.status(404).json({ error: "Not found" });
       const current = rows[0];
       const newConfidence = Math.max(0, current.confidence - 0.2);
@@ -75066,7 +75502,7 @@ Extract up to 8 memories per batch.`;
         stale: nowStale,
         failCount: newFailCount,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq109(buttonLocations.id, id)).returning();
+      }).where(eq110(buttonLocations.id, id)).returning();
       res.json({ entry: updated });
     } catch (err2) {
       console.error("[button-locations] PATCH deny error:", err2);
@@ -75190,21 +75626,21 @@ Extract up to 8 memories per batch.`;
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
       const rows = await db.select({
         userMessage: capabilityGaps.userMessage,
-        agentReplySnippet: sql39`MAX(${capabilityGaps.agentReplySnippet})`,
+        agentReplySnippet: sql40`MAX(${capabilityGaps.agentReplySnippet})`,
         detectedReason: capabilityGaps.detectedReason,
-        channel: sql39`MAX(${capabilityGaps.channel})`,
-        occurrenceCount: sql39`COUNT(*)::int`,
-        addressed: sql39`BOOL_AND(${capabilityGaps.addressed})`,
-        latestCreatedAt: sql39`MAX(${capabilityGaps.createdAt})::text`
+        channel: sql40`MAX(${capabilityGaps.channel})`,
+        occurrenceCount: sql40`COUNT(*)::int`,
+        addressed: sql40`BOOL_AND(${capabilityGaps.addressed})`,
+        latestCreatedAt: sql40`MAX(${capabilityGaps.createdAt})::text`
       }).from(capabilityGaps).where(
-        and81(
-          eq109(capabilityGaps.userId, userId),
+        and82(
+          eq110(capabilityGaps.userId, userId),
           gte22(capabilityGaps.createdAt, sevenDaysAgo)
         )
       ).groupBy(
         capabilityGaps.userMessage,
         capabilityGaps.detectedReason
-      ).orderBy(desc38(sql39`MAX(${capabilityGaps.createdAt})`)).limit(50);
+      ).orderBy(desc38(sql40`MAX(${capabilityGaps.createdAt})`)).limit(50);
       res.json({ gaps: rows });
     } catch (err2) {
       console.error("[capability-gaps] GET error:", err2);
@@ -75219,10 +75655,10 @@ Extract up to 8 memories per batch.`;
         return res.status(400).json({ error: "userMessage and detectedReason are required" });
       }
       await db.update(capabilityGaps).set({ addressed: true }).where(
-        and81(
-          eq109(capabilityGaps.userId, userId),
-          eq109(capabilityGaps.userMessage, userMessage),
-          eq109(capabilityGaps.detectedReason, detectedReason)
+        and82(
+          eq110(capabilityGaps.userId, userId),
+          eq110(capabilityGaps.userMessage, userMessage),
+          eq110(capabilityGaps.detectedReason, detectedReason)
         )
       );
       res.json({ ok: true });
@@ -75247,7 +75683,7 @@ Extract up to 8 memories per batch.`;
   const httpServer = createServer(app2);
   return httpServer;
 }
-var PRIME_DEFAULTS, PRIME, AGENT_ROUTING_PROMPT_BLOCK, _p8, openai17, screenshotStore, morningNoteSummaryCache;
+var PRIME_DEFAULTS, PRIME, AGENT_ROUTING_PROMPT_BLOCK, _p9, openai17, screenshotStore, morningNoteSummaryCache;
 var init_routes2 = __esm({
   "server/routes.ts"() {
     "use strict";
@@ -75378,7 +75814,7 @@ You can take real actions on connected services. Use these tools proactively whe
     };
     PRIME = loadPrimeSections();
     AGENT_ROUTING_PROMPT_BLOCK = loadAgentRoutingPromptBlock();
-    _p8 = (v) => Array.isArray(v) ? v[0] ?? "" : v;
+    _p9 = (v) => Array.isArray(v) ? v[0] ?? "" : v;
     openai17 = new OpenAI11(getOpenAIClientConfig());
     screenshotStore = /* @__PURE__ */ new Map();
     setInterval(() => {
@@ -75398,29 +75834,29 @@ __export(decay_exports, {
   reinforceMemories: () => reinforceMemories,
   runDailyDecay: () => runDailyDecay
 });
-import { eq as eq110, sql as sql40, and as and82 } from "drizzle-orm";
+import { eq as eq111, sql as sql41, and as and83 } from "drizzle-orm";
 function utcDayKey2(d) {
   return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
 }
 async function runDailyDecay() {
   const result = { decremented: 0, deleted: 0 };
   try {
-    const dec = await db.execute(sql40`
+    const dec = await db.execute(sql41`
       UPDATE user_memories
-      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql40.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql40.raw(String(DECAY_STEP))} END)
+      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql41.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql41.raw(String(DECAY_STEP))} END)
       WHERE (
-        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql40.raw(String(STALE_AFTER_REF_DAYS))} days')
-        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql40.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql41.raw(String(STALE_AFTER_REF_DAYS))} days')
+        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql41.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
       )
       RETURNING id
     `);
     result.decremented = dec.rows?.length || 0;
-    const del = await db.execute(sql40`
+    const del = await db.execute(sql41`
       DELETE FROM user_memories
       WHERE relevance_score < ${DECAY_FLOOR}
         AND (
-          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql40.raw(String(STALE_AFTER_REF_DAYS))} days')
-          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql40.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql41.raw(String(STALE_AFTER_REF_DAYS))} days')
+          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql41.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
         )
       RETURNING id
     `);
@@ -75443,9 +75879,9 @@ async function reinforceMemories(userId, ids) {
   if (ids.length === 0) return;
   try {
     await db.update(userMemories).set({
-      relevanceScore: sql40`LEAST(100, ${userMemories.relevanceScore} + 5)`,
+      relevanceScore: sql41`LEAST(100, ${userMemories.relevanceScore} + 5)`,
       lastReferencedAt: /* @__PURE__ */ new Date()
-    }).where(and82(eq110(userMemories.userId, userId), sql40`${userMemories.id} = ANY(${ids})`));
+    }).where(and83(eq111(userMemories.userId, userId), sql41`${userMemories.id} = ANY(${ids})`));
   } catch (err2) {
     console.error("[MemoryDecay] reinforce failed:", err2);
   }
@@ -75470,7 +75906,7 @@ __export(scanner_exports, {
   runNervousSystemScan: () => runNervousSystemScan
 });
 import crypto10 from "crypto";
-import { eq as eq111, and as and83 } from "drizzle-orm";
+import { eq as eq112, and as and84 } from "drizzle-orm";
 function contentHash(userId, headline, url) {
   return crypto10.createHash("sha256").update(`${userId}::${headline.toLowerCase().trim()}::${url.toLowerCase().trim()}`).digest("hex").slice(0, 64);
 }
@@ -75529,7 +75965,7 @@ ${items}`;
   }
 }
 async function scanWatchTopic(userId, watch3) {
-  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq111(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
+  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq112(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
   let searchResults = [];
   try {
     const query = `${watch3.label} news latest`;
@@ -75608,7 +76044,7 @@ ${hit.url}` : ""}`;
       const deliveryResults = await notifyUser(userId, "nervous_system", msgText);
       const anyDelivered = deliveryResults.some((r) => r.result.ok && r.channel !== "in_app");
       if (anyDelivered) {
-        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and83(eq111(nervousSystemSignals.userId, userId), eq111(nervousSystemSignals.contentHash, hash)));
+        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and84(eq112(nervousSystemSignals.userId, userId), eq112(nervousSystemSignals.contentHash, hash)));
         logInteraction(userId, "notification", "outbound", msgText, "nervous_system").catch(() => {
         });
       }
@@ -75624,7 +76060,7 @@ async function runNervousSystemScan() {
   const now = Date.now();
   let watches = [];
   try {
-    watches = await db.select().from(nervousSystemWatches).where(eq111(nervousSystemWatches.active, true));
+    watches = await db.select().from(nervousSystemWatches).where(eq112(nervousSystemWatches.active, true));
   } catch (err2) {
     console.error("[NervousSystem] failed to load watches:", err2);
     return;
@@ -75680,7 +76116,7 @@ var peopleSync_exports = {};
 __export(peopleSync_exports, {
   syncPeopleFromGoogle: () => syncPeopleFromGoogle
 });
-import { eq as eq112, and as and84 } from "drizzle-orm";
+import { eq as eq113, and as and85 } from "drizzle-orm";
 function parseSender(from) {
   const angle = from.match(/^"?([^"<]+?)"?\s*<([^>]+)>$/);
   if (angle) return { name: angle[1].trim(), email: angle[2].trim().toLowerCase() };
@@ -75755,7 +76191,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
   for (const obs of byEmail.values()) {
     const upc = upcoming.get(obs.email);
     try {
-      const [existing] = await db.select().from(people).where(and84(eq112(people.userId, userId), eq112(people.email, obs.email))).limit(1);
+      const [existing] = await db.select().from(people).where(and85(eq113(people.userId, userId), eq113(people.email, obs.email))).limit(1);
       const relationshipHint = obs.source === "calendar" ? `calendar attendee \u2014 ${obs.context}` : `email correspondent \u2014 re: ${obs.context}`;
       if (existing) {
         await db.update(people).set({
@@ -75766,7 +76202,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
           nextInteractionAt: upc?.nearest ?? null,
           upcomingCount: upc?.count ?? 0,
           updatedAt: /* @__PURE__ */ new Date()
-        }).where(eq112(people.id, existing.id));
+        }).where(eq113(people.id, existing.id));
       } else {
         await db.insert(people).values({
           userId,
@@ -75812,7 +76248,7 @@ var flagTaskNeedsAttention_exports = {};
 __export(flagTaskNeedsAttention_exports, {
   buildFlagTaskNeedsAttentionTool: () => buildFlagTaskNeedsAttentionTool
 });
-import { and as and87, eq as eq115 } from "drizzle-orm";
+import { and as and88, eq as eq116 } from "drizzle-orm";
 function buildFlagTaskNeedsAttentionTool(taskId) {
   return {
     name: "flag_task_needs_attention",
@@ -75834,22 +76270,22 @@ function buildFlagTaskNeedsAttentionTool(taskId) {
       }
       try {
         const [task] = await db.select().from(jarvisScheduledTasks).where(
-          and87(
-            eq115(jarvisScheduledTasks.id, taskId),
-            eq115(jarvisScheduledTasks.userId, ctx.userId)
+          and88(
+            eq116(jarvisScheduledTasks.id, taskId),
+            eq116(jarvisScheduledTasks.userId, ctx.userId)
           )
         ).limit(1);
         if (!task) {
           return { ok: false, content: `Scheduled task id=${taskId} not found.`, label: "Task not found" };
         }
         await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion: question }).where(
-          and87(
-            eq115(jarvisScheduledTasks.id, taskId),
-            eq115(jarvisScheduledTasks.userId, ctx.userId)
+          and88(
+            eq116(jarvisScheduledTasks.id, taskId),
+            eq116(jarvisScheduledTasks.userId, ctx.userId)
           )
         );
         try {
-          const [link] = await db.select().from(telegramLinks).where(eq115(telegramLinks.userId, ctx.userId));
+          const [link] = await db.select().from(telegramLinks).where(eq116(telegramLinks.userId, ctx.userId));
           if (link?.chatId) {
             const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
             await sendLongMessage2(
@@ -75897,7 +76333,7 @@ __export(selfImprovementLoop_exports, {
 });
 import { gte as gte25, desc as desc40 } from "drizzle-orm";
 import fs23 from "fs/promises";
-import path28 from "path";
+import path29 from "path";
 function getISOWeekKey(d) {
   const date2 = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = date2.getUTCDay() || 7;
@@ -75933,8 +76369,8 @@ function localDowAndHour(now, tz) {
   }
 }
 function isAllowedForAutoApply(filePath) {
-  const n = path28.posix.normalize(filePath.replace(/\\/g, "/"));
-  if (path28.posix.isAbsolute(n) || n.startsWith("../")) return false;
+  const n = path29.posix.normalize(filePath.replace(/\\/g, "/"));
+  if (path29.posix.isAbsolute(n) || n.startsWith("../")) return false;
   const inBlocklist = SELF_IMPROVE_BLOCKED_FILES.some((blocked) => {
     const dir = blocked.endsWith("/") ? blocked : blocked + "/";
     return n === blocked || n.startsWith(dir);
@@ -75983,11 +76419,11 @@ async function createInboxItem(userId, improvement) {
 }
 async function runSelfImprovementCycle(userId) {
   const controller = new AbortController();
-  const timeoutPromise = new Promise((resolve9) => {
+  const timeoutPromise = new Promise((resolve10) => {
     setTimeout(() => {
       console.warn(`[SelfImprovement] Hard 10-minute timeout hit for user=${userId} \u2014 aborting`);
       controller.abort();
-      resolve9({ applied: 0, queued: 0 });
+      resolve10({ applied: 0, queued: 0 });
     }, CYCLE_TIMEOUT_MS);
   });
   return Promise.race([_runCycleInner(userId, controller.signal), timeoutPromise]);
@@ -76048,7 +76484,7 @@ async function _runCycleInner(userId, signal) {
   ].join("\n").slice(0, 6e3);
   let primeContent = "";
   try {
-    primeContent = await fs23.readFile(path28.join(process.cwd(), "agents/PRIME.md"), "utf-8");
+    primeContent = await fs23.readFile(path29.join(process.cwd(), "agents/PRIME.md"), "utf-8");
   } catch {
     primeContent = "(PRIME.md not found)";
   }
@@ -76293,8 +76729,8 @@ __export(primeIdentityAudit_exports, {
   runPrimeIdentityAudit: () => runPrimeIdentityAudit
 });
 import * as fs24 from "fs/promises";
-import * as path29 from "path";
-import { eq as eq117, and as and89, desc as desc41, inArray as inArray9, gte as gte26 } from "drizzle-orm";
+import * as path30 from "path";
+import { eq as eq118, and as and90, desc as desc41, inArray as inArray9, gte as gte26 } from "drizzle-orm";
 function currentMonthKey() {
   const now = /* @__PURE__ */ new Date();
   const y = now.getUTCFullYear();
@@ -76304,10 +76740,10 @@ function currentMonthKey() {
 async function auditAlreadyRan(userId, monthKey) {
   try {
     const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-      and89(
-        eq117(proactiveScheduleLog.userId, userId),
-        eq117(proactiveScheduleLog.messageType, "prime_identity_audit"),
-        eq117(proactiveScheduleLog.sentDate, monthKey)
+      and90(
+        eq118(proactiveScheduleLog.userId, userId),
+        eq118(proactiveScheduleLog.messageType, "prime_identity_audit"),
+        eq118(proactiveScheduleLog.sentDate, monthKey)
       )
     ).limit(1);
     return rows.length > 0;
@@ -76333,9 +76769,9 @@ async function runPrimeIdentityAudit(userId) {
       label: interactionLog.label,
       createdAt: interactionLog.createdAt
     }).from(interactionLog).where(
-      and89(
-        eq117(interactionLog.userId, userId),
-        eq117(interactionLog.direction, "outbound"),
+      and90(
+        eq118(interactionLog.userId, userId),
+        eq118(interactionLog.direction, "outbound"),
         inArray9(interactionLog.channel, ["telegram", "app_chat"]),
         gte26(interactionLog.createdAt, cutoff)
       )
@@ -76516,7 +76952,7 @@ var init_primeIdentityAudit = __esm({
     init_schema();
     init_anthropicClient();
     init_registry();
-    PRIME_MD_PATH = path29.resolve("agents/PRIME.md");
+    PRIME_MD_PATH = path30.resolve("agents/PRIME.md");
     AUDIT_MODEL = "claude-3-5-sonnet-20241022";
   }
 });
@@ -76569,11 +77005,11 @@ init_proactiveDedup();
 init_diagnosticsService();
 init_routedChatCompletion();
 import * as fs22 from "fs";
-import * as path27 from "path";
-import { eq as eq113, and as and85, sql as sql42, desc as desc39, gte as gte23 } from "drizzle-orm";
+import * as path28 from "path";
+import { eq as eq114, and as and86, sql as sql43, desc as desc39, gte as gte23 } from "drizzle-orm";
 var openai19 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
-var CHECKLIST_PATH = path27.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
+var CHECKLIST_PATH = path28.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
 var VALIDATION_INTERVAL_MS = 30 * 60 * 1e3;
 var CREW_BATCH_MAX = (() => {
   const v = parseInt(process.env.CREW_BATCH_MAX ?? "", 10);
@@ -76676,7 +77112,7 @@ async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEm
     try {
       const emails = externalAttendees.map((a) => a.email.toLowerCase()).filter(Boolean);
       if (emails.length > 0) {
-        const peopleRows = await db.select().from(people).where(and85(eq113(people.userId, userId), sql42`lower(${people.email}) = ANY(${emails})`));
+        const peopleRows = await db.select().from(people).where(and86(eq114(people.userId, userId), sql43`lower(${people.email}) = ANY(${emails})`));
         if (peopleRows.length > 0) {
           peopleContext = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -76763,13 +77199,13 @@ async function runEmailDrafts(userId, chatId, token, now) {
   let urgentItems = [];
   try {
     urgentItems = await db.select().from(inboxItems).where(
-      and85(
-        eq113(inboxItems.userId, userId),
-        eq113(inboxItems.sourceType, "email"),
-        eq113(inboxItems.status, "pending"),
-        sql42`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
-        sql42`${inboxItems.jarvisReason} IS NOT NULL`,
-        sql42`${inboxItems.matchedRuleId} IS NULL`
+      and86(
+        eq114(inboxItems.userId, userId),
+        eq114(inboxItems.sourceType, "email"),
+        eq114(inboxItems.status, "pending"),
+        sql43`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
+        sql43`${inboxItems.jarvisReason} IS NOT NULL`,
+        sql43`${inboxItems.matchedRuleId} IS NULL`
       )
     ).limit(10);
   } catch (err2) {
@@ -76791,9 +77227,9 @@ async function runEmailDrafts(userId, chatId, token, now) {
     if (!sourceMessageId) continue;
     try {
       const existing = await db.select({ id: emailDrafts.id }).from(emailDrafts).where(
-        and85(
-          eq113(emailDrafts.userId, userId),
-          eq113(emailDrafts.sourceMessageId, sourceMessageId)
+        and86(
+          eq114(emailDrafts.userId, userId),
+          eq114(emailDrafts.sourceMessageId, sourceMessageId)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -76886,7 +77322,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   if (!await claimAndMark(userId, messageType, localKey)) return false;
   let tasks = [];
   try {
-    const planRows = await db.select().from(plans).where(and85(eq113(plans.userId, userId), eq113(plans.date, localKey))).limit(1);
+    const planRows = await db.select().from(plans).where(and86(eq114(plans.userId, userId), eq114(plans.date, localKey))).limit(1);
     const data = planRows[0]?.data || {};
     tasks = Array.isArray(data.tasks) ? data.tasks : [];
   } catch {
@@ -76894,7 +77330,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   let statsData = {};
   let statsRowExists = false;
   try {
-    const statsRows = await db.select().from(stats).where(eq113(stats.userId, userId)).limit(1);
+    const statsRows = await db.select().from(stats).where(eq114(stats.userId, userId)).limit(1);
     if (statsRows.length > 0) {
       statsData = statsRows[0].data || {};
       statsRowExists = true;
@@ -76933,7 +77369,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
           lastStreakDate: localKey
         },
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq113(stats.userId, userId));
+      }).where(eq114(stats.userId, userId));
       statsData = {
         ...statsData,
         streak: newStreak,
@@ -77005,7 +77441,7 @@ ${summary}`);
       d.setDate(d.getDate() + 1);
       return localDateKey3(d, tz);
     })();
-    const prefRows = await db.select().from(userPreferences).where(eq113(userPreferences.userId, userId)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq114(userPreferences.userId, userId)).limit(1);
     const prefData = prefRows[0]?.data || {};
     const tomorrowSeed = {
       date: tomorrowKey,
@@ -77014,7 +77450,7 @@ ${summary}`);
       observation,
       tomorrowPrompt
     };
-    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq113(userPreferences.userId, userId));
+    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq114(userPreferences.userId, userId));
     console.log(`[Heartbeat] tomorrow seed written for ${userId} (date: ${tomorrowKey})`);
   } catch (err2) {
     console.error(`[Heartbeat] tomorrow seed write failed (non-fatal):`, err2);
@@ -77053,11 +77489,11 @@ async function enqueueNewInboxItemsForPrime(userId) {
   let items = [];
   try {
     items = await db.select().from(inboxItems).where(
-      and85(
-        eq113(inboxItems.userId, userId),
-        eq113(inboxItems.status, "pending"),
-        sql42`${inboxItems.actedAt} IS NULL`,
-        sql42`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
+      and86(
+        eq114(inboxItems.userId, userId),
+        eq114(inboxItems.status, "pending"),
+        sql43`${inboxItems.actedAt} IS NULL`,
+        sql43`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
       )
     ).limit(CREW_BATCH_MAX);
   } catch (err2) {
@@ -77194,7 +77630,7 @@ async function runHeartbeatTick() {
     }
     let memories = [];
     try {
-      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq113(userMemories.userId, link.userId)).orderBy(desc39(userMemories.extractedAt)).limit(30);
+      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq114(userMemories.userId, link.userId)).orderBy(desc39(userMemories.extractedAt)).limit(30);
     } catch {
     }
     let actionsFired = 0;
@@ -77287,7 +77723,7 @@ async function runHeartbeatMemoryPass(userId, googleToken, now) {
   lastHeartbeatExtractAt[userId] = now.getTime();
   const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
   try {
-    const recentMessages = await db.select().from(telegramGroupMessages).where(and85(eq113(telegramGroupMessages.userId, userId), gte23(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc39(telegramGroupMessages.messageDate)).limit(20);
+    const recentMessages = await db.select().from(telegramGroupMessages).where(and86(eq114(telegramGroupMessages.userId, userId), gte23(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc39(telegramGroupMessages.messageDate)).limit(20);
     if (recentMessages.length > 0) {
       const text2 = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4e3);
       const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
@@ -77323,7 +77759,7 @@ async function runAgentHealthCheck() {
     const { logAgentEvent: logAgentEvent2 } = await Promise.resolve().then(() => (init_agentLogger(), agentLogger_exports));
     const now = /* @__PURE__ */ new Date();
     const THIRTY_MIN_MS = 30 * 60 * 1e3;
-    const allActive = await db.select().from(discordAgents3).where(eq113(discordAgents3.isActive, 1));
+    const allActive = await db.select().from(discordAgents3).where(eq114(discordAgents3.isActive, 1));
     const summaryByUser = /* @__PURE__ */ new Map();
     for (const agent of allActive) {
       const configIssues = [];
@@ -77349,7 +77785,7 @@ async function runAgentHealthCheck() {
           const newFailCount = (agent.heartbeatFailCount ?? 0) + 1;
           if (newFailCount >= 3) {
             await disableAgent2(agent.id);
-            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq113(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq114(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] auto-disabled stuck agent ${agent.name} (${agent.id}), fails=${newFailCount}`);
             logAgentEvent2({
               event: "agent_disabled_stuck",
@@ -77359,7 +77795,7 @@ async function runAgentHealthCheck() {
             });
             addSummary2(agent.userId, `\u{1F534} Agent "${agent.name}" was auto-disabled after ${newFailCount} missed heartbeats.`);
           } else {
-            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq113(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq114(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] agent ${agent.name} (${agent.id}) stale \u2014 fail ${newFailCount}/3`);
             logAgentEvent2({
               event: "heartbeat_check",
@@ -77370,7 +77806,7 @@ async function runAgentHealthCheck() {
             addSummary2(agent.userId, `\u{1F7E1} Agent "${agent.name}" missed heartbeat (${newFailCount}/3 before auto-disable).`);
           }
         } else {
-          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq113(discordAgents3.id, agent.id));
+          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq114(discordAgents3.id, agent.id));
         }
       }
       const agentPlatforms = agent.platforms ?? ["discord"];
@@ -77486,28 +77922,28 @@ init_routes2();
 init_goalScheduler();
 init_weeklyJob();
 init_schedules();
-import { eq as eq118, and as and90, lt as lt9, lte as lte2, or as or5, sql as sql44, isNull as isNull5 } from "drizzle-orm";
+import { eq as eq119, and as and91, lt as lt9, lte as lte2, or as or5, sql as sql45, isNull as isNull5 } from "drizzle-orm";
 
 // server/discord/digest.ts
 init_db();
 init_schema();
 init_schedules();
-import { eq as eq114, and as and86 } from "drizzle-orm";
+import { eq as eq115, and as and87 } from "drizzle-orm";
 async function buildDailyDigest(userId) {
   const now = /* @__PURE__ */ new Date();
   const midnight = new Date(now);
   midnight.setHours(0, 0, 0, 0);
-  const allSchedules = await db.select().from(discordChannelSchedules).where(eq114(discordChannelSchedules.userId, userId));
+  const allSchedules = await db.select().from(discordChannelSchedules).where(eq115(discordChannelSchedules.userId, userId));
   const completedToday = allSchedules.filter(
     (s) => s.lastRun && s.lastRun >= midnight
   );
   const pendingApprovals = await db.select().from(discordPendingApprovals).where(
-    and86(
-      eq114(discordPendingApprovals.userId, userId),
-      eq114(discordPendingApprovals.status, "pending")
+    and87(
+      eq115(discordPendingApprovals.userId, userId),
+      eq115(discordPendingApprovals.status, "pending")
     )
   );
-  const agents = await db.select().from(discordAgents).where(eq114(discordAgents.userId, userId));
+  const agents = await db.select().from(discordAgents).where(eq115(discordAgents.userId, userId));
   const upcoming = allSchedules.filter((s) => s.enabled).map((s) => ({ schedule: s, next: nextRunTime(s.cronExpression) })).filter((x) => x.next !== null && x.next <= new Date(now.getTime() + 24 * 60 * 60 * 1e3)).sort((a, b) => a.next.getTime() - b.next.getTime());
   const dateStr = now.toLocaleDateString("en-US", {
     weekday: "long",
@@ -77576,19 +78012,19 @@ init_googleDrive();
 init_db();
 init_retrieve();
 init_diagnosticsService();
-import { sql as sql43 } from "drizzle-orm";
+import { sql as sql44 } from "drizzle-orm";
 var BATCH_SIZE = 50;
 var INTER_ITEM_DELAY_MS = 200;
 var isRunning = false;
 function sleep3(ms) {
-  return new Promise((resolve9) => setTimeout(resolve9, ms));
+  return new Promise((resolve10) => setTimeout(resolve10, ms));
 }
 async function isEmbeddingsAvailable() {
   const result = await embedText("probe");
   return result !== null;
 }
 async function fetchUnembedded(limit) {
-  const rows = await db.execute(sql43`
+  const rows = await db.execute(sql44`
     SELECT id, content
     FROM user_memories
     WHERE embedding IS NULL
@@ -77600,7 +78036,7 @@ async function fetchUnembedded(limit) {
   return rows.rows ?? [];
 }
 async function countUnembedded() {
-  const result = await db.execute(sql43`
+  const result = await db.execute(sql44`
     SELECT COUNT(*) AS cnt FROM user_memories WHERE embedding IS NULL
   `);
   return parseInt(result.rows?.[0]?.cnt ?? "0", 10);
@@ -77708,7 +78144,7 @@ function sundayKey(d) {
 }
 async function runDiscordSchedules(now) {
   try {
-    const schedules = await db.select().from(discordChannelSchedules).where(eq118(discordChannelSchedules.enabled, true));
+    const schedules = await db.select().from(discordChannelSchedules).where(eq119(discordChannelSchedules.enabled, true));
     for (const schedule of schedules) {
       if (matchesCron(schedule.cronExpression, now)) {
         console.log(`[Scheduler] Firing Discord schedule "${schedule.label}" (${schedule.id})`);
@@ -77723,9 +78159,9 @@ async function runDiscordSchedules(now) {
 }
 async function runAgentLoops(now) {
   try {
-    const agents = await db.select().from(discordAgents).where(and90(
-      eq118(discordAgents.isActive, 1),
-      eq118(discordAgents.loopEnabled, 1)
+    const agents = await db.select().from(discordAgents).where(and91(
+      eq119(discordAgents.isActive, 1),
+      eq119(discordAgents.loopEnabled, 1)
     ));
     for (const agent of agents) {
       const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1e3;
@@ -77761,11 +78197,11 @@ ${prompt}`,
   if (result && agent.channelName) {
     await postToDiscordChannel2(agent.userId, agent.channelName, agent.channelId, result);
   }
-  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq118(discordAgents.id, agent.id));
+  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq119(discordAgents.id, agent.id));
 }
 async function runDailyDigests() {
   try {
-    const links = await db.select().from(channelLinks).where(eq118(channelLinks.channel, "discord"));
+    const links = await db.select().from(channelLinks).where(eq119(channelLinks.channel, "discord"));
     for (const link of links) {
       try {
         const meta = link.metadata;
@@ -77784,7 +78220,7 @@ async function runDailyDigests() {
 }
 async function cleanUpExpiredMemories() {
   try {
-    const result = await db.execute(sql44`
+    const result = await db.execute(sql45`
       DELETE FROM user_memories
       WHERE expires_at IS NOT NULL AND expires_at < NOW()
       RETURNING id
@@ -77807,7 +78243,7 @@ async function cleanUpExpiredAgentChatSessions() {
 async function cleanUpOldInteractionLogs() {
   try {
     const cutoff = new Date(Date.now() - INTERACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1e3);
-    const result = await db.execute(sql44`
+    const result = await db.execute(sql45`
       DELETE FROM interaction_log WHERE created_at < ${cutoff}
     `);
     const count2 = result.rowCount ?? 0;
@@ -77818,7 +78254,7 @@ async function cleanUpOldInteractionLogs() {
 }
 async function cleanUpOldBuildSessions() {
   try {
-    const result = await db.execute(sql44`
+    const result = await db.execute(sql45`
       DELETE FROM build_sessions
       WHERE
         (reminded = true  AND created_at < NOW() - INTERVAL '30 days')
@@ -77835,7 +78271,7 @@ async function cleanUpOldBuildSessions() {
 async function cleanUpOldActionLogs() {
   try {
     const cutoff = new Date(Date.now() - ACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1e3);
-    const result = await db.execute(sql44`
+    const result = await db.execute(sql45`
       DELETE FROM jarvis_action_log WHERE created_at < ${cutoff}
     `);
     const count2 = result.rowCount ?? 0;
@@ -77977,11 +78413,11 @@ async function runDueScheduledTasks(now) {
   let claimed = [];
   try {
     claimed = await db.update(jarvisScheduledTasks).set({ inProgressAt: now }).where(
-      and90(
+      and91(
         lte2(jarvisScheduledTasks.scheduledAt, now),
         isNull5(jarvisScheduledTasks.completedAt),
-        eq118(jarvisScheduledTasks.active, true),
-        eq118(jarvisScheduledTasks.needsAttention, false),
+        eq119(jarvisScheduledTasks.active, true),
+        eq119(jarvisScheduledTasks.needsAttention, false),
         or5(
           isNull5(jarvisScheduledTasks.inProgressAt),
           lt9(jarvisScheduledTasks.inProgressAt, staleThreshold)
@@ -77995,7 +78431,7 @@ async function runDueScheduledTasks(now) {
   for (const task of claimed) {
     handleDueTask(task, now).catch((err2) => {
       console.error(`[Scheduler] handleDueTask id=${task.id} failed:`, err2);
-      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq118(jarvisScheduledTasks.id, task.id)).catch(() => {
+      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id)).catch(() => {
       });
     });
   }
@@ -78006,7 +78442,7 @@ async function appendVoiceCallKeyboardOnTelegram(userId, notificationType) {
     if (!activeChannels.includes("telegram")) return;
     const { buildVoiceCallKeyboard: buildVoiceCallKeyboard2, isTelegramConfigured: isTelegramConfigured2, sendMessage: tgSend } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
     if (!isTelegramConfigured2()) return;
-    const links = await db.select().from(telegramLinks).where(eq118(telegramLinks.userId, userId)).limit(1);
+    const links = await db.select().from(telegramLinks).where(eq119(telegramLinks.userId, userId)).limit(1);
     const chatId = links[0]?.chatId;
     if (!chatId) return;
     const keyboard = buildVoiceCallKeyboard2({ includeTextReplyButton: true });
@@ -78050,12 +78486,12 @@ ${relevant.map((m) => `- ${m.content}`).join("\n")}
     if (isRecurring) {
       const nextRun = computeNextRun(task.recurrence, firedAt);
       if (nextRun) {
-        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq118(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq118(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
       }
     } else {
-      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq118(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
     }
     let notifText;
     if (!result.ok && result.error) {
@@ -78105,20 +78541,20 @@ If you encounter a blocker or need the user's input to proceed, call the flag_ta
     } catch (err2) {
       agentReply = `\u26A0\uFE0F Scheduled task "${task.title}" encountered an error: ${err2 instanceof Error ? err2.message : String(err2)}`;
     }
-    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq118(jarvisScheduledTasks.id, task.id)).limit(1);
+    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq119(jarvisScheduledTasks.id, task.id)).limit(1);
     if (freshTask?.needsAttention) {
-      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq118(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
       console.log(`[Scheduler] Agent task id=${task.id} paused \u2014 needsAttention=true, skipping completion`);
     } else {
       if (isRecurring) {
         const nextRun = computeNextRun(task.recurrence, firedAt);
         if (nextRun) {
-          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq118(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
         } else {
-          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq118(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
         }
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq118(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq119(jarvisScheduledTasks.id, task.id));
       }
       if (agentReply) {
         try {
@@ -78287,11 +78723,11 @@ function startScheduler() {
 async function runDueAutonomousProjectSessions() {
   const now = /* @__PURE__ */ new Date();
   const due = await db.update(jarvisProjects).set({ nextRunAt: null }).where(
-    and90(
-      eq118(jarvisProjects.autonomousMode, true),
+    and91(
+      eq119(jarvisProjects.autonomousMode, true),
       or5(
-        eq118(jarvisProjects.status, "building"),
-        eq118(jarvisProjects.status, "waiting_for_input")
+        eq119(jarvisProjects.status, "building"),
+        eq119(jarvisProjects.status, "waiting_for_input")
       ),
       lte2(jarvisProjects.nextRunAt, now)
     )
@@ -78352,7 +78788,7 @@ async function runMorningPlanBuild() {
   console.log(`[Scheduler] Processing ${allUsers.length} user(s) for auto-plan build`);
   for (const user of allUsers) {
     try {
-      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and90(eq118(plans.userId, user.id), eq118(plans.date, today)));
+      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and91(eq119(plans.userId, user.id), eq119(plans.date, today)));
       const existingTasks = existingPlan[0]?.data?.tasks || [];
       if (existingTasks.length > 0) {
         console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, skipping`);
@@ -78465,7 +78901,7 @@ async function runMorningPlanBuild() {
         console.error(`[Scheduler] prediction fetch failed for ${user.id}:`, predErr);
       }
       const topTask = newTasks[0];
-      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq118(userPreferences.userId, user.id));
+      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq119(userPreferences.userId, user.id));
       const currentPrefs = existingPrefs[0]?.data || {};
       const lastDreamCycle = currentPrefs.lastDreamCycle || null;
       const updatedPrefs = {
@@ -78630,10 +79066,10 @@ async function runDreamCycleForAllUsers(now) {
     const messageType = `dream_cycle:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and90(
-          eq118(proactiveScheduleLog.userId, user.id),
-          eq118(proactiveScheduleLog.messageType, messageType),
-          eq118(proactiveScheduleLog.sentDate, localDate)
+        and91(
+          eq119(proactiveScheduleLog.userId, user.id),
+          eq119(proactiveScheduleLog.messageType, messageType),
+          eq119(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -78651,7 +79087,7 @@ async function runDreamCycleForAllUsers(now) {
         );
       }
       try {
-        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq118(userPreferences.userId, user.id));
+        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq119(userPreferences.userId, user.id));
         const existingPrefs = existingPrefsRows[0]?.data || {};
         const updatedPrefsWithDream = {
           ...existingPrefs,
@@ -78703,10 +79139,10 @@ async function runDreamDeliveryForAllUsers(now) {
     const messageType = `dream_delivery:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and90(
-          eq118(proactiveScheduleLog.userId, user.id),
-          eq118(proactiveScheduleLog.messageType, messageType),
-          eq118(proactiveScheduleLog.sentDate, localDate)
+        and91(
+          eq119(proactiveScheduleLog.userId, user.id),
+          eq119(proactiveScheduleLog.messageType, messageType),
+          eq119(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -78778,7 +79214,7 @@ init_schema();
 init_soul();
 init_agentApproval();
 init_routedChatCompletion();
-import { eq as eq119, and as and91, sql as drizzleSql2 } from "drizzle-orm";
+import { eq as eq120, and as and92, sql as drizzleSql2 } from "drizzle-orm";
 
 // server/inboxTriageConfig.ts
 function isInboxTriageEnabled(env = process.env) {
@@ -78884,9 +79320,9 @@ Jarvis reason: ${item.jarvisReason || "(none)"}`;
 }
 async function triageInboxItemsForUser(userId) {
   const pendingItems = await db.select().from(inboxItems).where(
-    and91(
-      eq119(inboxItems.userId, userId),
-      eq119(inboxItems.status, "pending")
+    and92(
+      eq120(inboxItems.userId, userId),
+      eq120(inboxItems.status, "pending")
     )
   ).limit(15);
   for (const item of pendingItems) {
@@ -78897,7 +79333,7 @@ async function triageInboxItemsForUser(userId) {
           status: "dismissed",
           actedAt: /* @__PURE__ */ new Date(),
           jarvisReason: reason || "Auto-dismissed \u2014 not actionable"
-        }).where(eq119(inboxItems.id, item.id));
+        }).where(eq120(inboxItems.id, item.id));
         console.log(`[InboxTriage] auto-dismissed inbox item: ${item.id} (${(item.subject || "").slice(0, 60)}) \u2014 ${reason}`);
       }
     } catch (err2) {
@@ -78907,10 +79343,10 @@ async function triageInboxItemsForUser(userId) {
 }
 async function runTriagePassForUser(userId) {
   const pending = await db.select().from(deliverables).where(
-    and91(
-      eq119(deliverables.userId, userId),
-      eq119(deliverables.status, "pending_approval"),
-      eq119(deliverables.triageStatus, "needs_attention")
+    and92(
+      eq120(deliverables.userId, userId),
+      eq120(deliverables.status, "pending_approval"),
+      eq120(deliverables.triageStatus, "needs_attention")
     )
   ).limit(20);
   for (const d of pending) {
@@ -78922,7 +79358,7 @@ async function runTriagePassForUser(userId) {
           if (meta.gateId) {
             const gateOk = await approveGate(meta.gateId, userId).catch(() => false);
             if (!gateOk) {
-              await db.update(deliverables).set({ triageNote: "Auto-approve attempted but gate not found / already resolved" }).where(eq119(deliverables.id, d.id));
+              await db.update(deliverables).set({ triageNote: "Auto-approve attempted but gate not found / already resolved" }).where(eq120(deliverables.id, d.id));
               console.warn(`[InboxTriage] approveGate failed for ${d.id} \u2014 gate may already be resolved`);
               continue;
             }
@@ -78933,7 +79369,7 @@ async function runTriagePassForUser(userId) {
           triageStatus: "auto_handled",
           triageNote: note || "Auto-handled by Jarvis",
           actedAt: /* @__PURE__ */ new Date()
-        }).where(eq119(deliverables.id, d.id));
+        }).where(eq120(deliverables.id, d.id));
         console.log(`[InboxTriage] auto-handled: ${d.id} (${d.title.slice(0, 60)})`);
       } else if (verdict === "promote_memory") {
         await promoteToMemory(userId, d);
@@ -78942,10 +79378,10 @@ async function runTriagePassForUser(userId) {
           triageStatus: "promoted_memory",
           triageNote: note || "Saved to long-term memory by Jarvis",
           actedAt: /* @__PURE__ */ new Date()
-        }).where(eq119(deliverables.id, d.id));
+        }).where(eq120(deliverables.id, d.id));
         console.log(`[InboxTriage] promoted to memory: ${d.id} (${d.title.slice(0, 60)})`);
       } else {
-        await db.update(deliverables).set({ triageStatus: "escalated", triageNote: note || void 0 }).where(eq119(deliverables.id, d.id));
+        await db.update(deliverables).set({ triageStatus: "escalated", triageNote: note || void 0 }).where(eq120(deliverables.id, d.id));
         console.log(`[InboxTriage] escalated to user: ${d.id} (${d.title.slice(0, 60)})`);
       }
     } catch (err2) {
@@ -78955,10 +79391,10 @@ async function runTriagePassForUser(userId) {
   await triageInboxItemsForUser(userId);
   try {
     const orphanedGates = await db.select().from(agentApprovalGates).where(
-      and91(
-        eq119(agentApprovalGates.userId, userId),
-        eq119(agentApprovalGates.status, "pending"),
-        eq119(agentApprovalGates.initiatedBy, "jarvis"),
+      and92(
+        eq120(agentApprovalGates.userId, userId),
+        eq120(agentApprovalGates.status, "pending"),
+        eq120(agentApprovalGates.initiatedBy, "jarvis"),
         drizzleSql2`${agentApprovalGates.expiresAt} > NOW()`
       )
     ).limit(10);
@@ -79025,15 +79461,15 @@ init_outlook();
 init_interactionLog();
 init_actionLog();
 init_routedChatCompletion();
-import { eq as eq120, and as and92, gt as gt6, lt as lt10, inArray as inArray10 } from "drizzle-orm";
+import { eq as eq121, and as and93, gt as gt6, lt as lt10, inArray as inArray10 } from "drizzle-orm";
 var CURIOSITY_SCAN_LOCK_ID = 7654321098;
 var scannerStarted = false;
 var ALREADY_ASKED_WINDOW_DAYS = 30;
 async function getAlreadyAskedSourceIds(userId) {
   const windowStart = new Date(Date.now() - ALREADY_ASKED_WINDOW_DAYS * 24 * 60 * 60 * 1e3);
   const rows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and92(
-      eq120(proactiveQuestionsSent.userId, userId),
+    and93(
+      eq121(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, windowStart)
     )
   );
@@ -79052,16 +79488,16 @@ function extractSenderKey(sender) {
 var EMAIL_SOURCE_TYPES = ["email", "gmail", "outlook_email"];
 async function getRecentlySurfacedSenders(userId, since) {
   const sentRows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and92(
-      eq120(proactiveQuestionsSent.userId, userId),
+    and93(
+      eq121(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, since)
     )
   );
   if (sentRows.length === 0) return /* @__PURE__ */ new Set();
   const sentSourceIds = sentRows.map((r) => r.sourceId);
   const inboxRows = await db.select({ sender: inboxItems.sender }).from(inboxItems).where(
-    and92(
-      eq120(inboxItems.userId, userId),
+    and93(
+      eq121(inboxItems.userId, userId),
       inArray10(inboxItems.sourceId, sentSourceIds),
       inArray10(inboxItems.sourceType, [...EMAIL_SOURCE_TYPES])
     )
@@ -79077,7 +79513,7 @@ async function getUserMemories(userId) {
   return db.select({
     content: userMemories.content,
     category: userMemories.category
-  }).from(userMemories).where(eq120(userMemories.userId, userId));
+  }).from(userMemories).where(eq121(userMemories.userId, userId));
 }
 async function generateCuriosityQuestions(items, memories, userId) {
   if (items.length === 0) return [];
@@ -79536,7 +79972,7 @@ init_schema();
 init_coachAgent();
 init_whatsappChannel();
 init_sessionStore();
-import { eq as eq121, and as and93, sql as sql45 } from "drizzle-orm";
+import { eq as eq122, and as and94, sql as sql46 } from "drizzle-orm";
 import express2 from "express";
 import * as crypto11 from "crypto";
 function verifyTwilioSignature(req) {
@@ -79560,7 +79996,7 @@ function verifyTwilioSignature(req) {
 }
 async function findUserByPhone(phone) {
   try {
-    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and93(eq121(channelLinks.channel, "whatsapp"), eq121(channelLinks.address, phone))).limit(1);
+    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and94(eq122(channelLinks.channel, "whatsapp"), eq122(channelLinks.address, phone))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err2) {
     console.error("[whatsapp] user lookup failed:", err2);
@@ -79569,11 +80005,11 @@ async function findUserByPhone(phone) {
 }
 async function tryConsumeLinkCode(code, phone) {
   try {
-    const rows = await db.select().from(channelLinkCodes).where(and93(eq121(channelLinkCodes.code, code), eq121(channelLinkCodes.channel, "whatsapp"))).limit(1);
+    const rows = await db.select().from(channelLinkCodes).where(and94(eq122(channelLinkCodes.code, code), eq122(channelLinkCodes.channel, "whatsapp"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-      await db.delete(channelLinkCodes).where(eq121(channelLinkCodes.code, code));
+      await db.delete(channelLinkCodes).where(eq122(channelLinkCodes.code, code));
       return null;
     }
     await db.insert(channelLinks).values({
@@ -79585,7 +80021,7 @@ async function tryConsumeLinkCode(code, phone) {
       target: [channelLinks.channel, channelLinks.address],
       set: { userId: row.userId, lastSeenAt: /* @__PURE__ */ new Date() }
     });
-    await db.delete(channelLinkCodes).where(eq121(channelLinkCodes.code, code));
+    await db.delete(channelLinkCodes).where(eq122(channelLinkCodes.code, code));
     return row.userId;
   } catch (err2) {
     console.error("[whatsapp] link code consume failed:", err2);
@@ -79639,7 +80075,7 @@ function registerWhatsAppWebhook(app2) {
     }
   });
   const cleanup = setInterval(() => {
-    db.delete(channelLinkCodes).where(and93(eq121(channelLinkCodes.channel, "whatsapp"), sql45`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[whatsapp] code cleanup failed:", err2));
+    db.delete(channelLinkCodes).where(and94(eq122(channelLinkCodes.channel, "whatsapp"), sql46`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[whatsapp] code cleanup failed:", err2));
   }, 5 * 60 * 1e3);
   cleanup.unref();
 }
@@ -79655,15 +80091,15 @@ init_auth();
 init_registry();
 init_bridge();
 import fs25 from "fs";
-import path30 from "path";
+import path31 from "path";
 import { WebSocket as WebSocket3, WebSocketServer as WebSocketServer3 } from "ws";
-import { and as and96, desc as desc45, eq as eq125 } from "drizzle-orm";
+import { and as and97, desc as desc45, eq as eq126 } from "drizzle-orm";
 
 // server/gateway/devicePairing.ts
 init_db();
 init_schema();
 import { createHash as createHash8, randomBytes as randomBytes4 } from "crypto";
-import { and as and94, desc as desc42, eq as eq122, isNull as isNull6 } from "drizzle-orm";
+import { and as and95, desc as desc42, eq as eq123, isNull as isNull6 } from "drizzle-orm";
 var JWT_GATEWAY_SCOPES = [
   "operator.admin",
   "operator.read",
@@ -79699,10 +80135,10 @@ function requireGatewayScope(principal, scope) {
 async function authenticateGatewayDeviceToken(token) {
   if (!token?.startsWith("jgwd_")) return null;
   const hash = tokenHash(token);
-  const rows = await db.select().from(gatewayDevices).where(and94(eq122(gatewayDevices.tokenHash, hash), isNull6(gatewayDevices.revokedAt))).limit(1).catch(() => []);
+  const rows = await db.select().from(gatewayDevices).where(and95(eq123(gatewayDevices.tokenHash, hash), isNull6(gatewayDevices.revokedAt))).limit(1).catch(() => []);
   const device = rows[0];
   if (!device) return null;
-  db.update(gatewayDevices).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq122(gatewayDevices.id, device.id)).catch(() => {
+  db.update(gatewayDevices).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevices.id, device.id)).catch(() => {
   });
   return {
     userId: device.userId,
@@ -79735,7 +80171,7 @@ async function createGatewayPairingRequest({
   return row;
 }
 async function listGatewayPairingRequests(userId, limit = 25) {
-  return db.select().from(gatewayDevicePairingRequests).where(eq122(gatewayDevicePairingRequests.userId, userId)).orderBy(desc42(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
+  return db.select().from(gatewayDevicePairingRequests).where(eq123(gatewayDevicePairingRequests.userId, userId)).orderBy(desc42(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
 }
 async function approveGatewayPairingRequest({
   userId,
@@ -79743,12 +80179,12 @@ async function approveGatewayPairingRequest({
   code,
   scopes
 }) {
-  const rows = requestId ? await db.select().from(gatewayDevicePairingRequests).where(eq122(gatewayDevicePairingRequests.id, requestId)).limit(1) : await db.select().from(gatewayDevicePairingRequests).where(eq122(gatewayDevicePairingRequests.code, code || "")).limit(1);
+  const rows = requestId ? await db.select().from(gatewayDevicePairingRequests).where(eq123(gatewayDevicePairingRequests.id, requestId)).limit(1) : await db.select().from(gatewayDevicePairingRequests).where(eq123(gatewayDevicePairingRequests.code, code || "")).limit(1);
   const request = rows[0];
   if (!request || request.userId !== userId) throw new Error("Pairing request not found");
   if (request.status !== "pending") throw new Error(`Pairing request is ${request.status}`);
   if (new Date(request.expiresAt).getTime() < Date.now()) {
-    await db.update(gatewayDevicePairingRequests).set({ status: "expired", resolvedAt: /* @__PURE__ */ new Date() }).where(eq122(gatewayDevicePairingRequests.id, request.id)).catch(() => {
+    await db.update(gatewayDevicePairingRequests).set({ status: "expired", resolvedAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevicePairingRequests.id, request.id)).catch(() => {
     });
     throw new Error("Pairing request expired");
   }
@@ -79766,26 +80202,26 @@ async function approveGatewayPairingRequest({
       pairedFromRequestId: request.id
     }
   }).returning();
-  await db.update(gatewayDevicePairingRequests).set({ status: "approved", deviceId: device.id, resolvedAt: /* @__PURE__ */ new Date() }).where(eq122(gatewayDevicePairingRequests.id, request.id));
+  await db.update(gatewayDevicePairingRequests).set({ status: "approved", deviceId: device.id, resolvedAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevicePairingRequests.id, request.id));
   return {
     device: { ...device, tokenHash: void 0 },
     token: rawToken
   };
 }
 async function rejectGatewayPairingRequest(userId, requestId) {
-  const [request] = await db.select().from(gatewayDevicePairingRequests).where(eq122(gatewayDevicePairingRequests.id, requestId)).limit(1);
+  const [request] = await db.select().from(gatewayDevicePairingRequests).where(eq123(gatewayDevicePairingRequests.id, requestId)).limit(1);
   if (!request || request.userId !== userId) throw new Error("Pairing request not found");
-  await db.update(gatewayDevicePairingRequests).set({ status: "rejected", resolvedAt: /* @__PURE__ */ new Date() }).where(eq122(gatewayDevicePairingRequests.id, request.id));
+  await db.update(gatewayDevicePairingRequests).set({ status: "rejected", resolvedAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevicePairingRequests.id, request.id));
   return { ok: true };
 }
 async function listGatewayDevices(userId, includeRevoked = false, limit = 50) {
-  const rows = await db.select().from(gatewayDevices).where(eq122(gatewayDevices.userId, userId)).orderBy(desc42(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
+  const rows = await db.select().from(gatewayDevices).where(eq123(gatewayDevices.userId, userId)).orderBy(desc42(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
   return rows.filter((device) => includeRevoked || !device.revokedAt).map((device) => ({ ...device, tokenHash: void 0 }));
 }
 async function revokeGatewayDevice(userId, deviceId) {
-  const [device] = await db.select().from(gatewayDevices).where(eq122(gatewayDevices.id, deviceId)).limit(1);
+  const [device] = await db.select().from(gatewayDevices).where(eq123(gatewayDevices.id, deviceId)).limit(1);
   if (!device || device.userId !== userId) throw new Error("Gateway device not found");
-  await db.update(gatewayDevices).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq122(gatewayDevices.id, deviceId));
+  await db.update(gatewayDevices).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq123(gatewayDevices.id, deviceId));
   return { ok: true };
 }
 
@@ -79793,7 +80229,7 @@ async function revokeGatewayDevice(userId, deviceId) {
 init_db();
 init_schema();
 import { EventEmitter as EventEmitter2 } from "events";
-import { desc as desc43, eq as eq123 } from "drizzle-orm";
+import { desc as desc43, eq as eq124 } from "drizzle-orm";
 var emitter = new EventEmitter2();
 emitter.setMaxListeners(100);
 function onGatewayEvent(listener) {
@@ -79825,7 +80261,7 @@ async function recordGatewayEvent(input) {
 async function listGatewayEvents(userId, limit) {
   const query = db.select().from(gatewayEvents).orderBy(desc43(gatewayEvents.createdAt)).limit(limit);
   if (!userId) return query.catch(() => []);
-  return db.select().from(gatewayEvents).where(eq123(gatewayEvents.userId, userId)).orderBy(desc43(gatewayEvents.createdAt)).limit(limit).catch(() => []);
+  return db.select().from(gatewayEvents).where(eq124(gatewayEvents.userId, userId)).orderBy(desc43(gatewayEvents.createdAt)).limit(limit).catch(() => []);
 }
 
 // server/gateway/nodeRegistry.ts
@@ -79833,7 +80269,7 @@ init_db();
 init_registry();
 init_bridge();
 init_schema();
-import { and as and95, desc as desc44, eq as eq124, inArray as inArray11 } from "drizzle-orm";
+import { and as and96, desc as desc44, eq as eq125, inArray as inArray11 } from "drizzle-orm";
 var SERVER_CAPABILITIES = [
   "gateway.health",
   "gateway.status",
@@ -79910,8 +80346,8 @@ async function listGatewayNodes(userId, limit = 50) {
   }
   if (!userId) return nodes;
   const [gatewayDevices2, activeJobs] = await Promise.all([
-    db.select().from(gatewayDevices).where(eq124(gatewayDevices.userId, userId)).orderBy(desc44(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
-    db.select().from(agentJobs).where(and95(eq124(agentJobs.userId, userId), inArray11(agentJobs.status, ["queued", "running"]))).orderBy(desc44(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
+    db.select().from(gatewayDevices).where(eq125(gatewayDevices.userId, userId)).orderBy(desc44(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
+    db.select().from(agentJobs).where(and96(eq125(agentJobs.userId, userId), inArray11(agentJobs.status, ["queued", "running"]))).orderBy(desc44(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
   ]);
   for (const device of gatewayDevices2) {
     const scopes = device.scopes || [];
@@ -80008,7 +80444,7 @@ var OPENCLAW_PARITY_CAPABILITIES = [
 ];
 function readPackageVersion() {
   try {
-    const pkg = JSON.parse(fs25.readFileSync(path30.resolve(process.cwd(), "package.json"), "utf8"));
+    const pkg = JSON.parse(fs25.readFileSync(path31.resolve(process.cwd(), "package.json"), "utf8"));
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
@@ -80074,19 +80510,19 @@ async function channelState(userId, limit) {
     configured: channel.isConfigured(),
     toolGroups: channel.toolGroups
   }));
-  const linked = userId ? await db.select().from(channelLinks).where(eq125(channelLinks.userId, userId)).limit(limit).catch(() => []) : [];
+  const linked = userId ? await db.select().from(channelLinks).where(eq126(channelLinks.userId, userId)).limit(limit).catch(() => []) : [];
   return { registered, linked };
 }
 async function sessionState(userId, limit) {
   const [coachSessions, agentSessions] = await Promise.all([
-    db.select().from(coachChannelSessions).where(eq125(coachChannelSessions.userId, userId)).limit(limit).catch(() => []),
+    db.select().from(coachChannelSessions).where(eq126(coachChannelSessions.userId, userId)).limit(limit).catch(() => []),
     db.select({
       sdkSessionId: agentChatSessions.sdkSessionId,
       agentId: agentChatSessions.agentId,
       createdAt: agentChatSessions.createdAt,
       updatedAt: agentChatSessions.updatedAt,
       expiresAt: agentChatSessions.expiresAt
-    }).from(agentChatSessions).where(eq125(agentChatSessions.userId, userId)).orderBy(desc45(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
+    }).from(agentChatSessions).where(eq126(agentChatSessions.userId, userId)).orderBy(desc45(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
   ]);
   return { coachSessions, agentSessions };
 }
@@ -80105,16 +80541,16 @@ async function daemonState(userId) {
 }
 async function agentState(userId, limit) {
   const [discordAgents3, customAgents2] = await Promise.all([
-    db.select().from(discordAgents).where(eq125(discordAgents.userId, userId)).limit(limit).catch(() => []),
-    db.select().from(customAgents).where(eq125(customAgents.userId, userId)).limit(limit).catch(() => [])
+    db.select().from(discordAgents).where(eq126(discordAgents.userId, userId)).limit(limit).catch(() => []),
+    db.select().from(customAgents).where(eq126(customAgents.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { discordAgents: discordAgents3, customAgents: customAgents2 };
 }
 async function cronState(userId, limit) {
   const [scheduledTasks, workflows, jobs] = await Promise.all([
-    db.select().from(jarvisScheduledTasks).where(eq125(jarvisScheduledTasks.userId, userId)).orderBy(desc45(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentWorkflows).where(eq125(agentWorkflows.userId, userId)).orderBy(desc45(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
-    db.select().from(agentJobs).where(eq125(agentJobs.userId, userId)).orderBy(desc45(agentJobs.createdAt)).limit(limit).catch(() => [])
+    db.select().from(jarvisScheduledTasks).where(eq126(jarvisScheduledTasks.userId, userId)).orderBy(desc45(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentWorkflows).where(eq126(agentWorkflows.userId, userId)).orderBy(desc45(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
+    db.select().from(agentJobs).where(eq126(agentJobs.userId, userId)).orderBy(desc45(agentJobs.createdAt)).limit(limit).catch(() => [])
   ]);
   return { scheduledTasks, workflows, jobs };
 }
@@ -80183,11 +80619,11 @@ async function jobCreate(userId, params) {
 async function jobCancel(userId, params) {
   const jobId = typeof params.jobId === "string" ? params.jobId.trim() : "";
   if (!jobId) throw new Error("jobId is required");
-  const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(and96(eq125(agentJobs.id, jobId), eq125(agentJobs.userId, userId))).limit(1);
+  const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(and97(eq126(agentJobs.id, jobId), eq126(agentJobs.userId, userId))).limit(1);
   if (!row) throw new Error("Job not found");
   if (!["queued", "running"].includes(row.status)) throw new Error(`Job is already ${row.status}`);
   const nextStatus = row.status === "running" ? "cancelling" : "cancelled";
-  const [updated] = await db.update(agentJobs).set({ status: nextStatus, ...nextStatus === "cancelled" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(and96(eq125(agentJobs.id, jobId), eq125(agentJobs.userId, userId))).returning({ id: agentJobs.id, status: agentJobs.status });
+  const [updated] = await db.update(agentJobs).set({ status: nextStatus, ...nextStatus === "cancelled" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(and97(eq126(agentJobs.id, jobId), eq126(agentJobs.userId, userId))).returning({ id: agentJobs.id, status: agentJobs.status });
   recordGatewayEvent({
     userId,
     type: "job.cancelled",
@@ -80257,8 +80693,8 @@ async function daemonTest(userId, params) {
 }
 async function approvalState(userId, limit) {
   const [gates, policies] = await Promise.all([
-    db.select().from(agentApprovalGates).where(eq125(agentApprovalGates.userId, userId)).orderBy(desc45(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentApprovalPolicies).where(eq125(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
+    db.select().from(agentApprovalGates).where(eq126(agentApprovalGates.userId, userId)).orderBy(desc45(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentApprovalPolicies).where(eq126(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { gates, policies };
 }
@@ -80287,8 +80723,8 @@ async function resolveApprovalGate(userId, params, decision) {
 async function skillState(userId, limit) {
   const [skillPacks2, mcpServers2, userSkills2] = await Promise.all([
     db.select().from(skillPacks).limit(limit).catch(() => []),
-    userId ? db.select().from(mcpServers).where(eq125(mcpServers.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([]),
-    userId ? db.select().from(userSkills).where(eq125(userSkills.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([])
+    userId ? db.select().from(mcpServers).where(eq126(mcpServers.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([]),
+    userId ? db.select().from(userSkills).where(eq126(userSkills.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([])
   ]);
   return { skillPacks: skillPacks2, mcpServers: mcpServers2, userSkills: userSkills2 };
 }
@@ -80352,9 +80788,9 @@ async function daemonCapabilityInvoke(userId, capability, input) {
   if (action === "ping") return daemonPing(userId, input);
   const { sendDaemonOp: sendDaemonOp2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
   if (action === "file_read" || action === "file_list" || action === "android_file_read" || action === "android_file_list") {
-    const path32 = typeof input.path === "string" ? input.path.trim() : "";
-    if (!path32) throw new Error("path is required");
-    return sendDaemonOp2(userId, { type: action, path: path32 }, action.endsWith("read") ? 1e4 : 8e3);
+    const path33 = typeof input.path === "string" ? input.path.trim() : "";
+    if (!path33) throw new Error("path is required");
+    return sendDaemonOp2(userId, { type: action, path: path33 }, action.endsWith("read") ? 1e4 : 8e3);
   }
   if (action === "desktop_screenshot") return sendDaemonOp2(userId, { type: "desktop_screenshot" }, 2e4);
   if (action === "desktop_read_screen") return sendDaemonOp2(userId, { type: "desktop_read_screen" }, 4e4);
@@ -80758,9 +81194,9 @@ init_manager();
 init_applyCodeChangeTool();
 init_schema();
 init_publicUrl();
-import { eq as eq126, and as and97 } from "drizzle-orm";
+import { eq as eq127, and as and98 } from "drizzle-orm";
 import * as fs26 from "fs";
-import * as path31 from "path";
+import * as path32 from "path";
 async function alertTelegramUsersWebhookDown() {
   try {
     const linked = await db.select({ userId: telegramLinks.userId }).from(telegramLinks);
@@ -80768,11 +81204,11 @@ async function alertTelegramUsersWebhookDown() {
     let alertedCount = 0;
     for (const userId of uniqueUserIds) {
       const existing = await db.select({ id: inboxItems.id }).from(inboxItems).where(
-        and97(
-          eq126(inboxItems.userId, userId),
-          eq126(inboxItems.sourceType, "other"),
-          eq126(inboxItems.status, "pending"),
-          eq126(inboxItems.subject, "Telegram bot is offline")
+        and98(
+          eq127(inboxItems.userId, userId),
+          eq127(inboxItems.sourceType, "other"),
+          eq127(inboxItems.status, "pending"),
+          eq127(inboxItems.subject, "Telegram bot is offline")
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -80853,7 +81289,7 @@ function setupBodyParsing(app2) {
 function setupRequestLogging(app2) {
   app2.use((req, res, next) => {
     const start = Date.now();
-    const path32 = req.path;
+    const path33 = req.path;
     let capturedJsonResponse = void 0;
     const originalResJson = res.json;
     res.json = function(bodyJson, ...args) {
@@ -80861,9 +81297,9 @@ function setupRequestLogging(app2) {
       return originalResJson.apply(res, [bodyJson, ...args]);
     };
     res.on("finish", () => {
-      if (!path32.startsWith("/api")) return;
+      if (!path33.startsWith("/api")) return;
       const duration = Date.now() - start;
-      let logLine = `${req.method} ${path32} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${path33} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -80877,7 +81313,7 @@ function setupRequestLogging(app2) {
 }
 function getAppName() {
   try {
-    const appJsonPath = path31.resolve(process.cwd(), "app.json");
+    const appJsonPath = path32.resolve(process.cwd(), "app.json");
     const appJsonContent = fs26.readFileSync(appJsonPath, "utf-8");
     const appJson = JSON.parse(appJsonContent);
     return appJson.expo?.name || "App Landing Page";
@@ -80886,7 +81322,7 @@ function getAppName() {
   }
 }
 function serveExpoManifest(platform, res) {
-  const manifestPath = path31.resolve(
+  const manifestPath = path32.resolve(
     process.cwd(),
     "static-build",
     platform,
@@ -80920,7 +81356,7 @@ function serveLandingPage({
   res.status(200).send(html);
 }
 function configureExpoAndLanding(app2) {
-  const templatePath = path31.resolve(
+  const templatePath = path32.resolve(
     process.cwd(),
     "server",
     "templates",
@@ -80928,8 +81364,8 @@ function configureExpoAndLanding(app2) {
   );
   const landingPageTemplate = fs26.readFileSync(templatePath, "utf-8");
   const appName = getAppName();
-  const webBuildDir = path31.resolve(process.cwd(), "static-build", "web");
-  const webIndexPath = path31.join(webBuildDir, "index.html");
+  const webBuildDir = path32.resolve(process.cwd(), "static-build", "web");
+  const webIndexPath = path32.join(webBuildDir, "index.html");
   log("Serving static Expo files with dynamic manifest routing");
   app2.use((req, res, next) => {
     if (req.path.startsWith("/api")) {
@@ -80958,9 +81394,9 @@ function configureExpoAndLanding(app2) {
   if (fs26.existsSync(webBuildDir)) {
     app2.use(express3.static(webBuildDir));
   }
-  app2.use("/assets", express3.static(path31.resolve(process.cwd(), "assets")));
-  app2.use(express3.static(path31.resolve(process.cwd(), "static-build")));
-  const chatTemplatePath = path31.resolve(process.cwd(), "server", "templates", "chat.html");
+  app2.use("/assets", express3.static(path32.resolve(process.cwd(), "assets")));
+  app2.use(express3.static(path32.resolve(process.cwd(), "static-build")));
+  const chatTemplatePath = path32.resolve(process.cwd(), "server", "templates", "chat.html");
   app2.get("/chat", (req, res) => {
     try {
       let html = fs26.readFileSync(chatTemplatePath, "utf-8");
@@ -80972,7 +81408,7 @@ function configureExpoAndLanding(app2) {
       res.status(500).send("Chat page unavailable");
     }
   });
-  const controlTemplatePath = path31.resolve(process.cwd(), "server", "templates", "control.html");
+  const controlTemplatePath = path32.resolve(process.cwd(), "server", "templates", "control.html");
   app2.get(["/control", "/gateway"], (_req, res) => {
     try {
       const html = fs26.readFileSync(controlTemplatePath, "utf-8");

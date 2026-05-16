@@ -12,6 +12,7 @@ const tests = [
   { file: "server/agent/__tests__/autonomyRuntime.test.ts" },
   { file: "server/agent/__tests__/appCoachChatAutonomy.test.ts" },
   { file: "server/agent/__tests__/topLevelApprovalContinuation.test.ts" },
+  { file: "server/agent/__tests__/reviewLoop.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },
   { file: "server/agent/__tests__/manifestFilter.assert.ts" },
   { file: "server/agent/__tests__/toolAwareRouting.assert.ts" },
