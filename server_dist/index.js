@@ -26603,7 +26603,11 @@ Description: ${description || "(none provided)"}
 Framework: ${framework}
 Goal: ${goal}
 
-Produce a phased build plan with 6-16 steps. Use exactly these phases:
+Produce the smallest complete phased build plan that satisfies the goal.
+For a simple landing page or static website, use 4-6 steps.
+For a full app with backend/data/auth, use 6-12 steps.
+Do not add backend/API/database work unless the goal explicitly needs it.
+Use only the relevant phases from this list:
 
 SCAFFOLD \u2014 create the project (npx create-next-app, vite, express-generator, etc.)
 IMPLEMENT_BACKEND \u2014 database, API routes, business logic
@@ -26612,8 +26616,9 @@ INTEGRATE \u2014 wire frontend to backend, environment config
 TEST_UI \u2014 start dev server, load in browser, screenshot, verify all flows
 PACKAGE \u2014 build for production, zip the output
 
-Each step must have specific acceptance_criteria. The TEST_UI phase must include at
-least 3 browser interaction steps (navigate, interact, screenshot, verify).
+Each step must have specific acceptance_criteria. The plan must include PACKAGE.
+Include TEST_UI for visual projects. For static frontend projects, SCAFFOLD,
+IMPLEMENT_FRONTEND, TEST_UI, and PACKAGE are usually enough.
 
 Use project_shell to run all commands. The project workspace will be created automatically.
 Do NOT use phases outside the 6 listed above.
@@ -26623,7 +26628,7 @@ Return JSON only:
   "plan": [
     {
       "step_id": "step_001",
-      "label": "Scaffold Next.js project",
+      "label": "Scaffold project",
       "phase": "SCAFFOLD",
       "acceptance_criteria": "package.json exists, npm run dev starts successfully"
     },
