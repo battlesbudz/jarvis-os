@@ -540,6 +540,46 @@ export function getExpectedWebhookUrl(): string | null {
   return `${getPublicBaseUrl()}/api/telegram/webhook`;
 }
 
+export function getExpectedMiniAppUrl(): string | null {
+  const configured = process.env.TELEGRAM_MINI_APP_URL || process.env.TELEGRAM_WEB_APP_URL;
+  return configured ? new URL(configured).origin : getPublicBaseUrl();
+}
+
+export async function setMiniAppMenuButton(url: string, chatId?: string): Promise<void> {
+  if (!BOT_TOKEN) return;
+  if (!/^https:\/\//i.test(url)) {
+    throw new Error(`Telegram Mini App URL must be HTTPS: ${url}`);
+  }
+
+  const res = await fetch(`${BASE}/setChatMenuButton`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(chatId ? { chat_id: chatId } : {}),
+      menu_button: {
+        type: 'web_app',
+        text: process.env.TELEGRAM_MINI_APP_BUTTON_TEXT || 'Open Jarvis',
+        web_app: { url },
+      },
+    }),
+  });
+  const data = await res.json() as { ok: boolean; description?: string };
+  if (!data.ok) {
+    throw new Error(`Failed to set Telegram Mini App button: ${data.description || JSON.stringify(data)}`);
+  }
+}
+
+export async function ensureMiniAppMenuButton(expectedUrl: string, chatId?: string): Promise<boolean> {
+  try {
+    await setMiniAppMenuButton(expectedUrl, chatId);
+    console.log('[Telegram] Mini App menu button set:', chatId ? `${expectedUrl} (chat ${chatId})` : expectedUrl);
+    return true;
+  } catch (err) {
+    console.error('[Telegram] Mini App menu button setup failed:', err);
+    return false;
+  }
+}
+
 export function isTelegramConfigured(): boolean {
   return !!BOT_TOKEN;
 }
