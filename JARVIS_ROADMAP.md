@@ -1,15 +1,15 @@
 # Jarvis Autonomous Agent Roadmap
 
-> Living document — updated as features are built and shipped.
-> Last updated: April 2026
+> Living document - updated as features are built and shipped.
+> Last updated: May 16, 2026
 
 ---
 
 ## Vision
 
-Transform Jarvis from a reactive coaching app into a fully autonomous AI agent that works, researches, builds, and acts on your behalf — even while you sleep. Inspired by OpenClaw's architecture but purpose-built for ADHD executive function coaching with your existing mobile app, calendar, email, and Telegram stack.
+Transform Jarvis from a reactive coaching app into a fully autonomous AI agent that works, researches, builds, and acts on your behalf even while you sleep. The target is still OpenClaw-style autonomy, but the current Jarvis implementation is now its own agent OS foundation: Express + Drizzle + Expo, a tool-calling harness, background jobs, reviewable deliverables, memory, channels, and daemon control.
 
-**Core principle:** Borrow heavily from OpenClaw's MIT-licensed source. Don't reinvent what's already been debugged.
+**Core principle:** autonomous work must produce reviewable outputs, respect approval boundaries, and stay observable.
 
 ---
 
@@ -17,229 +17,310 @@ Transform Jarvis from a reactive coaching app into a fully autonomous AI agent t
 
 | Phase | Name | Status |
 |-------|------|--------|
-| ✅ Foundation | What Jarvis can already do | COMPLETE |
-| ✅ Phase 1 | Action Engine — Give Jarvis Hands | COMPLETE |
-| ✅ Phase 2 | Autonomous Heartbeat — Act Without Being Asked | COMPLETE |
-| ⬜ Phase 3 | Sub-Agent Goals — Work While You Sleep | PENDING |
-| ⬜ Phase 4 | Memory & Learning — Gets Smarter Every Week | PENDING |
-| ⬜ Phase 5 | Multi-Channel & Computer Control | PENDING |
+| Foundation | What Jarvis could already do | Complete |
+| Phase 0 | Jarvis OS Foundation | Complete |
+| Phase 1 | Action Engine - Give Jarvis Hands | Complete |
+| Phase 2 | Autonomous Heartbeat - Act Without Being Asked | Complete |
+| Phase 3 | Sub-Agent Goals - Work While You Sleep | In progress |
+| Phase 4 | Memory & Learning - Gets Smarter Every Week | In progress |
+| Phase 5 | Multi-Channel & Computer Control | In progress |
+| Phase 6 | Self-Improving / Build-Agent Layer | In progress |
 
 ---
 
-## ✅ Already Complete (Foundation)
+## What Is Left
 
-- [x] Morning plan auto-generation (7 AM daily)
-- [x] Curiosity scanner (30-min proactive questions via Telegram)
-- [x] Gmail draft creation
-- [x] Web search via Tavily (on-demand)
-- [x] Gmail label actions (archive, star, trash, mark read)
-- [x] Momentum session sequencing (4-step ADHD nudge chain)
-- [x] Voice input/output (Whisper + TTS Alloy)
-- [x] Proactive meeting briefings (basic)
-- [x] Telegram bot with full task + email control
-- [x] XP, streaks, gamification
-- [x] User memory (basic categories)
-- [x] Energy-aware planning
-- [x] Inbox rules with auto-learning (3-dismiss suppression)
-- [x] Outlook calendar integration
-- [x] Google Calendar integration
-- [x] Multi-account Google (personal + work)
-- [x] Slack integration (basic)
-- [x] Image understanding in Telegram chat
-- [x] Pattern analysis (last 30 days)
-- [x] Weekly review endpoint
+- Harden full end-to-end production verification with real connected accounts: Google, Gmail, Drive, Slack, WhatsApp, Discord, Telegram, daemon, and database-backed jobs.
+- Finish the user-facing project tree experience for decomposed goals: goal phases, milestones, pacing, progress rollups, and daily-plan insertion.
+- Complete approval UX polish for all autonomous deliverables, especially edit/revise/approve flows across mobile, web, and external channels.
+- Make memory review and SOUL updates more controllable: clearer pending-review flows, manual correction, deletion, and explanation of why Jarvis learned something.
+- Finish relationship intelligence as a first-class product surface: richer people profiles, interaction timeline, and meeting/email context confidence.
+- Validate WhatsApp and Slack as full two-way channels in production, including slash commands, channel preferences, pairing, and fallback behavior.
+- Finish daemon safety hardening: per-action approvals, audit trails, sandbox defaults, timeout handling, and recovery from disconnected desktop/Android nodes.
+- Add stronger observability dashboards for autonomy decisions, job queue health, channel delivery, tool failures, memory extraction, and approval-gate outcomes.
+- Keep expanding tests from unit/assertion coverage into realistic integration tests that fake DB/job/channel dependencies and prove user workflows.
 
 ---
 
-## 🔵 Phase 1 — Action Engine (Give Jarvis Hands)
+## Completed Foundation
 
-> **Goal:** Upgrade the AI brain from one-shot responses to a real tool-calling loop. Give Jarvis the ability to produce real artifacts — documents, research, organized files.
-> **Borrowing from OpenClaw:** `src/agent/` tool-calling loop, `src/tools/` harness and permission model.
-
-### 1.1 — Tool-Use Loop in the AI Brain
-- [ ] Replace one-shot OpenAI calls with a proper while-loop tool-calling harness
-- [ ] Model can call tools, see results, call more tools, then respond
-- [ ] All existing tools (Tavily, Gmail, Calendar) wired into the new harness
-- [ ] Tool results fed back into context before final response
-
-### 1.2 — Autonomous Web Research Tool
-- [ ] Expand Tavily search so Jarvis can chain multiple searches independently
-- [ ] Jarvis can research topics from goals, calendar events, and commitments without prompting
-- [ ] Research results summarized and surfaced proactively
-- [ ] Source citations included in output
-
-### 1.3 — File / Document Creation Tool
-- [ ] Jarvis can generate and save formatted documents (meeting notes, summaries, plans, brainstorms)
-- [ ] Documents available for download from the app and sent via Telegram
-- [ ] Templates: meeting prep, weekly review, goal breakdown, brainstorm doc
-
-### 1.4 — Google Drive Integration
-- [ ] Connect to Google Drive via existing Google OAuth
-- [ ] Jarvis can create files in a designated "Jarvis Workspace" folder
-- [ ] Can read existing docs for context (reference docs you point it to)
-- [ ] File links sent back via Telegram and visible in the app
-
-**Status:** ⬜ Not started
+- [x] Morning plan auto-generation
+- [x] Curiosity scanner / proactive scheduler lineage
+- [x] Gmail draft creation and Gmail label actions
+- [x] Web search and research tools
+- [x] Momentum session sequencing
+- [x] Voice input/output and realtime voice route support
+- [x] Telegram bot with task, email, and coach control
+- [x] XP, streaks, gamification, energy-aware planning
+- [x] Inbox rules with auto-learning
+- [x] Outlook and Google Calendar integrations
+- [x] Multi-account Google support
+- [x] Basic Slack integration
+- [x] Image understanding in chat
+- [x] Pattern analysis and weekly review endpoint
 
 ---
 
-## ⬜ Phase 2 — Autonomous Heartbeat (Act Without Being Asked)
+## Phase 0 - Jarvis OS Foundation
 
-> **Goal:** Transform the existing curiosity scanner from a question-asker into a real action-taker.
-> **Borrowing from OpenClaw:** `src/gateway/heartbeat.ts`, HEARTBEAT.md reader/executor pattern, action-before-message decision tree.
+**Status:** Complete
 
-### 2.1 — HEARTBEAT Redesign
-- [ ] Replace curiosity scanner's question-only behavior with an action-first loop
-- [ ] Introduce a `JARVIS_HEARTBEAT.md` priority checklist Jarvis reads every cycle
-- [ ] On each tick: check list → decide → act or queue for review → optionally message you
-- [ ] Silent heartbeats (no Telegram message) when nothing needs attention
+This was added after the original roadmap to make the system dependable before deeper autonomy.
 
-### 2.2 — Autonomous Meeting Research Briefings
-- [ ] Before any calendar event with an external person, Jarvis auto-researches them
-- [ ] Checks email history, web search, and memories for context
-- [ ] Sends a 3-bullet brief to Telegram 30 minutes before the meeting — unprompted
-- [ ] Toggleable per meeting type
-
-### 2.3 — Autonomous Email Draft Queue
-- [ ] When Jarvis spots an email needing a reply (per inbox rules + commitments), it drafts it
-- [ ] Draft queued for your approval — one tap to send, one tap to discard
-- [ ] New "Draft Queue" section in the Inbox tab
-- [ ] Draft shown with AI reasoning ("You said you'd follow up on this by Friday")
-
-### 2.4 — End-of-Day Autonomous Wrap-Up
-- [ ] At a user-configurable time (default 9 PM), Jarvis runs an end-of-day cycle
-- [ ] Reviews completed tasks, updates XP and streaks
-- [ ] Writes a brief daily reflection to Google Drive journal
-- [ ] Sends an evening summary to Telegram
-
-**Status:** ⬜ Not started
-**Depends on:** Phase 1 complete
+- [x] `jarvis:doctor` readiness command
+- [x] `jarvis:check` command that runs doctor plus tests
+- [x] OS readiness contract in `server/diagnostics/osReadiness.ts`
+- [x] Deterministic autonomy policy in `server/agent/autonomyPolicy.ts`
+- [x] Autonomy runtime that routes obvious background work into jobs
+- [x] Smoke flow proving inline / queued / approval-gated behavior
+- [x] Operations runbook in `docs/operations/jarvis-os-runbook.md`
+- [x] Architecture note documenting the foundation layer
+- [x] Tests wired into `scripts/run-agent-tests.mjs`
 
 ---
 
-## ⬜ Phase 3 — Sub-Agent Goals (Work While You Sleep)
+## Phase 1 - Action Engine (Give Jarvis Hands)
 
-> **Goal:** Jarvis spins up focused background agents to research, plan, and produce deliverables autonomously.
-> **Borrowing from OpenClaw:** `sessions_spawn` pattern (`src/agent/subagent.ts`), background job queue (`src/gateway/jobs.ts`), ACP harness for isolated sub-sessions.
+**Status:** Complete
 
-### 3.1 — Goal Decomposition Engine
-- [ ] When a new goal is added, Jarvis breaks it into a project tree (phases → milestones → tasks)
-- [ ] Project tree visible in the Goals tab with progress tracking
-- [ ] Tasks from the tree automatically inserted into daily plans over time
-- [ ] Jarvis adjusts pacing based on your completion rate
+### 1.1 - Tool-Use Loop in the AI Brain
 
-### 3.2 — Background Job Runner
-- [ ] Persistent job queue system (survives server restarts)
-- [ ] Jobs can be: research tasks, document creation, email drafting, planning cycles
-- [ ] Jobs run asynchronously — notified when complete, not interrupted while running
-- [ ] Job status visible in app: queued → running → complete → delivered
+- [x] Tool-calling harness exists in `server/agent/harness.ts`
+- [x] Model can call tools, receive results, call more tools, and then answer
+- [x] Tool execution is gated through hooks, integration checks, approval receipts, and tool-error reporting
+- [x] Tool calls are recorded with duration, result, and finish reason
+- [x] Tool-aware routing exists for research, weather, calendar, email, memory, browser, GitHub, Railway/app-build, and code-writing requests
 
-### 3.3 — Sub-Agent Spawning
-- [ ] For complex goals, Jarvis spawns specialized sub-agents with narrow jobs
-- [ ] Agent types: Research Agent, Writing Agent, Planning Agent, Email Agent
-- [ ] Sub-agents report back to main Jarvis brain; main brain synthesizes and responds
-- [ ] Each sub-agent has its own isolated context window and tool access
+### 1.2 - Autonomous Web Research Tool
 
-### 3.4 — Deliverable Inbox
-- [ ] New section in the app: everything Jarvis produced autonomously appears here
-- [ ] Items: documents, research briefs, drafted emails, goal breakdowns, summaries
-- [ ] Each item has: approve / edit / discard actions
-- [ ] Nothing is sent or saved externally without your explicit approval
+- [x] Research tools include web search, web fetch, YouTube search/transcripts, video transcript, X search, and topic research
+- [x] Research jobs can run asynchronously through the agent job queue
+- [x] Research deliverables are saved and surfaced for review
+- [x] Source checks warn when research output lacks real cited URLs
+- [x] Deep research can decompose, run child research jobs, synthesize, and deliver one report
 
-**Status:** ⬜ Not started
-**Depends on:** Phase 2 complete
+### 1.3 - File / Document Creation Tool
 
----
+- [x] Document tools exist: create, list, read, export PDF, and presentation creation
+- [x] Writing jobs can generate PDF output
+- [x] Deliverables are persisted in the review inbox
+- [x] Generated files can be attached to channel notifications when supported
 
-## ⬜ Phase 4 — Memory & Learning (Gets Smarter Every Week)
+### 1.4 - Google Drive Integration
 
-> **Goal:** Real structured memory that evolves — Jarvis knows you better after 60 days than day 1.
-> **Borrowing from OpenClaw:** Hybrid vector+FTS memory layer (`src/memory/`), SOUL.md loader/injector (`src/agent/soul.ts`), memory category schema.
-
-### 4.1 — Structured Long-Term Memory Store
-- [ ] Upgrade the existing user memories system to a semantic memory store
-- [ ] Memory categories: Work Patterns, Communication Style, Energy Rhythms, Goals History, Key Relationships, Values, Blockers
-- [ ] Memory updated automatically after every session, plan completion, and heartbeat cycle
-- [ ] Memories ranked by recency and relevance — stale memories decay
-
-### 4.2 — Pattern Recognition Engine
-- [ ] After 30+ days of data, run a weekly pattern analysis (Sunday night)
-- [ ] Identifies: peak productivity windows, task avoidance patterns, energy triggers, streak breakers
-- [ ] Insights surfaced in the Insights tab and used to adjust scheduling
-- [ ] Jarvis explains its reasoning: "I scheduled deep work before noon because that's when you complete 73% of your hard tasks"
-
-### 4.3 — Relationship Intelligence
-- [ ] Build lightweight profiles on people in your calendar and email
-- [ ] Profile: role/context, email history summary, upcoming interactions, last touched
-- [ ] Used automatically in meeting briefings and email drafting
-- [ ] Viewable in app under a new "People" section
-
-### 4.4 — Living SOUL File
-- [ ] Jarvis maintains a `JARVIS_SOUL.md` — your values, preferences, behavioral rules, communication style
-- [ ] Updated automatically as Jarvis learns more about you
-- [ ] Viewable and editable in the app (Profile tab)
-- [ ] Injected into every AI prompt as the core identity context (replaces current "life context" field)
-
-**Status:** ⬜ Not started
-**Depends on:** Phase 3 complete
+- [x] Drive tools exist: create file, list files, read file
+- [x] Writing PDFs can be saved to Google Drive when Google tokens are available
+- [x] Weekly reviews and evening wrap-ups can save markdown/docs to Drive
+- [x] Deliverables support Drive links and a "save to Drive" action
 
 ---
 
-## ⬜ Phase 5 — Multi-Channel & Computer Control
+## Phase 2 - Autonomous Heartbeat (Act Without Being Asked)
 
-> **Goal:** Access Jarvis from wherever you naturally live. Optional local daemon for true computer control (Android + desktop, no Apple).
-> **Borrowing from OpenClaw:** Channel adapter interface (`src/channels/`), node/device pairing WebSocket protocol (`src/devices/`), daemon gateway architecture.
+**Status:** Complete
 
-### 5.1 — WhatsApp Channel
-- [ ] Add WhatsApp as a second messaging channel alongside Telegram
-- [ ] Full Jarvis experience: task management, coach chat, briefings, approvals
-- [ ] Uses WhatsApp Business API or Twilio WhatsApp gateway
-- [ ] User can choose preferred channel per notification type
+### 2.1 - HEARTBEAT Redesign
 
-### 5.2 — Slack Personal Integration (Full Two-Way)
-- [ ] Upgrade existing Slack connection to a full two-way channel
-- [ ] Jarvis posts briefings, deliverables, and reminders to your personal Slack
-- [ ] Receives and responds to DMs within Slack workspace
-- [ ] Slash commands: `/jarvis plan`, `/jarvis brain-dump`, `/jarvis status`
+- [x] `JARVIS_HEARTBEAT.md` action checklist exists
+- [x] Heartbeat runs on a five-minute interval when Telegram is configured
+- [x] Silent-by-default behavior is documented and implemented
+- [x] Heartbeat does not duplicate morning brief ownership
+- [x] Activation planner informs heartbeat without blocking deterministic action jobs
 
-### 5.3 — Optional Local Daemon (OpenClaw Bridge)
-- [ ] Lightweight local Node.js script that runs on your Windows/Linux/Android machine
-- [ ] Connects to Jarvis's cloud API via WebSocket (mirrors OpenClaw's node protocol)
-- [ ] Gives Jarvis ability to: run shell commands, read/write local files, control desktop apps
-- [ ] Strictly opt-in, sandboxed, with explicit permission per action type
-- [ ] Android and desktop only — no Apple/iOS
+### 2.2 - Autonomous Meeting Research Briefings
 
-**Status:** ⬜ Not started
-**Depends on:** Phase 4 complete
+- [x] Calendar events 30-60 minutes ahead are scanned
+- [x] External attendees are detected
+- [x] Email history, memory, people records, and light web search are used for context
+- [x] Three-bullet meeting briefs are sent through notification preferences
+- [x] Dedupe prevents repeated briefs for the same event/day
+
+### 2.3 - Autonomous Email Draft Queue
+
+- [x] Reply-needed inbox items are detected from email alert classifier output
+- [x] Reply drafts are generated and stored in `email_drafts`
+- [x] Draft queue appears in the Inbox tab
+- [x] Approval saves the reply into Gmail drafts
+- [x] Draft nudges notify the user without auto-sending
+
+### 2.4 - End-of-Day Autonomous Wrap-Up
+
+- [x] Configurable evening wrap-up hour exists
+- [x] Wrap-up reviews daily plan completions, stats, streaks, and XP
+- [x] Summary is sent through user notification preferences
+- [x] Reflection can be saved to the user's Jarvis Workspace Drive folder
+- [x] Dedupe prevents duplicate wrap-ups per day
+
+### 2.5 - Additional Heartbeat Work Already Added
+
+- [x] Nervous System watch-topic signal scan
+- [x] Dream Cycle insight synthesis
+- [x] Prediction validation
+- [x] Emotional state recomputation
+- [x] Gut anomaly scan
+- [x] Hourly memory and people ingestion pass
+- [x] Agent health checks for stuck loop agents and platform liveness
 
 ---
 
-## OpenClaw Code Reference
+## Phase 3 - Sub-Agent Goals (Work While You Sleep)
 
-Key OpenClaw source paths to adapt (MIT licensed — keep `Copyright (c) 2025 Peter Steinberger`):
+**Status:** In progress
 
-| What to borrow | OpenClaw path | Jarvis phase |
-|---|---|---|
-| Tool-calling agent loop | `src/agent/` | Phase 1.1 |
-| Tool harness & permission model | `src/tools/` | Phase 1.1 |
-| Heartbeat scheduler | `src/gateway/heartbeat.ts` | Phase 2.1 |
-| HEARTBEAT.md reader/executor | `src/gateway/` | Phase 2.1 |
-| Sub-agent spawning | `src/agent/subagent.ts` | Phase 3.3 |
-| Background job queue | `src/gateway/jobs.ts` | Phase 3.2 |
-| Memory layer (SQLite + FTS5) | `src/memory/` | Phase 4.1 |
-| SOUL.md loader/injector | `src/agent/soul.ts` | Phase 4.4 |
-| Channel adapter interface | `src/channels/` | Phase 5.1–5.2 |
-| Node/device WebSocket protocol | `src/devices/` | Phase 5.3 |
+### 3.1 - Goal Decomposition Engine
+
+- [x] Goal decomposition module exists in `server/agent/goalDecomposer.ts`
+- [x] `goal_decompose` jobs are supported by the job queue
+- [x] Goal card and goal tree UI components exist
+- [ ] Finish the full Goals tab project-tree workflow with phase/milestone/task editing
+- [ ] Automatically insert decomposed tasks into daily plans over time
+- [ ] Adjust pacing based on completion rate and energy patterns
+
+### 3.2 - Background Job Runner
+
+- [x] Persistent `agent_jobs` table exists
+- [x] Job worker claims queued jobs, recovers stale running jobs, and handles cancellation
+- [x] Jobs support research, deep research, writing, planning, email, weekly pattern, goal decomposition, named-agent tasks, and build-feature work
+- [x] Job status is visible in the Inbox tab
+- [x] Retry and cancel flows exist for jobs
+- [ ] Add richer job observability and admin/debug screens
+- [ ] Add stronger production recovery tests for worker restarts and partial failures
+
+### 3.3 - Sub-Agent Spawning
+
+- [x] Sub-agent runtime exists in `server/agent/subagents.ts`
+- [x] `spawn_subagent`, `queue_background_job`, `sessions_*`, and named-agent tools exist
+- [x] Specialized agent types include research, deep research, writing, planning, email, build feature, and named/custom agents
+- [x] Agent manager, custom agent routes, and Discord/Telegram channel assignment exist
+- [ ] Finish isolated context and permissions UX for custom agents
+- [ ] Add clearer "main Jarvis synthesized this from sub-agents" user-facing trace
+
+### 3.4 - Deliverable Inbox
+
+- [x] `deliverables` table exists
+- [x] Inbox tab surfaces deliverables, active jobs, failed jobs, email drafts, approval gates, and auto-handled items
+- [x] Deliverables support approve, discard, edit, revise, and save-to-Drive flows
+- [x] Approval gates are stored as deliverables and can continue approved work
+- [ ] Polish mobile/web UX for long deliverables and revision history
+- [ ] Add stronger tests around approve/edit/revise across deliverable types
+
+---
+
+## Phase 4 - Memory & Learning (Gets Smarter Every Week)
+
+**Status:** In progress
+
+### 4.1 - Structured Long-Term Memory Store
+
+- [x] `user_memories` has typed categories, memory tier/type, confidence, relevance, review state, source tracking, access count, expiry, and optional embedding
+- [x] Hybrid retrieval uses full-text rank, optional embeddings, relevance, tier-recency boost, and access boost
+- [x] Memory extraction and review-gated promotion exist
+- [x] Pending memory review is surfaced in the tab badge
+- [ ] Finish user-facing memory correction, deletion, and provenance explanation flows
+- [ ] Backfill and monitor embeddings consistently in production
+
+### 4.2 - Pattern Recognition Engine
+
+- [x] Weekly pattern job reviews 30 days of completions, brain dumps, chat, Telegram, and energy check-ins
+- [x] High-confidence patterns are promoted into long-term memory
+- [x] Weekly review can be saved to Drive
+- [x] Insights and pattern surfaces exist in app screens
+- [ ] Make pattern explanations more transparent in daily scheduling decisions
+- [ ] Add confidence calibration and "this pattern is wrong" feedback loops
+
+### 4.3 - Relationship Intelligence
+
+- [x] `people` table exists
+- [x] People sync from calendar attendees and recent Gmail senders exists
+- [x] Meeting briefs include matching people records
+- [x] People are visible/editable in the Profile tab
+- [ ] Build richer relationship timelines and source-backed summaries
+- [ ] Use people profiles more consistently in email drafting and planning
+
+### 4.4 - Living SOUL File
+
+- [x] Root `SOUL.md` and `agents/SOUL.md` exist
+- [x] DB-backed SOUL table exists
+- [x] SOUL regeneration uses memory, people, weekly insights, and living context
+- [x] AI prompt context now treats SOUL as the authoritative "about this person" source when available
+- [x] Profile tab surfaces coach/memory context
+- [ ] Finish explicit user controls for editing, approving, and rolling back SOUL updates
+
+---
+
+## Phase 5 - Multi-Channel & Computer Control
+
+**Status:** In progress
+
+### 5.1 - WhatsApp Channel
+
+- [x] WhatsApp channel adapter exists through Twilio
+- [x] WhatsApp webhook supports pairing codes and coach routing
+- [x] WhatsApp can be selected in notification preferences
+- [x] Profile/settings UI includes WhatsApp connection state
+- [ ] Validate full production onboarding and two-way behavior
+- [ ] Add richer WhatsApp attachment/deliverable handling beyond "open the app"
+
+### 5.2 - Slack Personal Integration (Full Two-Way)
+
+- [x] Slack channel adapter exists
+- [x] Slack events and slash command webhook routes exist
+- [x] Slack OAuth/connection UI is present
+- [x] Slack DMs can route to coach handling
+- [ ] Finish slash command coverage and production validation
+- [ ] Improve Slack channel-specific deliverable and approval flows
+
+### 5.3 - Optional Local Daemon (OpenClaw Bridge)
+
+- [x] Desktop daemon package exists under `daemon/`
+- [x] Android daemon project exists under `android-daemon/`
+- [x] Daemon channel and pairing routes exist
+- [x] Desktop daemon operations include shell, file read/write/list, and native notification
+- [x] Android daemon actions include screen understanding, tap/type/swipe, forms, button training, and wake-word/Talk Mode integration
+- [x] Profile/settings UI exposes daemon pairing and per-action permissions
+- [ ] Harden audit logs, approvals, sandbox defaults, and recovery behavior before treating daemon control as fully production-safe
+
+---
+
+## Phase 6 - Self-Improving / Build-Agent Layer
+
+**Status:** In progress
+
+This phase was not in the original roadmap, but the repo now includes meaningful build-agent capability.
+
+- [x] `build_feature`, `test_tool`, `delegate_to_codex`, `project_shell`, `deploy_app`, `self_diagnose`, `self_heal`, and code proposal tools exist
+- [x] Capability gap detection exists for apology/deflection patterns
+- [x] Self-repair history and code proposal app screens exist
+- [x] Model routing, provider fallback, Codex OAuth routing, and model usage tracking exist
+- [x] Agent approval gates protect high-risk actions
+- [ ] Keep code-writing/build tools scoped and heavily approval-gated
+- [ ] Add clearer UI for reviewing proposed code changes before application
+- [ ] Expand integration tests around build-feature and self-heal flows
+
+---
+
+## OpenClaw Reference Status
+
+| Original reference | Jarvis status |
+|---|---|
+| Tool-calling agent loop | Implemented in `server/agent/harness.ts` |
+| Tool harness & permission model | Implemented across `server/agent/tools/`, `agentApproval.ts`, `toolCallHooks.ts`, and approval receipts |
+| Heartbeat scheduler | Implemented in `server/heartbeat.ts` |
+| HEARTBEAT.md reader/executor | Implemented with `JARVIS_HEARTBEAT.md` |
+| Sub-agent spawning | Implemented in `server/agent/subagents.ts` and related tools |
+| Background job queue | Implemented in `server/agent/jobQueue.ts` and `agent_jobs` |
+| Memory layer | Implemented in `server/memory/` and memory tables |
+| SOUL loader/injector | Implemented through root/agent SOUL files and `server/memory/promptContext.ts` |
+| Channel adapters | Implemented in `server/channels/` for Telegram, WhatsApp, Slack, Discord, in-app, webchat, daemon |
+| Node/device protocol | Implemented through daemon bridge, daemon package, and Android daemon |
 
 ---
 
 ## Notes & Decisions
 
-- **No Apple/iOS features** — Android, web, Windows/Linux only for local daemon
-- **Phase order is strict** — each phase's capabilities are dependencies for the next
-- **Deliverable inbox (Phase 3.4) is a hard gate** — nothing autonomous is sent externally without your explicit approval
-- **OpenClaw code is adapted, not copied verbatim** — Jarvis stays on Express + Drizzle + Expo stack
+- Android, web, Windows, and Linux remain the priority surfaces.
+- Autonomous work should land in reviewable deliverables unless the user has explicitly approved the external action.
+- Email sends, calendar changes, public posts, daemon actions, deploys, purchases, compliance/business-finance actions, memory rewrites, and code changes require approval boundaries.
+- Phase order is no longer strictly linear because later-phase primitives have already been partially implemented.
+- The next best work is not "start Phase 3"; it is hardening the in-progress Phase 3-6 surfaces into tested, observable product flows.
 
----
-
-*To update this file: switch to Build mode and ask Jarvis agent to mark a feature complete or adjust the plan.*

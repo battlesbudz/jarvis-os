@@ -65493,6 +65493,174 @@ var init_inboxActions = __esm({
   }
 });
 
+// server/agent/reviewLoop.ts
+var reviewLoop_exports = {};
+__export(reviewLoop_exports, {
+  attachDeliverableReviewState: () => attachDeliverableReviewState,
+  attachJobReviewState: () => attachJobReviewState,
+  buildDeliverableReviewState: () => buildDeliverableReviewState,
+  buildJobReviewState: () => buildJobReviewState
+});
+function asRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function previewText(...candidates) {
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue;
+    const normalized = candidate.replace(/\s+/g, " ").trim();
+    if (normalized) return normalized.slice(0, 280);
+  }
+  return "";
+}
+function buildJobReviewState(job) {
+  const input = asRecord(job.input);
+  const originChannel = typeof input.originChannel === "string" ? input.originChannel : void 0;
+  const autonomyPolicy = input.autonomyPolicy === true;
+  const preview = previewText(job.error, job.prompt, job.title);
+  if (job.status === "queued") {
+    return {
+      stage: "queued",
+      label: "Queued",
+      nextAction: "Wait or cancel",
+      canCancel: true,
+      canRetry: false,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  if (job.status === "running" || job.status === "cancelling") {
+    return {
+      stage: "in_progress",
+      label: job.status === "cancelling" ? "Cancelling" : "Running",
+      nextAction: job.status === "cancelling" ? "Waiting for cancellation" : "Wait or cancel",
+      canCancel: job.status === "running",
+      canRetry: false,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  if (job.status === "failed") {
+    return {
+      stage: "needs_retry",
+      label: "Failed",
+      nextAction: "Retry job",
+      canCancel: false,
+      canRetry: true,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  if (job.status === "cancelled") {
+    return {
+      stage: "cancelled",
+      label: "Cancelled",
+      nextAction: "Retry if still needed",
+      canCancel: false,
+      canRetry: true,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  if (job.status === "complete") {
+    return {
+      stage: "review_ready",
+      label: "Ready for review",
+      nextAction: "Open deliverable",
+      canCancel: false,
+      canRetry: false,
+      preview,
+      originChannel,
+      autonomyPolicy
+    };
+  }
+  return {
+    stage: "reviewed",
+    label: "Reviewed",
+    nextAction: "No action needed",
+    canCancel: false,
+    canRetry: false,
+    preview,
+    originChannel,
+    autonomyPolicy
+  };
+}
+function buildDeliverableReviewState(deliverable) {
+  const meta = asRecord(deliverable.meta);
+  const preview = previewText(deliverable.summary, deliverable.body, deliverable.title);
+  const isPending = deliverable.status === "pending_approval";
+  const isApprovalGate = deliverable.type === "approval_gate";
+  const approvalGateId = typeof meta.gateId === "string" ? meta.gateId : void 0;
+  if (isPending && isApprovalGate) {
+    return {
+      stage: "approval_required",
+      label: "Approval required",
+      nextAction: "Approve or decline",
+      canApprove: true,
+      canEdit: false,
+      canRevise: false,
+      canDiscard: false,
+      canReject: true,
+      preview,
+      approvalGateId
+    };
+  }
+  if (isPending) {
+    return {
+      stage: "needs_review",
+      label: "Needs review",
+      nextAction: "Approve, revise, edit, or discard",
+      canApprove: true,
+      canEdit: true,
+      canRevise: true,
+      canDiscard: true,
+      canReject: false,
+      preview,
+      approvalGateId
+    };
+  }
+  if (deliverable.status === "discarded" || deliverable.status === "rejected") {
+    return {
+      stage: "discarded",
+      label: deliverable.status === "rejected" ? "Declined" : "Discarded",
+      nextAction: "No action needed",
+      canApprove: false,
+      canEdit: false,
+      canRevise: false,
+      canDiscard: false,
+      canReject: false,
+      preview,
+      approvalGateId
+    };
+  }
+  return {
+    stage: "reviewed",
+    label: "Reviewed",
+    nextAction: "No action needed",
+    canApprove: false,
+    canEdit: false,
+    canRevise: false,
+    canDiscard: false,
+    canReject: false,
+    preview,
+    approvalGateId
+  };
+}
+function attachJobReviewState(job) {
+  return { ...job, review: buildJobReviewState(job) };
+}
+function attachDeliverableReviewState(deliverable) {
+  return { ...deliverable, review: buildDeliverableReviewState(deliverable) };
+}
+var init_reviewLoop = __esm({
+  "server/agent/reviewLoop.ts"() {
+    "use strict";
+  }
+});
+
 // server/intelligence/gut.ts
 var gut_exports = {};
 __export(gut_exports, {
@@ -72849,7 +73017,8 @@ Reply directly to this message with your answer and I'll take it from there.
       const status = typeof req.query.status === "string" ? req.query.status : null;
       const where = status ? and81(eq109(agentJobs.userId, userId), eq109(agentJobs.status, status)) : eq109(agentJobs.userId, userId);
       const jobs = await db.select().from(agentJobs).where(where).orderBy(desc38(agentJobs.createdAt)).limit(limit);
-      res.json(jobs);
+      const { attachJobReviewState: attachJobReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
+      res.json(jobs.map(attachJobReviewState2));
     } catch (err2) {
       console.error("Error listing agent jobs:", err2);
       res.status(500).json({ error: "Failed to list jobs" });
@@ -72865,7 +73034,8 @@ Reply directly to this message with your answer and I'll take it from there.
           sql39`${agentJobs.status} IN ('queued', 'running', 'cancelling')`
         )
       ).orderBy(asc7(agentJobs.createdAt)).limit(20);
-      res.json(jobs);
+      const { attachJobReviewState: attachJobReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
+      res.json(jobs.map(attachJobReviewState2));
     } catch (err2) {
       console.error("Error listing active agent jobs:", err2);
       res.status(500).json({ error: "Failed to list active jobs" });
@@ -72937,11 +73107,13 @@ Reply directly to this message with your answer and I'll take it from there.
             sql39`${deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
           )
         ).orderBy(desc38(deliverables.createdAt)).limit(20);
-        return res.json(items2);
+        const { attachDeliverableReviewState: attachDeliverableReviewState3 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
+        return res.json(items2.map(attachDeliverableReviewState3));
       }
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
       const items = await db.select().from(deliverables).where(and81(eq109(deliverables.userId, userId), eq109(deliverables.status, status))).orderBy(desc38(deliverables.createdAt)).limit(50);
-      res.json(items);
+      const { attachDeliverableReviewState: attachDeliverableReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
+      res.json(items.map(attachDeliverableReviewState2));
     } catch (err2) {
       console.error("Error listing deliverables:", err2);
       res.status(500).json({ error: "Failed to list deliverables" });
