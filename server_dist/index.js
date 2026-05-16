@@ -20794,13 +20794,8 @@ async function handleMobileAuthCallback(req, res) {
     const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
     const pendingRows = await db.select().from(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, sessionId)).limit(1);
     const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
-    const bindNonce = readCookie(req, BIND_COOKIE_NAME);
-    let bindHash = NATIVE_BIND_HASH;
-    if (pending && bindNonce && timingSafeEqual2(pending.bindHash, sha256(bindNonce))) {
-      bindHash = pending.bindHash;
-    }
     if (pending && timingSafeEqual2(pending.stateHash, sha256(state))) {
-      await db.update(mobileAuthSessions).set({ token: completeTokenValue(pending.pollHash, bindHash, token), expiresAt }).where(eq20(mobileAuthSessions.sessionId, sessionId));
+      await db.update(mobileAuthSessions).set({ token: completeTokenValue(pending.pollHash, NATIVE_BIND_HASH, token), expiresAt }).where(eq20(mobileAuthSessions.sessionId, sessionId));
     }
     return res.send(successHtml(token));
   } catch (err2) {
