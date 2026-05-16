@@ -43,6 +43,7 @@ yarn-error.*
 # runtime cache files
 .ytdlp-flags.json
 .jarvis/
+.worktrees/
 
 # Playwright test artifacts
 test-results/
