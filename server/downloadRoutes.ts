@@ -6,9 +6,10 @@ import { eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getUserIdFromRequest } from "./auth";
 import { validateDownloadToken } from "./agent/appDelivery";
+import { getProjectDownloadsDir } from "./projectStorage";
 
 const APK_PATH = path.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
-const DOWNLOADS_DIR = path.join(process.cwd(), "server", "static", "downloads");
+const DOWNLOADS_DIR = getProjectDownloadsDir();
 
 function getFallbackUrl(): string | null {
   return process.env.ANDROID_APK_URL ?? null;

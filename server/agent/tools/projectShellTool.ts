@@ -18,6 +18,7 @@ import type { AgentTool } from "../types";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { getProjectWorkspaceDir, getProjectWorkspaceRoot } from "../../projectStorage";
 
 const ALLOWED_EXECUTABLES = new Set([
   "npm", "npx", "node", "git", "zip", "unzip",
@@ -75,7 +76,7 @@ function removePidFile(workspaceDir: string): void {
  * processes, and removes the files so ports are not leaked across restarts.
  */
 export function cleanupOrphanedDevServers(): void {
-  const projectsRoot = path.join(process.cwd(), "projects");
+  const projectsRoot = getProjectWorkspaceRoot();
   if (!fs.existsSync(projectsRoot)) return;
 
   let entries: string[];
@@ -403,7 +404,7 @@ The tool returns the local URL where the app is running so you can immediately t
 
     let workspaceDir = project.workspaceDir;
     if (!workspaceDir) {
-      workspaceDir = path.join(process.cwd(), "projects", projectId);
+      workspaceDir = getProjectWorkspaceDir(projectId);
       fs.mkdirSync(workspaceDir, { recursive: true });
       await db
         .update(schema.jarvisProjects)

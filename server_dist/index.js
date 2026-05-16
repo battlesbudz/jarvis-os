@@ -4858,10 +4858,10 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   let patched = false;
   if (!clientProto[CLIENT_POST_PATCHED] && typeof clientProto.post === "function") {
     const originalPost = clientProto.post;
-    clientProto.post = function patchedPost(path31, opts) {
+    clientProto.post = function patchedPost(path32, opts) {
       const body = opts?.body;
-      if (path31 !== "/chat/completions" || !shouldRoute(body)) {
-        return originalPost.call(this, path31, opts);
+      if (path32 !== "/chat/completions" || !shouldRoute(body)) {
+        return originalPost.call(this, path32, opts);
       }
       return routeBody(body, opts?.signal, postLogPrefix);
     };
@@ -4870,10 +4870,10 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   }
   if (!clientProto[CLIENT_METHOD_PATCHED] && typeof clientProto.methodRequest === "function") {
     const originalMethodRequest = clientProto.methodRequest;
-    clientProto.methodRequest = function patchedMethodRequest(method, path31, opts) {
+    clientProto.methodRequest = function patchedMethodRequest(method, path32, opts) {
       const body = opts?.body;
-      if (method !== "post" || path31 !== "/chat/completions" || !shouldRoute(body)) {
-        return originalMethodRequest.call(this, method, path31, opts);
+      if (method !== "post" || path32 !== "/chat/completions" || !shouldRoute(body)) {
+        return originalMethodRequest.call(this, method, path32, opts);
       }
       return routeBody(body, opts?.signal, methodLogPrefix);
     };
@@ -4882,9 +4882,9 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   }
   return patched;
 }
-function optionalRequire(path31) {
+function optionalRequire(path32) {
   try {
-    return require2(path31);
+    return require2(path32);
   } catch {
     return null;
   }
@@ -24777,6 +24777,30 @@ var init_jobClient = __esm({
   }
 });
 
+// server/projectStorage.ts
+import * as fs7 from "fs";
+import * as path8 from "path";
+function getDataRoot() {
+  const configured = process.env.JARVIS_DATA_DIR?.trim();
+  if (configured) return configured;
+  if (fs7.existsSync("/data")) return "/data";
+  return process.cwd();
+}
+function getProjectWorkspaceRoot() {
+  return path8.join(getDataRoot(), "projects");
+}
+function getProjectWorkspaceDir(projectId) {
+  return path8.join(getProjectWorkspaceRoot(), projectId);
+}
+function getProjectDownloadsDir() {
+  return path8.join(getDataRoot(), "project-downloads");
+}
+var init_projectStorage = __esm({
+  "server/projectStorage.ts"() {
+    "use strict";
+  }
+});
+
 // server/agent/tools/projectShellTool.ts
 var projectShellTool_exports = {};
 __export(projectShellTool_exports, {
@@ -24785,40 +24809,40 @@ __export(projectShellTool_exports, {
   stopProjectServer: () => stopProjectServer
 });
 import { spawn as spawn4, execSync } from "child_process";
-import * as fs7 from "fs";
-import * as path8 from "path";
+import * as fs8 from "fs";
+import * as path9 from "path";
 import * as os3 from "os";
 import { eq as eq34 } from "drizzle-orm";
 function pidFilePath(workspaceDir) {
-  return path8.join(workspaceDir, ".jarvis-dev-server.json");
+  return path9.join(workspaceDir, ".jarvis-dev-server.json");
 }
 function writePidFile(workspaceDir, pid, port) {
   try {
-    fs7.writeFileSync(pidFilePath(workspaceDir), JSON.stringify({ pid, port }), "utf8");
+    fs8.writeFileSync(pidFilePath(workspaceDir), JSON.stringify({ pid, port }), "utf8");
   } catch {
   }
 }
 function removePidFile(workspaceDir) {
   try {
-    fs7.unlinkSync(pidFilePath(workspaceDir));
+    fs8.unlinkSync(pidFilePath(workspaceDir));
   } catch {
   }
 }
 function cleanupOrphanedDevServers() {
-  const projectsRoot = path8.join(process.cwd(), "projects");
-  if (!fs7.existsSync(projectsRoot)) return;
+  const projectsRoot = getProjectWorkspaceRoot();
+  if (!fs8.existsSync(projectsRoot)) return;
   let entries;
   try {
-    entries = fs7.readdirSync(projectsRoot);
+    entries = fs8.readdirSync(projectsRoot);
   } catch {
     return;
   }
   for (const entry of entries) {
-    const pidFile = path8.join(projectsRoot, entry, ".jarvis-dev-server.json");
-    if (!fs7.existsSync(pidFile)) continue;
+    const pidFile = path9.join(projectsRoot, entry, ".jarvis-dev-server.json");
+    if (!fs8.existsSync(pidFile)) continue;
     let data = {};
     try {
-      data = JSON.parse(fs7.readFileSync(pidFile, "utf8"));
+      data = JSON.parse(fs8.readFileSync(pidFile, "utf8"));
     } catch {
     }
     if (data.pid) {
@@ -24829,7 +24853,7 @@ function cleanupOrphanedDevServers() {
       }
     }
     try {
-      fs7.unlinkSync(pidFile);
+      fs8.unlinkSync(pidFile);
     } catch {
     }
   }
@@ -24863,24 +24887,24 @@ function hasCdOutside(command, workspaceDir) {
   const cdMatch = command.match(/(?:^|\s)cd\s+([^\s;&|]+)/);
   if (!cdMatch) return false;
   const target = cdMatch[1];
-  const resolvedWorkspace = path8.resolve(workspaceDir);
-  const resolvedTarget = path8.resolve(workspaceDir, target);
-  return !resolvedTarget.startsWith(resolvedWorkspace + path8.sep) && resolvedTarget !== resolvedWorkspace;
+  const resolvedWorkspace = path9.resolve(workspaceDir);
+  const resolvedTarget = path9.resolve(workspaceDir, target);
+  return !resolvedTarget.startsWith(resolvedWorkspace + path9.sep) && resolvedTarget !== resolvedWorkspace;
 }
 function looksLikePath(value) {
   return value.startsWith("/") || value === ".." || value.startsWith("../") || value.includes("/..") || value.startsWith("~/");
 }
 function resolvePathValue(value, workspaceDir) {
   if (value.startsWith("~/")) {
-    return path8.resolve(os3.homedir(), value.slice(2));
+    return path9.resolve(os3.homedir(), value.slice(2));
   }
-  return path8.resolve(workspaceDir, value);
+  return path9.resolve(workspaceDir, value);
 }
 function hasUnsafePathArgs(command, workspaceDir) {
   const tokens = command.trim().split(/\s+/).slice(1);
-  const resolvedWorkspace = path8.resolve(workspaceDir);
+  const resolvedWorkspace = path9.resolve(workspaceDir);
   function isOutside(resolved) {
-    return !resolved.startsWith(resolvedWorkspace + path8.sep) && resolved !== resolvedWorkspace;
+    return !resolved.startsWith(resolvedWorkspace + path9.sep) && resolved !== resolvedWorkspace;
   }
   for (const token of tokens) {
     if (!token) continue;
@@ -24993,6 +25017,7 @@ var init_projectShellTool = __esm({
     "use strict";
     init_db();
     init_schema();
+    init_projectStorage();
     ALLOWED_EXECUTABLES = /* @__PURE__ */ new Set([
       "npm",
       "npx",
@@ -25073,12 +25098,12 @@ The tool returns the local URL where the app is running so you can immediately t
         }
         let workspaceDir = project.workspaceDir;
         if (!workspaceDir) {
-          workspaceDir = path8.join(process.cwd(), "projects", projectId);
-          fs7.mkdirSync(workspaceDir, { recursive: true });
+          workspaceDir = getProjectWorkspaceDir(projectId);
+          fs8.mkdirSync(workspaceDir, { recursive: true });
           await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq34(jarvisProjects.id, projectId));
         }
-        if (!fs7.existsSync(workspaceDir)) {
-          fs7.mkdirSync(workspaceDir, { recursive: true });
+        if (!fs8.existsSync(workspaceDir)) {
+          fs8.mkdirSync(workspaceDir, { recursive: true });
         }
         const executable = parseExecutable(command);
         if (!ALLOWED_EXECUTABLES.has(executable)) {
@@ -26517,8 +26542,8 @@ __export(appProjectRunner_exports, {
   runAppProjectSession: () => runAppProjectSession,
   startAppProject: () => startAppProject
 });
-import * as path9 from "path";
-import * as fs8 from "fs";
+import * as path10 from "path";
+import * as fs9 from "fs";
 import { spawnSync } from "child_process";
 import * as os4 from "os";
 import { eq as eq35, asc as asc2 } from "drizzle-orm";
@@ -26534,8 +26559,8 @@ function appToolGroupsForPhase(phase) {
 async function runDeterministicVerification(phase, workspaceDir, reply, projectId) {
   const p = phase.toUpperCase();
   if (p.startsWith("IMPLEMENT") || p === "INTEGRATE") {
-    const tsconfigPath = path9.join(workspaceDir, "tsconfig.json");
-    if (!fs8.existsSync(tsconfigPath)) return null;
+    const tsconfigPath = path10.join(workspaceDir, "tsconfig.json");
+    if (!fs9.existsSync(tsconfigPath)) return null;
     const result = spawnSync("npx", ["tsc", "--noEmit", "--skipLibCheck"], {
       cwd: workspaceDir,
       env: { ...process.env, HOME: os4.homedir() },
@@ -26552,10 +26577,10 @@ ${errors}`;
   if (p === "TEST_UI") {
     const screenshotCount = projectId ? getAndClearAppProjectScreenshotCount(projectId) : 0;
     if (screenshotCount === 0) {
-      const packagePath = path9.join(workspaceDir, "package.json");
-      if (!fs8.existsSync(packagePath)) return null;
+      const packagePath = path10.join(workspaceDir, "package.json");
+      if (!fs9.existsSync(packagePath)) return null;
       try {
-        const pkg = JSON.parse(fs8.readFileSync(packagePath, "utf8"));
+        const pkg = JSON.parse(fs9.readFileSync(packagePath, "utf8"));
         if (pkg.scripts?.build) {
           const result = spawnSync("npm", ["run", "build"], {
             cwd: workspaceDir,
@@ -26648,7 +26673,7 @@ function buildAppStepPrompt(project, step, sessionHistory, userAnswer) {
   const completedSteps = plan.filter((s) => s.status === "complete");
   const completedSummary = completedSteps.length > 0 ? completedSteps.map((s) => `- ${s.label}: ${s.output?.slice(0, 200) || "completed"}`).join("\n") : "(none yet)";
   const devPort = project.devServerPort;
-  const workspaceDir = project.workspaceDir ?? path9.join(process.cwd(), "projects", project.id);
+  const workspaceDir = project.workspaceDir ?? getProjectWorkspaceDir(project.id);
   const framework = project.appFramework ?? "custom";
   const answerContext = userAnswer ? `
 
@@ -26731,7 +26756,6 @@ async function sendAppProjectQuestion(userId, originChannel, message) {
   return {};
 }
 async function startAppProject(input) {
-  const workspaceDir = path9.join(process.cwd(), "projects", "placeholder");
   const [project] = await db.insert(jarvisProjects).values({
     userId: input.userId,
     title: input.title,
@@ -26744,8 +26768,8 @@ async function startAppProject(input) {
     updatedAt: /* @__PURE__ */ new Date()
   }).returning({ id: jarvisProjects.id });
   const projectId = project.id;
-  const realWorkspaceDir = path9.join(process.cwd(), "projects", projectId);
-  fs8.mkdirSync(realWorkspaceDir, { recursive: true });
+  const realWorkspaceDir = getProjectWorkspaceDir(projectId);
+  fs9.mkdirSync(realWorkspaceDir, { recursive: true });
   await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
   console.log(`[AppProjectRunner] startAppProject: created project ${projectId} for user ${input.userId} framework=${input.framework}`);
   await submitAgentJob2({
@@ -26819,7 +26843,7 @@ ${project.questionPending}`
           messages: [
             {
               role: "system",
-              content: `You are Jarvis, building a standalone app. Your workspace is at ${project.workspaceDir ?? path9.join(process.cwd(), "projects", projectId)}.
+              content: `You are Jarvis, building a standalone app. Your workspace is at ${project.workspaceDir ?? getProjectWorkspaceDir(projectId)}.
 Use project_shell for ALL file system operations and commands. Never touch Jarvis's own source files.`
             },
             { role: "user", content: prompt }
@@ -26839,7 +26863,7 @@ Use project_shell for ALL file system operations and commands. Never touch Jarvi
         });
         reply = result.reply?.trim() || "";
         if (reply.startsWith("QUESTION:")) break;
-        const workspaceForVerify = project.workspaceDir ?? path9.join(process.cwd(), "projects", projectId);
+        const workspaceForVerify = project.workspaceDir ?? getProjectWorkspaceDir(projectId);
         const deterministicFailure = await runDeterministicVerification(step.phase, workspaceForVerify, reply, projectId);
         if (deterministicFailure) {
           correctionContext = deterministicFailure;
@@ -27101,6 +27125,7 @@ var init_appProjectRunner = __esm({
     init_projectShellTool();
     init_browserTools();
     init_manager();
+    init_projectStorage();
     AUTONOMOUS_INTERVAL_MINUTES = 30;
     STEPS_PER_SESSION = 2;
     MAX_STEP_VERIFY_RETRIES = 2;
@@ -30011,7 +30036,7 @@ import { exec, spawn as spawn5 } from "child_process";
 import { promisify } from "util";
 import { readdir, readFile as readFile3, rm as rm2, stat as fsStat, writeFile as writeFile2 } from "fs/promises";
 import { mkdtempSync } from "fs";
-import path10 from "path";
+import path11 from "path";
 import os5 from "os";
 function spawnYtdlp(cmd, timeoutMs) {
   return new Promise((resolve9, reject) => {
@@ -30234,12 +30259,12 @@ async function fetchYtDlpTranscript(videoId) {
   }
   let tmpDir;
   try {
-    tmpDir = mkdtempSync(path10.join(os5.tmpdir(), `ytdlp-${videoId}-`));
+    tmpDir = mkdtempSync(path11.join(os5.tmpdir(), `ytdlp-${videoId}-`));
   } catch {
     return [];
   }
   try {
-    const outputTemplate = path10.join(tmpDir, "%(id)s");
+    const outputTemplate = path11.join(tmpDir, "%(id)s");
     const url = `https://www.youtube.com/watch?v=${videoId}`;
     await execAsync(
       `yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en.*,en" --convert-subs srt --no-playlist --no-warnings --quiet --no-progress --output "${outputTemplate}" -- "${url}"`,
@@ -30249,7 +30274,7 @@ async function fetchYtDlpTranscript(videoId) {
     const srtFiles = files.filter((f) => f.endsWith(".srt"));
     if (srtFiles.length === 0) return [];
     const best = srtFiles.find((f) => /\.(en|en-US|en-GB)\[.*manual\]\.srt$/.test(f)) ?? srtFiles.find((f) => /\.(en|en-US|en-GB)\.srt$/.test(f)) ?? srtFiles.find((f) => /\.en/.test(f)) ?? srtFiles[0];
-    const content = await readFile3(path10.join(tmpDir, best), "utf-8");
+    const content = await readFile3(path11.join(tmpDir, best), "utf-8");
     const segments = parseSrt(content);
     if (segments.length > 0) {
       console.log(
@@ -30375,12 +30400,12 @@ async function fetchAudioTranscript(videoId, originalInput) {
   }
   let tmpDir;
   try {
-    tmpDir = mkdtempSync(path10.join(os5.tmpdir(), `ytaudio-${videoId}-`));
+    tmpDir = mkdtempSync(path11.join(os5.tmpdir(), `ytaudio-${videoId}-`));
   } catch {
     return [];
   }
   try {
-    const outputTemplate = path10.join(tmpDir, "%(id)s.%(ext)s");
+    const outputTemplate = path11.join(tmpDir, "%(id)s.%(ext)s");
     const isShorts = originalInput ? /\/shorts\//i.test(originalInput) : false;
     const urlCandidates = isShorts ? [
       `https://www.youtube.com/shorts/${videoId}`,
@@ -30453,7 +30478,7 @@ ${stderrMsg}`
       return [];
     }
     const mp3File = downloadedFile;
-    const mp3Path = path10.join(tmpDir, mp3File);
+    const mp3Path = path11.join(tmpDir, mp3File);
     const mp3Stat = await fsStat(mp3Path);
     if (mp3Stat.size > AUDIO_MAX_BYTES) {
       console.warn(
@@ -30461,7 +30486,7 @@ ${stderrMsg}`
       );
       return [];
     }
-    const wavPath = path10.join(tmpDir, `${videoId}.wav`);
+    const wavPath = path11.join(tmpDir, `${videoId}.wav`);
     await execAsync(
       `ffmpeg -i "${mp3Path}" -ar 16000 -ac 1 -acodec pcm_s16le -y "${wavPath}"`,
       { timeout: 12e4 }
@@ -30485,7 +30510,7 @@ ${stderrMsg}`
         let offset = 0;
         let chunkNum = 0;
         while (offset < totalDuration) {
-          const chunkPath = path10.join(tmpDir, `chunk-${chunkNum}.wav`);
+          const chunkPath = path11.join(tmpDir, `chunk-${chunkNum}.wav`);
           await execAsync(
             `ffmpeg -i "${wavPath}" -ss ${offset} -t ${AUDIO_CHUNK_SECS} -ar 16000 -ac 1 -acodec pcm_s16le -y "${chunkPath}"`,
             { timeout: 6e4 }
@@ -31050,7 +31075,7 @@ var init_transcriptCache = __esm({
     ytdlpCmd = "yt-dlp";
     ytdlpSupportsImpersonate = false;
     ytdlpAvailable = false;
-    YTDLP_FLAGS_PATH = path10.join(process.cwd(), ".ytdlp-flags.json");
+    YTDLP_FLAGS_PATH = path11.join(process.cwd(), ".ytdlp-flags.json");
     MIN_IMPERSONATE_VERSION = "2023.11.16";
     TTL_MS2 = 24 * 60 * 60 * 1e3;
     MAX_ENTRIES = 500;
@@ -31167,7 +31192,7 @@ import { exec as exec2 } from "child_process";
 import { promisify as promisify2 } from "util";
 import { readdir as readdir2, readFile as readFile4, rm as rm3 } from "fs/promises";
 import { mkdtempSync as mkdtempSync2 } from "fs";
-import path11 from "path";
+import path12 from "path";
 import os6 from "os";
 function evictExpiredVisual() {
   const now = Date.now();
@@ -31220,7 +31245,7 @@ async function extractFrameAt(videoPath, timestampSec, outputPath) {
 async function extractKeyframes(videoId, intervalSecs) {
   let tmpDir;
   try {
-    tmpDir = mkdtempSync2(path11.join(os6.tmpdir(), `ytviz-${videoId}-`));
+    tmpDir = mkdtempSync2(path12.join(os6.tmpdir(), `ytviz-${videoId}-`));
   } catch {
     return [];
   }
@@ -31228,7 +31253,7 @@ async function extractKeyframes(videoId, intervalSecs) {
     await ensureYtdlpUpgraded();
     const cmd = getYtdlpCmd();
     const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const videoPath = path11.join(tmpDir, `${videoId}.mp4`);
+    const videoPath = path12.join(tmpDir, `${videoId}.mp4`);
     await execAsync2(
       `${cmd} -f "worstvideo[ext=mp4]/worstvideo/worst[ext=mp4]/worst" --no-playlist --no-warnings --quiet --no-progress --max-filesize 150M --output "${videoPath}" -- "${url}"`,
       { timeout: 12e4 }
@@ -31238,9 +31263,9 @@ async function extractKeyframes(videoId, intervalSecs) {
       (f) => f.endsWith(".mp4") || f.endsWith(".webm") || f.endsWith(".mkv")
     );
     if (!videoFile) return [];
-    const actualVideoPath = path11.join(tmpDir, videoFile);
+    const actualVideoPath = path12.join(tmpDir, videoFile);
     const duration = await getVideoDuration(actualVideoPath);
-    const framesDir = path11.join(tmpDir, "frames");
+    const framesDir = path12.join(tmpDir, "frames");
     await execAsync2(`mkdir -p "${framesDir}"`, { timeout: 5e3 });
     const keyframes = [];
     if (duration > 0 && duration < 90) {
@@ -31251,7 +31276,7 @@ async function extractKeyframes(videoId, intervalSecs) {
       }
       for (let i = 0; i < timestamps.length; i++) {
         const ts = timestamps[i];
-        const framePath = path11.join(framesDir, `frame-${String(i + 1).padStart(4, "0")}.jpg`);
+        const framePath = path12.join(framesDir, `frame-${String(i + 1).padStart(4, "0")}.jpg`);
         const buf = await extractFrameAt(actualVideoPath, ts, framePath);
         if (buf) keyframes.push({ timestampSec: ts, jpegBuffer: buf });
       }
@@ -31267,7 +31292,7 @@ async function extractKeyframes(videoId, intervalSecs) {
       for (let i = 0; i < frameFiles.length; i++) {
         const timestampSec = i * interval;
         try {
-          const buf = await readFile4(path11.join(framesDir, frameFiles[i]));
+          const buf = await readFile4(path12.join(framesDir, frameFiles[i]));
           keyframes.push({ timestampSec, jpegBuffer: buf });
         } catch {
         }
@@ -35510,14 +35535,14 @@ __export(safeWritePolicy_exports, {
   resetCircuitBreaker: () => resetCircuitBreaker,
   writeBudgetSummary: () => writeBudgetSummary
 });
-import path12 from "path";
+import path13 from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sql as sql15 } from "drizzle-orm";
 function isProtectedFile(filePath) {
-  return PROTECTED_FILES.has(path12.normalize(filePath));
+  return PROTECTED_FILES.has(path13.normalize(filePath));
 }
 function isDangerousPath(filePath) {
-  const normalised = path12.normalize(filePath);
+  const normalised = path13.normalize(filePath);
   if (PROTECTED_FILES.has(normalised)) {
     return { dangerous: true, reason: `'${filePath}' is a hard-protected file that requires user approval` };
   }
@@ -35529,18 +35554,18 @@ function isDangerousPath(filePath) {
   return { dangerous: false };
 }
 function isPathAllowed(filePath) {
-  const normalised = path12.normalize(filePath);
-  if (path12.isAbsolute(normalised)) return false;
+  const normalised = path13.normalize(filePath);
+  if (path13.isAbsolute(normalised)) return false;
   if (normalised.startsWith("..")) return false;
   if (PROTECTED_FILES.has(normalised)) return false;
-  const firstSegment = normalised.split(path12.sep)[0];
+  const firstSegment = normalised.split(path13.sep)[0];
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 function isPathAllowedForProposal(filePath) {
-  const normalised = path12.normalize(filePath);
-  if (path12.isAbsolute(normalised)) return false;
+  const normalised = path13.normalize(filePath);
+  if (path13.isAbsolute(normalised)) return false;
   if (normalised.startsWith("..")) return false;
-  const firstSegment = normalised.split(path12.sep)[0];
+  const firstSegment = normalised.split(path13.sep)[0];
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 function _statusFromTimestamps(timestamps) {
@@ -35793,8 +35818,8 @@ function toCamelCase(snake) {
   return snake.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
 }
 async function applyToolCode(featureName, toolCode, routeCode) {
-  const { promises: fs26 } = await import("fs");
-  const path31 = await import("path");
+  const { promises: fs27 } = await import("fs");
+  const path32 = await import("path");
   const applied = [];
   const warnings = [];
   const circuit = await checkCircuitBreaker();
@@ -35807,8 +35832,8 @@ async function applyToolCode(featureName, toolCode, routeCode) {
   const toolFilePath = `server/agent/tools/${featureName}.ts`;
   const routeFilePath = `server/${featureName}Routes.ts`;
   try {
-    await fs26.mkdir(path31.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
-    await fs26.writeFile(path31.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
+    await fs27.mkdir(path32.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
+    await fs27.writeFile(path32.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
     await recordAutonomousWrite(toolFilePath);
     applied.push(toolFilePath);
   } catch (err2) {
@@ -35818,8 +35843,8 @@ async function applyToolCode(featureName, toolCode, routeCode) {
   }
   if (routeCode) {
     try {
-      await fs26.mkdir(path31.resolve(process.cwd(), "server"), { recursive: true });
-      await fs26.writeFile(path31.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
+      await fs27.mkdir(path32.resolve(process.cwd(), "server"), { recursive: true });
+      await fs27.writeFile(path32.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
       await recordAutonomousWrite(routeFilePath);
       applied.push(routeFilePath);
     } catch (err2) {
@@ -35845,8 +35870,8 @@ async function applyToolCode(featureName, toolCode, routeCode) {
         );
       }
     }
-    const indexAbsPath = path31.resolve(process.cwd(), "server/agent/tools/index.ts");
-    let idx = await fs26.readFile(indexAbsPath, "utf8");
+    const indexAbsPath = path32.resolve(process.cwd(), "server/agent/tools/index.ts");
+    let idx = await fs27.readFile(indexAbsPath, "utf8");
     let modified = false;
     const importLine = `import { ${actualExportName} } from "./${featureName}";`;
     if (!idx.includes(`from "./${featureName}"`)) {
@@ -35916,7 +35941,7 @@ async function applyToolCode(featureName, toolCode, routeCode) {
       }
     }
     if (modified) {
-      await fs26.writeFile(indexAbsPath, idx, "utf8");
+      await fs27.writeFile(indexAbsPath, idx, "utf8");
       await recordAutonomousWrite("server/agent/tools/index.ts");
       applied.push("server/agent/tools/index.ts");
     } else {
@@ -36659,25 +36684,25 @@ var init_runGapAnalysisTool = __esm({
 });
 
 // server/agent/tools/selfEditTools.ts
-import fs9 from "fs/promises";
-import path13 from "path";
+import fs10 from "fs/promises";
+import path14 from "path";
 import { desc as desc15, and as and40, eq as eq55, gte as gte7 } from "drizzle-orm";
 async function collectSourceFiles(absDir, root) {
   const results = [];
   let entries;
   try {
-    entries = await fs9.readdir(absDir, { withFileTypes: true });
+    entries = await fs10.readdir(absDir, { withFileTypes: true });
   } catch {
     return results;
   }
   for (const entry of entries) {
-    const abs = path13.join(absDir, entry.name);
+    const abs = path14.join(absDir, entry.name);
     if (entry.isDirectory()) {
       if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
       const sub = await collectSourceFiles(abs, root);
       results.push(...sub);
     } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
-      results.push(path13.relative(root, abs));
+      results.push(path14.relative(root, abs));
     }
   }
   return results;
@@ -36718,7 +36743,7 @@ var init_selfEditTools = __esm({
           };
         }
         try {
-          const absDir = path13.join(PROJECT_ROOT, dir);
+          const absDir = path14.join(PROJECT_ROOT, dir);
           const files = await collectSourceFiles(absDir, PROJECT_ROOT);
           if (files.length === 0) {
             return { ok: true, content: `No .ts/.tsx files found in '${dir}'.`, label: "list_source_files: empty" };
@@ -36769,8 +36794,8 @@ ${files.join("\n")}`,
           };
         }
         try {
-          const absPath = path13.join(PROJECT_ROOT, filePath);
-          const raw = await fs9.readFile(absPath, "utf-8");
+          const absPath = path14.join(PROJECT_ROOT, filePath);
+          const raw = await fs10.readFile(absPath, "utf-8");
           const allLines = raw.split("\n");
           const totalLines = allLines.length;
           const offset = Math.max(1, Math.floor(Number(args.offset ?? 1)));
@@ -36942,8 +36967,8 @@ ${formatted}`,
         }
         let originalContent = "";
         try {
-          const absPath = path13.join(PROJECT_ROOT, filePath);
-          originalContent = await fs9.readFile(absPath, "utf-8");
+          const absPath = path14.join(PROJECT_ROOT, filePath);
+          originalContent = await fs10.readFile(absPath, "utf-8");
         } catch (err2) {
           return {
             ok: false,
@@ -37024,8 +37049,8 @@ __export(applyCodeChangeTool_exports, {
   pruneAuditLogArchivesOnStartup: () => pruneAuditLogArchivesOnStartup,
   recordVerificationResult: () => recordVerificationResult
 });
-import fs10 from "fs/promises";
-import path14 from "path";
+import fs11 from "fs/promises";
+import path15 from "path";
 import { and as and41, eq as eq56 } from "drizzle-orm";
 function _setAuditTimestampForTest(fp, ts) {
   lastAuditTimestamp.set(fp, ts);
@@ -37044,22 +37069,22 @@ function _interceptOwnerLookupForTest(fn) {
 }
 async function rotateAuditLogIfNeeded() {
   try {
-    const stat = await fs10.stat(AUDIT_LOG_PATH).catch(() => null);
+    const stat = await fs11.stat(AUDIT_LOG_PATH).catch(() => null);
     if (!stat || stat.size < AUDIT_LOG_MAX_BYTES) return;
     const ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-    const rotatedPath = path14.join(
+    const rotatedPath = path15.join(
       PROJECT_ROOT2,
       `server/self-heal-audit.${ts}.log`
     );
-    await fs10.rename(AUDIT_LOG_PATH, rotatedPath);
+    await fs11.rename(AUDIT_LOG_PATH, rotatedPath);
     console.log(`[SelfHeal] audit log rotated \u2192 ${rotatedPath}`);
     try {
-      const serverDir = path14.join(PROJECT_ROOT2, "server");
-      const entries = await fs10.readdir(serverDir);
-      const archives = entries.filter((name) => /^self-heal-audit\..+\.log$/.test(name)).sort().map((name) => path14.join(serverDir, name));
+      const serverDir = path15.join(PROJECT_ROOT2, "server");
+      const entries = await fs11.readdir(serverDir);
+      const archives = entries.filter((name) => /^self-heal-audit\..+\.log$/.test(name)).sort().map((name) => path15.join(serverDir, name));
       const toDelete = archives.slice(0, Math.max(0, archives.length - AUDIT_LOG_MAX_ARCHIVES));
       for (const archivePath of toDelete) {
-        await fs10.unlink(archivePath);
+        await fs11.unlink(archivePath);
         console.log(`[SelfHeal] deleted old audit archive \u2192 ${archivePath}`);
       }
     } catch {
@@ -37069,12 +37094,12 @@ async function rotateAuditLogIfNeeded() {
 }
 async function pruneAuditLogArchivesOnStartup() {
   try {
-    const serverDir = path14.join(PROJECT_ROOT2, "server");
-    const entries = await fs10.readdir(serverDir);
-    const archives = entries.filter((name) => /^self-heal-audit\..+\.log$/.test(name)).sort().map((name) => path14.join(serverDir, name));
+    const serverDir = path15.join(PROJECT_ROOT2, "server");
+    const entries = await fs11.readdir(serverDir);
+    const archives = entries.filter((name) => /^self-heal-audit\..+\.log$/.test(name)).sort().map((name) => path15.join(serverDir, name));
     const toDelete = archives.slice(0, Math.max(0, archives.length - AUDIT_LOG_MAX_ARCHIVES));
     for (const archivePath of toDelete) {
-      await fs10.unlink(archivePath);
+      await fs11.unlink(archivePath);
       console.log(`[SelfHeal] startup: deleted old audit archive \u2192 ${archivePath}`);
     }
     if (toDelete.length === 0) {
@@ -37125,7 +37150,7 @@ async function appendAuditLog(entry) {
   ].join("\n");
   try {
     await rotateAuditLogIfNeeded();
-    await fs10.appendFile(AUDIT_LOG_PATH, block, "utf-8");
+    await fs11.appendFile(AUDIT_LOG_PATH, block, "utf-8");
     lastAuditTimestamp.set(entry.filePath, ts);
   } catch {
   }
@@ -37152,7 +37177,7 @@ async function recordVerificationResult(filePaths, result, summary, userId) {
   const block = updates.join("\n") + "\n";
   try {
     await rotateAuditLogIfNeeded();
-    await fs10.appendFile(AUDIT_LOG_PATH, block, "utf-8");
+    await fs11.appendFile(AUDIT_LOG_PATH, block, "utf-8");
   } catch {
   }
   for (const fp of filePaths) {
@@ -37231,7 +37256,7 @@ var init_applyCodeChangeTool = __esm({
     init_db();
     init_schema();
     PROJECT_ROOT2 = process.cwd();
-    AUDIT_LOG_PATH = path14.join(PROJECT_ROOT2, "server/self-heal-audit.log");
+    AUDIT_LOG_PATH = path15.join(PROJECT_ROOT2, "server/self-heal-audit.log");
     AUDIT_MAX_DIFF_LINES = 300;
     AUDIT_LOG_MAX_BYTES = 5 * 1024 * 1024;
     AUDIT_LOG_MAX_ARCHIVES = 5;
@@ -37348,8 +37373,8 @@ ${proposalContent}` : `'${filePath}' matches a dangerous-change pattern ("${dang
         }
         let originalContent = "";
         try {
-          const absPath = path14.join(PROJECT_ROOT2, filePath);
-          originalContent = await fs10.readFile(absPath, "utf-8");
+          const absPath = path15.join(PROJECT_ROOT2, filePath);
+          originalContent = await fs11.readFile(absPath, "utf-8");
         } catch {
         }
         if (originalContent === newContent) {
@@ -37361,9 +37386,9 @@ ${proposalContent}` : `'${filePath}' matches a dangerous-change pattern ("${dang
           };
         }
         try {
-          const absPath = path14.join(PROJECT_ROOT2, filePath);
-          await fs10.mkdir(path14.dirname(absPath), { recursive: true });
-          await fs10.writeFile(absPath, newContent, "utf-8");
+          const absPath = path15.join(PROJECT_ROOT2, filePath);
+          await fs11.mkdir(path15.dirname(absPath), { recursive: true });
+          await fs11.writeFile(absPath, newContent, "utf-8");
           await recordAutonomousWrite(filePath);
           const newCount = circuit.count + 1;
           console.log(`[SelfHeal] wrote '${filePath}' (circuit: ${newCount}/10 in last 60 min)`);
@@ -37583,8 +37608,8 @@ var selfHealTool_exports = {};
 __export(selfHealTool_exports, {
   selfHealTool: () => selfHealTool
 });
-import fs11 from "fs/promises";
-import path15 from "path";
+import fs12 from "fs/promises";
+import path16 from "path";
 function fileNameToToolName(filename) {
   const base = filename.replace(/Tool\.tsx?$/, "");
   if (base === filename.replace(/\.tsx?$/, "")) return null;
@@ -37592,8 +37617,8 @@ function fileNameToToolName(filename) {
 }
 async function readFileSafe2(filePath) {
   try {
-    const abs = path15.join(PROJECT_ROOT4, filePath);
-    const raw = await fs11.readFile(abs, "utf-8");
+    const abs = path16.join(PROJECT_ROOT4, filePath);
+    const raw = await fs12.readFile(abs, "utf-8");
     const lines = raw.split("\n");
     if (lines.length > MAX_FILE_LINES2) {
       return lines.slice(0, MAX_FILE_LINES2).join("\n") + `
@@ -37605,10 +37630,10 @@ async function readFileSafe2(filePath) {
   }
 }
 async function collectTsFilesFromDir(dirRelative) {
-  const abs = path15.join(PROJECT_ROOT4, dirRelative);
+  const abs = path16.join(PROJECT_ROOT4, dirRelative);
   try {
-    const entries = await fs11.readdir(abs, { withFileTypes: true });
-    return entries.filter((e) => e.isFile() && (e.name.endsWith(".ts") || e.name.endsWith(".tsx"))).map((e) => path15.join(dirRelative, e.name));
+    const entries = await fs12.readdir(abs, { withFileTypes: true });
+    return entries.filter((e) => e.isFile() && (e.name.endsWith(".ts") || e.name.endsWith(".tsx"))).map((e) => path16.join(dirRelative, e.name));
   } catch {
     return [];
   }
@@ -37617,11 +37642,11 @@ async function findRelevantFiles(description, affectedPaths) {
   const candidates = [];
   if (affectedPaths && affectedPaths.length > 0) {
     for (const p of affectedPaths) {
-      const norm = path15.normalize(p);
+      const norm = path16.normalize(p);
       if (!isPathAllowed(norm)) continue;
-      const abs = path15.join(PROJECT_ROOT4, norm);
+      const abs = path16.join(PROJECT_ROOT4, norm);
       try {
-        const stat = await fs11.stat(abs);
+        const stat = await fs12.stat(abs);
         if (stat.isDirectory()) {
           candidates.push(...await collectTsFilesFromDir(norm));
         } else {
@@ -37651,7 +37676,7 @@ async function findRelevantFiles(description, affectedPaths) {
   const seen = /* @__PURE__ */ new Set();
   const result = [];
   for (const fp of candidates) {
-    const norm = path15.normalize(fp);
+    const norm = path16.normalize(fp);
     if (seen.has(norm)) continue;
     if (!isPathAllowed(norm) || isProtectedFile(norm)) continue;
     seen.add(norm);
@@ -37966,8 +37991,8 @@ ${await writeBudgetSummary()}`,
             }
             let originalLineCount = 0;
             try {
-              const abs = path15.join(PROJECT_ROOT4, change.file_path);
-              const orig = await fs11.readFile(abs, "utf-8").catch(() => "");
+              const abs = path16.join(PROJECT_ROOT4, change.file_path);
+              const orig = await fs12.readFile(abs, "utf-8").catch(() => "");
               originalLineCount = orig.split("\n").length;
             } catch {
             }
@@ -38079,7 +38104,7 @@ ${testResult.content}`;
             continue;
           }
           const smokeResults = [];
-          const toolNamesFromFiles = applyResults.filter((r) => r.ok && r.filePath.startsWith("server/agent/tools/")).map((r) => fileNameToToolName(path15.basename(r.filePath))).filter((n) => n !== null);
+          const toolNamesFromFiles = applyResults.filter((r) => r.ok && r.filePath.startsWith("server/agent/tools/")).map((r) => fileNameToToolName(path16.basename(r.filePath))).filter((n) => n !== null);
           const affectedToolNames = Array.isArray(plan.affected_tools) ? plan.affected_tools.filter((t) => typeof t === "string" && t.trim().length > 0) : [];
           const allToolNames = [.../* @__PURE__ */ new Set([...toolNamesFromFiles, ...affectedToolNames])];
           if (allToolNames.length > 0) {
@@ -38293,11 +38318,11 @@ ${await writeBudgetSummary()}`,
 });
 
 // server/agent/tools/workspaceUpdateTool.ts
-import fs12 from "fs/promises";
-import path16 from "path";
+import fs13 from "fs/promises";
+import path17 from "path";
 async function appendAudit2(entry) {
   try {
-    await fs12.appendFile(AUDIT_LOG, entry + "\n", "utf-8");
+    await fs13.appendFile(AUDIT_LOG, entry + "\n", "utf-8");
   } catch {
   }
 }
@@ -38307,7 +38332,7 @@ var init_workspaceUpdateTool = __esm({
     "use strict";
     init_integrationOwner();
     init_loader();
-    AUDIT_LOG = path16.join(process.cwd(), "server", "self-heal-audit.log");
+    AUDIT_LOG = path17.join(process.cwd(), "server", "self-heal-audit.log");
     VALID_FILES = [
       "soul",
       "agents",
@@ -38725,8 +38750,8 @@ async function saveGitHubSettings(userId, patch) {
     });
   }
 }
-async function githubRequest(pat, path31, options = {}) {
-  const url = `https://api.github.com${path31}`;
+async function githubRequest(pat, path32, options = {}) {
+  const url = `https://api.github.com${path32}`;
   return fetch(url, {
     ...options,
     headers: {
@@ -39192,8 +39217,8 @@ On Telegram/in-app: ask the user to confirm, then call merge_github_pr again wit
 });
 
 // server/agent/cloudDeploy.ts
-import * as fs13 from "fs";
-import * as path17 from "path";
+import * as fs14 from "fs";
+import * as path18 from "path";
 import * as crypto7 from "crypto";
 import { spawnSync as spawnSync2 } from "child_process";
 import * as os7 from "os";
@@ -39205,7 +39230,7 @@ function shouldExclude(relPath) {
   for (const part of parts) {
     if (EXCLUDE_DIRS.has(part)) return true;
     if (EXCLUDE_FILENAMES.has(part)) return true;
-    if (EXCLUDE_EXTENSIONS.has(path17.extname(part))) return true;
+    if (EXCLUDE_EXTENSIONS.has(path18.extname(part))) return true;
   }
   return false;
 }
@@ -39213,22 +39238,22 @@ function collectFiles(dir, baseDir, results, counter) {
   if (counter.n >= MAX_TOTAL_FILES) return;
   let entries;
   try {
-    entries = fs13.readdirSync(dir, { withFileTypes: true });
+    entries = fs14.readdirSync(dir, { withFileTypes: true });
   } catch {
     return;
   }
   for (const entry of entries) {
     if (counter.n >= MAX_TOTAL_FILES) break;
-    const fullPath = path17.join(dir, entry.name);
-    const relPath = path17.relative(baseDir, fullPath).split(path17.sep).join("/");
+    const fullPath = path18.join(dir, entry.name);
+    const relPath = path18.relative(baseDir, fullPath).split(path18.sep).join("/");
     if (shouldExclude(relPath)) continue;
     if (entry.isDirectory()) {
       collectFiles(fullPath, baseDir, results, counter);
     } else if (entry.isFile()) {
       try {
-        const stat = fs13.statSync(fullPath);
+        const stat = fs14.statSync(fullPath);
         if (stat.size === 0 || stat.size > MAX_FILE_SIZE_BYTES) continue;
-        const data = fs13.readFileSync(fullPath);
+        const data = fs14.readFileSync(fullPath);
         const sha = crypto7.createHash("sha1").update(data).digest("hex");
         results.push({ file: relPath, data, sha, size: stat.size });
         counter.n++;
@@ -39684,7 +39709,7 @@ Share this link with anyone \u2014 the app is publicly accessible.`,
 import { spawn as spawn7 } from "node:child_process";
 import { mkdtemp as mkdtemp2, readFile as readFile5, rm as rm4 } from "node:fs/promises";
 import { tmpdir as tmpdir4 } from "node:os";
-import path18 from "node:path";
+import path19 from "node:path";
 function isCodexDelegationEnabled() {
   return Boolean(getCodexGatewayUrl2()) || isLocalCodexDelegationEnabled();
 }
@@ -39732,12 +39757,12 @@ function buildCodexDelegationPrompt(input) {
   ].join("\n");
 }
 function resolveCodexDelegationCwd(requestedCwd) {
-  const projectRoot = path18.resolve(process.cwd());
+  const projectRoot = path19.resolve(process.cwd());
   const raw = typeof requestedCwd === "string" ? requestedCwd.trim() : "";
   if (!raw) return projectRoot;
-  const resolved = path18.resolve(projectRoot, raw);
-  const relative3 = path18.relative(projectRoot, resolved);
-  if (relative3.startsWith("..") || path18.isAbsolute(relative3)) {
+  const resolved = path19.resolve(projectRoot, raw);
+  const relative3 = path19.relative(projectRoot, resolved);
+  if (relative3.startsWith("..") || path19.isAbsolute(relative3)) {
     throw new Error("Codex delegation working_directory resolves outside the Jarvis workspace.");
   }
   return resolved;
@@ -39755,8 +39780,8 @@ async function runRemoteCodexDelegation(gatewayUrl, request) {
   if (!token) {
     throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
   }
-  const relativeCwd = path18.relative(path18.resolve(process.cwd()), request.cwd);
-  const workingDirectory = relativeCwd && !relativeCwd.startsWith("..") && !path18.isAbsolute(relativeCwd) ? relativeCwd : "";
+  const relativeCwd = path19.relative(path19.resolve(process.cwd()), request.cwd);
+  const workingDirectory = relativeCwd && !relativeCwd.startsWith("..") && !path19.isAbsolute(relativeCwd) ? relativeCwd : "";
   const response = await fetch(`${gatewayUrl}/api/codex/delegate`, {
     method: "POST",
     headers: {
@@ -39795,8 +39820,8 @@ async function runLocalCodexDelegation(request) {
     throw new Error("Codex delegation is not enabled on this host.");
   }
   const startedAt = Date.now();
-  const dir = await mkdtemp2(path18.join(tmpdir4(), "jarvis-codex-delegate-"));
-  const outputPath = path18.join(dir, "answer.txt");
+  const dir = await mkdtemp2(path19.join(tmpdir4(), "jarvis-codex-delegate-"));
+  const outputPath = path19.join(dir, "answer.txt");
   const prompt = buildCodexDelegationPrompt(request);
   try {
     const stdout = await new Promise((resolve9, reject) => {
@@ -44198,8 +44223,8 @@ __export(selfHealAudit_exports, {
   countAuditEntries: () => countAuditEntries,
   readAuditEntries: () => readAuditEntries
 });
-import fs14 from "fs/promises";
-import path19 from "path";
+import fs15 from "fs/promises";
+import path20 from "path";
 import { asc as asc4 } from "drizzle-orm";
 function parseAuditLog(raw) {
   const verifyUpdates = /* @__PURE__ */ new Map();
@@ -44288,20 +44313,20 @@ async function restoreFromDB() {
     ].join("\n");
     blocks.push(block);
   }
-  await fs14.mkdir(path19.dirname(AUDIT_LOG_PATH2), { recursive: true });
-  await fs14.writeFile(AUDIT_LOG_PATH2, blocks.join(""), "utf-8");
+  await fs15.mkdir(path20.dirname(AUDIT_LOG_PATH2), { recursive: true });
+  await fs15.writeFile(AUDIT_LOG_PATH2, blocks.join(""), "utf-8");
   console.log(`[selfHealAudit] Restored ${rows.length} audit entries from DB.`);
 }
 async function readAuditEntries(limit = 20) {
   try {
-    const raw = await fs14.readFile(AUDIT_LOG_PATH2, "utf-8");
+    const raw = await fs15.readFile(AUDIT_LOG_PATH2, "utf-8");
     const all = parseAuditLog(raw);
     return all.slice(0, limit);
   } catch (err2) {
     if (err2.code === "ENOENT") {
       try {
         await restoreFromDB();
-        const raw = await fs14.readFile(AUDIT_LOG_PATH2, "utf-8");
+        const raw = await fs15.readFile(AUDIT_LOG_PATH2, "utf-8");
         return parseAuditLog(raw).slice(0, limit);
       } catch {
         return [];
@@ -44315,14 +44340,14 @@ async function appendAuditVerifyLine(file, timestamp2, status) {
 [VERIFY] ${timestamp2} ${file}: ${status}
 `;
   try {
-    await fs14.appendFile(AUDIT_LOG_PATH2, line, "utf-8");
+    await fs15.appendFile(AUDIT_LOG_PATH2, line, "utf-8");
   } catch (err2) {
     console.warn(`[selfHealAudit] appendAuditVerifyLine failed (non-fatal):`, err2);
   }
 }
 async function countAuditEntries() {
   try {
-    const raw = await fs14.readFile(AUDIT_LOG_PATH2, "utf-8");
+    const raw = await fs15.readFile(AUDIT_LOG_PATH2, "utf-8");
     return parseAuditLog(raw).length;
   } catch (err2) {
     if (err2.code === "ENOENT") {
@@ -44342,7 +44367,7 @@ var init_selfHealAudit = __esm({
     "use strict";
     init_db();
     init_schema();
-    AUDIT_LOG_PATH2 = path19.join(process.cwd(), "server/self-heal-audit.log");
+    AUDIT_LOG_PATH2 = path20.join(process.cwd(), "server/self-heal-audit.log");
     SEPARATOR_CHAR = "\u2500";
     SEPARATOR_LENGTH = 72;
     SEPARATOR = SEPARATOR_CHAR.repeat(SEPARATOR_LENGTH);
@@ -47162,7 +47187,7 @@ import { spawn as spawn8 } from "child_process";
 import { writeFile as writeFile3, unlink as unlink2, readFile as readFile6 } from "fs/promises";
 import { randomUUID as randomUUID3 } from "crypto";
 import { tmpdir as tmpdir5 } from "os";
-import { join as join7 } from "path";
+import { join as join8 } from "path";
 import { eq as eq66, and as and47 } from "drizzle-orm";
 function storeTempAudio(buffer, mimeType = "audio/mpeg") {
   const token = randomUUID3();
@@ -47182,8 +47207,8 @@ function consumeTempAudio(token) {
   return entry;
 }
 async function mp3ToOggOpus(mp3Buffer) {
-  const inputPath = join7(tmpdir5(), `tts-in-${randomUUID3()}.mp3`);
-  const outputPath = join7(tmpdir5(), `tts-out-${randomUUID3()}.ogg`);
+  const inputPath = join8(tmpdir5(), `tts-in-${randomUUID3()}.mp3`);
+  const outputPath = join8(tmpdir5(), `tts-out-${randomUUID3()}.ogg`);
   try {
     await writeFile3(inputPath, mp3Buffer);
     await new Promise((resolve9, reject) => {
@@ -51336,8 +51361,8 @@ __export(codeExecution_exports, {
   runPythonSandbox: () => runPythonSandbox
 });
 import { spawn as spawn9 } from "child_process";
-import fs15 from "fs/promises";
-import path20 from "path";
+import fs16 from "fs/promises";
+import path21 from "path";
 import os8 from "os";
 function buildScript(userCode) {
   const b64 = Buffer.from(userCode, "utf8").toString("base64");
@@ -51544,7 +51569,7 @@ function runPythonSandbox(code, timeoutMs) {
 async function getOrCreateWorkspace(jobId) {
   const existing = _jobWorkspaces.get(jobId);
   if (existing) return existing;
-  const dir = await fs15.mkdtemp(path20.join(os8.tmpdir(), `jarvis-build-${jobId}-`));
+  const dir = await fs16.mkdtemp(path21.join(os8.tmpdir(), `jarvis-build-${jobId}-`));
   _jobWorkspaces.set(jobId, dir);
   return dir;
 }
@@ -51553,7 +51578,7 @@ async function cleanupJobWorkspace(jobId) {
   if (!dir) return;
   _jobWorkspaces.delete(jobId);
   try {
-    await fs15.rm(dir, { recursive: true, force: true });
+    await fs16.rm(dir, { recursive: true, force: true });
     console.log(`[exec_in_workspace] cleaned up workspace for job ${jobId}: ${dir}`);
   } catch (err2) {
     console.warn(`[exec_in_workspace] cleanup failed for ${jobId}:`, err2);
@@ -52129,7 +52154,7 @@ ${trimmed}
         const workspace = await getOrCreateWorkspace(jobId);
         if (action === "list_files") {
           try {
-            const entries = await fs15.readdir(workspace, { withFileTypes: true });
+            const entries = await fs16.readdir(workspace, { withFileTypes: true });
             const names = entries.map((e) => `${e.isDirectory() ? "[dir] " : ""}${e.name}`).join("\n");
             return { ok: true, content: names || "(empty workspace)", label: "exec_in_workspace: list_files" };
           } catch (err2) {
@@ -52138,13 +52163,13 @@ ${trimmed}
         }
         if (action === "write_file") {
           if (!filePath) return { ok: false, content: "file_path is required for write_file.", label: "exec_in_workspace: error" };
-          const absPath = path20.resolve(workspace, filePath);
-          if (!absPath.startsWith(workspace + path20.sep) && absPath !== workspace) {
+          const absPath = path21.resolve(workspace, filePath);
+          if (!absPath.startsWith(workspace + path21.sep) && absPath !== workspace) {
             return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
           }
           try {
-            await fs15.mkdir(path20.dirname(absPath), { recursive: true });
-            await fs15.writeFile(absPath, content, "utf8");
+            await fs16.mkdir(path21.dirname(absPath), { recursive: true });
+            await fs16.writeFile(absPath, content, "utf8");
             return { ok: true, content: `Written ${filePath} (${content.length} bytes) to workspace.`, label: "exec_in_workspace: write_file" };
           } catch (err2) {
             return { ok: false, content: `write_file failed: ${err2 instanceof Error ? err2.message : String(err2)}`, label: "exec_in_workspace: error" };
@@ -52152,12 +52177,12 @@ ${trimmed}
         }
         if (action === "read_file") {
           if (!filePath) return { ok: false, content: "file_path is required for read_file.", label: "exec_in_workspace: error" };
-          const absPath = path20.resolve(workspace, filePath);
-          if (!absPath.startsWith(workspace + path20.sep) && absPath !== workspace) {
+          const absPath = path21.resolve(workspace, filePath);
+          if (!absPath.startsWith(workspace + path21.sep) && absPath !== workspace) {
             return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
           }
           try {
-            const text2 = await fs15.readFile(absPath, "utf8");
+            const text2 = await fs16.readFile(absPath, "utf8");
             const trimmed = text2.slice(0, WORKSPACE_MAX_OUTPUT_CHARS);
             return { ok: true, content: trimmed + (text2.length > WORKSPACE_MAX_OUTPUT_CHARS ? "\n\u2026 [truncated]" : ""), label: "exec_in_workspace: read_file" };
           } catch (err2) {
@@ -52167,12 +52192,12 @@ ${trimmed}
         if (action === "run_python") {
           let codeToRun = content;
           if (!codeToRun && filePath) {
-            const absPath = path20.resolve(workspace, filePath);
-            if (!absPath.startsWith(workspace + path20.sep) && absPath !== workspace) {
+            const absPath = path21.resolve(workspace, filePath);
+            if (!absPath.startsWith(workspace + path21.sep) && absPath !== workspace) {
               return { ok: false, content: "Path traversal not allowed.", label: "exec_in_workspace: error" };
             }
             try {
-              codeToRun = await fs15.readFile(absPath, "utf8");
+              codeToRun = await fs16.readFile(absPath, "utf8");
             } catch (err2) {
               return { ok: false, content: `Cannot read ${filePath}: ${err2 instanceof Error ? err2.message : String(err2)}`, label: "exec_in_workspace: error" };
             }
@@ -54348,8 +54373,8 @@ __export(appDelivery_exports, {
   packageAndDeliverApp: () => packageAndDeliverApp,
   validateDownloadToken: () => validateDownloadToken
 });
-import * as fs16 from "fs";
-import * as path21 from "path";
+import * as fs17 from "fs";
+import * as path22 from "path";
 import { execSync as execSync2, spawnSync as spawnSync3 } from "child_process";
 import * as os9 from "os";
 import { eq as eq78 } from "drizzle-orm";
@@ -54368,7 +54393,7 @@ function validateDownloadToken(projectId, token) {
   return entry.token === token;
 }
 function ensureDownloadsDir() {
-  fs16.mkdirSync(DOWNLOADS_DIR, { recursive: true });
+  fs17.mkdirSync(DOWNLOADS_DIR, { recursive: true });
 }
 function countFiles(dir) {
   try {
@@ -54383,7 +54408,7 @@ function countFiles(dir) {
 }
 function getZipSizeMb(zipPath) {
   try {
-    const stat = fs16.statSync(zipPath);
+    const stat = fs17.statSync(zipPath);
     return Math.round(stat.size / 1024 / 1024 * 100) / 100;
   } catch {
     return 0;
@@ -54392,8 +54417,8 @@ function getZipSizeMb(zipPath) {
 function scheduleZipCleanup(zipPath) {
   const timer = setTimeout(() => {
     try {
-      if (fs16.existsSync(zipPath)) {
-        fs16.unlinkSync(zipPath);
+      if (fs17.existsSync(zipPath)) {
+        fs17.unlinkSync(zipPath);
         console.log(`[AppDelivery] cleaned up expired zip: ${zipPath}`);
       }
     } catch (err2) {
@@ -54406,13 +54431,13 @@ function cleanupExpiredZips() {
   try {
     ensureDownloadsDir();
     const cutoff = Date.now() - ZIP_TTL_MS;
-    for (const file of fs16.readdirSync(DOWNLOADS_DIR)) {
+    for (const file of fs17.readdirSync(DOWNLOADS_DIR)) {
       if (!file.endsWith(".zip")) continue;
-      const fullPath = path21.join(DOWNLOADS_DIR, file);
+      const fullPath = path22.join(DOWNLOADS_DIR, file);
       try {
-        const { mtimeMs } = fs16.statSync(fullPath);
+        const { mtimeMs } = fs17.statSync(fullPath);
         if (mtimeMs < cutoff) {
-          fs16.unlinkSync(fullPath);
+          fs17.unlinkSync(fullPath);
           console.log(`[AppDelivery] startup cleanup: deleted expired zip ${file}`);
         }
       } catch {
@@ -54456,16 +54481,16 @@ async function packageAndDeliverApp(projectId, userId, originChannel) {
   const [project] = await db.select().from(jarvisProjects).where(eq78(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`Project ${projectId} not found`);
   const workspaceDir = project.workspaceDir;
-  if (!workspaceDir || !fs16.existsSync(workspaceDir)) {
+  if (!workspaceDir || !fs17.existsSync(workspaceDir)) {
     throw new Error(`Workspace directory not found for project ${projectId}`);
   }
   stopProjectServer(projectId);
   const framework = project.appFramework ?? "custom";
   runProductionBuild(workspaceDir, framework);
   ensureDownloadsDir();
-  const zipPath = path21.join(DOWNLOADS_DIR, `${projectId}.zip`);
-  if (fs16.existsSync(zipPath)) {
-    fs16.unlinkSync(zipPath);
+  const zipPath = path22.join(DOWNLOADS_DIR, `${projectId}.zip`);
+  if (fs17.existsSync(zipPath)) {
+    fs17.unlinkSync(zipPath);
   }
   console.log(`[AppDelivery] zipping workspace for project ${projectId}: ${workspaceDir}`);
   try {
@@ -54480,7 +54505,7 @@ async function packageAndDeliverApp(projectId, userId, originChannel) {
   } catch (err2) {
     throw new Error(`Failed to zip project workspace: ${String(err2).slice(0, 300)}`);
   }
-  if (!fs16.existsSync(zipPath)) {
+  if (!fs17.existsSync(zipPath)) {
     throw new Error("Zip file was not created \u2014 zip command may have failed silently");
   }
   scheduleZipCleanup(zipPath);
@@ -54554,7 +54579,8 @@ var init_appDelivery = __esm({
     init_manager();
     init_github();
     init_publicUrl();
-    DOWNLOADS_DIR = path21.join(process.cwd(), "server", "static", "downloads");
+    init_projectStorage();
+    DOWNLOADS_DIR = getProjectDownloadsDir();
     ZIP_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
     downloadTokens = /* @__PURE__ */ new Map();
   }
@@ -59018,8 +59044,8 @@ function requireUserId(req, res) {
   }
   return userId;
 }
-function registerSimpleJsonCrud(app2, path31, table) {
-  app2.get(`/api/data/${path31}`, async (req, res) => {
+function registerSimpleJsonCrud(app2, path32, table) {
+  app2.get(`/api/data/${path32}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
@@ -59027,11 +59053,11 @@ function registerSimpleJsonCrud(app2, path31, table) {
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
-      console.error(`Error fetching ${path31}:`, e);
-      res.status(500).json({ error: `Failed to fetch ${path31}` });
+      console.error(`Error fetching ${path32}:`, e);
+      res.status(500).json({ error: `Failed to fetch ${path32}` });
     }
   });
-  app2.put(`/api/data/${path31}`, async (req, res) => {
+  app2.put(`/api/data/${path32}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
@@ -59042,19 +59068,19 @@ function registerSimpleJsonCrud(app2, path31, table) {
       });
       res.json({ ok: true });
     } catch (e) {
-      console.error(`Error saving ${path31}:`, e);
-      res.status(500).json({ error: `Failed to save ${path31}` });
+      console.error(`Error saving ${path32}:`, e);
+      res.status(500).json({ error: `Failed to save ${path32}` });
     }
   });
-  app2.delete(`/api/data/${path31}`, async (req, res) => {
+  app2.delete(`/api/data/${path32}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
       await db.delete(table).where(eq85(table.userId, userId));
       res.json({ ok: true });
     } catch (e) {
-      console.error(`Error deleting ${path31}:`, e);
-      res.status(500).json({ error: `Failed to delete ${path31}` });
+      console.error(`Error deleting ${path32}:`, e);
+      res.status(500).json({ error: `Failed to delete ${path32}` });
     }
   });
 }
@@ -60544,8 +60570,8 @@ function validateAgentConfig(raw) {
     return { ok: true, errors: [], warnings };
   }
   const errors = result.error.issues.map((issue) => {
-    const path31 = issue.path.length > 0 ? `'${issue.path.join(".")}': ` : "";
-    return `${path31}${issue.message}`;
+    const path32 = issue.path.length > 0 ? `'${issue.path.join(".")}': ` : "";
+    return `${path32}${issue.message}`;
   });
   return { ok: false, errors, warnings: [] };
 }
@@ -61824,8 +61850,8 @@ var init_customAgentRoutes = __esm({
 
 // server/agent/codeProposalsRoutes.ts
 import { eq as eq92, and as and68, desc as desc30 } from "drizzle-orm";
-import fs17 from "fs/promises";
-import path22 from "path";
+import fs18 from "fs/promises";
+import path23 from "path";
 async function schedulePostFixVerification(userId, proposalId, filePath, debugCtx) {
   await new Promise((resolve9) => setTimeout(resolve9, 8e3));
   try {
@@ -61918,9 +61944,9 @@ function registerCodeProposalsRoutes(app2) {
       if (!isPathAllowedForProposal(row.filePath)) {
         return res.status(403).json({ error: "Stored file path is outside the allowed source directories. This proposal cannot be applied." });
       }
-      const absPath = path22.join(PROJECT_ROOT5, row.filePath);
-      await fs17.mkdir(path22.dirname(absPath), { recursive: true });
-      await fs17.writeFile(absPath, row.proposedContent, "utf-8");
+      const absPath = path23.join(PROJECT_ROOT5, row.filePath);
+      await fs18.mkdir(path23.dirname(absPath), { recursive: true });
+      await fs18.writeFile(absPath, row.proposedContent, "utf-8");
       await db.update(codeProposals).set({ status: "approved", appliedAt: /* @__PURE__ */ new Date() }).where(eq92(codeProposals.id, row.id));
       console.log(`[CodeProposals] approved proposal ${row.id} \u2192 wrote ${row.filePath}`);
       const debugCtx = row.debugContext;
@@ -62040,8 +62066,8 @@ var init_projectCreateRequest = __esm({
 
 // server/projectRoutes.ts
 import { eq as eq93, and as and69 } from "drizzle-orm";
-import * as fs18 from "fs";
-import * as path23 from "path";
+import * as fs19 from "fs";
+import * as path24 from "path";
 function registerProjectRoutes(app2) {
   app2.get("/api/projects", authMiddleware, async (req, res) => {
     try {
@@ -62100,19 +62126,19 @@ function registerProjectRoutes(app2) {
       const id = _p7(req.params.id);
       const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
       if (!project) return res.status(404).json({ error: "Project not found" });
-      if (!project.workspaceDir || !fs18.existsSync(project.workspaceDir)) {
+      if (!project.workspaceDir || !fs19.existsSync(project.workspaceDir)) {
         return res.json({ workspaceDir: project.workspaceDir ?? null, files: [] });
       }
-      const root = path23.resolve(project.workspaceDir);
+      const root = path24.resolve(project.workspaceDir);
       const blocked = /* @__PURE__ */ new Set([".git", "node_modules", ".next", ".expo", "dist", "build"]);
       const files = [];
       const walk = (dir, depth) => {
         if (depth > 4 || files.length >= 250) return;
-        for (const entry of fs18.readdirSync(dir, { withFileTypes: true })) {
+        for (const entry of fs19.readdirSync(dir, { withFileTypes: true })) {
           if (blocked.has(entry.name)) continue;
-          const full = path23.join(dir, entry.name);
-          const stat = fs18.statSync(full);
-          const rel = path23.relative(root, full).replace(/\\/g, "/");
+          const full = path24.join(dir, entry.name);
+          const stat = fs19.statSync(full);
+          const rel = path24.relative(root, full).replace(/\\/g, "/");
           files.push({
             path: rel,
             name: entry.name,
@@ -62139,13 +62165,13 @@ function registerProjectRoutes(app2) {
       if (!isSafeProjectFilePath(requestedPath)) return res.status(400).json({ error: "Invalid file path" });
       const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
       if (!project?.workspaceDir) return res.status(404).json({ error: "Project workspace not found" });
-      const root = path23.resolve(project.workspaceDir);
-      const fullPath = path23.resolve(root, requestedPath);
-      if (!fullPath.startsWith(root + path23.sep)) return res.status(400).json({ error: "Invalid file path" });
-      if (!fs18.existsSync(fullPath) || !fs18.statSync(fullPath).isFile()) return res.status(404).json({ error: "File not found" });
-      const stat = fs18.statSync(fullPath);
+      const root = path24.resolve(project.workspaceDir);
+      const fullPath = path24.resolve(root, requestedPath);
+      if (!fullPath.startsWith(root + path24.sep)) return res.status(400).json({ error: "Invalid file path" });
+      if (!fs19.existsSync(fullPath) || !fs19.statSync(fullPath).isFile()) return res.status(404).json({ error: "File not found" });
+      const stat = fs19.statSync(fullPath);
       if (stat.size > 2e5) return res.status(413).json({ error: "File is too large to preview" });
-      const content = fs18.readFileSync(fullPath, "utf8");
+      const content = fs19.readFileSync(fullPath, "utf8");
       res.json({ path: requestedPath, content, size: stat.size, updatedAt: stat.mtime.toISOString() });
     } catch (err2) {
       console.error("[ProjectRoutes] GET /api/projects/:id/files/content failed:", err2);
@@ -62159,8 +62185,8 @@ function registerProjectRoutes(app2) {
       const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
       if (!project) return res.status(404).json({ error: "Project not found" });
       if (project.status !== "complete") return res.status(409).json({ error: "Project is not complete yet" });
-      const zipPath = path23.join(process.cwd(), "server", "static", "downloads", `${id}.zip`);
-      if (!fs18.existsSync(zipPath)) return res.status(404).json({ error: "Project zip not yet available" });
+      const zipPath = path24.join(getProjectDownloadsDir(), `${id}.zip`);
+      if (!fs19.existsSync(zipPath)) return res.status(404).json({ error: "Project zip not yet available" });
       const token = generateDownloadToken(id);
       const downloadUrl = `${getPublicBaseUrl(req)}/api/downloads/project/${id}?token=${token}`;
       res.json({ downloadUrl });
@@ -62229,7 +62255,7 @@ function registerProjectRoutes(app2) {
       if (project.status !== "complete") {
         return res.status(400).json({ error: "Project must be complete before pushing to GitHub" });
       }
-      if (!project.workspaceDir || !fs18.existsSync(project.workspaceDir)) {
+      if (!project.workspaceDir || !fs19.existsSync(project.workspaceDir)) {
         return res.status(400).json({ error: "Project workspace directory not found" });
       }
       const settings = await getGitHubSettings(userId);
@@ -62320,6 +62346,7 @@ var init_projectRoutes = __esm({
     init_auth();
     init_github();
     init_publicUrl();
+    init_projectStorage();
     _p7 = (v) => Array.isArray(v) ? v[0] ?? "" : v;
   }
 });
@@ -62873,21 +62900,21 @@ var init_doctorRoutes = __esm({
 });
 
 // server/downloadRoutes.ts
-import * as fs19 from "fs";
-import * as path24 from "path";
+import * as fs20 from "fs";
+import * as path25 from "path";
 import { eq as eq95 } from "drizzle-orm";
 function getFallbackUrl() {
   return process.env.ANDROID_APK_URL ?? null;
 }
 function registerDownloadRoutes(app2) {
   app2.get("/api/download/apk", (_req, res) => {
-    if (fs19.existsSync(APK_PATH)) {
-      const stat = fs19.statSync(APK_PATH);
+    if (fs20.existsSync(APK_PATH)) {
+      const stat = fs20.statSync(APK_PATH);
       res.setHeader("Content-Type", "application/vnd.android.package-archive");
       res.setHeader("Content-Disposition", 'attachment; filename="jarvis-daemon.apk"');
       res.setHeader("Content-Length", stat.size);
       res.setHeader("Cache-Control", "public, max-age=3600");
-      fs19.createReadStream(APK_PATH).pipe(res);
+      fs20.createReadStream(APK_PATH).pipe(res);
       return;
     }
     const fallback = getFallbackUrl();
@@ -62901,8 +62928,8 @@ function registerDownloadRoutes(app2) {
     });
   });
   app2.get("/api/download/apk/info", (_req, res) => {
-    if (fs19.existsSync(APK_PATH)) {
-      const stat = fs19.statSync(APK_PATH);
+    if (fs20.existsSync(APK_PATH)) {
+      const stat = fs20.statSync(APK_PATH);
       return res.json({
         available: true,
         source: "local",
@@ -62932,21 +62959,21 @@ function registerDownloadRoutes(app2) {
       if (!tokenValid && project.userId !== bearerUserId) {
         return res.status(404).json({ error: "Project not found" });
       }
-      const zipPath = path24.join(DOWNLOADS_DIR2, `${projectId}.zip`);
-      if (!fs19.existsSync(zipPath)) {
+      const zipPath = path25.join(DOWNLOADS_DIR2, `${projectId}.zip`);
+      if (!fs20.existsSync(zipPath)) {
         return res.status(404).json({
           error: "Project zip not yet available",
           detail: "The project may still be building. You will receive a notification when the download is ready."
         });
       }
-      const stat = fs19.statSync(zipPath);
+      const stat = fs20.statSync(zipPath);
       const safeName = (project.title ?? projectId).replace(/[^a-z0-9]/gi, "-").toLowerCase();
       const filename = `${safeName}.zip`;
       res.setHeader("Content-Type", "application/zip");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       res.setHeader("Content-Length", stat.size);
       res.setHeader("Cache-Control", "no-cache");
-      fs19.createReadStream(zipPath).pipe(res);
+      fs20.createReadStream(zipPath).pipe(res);
     } catch (err2) {
       console.error(`[DownloadRoutes] project download error for ${projectId}:`, err2);
       res.status(500).json({ error: "Download failed" });
@@ -62961,8 +62988,9 @@ var init_downloadRoutes = __esm({
     init_schema();
     init_auth();
     init_appDelivery();
-    APK_PATH = path24.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
-    DOWNLOADS_DIR2 = path24.join(process.cwd(), "server", "static", "downloads");
+    init_projectStorage();
+    APK_PATH = path25.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
+    DOWNLOADS_DIR2 = getProjectDownloadsDir();
   }
 });
 
@@ -67085,8 +67113,8 @@ __export(routes_exports, {
   registerRoutes: () => registerRoutes
 });
 import { createHash as createHash7 } from "crypto";
-import fs20 from "fs";
-import path25 from "path";
+import fs21 from "fs";
+import path26 from "path";
 import { createServer } from "node:http";
 import OpenAI11 from "openai";
 import { eq as eq109, and as and81, desc as desc38, sql as sql39, gte as gte22, asc as asc7 } from "drizzle-orm";
@@ -67104,21 +67132,21 @@ function providerLabelForModel(model) {
 }
 async function applyLivingContextReviewToFile(relPath, oldBlock, newBlock) {
   if (!relPath || !oldBlock) return;
-  if (path25.isAbsolute(relPath) || relPath.includes("..")) return;
+  if (path26.isAbsolute(relPath) || relPath.includes("..")) return;
   const rootDir = process.cwd();
-  const abs = path25.resolve(rootDir, relPath);
-  const allowedRoot = path25.resolve(rootDir, "workspaces", "battles");
-  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path25.sep))) return;
-  if (path25.extname(abs).toLowerCase() !== ".md") return;
+  const abs = path26.resolve(rootDir, relPath);
+  const allowedRoot = path26.resolve(rootDir, "workspaces", "battles");
+  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path26.sep))) return;
+  if (path26.extname(abs).toLowerCase() !== ".md") return;
   try {
-    let content = await fs20.promises.readFile(abs, "utf-8");
+    let content = await fs21.promises.readFile(abs, "utf-8");
     const replacement = newBlock ? `${newBlock}
 ` : "";
     if (content.includes(oldBlock)) {
       content = content.replace(oldBlock, replacement).replace(/\n{4,}/g, "\n\n\n");
-      await fs20.promises.writeFile(abs, content, "utf-8");
+      await fs21.promises.writeFile(abs, content, "utf-8");
     } else if (newBlock && !content.includes(newBlock)) {
-      await fs20.promises.appendFile(abs, `
+      await fs21.promises.appendFile(abs, `
 ${newBlock}
 `, "utf-8");
     }
@@ -67126,10 +67154,10 @@ ${newBlock}
   }
 }
 function loadPrimeSections() {
-  const filePath = path25.resolve(process.cwd(), "agents/PRIME.md");
+  const filePath = path26.resolve(process.cwd(), "agents/PRIME.md");
   let content;
   try {
-    content = fs20.readFileSync(filePath, "utf8");
+    content = fs21.readFileSync(filePath, "utf8");
     console.log("[routes] agents/PRIME.md loaded \u2014 sections: coachingFrameworks, personas (5), coachingRules, emailFormat, actuation");
   } catch (err2) {
     const reason = err2 instanceof Error ? err2.message : String(err2);
@@ -67163,10 +67191,10 @@ function loadPrimeSections() {
 }
 function readPromptDoc(relativePath, maxChars) {
   try {
-    const filePath = path25.resolve(process.cwd(), relativePath);
-    const root = path25.resolve(process.cwd());
+    const filePath = path26.resolve(process.cwd(), relativePath);
+    const root = path26.resolve(process.cwd());
     if (!filePath.startsWith(root)) return "";
-    return fs20.readFileSync(filePath, "utf8").trim().slice(0, maxChars);
+    return fs21.readFileSync(filePath, "utf8").trim().slice(0, maxChars);
   } catch {
     return "";
   }
@@ -75868,8 +75896,8 @@ __export(selfImprovementLoop_exports, {
   runSelfImprovementForAllUsers: () => runSelfImprovementForAllUsers
 });
 import { gte as gte25, desc as desc40 } from "drizzle-orm";
-import fs22 from "fs/promises";
-import path27 from "path";
+import fs23 from "fs/promises";
+import path28 from "path";
 function getISOWeekKey(d) {
   const date2 = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = date2.getUTCDay() || 7;
@@ -75905,8 +75933,8 @@ function localDowAndHour(now, tz) {
   }
 }
 function isAllowedForAutoApply(filePath) {
-  const n = path27.posix.normalize(filePath.replace(/\\/g, "/"));
-  if (path27.posix.isAbsolute(n) || n.startsWith("../")) return false;
+  const n = path28.posix.normalize(filePath.replace(/\\/g, "/"));
+  if (path28.posix.isAbsolute(n) || n.startsWith("../")) return false;
   const inBlocklist = SELF_IMPROVE_BLOCKED_FILES.some((blocked) => {
     const dir = blocked.endsWith("/") ? blocked : blocked + "/";
     return n === blocked || n.startsWith(dir);
@@ -76020,7 +76048,7 @@ async function _runCycleInner(userId, signal) {
   ].join("\n").slice(0, 6e3);
   let primeContent = "";
   try {
-    primeContent = await fs22.readFile(path27.join(process.cwd(), "agents/PRIME.md"), "utf-8");
+    primeContent = await fs23.readFile(path28.join(process.cwd(), "agents/PRIME.md"), "utf-8");
   } catch {
     primeContent = "(PRIME.md not found)";
   }
@@ -76264,8 +76292,8 @@ var primeIdentityAudit_exports = {};
 __export(primeIdentityAudit_exports, {
   runPrimeIdentityAudit: () => runPrimeIdentityAudit
 });
-import * as fs23 from "fs/promises";
-import * as path28 from "path";
+import * as fs24 from "fs/promises";
+import * as path29 from "path";
 import { eq as eq117, and as and89, desc as desc41, inArray as inArray9, gte as gte26 } from "drizzle-orm";
 function currentMonthKey() {
   const now = /* @__PURE__ */ new Date();
@@ -76334,7 +76362,7 @@ async function runPrimeIdentityAudit(userId) {
     }).join("\n");
     let primeContent;
     try {
-      primeContent = await fs23.readFile(PRIME_MD_PATH, "utf-8");
+      primeContent = await fs24.readFile(PRIME_MD_PATH, "utf-8");
     } catch (err2) {
       console.error("[PrimeAudit] Could not read PRIME.md:", err2);
       return { driftsFound: 0, proposalsQueued: 0 };
@@ -76488,7 +76516,7 @@ var init_primeIdentityAudit = __esm({
     init_schema();
     init_anthropicClient();
     init_registry();
-    PRIME_MD_PATH = path28.resolve("agents/PRIME.md");
+    PRIME_MD_PATH = path29.resolve("agents/PRIME.md");
     AUDIT_MODEL = "claude-3-5-sonnet-20241022";
   }
 });
@@ -76540,12 +76568,12 @@ init_actionLog();
 init_proactiveDedup();
 init_diagnosticsService();
 init_routedChatCompletion();
-import * as fs21 from "fs";
-import * as path26 from "path";
+import * as fs22 from "fs";
+import * as path27 from "path";
 import { eq as eq113, and as and85, sql as sql42, desc as desc39, gte as gte23 } from "drizzle-orm";
 var openai19 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
-var CHECKLIST_PATH = path26.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
+var CHECKLIST_PATH = path27.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
 var VALIDATION_INTERVAL_MS = 30 * 60 * 1e3;
 var CREW_BATCH_MAX = (() => {
   const v = parseInt(process.env.CREW_BATCH_MAX ?? "", 10);
@@ -76562,9 +76590,9 @@ var cachedChecklist = null;
 var cachedChecklistMtime = 0;
 function readChecklist() {
   try {
-    const stat = fs21.statSync(CHECKLIST_PATH);
+    const stat = fs22.statSync(CHECKLIST_PATH);
     if (cachedChecklist && stat.mtimeMs === cachedChecklistMtime) return cachedChecklist;
-    cachedChecklist = fs21.readFileSync(CHECKLIST_PATH, "utf-8");
+    cachedChecklist = fs22.readFileSync(CHECKLIST_PATH, "utf-8");
     cachedChecklistMtime = stat.mtimeMs;
     return cachedChecklist;
   } catch {
@@ -79626,8 +79654,8 @@ init_db();
 init_auth();
 init_registry();
 init_bridge();
-import fs24 from "fs";
-import path29 from "path";
+import fs25 from "fs";
+import path30 from "path";
 import { WebSocket as WebSocket3, WebSocketServer as WebSocketServer3 } from "ws";
 import { and as and96, desc as desc45, eq as eq125 } from "drizzle-orm";
 
@@ -79980,7 +80008,7 @@ var OPENCLAW_PARITY_CAPABILITIES = [
 ];
 function readPackageVersion() {
   try {
-    const pkg = JSON.parse(fs24.readFileSync(path29.resolve(process.cwd(), "package.json"), "utf8"));
+    const pkg = JSON.parse(fs25.readFileSync(path30.resolve(process.cwd(), "package.json"), "utf8"));
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
@@ -80324,9 +80352,9 @@ async function daemonCapabilityInvoke(userId, capability, input) {
   if (action === "ping") return daemonPing(userId, input);
   const { sendDaemonOp: sendDaemonOp2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
   if (action === "file_read" || action === "file_list" || action === "android_file_read" || action === "android_file_list") {
-    const path31 = typeof input.path === "string" ? input.path.trim() : "";
-    if (!path31) throw new Error("path is required");
-    return sendDaemonOp2(userId, { type: action, path: path31 }, action.endsWith("read") ? 1e4 : 8e3);
+    const path32 = typeof input.path === "string" ? input.path.trim() : "";
+    if (!path32) throw new Error("path is required");
+    return sendDaemonOp2(userId, { type: action, path: path32 }, action.endsWith("read") ? 1e4 : 8e3);
   }
   if (action === "desktop_screenshot") return sendDaemonOp2(userId, { type: "desktop_screenshot" }, 2e4);
   if (action === "desktop_read_screen") return sendDaemonOp2(userId, { type: "desktop_read_screen" }, 4e4);
@@ -80731,8 +80759,8 @@ init_applyCodeChangeTool();
 init_schema();
 init_publicUrl();
 import { eq as eq126, and as and97 } from "drizzle-orm";
-import * as fs25 from "fs";
-import * as path30 from "path";
+import * as fs26 from "fs";
+import * as path31 from "path";
 async function alertTelegramUsersWebhookDown() {
   try {
     const linked = await db.select({ userId: telegramLinks.userId }).from(telegramLinks);
@@ -80825,7 +80853,7 @@ function setupBodyParsing(app2) {
 function setupRequestLogging(app2) {
   app2.use((req, res, next) => {
     const start = Date.now();
-    const path31 = req.path;
+    const path32 = req.path;
     let capturedJsonResponse = void 0;
     const originalResJson = res.json;
     res.json = function(bodyJson, ...args) {
@@ -80833,9 +80861,9 @@ function setupRequestLogging(app2) {
       return originalResJson.apply(res, [bodyJson, ...args]);
     };
     res.on("finish", () => {
-      if (!path31.startsWith("/api")) return;
+      if (!path32.startsWith("/api")) return;
       const duration = Date.now() - start;
-      let logLine = `${req.method} ${path31} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${path32} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -80849,8 +80877,8 @@ function setupRequestLogging(app2) {
 }
 function getAppName() {
   try {
-    const appJsonPath = path30.resolve(process.cwd(), "app.json");
-    const appJsonContent = fs25.readFileSync(appJsonPath, "utf-8");
+    const appJsonPath = path31.resolve(process.cwd(), "app.json");
+    const appJsonContent = fs26.readFileSync(appJsonPath, "utf-8");
     const appJson = JSON.parse(appJsonContent);
     return appJson.expo?.name || "App Landing Page";
   } catch {
@@ -80858,19 +80886,19 @@ function getAppName() {
   }
 }
 function serveExpoManifest(platform, res) {
-  const manifestPath = path30.resolve(
+  const manifestPath = path31.resolve(
     process.cwd(),
     "static-build",
     platform,
     "manifest.json"
   );
-  if (!fs25.existsSync(manifestPath)) {
+  if (!fs26.existsSync(manifestPath)) {
     return res.status(404).json({ error: `Manifest not found for platform: ${platform}` });
   }
   res.setHeader("expo-protocol-version", "1");
   res.setHeader("expo-sfv-version", "0");
   res.setHeader("content-type", "application/json");
-  const manifest = fs25.readFileSync(manifestPath, "utf-8");
+  const manifest = fs26.readFileSync(manifestPath, "utf-8");
   res.send(manifest);
 }
 function serveLandingPage({
@@ -80892,16 +80920,16 @@ function serveLandingPage({
   res.status(200).send(html);
 }
 function configureExpoAndLanding(app2) {
-  const templatePath = path30.resolve(
+  const templatePath = path31.resolve(
     process.cwd(),
     "server",
     "templates",
     "landing-page.html"
   );
-  const landingPageTemplate = fs25.readFileSync(templatePath, "utf-8");
+  const landingPageTemplate = fs26.readFileSync(templatePath, "utf-8");
   const appName = getAppName();
-  const webBuildDir = path30.resolve(process.cwd(), "static-build", "web");
-  const webIndexPath = path30.join(webBuildDir, "index.html");
+  const webBuildDir = path31.resolve(process.cwd(), "static-build", "web");
+  const webIndexPath = path31.join(webBuildDir, "index.html");
   log("Serving static Expo files with dynamic manifest routing");
   app2.use((req, res, next) => {
     if (req.path.startsWith("/api")) {
@@ -80915,7 +80943,7 @@ function configureExpoAndLanding(app2) {
       return serveExpoManifest(platform, res);
     }
     if (req.path === "/") {
-      if (fs25.existsSync(webIndexPath)) {
+      if (fs26.existsSync(webIndexPath)) {
         return res.sendFile(webIndexPath);
       }
       return serveLandingPage({
@@ -80927,15 +80955,15 @@ function configureExpoAndLanding(app2) {
     }
     next();
   });
-  if (fs25.existsSync(webBuildDir)) {
+  if (fs26.existsSync(webBuildDir)) {
     app2.use(express3.static(webBuildDir));
   }
-  app2.use("/assets", express3.static(path30.resolve(process.cwd(), "assets")));
-  app2.use(express3.static(path30.resolve(process.cwd(), "static-build")));
-  const chatTemplatePath = path30.resolve(process.cwd(), "server", "templates", "chat.html");
+  app2.use("/assets", express3.static(path31.resolve(process.cwd(), "assets")));
+  app2.use(express3.static(path31.resolve(process.cwd(), "static-build")));
+  const chatTemplatePath = path31.resolve(process.cwd(), "server", "templates", "chat.html");
   app2.get("/chat", (req, res) => {
     try {
-      let html = fs25.readFileSync(chatTemplatePath, "utf-8");
+      let html = fs26.readFileSync(chatTemplatePath, "utf-8");
       const googleClientId = process.env.GOOGLE_WEB_CLIENT_ID || "";
       html = html.replace("GOOGLE_CLIENT_ID_PLACEHOLDER", googleClientId);
       res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -80944,10 +80972,10 @@ function configureExpoAndLanding(app2) {
       res.status(500).send("Chat page unavailable");
     }
   });
-  const controlTemplatePath = path30.resolve(process.cwd(), "server", "templates", "control.html");
+  const controlTemplatePath = path31.resolve(process.cwd(), "server", "templates", "control.html");
   app2.get(["/control", "/gateway"], (_req, res) => {
     try {
-      const html = fs25.readFileSync(controlTemplatePath, "utf-8");
+      const html = fs26.readFileSync(controlTemplatePath, "utf-8");
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       res.status(200).send(html);
     } catch {
@@ -80956,7 +80984,7 @@ function configureExpoAndLanding(app2) {
   });
   app2.use((req, res, next) => {
     if (req.path.startsWith("/api") || req.path.startsWith("/assets") || req.path === "/chat" || req.path === "/control" || req.path === "/gateway") return next();
-    if (fs25.existsSync(webIndexPath)) {
+    if (fs26.existsSync(webIndexPath)) {
       return res.sendFile(webIndexPath);
     }
     next();

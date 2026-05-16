@@ -26,6 +26,7 @@ import { getChannel } from "../channels/registry";
 import { stopProjectServer } from "./tools/projectShellTool";
 import { getAndClearAppProjectScreenshotCount } from "./tools/browserTools";
 import { sendToDiscordUser } from "../discord/manager";
+import { getProjectWorkspaceDir } from "../projectStorage";
 
 export type AppFramework = "nextjs" | "react-vite" | "node-express" | "custom";
 
@@ -205,7 +206,7 @@ function buildAppStepPrompt(
     : "(none yet)";
 
   const devPort = project.devServerPort;
-  const workspaceDir = project.workspaceDir ?? path.join(process.cwd(), "projects", project.id);
+  const workspaceDir = project.workspaceDir ?? getProjectWorkspaceDir(project.id);
   const framework = project.appFramework ?? "custom";
 
   const answerContext = userAnswer
@@ -308,8 +309,6 @@ export async function startAppProject(input: {
   framework: AppFramework;
   originChannel?: string;
 }): Promise<{ projectId: string }> {
-  const workspaceDir = path.join(process.cwd(), "projects", "placeholder");
-
   const [project] = await db
     .insert(schema.jarvisProjects)
     .values({
@@ -327,7 +326,7 @@ export async function startAppProject(input: {
 
   const projectId = project.id;
 
-  const realWorkspaceDir = path.join(process.cwd(), "projects", projectId);
+  const realWorkspaceDir = getProjectWorkspaceDir(projectId);
   fs.mkdirSync(realWorkspaceDir, { recursive: true });
 
   await db
@@ -449,7 +448,7 @@ export async function runAppProjectSession(
           messages: [
             {
               role: "system",
-              content: `You are Jarvis, building a standalone app. Your workspace is at ${project.workspaceDir ?? path.join(process.cwd(), "projects", projectId)}.
+              content: `You are Jarvis, building a standalone app. Your workspace is at ${project.workspaceDir ?? getProjectWorkspaceDir(projectId)}.
 Use project_shell for ALL file system operations and commands. Never touch Jarvis's own source files.`,
             },
             { role: "user", content: prompt },
@@ -472,7 +471,7 @@ Use project_shell for ALL file system operations and commands. Never touch Jarvi
         if (reply.startsWith("QUESTION:")) break;
 
         // ── Deterministic verification (tool-based, not LLM-based) ────────────
-        const workspaceForVerify = project.workspaceDir ?? path.join(process.cwd(), "projects", projectId);
+        const workspaceForVerify = project.workspaceDir ?? getProjectWorkspaceDir(projectId);
         const deterministicFailure = await runDeterministicVerification(step.phase, workspaceForVerify, reply, projectId);
         if (deterministicFailure) {
           correctionContext = deterministicFailure;
