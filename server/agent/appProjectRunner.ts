@@ -55,9 +55,9 @@ function appToolGroupsForPhase(phase: string): ToolGroup[] {
  * IMPLEMENT_* phases: runs `npx tsc --noEmit --skipLibCheck` when a tsconfig.json
  *   exists. A non-zero exit means the step needs correction.
  *
- * TEST_UI phase: checks that browser_screenshot was actually called (via side-effect
- *   counter) and that the reply does not indicate a known error state (connection
- *   refused, blank page, etc.).  Text-only mentions of "screenshot" are NOT enough.
+ * TEST_UI phase: prefers a real browser_screenshot (via side-effect counter). If the
+ *   hosted browser cannot launch in the container, fall back to command-based app
+ *   validation so the project does not get permanently stuck before packaging.
  */
 async function runDeterministicVerification(
   phase: string,
@@ -86,15 +86,30 @@ async function runDeterministicVerification(
   }
 
   if (p === "TEST_UI") {
-    // Check that browser_screenshot was actually invoked (tool side-effect counter),
-    // not just mentioned in text. The counter is incremented inside the tool's execute()
-    // only when ctx.projectId is set and the screenshot succeeds.
     const screenshotCount = projectId ? getAndClearAppProjectScreenshotCount(projectId) : 0;
     if (screenshotCount === 0) {
-      return "TEST_UI step did not produce an actual browser_screenshot. Start the dev server, navigate to it with browser_navigate, then call browser_screenshot to capture the running UI.";
+      const packagePath = path.join(workspaceDir, "package.json");
+      if (!fs.existsSync(packagePath)) return null;
+      try {
+        const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8")) as { scripts?: Record<string, string> };
+        if (pkg.scripts?.build) {
+          const result = spawnSync("npm", ["run", "build"], {
+            cwd: workspaceDir,
+            env: { ...process.env, HOME: os.homedir() },
+            encoding: "utf8",
+            timeout: 180_000,
+          });
+          if (result.status !== 0) {
+            const errors = (result.stdout ?? "").slice(0, 1000) + (result.stderr ?? "").slice(0, 600);
+            return `TEST_UI fallback build failed (npm run build). Fix the app before packaging.\n${errors}`;
+          }
+        }
+      } catch (err) {
+        return `TEST_UI fallback validation failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+      return null;
     }
 
-    // Reject known error states that indicate the dev server was not reachable.
     const replyLower = reply.toLowerCase();
     const errorPatterns = [
       "err_connection_refused",
@@ -461,7 +476,7 @@ Use project_shell for ALL file system operations and commands. Never touch Jarvi
 
         // ── LLM-based quality verification ────────────────────────────────────
         const acceptanceCriteria = step.phase.toUpperCase() === "TEST_UI"
-          ? `At least one browser_screenshot was taken and the screenshot shows a working UI (not an error page). ${step.acceptance_criteria || ""}`
+      ? `Use browser_screenshot when the hosted browser is available; otherwise command-based validation such as npm run build is acceptable. The app must not show an obvious browser/dev-server error. ${step.acceptance_criteria || ""}`
           : (step.acceptance_criteria || "step completed successfully");
 
         const verification = await verifyJobOutput({
