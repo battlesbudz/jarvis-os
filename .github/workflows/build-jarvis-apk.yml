@@ -122,6 +122,9 @@ jobs:
 
       - name: Build release APK
         working-directory: android
+        env:
+          EXPO_PUBLIC_DOMAIN: gameplanjarvisai.up.railway.app
+          EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
