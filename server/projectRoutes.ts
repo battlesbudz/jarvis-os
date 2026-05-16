@@ -11,7 +11,7 @@ import {
   getUserProjects,
   setAutonomousMode,
 } from "./agent/projectRunner";
-import { startAppProject } from "./agent/appProjectRunner";
+import { answerAppProjectQuestion, startAppProject } from "./agent/appProjectRunner";
 import { normalizeCreateProjectRequest, isSafeProjectFilePath } from "./agent/projectCreateRequest";
 import { generateDownloadToken } from "./agent/appDelivery";
 import { authMiddleware } from "./auth";
@@ -214,7 +214,11 @@ export function registerProjectRoutes(app: Express): void {
       }
 
       if (answer !== undefined) {
-        await answerProjectQuestion(id, answer);
+        if (project.appFramework) {
+          await answerAppProjectQuestion(id, answer);
+        } else {
+          await answerProjectQuestion(id, answer);
+        }
         return res.json({ status: "building" });
       }
 
