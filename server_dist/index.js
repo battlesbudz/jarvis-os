@@ -4201,7 +4201,7 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
   const dir = await mkdtemp(join(tmpdir(), "jarvis-codex-oauth-"));
   const outputPath = join(dir, "answer.txt");
   try {
-    await new Promise((resolve8, reject) => {
+    await new Promise((resolve9, reject) => {
       const child = spawn(
         command,
         ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", outputPath, "-"],
@@ -4233,7 +4233,7 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
       });
       child.on("close", (code) => {
         finish(() => {
-          if (code === 0) resolve8();
+          if (code === 0) resolve9();
           else reject(new Error(stderr || `Codex OAuth provider exited with ${code}.`));
         });
       });
@@ -4858,10 +4858,10 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   let patched = false;
   if (!clientProto[CLIENT_POST_PATCHED] && typeof clientProto.post === "function") {
     const originalPost = clientProto.post;
-    clientProto.post = function patchedPost(path30, opts) {
+    clientProto.post = function patchedPost(path31, opts) {
       const body = opts?.body;
-      if (path30 !== "/chat/completions" || !shouldRoute(body)) {
-        return originalPost.call(this, path30, opts);
+      if (path31 !== "/chat/completions" || !shouldRoute(body)) {
+        return originalPost.call(this, path31, opts);
       }
       return routeBody(body, opts?.signal, postLogPrefix);
     };
@@ -4870,10 +4870,10 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   }
   if (!clientProto[CLIENT_METHOD_PATCHED] && typeof clientProto.methodRequest === "function") {
     const originalMethodRequest = clientProto.methodRequest;
-    clientProto.methodRequest = function patchedMethodRequest(method, path30, opts) {
+    clientProto.methodRequest = function patchedMethodRequest(method, path31, opts) {
       const body = opts?.body;
-      if (method !== "post" || path30 !== "/chat/completions" || !shouldRoute(body)) {
-        return originalMethodRequest.call(this, method, path30, opts);
+      if (method !== "post" || path31 !== "/chat/completions" || !shouldRoute(body)) {
+        return originalMethodRequest.call(this, method, path31, opts);
       }
       return routeBody(body, opts?.signal, methodLogPrefix);
     };
@@ -4882,9 +4882,9 @@ function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
   }
   return patched;
 }
-function optionalRequire(path30) {
+function optionalRequire(path31) {
   try {
-    return require2(path30);
+    return require2(path31);
   } catch {
     return null;
   }
@@ -5112,9 +5112,9 @@ import OpenAI4 from "openai";
 import { eq as eq4, desc as desc2 } from "drizzle-orm";
 async function extractFromPdfWithPdfjs(buffer) {
   const { pathToFileURL } = await import("url");
-  const { resolve: resolve8 } = await import("path");
+  const { resolve: resolve9 } = await import("path");
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const workerPath = resolve8("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  const workerPath = resolve9("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   const uint8 = new Uint8Array(buffer);
   const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
@@ -9639,9 +9639,9 @@ function isIngestableDocument(mimeType, filename) {
 }
 async function extractPdf(buffer) {
   const { pathToFileURL } = await import("url");
-  const { resolve: resolve8 } = await import("path");
+  const { resolve: resolve9 } = await import("path");
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const workerPath = resolve8("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  const workerPath = resolve9("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   const uint8 = new Uint8Array(buffer);
   const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
@@ -9678,9 +9678,9 @@ async function renderPageToPngBase64(pdf, pageNum) {
 async function extractPdfViaVision(buffer) {
   try {
     const { pathToFileURL } = await import("url");
-    const { resolve: resolve8 } = await import("path");
+    const { resolve: resolve9 } = await import("path");
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const workerPath = resolve8("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+    const workerPath = resolve9("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
     pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
     const uint8 = new Uint8Array(buffer);
     const pdf = await pdfjs.getDocument({ data: uint8, useSystemFonts: true }).promise;
@@ -9921,7 +9921,7 @@ async function convertToWav(audioBuffer) {
   const outputPath = join2(tmpdir2(), `output-${randomUUID2()}.wav`);
   try {
     await writeFile(inputPath, audioBuffer);
-    await new Promise((resolve8, reject) => {
+    await new Promise((resolve9, reject) => {
       const ffmpeg = spawn2("ffmpeg", [
         "-i",
         inputPath,
@@ -9944,7 +9944,7 @@ async function convertToWav(audioBuffer) {
       ffmpeg.stderr.on("data", () => {
       });
       ffmpeg.on("close", (code) => {
-        if (code === 0) resolve8();
+        if (code === 0) resolve9();
         else reject(new Error(`ffmpeg exited with code ${code}`));
       });
       ffmpeg.on("error", reject);
@@ -11307,7 +11307,7 @@ var init_mcpClient = __esm({
       }
       // ── stdio transport ──────────────────────────────────────────────────────────
       _initStdio() {
-        return new Promise((resolve8, reject) => {
+        return new Promise((resolve9, reject) => {
           const { command, args = [], env } = this.transport;
           this.proc = spawn3(command, args, {
             stdio: ["pipe", "pipe", "pipe"],
@@ -11355,7 +11355,7 @@ var init_mcpClient = __esm({
             }
             this._stdioSend({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
             console.log(`[McpClient] stdio connected: ${command}`);
-            resolve8();
+            resolve9();
           }).catch(reject);
         });
       }
@@ -11385,15 +11385,15 @@ var init_mcpClient = __esm({
         }
       }
       _stdioRequest(method, params) {
-        return new Promise((resolve8) => {
+        return new Promise((resolve9) => {
           const id = ++this.counter;
           const timer = setTimeout(() => {
             this.pending.delete(id);
-            resolve8({ id, jsonrpc: "2.0", error: { code: -32e3, message: `Timeout calling ${method}` } });
+            resolve9({ id, jsonrpc: "2.0", error: { code: -32e3, message: `Timeout calling ${method}` } });
           }, this.timeoutMs);
           this.pending.set(id, (r) => {
             clearTimeout(timer);
-            resolve8(r);
+            resolve9(r);
           });
           this._stdioSend({ jsonrpc: "2.0", id, method, params });
         });
@@ -11738,7 +11738,7 @@ function getRecentPhoneNotifications(userId, limit = 20) {
   return arr.slice(0, limit);
 }
 function waitForTrainingTap(userId, label, timeoutMs = 6e4) {
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve9, reject) => {
     const prior = trainingWaiters.get(userId);
     if (prior) {
       clearTimeout(prior.timer);
@@ -11748,7 +11748,7 @@ function waitForTrainingTap(userId, label, timeoutMs = 6e4) {
       trainingWaiters.delete(userId);
       reject("Training timed out \u2014 no tap received within the allowed time.");
     }, timeoutMs);
-    trainingWaiters.set(userId, { label, resolve: resolve8, reject, timer });
+    trainingWaiters.set(userId, { label, resolve: resolve9, reject, timer });
   });
 }
 function subscribeWakeWordTrigger(userId, cb) {
@@ -12039,7 +12039,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
   }
   console.log(`[daemon] op SENT userId=${userId} op=${op.type}`, "packageName" in op ? `pkg=${op.packageName}` : "");
   const sentAt = Date.now();
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const id = nextOpId();
     const timer = setTimeout(() => {
       const map = pendingByUser.get(pendingKey);
@@ -12047,7 +12047,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
-      resolve8({ ok: false, error: "daemon timeout" });
+      resolve9({ ok: false, error: "daemon timeout" });
     }, timeoutMs);
     let userMap = pendingByUser.get(pendingKey);
     if (!userMap) {
@@ -12063,7 +12063,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
           console.log(`[daemon] op RESULT userId=${userId} op=${op.type} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
         }
         recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
-        resolve8(result);
+        resolve9(result);
       },
       timer
     });
@@ -12074,7 +12074,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       userMap.delete(id);
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: String(err2), durationMs });
-      resolve8({ ok: false, error: String(err2) });
+      resolve9({ ok: false, error: String(err2) });
     }
   });
 }
@@ -13329,11 +13329,11 @@ var init_googleDrive = __esm({
 import { eq as eq16, and as and12 } from "drizzle-orm";
 async function markdownToPdfBuffer(title, markdown) {
   const PDFDocument = (await import("pdfkit")).default;
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve9, reject) => {
     const doc = new PDFDocument({ margin: 72, size: "A4" });
     const chunks = [];
     doc.on("data", (chunk) => chunks.push(chunk));
-    doc.on("end", () => resolve8(Buffer.concat(chunks)));
+    doc.on("end", () => resolve9(Buffer.concat(chunks)));
     doc.on("error", reject);
     const COLORS = {
       title: "#1a1a2e",
@@ -16144,7 +16144,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_swipe_element] element "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve8) => setTimeout(resolve8, 400));
+          await new Promise((resolve9) => setTimeout(resolve9, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -16185,7 +16185,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve8) => setTimeout(resolve8, 500));
+            await new Promise((resolve9) => setTimeout(resolve9, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -16293,7 +16293,7 @@ ${elementList || "  (none)"}`,
           };
         }
         const SWIPE_SETTLE_MS = 400;
-        await new Promise((resolve8) => setTimeout(resolve8, SWIPE_SETTLE_MS));
+        await new Promise((resolve9) => setTimeout(resolve9, SWIPE_SETTLE_MS));
         let screenChanged = false;
         let hashDistance = null;
         if (preSwipeHash !== null) {
@@ -16780,7 +16780,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_tap_element] element "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve8) => setTimeout(resolve8, 400));
+          await new Promise((resolve9) => setTimeout(resolve9, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -16816,7 +16816,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve8) => setTimeout(resolve8, 500));
+            await new Promise((resolve9) => setTimeout(resolve9, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -16929,7 +16929,7 @@ ${elementList || "  (none)"}`,
             if (attempt < MAX_ATTEMPTS) continue;
             break;
           }
-          await new Promise((resolve8) => setTimeout(resolve8, SETTLE_MS));
+          await new Promise((resolve9) => setTimeout(resolve9, SETTLE_MS));
           if (preTapHash !== null) {
             try {
               const postScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17140,7 +17140,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_long_press_element] element "${label}" not found on initial screen \u2014 resetting to top of page`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve8) => setTimeout(resolve8, 400));
+          await new Promise((resolve9) => setTimeout(resolve9, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -17176,7 +17176,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve8) => setTimeout(resolve8, 500));
+            await new Promise((resolve9) => setTimeout(resolve9, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17402,7 +17402,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!dropdownBest || dropdownScore === 0) && resetScroll) {
           console.log(`[android_select_option] dropdown "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve8) => setTimeout(resolve8, 400));
+          await new Promise((resolve9) => setTimeout(resolve9, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             dropdownBest = null;
@@ -17438,7 +17438,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve8) => setTimeout(resolve8, 500));
+            await new Promise((resolve9) => setTimeout(resolve9, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17562,7 +17562,7 @@ ${elementList || "  (none)"}`,
               break;
             }
             optionScrollsPerformed = scroll + 1;
-            await new Promise((resolve8) => setTimeout(resolve8, 500));
+            await new Promise((resolve9) => setTimeout(resolve9, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17866,7 +17866,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!fromElement || fromScore === 0) && resetScroll) {
           console.log(`[android_drag_element] element "${fromLabel}" not found on initial screen \u2014 resetting to top of page`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve8) => setTimeout(resolve8, 400));
+          await new Promise((resolve9) => setTimeout(resolve9, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             fromElement = null;
@@ -17902,7 +17902,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve8) => setTimeout(resolve8, 500));
+            await new Promise((resolve9) => setTimeout(resolve9, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               try {
@@ -17989,7 +17989,7 @@ ${elementList || "  (none)"}`,
                 break;
               }
               scrollsPerformed = scrollsPerformed + 1;
-              await new Promise((resolve8) => setTimeout(resolve8, 500));
+              await new Promise((resolve9) => setTimeout(resolve9, 500));
               let screenshotCheckConclusive = false;
               if (preScrollScreenshot) {
                 try {
@@ -18035,7 +18035,7 @@ ${elementList || "  (none)"}`,
           if ((!toElement || toScore === 0) && resetScroll && maxScrollAttempts > 0) {
             console.log(`[android_drag_element] destination "${toLabel}" not found after downward scan \u2014 resetting to top to search upward coverage`);
             await scrollToTop(ctx.userId, 5, ctx);
-            await new Promise((resolve8) => setTimeout(resolve8, 400));
+            await new Promise((resolve9) => setTimeout(resolve9, 400));
             const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
             if (afterResetResult.ok) {
               screenElements = afterResetResult.elements;
@@ -18070,7 +18070,7 @@ ${elementList || "  (none)"}`,
                   break;
                 }
                 scrollsPerformed = scrollsPerformed + 1;
-                await new Promise((resolve8) => setTimeout(resolve8, 500));
+                await new Promise((resolve9) => setTimeout(resolve9, 500));
                 let screenshotCheckConclusive = false;
                 if (preScrollScreenshot) {
                   try {
@@ -18145,7 +18145,7 @@ ${elementList || "  (none)"}`,
             } else {
               console.log(`[android_drag_element] source "${fromLabel}" no longer visible after destination scroll \u2014 resetting to top`);
               await scrollToTop(ctx.userId, 5, ctx);
-              await new Promise((resolve8) => setTimeout(resolve8, 400));
+              await new Promise((resolve9) => setTimeout(resolve9, 400));
               const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
               if (afterResetResult.ok) {
                 screenElements = afterResetResult.elements;
@@ -22155,9 +22155,9 @@ async function requestApproval(req) {
   };
 }
 function awaitApproval(gateId, ttlMs, signal) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     if (signal?.aborted) {
-      resolve8(false);
+      resolve9(false);
       return;
     }
     const timeout = ttlMs ?? DEFAULT_TTL_MS + 5e3;
@@ -22165,7 +22165,7 @@ function awaitApproval(gateId, ttlMs, signal) {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       gateEmitter.removeAllListeners(gateId);
-      resolve8(result);
+      resolve9(result);
     };
     const timer = setTimeout(() => cleanup(false), timeout);
     const onAbort = () => cleanup(false);
@@ -22173,7 +22173,7 @@ function awaitApproval(gateId, ttlMs, signal) {
     gateEmitter.once(gateId, (result) => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      resolve8(result.approved);
+      resolve9(result.approved);
     });
   });
 }
@@ -24899,7 +24899,7 @@ function hasUnsafePathArgs(command, workspaceDir) {
   return false;
 }
 async function runCommand(command, cwd, timeoutSeconds) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const tokens = command.trim().split(/\s+/);
     const executable = tokens[0];
     const args = tokens.slice(1);
@@ -24925,7 +24925,7 @@ async function runCommand(command, cwd, timeoutSeconds) {
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve8({
+      resolve9({
         stdout: stdout.slice(0, 8e3),
         stderr: stderr.slice(0, 4e3),
         exitCode: timedOut ? -1 : code ?? 0
@@ -24934,7 +24934,7 @@ async function runCommand(command, cwd, timeoutSeconds) {
   });
 }
 async function runDevServer(command, cwd, projectId, port) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const env = {
       ...process.env,
       HOME: os3.homedir(),
@@ -24958,7 +24958,7 @@ async function runDevServer(command, cwd, projectId, port) {
       settled = true;
       runningServers.set(projectId, { pid, port, workspaceDir: cwd });
       writePidFile(cwd, pid, port);
-      resolve8({ pid, url: `http://localhost:${port}` });
+      resolve9({ pid, url: `http://localhost:${port}` });
     };
     child.stdout.on("data", (d) => {
       const text2 = d.toString();
@@ -29944,7 +29944,7 @@ async function pollSupadataJob(apiKey, jobId, videoId, signal) {
   );
 }
 function sleep2(ms) {
-  return new Promise((resolve8) => setTimeout(resolve8, ms));
+  return new Promise((resolve9) => setTimeout(resolve9, ms));
 }
 var BASE2, JOB_POLL_TIMEOUT_MS, JOB_POLL_INTERVAL_START_MS, JOB_POLL_INTERVAL_MAX_MS, JOB_POLL_LOG_INTERVAL_MS, SupadataJobPendingError;
 var init_supadataTranscript = __esm({
@@ -29987,7 +29987,7 @@ import { mkdtempSync } from "fs";
 import path10 from "path";
 import os5 from "os";
 function spawnYtdlp(cmd, timeoutMs) {
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve9, reject) => {
     const child = spawn5(cmd, { shell: true, stdio: ["ignore", "pipe", "pipe"] });
     const startMs = Date.now();
     const stderrChunks = [];
@@ -30036,7 +30036,7 @@ function spawnYtdlp(cmd, timeoutMs) {
           { stderr: fullStderr }
         ));
       } else {
-        resolve8();
+        resolve9();
       }
     });
     child.on("error", (err2) => {
@@ -31412,9 +31412,9 @@ function isWorkerOnline(userId) {
   return Date.now() - reg.lastSeen < WORKER_ONLINE_WINDOW_MS;
 }
 function queueTranscriptJob(userId, url, timeoutMs = 3e4) {
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve9, reject) => {
     const id = `lwj_${Date.now()}_${crypto6.randomBytes(4).toString("hex")}`;
-    const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve8, reject };
+    const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve9, reject };
     jobStore.set(id, job);
     setTimeout(() => {
       if (jobStore.has(id)) {
@@ -35767,7 +35767,7 @@ function toCamelCase(snake) {
 }
 async function applyToolCode(featureName, toolCode, routeCode) {
   const { promises: fs26 } = await import("fs");
-  const path30 = await import("path");
+  const path31 = await import("path");
   const applied = [];
   const warnings = [];
   const circuit = await checkCircuitBreaker();
@@ -35780,8 +35780,8 @@ async function applyToolCode(featureName, toolCode, routeCode) {
   const toolFilePath = `server/agent/tools/${featureName}.ts`;
   const routeFilePath = `server/${featureName}Routes.ts`;
   try {
-    await fs26.mkdir(path30.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
-    await fs26.writeFile(path30.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
+    await fs26.mkdir(path31.resolve(process.cwd(), "server/agent/tools"), { recursive: true });
+    await fs26.writeFile(path31.resolve(process.cwd(), toolFilePath), toolCode, "utf8");
     await recordAutonomousWrite(toolFilePath);
     applied.push(toolFilePath);
   } catch (err2) {
@@ -35791,8 +35791,8 @@ async function applyToolCode(featureName, toolCode, routeCode) {
   }
   if (routeCode) {
     try {
-      await fs26.mkdir(path30.resolve(process.cwd(), "server"), { recursive: true });
-      await fs26.writeFile(path30.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
+      await fs26.mkdir(path31.resolve(process.cwd(), "server"), { recursive: true });
+      await fs26.writeFile(path31.resolve(process.cwd(), routeFilePath), routeCode, "utf8");
       await recordAutonomousWrite(routeFilePath);
       applied.push(routeFilePath);
     } catch (err2) {
@@ -35818,7 +35818,7 @@ async function applyToolCode(featureName, toolCode, routeCode) {
         );
       }
     }
-    const indexAbsPath = path30.resolve(process.cwd(), "server/agent/tools/index.ts");
+    const indexAbsPath = path31.resolve(process.cwd(), "server/agent/tools/index.ts");
     let idx = await fs26.readFile(indexAbsPath, "utf8");
     let modified = false;
     const importLine = `import { ${actualExportName} } from "./${featureName}";`;
@@ -37081,12 +37081,12 @@ function computeSimpleDiff(before, after) {
   return [`+${added} -${removed} lines`, ...diff];
 }
 async function appendAuditLog(entry) {
-  const sep3 = "\u2500".repeat(72);
+  const sep4 = "\u2500".repeat(72);
   const ts = (/* @__PURE__ */ new Date()).toISOString();
   const diff = computeSimpleDiff(entry.before, entry.after);
   const capped = diff.length > AUDIT_MAX_DIFF_LINES ? [...diff.slice(0, AUDIT_MAX_DIFF_LINES), `\u2026[diff truncated at ${AUDIT_MAX_DIFF_LINES} lines]`] : diff;
   const block = [
-    sep3,
+    sep4,
     `Timestamp : ${ts}`,
     `File      : ${entry.filePath}`,
     `Reason    : ${entry.reason}`,
@@ -37376,9 +37376,9 @@ __export(runShellTool_exports, {
 import { spawn as spawn6 } from "child_process";
 import http from "http";
 function httpGet(url, timeoutMs = 5e3) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const timer = setTimeout(() => {
-      resolve8({ status: -1, body: "Request timed out" });
+      resolve9({ status: -1, body: "Request timed out" });
     }, timeoutMs);
     http.get(url, (res) => {
       const chunks = [];
@@ -37386,20 +37386,20 @@ function httpGet(url, timeoutMs = 5e3) {
       res.on("end", () => {
         clearTimeout(timer);
         const body = Buffer.concat(chunks).toString("utf8").slice(0, 500);
-        resolve8({ status: res.statusCode ?? 0, body });
+        resolve9({ status: res.statusCode ?? 0, body });
       });
       res.on("error", (err2) => {
         clearTimeout(timer);
-        resolve8({ status: -1, body: err2.message });
+        resolve9({ status: -1, body: err2.message });
       });
     }).on("error", (err2) => {
       clearTimeout(timer);
-      resolve8({ status: -1, body: err2.message });
+      resolve9({ status: -1, body: err2.message });
     });
   });
 }
 function runProcess(bin, args, timeoutMs) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const chunks = [];
     let timedOut = false;
     const child = spawn6(bin, args, {
@@ -37418,11 +37418,11 @@ function runProcess(bin, args, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > MAX_OUTPUT_CHARS ? raw.slice(0, MAX_OUTPUT_CHARS) + "\n\u2026[output truncated]" : raw;
-      resolve8({ stdout, exitCode: code, timedOut });
+      resolve9({ stdout, exitCode: code, timedOut });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve8({ stdout: `Failed to spawn '${bin}': ${err2.message}`, exitCode: -1, timedOut: false });
+      resolve9({ stdout: `Failed to spawn '${bin}': ${err2.message}`, exitCode: -1, timedOut: false });
     });
   });
 }
@@ -38698,8 +38698,8 @@ async function saveGitHubSettings(userId, patch) {
     });
   }
 }
-async function githubRequest(pat, path30, options = {}) {
-  const url = `https://api.github.com${path30}`;
+async function githubRequest(pat, path31, options = {}) {
+  const url = `https://api.github.com${path31}`;
   return fetch(url, {
     ...options,
     headers: {
@@ -39709,8 +39709,8 @@ function resolveCodexDelegationCwd(requestedCwd) {
   const raw = typeof requestedCwd === "string" ? requestedCwd.trim() : "";
   if (!raw) return projectRoot;
   const resolved = path18.resolve(projectRoot, raw);
-  const relative2 = path18.relative(projectRoot, resolved);
-  if (relative2.startsWith("..") || path18.isAbsolute(relative2)) {
+  const relative3 = path18.relative(projectRoot, resolved);
+  if (relative3.startsWith("..") || path18.isAbsolute(relative3)) {
     throw new Error("Codex delegation working_directory resolves outside the Jarvis workspace.");
   }
   return resolved;
@@ -39772,7 +39772,7 @@ async function runLocalCodexDelegation(request) {
   const outputPath = path18.join(dir, "answer.txt");
   const prompt = buildCodexDelegationPrompt(request);
   try {
-    const stdout = await new Promise((resolve8, reject) => {
+    const stdout = await new Promise((resolve9, reject) => {
       const child = spawn7(
         getCodexOAuthCommand(),
         [
@@ -39823,7 +39823,7 @@ async function runLocalCodexDelegation(request) {
       });
       child.on("close", (code) => {
         finish(() => {
-          if (code === 0) resolve8(stdoutText);
+          if (code === 0) resolve9(stdoutText);
           else reject(new Error((stderrText || stdoutText || `Codex delegation exited with ${code}.`).trim()));
         });
       });
@@ -40374,7 +40374,7 @@ var init_youtubeAutoFetch = __esm({
 function withTimeout(promise, ms, fallback) {
   return Promise.race([
     promise,
-    new Promise((resolve8) => setTimeout(() => resolve8(fallback), ms))
+    new Promise((resolve9) => setTimeout(() => resolve9(fallback), ms))
   ]);
 }
 async function preThink(userMessage, briefContext, orchestratorModel) {
@@ -43104,13 +43104,13 @@ async function opusChunksToWav(opusChunks) {
   const SAMPLE_RATE = 48e3;
   const CHANNELS = 2;
   const FRAME_SIZE = 960;
-  return new Promise((resolve8, reject) => {
+  return new Promise((resolve9, reject) => {
     const decoder = new prism.opus.Decoder({ rate: SAMPLE_RATE, channels: CHANNELS, frameSize: FRAME_SIZE });
     const pcmChunks = [];
     decoder.on("data", (chunk) => pcmChunks.push(chunk));
     decoder.on("end", () => {
       const pcm = Buffer.concat(pcmChunks);
-      resolve8(buildWavBuffer(pcm, SAMPLE_RATE, CHANNELS));
+      resolve9(buildWavBuffer(pcm, SAMPLE_RATE, CHANNELS));
     });
     decoder.on("error", reject);
     for (const chunk of opusChunks) {
@@ -45608,7 +45608,7 @@ function getClientForUser(userId) {
 async function claimMessageId(messageId) {
   const seenAt = Date.now();
   seenMessageIds.set(messageId, seenAt);
-  const timeout = new Promise((resolve8) => setTimeout(() => resolve8(null), 2e3));
+  const timeout = new Promise((resolve9) => setTimeout(() => resolve9(null), 2e3));
   try {
     const dbCall = db.execute(sql20`
       INSERT INTO discord_seen_messages (message_id, seen_at)
@@ -45871,8 +45871,8 @@ To link this Discord account:
     }
     const prevLock = userProcessingLocks.get(userId) ?? Promise.resolve();
     let releaseLock;
-    const thisLock = new Promise((resolve8) => {
-      releaseLock = resolve8;
+    const thisLock = new Promise((resolve9) => {
+      releaseLock = resolve9;
     });
     const chainedLock = prevLock.then(() => thisLock).catch(() => thisLock);
     userProcessingLocks.set(userId, chainedLock);
@@ -47159,7 +47159,7 @@ async function mp3ToOggOpus(mp3Buffer) {
   const outputPath = join7(tmpdir5(), `tts-out-${randomUUID3()}.ogg`);
   try {
     await writeFile3(inputPath, mp3Buffer);
-    await new Promise((resolve8, reject) => {
+    await new Promise((resolve9, reject) => {
       const ff = spawn8("ffmpeg", [
         "-i",
         inputPath,
@@ -47176,7 +47176,7 @@ async function mp3ToOggOpus(mp3Buffer) {
       ]);
       ff.stderr.on("data", () => {
       });
-      ff.on("close", (code) => code === 0 ? resolve8() : reject(new Error(`ffmpeg exited ${code}`)));
+      ff.on("close", (code) => code === 0 ? resolve9() : reject(new Error(`ffmpeg exited ${code}`)));
       ff.on("error", reject);
     });
     return await readFile6(outputPath);
@@ -51477,7 +51477,7 @@ print(_buf.getvalue(), end='')
 `;
 }
 function runPythonSandbox(code, timeoutMs) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const script = buildScript(code);
     const chunks = [];
     let timedOut = false;
@@ -51502,11 +51502,11 @@ function runPythonSandbox(code, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > MAX_OUTPUT_CHARS3 ? raw.slice(0, MAX_OUTPUT_CHARS3) + "\n\u2026 [output truncated]" : raw;
-      resolve8({ stdout, timedOut, exitCode });
+      resolve9({ stdout, timedOut, exitCode });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve8({
+      resolve9({
         stdout: `Failed to start Python: ${err2.message}`,
         timedOut: false,
         exitCode: -1
@@ -51729,7 +51729,7 @@ print(_buf.getvalue(), end='')
 `;
 }
 function runPythonInWorkspace(workspaceDir, code, timeoutMs) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const script = buildWorkspaceScript(code, workspaceDir);
     const chunks = [];
     let timedOut = false;
@@ -51755,11 +51755,11 @@ function runPythonInWorkspace(workspaceDir, code, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > WORKSPACE_MAX_OUTPUT_CHARS ? raw.slice(0, WORKSPACE_MAX_OUTPUT_CHARS) + "\n\u2026 [output truncated]" : raw;
-      resolve8({ stdout, timedOut, exitCode });
+      resolve9({ stdout, timedOut, exitCode });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve8({ stdout: `Failed to start Python: ${err2.message}`, timedOut: false, exitCode: -1 });
+      resolve9({ stdout: `Failed to start Python: ${err2.message}`, timedOut: false, exitCode: -1 });
     });
   });
 }
@@ -58991,8 +58991,8 @@ function requireUserId(req, res) {
   }
   return userId;
 }
-function registerSimpleJsonCrud(app2, path30, table) {
-  app2.get(`/api/data/${path30}`, async (req, res) => {
+function registerSimpleJsonCrud(app2, path31, table) {
+  app2.get(`/api/data/${path31}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
@@ -59000,11 +59000,11 @@ function registerSimpleJsonCrud(app2, path30, table) {
       if (result.length === 0) return res.json({ data: null });
       res.json({ data: result[0].data });
     } catch (e) {
-      console.error(`Error fetching ${path30}:`, e);
-      res.status(500).json({ error: `Failed to fetch ${path30}` });
+      console.error(`Error fetching ${path31}:`, e);
+      res.status(500).json({ error: `Failed to fetch ${path31}` });
     }
   });
-  app2.put(`/api/data/${path30}`, async (req, res) => {
+  app2.put(`/api/data/${path31}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
@@ -59015,19 +59015,19 @@ function registerSimpleJsonCrud(app2, path30, table) {
       });
       res.json({ ok: true });
     } catch (e) {
-      console.error(`Error saving ${path30}:`, e);
-      res.status(500).json({ error: `Failed to save ${path30}` });
+      console.error(`Error saving ${path31}:`, e);
+      res.status(500).json({ error: `Failed to save ${path31}` });
     }
   });
-  app2.delete(`/api/data/${path30}`, async (req, res) => {
+  app2.delete(`/api/data/${path31}`, async (req, res) => {
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
       await db.delete(table).where(eq85(table.userId, userId));
       res.json({ ok: true });
     } catch (e) {
-      console.error(`Error deleting ${path30}:`, e);
-      res.status(500).json({ error: `Failed to delete ${path30}` });
+      console.error(`Error deleting ${path31}:`, e);
+      res.status(500).json({ error: `Failed to delete ${path31}` });
     }
   });
 }
@@ -60517,8 +60517,8 @@ function validateAgentConfig(raw) {
     return { ok: true, errors: [], warnings };
   }
   const errors = result.error.issues.map((issue) => {
-    const path30 = issue.path.length > 0 ? `'${issue.path.join(".")}': ` : "";
-    return `${path30}${issue.message}`;
+    const path31 = issue.path.length > 0 ? `'${issue.path.join(".")}': ` : "";
+    return `${path31}${issue.message}`;
   });
   return { ok: false, errors, warnings: [] };
 }
@@ -61800,7 +61800,7 @@ import { eq as eq92, and as and68, desc as desc30 } from "drizzle-orm";
 import fs17 from "fs/promises";
 import path22 from "path";
 async function schedulePostFixVerification(userId, proposalId, filePath, debugCtx) {
-  await new Promise((resolve8) => setTimeout(resolve8, 8e3));
+  await new Promise((resolve9) => setTimeout(resolve9, 8e3));
   try {
     const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
     const brief = [
@@ -61945,9 +61945,76 @@ var init_codeProposalsRoutes = __esm({
   }
 });
 
+// server/agent/projectCreateRequest.ts
+function cleanString2(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function normalizeFramework2(value) {
+  const raw = cleanString2(value).toLowerCase();
+  if (raw === "react-vite") return "react-vite";
+  if (raw === "node-express") return "node-express";
+  if (raw === "custom") return "custom";
+  return "nextjs";
+}
+function normalizeProjectKind2(value, frameworkRaw) {
+  const raw = cleanString2(value).toLowerCase();
+  if (raw === "app" || raw === "website" || raw === "web_app" || raw === "web-app") return "app";
+  if (frameworkRaw) return "app";
+  return "general";
+}
+function normalizeCreateProjectRequest(body) {
+  const input = body && typeof body === "object" ? body : {};
+  const title = cleanString2(input.title);
+  const description = cleanString2(input.description);
+  const goal = cleanString2(input.goal);
+  const frameworkRaw = cleanString2(input.framework);
+  const projectKind = normalizeProjectKind2(input.projectKind ?? input.project_kind, frameworkRaw);
+  const framework = normalizeFramework2(input.framework);
+  const autonomousMode = typeof input.autonomousMode === "boolean" ? input.autonomousMode : typeof input.autonomous_mode === "boolean" ? input.autonomous_mode : projectKind === "app";
+  const originChannel = cleanString2(input.originChannel) || "app";
+  const errors = [];
+  if (!title) errors.push("title is required");
+  if (!goal) errors.push("goal is required");
+  return {
+    title,
+    description,
+    goal,
+    originChannel,
+    projectKind,
+    framework,
+    autonomousMode,
+    errors
+  };
+}
+function isSafeProjectFilePath(value) {
+  const raw = cleanString2(value).replace(/\\/g, "/");
+  if (!raw || raw.includes("\0")) return false;
+  if (raw.startsWith("/") || /^[a-zA-Z]:\//.test(raw)) return false;
+  const parts = raw.split("/").filter(Boolean);
+  if (parts.length === 0) return false;
+  if (parts.some((part) => part === "." || part === "..")) return false;
+  if (parts.some((part) => BLOCKED_FILE_SEGMENTS.has(part))) return false;
+  return true;
+}
+var BLOCKED_FILE_SEGMENTS;
+var init_projectCreateRequest = __esm({
+  "server/agent/projectCreateRequest.ts"() {
+    "use strict";
+    BLOCKED_FILE_SEGMENTS = /* @__PURE__ */ new Set([
+      ".git",
+      "node_modules",
+      ".next",
+      ".expo",
+      "dist",
+      "build"
+    ]);
+  }
+});
+
 // server/projectRoutes.ts
 import { eq as eq93, and as and69 } from "drizzle-orm";
 import * as fs18 from "fs";
+import * as path23 from "path";
 function registerProjectRoutes(app2) {
   app2.get("/api/projects", authMiddleware, async (req, res) => {
     try {
@@ -61962,15 +62029,26 @@ function registerProjectRoutes(app2) {
   app2.post("/api/projects", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const { title, description, goal, autonomousMode, originChannel } = req.body;
-      if (!title || !goal) {
-        return res.status(400).json({ error: "title and goal are required" });
+      const normalized = normalizeCreateProjectRequest(req.body);
+      if (normalized.errors.length > 0) {
+        return res.status(400).json({ error: normalized.errors.join(", ") });
       }
-      const projectId = await startProject(userId, title, description ?? "", goal, originChannel ?? "app");
-      if (autonomousMode) {
+      if (normalized.projectKind === "app") {
+        const { projectId: projectId2 } = await startAppProject({
+          userId,
+          title: normalized.title,
+          description: normalized.description,
+          goal: normalized.goal,
+          framework: normalized.framework,
+          originChannel: normalized.originChannel
+        });
+        return res.json({ projectId: projectId2, status: "planning", projectKind: "app" });
+      }
+      const projectId = await startProject(userId, normalized.title, normalized.description, normalized.goal, normalized.originChannel);
+      if (normalized.autonomousMode) {
         await setAutonomousMode(projectId, true);
       }
-      res.json({ projectId, status: "planning" });
+      res.json({ projectId, status: "planning", projectKind: "general" });
     } catch (err2) {
       console.error("[ProjectRoutes] POST /api/projects failed:", err2);
       res.status(500).json({ error: "Failed to create project" });
@@ -61987,6 +62065,81 @@ function registerProjectRoutes(app2) {
     } catch (err2) {
       console.error("[ProjectRoutes] GET /api/projects/:id failed:", err2);
       res.status(500).json({ error: "Failed to load project" });
+    }
+  });
+  app2.get("/api/projects/:id/files", authMiddleware, async (req, res) => {
+    try {
+      const userId = req.userId;
+      const id = _p7(req.params.id);
+      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      if (!project.workspaceDir || !fs18.existsSync(project.workspaceDir)) {
+        return res.json({ workspaceDir: project.workspaceDir ?? null, files: [] });
+      }
+      const root = path23.resolve(project.workspaceDir);
+      const blocked = /* @__PURE__ */ new Set([".git", "node_modules", ".next", ".expo", "dist", "build"]);
+      const files = [];
+      const walk = (dir, depth) => {
+        if (depth > 4 || files.length >= 250) return;
+        for (const entry of fs18.readdirSync(dir, { withFileTypes: true })) {
+          if (blocked.has(entry.name)) continue;
+          const full = path23.join(dir, entry.name);
+          const stat = fs18.statSync(full);
+          const rel = path23.relative(root, full).replace(/\\/g, "/");
+          files.push({
+            path: rel,
+            name: entry.name,
+            type: entry.isDirectory() ? "directory" : "file",
+            size: entry.isDirectory() ? 0 : stat.size,
+            updatedAt: stat.mtime.toISOString()
+          });
+          if (entry.isDirectory()) walk(full, depth + 1);
+          if (files.length >= 250) return;
+        }
+      };
+      walk(root, 0);
+      res.json({ workspaceDir: root, files });
+    } catch (err2) {
+      console.error("[ProjectRoutes] GET /api/projects/:id/files failed:", err2);
+      res.status(500).json({ error: "Failed to list project files" });
+    }
+  });
+  app2.get("/api/projects/:id/files/content", authMiddleware, async (req, res) => {
+    try {
+      const userId = req.userId;
+      const id = _p7(req.params.id);
+      const requestedPath = typeof req.query.path === "string" ? req.query.path : "";
+      if (!isSafeProjectFilePath(requestedPath)) return res.status(400).json({ error: "Invalid file path" });
+      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
+      if (!project?.workspaceDir) return res.status(404).json({ error: "Project workspace not found" });
+      const root = path23.resolve(project.workspaceDir);
+      const fullPath = path23.resolve(root, requestedPath);
+      if (!fullPath.startsWith(root + path23.sep)) return res.status(400).json({ error: "Invalid file path" });
+      if (!fs18.existsSync(fullPath) || !fs18.statSync(fullPath).isFile()) return res.status(404).json({ error: "File not found" });
+      const stat = fs18.statSync(fullPath);
+      if (stat.size > 2e5) return res.status(413).json({ error: "File is too large to preview" });
+      const content = fs18.readFileSync(fullPath, "utf8");
+      res.json({ path: requestedPath, content, size: stat.size, updatedAt: stat.mtime.toISOString() });
+    } catch (err2) {
+      console.error("[ProjectRoutes] GET /api/projects/:id/files/content failed:", err2);
+      res.status(500).json({ error: "Failed to read project file" });
+    }
+  });
+  app2.get("/api/projects/:id/download-url", authMiddleware, async (req, res) => {
+    try {
+      const userId = req.userId;
+      const id = _p7(req.params.id);
+      const [project] = await db.select().from(jarvisProjects).where(and69(eq93(jarvisProjects.id, id), eq93(jarvisProjects.userId, userId))).limit(1);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      if (project.status !== "complete") return res.status(409).json({ error: "Project is not complete yet" });
+      const zipPath = path23.join(process.cwd(), "server", "static", "downloads", `${id}.zip`);
+      if (!fs18.existsSync(zipPath)) return res.status(404).json({ error: "Project zip not yet available" });
+      const token = generateDownloadToken(id);
+      const downloadUrl = `${getPublicBaseUrl(req)}/api/downloads/project/${id}?token=${token}`;
+      res.json({ downloadUrl });
+    } catch (err2) {
+      console.error("[ProjectRoutes] GET /api/projects/:id/download-url failed:", err2);
+      res.status(500).json({ error: "Failed to create download link" });
     }
   });
   app2.patch("/api/projects/:id", authMiddleware, async (req, res) => {
@@ -62130,8 +62283,12 @@ var init_projectRoutes = __esm({
     init_db();
     init_schema();
     init_projectRunner();
+    init_appProjectRunner();
+    init_projectCreateRequest();
+    init_appDelivery();
     init_auth();
     init_github();
+    init_publicUrl();
     _p7 = (v) => Array.isArray(v) ? v[0] ?? "" : v;
   }
 });
@@ -62150,19 +62307,19 @@ function fail2(id, label, message, settingsPath) {
   return { id, label, status: "fail", message, settingsPath };
 }
 async function httpsGet(url, timeoutMs = 5e3, headers) {
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const req = https.get(url, { timeout: timeoutMs, headers }, (res) => {
       res.resume();
-      resolve8({
+      resolve9({
         statusCode: res.statusCode ?? 0,
         ok: (res.statusCode ?? 0) < 500,
         networkError: false
       });
     });
-    req.on("error", () => resolve8({ statusCode: 0, ok: false, networkError: true }));
+    req.on("error", () => resolve9({ statusCode: 0, ok: false, networkError: true }));
     req.on("timeout", () => {
       req.destroy();
-      resolve8({ statusCode: 0, ok: false, networkError: true });
+      resolve9({ statusCode: 0, ok: false, networkError: true });
     });
   });
 }
@@ -62361,7 +62518,7 @@ async function checkMcpEndpointAuth() {
   const id = "mcp_endpoint_auth";
   const label = "MCP Endpoint Authentication";
   const port = parseInt(process.env.PORT ?? "5000", 10);
-  return new Promise((resolve8) => {
+  return new Promise((resolve9) => {
     const body = JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1, params: {} });
     const options = {
       hostname: "127.0.0.1",
@@ -62378,27 +62535,27 @@ async function checkMcpEndpointAuth() {
       res.resume();
       const code = res.statusCode ?? 0;
       if (code === 401 || code === 403) {
-        resolve8(pass(id, label, "MCP endpoint correctly rejects unauthenticated requests."));
+        resolve9(pass(id, label, "MCP endpoint correctly rejects unauthenticated requests."));
       } else if (code === 200 || code === 202) {
-        resolve8(fail2(id, label, "MCP endpoint accepted a request with no Authorization header \u2014 endpoint may be unauthenticated.", "/(tabs)/settings"));
+        resolve9(fail2(id, label, "MCP endpoint accepted a request with no Authorization header \u2014 endpoint may be unauthenticated.", "/(tabs)/settings"));
       } else if (code === 404) {
-        resolve8(warn(id, label, "MCP endpoint returned 404 \u2014 path may be misconfigured or MCP is not enabled.", "/(tabs)/settings"));
+        resolve9(warn(id, label, "MCP endpoint returned 404 \u2014 path may be misconfigured or MCP is not enabled.", "/(tabs)/settings"));
       } else if (code >= 500) {
-        resolve8(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 server-side error; auth posture cannot be confirmed.`, "/(tabs)/settings"));
+        resolve9(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 server-side error; auth posture cannot be confirmed.`, "/(tabs)/settings"));
       } else {
-        resolve8(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 unexpected status; verify MCP is configured correctly.`, "/(tabs)/settings"));
+        resolve9(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 unexpected status; verify MCP is configured correctly.`, "/(tabs)/settings"));
       }
     });
     req.on("error", (err2) => {
       if (err2.code === "ECONNREFUSED") {
-        resolve8(warn(id, label, "Could not connect to local MCP endpoint \u2014 server may still be starting."));
+        resolve9(warn(id, label, "Could not connect to local MCP endpoint \u2014 server may still be starting."));
       } else {
-        resolve8(warn(id, label, `MCP auth check failed: ${err2.message}`));
+        resolve9(warn(id, label, `MCP auth check failed: ${err2.message}`));
       }
     });
     req.on("timeout", () => {
       req.destroy();
-      resolve8(warn(id, label, "MCP auth check timed out."));
+      resolve9(warn(id, label, "MCP auth check timed out."));
     });
     req.write(body);
     req.end();
@@ -62686,7 +62843,7 @@ var init_doctorRoutes = __esm({
 
 // server/downloadRoutes.ts
 import * as fs19 from "fs";
-import * as path23 from "path";
+import * as path24 from "path";
 import { eq as eq95 } from "drizzle-orm";
 function getFallbackUrl() {
   return process.env.ANDROID_APK_URL ?? null;
@@ -62744,7 +62901,7 @@ function registerDownloadRoutes(app2) {
       if (!tokenValid && project.userId !== bearerUserId) {
         return res.status(404).json({ error: "Project not found" });
       }
-      const zipPath = path23.join(DOWNLOADS_DIR2, `${projectId}.zip`);
+      const zipPath = path24.join(DOWNLOADS_DIR2, `${projectId}.zip`);
       if (!fs19.existsSync(zipPath)) {
         return res.status(404).json({
           error: "Project zip not yet available",
@@ -62773,8 +62930,8 @@ var init_downloadRoutes = __esm({
     init_schema();
     init_auth();
     init_appDelivery();
-    APK_PATH = path23.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
-    DOWNLOADS_DIR2 = path23.join(process.cwd(), "server", "static", "downloads");
+    APK_PATH = path24.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
+    DOWNLOADS_DIR2 = path24.join(process.cwd(), "server", "static", "downloads");
   }
 });
 
@@ -66898,7 +67055,7 @@ __export(routes_exports, {
 });
 import { createHash as createHash7 } from "crypto";
 import fs20 from "fs";
-import path24 from "path";
+import path25 from "path";
 import { createServer } from "node:http";
 import OpenAI11 from "openai";
 import { eq as eq109, and as and81, desc as desc38, sql as sql39, gte as gte22, asc as asc7 } from "drizzle-orm";
@@ -66916,12 +67073,12 @@ function providerLabelForModel(model) {
 }
 async function applyLivingContextReviewToFile(relPath, oldBlock, newBlock) {
   if (!relPath || !oldBlock) return;
-  if (path24.isAbsolute(relPath) || relPath.includes("..")) return;
+  if (path25.isAbsolute(relPath) || relPath.includes("..")) return;
   const rootDir = process.cwd();
-  const abs = path24.resolve(rootDir, relPath);
-  const allowedRoot = path24.resolve(rootDir, "workspaces", "battles");
-  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path24.sep))) return;
-  if (path24.extname(abs).toLowerCase() !== ".md") return;
+  const abs = path25.resolve(rootDir, relPath);
+  const allowedRoot = path25.resolve(rootDir, "workspaces", "battles");
+  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path25.sep))) return;
+  if (path25.extname(abs).toLowerCase() !== ".md") return;
   try {
     let content = await fs20.promises.readFile(abs, "utf-8");
     const replacement = newBlock ? `${newBlock}
@@ -66938,7 +67095,7 @@ ${newBlock}
   }
 }
 function loadPrimeSections() {
-  const filePath = path24.resolve(process.cwd(), "agents/PRIME.md");
+  const filePath = path25.resolve(process.cwd(), "agents/PRIME.md");
   let content;
   try {
     content = fs20.readFileSync(filePath, "utf8");
@@ -66975,8 +67132,8 @@ function loadPrimeSections() {
 }
 function readPromptDoc(relativePath, maxChars) {
   try {
-    const filePath = path24.resolve(process.cwd(), relativePath);
-    const root = path24.resolve(process.cwd());
+    const filePath = path25.resolve(process.cwd(), relativePath);
+    const root = path25.resolve(process.cwd());
     if (!filePath.startsWith(root)) return "";
     return fs20.readFileSync(filePath, "utf8").trim().slice(0, maxChars);
   } catch {
@@ -68867,7 +69024,7 @@ ${shadeText}`
               };
             } else if (action === "android_wait") {
               const ms = Math.min(Math.max(typeof args.ms === "number" ? args.ms : 1500, 200), 1e4);
-              await new Promise((resolve8) => setTimeout(resolve8, ms));
+              await new Promise((resolve9) => setTimeout(resolve9, ms));
               return { result: "success", label: `Waited ${ms}ms`, detail: `Paused ${ms}ms to let the phone UI settle.` };
             } else if (action === "android_swipe") {
               if (typeof args.x1 !== "number" || typeof args.y1 !== "number" || typeof args.x2 !== "number" || typeof args.y2 !== "number") return { result: "error", label: "coords required", detail: "Provide x1,y1,x2,y2 for android_swipe." };
@@ -75681,7 +75838,7 @@ __export(selfImprovementLoop_exports, {
 });
 import { gte as gte25, desc as desc40 } from "drizzle-orm";
 import fs22 from "fs/promises";
-import path26 from "path";
+import path27 from "path";
 function getISOWeekKey(d) {
   const date2 = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   const dayNum = date2.getUTCDay() || 7;
@@ -75717,8 +75874,8 @@ function localDowAndHour(now, tz) {
   }
 }
 function isAllowedForAutoApply(filePath) {
-  const n = path26.posix.normalize(filePath.replace(/\\/g, "/"));
-  if (path26.posix.isAbsolute(n) || n.startsWith("../")) return false;
+  const n = path27.posix.normalize(filePath.replace(/\\/g, "/"));
+  if (path27.posix.isAbsolute(n) || n.startsWith("../")) return false;
   const inBlocklist = SELF_IMPROVE_BLOCKED_FILES.some((blocked) => {
     const dir = blocked.endsWith("/") ? blocked : blocked + "/";
     return n === blocked || n.startsWith(dir);
@@ -75767,11 +75924,11 @@ async function createInboxItem(userId, improvement) {
 }
 async function runSelfImprovementCycle(userId) {
   const controller = new AbortController();
-  const timeoutPromise = new Promise((resolve8) => {
+  const timeoutPromise = new Promise((resolve9) => {
     setTimeout(() => {
       console.warn(`[SelfImprovement] Hard 10-minute timeout hit for user=${userId} \u2014 aborting`);
       controller.abort();
-      resolve8({ applied: 0, queued: 0 });
+      resolve9({ applied: 0, queued: 0 });
     }, CYCLE_TIMEOUT_MS);
   });
   return Promise.race([_runCycleInner(userId, controller.signal), timeoutPromise]);
@@ -75832,7 +75989,7 @@ async function _runCycleInner(userId, signal) {
   ].join("\n").slice(0, 6e3);
   let primeContent = "";
   try {
-    primeContent = await fs22.readFile(path26.join(process.cwd(), "agents/PRIME.md"), "utf-8");
+    primeContent = await fs22.readFile(path27.join(process.cwd(), "agents/PRIME.md"), "utf-8");
   } catch {
     primeContent = "(PRIME.md not found)";
   }
@@ -76077,7 +76234,7 @@ __export(primeIdentityAudit_exports, {
   runPrimeIdentityAudit: () => runPrimeIdentityAudit
 });
 import * as fs23 from "fs/promises";
-import * as path27 from "path";
+import * as path28 from "path";
 import { eq as eq117, and as and89, desc as desc41, inArray as inArray9, gte as gte26 } from "drizzle-orm";
 function currentMonthKey() {
   const now = /* @__PURE__ */ new Date();
@@ -76300,7 +76457,7 @@ var init_primeIdentityAudit = __esm({
     init_schema();
     init_anthropicClient();
     init_registry();
-    PRIME_MD_PATH = path27.resolve("agents/PRIME.md");
+    PRIME_MD_PATH = path28.resolve("agents/PRIME.md");
     AUDIT_MODEL = "claude-3-5-sonnet-20241022";
   }
 });
@@ -76353,11 +76510,11 @@ init_proactiveDedup();
 init_diagnosticsService();
 init_routedChatCompletion();
 import * as fs21 from "fs";
-import * as path25 from "path";
+import * as path26 from "path";
 import { eq as eq113, and as and85, sql as sql42, desc as desc39, gte as gte23 } from "drizzle-orm";
 var openai19 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
-var CHECKLIST_PATH = path25.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
+var CHECKLIST_PATH = path26.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
 var VALIDATION_INTERVAL_MS = 30 * 60 * 1e3;
 var CREW_BATCH_MAX = (() => {
   const v = parseInt(process.env.CREW_BATCH_MAX ?? "", 10);
@@ -77365,7 +77522,7 @@ var BATCH_SIZE = 50;
 var INTER_ITEM_DELAY_MS = 200;
 var isRunning = false;
 function sleep3(ms) {
-  return new Promise((resolve8) => setTimeout(resolve8, ms));
+  return new Promise((resolve9) => setTimeout(resolve9, ms));
 }
 async function isEmbeddingsAvailable() {
   const result = await embedText("probe");
@@ -79439,7 +79596,7 @@ init_auth();
 init_registry();
 init_bridge();
 import fs24 from "fs";
-import path28 from "path";
+import path29 from "path";
 import { WebSocket as WebSocket3, WebSocketServer as WebSocketServer3 } from "ws";
 import { and as and96, desc as desc45, eq as eq125 } from "drizzle-orm";
 
@@ -79792,7 +79949,7 @@ var OPENCLAW_PARITY_CAPABILITIES = [
 ];
 function readPackageVersion() {
   try {
-    const pkg = JSON.parse(fs24.readFileSync(path28.resolve(process.cwd(), "package.json"), "utf8"));
+    const pkg = JSON.parse(fs24.readFileSync(path29.resolve(process.cwd(), "package.json"), "utf8"));
     return pkg.version ?? "unknown";
   } catch {
     return "unknown";
@@ -80136,9 +80293,9 @@ async function daemonCapabilityInvoke(userId, capability, input) {
   if (action === "ping") return daemonPing(userId, input);
   const { sendDaemonOp: sendDaemonOp2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
   if (action === "file_read" || action === "file_list" || action === "android_file_read" || action === "android_file_list") {
-    const path30 = typeof input.path === "string" ? input.path.trim() : "";
-    if (!path30) throw new Error("path is required");
-    return sendDaemonOp2(userId, { type: action, path: path30 }, action.endsWith("read") ? 1e4 : 8e3);
+    const path31 = typeof input.path === "string" ? input.path.trim() : "";
+    if (!path31) throw new Error("path is required");
+    return sendDaemonOp2(userId, { type: action, path: path31 }, action.endsWith("read") ? 1e4 : 8e3);
   }
   if (action === "desktop_screenshot") return sendDaemonOp2(userId, { type: "desktop_screenshot" }, 2e4);
   if (action === "desktop_read_screen") return sendDaemonOp2(userId, { type: "desktop_read_screen" }, 4e4);
@@ -80544,7 +80701,7 @@ init_schema();
 init_publicUrl();
 import { eq as eq126, and as and97 } from "drizzle-orm";
 import * as fs25 from "fs";
-import * as path29 from "path";
+import * as path30 from "path";
 async function alertTelegramUsersWebhookDown() {
   try {
     const linked = await db.select({ userId: telegramLinks.userId }).from(telegramLinks);
@@ -80637,7 +80794,7 @@ function setupBodyParsing(app2) {
 function setupRequestLogging(app2) {
   app2.use((req, res, next) => {
     const start = Date.now();
-    const path30 = req.path;
+    const path31 = req.path;
     let capturedJsonResponse = void 0;
     const originalResJson = res.json;
     res.json = function(bodyJson, ...args) {
@@ -80645,9 +80802,9 @@ function setupRequestLogging(app2) {
       return originalResJson.apply(res, [bodyJson, ...args]);
     };
     res.on("finish", () => {
-      if (!path30.startsWith("/api")) return;
+      if (!path31.startsWith("/api")) return;
       const duration = Date.now() - start;
-      let logLine = `${req.method} ${path30} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${path31} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -80661,7 +80818,7 @@ function setupRequestLogging(app2) {
 }
 function getAppName() {
   try {
-    const appJsonPath = path29.resolve(process.cwd(), "app.json");
+    const appJsonPath = path30.resolve(process.cwd(), "app.json");
     const appJsonContent = fs25.readFileSync(appJsonPath, "utf-8");
     const appJson = JSON.parse(appJsonContent);
     return appJson.expo?.name || "App Landing Page";
@@ -80670,7 +80827,7 @@ function getAppName() {
   }
 }
 function serveExpoManifest(platform, res) {
-  const manifestPath = path29.resolve(
+  const manifestPath = path30.resolve(
     process.cwd(),
     "static-build",
     platform,
@@ -80704,7 +80861,7 @@ function serveLandingPage({
   res.status(200).send(html);
 }
 function configureExpoAndLanding(app2) {
-  const templatePath = path29.resolve(
+  const templatePath = path30.resolve(
     process.cwd(),
     "server",
     "templates",
@@ -80712,8 +80869,8 @@ function configureExpoAndLanding(app2) {
   );
   const landingPageTemplate = fs25.readFileSync(templatePath, "utf-8");
   const appName = getAppName();
-  const webBuildDir = path29.resolve(process.cwd(), "static-build", "web");
-  const webIndexPath = path29.join(webBuildDir, "index.html");
+  const webBuildDir = path30.resolve(process.cwd(), "static-build", "web");
+  const webIndexPath = path30.join(webBuildDir, "index.html");
   log("Serving static Expo files with dynamic manifest routing");
   app2.use((req, res, next) => {
     if (req.path.startsWith("/api")) {
@@ -80742,9 +80899,9 @@ function configureExpoAndLanding(app2) {
   if (fs25.existsSync(webBuildDir)) {
     app2.use(express3.static(webBuildDir));
   }
-  app2.use("/assets", express3.static(path29.resolve(process.cwd(), "assets")));
-  app2.use(express3.static(path29.resolve(process.cwd(), "static-build")));
-  const chatTemplatePath = path29.resolve(process.cwd(), "server", "templates", "chat.html");
+  app2.use("/assets", express3.static(path30.resolve(process.cwd(), "assets")));
+  app2.use(express3.static(path30.resolve(process.cwd(), "static-build")));
+  const chatTemplatePath = path30.resolve(process.cwd(), "server", "templates", "chat.html");
   app2.get("/chat", (req, res) => {
     try {
       let html = fs25.readFileSync(chatTemplatePath, "utf-8");
@@ -80756,7 +80913,7 @@ function configureExpoAndLanding(app2) {
       res.status(500).send("Chat page unavailable");
     }
   });
-  const controlTemplatePath = path29.resolve(process.cwd(), "server", "templates", "control.html");
+  const controlTemplatePath = path30.resolve(process.cwd(), "server", "templates", "control.html");
   app2.get(["/control", "/gateway"], (_req, res) => {
     try {
       const html = fs25.readFileSync(controlTemplatePath, "utf-8");
