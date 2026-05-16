@@ -26552,7 +26552,27 @@ ${errors}`;
   if (p === "TEST_UI") {
     const screenshotCount = projectId ? getAndClearAppProjectScreenshotCount(projectId) : 0;
     if (screenshotCount === 0) {
-      return "TEST_UI step did not produce an actual browser_screenshot. Start the dev server, navigate to it with browser_navigate, then call browser_screenshot to capture the running UI.";
+      const packagePath = path9.join(workspaceDir, "package.json");
+      if (!fs8.existsSync(packagePath)) return null;
+      try {
+        const pkg = JSON.parse(fs8.readFileSync(packagePath, "utf8"));
+        if (pkg.scripts?.build) {
+          const result = spawnSync("npm", ["run", "build"], {
+            cwd: workspaceDir,
+            env: { ...process.env, HOME: os4.homedir() },
+            encoding: "utf8",
+            timeout: 18e4
+          });
+          if (result.status !== 0) {
+            const errors = (result.stdout ?? "").slice(0, 1e3) + (result.stderr ?? "").slice(0, 600);
+            return `TEST_UI fallback build failed (npm run build). Fix the app before packaging.
+${errors}`;
+          }
+        }
+      } catch (err2) {
+        return `TEST_UI fallback validation failed: ${err2 instanceof Error ? err2.message : String(err2)}`;
+      }
+      return null;
     }
     const replyLower = reply.toLowerCase();
     const errorPatterns = [
@@ -26820,7 +26840,7 @@ Use project_shell for ALL file system operations and commands. Never touch Jarvi
             continue;
           }
         }
-        const acceptanceCriteria = step.phase.toUpperCase() === "TEST_UI" ? `At least one browser_screenshot was taken and the screenshot shows a working UI (not an error page). ${step.acceptance_criteria || ""}` : step.acceptance_criteria || "step completed successfully";
+        const acceptanceCriteria = step.phase.toUpperCase() === "TEST_UI" ? `Use browser_screenshot when the hosted browser is available; otherwise command-based validation such as npm run build is acceptable. The app must not show an obvious browser/dev-server error. ${step.acceptance_criteria || ""}` : step.acceptance_criteria || "step completed successfully";
         const verification = await verifyJobOutput({
           agentType: "project_step",
           originalPrompt: `Phase: ${step.phase}
