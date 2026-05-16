@@ -159,6 +159,7 @@ interface TelegramStatus {
   connected: boolean;
   username: string | null;
   configured: boolean;
+  botUsername: string | null;
   webhookHealthy: boolean | null;
   webhookLastChecked: string | null;
 }
@@ -229,7 +230,7 @@ export default function ProfileScreen() {
     slack: { connected: false },
   });
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>({
-    connected: false, username: null, configured: false, webhookHealthy: null, webhookLastChecked: null,
+    connected: false, username: null, configured: false, botUsername: null, webhookHealthy: null, webhookLastChecked: null,
   });
   const [webhookResetting, setWebhookResetting] = useState(false);
   const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
@@ -538,11 +539,12 @@ export default function ProfileScreen() {
         connected: data.connected ?? false,
         username: data.username ?? null,
         configured: data.configured ?? false,
+        botUsername: data.botUsername ?? null,
         webhookHealthy: data.webhookHealthy ?? null,
         webhookLastChecked: data.webhookLastChecked ?? null,
       });
     } catch {
-      setTelegramStatus({ connected: false, username: null, configured: false, webhookHealthy: null, webhookLastChecked: null });
+      setTelegramStatus({ connected: false, username: null, configured: false, botUsername: null, webhookHealthy: null, webhookLastChecked: null });
     }
   }, []);
 
@@ -1393,6 +1395,7 @@ export default function ProfileScreen() {
       }
 
       setTelegramLinkCode(data.code);
+      setTelegramStatus(prev => ({ ...prev, botUsername: data.botUsername ?? prev.botUsername ?? null }));
       setTelegramPolling(true);
       setConnectingId(null);
 
@@ -1409,7 +1412,14 @@ export default function ProfileScreen() {
           const statusData = await statusRes.json();
           if (statusData.connected) {
             stopTelegramPolling();
-            setTelegramStatus(statusData);
+            setTelegramStatus({
+              connected: statusData.connected ?? true,
+              username: statusData.username ?? null,
+              configured: statusData.configured ?? true,
+              botUsername: statusData.botUsername ?? data.botUsername ?? null,
+              webhookHealthy: statusData.webhookHealthy ?? null,
+              webhookLastChecked: statusData.webhookLastChecked ?? null,
+            });
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           }
         } catch {}
@@ -1774,7 +1784,7 @@ export default function ProfileScreen() {
     setConnectingId('telegram');
     try {
       await apiRequest('DELETE', '/api/telegram/disconnect');
-      setTelegramStatus({ connected: false, username: null, configured: true, webhookHealthy: null, webhookLastChecked: null });
+      setTelegramStatus(prev => ({ connected: false, username: null, configured: true, botUsername: prev.botUsername, webhookHealthy: null, webhookLastChecked: null }));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       console.error('Telegram disconnect error:', e);
@@ -3221,7 +3231,7 @@ export default function ProfileScreen() {
             <View style={styles.telegramCodeCard}>
               <Text style={styles.telegramCodeTitle}>Link your Telegram</Text>
               <Text style={styles.telegramCodeInstructions}>
-                Open Telegram, search for @GamePlanCoachBot, and send this code:
+                Open Telegram, search for {telegramStatus.botUsername ? `@${telegramStatus.botUsername}` : 'the Jarvis bot'}, and send this code:
               </Text>
               <View style={styles.telegramCodeBox}>
                 <Text style={styles.telegramCodeText}>{telegramLinkCode}</Text>

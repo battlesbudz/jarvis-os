@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl, sendMessageGetId, editMessage, buildVoiceCallKeyboard } from "./integrations/telegram";
+import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl, sendMessageGetId, editMessage, buildVoiceCallKeyboard, getTelegramBotUsername } from "./integrations/telegram";
 import { attachmentToBuffer, collectMarkdownExtras } from "./channels/attachmentHelpers";
 import { outboundMiddleware } from "./channels/outboundMiddleware";
 import type { ChannelAttachment } from "./channels/types";
@@ -1572,8 +1572,14 @@ export function registerTelegramRoutes(app: Express): void {
 
       const code = generateLinkCode();
       await db.insert(schema.telegramLinkCodes).values({ code, userId });
+      const botUsername = await getTelegramBotUsername();
 
-      res.json({ code });
+      res.json({
+        code,
+        botUsername,
+        botUrl: botUsername ? `https://t.me/${botUsername}` : null,
+        deepLinkUrl: botUsername ? `https://t.me/${botUsername}?start=${code}` : null,
+      });
     } catch (error) {
       console.error("Error generating link code:", error);
       res.status(500).json({ error: "Failed to generate link code" });
@@ -1611,6 +1617,7 @@ export function registerTelegramRoutes(app: Express): void {
           connected: false,
           username: null,
           configured: isTelegramConfigured(),
+          botUsername: await getTelegramBotUsername(),
           webhookHealthy: webhookHealth?.healthy ?? null,
           webhookLastChecked: webhookHealth?.lastChecked ?? null,
         });
@@ -1620,6 +1627,7 @@ export function registerTelegramRoutes(app: Express): void {
         connected: true,
         username: link[0].username,
         configured: isTelegramConfigured(),
+        botUsername: await getTelegramBotUsername(),
         webhookHealthy: webhookHealth?.healthy ?? null,
         webhookLastChecked: webhookHealth?.lastChecked ?? null,
       });

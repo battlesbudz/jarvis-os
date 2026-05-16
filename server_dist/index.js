@@ -50394,7 +50394,13 @@ function registerTelegramRoutes(app2) {
       }
       const code = generateLinkCode();
       await db.insert(telegramLinkCodes).values({ code, userId });
-      res.json({ code });
+      const botUsername = await getTelegramBotUsername();
+      res.json({
+        code,
+        botUsername,
+        botUrl: botUsername ? `https://t.me/${botUsername}` : null,
+        deepLinkUrl: botUsername ? `https://t.me/${botUsername}?start=${code}` : null
+      });
     } catch (error) {
       console.error("Error generating link code:", error);
       res.status(500).json({ error: "Failed to generate link code" });
@@ -50424,6 +50430,7 @@ function registerTelegramRoutes(app2) {
           connected: false,
           username: null,
           configured: isTelegramConfigured(),
+          botUsername: await getTelegramBotUsername(),
           webhookHealthy: webhookHealth?.healthy ?? null,
           webhookLastChecked: webhookHealth?.lastChecked ?? null
         });
@@ -50432,6 +50439,7 @@ function registerTelegramRoutes(app2) {
         connected: true,
         username: link[0].username,
         configured: isTelegramConfigured(),
+        botUsername: await getTelegramBotUsername(),
         webhookHealthy: webhookHealth?.healthy ?? null,
         webhookLastChecked: webhookHealth?.lastChecked ?? null
       });

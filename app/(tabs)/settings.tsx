@@ -78,6 +78,7 @@ interface TelegramStatus {
   connected: boolean;
   username: string | null;
   configured: boolean;
+  botUsername?: string | null;
 }
 
 interface McpServerInfo {
@@ -1057,6 +1058,7 @@ export default function SettingsScreen() {
       connected: telegramRes.connected ?? false,
       username: telegramRes.username ?? null,
       configured: telegramRes.configured ?? false,
+      botUsername: telegramRes.botUsername ?? null,
     });
     setDiscordConnected(discordRes?.connected ?? false);
     setDiscordUsername(discordRes?.discordUsername ?? null);
@@ -1360,6 +1362,7 @@ export default function SettingsScreen() {
       const data = await res.json();
       if (data.code) {
         setTelegramLinkCode(data.code);
+        setTelegramStatus(prev => ({ ...prev, botUsername: data.botUsername ?? prev.botUsername ?? null }));
         setTelegramPolling(true);
         let attempts = 0;
         telegramPollRef.current = setInterval(async () => {
@@ -1376,7 +1379,12 @@ export default function SettingsScreen() {
               clearInterval(telegramPollRef.current!);
               setTelegramPolling(false);
               setTelegramLinkCode(null);
-              setTelegramStatus({ connected: true, username: status.username ?? null, configured: true });
+              setTelegramStatus({
+                connected: true,
+                username: status.username ?? null,
+                configured: true,
+                botUsername: status.botUsername ?? data.botUsername ?? null,
+              });
               // Refresh validator so health badge updates immediately after link
               await refreshIntegrationHealth();
               const healthRes = await apiRequest('GET', '/api/integrations/status').then(r => r.json()).catch(() => null);
@@ -1406,7 +1414,7 @@ export default function SettingsScreen() {
           try {
             await apiRequest('DELETE', '/api/telegram/disconnect');
             await refreshIntegrationHealth();
-            setTelegramStatus({ connected: false, username: null, configured: false });
+            setTelegramStatus(prev => ({ connected: false, username: null, configured: false, botUsername: prev.botUsername ?? null }));
             setIntegrationHealth(prev => ({ ...prev, telegram: 'unconfigured' }));
             setIntegrationErrors(prev => ({ ...prev, telegram: null }));
           } catch {}
@@ -1672,7 +1680,9 @@ export default function SettingsScreen() {
           {/* Telegram link code */}
           {telegramLinkCode && (
             <View style={styles.linkCodeBlock}>
-              <Text style={styles.linkCodeLabel}>Send this code to @GamePlanAI_bot on Telegram:</Text>
+              <Text style={styles.linkCodeLabel}>
+                Send this code to {telegramStatus.botUsername ? `@${telegramStatus.botUsername}` : 'the Jarvis Telegram bot'}:
+              </Text>
               <Text style={styles.linkCode}>{telegramLinkCode}</Text>
               {telegramPolling && (
                 <View style={styles.linkCodeWait}>
