@@ -4240,7 +4240,7 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
   const dir = await mkdtemp(join(tmpdir(), "jarvis-codex-oauth-"));
   const outputPath = join(dir, "answer.txt");
   try {
-    await new Promise((resolve10, reject) => {
+    await new Promise((resolve11, reject) => {
       const child = spawn(
         command,
         ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", outputPath, "-"],
@@ -4272,7 +4272,7 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
       });
       child.on("close", (code) => {
         finish(() => {
-          if (code === 0) resolve10();
+          if (code === 0) resolve11();
           else reject(new Error(stderr || `Codex OAuth provider exited with ${code}.`));
         });
       });
@@ -5151,9 +5151,9 @@ import OpenAI4 from "openai";
 import { eq as eq4, desc as desc2 } from "drizzle-orm";
 async function extractFromPdfWithPdfjs(buffer) {
   const { pathToFileURL } = await import("url");
-  const { resolve: resolve10 } = await import("path");
+  const { resolve: resolve11 } = await import("path");
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const workerPath = resolve10("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  const workerPath = resolve11("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   const uint8 = new Uint8Array(buffer);
   const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
@@ -9678,9 +9678,9 @@ function isIngestableDocument(mimeType, filename) {
 }
 async function extractPdf(buffer) {
   const { pathToFileURL } = await import("url");
-  const { resolve: resolve10 } = await import("path");
+  const { resolve: resolve11 } = await import("path");
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const workerPath = resolve10("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+  const workerPath = resolve11("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   const uint8 = new Uint8Array(buffer);
   const loadingTask = pdfjs.getDocument({ data: uint8, useSystemFonts: true });
@@ -9717,9 +9717,9 @@ async function renderPageToPngBase64(pdf, pageNum) {
 async function extractPdfViaVision(buffer) {
   try {
     const { pathToFileURL } = await import("url");
-    const { resolve: resolve10 } = await import("path");
+    const { resolve: resolve11 } = await import("path");
     const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const workerPath = resolve10("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
+    const workerPath = resolve11("./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs");
     pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
     const uint8 = new Uint8Array(buffer);
     const pdf = await pdfjs.getDocument({ data: uint8, useSystemFonts: true }).promise;
@@ -9960,7 +9960,7 @@ async function convertToWav(audioBuffer) {
   const outputPath = join2(tmpdir2(), `output-${randomUUID2()}.wav`);
   try {
     await writeFile(inputPath, audioBuffer);
-    await new Promise((resolve10, reject) => {
+    await new Promise((resolve11, reject) => {
       const ffmpeg = spawn2("ffmpeg", [
         "-i",
         inputPath,
@@ -9983,7 +9983,7 @@ async function convertToWav(audioBuffer) {
       ffmpeg.stderr.on("data", () => {
       });
       ffmpeg.on("close", (code) => {
-        if (code === 0) resolve10();
+        if (code === 0) resolve11();
         else reject(new Error(`ffmpeg exited with code ${code}`));
       });
       ffmpeg.on("error", reject);
@@ -11346,7 +11346,7 @@ var init_mcpClient = __esm({
       }
       // ── stdio transport ──────────────────────────────────────────────────────────
       _initStdio() {
-        return new Promise((resolve10, reject) => {
+        return new Promise((resolve11, reject) => {
           const { command, args = [], env } = this.transport;
           this.proc = spawn3(command, args, {
             stdio: ["pipe", "pipe", "pipe"],
@@ -11394,7 +11394,7 @@ var init_mcpClient = __esm({
             }
             this._stdioSend({ jsonrpc: "2.0", method: "notifications/initialized", params: {} });
             console.log(`[McpClient] stdio connected: ${command}`);
-            resolve10();
+            resolve11();
           }).catch(reject);
         });
       }
@@ -11424,15 +11424,15 @@ var init_mcpClient = __esm({
         }
       }
       _stdioRequest(method, params) {
-        return new Promise((resolve10) => {
+        return new Promise((resolve11) => {
           const id = ++this.counter;
           const timer = setTimeout(() => {
             this.pending.delete(id);
-            resolve10({ id, jsonrpc: "2.0", error: { code: -32e3, message: `Timeout calling ${method}` } });
+            resolve11({ id, jsonrpc: "2.0", error: { code: -32e3, message: `Timeout calling ${method}` } });
           }, this.timeoutMs);
           this.pending.set(id, (r) => {
             clearTimeout(timer);
-            resolve10(r);
+            resolve11(r);
           });
           this._stdioSend({ jsonrpc: "2.0", id, method, params });
         });
@@ -11777,7 +11777,7 @@ function getRecentPhoneNotifications(userId, limit = 20) {
   return arr.slice(0, limit);
 }
 function waitForTrainingTap(userId, label, timeoutMs = 6e4) {
-  return new Promise((resolve10, reject) => {
+  return new Promise((resolve11, reject) => {
     const prior = trainingWaiters.get(userId);
     if (prior) {
       clearTimeout(prior.timer);
@@ -11787,7 +11787,7 @@ function waitForTrainingTap(userId, label, timeoutMs = 6e4) {
       trainingWaiters.delete(userId);
       reject("Training timed out \u2014 no tap received within the allowed time.");
     }, timeoutMs);
-    trainingWaiters.set(userId, { label, resolve: resolve10, reject, timer });
+    trainingWaiters.set(userId, { label, resolve: resolve11, reject, timer });
   });
 }
 function subscribeWakeWordTrigger(userId, cb) {
@@ -12078,7 +12078,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
   }
   console.log(`[daemon] op SENT userId=${userId} op=${op.type}`, "packageName" in op ? `pkg=${op.packageName}` : "");
   const sentAt = Date.now();
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const id = nextOpId();
     const timer = setTimeout(() => {
       const map = pendingByUser.get(pendingKey);
@@ -12086,7 +12086,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
-      resolve10({ ok: false, error: "daemon timeout" });
+      resolve11({ ok: false, error: "daemon timeout" });
     }, timeoutMs);
     let userMap = pendingByUser.get(pendingKey);
     if (!userMap) {
@@ -12102,7 +12102,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
           console.log(`[daemon] op RESULT userId=${userId} op=${op.type} ok=${result.ok}`, result.ok ? "" : `err=${result.error}`);
         }
         recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: result.ok, error: result.error, durationMs });
-        resolve10(result);
+        resolve11(result);
       },
       timer
     });
@@ -12113,7 +12113,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       userMap.delete(id);
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: String(err2), durationMs });
-      resolve10({ ok: false, error: String(err2) });
+      resolve11({ ok: false, error: String(err2) });
     }
   });
 }
@@ -13368,11 +13368,11 @@ var init_googleDrive = __esm({
 import { eq as eq16, and as and12 } from "drizzle-orm";
 async function markdownToPdfBuffer(title, markdown) {
   const PDFDocument = (await import("pdfkit")).default;
-  return new Promise((resolve10, reject) => {
+  return new Promise((resolve11, reject) => {
     const doc = new PDFDocument({ margin: 72, size: "A4" });
     const chunks = [];
     doc.on("data", (chunk) => chunks.push(chunk));
-    doc.on("end", () => resolve10(Buffer.concat(chunks)));
+    doc.on("end", () => resolve11(Buffer.concat(chunks)));
     doc.on("error", reject);
     const COLORS = {
       title: "#1a1a2e",
@@ -16183,7 +16183,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_swipe_element] element "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve10) => setTimeout(resolve10, 400));
+          await new Promise((resolve11) => setTimeout(resolve11, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -16224,7 +16224,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve10) => setTimeout(resolve10, 500));
+            await new Promise((resolve11) => setTimeout(resolve11, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -16332,7 +16332,7 @@ ${elementList || "  (none)"}`,
           };
         }
         const SWIPE_SETTLE_MS = 400;
-        await new Promise((resolve10) => setTimeout(resolve10, SWIPE_SETTLE_MS));
+        await new Promise((resolve11) => setTimeout(resolve11, SWIPE_SETTLE_MS));
         let screenChanged = false;
         let hashDistance = null;
         if (preSwipeHash !== null) {
@@ -16819,7 +16819,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_tap_element] element "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve10) => setTimeout(resolve10, 400));
+          await new Promise((resolve11) => setTimeout(resolve11, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -16855,7 +16855,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve10) => setTimeout(resolve10, 500));
+            await new Promise((resolve11) => setTimeout(resolve11, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -16968,7 +16968,7 @@ ${elementList || "  (none)"}`,
             if (attempt < MAX_ATTEMPTS) continue;
             break;
           }
-          await new Promise((resolve10) => setTimeout(resolve10, SETTLE_MS));
+          await new Promise((resolve11) => setTimeout(resolve11, SETTLE_MS));
           if (preTapHash !== null) {
             try {
               const postScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17179,7 +17179,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!bestElement || bestScore === 0) && resetScroll) {
           console.log(`[android_long_press_element] element "${label}" not found on initial screen \u2014 resetting to top of page`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve10) => setTimeout(resolve10, 400));
+          await new Promise((resolve11) => setTimeout(resolve11, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             bestElement = null;
@@ -17215,7 +17215,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve10) => setTimeout(resolve10, 500));
+            await new Promise((resolve11) => setTimeout(resolve11, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17441,7 +17441,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!dropdownBest || dropdownScore === 0) && resetScroll) {
           console.log(`[android_select_option] dropdown "${label}" not found on initial screen \u2014 resetting to top of page before downward scroll-to-find loop`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve10) => setTimeout(resolve10, 400));
+          await new Promise((resolve11) => setTimeout(resolve11, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             dropdownBest = null;
@@ -17477,7 +17477,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve10) => setTimeout(resolve10, 500));
+            await new Promise((resolve11) => setTimeout(resolve11, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17601,7 +17601,7 @@ ${elementList || "  (none)"}`,
               break;
             }
             optionScrollsPerformed = scroll + 1;
-            await new Promise((resolve10) => setTimeout(resolve10, 500));
+            await new Promise((resolve11) => setTimeout(resolve11, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -17905,7 +17905,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         if ((!fromElement || fromScore === 0) && resetScroll) {
           console.log(`[android_drag_element] element "${fromLabel}" not found on initial screen \u2014 resetting to top of page`);
           await scrollToTop(ctx.userId, 5, ctx);
-          await new Promise((resolve10) => setTimeout(resolve10, 400));
+          await new Promise((resolve11) => setTimeout(resolve11, 400));
           const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
           if (afterResetResult.ok) {
             fromElement = null;
@@ -17941,7 +17941,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
               break;
             }
             scrollsPerformed = scroll + 1;
-            await new Promise((resolve10) => setTimeout(resolve10, 500));
+            await new Promise((resolve11) => setTimeout(resolve11, 500));
             let screenshotCheckConclusive = false;
             if (preScrollScreenshot) {
               try {
@@ -18028,7 +18028,7 @@ ${elementList || "  (none)"}`,
                 break;
               }
               scrollsPerformed = scrollsPerformed + 1;
-              await new Promise((resolve10) => setTimeout(resolve10, 500));
+              await new Promise((resolve11) => setTimeout(resolve11, 500));
               let screenshotCheckConclusive = false;
               if (preScrollScreenshot) {
                 try {
@@ -18074,7 +18074,7 @@ ${elementList || "  (none)"}`,
           if ((!toElement || toScore === 0) && resetScroll && maxScrollAttempts > 0) {
             console.log(`[android_drag_element] destination "${toLabel}" not found after downward scan \u2014 resetting to top to search upward coverage`);
             await scrollToTop(ctx.userId, 5, ctx);
-            await new Promise((resolve10) => setTimeout(resolve10, 400));
+            await new Promise((resolve11) => setTimeout(resolve11, 400));
             const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
             if (afterResetResult.ok) {
               screenElements = afterResetResult.elements;
@@ -18109,7 +18109,7 @@ ${elementList || "  (none)"}`,
                   break;
                 }
                 scrollsPerformed = scrollsPerformed + 1;
-                await new Promise((resolve10) => setTimeout(resolve10, 500));
+                await new Promise((resolve11) => setTimeout(resolve11, 500));
                 let screenshotCheckConclusive = false;
                 if (preScrollScreenshot) {
                   try {
@@ -18184,7 +18184,7 @@ ${elementList || "  (none)"}`,
             } else {
               console.log(`[android_drag_element] source "${fromLabel}" no longer visible after destination scroll \u2014 resetting to top`);
               await scrollToTop(ctx.userId, 5, ctx);
-              await new Promise((resolve10) => setTimeout(resolve10, 400));
+              await new Promise((resolve11) => setTimeout(resolve11, 400));
               const afterResetResult = await buildScreenMapElements(ctx.userId, ctx);
               if (afterResetResult.ok) {
                 screenElements = afterResetResult.elements;
@@ -22194,9 +22194,9 @@ async function requestApproval(req) {
   };
 }
 function awaitApproval(gateId, ttlMs, signal) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     if (signal?.aborted) {
-      resolve10(false);
+      resolve11(false);
       return;
     }
     const timeout = ttlMs ?? DEFAULT_TTL_MS + 5e3;
@@ -22204,7 +22204,7 @@ function awaitApproval(gateId, ttlMs, signal) {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
       gateEmitter.removeAllListeners(gateId);
-      resolve10(result);
+      resolve11(result);
     };
     const timer = setTimeout(() => cleanup(false), timeout);
     const onAbort = () => cleanup(false);
@@ -22212,7 +22212,7 @@ function awaitApproval(gateId, ttlMs, signal) {
     gateEmitter.once(gateId, (result) => {
       clearTimeout(timer);
       signal?.removeEventListener("abort", onAbort);
-      resolve10(result.approved);
+      resolve11(result.approved);
     });
   });
 }
@@ -25143,7 +25143,7 @@ function hasUnsafePathArgs(command, workspaceDir) {
   return false;
 }
 async function runCommand(command, cwd, timeoutSeconds) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const tokens = command.trim().split(/\s+/);
     const executable = tokens[0];
     const args = tokens.slice(1);
@@ -25169,7 +25169,7 @@ async function runCommand(command, cwd, timeoutSeconds) {
     });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve10({
+      resolve11({
         stdout: stdout.slice(0, 8e3),
         stderr: stderr.slice(0, 4e3),
         exitCode: timedOut ? -1 : code ?? 0
@@ -25178,7 +25178,7 @@ async function runCommand(command, cwd, timeoutSeconds) {
   });
 }
 async function runDevServer(command, cwd, projectId, port) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const env = {
       ...process.env,
       HOME: os4.homedir(),
@@ -25202,7 +25202,7 @@ async function runDevServer(command, cwd, projectId, port) {
       settled = true;
       runningServers.set(projectId, { pid, port, workspaceDir: cwd });
       writePidFile(cwd, pid, port);
-      resolve10({ pid, url: `http://localhost:${port}` });
+      resolve11({ pid, url: `http://localhost:${port}` });
     };
     child.stdout.on("data", (d) => {
       const text2 = d.toString();
@@ -30824,7 +30824,7 @@ async function pollSupadataJob(apiKey, jobId, videoId, signal) {
   );
 }
 function sleep2(ms) {
-  return new Promise((resolve10) => setTimeout(resolve10, ms));
+  return new Promise((resolve11) => setTimeout(resolve11, ms));
 }
 var BASE2, JOB_POLL_TIMEOUT_MS, JOB_POLL_INTERVAL_START_MS, JOB_POLL_INTERVAL_MAX_MS, JOB_POLL_LOG_INTERVAL_MS, SupadataJobPendingError;
 var init_supadataTranscript = __esm({
@@ -30867,7 +30867,7 @@ import { mkdtempSync } from "fs";
 import path12 from "path";
 import os6 from "os";
 function spawnYtdlp(cmd, timeoutMs) {
-  return new Promise((resolve10, reject) => {
+  return new Promise((resolve11, reject) => {
     const child = spawn5(cmd, { shell: true, stdio: ["ignore", "pipe", "pipe"] });
     const startMs = Date.now();
     const stderrChunks = [];
@@ -30916,7 +30916,7 @@ function spawnYtdlp(cmd, timeoutMs) {
           { stderr: fullStderr }
         ));
       } else {
-        resolve10();
+        resolve11();
       }
     });
     child.on("error", (err2) => {
@@ -32292,9 +32292,9 @@ function isWorkerOnline(userId) {
   return Date.now() - reg.lastSeen < WORKER_ONLINE_WINDOW_MS;
 }
 function queueTranscriptJob(userId, url, timeoutMs = 3e4) {
-  return new Promise((resolve10, reject) => {
+  return new Promise((resolve11, reject) => {
     const id = `lwj_${Date.now()}_${crypto6.randomBytes(4).toString("hex")}`;
-    const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve10, reject };
+    const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve11, reject };
     jobStore.set(id, job);
     setTimeout(() => {
       if (jobStore.has(id)) {
@@ -38256,9 +38256,9 @@ __export(runShellTool_exports, {
 import { spawn as spawn6 } from "child_process";
 import http from "http";
 function httpGet(url, timeoutMs = 5e3) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const timer = setTimeout(() => {
-      resolve10({ status: -1, body: "Request timed out" });
+      resolve11({ status: -1, body: "Request timed out" });
     }, timeoutMs);
     http.get(url, (res) => {
       const chunks = [];
@@ -38266,20 +38266,20 @@ function httpGet(url, timeoutMs = 5e3) {
       res.on("end", () => {
         clearTimeout(timer);
         const body = Buffer.concat(chunks).toString("utf8").slice(0, 500);
-        resolve10({ status: res.statusCode ?? 0, body });
+        resolve11({ status: res.statusCode ?? 0, body });
       });
       res.on("error", (err2) => {
         clearTimeout(timer);
-        resolve10({ status: -1, body: err2.message });
+        resolve11({ status: -1, body: err2.message });
       });
     }).on("error", (err2) => {
       clearTimeout(timer);
-      resolve10({ status: -1, body: err2.message });
+      resolve11({ status: -1, body: err2.message });
     });
   });
 }
 function runProcess(bin, args, timeoutMs) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const chunks = [];
     let timedOut = false;
     const child = spawn6(bin, args, {
@@ -38298,11 +38298,11 @@ function runProcess(bin, args, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > MAX_OUTPUT_CHARS ? raw.slice(0, MAX_OUTPUT_CHARS) + "\n\u2026[output truncated]" : raw;
-      resolve10({ stdout, exitCode: code, timedOut });
+      resolve11({ stdout, exitCode: code, timedOut });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve10({ stdout: `Failed to spawn '${bin}': ${err2.message}`, exitCode: -1, timedOut: false });
+      resolve11({ stdout: `Failed to spawn '${bin}': ${err2.message}`, exitCode: -1, timedOut: false });
     });
   });
 }
@@ -40589,8 +40589,8 @@ function resolveCodexDelegationCwd(requestedCwd) {
   const raw = typeof requestedCwd === "string" ? requestedCwd.trim() : "";
   if (!raw) return projectRoot;
   const resolved = path20.resolve(projectRoot, raw);
-  const relative4 = path20.relative(projectRoot, resolved);
-  if (relative4.startsWith("..") || path20.isAbsolute(relative4)) {
+  const relative5 = path20.relative(projectRoot, resolved);
+  if (relative5.startsWith("..") || path20.isAbsolute(relative5)) {
     throw new Error("Codex delegation working_directory resolves outside the Jarvis workspace.");
   }
   return resolved;
@@ -40652,7 +40652,7 @@ async function runLocalCodexDelegation(request) {
   const outputPath = path20.join(dir, "answer.txt");
   const prompt = buildCodexDelegationPrompt(request);
   try {
-    const stdout = await new Promise((resolve10, reject) => {
+    const stdout = await new Promise((resolve11, reject) => {
       const child = spawn7(
         getCodexOAuthCommand(),
         [
@@ -40703,7 +40703,7 @@ async function runLocalCodexDelegation(request) {
       });
       child.on("close", (code) => {
         finish(() => {
-          if (code === 0) resolve10(stdoutText);
+          if (code === 0) resolve11(stdoutText);
           else reject(new Error((stderrText || stdoutText || `Codex delegation exited with ${code}.`).trim()));
         });
       });
@@ -41257,7 +41257,7 @@ var init_youtubeAutoFetch = __esm({
 function withTimeout(promise, ms, fallback) {
   return Promise.race([
     promise,
-    new Promise((resolve10) => setTimeout(() => resolve10(fallback), ms))
+    new Promise((resolve11) => setTimeout(() => resolve11(fallback), ms))
   ]);
 }
 async function preThink(userMessage, briefContext, orchestratorModel) {
@@ -43987,13 +43987,13 @@ async function opusChunksToWav(opusChunks) {
   const SAMPLE_RATE = 48e3;
   const CHANNELS = 2;
   const FRAME_SIZE = 960;
-  return new Promise((resolve10, reject) => {
+  return new Promise((resolve11, reject) => {
     const decoder = new prism.opus.Decoder({ rate: SAMPLE_RATE, channels: CHANNELS, frameSize: FRAME_SIZE });
     const pcmChunks = [];
     decoder.on("data", (chunk) => pcmChunks.push(chunk));
     decoder.on("end", () => {
       const pcm = Buffer.concat(pcmChunks);
-      resolve10(buildWavBuffer(pcm, SAMPLE_RATE, CHANNELS));
+      resolve11(buildWavBuffer(pcm, SAMPLE_RATE, CHANNELS));
     });
     decoder.on("error", reject);
     for (const chunk of opusChunks) {
@@ -46491,7 +46491,7 @@ function getClientForUser(userId) {
 async function claimMessageId(messageId) {
   const seenAt = Date.now();
   seenMessageIds.set(messageId, seenAt);
-  const timeout = new Promise((resolve10) => setTimeout(() => resolve10(null), 2e3));
+  const timeout = new Promise((resolve11) => setTimeout(() => resolve11(null), 2e3));
   try {
     const dbCall = db.execute(sql20`
       INSERT INTO discord_seen_messages (message_id, seen_at)
@@ -46754,8 +46754,8 @@ To link this Discord account:
     }
     const prevLock = userProcessingLocks.get(userId) ?? Promise.resolve();
     let releaseLock;
-    const thisLock = new Promise((resolve10) => {
-      releaseLock = resolve10;
+    const thisLock = new Promise((resolve11) => {
+      releaseLock = resolve11;
     });
     const chainedLock = prevLock.then(() => thisLock).catch(() => thisLock);
     userProcessingLocks.set(userId, chainedLock);
@@ -48042,7 +48042,7 @@ async function mp3ToOggOpus(mp3Buffer) {
   const outputPath = join9(tmpdir6(), `tts-out-${randomUUID3()}.ogg`);
   try {
     await writeFile3(inputPath, mp3Buffer);
-    await new Promise((resolve10, reject) => {
+    await new Promise((resolve11, reject) => {
       const ff = spawn8("ffmpeg", [
         "-i",
         inputPath,
@@ -48059,7 +48059,7 @@ async function mp3ToOggOpus(mp3Buffer) {
       ]);
       ff.stderr.on("data", () => {
       });
-      ff.on("close", (code) => code === 0 ? resolve10() : reject(new Error(`ffmpeg exited ${code}`)));
+      ff.on("close", (code) => code === 0 ? resolve11() : reject(new Error(`ffmpeg exited ${code}`)));
       ff.on("error", reject);
     });
     return await readFile6(outputPath);
@@ -52360,7 +52360,7 @@ print(_buf.getvalue(), end='')
 `;
 }
 function runPythonSandbox(code, timeoutMs) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const script = buildScript(code);
     const chunks = [];
     let timedOut = false;
@@ -52385,11 +52385,11 @@ function runPythonSandbox(code, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > MAX_OUTPUT_CHARS3 ? raw.slice(0, MAX_OUTPUT_CHARS3) + "\n\u2026 [output truncated]" : raw;
-      resolve10({ stdout, timedOut, exitCode });
+      resolve11({ stdout, timedOut, exitCode });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve10({
+      resolve11({
         stdout: `Failed to start Python: ${err2.message}`,
         timedOut: false,
         exitCode: -1
@@ -52612,7 +52612,7 @@ print(_buf.getvalue(), end='')
 `;
 }
 function runPythonInWorkspace(workspaceDir, code, timeoutMs) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const script = buildWorkspaceScript(code, workspaceDir);
     const chunks = [];
     let timedOut = false;
@@ -52638,11 +52638,11 @@ function runPythonInWorkspace(workspaceDir, code, timeoutMs) {
       clearTimeout(timer);
       const raw = Buffer.concat(chunks).toString("utf8");
       const stdout = raw.length > WORKSPACE_MAX_OUTPUT_CHARS ? raw.slice(0, WORKSPACE_MAX_OUTPUT_CHARS) + "\n\u2026 [output truncated]" : raw;
-      resolve10({ stdout, timedOut, exitCode });
+      resolve11({ stdout, timedOut, exitCode });
     });
     child.on("error", (err2) => {
       clearTimeout(timer);
-      resolve10({ stdout: `Failed to start Python: ${err2.message}`, timedOut: false, exitCode: -1 });
+      resolve11({ stdout: `Failed to start Python: ${err2.message}`, timedOut: false, exitCode: -1 });
     });
   });
 }
@@ -55208,6 +55208,7 @@ import * as fs17 from "fs";
 import * as path23 from "path";
 import { execSync as execSync2, spawnSync as spawnSync3 } from "child_process";
 import * as os10 from "os";
+import * as zlib from "zlib";
 import { eq as eq79 } from "drizzle-orm";
 function generateDownloadToken(projectId) {
   const token = Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
@@ -55244,6 +55245,93 @@ function getZipSizeMb(zipPath) {
   } catch {
     return 0;
   }
+}
+function crc32(buffer) {
+  let crc = 4294967295;
+  for (const byte of buffer) {
+    crc = crcTable[(crc ^ byte) & 255] ^ crc >>> 8;
+  }
+  return (crc ^ 4294967295) >>> 0;
+}
+function getDosDateTime(date2) {
+  const year = Math.max(1980, date2.getFullYear());
+  const dosTime = date2.getHours() << 11 | date2.getMinutes() << 5 | Math.floor(date2.getSeconds() / 2);
+  const dosDate = year - 1980 << 9 | date2.getMonth() + 1 << 5 | date2.getDate();
+  return { time: dosTime, date: dosDate };
+}
+function createZipArchive(sourceDir, zipPath) {
+  const root = path23.resolve(sourceDir);
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs17.readdirSync(dir, { withFileTypes: true })) {
+      if (entry.name === ".git" || entry.name === "node_modules") continue;
+      if (entry.name.endsWith(".log")) continue;
+      const fullPath = path23.join(dir, entry.name);
+      const relativePath = path23.relative(root, fullPath).replace(/\\/g, "/");
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      files.push({ relativePath, fullPath, stat: fs17.statSync(fullPath) });
+    }
+  };
+  walk(root);
+  const chunks = [];
+  const centralDirectory = [];
+  let offset = 0;
+  for (const file of files) {
+    const data = fs17.readFileSync(file.fullPath);
+    const compressed = zlib.deflateRawSync(data);
+    const name = Buffer.from(file.relativePath, "utf8");
+    const crc = crc32(data);
+    const dos = getDosDateTime(file.stat.mtime);
+    const localHeader = Buffer.alloc(30);
+    localHeader.writeUInt32LE(67324752, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(8, 8);
+    localHeader.writeUInt16LE(dos.time, 10);
+    localHeader.writeUInt16LE(dos.date, 12);
+    localHeader.writeUInt32LE(crc, 14);
+    localHeader.writeUInt32LE(compressed.length, 18);
+    localHeader.writeUInt32LE(data.length, 22);
+    localHeader.writeUInt16LE(name.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    chunks.push(localHeader, name, compressed);
+    const centralHeader = Buffer.alloc(46);
+    centralHeader.writeUInt32LE(33639248, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0, 8);
+    centralHeader.writeUInt16LE(8, 10);
+    centralHeader.writeUInt16LE(dos.time, 12);
+    centralHeader.writeUInt16LE(dos.date, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(compressed.length, 20);
+    centralHeader.writeUInt32LE(data.length, 24);
+    centralHeader.writeUInt16LE(name.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+    centralDirectory.push(centralHeader, name);
+    offset += localHeader.length + name.length + compressed.length;
+  }
+  const centralDirectoryOffset = offset;
+  const centralDirectorySize = centralDirectory.reduce((sum, chunk) => sum + chunk.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(101010256, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(files.length, 8);
+  end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralDirectorySize, 12);
+  end.writeUInt32LE(centralDirectoryOffset, 16);
+  end.writeUInt16LE(0, 20);
+  fs17.writeFileSync(zipPath, Buffer.concat([...chunks, ...centralDirectory, end]));
 }
 function scheduleZipCleanup(zipPath) {
   const timer = setTimeout(() => {
@@ -55345,14 +55433,7 @@ async function packageAndDeliverApp(projectId, userId, originChannel) {
   }
   console.log(`[AppDelivery] zipping workspace for project ${projectId}: ${workspaceDir}`);
   try {
-    execSync2(
-      `zip -r "${zipPath}" . -x "*/node_modules/*" -x "*/.git/*" -x "*.log"`,
-      {
-        cwd: workspaceDir,
-        timeout: 12e4,
-        stdio: "pipe"
-      }
-    );
+    createZipArchive(workspaceDir, zipPath);
   } catch (err2) {
     throw new Error(`Failed to zip project workspace: ${String(err2).slice(0, 300)}`);
   }
@@ -55420,7 +55501,7 @@ async function sendDeliveryNotification(userId, effectiveChannel, text2) {
     console.warn(`[AppDelivery] failed to send notification to channel=${effectiveChannel}`);
   }
 }
-var DOWNLOADS_DIR, ZIP_TTL_MS, downloadTokens;
+var DOWNLOADS_DIR, ZIP_TTL_MS, downloadTokens, crcTable;
 var init_appDelivery = __esm({
   "server/agent/appDelivery.ts"() {
     "use strict";
@@ -55436,6 +55517,17 @@ var init_appDelivery = __esm({
     DOWNLOADS_DIR = getProjectDownloadsDir();
     ZIP_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
     downloadTokens = /* @__PURE__ */ new Map();
+    crcTable = (() => {
+      const table = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) {
+          c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;
+        }
+        table[i] = c >>> 0;
+      }
+      return table;
+    })();
   }
 });
 
@@ -62706,7 +62798,7 @@ import { eq as eq93, and as and69, desc as desc30 } from "drizzle-orm";
 import fs18 from "fs/promises";
 import path24 from "path";
 async function schedulePostFixVerification(userId, proposalId, filePath, debugCtx) {
-  await new Promise((resolve10) => setTimeout(resolve10, 8e3));
+  await new Promise((resolve11) => setTimeout(resolve11, 8e3));
   try {
     const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
     const brief = [
@@ -63248,19 +63340,19 @@ function fail2(id, label, message, settingsPath) {
   return { id, label, status: "fail", message, settingsPath };
 }
 async function httpsGet(url, timeoutMs = 5e3, headers) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const req = https.get(url, { timeout: timeoutMs, headers }, (res) => {
       res.resume();
-      resolve10({
+      resolve11({
         statusCode: res.statusCode ?? 0,
         ok: (res.statusCode ?? 0) < 500,
         networkError: false
       });
     });
-    req.on("error", () => resolve10({ statusCode: 0, ok: false, networkError: true }));
+    req.on("error", () => resolve11({ statusCode: 0, ok: false, networkError: true }));
     req.on("timeout", () => {
       req.destroy();
-      resolve10({ statusCode: 0, ok: false, networkError: true });
+      resolve11({ statusCode: 0, ok: false, networkError: true });
     });
   });
 }
@@ -63459,7 +63551,7 @@ async function checkMcpEndpointAuth() {
   const id = "mcp_endpoint_auth";
   const label = "MCP Endpoint Authentication";
   const port = parseInt(process.env.PORT ?? "5000", 10);
-  return new Promise((resolve10) => {
+  return new Promise((resolve11) => {
     const body = JSON.stringify({ jsonrpc: "2.0", method: "initialize", id: 1, params: {} });
     const options = {
       hostname: "127.0.0.1",
@@ -63476,27 +63568,27 @@ async function checkMcpEndpointAuth() {
       res.resume();
       const code = res.statusCode ?? 0;
       if (code === 401 || code === 403) {
-        resolve10(pass(id, label, "MCP endpoint correctly rejects unauthenticated requests."));
+        resolve11(pass(id, label, "MCP endpoint correctly rejects unauthenticated requests."));
       } else if (code === 200 || code === 202) {
-        resolve10(fail2(id, label, "MCP endpoint accepted a request with no Authorization header \u2014 endpoint may be unauthenticated.", "/(tabs)/settings"));
+        resolve11(fail2(id, label, "MCP endpoint accepted a request with no Authorization header \u2014 endpoint may be unauthenticated.", "/(tabs)/settings"));
       } else if (code === 404) {
-        resolve10(warn(id, label, "MCP endpoint returned 404 \u2014 path may be misconfigured or MCP is not enabled.", "/(tabs)/settings"));
+        resolve11(warn(id, label, "MCP endpoint returned 404 \u2014 path may be misconfigured or MCP is not enabled.", "/(tabs)/settings"));
       } else if (code >= 500) {
-        resolve10(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 server-side error; auth posture cannot be confirmed.`, "/(tabs)/settings"));
+        resolve11(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 server-side error; auth posture cannot be confirmed.`, "/(tabs)/settings"));
       } else {
-        resolve10(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 unexpected status; verify MCP is configured correctly.`, "/(tabs)/settings"));
+        resolve11(warn(id, label, `MCP endpoint returned HTTP ${code} \u2014 unexpected status; verify MCP is configured correctly.`, "/(tabs)/settings"));
       }
     });
     req.on("error", (err2) => {
       if (err2.code === "ECONNREFUSED") {
-        resolve10(warn(id, label, "Could not connect to local MCP endpoint \u2014 server may still be starting."));
+        resolve11(warn(id, label, "Could not connect to local MCP endpoint \u2014 server may still be starting."));
       } else {
-        resolve10(warn(id, label, `MCP auth check failed: ${err2.message}`));
+        resolve11(warn(id, label, `MCP auth check failed: ${err2.message}`));
       }
     });
     req.on("timeout", () => {
       req.destroy();
-      resolve10(warn(id, label, "MCP auth check timed out."));
+      resolve11(warn(id, label, "MCP auth check timed out."));
     });
     req.write(body);
     req.end();
@@ -70146,7 +70238,7 @@ ${shadeText}`
               };
             } else if (action === "android_wait") {
               const ms = Math.min(Math.max(typeof args.ms === "number" ? args.ms : 1500, 200), 1e4);
-              await new Promise((resolve10) => setTimeout(resolve10, ms));
+              await new Promise((resolve11) => setTimeout(resolve11, ms));
               return { result: "success", label: `Waited ${ms}ms`, detail: `Paused ${ms}ms to let the phone UI settle.` };
             } else if (action === "android_swipe") {
               if (typeof args.x1 !== "number" || typeof args.y1 !== "number" || typeof args.x2 !== "number" || typeof args.y2 !== "number") return { result: "error", label: "coords required", detail: "Provide x1,y1,x2,y2 for android_swipe." };
@@ -77050,11 +77142,11 @@ async function createInboxItem(userId, improvement) {
 }
 async function runSelfImprovementCycle(userId) {
   const controller = new AbortController();
-  const timeoutPromise = new Promise((resolve10) => {
+  const timeoutPromise = new Promise((resolve11) => {
     setTimeout(() => {
       console.warn(`[SelfImprovement] Hard 10-minute timeout hit for user=${userId} \u2014 aborting`);
       controller.abort();
-      resolve10({ applied: 0, queued: 0 });
+      resolve11({ applied: 0, queued: 0 });
     }, CYCLE_TIMEOUT_MS);
   });
   return Promise.race([_runCycleInner(userId, controller.signal), timeoutPromise]);
@@ -78648,7 +78740,7 @@ var BATCH_SIZE = 50;
 var INTER_ITEM_DELAY_MS = 200;
 var isRunning = false;
 function sleep3(ms) {
-  return new Promise((resolve10) => setTimeout(resolve10, ms));
+  return new Promise((resolve11) => setTimeout(resolve11, ms));
 }
 async function isEmbeddingsAvailable() {
   const result = await embedText("probe");
