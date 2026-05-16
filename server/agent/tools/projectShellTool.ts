@@ -19,6 +19,7 @@ import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getProjectWorkspaceDir, getProjectWorkspaceRoot } from "../../projectStorage";
+import { hydrateProjectWorkspace, snapshotProjectWorkspace } from "../../projectArtifacts";
 
 const ALLOWED_EXECUTABLES = new Set([
   "npm", "npx", "node", "git", "zip", "unzip",
@@ -415,6 +416,9 @@ The tool returns the local URL where the app is running so you can immediately t
     if (!fs.existsSync(workspaceDir)) {
       fs.mkdirSync(workspaceDir, { recursive: true });
     }
+    await hydrateProjectWorkspace(projectId, workspaceDir).catch((err) => {
+      console.warn(`[ProjectShell] failed to hydrate workspace for ${projectId}:`, err);
+    });
 
     const executable = parseExecutable(command);
     if (!ALLOWED_EXECUTABLES.has(executable)) {
@@ -478,6 +482,9 @@ The tool returns the local URL where the app is running so you can immediately t
     }
 
     const { stdout, stderr, exitCode } = await runCommand(command, workspaceDir, timeoutSeconds);
+    await snapshotProjectWorkspace(projectId, workspaceDir).catch((err) => {
+      console.warn(`[ProjectShell] failed to snapshot workspace for ${projectId}:`, err);
+    });
 
     const success = exitCode === 0;
     console.log(

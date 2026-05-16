@@ -1602,6 +1602,27 @@ export async function ensureTablesExist() {
         ON jarvis_project_sessions (project_id, session_number DESC)
     `).catch(() => {});
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS jarvis_project_files (
+        project_id     VARCHAR NOT NULL REFERENCES jarvis_projects(id) ON DELETE CASCADE,
+        file_path      TEXT NOT NULL,
+        content_base64 TEXT NOT NULL,
+        size_bytes     INTEGER NOT NULL DEFAULT 0,
+        updated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (project_id, file_path)
+      )
+    `).catch(() => {});
+
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS jarvis_project_archives (
+        project_id     VARCHAR PRIMARY KEY REFERENCES jarvis_projects(id) ON DELETE CASCADE,
+        zip_base64     TEXT NOT NULL,
+        size_bytes     INTEGER NOT NULL DEFAULT 0,
+        created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+
     // ── Search-bar coordinate persistence ────────────────────────────────────
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS search_bar_locations (

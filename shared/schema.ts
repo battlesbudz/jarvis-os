@@ -1720,6 +1720,28 @@ export const jarvisProjectSessions = pgTable("jarvis_project_sessions", {
 
 export type JarvisProjectSession = typeof jarvisProjectSessions.$inferSelect;
 
+export const jarvisProjectFiles = pgTable("jarvis_project_files", {
+  projectId: varchar("project_id").notNull().references(() => jarvisProjects.id, { onDelete: "cascade" }),
+  filePath: text("file_path").notNull(),
+  contentBase64: text("content_base64").notNull(),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.projectId, table.filePath] }),
+]);
+
+export type JarvisProjectFile = typeof jarvisProjectFiles.$inferSelect;
+
+export const jarvisProjectArchives = pgTable("jarvis_project_archives", {
+  projectId: varchar("project_id").primaryKey().references(() => jarvisProjects.id, { onDelete: "cascade" }),
+  zipBase64: text("zip_base64").notNull(),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type JarvisProjectArchive = typeof jarvisProjectArchives.$inferSelect;
+
 // Each row mirrors one block from server/self-heal-audit.log.  On container
 // restart, selfHealAudit.ts restores the flat file from these rows so audit
 // history is never lost.

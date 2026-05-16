@@ -7,9 +7,11 @@ import * as schema from "@shared/schema";
 import { getUserIdFromRequest } from "./auth";
 import { validateDownloadToken } from "./agent/appDelivery";
 import { getProjectDownloadsDir } from "./projectStorage";
+import { readProjectArchive } from "./projectArtifacts";
 
 const APK_PATH = path.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
 const DOWNLOADS_DIR = getProjectDownloadsDir();
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
 function getFallbackUrl(): string | null {
   return process.env.ANDROID_APK_URL ?? null;
@@ -65,7 +67,7 @@ export function registerDownloadRoutes(app: Express): void {
   //   a) A valid signed ?token=<token> query param (for Telegram/Discord clickthrough)
   //   b) Bearer auth (for in-app download button)
   app.get("/api/downloads/project/:projectId", async (req: Request, res: Response) => {
-    const { projectId } = req.params;
+    const projectId = _p(req.params.projectId);
     const queryToken = typeof req.query.token === "string" ? req.query.token : null;
 
     // ── Auth: signed token OR bearer ────────────────────────────────────────
@@ -97,10 +99,21 @@ export function registerDownloadRoutes(app: Express): void {
       const zipPath = path.join(DOWNLOADS_DIR, `${projectId}.zip`);
 
       if (!fs.existsSync(zipPath)) {
-        return res.status(404).json({
-          error: "Project zip not yet available",
-          detail: "The project may still be building. You will receive a notification when the download is ready.",
-        });
+        const archive = await readProjectArchive(projectId);
+        if (!archive) {
+          return res.status(404).json({
+            error: "Project zip not yet available",
+            detail: "The project may still be building. You will receive a notification when the download is ready.",
+          });
+        }
+
+        const safeName = (project.title ?? projectId).replace(/[^a-z0-9]/gi, "-").toLowerCase();
+        const filename = `${safeName}.zip`;
+        res.setHeader("Content-Type", "application/zip");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Content-Length", archive.sizeBytes);
+        res.setHeader("Cache-Control", "no-cache");
+        return res.end(archive.data);
       }
 
       const stat = fs.statSync(zipPath);
