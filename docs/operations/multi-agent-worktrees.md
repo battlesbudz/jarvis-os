@@ -7,7 +7,9 @@ Conventions:
 - Main coordination checkout: project root on `codex/replit-main-continuation`.
 - Agent A worktree: `.worktrees/agent-a` on branch `codex/agent-a`.
 - Agent B worktree: `.worktrees/agent-b` on branch `codex/agent-b`.
+- `node_modules` inside each worktree is a Windows junction to the main checkout's `node_modules`. This keeps source isolation without filling the disk with duplicate installs.
 - Keep each agent on a separate branch and assign non-overlapping files when possible.
+- If an agent needs to change dependencies, coordinate that work in the main checkout or create a temporary dedicated install with enough disk space first.
 - Before merging an agent branch back, run `npm.cmd test` and `npm.cmd run server:build` from that worktree.
 - Do not edit inside another agent's worktree unless that agent is finished or the work is being intentionally handed off.
 
