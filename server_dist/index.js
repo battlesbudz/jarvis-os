@@ -26629,9 +26629,12 @@ Return JSON only:
     },
     ...more steps...
   ],
-  "questions": ["Any ambiguity 1"],
+  "questions": [],
   "summary": "One paragraph overview of the plan"
 }
+
+Only include questions if there is a real blocker that makes the app impossible
+to build safely. Do not include placeholder questions.
 
 Return ONLY the JSON object, nothing else.`;
 }
@@ -62178,7 +62181,11 @@ function registerProjectRoutes(app2) {
         return res.json({ status: "building" });
       }
       if (answer !== void 0) {
-        await answerProjectQuestion(id, answer);
+        if (project.appFramework) {
+          await answerAppProjectQuestion(id, answer);
+        } else {
+          await answerProjectQuestion(id, answer);
+        }
         return res.json({ status: "building" });
       }
       if (autonomousMode !== void 0) {

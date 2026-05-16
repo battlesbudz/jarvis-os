@@ -175,9 +175,12 @@ Return JSON only:
     },
     ...more steps...
   ],
-  "questions": ["Any ambiguity 1"],
+  "questions": [],
   "summary": "One paragraph overview of the plan"
 }
+
+Only include questions if there is a real blocker that makes the app impossible
+to build safely. Do not include placeholder questions.
 
 Return ONLY the JSON object, nothing else.`;
 }
