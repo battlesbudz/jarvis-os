@@ -43,6 +43,7 @@ import { createCalendarEventTool } from "./calendarCreate";
 import { sendEmailTool } from "./sendEmail";
 import { fetchEmailsTool } from "./fetchEmails";
 import { connectChannelTool } from "./connectChannel";
+import { startProjectTool } from "./startProject";
 import { discordPostTool } from "./discordPost";
 import { discordCreateChannelTool } from "./discordCreateChannel";
 import { discordRequestConfirmTool } from "./discordRequestConfirm";
@@ -303,6 +304,7 @@ export {
   videoTranscriptTool,
   xSearchTool,
   queueBackgroundJobTool,
+  startProjectTool,
   setupContentPipelineTool,
   setupDiscordWorkspaceTool,
   memorySearchTool,

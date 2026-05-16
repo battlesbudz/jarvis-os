@@ -74,6 +74,12 @@ assertRoute(
   ["deploy_app", "project_shell"],
 );
 assertRoute(
+  "start a project called Test Project",
+  "project",
+  ["coaching"],
+  ["start_project"],
+);
+assertRoute(
   "fix your calendar routing code",
   "code",
   ["system", "self_edit"],
