@@ -48775,6 +48775,35 @@ var init_extractor = __esm({
   }
 });
 
+// server/channels/telegramNeedsAttention.ts
+function getTelegramNeedsAttentionDecision(rawText, needsAttentionCount) {
+  const text2 = rawText.trim();
+  if (!text2 || text2.startsWith("/") || needsAttentionCount === 0) {
+    return { shouldRouteToTask: false, shouldShowTaskList: false };
+  }
+  const explicitTaskReference = TASK_REFERENCE_RE.test(text2);
+  const looksLikeGeneralQuestion = text2.includes("?") || GENERAL_QUESTION_RE.test(text2);
+  if (needsAttentionCount > 1) {
+    return {
+      shouldRouteToTask: false,
+      shouldShowTaskList: explicitTaskReference
+    };
+  }
+  return {
+    shouldRouteToTask: explicitTaskReference || !looksLikeGeneralQuestion && SHORT_TASK_ANSWER_RE.test(text2),
+    shouldShowTaskList: false
+  };
+}
+var GENERAL_QUESTION_RE, TASK_REFERENCE_RE, SHORT_TASK_ANSWER_RE;
+var init_telegramNeedsAttention = __esm({
+  "server/channels/telegramNeedsAttention.ts"() {
+    "use strict";
+    GENERAL_QUESTION_RE = /^(?:who|what|when|where|why|how|can|could|would|should|do|does|did|is|are|am|will|tell|explain|help|build|create|make|fix|look|check)\b/i;
+    TASK_REFERENCE_RE = /^(?:answer|task|for task|regarding|about(?: that| the)? task|needs you|guidance)\b/i;
+    SHORT_TASK_ANSWER_RE = /^(?:yes|yep|yeah|no|nope|nah|correct|right|use|include|exclude|focus|prioritize|both|all|only)\b/i;
+  }
+});
+
 // server/lib/proactiveDedup.ts
 async function claimAndMark(userId, messageType, dateKey) {
   try {
@@ -50314,7 +50343,8 @@ id: \`${status.project.id.slice(0, 8)}\``;
               eq72(jarvisScheduledTasks.needsAttention, true)
             )
           ).orderBy(desc22(jarvisScheduledTasks.createdAt));
-          if (needsTasks.length === 1) {
+          const attentionDecision = getTelegramNeedsAttentionDecision(rawUserText, needsTasks.length);
+          if (needsTasks.length === 1 && attentionDecision.shouldRouteToTask) {
             const result = await resolveScheduledTaskAttention(userId, needsTasks[0].id, rawUserText);
             if (result.ok) {
               await sendMessage(
@@ -50323,7 +50353,7 @@ id: \`${status.project.id.slice(0, 8)}\``;
               );
               return;
             }
-          } else if (needsTasks.length > 1) {
+          } else if (needsTasks.length > 1 && attentionDecision.shouldShowTaskList) {
             const taskList = needsTasks.map((t, i) => {
               const q = t.attentionQuestion ? `
    \u21B3 ${t.attentionQuestion}` : "";
@@ -51387,6 +51417,7 @@ var init_telegramRoutes = __esm({
     init_runNamedAgent();
     init_manager();
     init_sessionStore();
+    init_telegramNeedsAttention();
     init_env();
     init_proactiveDedup();
     init_taskResolver();

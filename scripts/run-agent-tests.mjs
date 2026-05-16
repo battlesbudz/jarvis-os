@@ -38,6 +38,7 @@ const tests = [
   { file: "server/agent/__tests__/outboundMiddleware.test.ts" },
   { file: "server/agent/__tests__/responseQuality.test.ts" },
   { file: "server/agent/__tests__/queryClassifier.test.ts" },
+  { file: "server/agent/__tests__/telegramNeedsAttention.test.ts" },
   { file: "server/agent/__tests__/weatherLookup.test.ts" },
 ];
 

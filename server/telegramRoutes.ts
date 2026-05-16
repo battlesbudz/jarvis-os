@@ -26,6 +26,7 @@ import { runCoachAgent } from "./channels/coachAgent";
 import { routeToNamedAgent } from "./agent/runNamedAgent";
 import { completePairing as completeDiscordPairing } from "./discord/manager";
 import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
+import { getTelegramNeedsAttentionDecision } from "./channels/telegramNeedsAttention";
 import OpenAI from "openai";
 import { getOpenAIClientConfig } from "./agent/providers/env";
 import { claimAndMark } from "./lib/proactiveDedup";
@@ -1480,7 +1481,9 @@ async function processUpdate(update: any): Promise<void> {
             )
             .orderBy(desc(schema.jarvisScheduledTasks.createdAt));
 
-          if (needsTasks.length === 1) {
+          const attentionDecision = getTelegramNeedsAttentionDecision(rawUserText, needsTasks.length);
+
+          if (needsTasks.length === 1 && attentionDecision.shouldRouteToTask) {
             // Use rawUserText so stored guidance isn't polluted with the
             // "[Replying to Jarvis's message: ...]" context-injection prefix.
             const result = await resolveScheduledTaskAttention(userId, needsTasks[0].id, rawUserText);
@@ -1491,7 +1494,7 @@ async function processUpdate(update: any): Promise<void> {
               );
               return;
             }
-          } else if (needsTasks.length > 1) {
+          } else if (needsTasks.length > 1 && attentionDecision.shouldShowTaskList) {
             const taskList = needsTasks
               .map((t, i) => {
                 const q = t.attentionQuestion ? `\n   ↳ ${t.attentionQuestion}` : "";
