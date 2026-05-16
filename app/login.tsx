@@ -186,6 +186,8 @@ export default function LoginScreen() {
     let pollInterval: ReturnType<typeof setInterval> | null = null;
     let succeeded = false;
     let attemptNum = 0;
+    const startedAt = Date.now();
+    const timeoutMs = 2 * 60 * 1000;
 
     const cleanup = () => {
       if (pollInterval) {
@@ -229,28 +231,24 @@ export default function LoginScreen() {
 
       pollInterval = setInterval(() => { doPoll(); }, 2000);
 
-      await WebBrowser.openBrowserAsync(startUrl, {
+      WebBrowser.openBrowserAsync(startUrl, {
         showTitle: false,
         toolbarColor: "#0F0F0F",
         secondaryToolbarColor: "#0F0F0F",
+      }).catch((browserErr) => {
+        console.log("[GoogleAuth] Browser sign-in window closed or failed:", browserErr);
       });
 
-      console.log(`[GoogleAuth] Browser closed. succeeded=${succeeded}, isAuth=${isAuthenticatedRef.current}`);
-      cleanup();
+      console.log(`[GoogleAuth] Browser launched. succeeded=${succeeded}, isAuth=${isAuthenticatedRef.current}`);
 
-      if (succeeded || isAuthenticatedRef.current) {
-        setLoading(false);
-        return;
-      }
-
-      for (let i = 0; i < 3; i++) {
+      while (Date.now() - startedAt < timeoutMs) {
         if (isAuthenticatedRef.current) {
           setLoading(false);
           return;
         }
         const found = await doPoll();
         if (found) return;
-        await delay(300);
+        await delay(1000);
       }
 
       if (!isAuthenticatedRef.current) {

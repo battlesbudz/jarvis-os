@@ -33,6 +33,11 @@
           "action": "VIEW",
           "data": [
             {
+              "scheme": "gameplan",
+              "host": "auth",
+              "pathPrefix": "/complete"
+            },
+            {
               "scheme": "jarvis",
               "host": "voice-realtime"
             }
