@@ -5,6 +5,7 @@
     "buildCommand": "npx playwright install --with-deps chromium && EXPO_PUBLIC_DOMAIN=gameplanjarvisai.up.railway.app EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID npx expo export --platform web --output-dir static-build/web --clear && npm run server:build && node scripts/patch-chat-template.mjs"
   },
   "deploy": {
+    "preDeployCommand": null,
     "startCommand": "node scripts/railway-db-push.mjs --force && node scripts/railway-prestart.mjs && npm run server:prod",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
