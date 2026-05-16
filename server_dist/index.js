@@ -27034,7 +27034,12 @@ ${questionText}`,
       updatedAt: /* @__PURE__ */ new Date()
     }).where(eq35(jarvisProjects.id, project.id));
   } else {
-    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({
+      plan,
+      status: "building",
+      nextRunAt: new Date(Date.now() + 1e4),
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq35(jarvisProjects.id, project.id));
     await sendAppProjectMessage(
       project.userId,
       project.originChannel ?? void 0,
@@ -27046,13 +27051,7 @@ ${planData.summary || ""}
 
 Starting build now \u2014 I'll update you every ${AUTONOMOUS_INTERVAL_MINUTES} minutes.`
     );
-    await submitAgentJob2({
-      userId: project.userId,
-      agentType: "app_project",
-      title: `Build: ${project.title} (session 1)`,
-      prompt: `Continue building app project ${project.id}`,
-      input: { projectId: project.id }
-    });
+    console.log(`[AppProjectRunner] scheduled first build session for ${project.id}`);
   }
   await db.insert(jarvisProjectSessions).values({
     projectId: project.id,
