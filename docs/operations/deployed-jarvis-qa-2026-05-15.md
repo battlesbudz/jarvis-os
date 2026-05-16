@@ -587,7 +587,7 @@ Next steps:
 
 Date: 2026-05-15
 
-Status: local code and tests complete. Railway CLI upload created deployment `de54eb59-6395-4576-ad47-f4b203f4b3b8`, but Railway failed before build with `Failed to create code snapshot`, so production was left on the prior successful deployment until the GitHub-linked deploy picks up the pushed commit.
+Status: deployed through the GitHub-linked Railway flow. The direct Railway CLI upload created deployment `de54eb59-6395-4576-ad47-f4b203f4b3b8`, but Railway failed before build with `Failed to create code snapshot`; pushing the branch to GitHub then produced successful deployments, with the latest confirmed deployment `6cc1fb44-2223-4331-af12-4ee1854de508` from commit `26727fc`.
 
 | Area | Status | Local change | Verification |
 | --- | --- | --- | --- |
@@ -599,6 +599,6 @@ Status: local code and tests complete. Railway CLI upload created deployment `de
 
 Remaining after this pass:
 
-1. Let Railway deploy the pushed GitHub commit, then check startup logs for `[railway-db-repair] Database compatibility repair complete` and absence of the old `active` boolean cast warning.
+1. Continue monitoring future startup logs for new schema drift. This pass confirmed `[railway-db-repair] Database compatibility repair complete`, Drizzle `[✓] Changes applied`, and no repeat of the old `active` boolean cast warning or the follow-up `mention_patterns` null error.
 2. Run `npm run jarvis:qa:endpoints` and `npm run jarvis:qa:cleanup` with a real `JARVIS_QA_AUTH_TOKEN`.
 3. Browser-confirm the mobile/native OAuth fallback on the actual device flow.
