@@ -69,6 +69,16 @@ interface AgentJob {
   createdAt: string;
   startedAt: string | null;
   completedAt?: string | null;
+  review?: {
+    stage: string;
+    label: string;
+    nextAction: string;
+    canCancel: boolean;
+    canRetry: boolean;
+    preview: string;
+    originChannel?: string;
+    autonomyPolicy: boolean;
+  };
 }
 
 interface Deliverable {
@@ -85,6 +95,18 @@ interface Deliverable {
   driveLink: string | null;
   createdAt: string;
   actedAt: string | null;
+  review?: {
+    stage: string;
+    label: string;
+    nextAction: string;
+    canApprove: boolean;
+    canEdit: boolean;
+    canRevise: boolean;
+    canDiscard: boolean;
+    canReject: boolean;
+    preview: string;
+    approvalGateId?: string;
+  };
 }
 
 const DELIVERABLE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -676,6 +698,7 @@ export default function InboxScreen() {
         {deliverables.map((d, index) => {
           const icon = DELIVERABLE_ICON[d.type] || 'document-text';
           const typeLabel = DELIVERABLE_LABEL[d.type] || d.type;
+          const review = d.review;
           const busy =
             (approveDeliverableMutation.isPending && approveDeliverableMutation.variables === d.id) ||
             (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id) ||
@@ -707,6 +730,15 @@ export default function InboxScreen() {
                 </View>
 
                 <Text style={styles.subject} numberOfLines={2}>{d.title}</Text>
+
+                {review ? (
+                  <View style={styles.jobStatusRow}>
+                    <View style={[styles.jobTypeBadge, { backgroundColor: Colors.primary + '14' }]}>
+                      <Text style={[styles.jobTypeBadgeText, { color: Colors.primary }]}>{review.label}</Text>
+                    </View>
+                    <Text style={styles.jobStatusText} numberOfLines={1}>{review.nextAction}</Text>
+                  </View>
+                ) : null}
 
                 {d.type === 'email_draft' && meta?.to && (
                   <View style={styles.reasonContainer}>
@@ -764,7 +796,7 @@ export default function InboxScreen() {
 
                 <View style={styles.draftBodyBox}>
                   <Text style={styles.draftBodyText} numberOfLines={8}>
-                    {d.summary || d.body}
+                    {review?.preview || d.summary || d.body}
                   </Text>
                 </View>
 
@@ -990,7 +1022,8 @@ export default function InboxScreen() {
           const icon = JOB_ICON[job.agentType] || 'sparkles';
           const label = JOB_LABEL[job.agentType] || job.agentType;
           const busy = retryJobMutation.isPending && retryJobMutation.variables === job.id;
-          const preview = job.error || job.prompt || 'No details available.';
+          const review = job.review;
+          const preview = review?.preview || job.error || job.prompt || 'No details available.';
           return (
             <Animated.View key={job.id} entering={FadeInDown.duration(300).delay(index * 60)}>
               <View style={[styles.jobCard, styles.jobFailedCard]}>
@@ -1003,7 +1036,7 @@ export default function InboxScreen() {
                     <View style={styles.jobStatusRow}>
                       <Ionicons name="warning-outline" size={13} color={Colors.error} style={{ marginRight: 3 }} />
                       <Text style={[styles.jobStatusText, { color: Colors.error }]}>
-                        Failed{job.completedAt ? ` - ${formatElapsed(job.completedAt)} ago` : ''}
+                        {review?.label || 'Failed'}{job.completedAt ? ` - ${formatElapsed(job.completedAt)} ago` : ''}
                       </Text>
                       <View style={[styles.jobTypeBadge, { backgroundColor: Colors.error + '14' }]}>
                         <Text style={[styles.jobTypeBadgeText, { color: Colors.error }]}>{label}</Text>
@@ -1019,7 +1052,7 @@ export default function InboxScreen() {
                         disabled={busy}
                         testID={`job-retry-${job.id}`}
                       >
-                        <Text style={styles.actionText}>{busy ? 'Queuing...' : 'Retry'}</Text>
+                        <Text style={styles.actionText}>{busy ? 'Queuing...' : (review?.nextAction || 'Retry')}</Text>
                       </Pressable>
                     </View>
                   </View>
@@ -1045,6 +1078,7 @@ export default function InboxScreen() {
         {activeJobs.map((job, index) => {
           const icon = JOB_ICON[job.agentType] || 'sparkles';
           const label = JOB_LABEL[job.agentType] || job.agentType;
+          const review = job.review;
           const isRunning = job.status === 'running';
           const isCancelling = job.status === 'cancelling';
           const elapsedFrom = isRunning && job.startedAt ? job.startedAt : job.createdAt;
@@ -1071,8 +1105,8 @@ export default function InboxScreen() {
                         <Text style={[styles.jobTypeBadgeText, { color: Colors.primary }]}>{label}</Text>
                       </View>
                     </View>
-                    {job.prompt ? (
-                      <Text style={styles.jobPromptPreview} numberOfLines={2}>{job.prompt}</Text>
+                    {(review?.preview || job.prompt) ? (
+                      <Text style={styles.jobPromptPreview} numberOfLines={2}>{review?.preview || job.prompt}</Text>
                     ) : null}
                   </View>
                   <Pressable

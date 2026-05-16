@@ -7190,7 +7190,8 @@ Return ONLY the JSON object.`;
         .where(where)
         .orderBy(desc(schema.agentJobs.createdAt))
         .limit(limit);
-      res.json(jobs);
+      const { attachJobReviewState } = await import("./agent/reviewLoop");
+      res.json(jobs.map(attachJobReviewState));
     } catch (err) {
       console.error("Error listing agent jobs:", err);
       res.status(500).json({ error: "Failed to list jobs" });
@@ -7212,7 +7213,8 @@ Return ONLY the JSON object.`;
         )
         .orderBy(asc(schema.agentJobs.createdAt))
         .limit(20);
-      res.json(jobs);
+      const { attachJobReviewState } = await import("./agent/reviewLoop");
+      res.json(jobs.map(attachJobReviewState));
     } catch (err) {
       console.error("Error listing active agent jobs:", err);
       res.status(500).json({ error: "Failed to list active jobs" });
@@ -7309,7 +7311,8 @@ Return ONLY the JSON object.`;
           )
           .orderBy(desc(schema.deliverables.createdAt))
           .limit(20);
-        return res.json(items);
+        const { attachDeliverableReviewState } = await import("./agent/reviewLoop");
+        return res.json(items.map(attachDeliverableReviewState));
       }
 
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
@@ -7319,7 +7322,8 @@ Return ONLY the JSON object.`;
         .where(and(eq(schema.deliverables.userId, userId), eq(schema.deliverables.status, status)))
         .orderBy(desc(schema.deliverables.createdAt))
         .limit(50);
-      res.json(items);
+      const { attachDeliverableReviewState } = await import("./agent/reviewLoop");
+      res.json(items.map(attachDeliverableReviewState));
     } catch (err) {
       console.error("Error listing deliverables:", err);
       res.status(500).json({ error: "Failed to list deliverables" });
