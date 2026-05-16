@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import {
   startProject,
@@ -263,6 +263,19 @@ export function registerProjectRoutes(app: Express): void {
         .limit(1);
 
       if (!project) return res.status(404).json({ error: "Project not found" });
+
+      await db
+        .update(schema.agentJobs)
+        .set({
+          status: "cancelled",
+          error: "Project deleted",
+          completedAt: new Date(),
+        })
+        .where(and(
+          eq(schema.agentJobs.userId, userId),
+          sql`${schema.agentJobs.input}->>'projectId' = ${id}`,
+          sql`${schema.agentJobs.status} IN ('queued', 'running')`,
+        ));
 
       await db.delete(schema.jarvisProjects).where(eq(schema.jarvisProjects.id, id));
       res.json({ deleted: true });
