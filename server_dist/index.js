@@ -24999,6 +24999,7 @@ var projectShellTool_exports = {};
 __export(projectShellTool_exports, {
   cleanupOrphanedDevServers: () => cleanupOrphanedDevServers,
   projectShellTool: () => projectShellTool,
+  projectWriteFileTool: () => projectWriteFileTool,
   stopProjectServer: () => stopProjectServer
 });
 import { spawn as spawn4, execSync } from "child_process";
@@ -25092,6 +25093,32 @@ function resolvePathValue(value, workspaceDir) {
     return path10.resolve(os4.homedir(), value.slice(2));
   }
   return path10.resolve(workspaceDir, value);
+}
+function isSafeProjectRelativePath(value) {
+  if (!value || value.length > 240) return false;
+  if (path10.isAbsolute(value)) return false;
+  const normalized = value.replace(/\\/g, "/");
+  if (normalized.includes("\0")) return false;
+  return !normalized.split("/").some((part) => part === "..");
+}
+async function getOrCreateProjectWorkspace(projectId) {
+  const [project] = await db.select().from(jarvisProjects).where(eq35(jarvisProjects.id, projectId)).limit(1);
+  if (!project) {
+    return { ok: false, content: `Project ${projectId} not found`, label: "Project not found" };
+  }
+  let workspaceDir = project.workspaceDir;
+  if (!workspaceDir) {
+    workspaceDir = getProjectWorkspaceDir(projectId);
+    fs8.mkdirSync(workspaceDir, { recursive: true });
+    await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
+  }
+  if (!fs8.existsSync(workspaceDir)) {
+    fs8.mkdirSync(workspaceDir, { recursive: true });
+  }
+  await hydrateProjectWorkspace(projectId, workspaceDir).catch((err2) => {
+    console.warn(`[ProjectShell] failed to hydrate workspace for ${projectId}:`, err2);
+  });
+  return { ok: true, workspaceDir };
 }
 function hasUnsafePathArgs(command, workspaceDir) {
   const tokens = command.trim().split(/\s+/).slice(1);
@@ -25204,7 +25231,7 @@ function stopProjectServer(projectId) {
     runningServers.delete(projectId);
   }
 }
-var ALLOWED_EXECUTABLES, DEV_SERVER_COMMANDS, LONG_RUNNING_COMMANDS, PORT_RANGE_START, PORT_RANGE_END, runningServers, SHELL_METACHAR_RE, projectShellTool;
+var ALLOWED_EXECUTABLES, DEV_SERVER_COMMANDS, LONG_RUNNING_COMMANDS, PORT_RANGE_START, PORT_RANGE_END, runningServers, SHELL_METACHAR_RE, projectShellTool, projectWriteFileTool;
 var init_projectShellTool = __esm({
   "server/agent/tools/projectShellTool.ts"() {
     "use strict";
@@ -25368,6 +25395,68 @@ ${stderr}`);
           label: success ? `Command ok (exit ${exitCode})` : `Command failed (exit ${exitCode})`,
           detail: `cwd: ${workspaceDir}`,
           metadata: { exitCode, workspaceDir }
+        };
+      }
+    };
+    projectWriteFileTool = {
+      name: "project_write_file",
+      description: `Write or replace a text file inside the current standalone app project's isolated workspace.
+Use this for app source files, CSS, package.json, Vite config, HTML, and README files.
+Path must be relative to the project workspace, for example 'src/App.jsx' or 'package.json'.`,
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description: "Relative path inside the project workspace, e.g. 'src/App.jsx'."
+          },
+          content: {
+            type: "string",
+            description: "Complete file content to write."
+          }
+        },
+        required: ["path", "content"]
+      },
+      async execute(args, ctx) {
+        const projectId = String(ctx?.projectId ?? "");
+        if (!projectId) {
+          return { ok: false, content: "project_write_file requires a projectId in context", label: "No project context" };
+        }
+        const relativePath = String(args.path ?? "").trim();
+        const content = String(args.content ?? "");
+        if (!isSafeProjectRelativePath(relativePath)) {
+          return {
+            ok: false,
+            content: "Invalid path. Use a relative path inside the project workspace without '..' segments.",
+            label: "Unsafe path blocked"
+          };
+        }
+        if (content.length > 1e6) {
+          return { ok: false, content: "File content is too large for project_write_file.", label: "Content too large" };
+        }
+        const workspace = await getOrCreateProjectWorkspace(projectId);
+        if (!workspace.ok) return workspace;
+        const root = path10.resolve(workspace.workspaceDir);
+        const fullPath = path10.resolve(root, relativePath);
+        if (!fullPath.startsWith(root + path10.sep) && fullPath !== root) {
+          return {
+            ok: false,
+            content: "Resolved file path escapes the project workspace.",
+            label: "Unsafe path blocked"
+          };
+        }
+        fs8.mkdirSync(path10.dirname(fullPath), { recursive: true });
+        fs8.writeFileSync(fullPath, content, "utf8");
+        await snapshotProjectWorkspace(projectId, workspace.workspaceDir).catch((err2) => {
+          console.warn(`[ProjectShell] failed to snapshot workspace for ${projectId}:`, err2);
+        });
+        console.log(`[ProjectWriteFile] project=${projectId} path="${relativePath}" bytes=${content.length}`);
+        return {
+          ok: true,
+          content: `Wrote ${relativePath} (${content.length} bytes).`,
+          label: "File written",
+          detail: `cwd: ${workspace.workspaceDir}`,
+          metadata: { path: relativePath, bytes: content.length, workspaceDir: workspace.workspaceDir }
         };
       }
     };
@@ -26735,6 +26824,44 @@ ${pageText || "(page updated)"}`,
   }
 });
 
+// server/agent/appProjectPlanning.ts
+function normalizePlanningQuestion(question) {
+  if (typeof question === "string") {
+    const trimmed = question.trim();
+    return trimmed ? trimmed : null;
+  }
+  if (!question || typeof question !== "object" || Array.isArray(question)) return null;
+  const record = question;
+  const candidates = [
+    record.question,
+    record.text,
+    record.prompt,
+    record.label,
+    record.title,
+    record.summary
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  try {
+    const compact = JSON.stringify(record);
+    return compact && compact !== "{}" ? compact.slice(0, 300) : null;
+  } catch {
+    return null;
+  }
+}
+function normalizePlanningQuestions(questions) {
+  if (!Array.isArray(questions)) return [];
+  return questions.map(normalizePlanningQuestion).filter((q) => Boolean(q));
+}
+var init_appProjectPlanning = __esm({
+  "server/agent/appProjectPlanning.ts"() {
+    "use strict";
+  }
+});
+
 // server/agent/appProjectRunner.ts
 var appProjectRunner_exports = {};
 __export(appProjectRunner_exports, {
@@ -26749,12 +26876,12 @@ import * as os5 from "os";
 import { eq as eq36, asc as asc2 } from "drizzle-orm";
 function appToolGroupsForPhase(phase) {
   const p = phase.toUpperCase();
-  if (p === "SCAFFOLD") return ["app_build", "research"];
-  if (p.startsWith("IMPLEMENT")) return ["app_build", "self_edit", "research", "memory"];
-  if (p === "INTEGRATE") return ["app_build", "research"];
-  if (p === "TEST_UI") return ["app_build", "browser", "research"];
+  if (p === "SCAFFOLD") return ["app_build"];
+  if (p.startsWith("IMPLEMENT")) return ["app_build"];
+  if (p === "INTEGRATE") return ["app_build"];
+  if (p === "TEST_UI") return ["app_build", "browser"];
   if (p === "PACKAGE") return ["app_build"];
-  return ["app_build", "research"];
+  return ["app_build"];
 }
 async function runDeterministicVerification(phase, workspaceDir, reply, projectId) {
   const p = phase.toUpperCase();
@@ -26845,8 +26972,12 @@ Each step must have specific acceptance_criteria. The plan must include PACKAGE.
 Include TEST_UI for visual projects. For static frontend projects, SCAFFOLD,
 IMPLEMENT_FRONTEND, TEST_UI, and PACKAGE are usually enough.
 
-Use project_shell to run all commands. The project workspace will be created automatically.
+For react-vite projects, target these files unless the goal requires otherwise:
+package.json, index.html, src/main.jsx, src/App.jsx, src/App.css.
+Use project_shell for commands and project_write_file for source/config files.
+The project workspace will be created automatically.
 Do NOT use phases outside the 6 listed above.
+questions MUST be an array of plain strings, never objects.
 
 Return JSON only:
 {
@@ -26901,7 +27032,10 @@ Use this answer to guide this step.` : "";
 **Goal:** ${project.goal}
 
 CRITICAL: All code changes must go inside ${workspaceDir}.
-Use project_shell to run commands. NEVER touch Jarvis's own source files.
+Use project_write_file to create or replace files.
+Use project_shell only for commands such as npm install, npm run build, npm run dev, ls, and cat.
+Do not use shell redirection, heredocs, pipes, &&, or command chaining.
+NEVER touch Jarvis's own source files.
 
 **Session history:**
 ${sessionHistory || "(this is the first session)"}
@@ -26917,6 +27051,7 @@ Acceptance criteria: ${step.acceptance_criteria || "step completed successfully"
 Execute this step using your available tools. When using project_shell:
 - All commands run in the workspace directory automatically
 - Use npm, npx, node, git, zip, ls, cat, mkdir, cp, mv, rm, echo, curl
+- Use project_write_file for package.json, index.html, src/App.jsx, CSS, and config files
 - For dev servers: set background=true
 
 Produce a clear, detailed output that satisfies the acceptance criteria.
@@ -27235,7 +27370,7 @@ async function runAppPlanningSession(project, sessionNumber, startTime) {
     step_id: s.step_id || `step_${String(i + 1).padStart(3, "0")}`,
     status: "pending"
   }));
-  const questions = planData.questions?.filter(Boolean) ?? [];
+  const questions = normalizePlanningQuestions(planData.questions);
   const durationMs = Date.now() - startTime;
   if (questions.length > 0) {
     const questionText = questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
@@ -27326,6 +27461,7 @@ var init_appProjectRunner = __esm({
     init_browserTools();
     init_manager();
     init_projectStorage();
+    init_appProjectPlanning();
     AUTONOMOUS_INTERVAL_MINUTES = 30;
     STEPS_PER_SESSION = 2;
     MAX_STEP_VERIFY_RETRIES = 2;
@@ -40316,6 +40452,7 @@ __export(tools_exports, {
   memorySearchTool: () => memorySearchTool,
   mergeGithubPrTool: () => mergeGithubPrTool,
   projectShellTool: () => projectShellTool,
+  projectWriteFileTool: () => projectWriteFileTool,
   proposeCodeChangeTool: () => proposeCodeChangeTool,
   queueBackgroundJobTool: () => queueBackgroundJobTool,
   readDocumentTool: () => readDocumentTool,
@@ -40466,12 +40603,14 @@ var init_tools = __esm({
       listCustomAgentsTool,
       runTournamentTool,
       projectShellTool,
+      projectWriteFileTool,
       deployAppTool
     ];
     TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
     TOOL_GROUP_MAP[listCustomAgentsTool.name] = ["coaching"];
     TOOL_GROUP_MAP[runTournamentTool.name] = ["system"];
     TOOL_GROUP_MAP[projectShellTool.name] = ["app_build"];
+    TOOL_GROUP_MAP[projectWriteFileTool.name] = ["app_build"];
     TOOL_GROUP_MAP[deployAppTool.name] = ["app_build", "coaching"];
     initToolResolver((name) => TOOL_INDEX.get(name));
   }
