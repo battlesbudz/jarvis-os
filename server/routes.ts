@@ -3487,6 +3487,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           "build_feature",
           "test_tool",
           "queue_background_job",
+          "start_project",
           "spawn_subagent",
           "jarvis_self_diagnose",
           "list_source_files",

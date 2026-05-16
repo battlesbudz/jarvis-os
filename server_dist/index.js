@@ -10608,6 +10608,18 @@ var init_toolAwareRouting = __esm({
         guidance: "For Railway/deploy/status requests, use Railway MCP/deploy/project tools when available before falling back to docs or a setup explanation."
       },
       {
+        intent: "project",
+        patterns: [
+          /\b(start|create|make|open|set up|setup)\s+(a\s+|new\s+)?project\b/i,
+          /\bproject\s+(called|named|titled)\b/i,
+          /\bnew\s+project\b/i
+        ],
+        capabilityIds: ["coaching"],
+        toolGroups: ["coaching"],
+        priorityToolNames: ["start_project", "queue_background_job"],
+        guidance: "For project creation requests, use start_project. For websites, landing pages, dashboards, tools, or standalone apps, set project_kind='app'. If the user only supplies a project name, create the project with that name as the initial goal instead of claiming no project API exists."
+      },
+      {
         intent: "code",
         patterns: [
           /\b(build|create|make|implement|add|code|write|fix|debug|inspect|edit|test)\s+.*\b(app|website|feature|tool|script|function|repo|repository|source|code|bug|integration|connector)\b/i,
@@ -21676,1830 +21688,628 @@ var init_connectChannel = __esm({
   }
 });
 
-// server/agent/discordConfirmStore.ts
-var discordConfirmStore_exports = {};
-__export(discordConfirmStore_exports, {
-  cleanUpExpiredDiscordConfirmTokens: () => cleanUpExpiredDiscordConfirmTokens,
-  clearConfirmToken: () => clearConfirmToken,
-  consumeConfirmToken: () => consumeConfirmToken,
-  seedConfirmTokenCache: () => seedConfirmTokenCache,
-  setConfirmToken: () => setConfirmToken
+// server/agent/agentLogger.ts
+var agentLogger_exports = {};
+__export(agentLogger_exports, {
+  logAgentEvent: () => logAgentEvent
 });
-import { eq as eq24, lt as lt2, and as and17, gt as gt3 } from "drizzle-orm";
-async function setConfirmToken(userId, action) {
-  const expiresAt = new Date(Date.now() + TTL_MS);
-  _cache.set(userId, { action, expiresAt: expiresAt.getTime() });
+function logAgentEvent(e) {
   try {
-    await db.insert(discordConfirmTokens).values({ userId, action, expiresAt }).onConflictDoUpdate({
-      target: discordConfirmTokens.userId,
-      set: { action, expiresAt, createdAt: /* @__PURE__ */ new Date() }
-    });
-  } catch (err2) {
-    console.error("[DiscordConfirmStore] setConfirmToken DB write failed:", err2);
+    const payload = { event: e.event };
+    if (e.agentId) payload.agentId = e.agentId;
+    if (e.userId) payload.userId = e.userId;
+    if (e.toolName) payload.toolName = e.toolName;
+    if (e.taskId) payload.taskId = e.taskId;
+    if (e.durationMs !== void 0) payload.durationMs = e.durationMs;
+    if (e.detail) payload.detail = e.detail;
+    console.log(`[AgentManager] ${JSON.stringify(payload)}`);
+  } catch {
   }
 }
-async function consumeConfirmToken(userId, action) {
-  const now = Date.now();
-  const cached = _cache.get(userId);
-  if (cached) {
-    _cache.delete(userId);
-    if (now > cached.expiresAt) {
-      _deleteFromDb(userId);
+var init_agentLogger = __esm({
+  "server/agent/agentLogger.ts"() {
+    "use strict";
+  }
+});
+
+// server/agent/agentManager.ts
+var agentManager_exports = {};
+__export(agentManager_exports, {
+  assignChannel: () => assignChannel,
+  createAgent: () => createAgent,
+  deleteAgent: () => deleteAgent,
+  disableAgent: () => disableAgent,
+  enableAgent: () => enableAgent,
+  getActiveAgentsForUser: () => getActiveAgentsForUser,
+  getAgent: () => getAgent,
+  getAgentForChannel: () => getAgentForChannel,
+  listAgents: () => listAgents,
+  loadAgentConfig: () => loadAgentConfig,
+  removeChannel: () => removeChannel,
+  updateAgent: () => updateAgent
+});
+import { eq as eq24, and as and17 } from "drizzle-orm";
+function mergePermissions(partial) {
+  if (!partial) return { ...DEFAULT_AGENT_PERMISSIONS };
+  return { ...DEFAULT_AGENT_PERMISSIONS, ...partial };
+}
+async function createAgent(userId, config) {
+  const name = config.name.trim();
+  if (!name) throw new Error("Agent name is required");
+  const allActive = await db.select().from(discordAgents).where(and17(eq24(discordAgents.userId, userId), eq24(discordAgents.isActive, 1)));
+  const nameLower = name.toLowerCase();
+  const conflict = allActive.find((a) => a.name.toLowerCase() === nameLower);
+  if (conflict) {
+    throw new Error(`Agent "${name}" already exists for this user. Choose a different name.`);
+  }
+  const values = {
+    userId,
+    name,
+    role: config.role || "custom",
+    persona: config.persona,
+    channelId: config.channelId,
+    channelName: config.channelName,
+    isActive: 1,
+    loopEnabled: config.loopEnabled ? 1 : 0,
+    loopIntervalMinutes: config.loopIntervalMinutes ?? 60,
+    loopPrompt: config.loopPrompt,
+    platforms: config.platforms ?? ["discord"],
+    permissions: mergePermissions(config.permissions),
+    memoryScope: config.memoryScope ?? "agent_private",
+    accessGlobalMemory: config.accessGlobalMemory ?? false,
+    allowedUsers: [],
+    allowedConversations: [],
+    privateMode: config.privateMode ?? false,
+    platformChannels: config.platformChannels ?? {},
+    configJson: config.configJson,
+    heartbeatFailCount: 0,
+    mentionPatterns: config.mentionPatterns ?? []
+  };
+  const [row] = await db.insert(discordAgents).values(values).returning({ id: discordAgents.id });
+  const agentId = row.id;
+  logAgentEvent({
+    event: "agent_created",
+    agentId,
+    userId,
+    detail: `role=${values.role} platforms=${values.platforms.join(",")}`
+  });
+  console.log(`[AgentManager] created agent "${name}" (${agentId}) for user ${userId}`);
+  return agentId;
+}
+async function getAgent(agentId) {
+  const [row] = await db.select().from(discordAgents).where(eq24(discordAgents.id, agentId)).limit(1);
+  return row ?? null;
+}
+async function listAgents(userId, includeDisabled = false) {
+  if (includeDisabled) {
+    return db.select().from(discordAgents).where(eq24(discordAgents.userId, userId));
+  }
+  return db.select().from(discordAgents).where(
+    and17(eq24(discordAgents.userId, userId), eq24(discordAgents.isActive, 1))
+  );
+}
+async function updateAgent(agentId, patch) {
+  const updates = {};
+  if (patch.name !== void 0) updates.name = patch.name;
+  if (patch.role !== void 0) updates.role = patch.role;
+  if (patch.persona !== void 0) updates.persona = patch.persona;
+  if (patch.platforms !== void 0) updates.platforms = patch.platforms;
+  if (patch.permissions !== void 0) {
+    const existing = await getAgent(agentId);
+    const current = existing?.permissions ?? DEFAULT_AGENT_PERMISSIONS;
+    updates.permissions = { ...current, ...patch.permissions };
+  }
+  if (patch.memoryScope !== void 0) updates.memoryScope = patch.memoryScope;
+  if (patch.accessGlobalMemory !== void 0) updates.accessGlobalMemory = patch.accessGlobalMemory;
+  if (patch.privateMode !== void 0) updates.privateMode = patch.privateMode;
+  if (patch.channelId !== void 0) updates.channelId = patch.channelId;
+  if (patch.channelName !== void 0) updates.channelName = patch.channelName;
+  if (patch.loopEnabled !== void 0) updates.loopEnabled = patch.loopEnabled ? 1 : 0;
+  if (patch.loopIntervalMinutes !== void 0) updates.loopIntervalMinutes = patch.loopIntervalMinutes;
+  if (patch.loopPrompt !== void 0) updates.loopPrompt = patch.loopPrompt;
+  if (patch.platformChannels !== void 0) updates.platformChannels = patch.platformChannels;
+  if (patch.isActive !== void 0) updates.isActive = patch.isActive ? 1 : 0;
+  if (patch.mentionPatterns !== void 0) updates.mentionPatterns = patch.mentionPatterns;
+  if (Object.keys(updates).length === 0) return;
+  await db.update(discordAgents).set(updates).where(eq24(discordAgents.id, agentId));
+  console.log(`[AgentManager] updated agent ${agentId}`);
+}
+async function disableAgent(agentId) {
+  await db.update(discordAgents).set({ isActive: 0 }).where(eq24(discordAgents.id, agentId));
+  logAgentEvent({ event: "agent_disabled_stuck", agentId, detail: "manually disabled" });
+  console.log(`[AgentManager] disabled agent ${agentId}`);
+}
+async function enableAgent(agentId) {
+  await db.update(discordAgents).set({ isActive: 1, stuckSince: null, heartbeatFailCount: 0 }).where(eq24(discordAgents.id, agentId));
+  console.log(`[AgentManager] enabled agent ${agentId}`);
+}
+async function deleteAgent(agentId) {
+  await db.delete(discordAgents).where(eq24(discordAgents.id, agentId));
+  console.log(`[AgentManager] deleted agent ${agentId}`);
+}
+async function assignChannel(agentId, platform, channelId) {
+  const agent = await getAgent(agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+  const channels2 = agent.platformChannels ?? {};
+  const existing = channels2[platform] ?? [];
+  if (!existing.includes(channelId)) {
+    channels2[platform] = [...existing, channelId];
+  }
+  const updates = { platformChannels: channels2 };
+  if (platform === "discord" && !agent.channelId) {
+    updates.channelId = channelId;
+  }
+  await db.update(discordAgents).set(updates).where(eq24(discordAgents.id, agentId));
+  console.log(`[AgentManager] assigned ${platform}:${channelId} to agent ${agentId}`);
+}
+async function removeChannel(agentId, platform, channelId) {
+  const agent = await getAgent(agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+  const channels2 = agent.platformChannels ?? {};
+  channels2[platform] = (channels2[platform] ?? []).filter((id) => id !== channelId);
+  await db.update(discordAgents).set({ platformChannels: channels2 }).where(eq24(discordAgents.id, agentId));
+  console.log(`[AgentManager] removed ${platform}:${channelId} from agent ${agentId}`);
+}
+async function getActiveAgentsForUser(userId) {
+  return db.select().from(discordAgents).where(and17(eq24(discordAgents.userId, userId), eq24(discordAgents.isActive, 1)));
+}
+async function getAgentForChannel(userId, platform, channelId) {
+  const agents = await getActiveAgentsForUser(userId);
+  for (const agent of agents) {
+    if (agent.channelId === channelId) return agent;
+    const pc = agent.platformChannels ?? {};
+    if (pc[platform]?.includes(channelId)) return agent;
+  }
+  return null;
+}
+async function loadAgentConfig(userId, configJson) {
+  const config = {
+    name: String(configJson.name || ""),
+    role: String(configJson.role || "custom"),
+    persona: configJson.personality_prompt ? String(configJson.personality_prompt) : void 0,
+    platforms: Array.isArray(configJson.platforms) ? configJson.platforms : ["discord"],
+    permissions: configJson.permissions ?? {},
+    memoryScope: configJson.memory_scope ?? "agent_private",
+    accessGlobalMemory: Boolean(configJson.can_access_global_memory ?? false),
+    configJson
+  };
+  if (!config.name) throw new Error("Config must include a 'name' field");
+  return createAgent(userId, config);
+}
+var init_agentManager = __esm({
+  "server/agent/agentManager.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_agentLogger();
+  }
+});
+
+// server/agent/approvalReceipt.ts
+function isRecord(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function isIsoDateLike(value) {
+  return !Number.isNaN(Date.parse(value));
+}
+function createApprovalReceipt(input) {
+  const expiresAt = input.expiresAt instanceof Date ? input.expiresAt.toISOString() : typeof input.expiresAt === "string" ? input.expiresAt : void 0;
+  return {
+    gateId: input.gateId,
+    userId: input.userId,
+    toolName: input.toolName,
+    scope: "top_level_action",
+    originalUserText: input.originalUserText,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    ...expiresAt ? { expiresAt } : {}
+  };
+}
+function normalizeApprovalReceipt(value) {
+  if (!isRecord(value)) return void 0;
+  const gateId = typeof value.gateId === "string" ? value.gateId.trim() : "";
+  const userId = typeof value.userId === "string" ? value.userId.trim() : "";
+  const toolName = typeof value.toolName === "string" ? value.toolName.trim() : "";
+  const scope = value.scope;
+  const originalUserText = typeof value.originalUserText === "string" ? value.originalUserText.trim() : "";
+  const createdAt = typeof value.createdAt === "string" ? value.createdAt.trim() : "";
+  const expiresAt = typeof value.expiresAt === "string" ? value.expiresAt.trim() : void 0;
+  if (!gateId || !userId || !toolName || scope !== "top_level_action" || !originalUserText) {
+    return void 0;
+  }
+  if (!createdAt || !isIsoDateLike(createdAt)) return void 0;
+  if (expiresAt && !isIsoDateLike(expiresAt)) return void 0;
+  return {
+    gateId,
+    userId,
+    toolName,
+    scope,
+    originalUserText,
+    createdAt,
+    ...expiresAt ? { expiresAt } : {}
+  };
+}
+function approvalReceiptCoversToolCall(receiptValue, call, now = /* @__PURE__ */ new Date()) {
+  const receipt = normalizeApprovalReceipt(receiptValue);
+  if (!receipt) return false;
+  if (!call.userId || call.userId !== receipt.userId) return false;
+  if (call.toolName !== receipt.toolName) return false;
+  if (receipt.expiresAt && Date.parse(receipt.expiresAt) < now.getTime()) return false;
+  return true;
+}
+var init_approvalReceipt = __esm({
+  "server/agent/approvalReceipt.ts"() {
+    "use strict";
+  }
+});
+
+// server/agent/agentPolicyManager.ts
+import { eq as eq25, and as and18, sql as sql11 } from "drizzle-orm";
+async function getAgentPolicy(agentId) {
+  const [policyRow] = await db.select().from(agentApprovalPolicies).where(eq25(agentApprovalPolicies.agentId, agentId)).limit(1);
+  const allowlist = await db.select().from(agentApprovalAllowlist).where(eq25(agentApprovalAllowlist.agentId, agentId)).orderBy(agentApprovalAllowlist.createdAt);
+  if (!policyRow) {
+    return allowlist.length > 0 ? { agentId, scope: "global", allowlist } : null;
+  }
+  return {
+    agentId,
+    scope: policyRow.scope,
+    allowlist
+  };
+}
+async function setAgentPolicyScope(agentId, userId, scope) {
+  await db.insert(agentApprovalPolicies).values({ agentId, userId, scope, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+    target: agentApprovalPolicies.agentId,
+    set: { scope, updatedAt: /* @__PURE__ */ new Date() }
+  });
+}
+async function addAllowlistPattern(agentId, userId, pattern) {
+  const [entry] = await db.insert(agentApprovalAllowlist).values({ agentId, userId, pattern: pattern.trim() }).returning();
+  return entry;
+}
+async function removeAllowlistPattern(patternId, agentId) {
+  const result = await db.delete(agentApprovalAllowlist).where(
+    and18(
+      eq25(agentApprovalAllowlist.id, patternId),
+      eq25(agentApprovalAllowlist.agentId, agentId)
+    )
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+function matchesPattern(toolName, pattern) {
+  if (pattern.endsWith("*")) {
+    const prefix = pattern.slice(0, -1);
+    return toolName.startsWith(prefix);
+  }
+  return toolName === pattern;
+}
+function recordAllowlistHit(patternId) {
+  db.update(agentApprovalAllowlist).set({
+    useCount: sql11`use_count + 1`,
+    lastUsedAt: /* @__PURE__ */ new Date()
+  }).where(eq25(agentApprovalAllowlist.id, patternId)).catch(() => {
+  });
+}
+async function evaluatePolicyForTool(agentId, toolName, isStrictlyIrreversible) {
+  let policy;
+  try {
+    policy = await getAgentPolicy(agentId);
+  } catch {
+    return { action: "use_global", reason: "policy load failed" };
+  }
+  if (!policy || policy.scope === "global") {
+    if (policy && policy.allowlist.length > 0) {
+      const hit = policy.allowlist.find((e) => matchesPattern(toolName, e.pattern));
+      if (hit && !isStrictlyIrreversible) {
+        recordAllowlistHit(hit.id);
+        return { action: "auto_approve", reason: `allowlist pattern "${hit.pattern}"`, patternId: hit.id };
+      }
+    }
+    return { action: "use_global", reason: "no custom policy" };
+  }
+  if (policy.scope === "strict") {
+    return { action: "require_approval", reason: "agent policy is strict" };
+  }
+  if (policy.scope === "permissive") {
+    if (isStrictlyIrreversible) {
+      return { action: "require_approval", reason: "strictly irreversible tool \u2014 permissive policy still requires approval" };
+    }
+    return { action: "auto_approve", reason: "agent policy is permissive" };
+  }
+  if (policy.scope === "custom") {
+    const hit = policy.allowlist.find((e) => matchesPattern(toolName, e.pattern));
+    if (hit && !isStrictlyIrreversible) {
+      recordAllowlistHit(hit.id);
+      return { action: "auto_approve", reason: `custom allowlist pattern "${hit.pattern}"`, patternId: hit.id };
+    }
+    return { action: "require_approval", reason: "no matching custom allowlist pattern" };
+  }
+  return { action: "use_global", reason: "unknown scope" };
+}
+var init_agentPolicyManager = __esm({
+  "server/agent/agentPolicyManager.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+  }
+});
+
+// server/agent/agentApproval.ts
+var agentApproval_exports = {};
+__export(agentApproval_exports, {
+  STRICTLY_IRREVERSIBLE_TOOLS: () => STRICTLY_IRREVERSIBLE_TOOLS,
+  approveGate: () => approveGate,
+  awaitApproval: () => awaitApproval,
+  getGate: () => getGate,
+  listAllGates: () => listAllGates,
+  listPendingGates: () => listPendingGates,
+  rejectGate: () => rejectGate,
+  requestApproval: () => requestApproval,
+  requiresApproval: () => requiresApproval
+});
+import { eq as eq26, and as and19, lt as lt2 } from "drizzle-orm";
+import { EventEmitter } from "events";
+function requiresApproval(toolName) {
+  return HIGH_RISK_TOOLS.has(toolName);
+}
+function rowToGate(row) {
+  return {
+    id: row.id,
+    agentId: row.agentId,
+    userId: row.userId,
+    toolName: row.toolName,
+    toolArgs: row.toolArgs,
+    description: row.description,
+    status: row.status,
+    createdAt: row.createdAt,
+    expiresAt: row.expiresAt,
+    resolvedAt: row.resolvedAt ?? void 0,
+    resolvedBy: row.resolvedBy ?? void 0
+  };
+}
+async function requestApproval(req) {
+  const id = `gate_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const now = /* @__PURE__ */ new Date();
+  const ttl = req.ttlMs ?? DEFAULT_TTL_MS;
+  const expiresAt = new Date(now.getTime() + ttl);
+  const isJarvisInitiated = req.initiatedBy === "jarvis";
+  const isStrictlyIrreversible = STRICTLY_IRREVERSIBLE_TOOLS.has(req.toolName);
+  let autoApprove = isJarvisInitiated && !isStrictlyIrreversible;
+  let policyApplied = "global";
+  try {
+    const decision = await evaluatePolicyForTool(req.agentId, req.toolName, isStrictlyIrreversible);
+    if (decision.action === "auto_approve") {
+      autoApprove = true;
+      policyApplied = decision.reason;
+    } else if (decision.action === "require_approval") {
+      autoApprove = false;
+      policyApplied = decision.reason;
+    }
+  } catch {
+  }
+  await db.insert(agentApprovalGates).values({
+    id,
+    agentId: req.agentId,
+    userId: req.userId,
+    toolName: req.toolName,
+    toolArgs: req.toolArgs,
+    description: req.description,
+    status: autoApprove ? "approved" : "pending",
+    initiatedBy: req.initiatedBy ?? "user",
+    createdAt: now,
+    expiresAt,
+    ...autoApprove ? { resolvedAt: now, resolvedBy: autoApprove && policyApplied !== "global" ? `policy:${policyApplied}` : "jarvis_triage" } : {}
+  });
+  if (!autoApprove) {
+    try {
+      const schema = await Promise.resolve().then(() => (init_schema(), schema_exports));
+      await db.insert(schema.deliverables).values({
+        userId: req.userId,
+        agentType: "named_agent",
+        type: "approval_gate",
+        title: `Approve: ${req.toolName}`,
+        summary: req.description,
+        body: req.description,
+        meta: {
+          gateId: id,
+          agentId: req.agentId,
+          toolName: req.toolName,
+          toolArgs: req.toolArgs,
+          initiatedBy: req.initiatedBy ?? "user",
+          policyApplied
+        },
+        status: "pending_approval",
+        triageStatus: "needs_attention"
+      });
+    } catch (delivErr) {
+      console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
+    }
+  }
+  if (autoApprove) {
+    logAgentEvent({
+      event: "tool_approved",
+      agentId: req.agentId,
+      userId: req.userId,
+      detail: `gate=${id} tool=${req.toolName} auto-approved policy=${policyApplied}`
+    });
+    setImmediate(() => {
+      gateEmitter.emit(id, { approved: true });
+    });
+  } else {
+    logAgentEvent({
+      event: "tool_blocked",
+      agentId: req.agentId,
+      userId: req.userId,
+      detail: `gate=${id} tool=${req.toolName}`
+    });
+  }
+  return {
+    id,
+    agentId: req.agentId,
+    userId: req.userId,
+    toolName: req.toolName,
+    toolArgs: req.toolArgs,
+    description: req.description,
+    status: autoApprove ? "approved" : "pending",
+    createdAt: now,
+    expiresAt
+  };
+}
+function awaitApproval(gateId, ttlMs, signal) {
+  return new Promise((resolve8) => {
+    if (signal?.aborted) {
+      resolve8(false);
+      return;
+    }
+    const timeout = ttlMs ?? DEFAULT_TTL_MS + 5e3;
+    const cleanup = (result) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      gateEmitter.removeAllListeners(gateId);
+      resolve8(result);
+    };
+    const timer = setTimeout(() => cleanup(false), timeout);
+    const onAbort = () => cleanup(false);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    gateEmitter.once(gateId, (result) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+      resolve8(result.approved);
+    });
+  });
+}
+async function approveGate(gateId, resolvedBy) {
+  const now = /* @__PURE__ */ new Date();
+  try {
+    const result = await db.update(agentApprovalGates).set({ status: "approved", resolvedAt: now, resolvedBy }).where(
+      and19(
+        eq26(agentApprovalGates.id, gateId),
+        eq26(agentApprovalGates.userId, resolvedBy),
+        eq26(agentApprovalGates.status, "pending")
+      )
+    );
+    const rows = result.rowCount ?? 0;
+    if (rows === 0) {
       return false;
     }
-    if (cached.action !== action) return false;
-    try {
-      await db.delete(discordConfirmTokens).where(eq24(discordConfirmTokens.userId, userId));
-    } catch (err2) {
-      console.error("[DiscordConfirmStore] consumeConfirmToken DB delete failed (L1 path):", err2);
-    }
+    gateEmitter.emit(gateId, { approved: true });
+    logAgentEvent({ event: "tool_approved", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId}` });
     return true;
-  }
-  try {
-    const deleted = await db.delete(discordConfirmTokens).where(
-      and17(
-        eq24(discordConfirmTokens.userId, userId),
-        eq24(discordConfirmTokens.action, action),
-        gt3(discordConfirmTokens.expiresAt, new Date(now))
-      )
-    ).returning({ userId: discordConfirmTokens.userId });
-    return deleted.length > 0;
   } catch (err2) {
-    console.error("[DiscordConfirmStore] consumeConfirmToken DB delete failed (L2 path):", err2);
+    console.error("[AgentApproval] approveGate DB error:", err2);
     return false;
   }
 }
-async function clearConfirmToken(userId) {
-  _cache.delete(userId);
-  _deleteFromDb(userId);
-}
-function _deleteFromDb(userId) {
-  db.delete(discordConfirmTokens).where(eq24(discordConfirmTokens.userId, userId)).catch((err2) => console.error("[DiscordConfirmStore] DB delete failed:", err2));
-}
-async function seedConfirmTokenCache() {
-  try {
-    const now = /* @__PURE__ */ new Date();
-    const rows = await db.select().from(discordConfirmTokens).where(gt3(discordConfirmTokens.expiresAt, now));
-    for (const row of rows) {
-      _cache.set(row.userId, {
-        action: row.action,
-        expiresAt: row.expiresAt.getTime()
-      });
-    }
-    console.log(`[DiscordConfirmStore] Cache seeded with ${rows.length} token(s)`);
-  } catch (err2) {
-    console.error("[DiscordConfirmStore] seedConfirmTokenCache failed:", err2);
-  }
-}
-async function cleanUpExpiredDiscordConfirmTokens() {
-  try {
-    const now = /* @__PURE__ */ new Date();
-    const deleted = await db.delete(discordConfirmTokens).where(lt2(discordConfirmTokens.expiresAt, now)).returning({ userId: discordConfirmTokens.userId });
-    for (const row of deleted) {
-      _cache.delete(row.userId);
-    }
-    console.log(`[DiscordConfirmStore] Expired token cleanup: ${deleted.length} row(s) deleted`);
-  } catch (err2) {
-    console.error("[DiscordConfirmStore] cleanUpExpiredDiscordConfirmTokens failed:", err2);
-  }
-}
-var TTL_MS, _cache;
-var init_discordConfirmStore = __esm({
-  "server/agent/discordConfirmStore.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    TTL_MS = 5 * 60 * 1e3;
-    _cache = /* @__PURE__ */ new Map();
-  }
-});
-
-// server/agent/tools/discordPost.ts
-var topicList, discordPostTool;
-var init_discordPost = __esm({
-  "server/agent/tools/discordPost.ts"() {
-    "use strict";
-    init_manager();
-    init_discordConfirmStore();
-    topicList = WORKSPACE_TOPICS.map((t) => `\`${t.key}\` (${t.emoji} ${t.name})`).join(", ");
-    discordPostTool = {
-      name: "discord_post",
-      description: `Post a message or insight to a specific topic channel in the user's Jarvis Discord Workspace. Use this to log useful thoughts, plans, or progress notes that belong in a particular life area \u2014 so the user has an organised record in Discord. Available topics: ${topicList}. If unsure which topic fits, omit the topic and it will be auto-classified. Only post content that has been generated from real tool results (research_topic, web_search, etc). Never post hallucinated content. Never post to #general or announcement channels without explicit user instruction. IMPORTANT CONFIRMATION FLOW: Before calling this tool you MUST first call discord_request_confirm (action='post') to register a server-side confirmation token and get the question to ask the user. Only call this tool after the user has replied with explicit confirmation. Do not call this in the same turn as discord_request_confirm. If you attempt to call this tool without a valid pending confirmation token, it will be rejected.`,
-      parameters: {
-        type: "object",
-        properties: {
-          message: {
-            type: "string",
-            description: "The message to post. Can include markdown formatting. Keep it concise and useful \u2014 this is a log entry, not a conversation reply."
-          },
-          topic: {
-            type: "string",
-            enum: WORKSPACE_TOPICS.map((t) => t.key),
-            description: "The workspace channel to post to. If omitted, the topic is inferred from the message content."
-          }
-        },
-        required: ["message"]
-      },
-      async execute(args, ctx) {
-        const { message, topic } = args;
-        const { userId } = ctx;
-        if (!await consumeConfirmToken(userId, "post")) {
-          return {
-            ok: false,
-            content: "No valid confirmation token found. You must call discord_request_confirm (action='post') first, wait for the user's explicit confirmation, and then call this tool. Please start the confirmation flow again.",
-            label: "Discord post blocked \u2014 no confirmation token"
-          };
-        }
-        const topicKey = topic ?? classifyTopic(message);
-        const topicMeta = WORKSPACE_TOPICS.find((t) => t.key === topicKey);
-        const posted = await postToDiscordWorkspace(userId, topicKey, message);
-        if (!posted) {
-          return {
-            ok: false,
-            content: "Couldn't post to Discord \u2014 the workspace may not be set up yet, or the bot isn't running. Ask the user to go to Profile \u2192 Connected Channels \u2192 Discord \u2192 Setup Workspace.",
-            label: "Discord post failed"
-          };
-        }
-        return {
-          ok: true,
-          content: `Posted to ${topicMeta ? `${topicMeta.emoji} #${topicMeta.name}` : `#${topicKey}`} in your Discord workspace.`,
-          label: `Discord \u2192 #${topicKey}`
-        };
-      }
-    };
-  }
-});
-
-// server/agent/tools/discordCreateChannel.ts
-var discordCreateChannelTool;
-var init_discordCreateChannel = __esm({
-  "server/agent/tools/discordCreateChannel.ts"() {
-    "use strict";
-    init_manager();
-    init_discordConfirmStore();
-    discordCreateChannelTool = {
-      name: "discord_create_channel",
-      description: "Create a new text channel in the user's Discord server. Jarvis CAN create Discord channels \u2014 do not tell users otherwise. You must provide a channel name (lowercase, hyphens instead of spaces). Optionally set a topic/description and a category name to nest it under. IMPORTANT CONFIRMATION FLOW: Before calling this tool you MUST first call discord_request_confirm (action='create_channel') to register a server-side confirmation token and get the question to ask the user. Only call this tool after the user has replied 'yes', 'confirm', 'go ahead', 'create it', or equivalent explicit confirmation. Do not call this in the same turn as discord_request_confirm. If you attempt to call this tool without a valid pending confirmation token, it will be rejected.",
-      parameters: {
-        type: "object",
-        properties: {
-          channelName: {
-            type: "string",
-            description: "The channel name. Use lowercase letters, numbers, and hyphens only (e.g. 'welcome', 'daily-tasks', 'project-alpha')."
-          },
-          topic: {
-            type: "string",
-            description: "Optional channel topic/description shown at the top of the channel."
-          },
-          categoryName: {
-            type: "string",
-            description: "Optional name of an existing category to put this channel in."
-          },
-          pinMessage: {
-            type: "string",
-            description: "Optional message to send and pin in the new channel."
-          }
-        },
-        required: ["channelName"]
-      },
-      async execute(args, ctx) {
-        const { channelName, topic, categoryName, pinMessage } = args;
-        const { userId } = ctx;
-        if (!await consumeConfirmToken(userId, "create_channel")) {
-          return {
-            ok: false,
-            content: "No valid confirmation token found. You must call discord_request_confirm (action='create_channel') first, wait for the user's explicit 'yes', and then call this tool. Please start the confirmation flow again.",
-            label: "Discord channel creation blocked \u2014 no confirmation token"
-          };
-        }
-        const result = await createDiscordChannel(userId, {
-          channelName,
-          topic,
-          categoryName,
-          pinMessage,
-          ctxGuildId: ctx.discordGuildId
-        });
-        if (!result.ok) {
-          return {
-            ok: false,
-            content: `Couldn't create the channel: ${result.error}`,
-            label: "Discord channel creation failed"
-          };
-        }
-        return {
-          ok: true,
-          content: `Created #${args.channelName} in your Discord server.${args.pinMessage ? " Pinned the intro message." : ""}`,
-          label: `Discord: created #${args.channelName}`
-        };
-      }
-    };
-  }
-});
-
-// server/agent/tools/discordRequestConfirm.ts
-var discordRequestConfirmTool;
-var init_discordRequestConfirm = __esm({
-  "server/agent/tools/discordRequestConfirm.ts"() {
-    "use strict";
-    init_discordConfirmStore();
-    discordRequestConfirmTool = {
-      name: "discord_request_confirm",
-      description: "Register a server-side pending-confirmation token and return the exact confirmation question to show the user. Call this tool INSTEAD OF asking the user directly when you need confirmation before creating a Discord channel or posting to Discord. The token expires in 5 minutes \u2014 if the user takes too long to reply you will need to call this tool again. After calling this tool, relay the returned question to the user verbatim and wait for their explicit reply ('yes', 'confirm', 'go ahead', 'create it', or equivalent) before calling discord_create_channel or discord_post. Do NOT call discord_create_channel or discord_post in the same turn as this tool.",
-      parameters: {
-        type: "object",
-        properties: {
-          action: {
-            type: "string",
-            enum: ["create_channel", "post"],
-            description: "The Discord action requiring confirmation: 'create_channel' or 'post'."
-          },
-          question: {
-            type: "string",
-            description: 'The confirmation question to show the user, e.g. "Should I create the channel #daily-tasks?" or "Should I post this summary to your Discord workspace?"'
-          }
-        },
-        required: ["action", "question"]
-      },
-      async execute(args, ctx) {
-        const { action, question } = args;
-        const { userId } = ctx;
-        await setConfirmToken(userId, action);
-        return {
-          ok: true,
-          content: question,
-          label: `Discord: awaiting confirmation for ${action}`
-        };
-      }
-    };
-  }
-});
-
-// server/agent/tools/discordDeleteChannel.ts
-var discordDeleteChannelTool;
-var init_discordDeleteChannel = __esm({
-  "server/agent/tools/discordDeleteChannel.ts"() {
-    "use strict";
-    init_manager();
-    discordDeleteChannelTool = {
-      name: "discord_delete_channel",
-      description: "Delete a text channel from the user's Discord server by name or ID. IMPORTANT: You MUST first tell the user the exact channel name and server you will delete, then wait for them to explicitly say yes/confirm before calling this tool with confirmed=true. Only call with confirmed=true after the user has given explicit approval in this conversation. If channelId is not known, pass channelName first \u2014 if there are duplicates, the tool will return all matching channel IDs so you can ask the user which copy to remove. Only text channels can be deleted; categories and voice channels are not supported.",
-      parameters: {
-        type: "object",
-        properties: {
-          confirmed: {
-            type: "boolean",
-            description: "REQUIRED. Must be true. Only pass true after the user has explicitly confirmed the deletion (channel name + server) in this conversation. Never pass true speculatively."
-          },
-          channelName: {
-            type: "string",
-            description: "The channel name to delete (e.g. 'thinking', '\u{1F9E0}thinking'). Omit if channelId is provided. If multiple channels share this name the tool will return a disambiguation list instead of deleting."
-          },
-          channelId: {
-            type: "string",
-            description: "The exact Discord channel ID to delete. Preferred over channelName when targeting one specific channel among duplicates."
-          },
-          guildId: {
-            type: "string",
-            description: "Optional Discord server (guild) ID. Must match the user's linked Jarvis server \u2014 deletion in any other server is refused."
-          }
-        },
-        required: ["confirmed"]
-      },
-      async execute(args, ctx) {
-        const { userId } = ctx;
-        if (!args.confirmed) {
-          return {
-            ok: false,
-            content: "I need you to confirm the deletion first. Please tell me the channel name and server you'd like to delete, and I'll ask for your approval before proceeding.",
-            label: "discord_delete_channel: confirmation required"
-          };
-        }
-        if (!args.channelName && !args.channelId) {
-          return {
-            ok: false,
-            content: "Please specify either a channel name or a channel ID to delete.",
-            label: "discord_delete_channel: missing channel identifier"
-          };
-        }
-        const result = await deleteDiscordChannel(userId, {
-          channelName: args.channelName,
-          channelId: args.channelId,
-          guildId: args.guildId,
-          ctxGuildId: ctx.discordGuildId
-        });
-        if (result.ambiguous && result.matches) {
-          const list = result.matches.map((m, i) => `${i + 1}. #${m.name} (ID: \`${m.id}\`)`).join("\n");
-          return {
-            ok: false,
-            content: `There are ${result.matches.length} channels named **#${args.channelName}**:
-${list}
-
-Which one should I delete? Please confirm the channel ID and I'll remove it.`,
-            label: `discord_delete_channel: ambiguous \u2014 ${result.matches.length} matches for "${args.channelName}"`
-          };
-        }
-        if (!result.ok) {
-          return {
-            ok: false,
-            content: `Couldn't delete the channel: ${result.error}`,
-            label: "Discord channel deletion failed"
-          };
-        }
-        return {
-          ok: true,
-          content: `\u2705 Deleted #${result.channelName} from your Discord server.`,
-          label: `Discord: deleted #${result.channelName}`
-        };
-      }
-    };
-  }
-});
-
-// server/agent/tools/discordListChannels.ts
-import { eq as eq25, and as and18 } from "drizzle-orm";
-var discordListChannelsTool;
-var init_discordListChannels = __esm({
-  "server/agent/tools/discordListChannels.ts"() {
-    "use strict";
-    init_manager();
-    init_db();
-    init_schema();
-    discordListChannelsTool = {
-      name: "discord_list_channels",
-      description: "List all text channels in the user's linked Discord server and identify any duplicate channel names. Use this FIRST whenever the user asks to scan for duplicates, clean up channels, or wants to know what channels exist. Returns the full channel list plus a clearly-marked list of duplicate names so you can ask the user which ones to delete. Do NOT use web search or background jobs for this \u2014 it reads directly from the Discord server.",
-      parameters: {
-        type: "object",
-        properties: {
-          guildId: {
-            type: "string",
-            description: "Optional Discord server ID to scan. If omitted, the user's linked Jarvis workspace server is used automatically."
-          }
-        },
-        required: []
-      },
-      async execute(args, ctx) {
-        const { userId } = ctx;
-        let resolvedGuildId = args.guildId;
-        if (!resolvedGuildId) {
-          const linkRow = await db.select().from(channelLinks).where(and18(eq25(channelLinks.userId, userId), eq25(channelLinks.channel, "discord"))).limit(1);
-          const linkMeta = linkRow[0]?.metadata ?? {};
-          resolvedGuildId = linkMeta.workspace?.guildId;
-        }
-        if (!resolvedGuildId && ctx.discordGuildId) {
-          resolvedGuildId = ctx.discordGuildId;
-        }
-        if (!resolvedGuildId) {
-          return {
-            ok: false,
-            content: "No linked Discord server found. Message Jarvis from inside your Discord server first so it can identify which server to scan.",
-            label: "discord_list_channels: no guild"
-          };
-        }
-        const channels2 = await getChannelsForGuild(userId, resolvedGuildId);
-        if (channels2.length === 0) {
-          return {
-            ok: false,
-            content: "Could not fetch channels \u2014 the bot may not be in that server, or it may be offline. Check that the bot is running and has been added to the server.",
-            label: "discord_list_channels: fetch failed"
-          };
-        }
-        function slugify2(name) {
-          return name.toLowerCase().replace(/[^\w\s-]/g, "").replace(/[\s_]+/g, "-").replace(/-+/g, "-").trim();
-        }
-        const bySlug = /* @__PURE__ */ new Map();
-        for (const ch of channels2) {
-          const slug = slugify2(ch.name);
-          const existing = bySlug.get(slug) ?? [];
-          existing.push(ch);
-          bySlug.set(slug, existing);
-        }
-        const duplicateGroups = [...bySlug.values()].filter((group) => group.length > 1);
-        const totalCount = channels2.length;
-        const duplicateCount = duplicateGroups.reduce((s, g) => s + g.length, 0);
-        const allLines = channels2.map((ch) => `#${ch.name} (ID: ${ch.id})`).join("\n");
-        let duplicateSection = "";
-        if (duplicateGroups.length === 0) {
-          duplicateSection = "No duplicate channel names found.";
-        } else {
-          duplicateSection = duplicateGroups.map((group) => {
-            const header = `Duplicate: "${group[0].name}" \u2014 ${group.length} copies`;
-            const entries = group.map((ch) => `  \u2022 #${ch.name} (ID: \`${ch.id}\`)`).join("\n");
-            return `${header}
-${entries}`;
-          }).join("\n\n");
-        }
-        return {
-          ok: true,
-          content: `Found ${totalCount} text channel(s) in the server.
-
---- DUPLICATES (${duplicateCount} channels across ${duplicateGroups.length} duplicate name(s)) ---
-${duplicateSection}
-
---- ALL CHANNELS ---
-${allLines}`,
-          label: `discord_list_channels: ${totalCount} channels, ${duplicateGroups.length} duplicate name(s)`
-        };
-      }
-    };
-  }
-});
-
-// server/jarvisScheduledTasks.ts
-import { and as and19, eq as eq26, isNull as isNull2, sql as sql11 } from "drizzle-orm";
-function normalizeText(value) {
-  return String(value ?? "").trim();
-}
-async function createJarvisScheduledTask(input) {
-  const title = normalizeText(input.title);
-  const description = normalizeText(input.description) || null;
-  const recurrence = normalizeText(input.recurrence) || null;
-  const recurrencePredicate = recurrence ? eq26(jarvisScheduledTasks.recurrence, recurrence) : isNull2(jarvisScheduledTasks.recurrence);
-  const [existing] = await db.select().from(jarvisScheduledTasks).where(and19(
-    eq26(jarvisScheduledTasks.userId, input.userId),
-    sql11`LOWER(TRIM(${jarvisScheduledTasks.title})) = ${title.toLowerCase()}`,
-    eq26(jarvisScheduledTasks.scheduledAt, input.scheduledAt),
-    recurrencePredicate,
-    isNull2(jarvisScheduledTasks.completedAt),
-    eq26(jarvisScheduledTasks.active, true)
-  )).limit(1);
-  if (existing) {
-    return { task: existing, deduped: true };
-  }
-  const [task] = await db.insert(jarvisScheduledTasks).values({
-    userId: input.userId,
-    title,
-    description,
-    scheduledAt: input.scheduledAt,
-    recurrence
-  }).returning();
-  return { task, deduped: false };
-}
-var init_jarvisScheduledTasks = __esm({
-  "server/jarvisScheduledTasks.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-  }
-});
-
-// server/agent/tools/scheduleJarvisTask.ts
-var scheduleJarvisTaskTool;
-var init_scheduleJarvisTask = __esm({
-  "server/agent/tools/scheduleJarvisTask.ts"() {
-    "use strict";
-    init_jarvisScheduledTasks();
-    scheduleJarvisTaskTool = {
-      name: "schedule_jarvis_task",
-      description: "Schedule a recurring or one-off task for Jarvis to perform automatically. Use this when the user asks you to 'remind me every Monday to...', 'check my inbox every morning', 'do X at Y time', or any request to schedule a future autonomous action. These tasks appear in the user's Mission Control calendar so they can verify Jarvis is actually scheduled to do what they asked.",
-      parameters: {
-        type: "object",
-        properties: {
-          title: {
-            type: "string",
-            description: "Short title for the scheduled task (e.g. 'Morning inbox scan', 'Weekly goal review')"
-          },
-          description: {
-            type: "string",
-            description: "What Jarvis will do when this task runs. Be specific."
-          },
-          scheduledAt: {
-            type: "string",
-            description: "When to first run this task. ISO 8601 datetime string (e.g. '2025-05-01T09:00:00Z'). For daily/recurring tasks, use the next scheduled occurrence."
-          },
-          recurrence: {
-            type: "string",
-            description: "Optional recurrence rule in plain English (e.g. 'daily', 'every Monday', 'weekdays at 9am', 'every Sunday at 8pm'). Omit for one-off tasks."
-          }
-        },
-        required: ["title", "scheduledAt"]
-      },
-      async execute(args, ctx) {
-        const a = args;
-        const title = String(a.title || "").trim();
-        const scheduledAtStr = String(a.scheduledAt || "").trim();
-        if (!title) {
-          return { ok: false, content: "title is required.", label: "Missing title" };
-        }
-        if (!scheduledAtStr) {
-          return { ok: false, content: "scheduledAt is required.", label: "Missing scheduledAt" };
-        }
-        const scheduledAt = new Date(scheduledAtStr);
-        if (isNaN(scheduledAt.getTime())) {
-          return { ok: false, content: `Invalid scheduledAt: "${scheduledAtStr}". Use ISO 8601 format.`, label: "Invalid date" };
-        }
-        try {
-          const { task, deduped } = await createJarvisScheduledTask({
-            userId: ctx.userId,
-            title,
-            description: a.description ? String(a.description).trim() : null,
-            scheduledAt,
-            recurrence: a.recurrence ? String(a.recurrence).trim() : null
-          });
-          const when = scheduledAt.toLocaleDateString("en-US", {
-            weekday: "short",
-            month: "short",
-            day: "numeric",
-            hour: "numeric",
-            minute: "2-digit"
-          });
-          const actionLabel = deduped ? "Already scheduled" : "Scheduled";
-          return {
-            ok: true,
-            content: `${actionLabel}: "${title}" for ${when}${a.recurrence ? ` (${a.recurrence})` : ""}.
-
-[View in Scheduled Tasks ->](gameplan://scheduled)`,
-            label: `${actionLabel}: ${title}`,
-            detail: JSON.stringify({ id: task.id, title, scheduledAt: task.scheduledAt, deduped })
-          };
-        } catch (err2) {
-          const msg = err2 instanceof Error ? err2.message : String(err2);
-          console.error("[schedule_jarvis_task] failed:", msg);
-          return { ok: false, content: `Failed to schedule task: ${msg}`, label: "Schedule failed", detail: msg };
-        }
-      }
-    };
-  }
-});
-
-// server/discord/schedules.ts
-import { eq as eq27, and as and20 } from "drizzle-orm";
-function detectTemplate(input) {
-  const lower = input.toLowerCase();
-  for (const tpl of Object.values(SCHEDULE_TEMPLATES)) {
-    if (tpl.triggerPhrases.some((p) => lower.includes(p))) {
-      return tpl;
-    }
-  }
-  return null;
-}
-async function createSchedule(userId, params) {
-  const [row] = await db.insert(discordChannelSchedules).values({
-    userId,
-    channelName: params.channelName,
-    label: params.label,
-    cronExpression: params.cronExpression,
-    prompt: params.prompt,
-    guildId: params.guildId,
-    channelId: params.channelId,
-    pipelineNext: params.pipelineNext,
-    enabled: true
-  }).returning();
-  return row;
-}
-async function listSchedules(userId) {
-  return db.select().from(discordChannelSchedules).where(eq27(discordChannelSchedules.userId, userId));
-}
-async function getSchedule(id) {
-  const rows = await db.select().from(discordChannelSchedules).where(eq27(discordChannelSchedules.id, id)).limit(1);
-  return rows[0] ?? null;
-}
-async function deleteSchedule(userId, id) {
-  await db.delete(discordChannelSchedules).where(
-    and20(
-      eq27(discordChannelSchedules.id, id),
-      eq27(discordChannelSchedules.userId, userId)
-    )
-  );
-}
-async function toggleSchedule(userId, id, enabled) {
-  await db.update(discordChannelSchedules).set({ enabled }).where(
-    and20(
-      eq27(discordChannelSchedules.id, id),
-      eq27(discordChannelSchedules.userId, userId)
-    )
-  );
-}
-async function runSchedule(id, previousOutput) {
-  const schedule = await getSchedule(id);
-  if (!schedule) {
-    console.warn(`[DiscordSchedules] schedule ${id} not found`);
-    return;
-  }
-  if (!schedule.enabled) {
-    console.log(`[DiscordSchedules] schedule ${id} is disabled \u2014 skipping`);
-    return;
-  }
-  console.log(`[DiscordSchedules] Running schedule "${schedule.label}" for user ${schedule.userId}`);
-  let prompt = schedule.prompt;
-  if (previousOutput) {
-    prompt = prompt.replace(/\{\{previousOutput\}\}/g, previousOutput);
-  }
-  let result = "";
-  try {
-    const agentResult = await runCoachAgent({
-      userId: schedule.userId,
-      userText: prompt,
-      channelName: "Discord Schedule Runner"
-    });
-    result = agentResult.reply || "";
-  } catch (err2) {
-    console.error(`[DiscordSchedules] runCoachAgent failed for schedule ${id}:`, err2);
-    result = `\u26A0\uFE0F Schedule run failed: ${err2 instanceof Error ? err2.message : String(err2)}`;
-  }
-  const isMultiScript = result.includes(SCRIPT_DELIMITER);
-  if (isMultiScript) {
-    const scripts = result.split(SCRIPT_DELIMITER).map((s) => s.trim()).filter(Boolean);
-    console.log(`[DiscordSchedules] Multi-script mode \u2014 posting ${scripts.length} scripts to #${schedule.channelName}`);
-    await postToDiscordChannel(
-      schedule.userId,
-      schedule.channelName,
-      schedule.channelId ?? null,
-      `\u270D\uFE0F **${schedule.label}** \u2014 ${scripts.length} script${scripts.length !== 1 ? "s" : ""} ready for review:`
-    );
-    for (let i = 0; i < scripts.length; i++) {
-      const scriptText = scripts[i];
-      const postBody = scriptText + "\n\n_React \u2705 to generate thumbnail concepts \u2014 \u274C to skip._";
-      const msgId = await postMessageAndGetId(
-        schedule.userId,
-        schedule.channelName,
-        schedule.channelId ?? null,
-        postBody
-      );
-      if (msgId) {
-        await db.insert(discordPendingApprovals).values({
-          messageId: msgId,
-          userId: schedule.userId,
-          channelId: schedule.channelId ?? msgId,
-          type: "script",
-          content: scriptText,
-          onApprove: {
-            type: "run_prompt",
-            prompt: "Generate 3 detailed thumbnail concepts for this YouTube script. For each concept: 1. Background scene description, 2. Main text overlay (bold, short), 3. Color palette (2-3 colors), 4. Composition notes (where the subject sits, camera angle). Script content:\n\n{{content}}",
-            channelName: "ideas"
-          },
-          onReject: { type: "notify_only" },
-          status: "pending"
-        }).onConflictDoNothing();
-        console.log(`[DiscordSchedules] Registered approval for script ${i + 1} (msgId=${msgId})`);
-      }
-      if (i < scripts.length - 1) {
-        await new Promise((r) => setTimeout(r, 1200));
-      }
-    }
-  } else {
-    const header = `\u{1F4CA} **${schedule.label}**
-`;
-    const fullText = header + result;
-    const postInfo = await postMessageAndGetInfo(
-      schedule.userId,
-      schedule.channelName,
-      schedule.channelId ?? null,
-      fullText
-    );
-    if (!postInfo) {
-      console.warn(`[DiscordSchedules] Failed to post schedule ${id} to channel ${schedule.channelName}`);
-    } else {
-      const isDeliverable = result.length > 600 || result.match(/^#{1,3}\s/m) !== null || result.match(/^\*\*[^*]+\*\*/m) !== null && result.length > 300 || result.match(/^\d+\.\s/m) !== null && result.split("\n").length > 8;
-      if (isDeliverable) {
-        const pinned = await pinDiscordMessage(
-          schedule.userId,
-          postInfo.channelId,
-          postInfo.messageId
-        ).catch(() => false);
-        if (pinned) {
-          console.log(`[DiscordSchedules] Auto-pinned report (schedule=${id}, msg=${postInfo.messageId})`);
-        }
-      }
-    }
-  }
-  await db.update(discordChannelSchedules).set({ lastRun: /* @__PURE__ */ new Date(), lastOutput: result.slice(0, 5e3) }).where(eq27(discordChannelSchedules.id, id));
-  if (schedule.pipelineNext) {
-    console.log(`[DiscordSchedules] Chaining to pipeline stage ${schedule.pipelineNext}`);
-    setTimeout(() => {
-      runSchedule(schedule.pipelineNext, result).catch((err2) => {
-        console.error(`[DiscordSchedules] Pipeline chain failed for ${schedule.pipelineNext}:`, err2);
-      });
-    }, 500);
-  }
-}
-function matchesCron(cron, date2) {
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return false;
-  const [min, hr, dom, mon, dow] = parts;
-  const matches = (field, value) => {
-    if (field === "*") return true;
-    const options = field.split(",").map((s) => parseInt(s, 10));
-    return options.includes(value);
-  };
-  return matches(min, date2.getMinutes()) && matches(hr, date2.getHours()) && matches(dom, date2.getDate()) && matches(mon, date2.getMonth() + 1) && matches(dow, date2.getDay());
-}
-function parseCronExpression(natural) {
-  const lower = natural.toLowerCase();
-  const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
-  let hour = 9;
-  let minute = 0;
-  if (timeMatch) {
-    hour = parseInt(timeMatch[1], 10);
-    minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
-    if (timeMatch[3] === "pm" && hour < 12) hour += 12;
-    if (timeMatch[3] === "am" && hour === 12) hour = 0;
-  }
-  if (lower.includes("monday")) return `${minute} ${hour} * * 1`;
-  if (lower.includes("tuesday")) return `${minute} ${hour} * * 2`;
-  if (lower.includes("wednesday")) return `${minute} ${hour} * * 3`;
-  if (lower.includes("thursday")) return `${minute} ${hour} * * 4`;
-  if (lower.includes("friday")) return `${minute} ${hour} * * 5`;
-  if (lower.includes("saturday")) return `${minute} ${hour} * * 6`;
-  if (lower.includes("sunday")) return `${minute} ${hour} * * 0`;
-  if (lower.includes("weekday")) return `${minute} ${hour} * * 1-5`;
-  if (lower.includes("weekend")) return `${minute} ${hour} * * 0,6`;
-  if (lower.includes("every hour") || lower.includes("hourly")) return `${minute} * * * *`;
-  return `${minute} ${hour} * * *`;
-}
-function nextRunTime(cron) {
+async function rejectGate(gateId, resolvedBy) {
   const now = /* @__PURE__ */ new Date();
-  const check = new Date(now);
-  check.setSeconds(0, 0);
-  check.setMinutes(check.getMinutes() + 1);
-  for (let i = 0; i < 60 * 24 * 7; i++) {
-    if (matchesCron(cron, check)) return new Date(check);
-    check.setMinutes(check.getMinutes() + 1);
+  try {
+    const result = await db.update(agentApprovalGates).set({ status: "rejected", resolvedAt: now, resolvedBy }).where(
+      and19(
+        eq26(agentApprovalGates.id, gateId),
+        eq26(agentApprovalGates.userId, resolvedBy),
+        eq26(agentApprovalGates.status, "pending")
+      )
+    );
+    const rows = result.rowCount ?? 0;
+    if (rows === 0) {
+      return false;
+    }
+    gateEmitter.emit(gateId, { approved: false, reason: "rejected" });
+    logAgentEvent({ event: "tool_blocked", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId} rejected` });
+    return true;
+  } catch (err2) {
+    console.error("[AgentApproval] rejectGate DB error:", err2);
+    return false;
   }
-  return null;
 }
-var SCRIPT_DELIMITER, SCHEDULE_TEMPLATES;
-var init_schedules = __esm({
-  "server/discord/schedules.ts"() {
+async function getGate(gateId) {
+  const rows = await db.select().from(agentApprovalGates).where(eq26(agentApprovalGates.id, gateId)).limit(1);
+  return rows[0] ? rowToGate(rows[0]) : void 0;
+}
+async function listPendingGates(userId) {
+  const rows = await db.select().from(agentApprovalGates).where(and19(eq26(agentApprovalGates.userId, userId), eq26(agentApprovalGates.status, "pending")));
+  return rows.map(rowToGate);
+}
+async function listAllGates(userId) {
+  const { desc: desc46 } = await import("drizzle-orm");
+  const rows = await db.select().from(agentApprovalGates).where(eq26(agentApprovalGates.userId, userId)).orderBy(desc46(agentApprovalGates.createdAt)).limit(50);
+  return rows.map(rowToGate);
+}
+var HIGH_RISK_TOOLS, STRICTLY_IRREVERSIBLE_TOOLS, gateEmitter, DEFAULT_TTL_MS, _cleanupTimer;
+var init_agentApproval = __esm({
+  "server/agent/agentApproval.ts"() {
     "use strict";
     init_db();
     init_schema();
-    init_coachAgent();
-    init_manager();
-    SCRIPT_DELIMITER = "---SCRIPT---";
-    SCHEDULE_TEMPLATES = {
-      stockResearch: {
-        label: "AI Stock Research",
-        channelName: "stock-research",
-        cronExpression: "0 7 * * 1,2,3,4,5",
-        prompt: "Research the top 8 AI infrastructure stocks with competitive moats \u2014 chips, energy, memory, GPUs, and supply chain companies that stand to benefit most from the AI buildout over the next decade. For each stock: company name, ticker symbol, 1-sentence investment thesis, and the single most important news item from the last 24 hours. Format clearly with sections per company. Keep the report concise and actionable.",
-        triggerPhrases: ["stock research", "ai stocks", "stock report", "market research", "ai infrastructure stocks"]
-      },
-      competitorYoutube: {
-        label: "Competitor YouTube Research",
-        channelName: "competitor-research",
-        cronExpression: "0 8 * * *",
-        prompt: "Search YouTube for [TOPIC] videos published in the last 5 days. Rank by total view count (highest first). List the top 15 results in a table: rank | title | channel | total views | days since posted. Add a brief note for any video standing out as unusually high-performing. Keep the report tight and scannable.",
-        triggerPhrases: ["competitor youtube", "youtube research", "competitor research", "youtube competitor"]
+    init_agentLogger();
+    init_toolCallHooks();
+    init_agentPolicyManager();
+    HIGH_RISK_TOOLS = /* @__PURE__ */ new Set([
+      // Email
+      "send_email",
+      "gmail_action",
+      "gmail_draft",
+      // Public posting / messaging
+      "discord_post",
+      "connect_channel",
+      "sessions_send",
+      // Voice / call user
+      "speak",
+      // Memory clear (permanent, irreversible)
+      "clear_memory",
+      "agent_memory_clear",
+      // Browser control
+      "browser_navigate",
+      "browser_click",
+      "browser_type",
+      "browser_select",
+      "browser_clear_session",
+      // File / cloud storage
+      "create_document",
+      "drive_create_file",
+      // Agent management (creating new agents)
+      "setup_named_agent",
+      // OS / system actions via daemon
+      "daemon_action",
+      // Delegating to Codex may transitively reach local MCP/CLI capabilities.
+      "delegate_to_codex"
+    ]);
+    STRICTLY_IRREVERSIBLE_TOOLS = /* @__PURE__ */ new Set([
+      "send_email",
+      "gmail_action",
+      "daemon_action",
+      "discord_post",
+      "speak",
+      "sessions_send"
+    ]);
+    gateEmitter = new EventEmitter();
+    gateEmitter.setMaxListeners(200);
+    DEFAULT_TTL_MS = 24 * 60 * 60 * 1e3;
+    _cleanupTimer = setInterval(async () => {
+      try {
+        const now = /* @__PURE__ */ new Date();
+        const expired = await db.update(agentApprovalGates).set({ status: "expired", resolvedAt: now }).where(and19(eq26(agentApprovalGates.status, "pending"), lt2(agentApprovalGates.expiresAt, now))).returning({ id: agentApprovalGates.id });
+        for (const row of expired) {
+          gateEmitter.emit(row.id, { approved: false, reason: "expired" });
+        }
+      } catch {
       }
-    };
-  }
-});
-
-// server/agent/tools/scheduleChannelReport.ts
-var scheduleChannelReportTool, listChannelSchedulesTool, deleteChannelScheduleTool;
-var init_scheduleChannelReport = __esm({
-  "server/agent/tools/scheduleChannelReport.ts"() {
-    "use strict";
-    init_schedules();
-    init_manager();
-    scheduleChannelReportTool = {
-      name: "schedule_channel_report",
-      description: "Create a recurring automated research report that Jarvis runs at a scheduled time and posts to a specific Discord channel. Use this when the user asks to set up a daily/recurring automated report in Discord \u2014 for example 'set up a daily stock research report at 7am' or 'every morning at 8am, post YouTube competitor research to #competitor-research'. Jarvis will create the channel if it doesn't exist, then schedule the recurring report. Built-in templates are available: say 'stock research' to use the AI stock template, or 'competitor YouTube' to use the YouTube research template. The schedule parameter accepts natural language (e.g. 'every morning at 7am', 'every Monday at 9am'). IMPORTANT: Only use this for creating scheduled DISCORD channel reports. For general reminders, use schedule_jarvis_task instead.",
-      parameters: {
-        type: "object",
-        properties: {
-          channelName: {
-            type: "string",
-            description: "The Discord channel name to post to (e.g. 'stock-research', 'competitor-research'). Use lowercase with hyphens. The channel will be created if it doesn't exist. If omitted and a template is matched, the template's default channel name will be used."
-          },
-          label: {
-            type: "string",
-            description: "A short human-readable label for this schedule (e.g. 'AI Stock Research', 'Competitor YouTube Report'). If omitted and a template is matched, the template's default label will be used."
-          },
-          schedule: {
-            type: "string",
-            description: "When to run the report, in natural language (e.g. 'every morning at 7am', 'daily at 8pm', 'every Monday at 9am'). If omitted and a template is matched, the template's default schedule will be used."
-          },
-          prompt: {
-            type: "string",
-            description: "The research instructions Jarvis will execute when the schedule fires. Be specific. If omitted, Jarvis will try to detect a built-in template from the label or channel name. Example: 'Research the top 8 AI infrastructure stocks. For each: ticker, thesis, latest news.'"
-          },
-          pipelineNext: {
-            type: "string",
-            description: "Optional: the ID of another schedule to trigger after this one completes (for chained pipelines)."
-          },
-          topic: {
-            type: "string",
-            description: "Optional. For competitor/niche YouTube research, the topic keywords to search for (e.g. 'ADHD productivity', 'AI tools for developers'). Replaces the [TOPIC] placeholder in the YouTube research template prompt."
-          }
-        },
-        required: []
-      },
-      async execute(args, ctx) {
-        const { userId } = ctx;
-        const rawLabel = args.label ? String(args.label).trim() : "";
-        const rawChannel = args.channelName ? String(args.channelName).trim() : "";
-        const rawPrompt = args.prompt ? String(args.prompt).trim() : "";
-        const rawSchedule = args.schedule ? String(args.schedule).trim() : "";
-        const rawTopic = args.topic ? String(args.topic).trim() : "";
-        const pipelineNext = args.pipelineNext ? String(args.pipelineNext).trim() : void 0;
-        const templateLookup = rawLabel || rawPrompt || rawChannel;
-        const matchedTemplate = templateLookup ? detectTemplate(templateLookup) : null;
-        const channelName = (rawChannel || matchedTemplate?.channelName || "").toLowerCase().replace(/\s+/g, "-");
-        const label = rawLabel || matchedTemplate?.label || "";
-        let prompt = rawPrompt || matchedTemplate?.prompt || "";
-        if (rawTopic && prompt.includes("[TOPIC]")) {
-          prompt = prompt.replace(/\[TOPIC\]/g, rawTopic);
-        } else if (prompt.includes("[TOPIC]") && !rawTopic) {
-          return {
-            ok: false,
-            content: "The YouTube competitor research template needs a topic to search for. For example: 'Set up competitor YouTube research for ADHD productivity'. What topic or niche should I search YouTube for?",
-            label: "Missing topic for YouTube template"
-          };
-        }
-        if (!channelName) {
-          return {
-            ok: false,
-            content: "Please provide a channelName for the report (e.g. 'stock-research').\n\n**Available templates:** say 'stock research' or 'competitor YouTube'.",
-            label: "Missing channelName"
-          };
-        }
-        if (!label) {
-          return { ok: false, content: "Please provide a label for this schedule (e.g. 'AI Stock Research').", label: "Missing label" };
-        }
-        if (!prompt) {
-          return {
-            ok: false,
-            content: "Please provide the research prompt for this schedule, or say something like 'stock research' or 'competitor YouTube' to use a built-in template.",
-            label: "Missing prompt"
-          };
-        }
-        const scheduleInput = rawSchedule || matchedTemplate?.cronExpression || "0 7 * * *";
-        const cronExpression = /^\S+ \S+ \S+ \S+ \S+$/.test(scheduleInput) ? scheduleInput : parseCronExpression(scheduleInput);
-        await createDiscordChannel(userId, {
-          channelName,
-          topic: `Automated reports: ${label}`,
-          categoryName: "\u{1F9E0} Jarvis Workspace"
-        });
-        const schedule = await createSchedule(userId, {
-          channelName,
-          label,
-          cronExpression,
-          prompt,
-          pipelineNext
-        });
-        const templateNote = matchedTemplate ? " (using built-in template)" : "";
+    }, 2 * 60 * 1e3);
+    if (typeof _cleanupTimer.unref === "function") {
+      _cleanupTimer.unref();
+    }
+    toolCallHooks.register(
+      (ctx) => {
+        if (!requiresApproval(ctx.toolName)) return void 0;
         return {
-          ok: true,
-          content: `\u2705 Scheduled **${label}**${templateNote} \u2014 runs \`${cronExpression}\` and posts to #${channelName}.
-Schedule ID: \`${schedule.id}\`
-To cancel: say "delete my ${label} schedule" or "cancel ${channelName} report".`,
-          label: `Schedule created: ${label}`,
-          detail: schedule.id
+          requireApproval: {
+            title: `Approve: ${ctx.toolName}`,
+            description: `Agent "${ctx.agentName}" wants to run tool: ${ctx.toolName}`,
+            severity: "info"
+          }
         };
-      }
-    };
-    listChannelSchedulesTool = {
-      name: "list_channel_schedules",
-      description: "List all active Discord channel report schedules for the user. Use when the user asks 'what automations do I have?', 'what schedules are running?', or 'show my Discord reports'.",
-      parameters: {
-        type: "object",
-        properties: {},
-        required: []
       },
-      async execute(_args, ctx) {
-        const { userId } = ctx;
-        try {
-          const schedules = await listSchedules(userId);
-          if (schedules.length === 0) {
-            return {
-              ok: true,
-              content: "No Discord channel schedules set up yet. Ask me to set up a stock research report or any other recurring automation.\n\n**Available templates:**\n\u2022 **AI Stock Research** \u2014 weekdays at 7am, posts to #stock-research\n\u2022 **Competitor YouTube Research** \u2014 daily at 8am, posts to #competitor-research",
-              label: "No schedules"
-            };
-          }
-          const lines = schedules.map((s) => {
-            const status = s.enabled ? "\u2705 Active" : "\u23F8 Paused";
-            const lastRun = s.lastRun ? `Last run: ${new Date(s.lastRun).toLocaleString()}` : "Never run";
-            return `\u2022 **${s.label}** \u2192 #${s.channelName} | \`${s.cronExpression}\` | ${status} | ${lastRun} | ID: \`${s.id}\``;
-          });
-          return {
-            ok: true,
-            content: `**Your Discord Channel Schedules (${schedules.length}):**
-
-${lines.join("\n")}`,
-            label: `${schedules.length} schedule(s)`
-          };
-        } catch (err2) {
-          const msg = err2 instanceof Error ? err2.message : String(err2);
-          return { ok: false, content: `Failed to list schedules: ${msg}`, label: "List failed" };
-        }
-      }
-    };
-    deleteChannelScheduleTool = {
-      name: "delete_channel_schedule",
-      description: "Cancel and delete a Discord channel report schedule. Use when the user says 'cancel my stock report', 'stop the YouTube research', 'delete schedule X', or any request to remove an automated Discord report. You can match by label (partial, case-insensitive) or by the exact schedule ID.",
-      parameters: {
-        type: "object",
-        properties: {
-          label: {
-            type: "string",
-            description: "The label (or partial label) of the schedule to delete. Case-insensitive match. Example: 'stock research' will match 'AI Stock Research'."
-          },
-          scheduleId: {
-            type: "string",
-            description: "The exact schedule ID (UUID) to delete. Use when the user specifies it directly."
-          }
-        },
-        required: []
-      },
-      async execute(args, ctx) {
-        const { userId } = ctx;
-        const labelQuery = args.label ? String(args.label).toLowerCase().trim() : null;
-        const scheduleId = args.scheduleId ? String(args.scheduleId).trim() : null;
-        if (!labelQuery && !scheduleId) {
-          return {
-            ok: false,
-            content: "Please provide either a label or a schedule ID to delete.",
-            label: "Missing identifier"
-          };
-        }
-        try {
-          const all = await listSchedules(userId);
-          let target = null;
-          if (scheduleId) {
-            target = all.find((s) => s.id === scheduleId) ?? null;
-          } else if (labelQuery) {
-            target = all.find((s) => s.label.toLowerCase().includes(labelQuery)) ?? null;
-          }
-          if (!target) {
-            const names = all.map((s) => `"${s.label}"`).join(", ");
-            return {
-              ok: false,
-              content: `No schedule found matching "${labelQuery ?? scheduleId}". ` + (all.length > 0 ? `Your schedules: ${names}` : "You have no schedules set up."),
-              label: "Schedule not found"
-            };
-          }
-          await deleteSchedule(userId, target.id);
-          return {
-            ok: true,
-            content: `Cancelled "${target.label}" \u2014 it will no longer post to #${target.channelName}.`,
-            label: `Deleted: ${target.label}`
-          };
-        } catch (err2) {
-          const msg = err2 instanceof Error ? err2.message : String(err2);
-          return { ok: false, content: `Failed to delete schedule: ${msg}`, label: "Delete failed" };
-        }
-      }
-    };
-  }
-});
-
-// server/agent/tools/youtubeSearch.ts
-function parseAgoToMs(ago, fallbackMs) {
-  const m = ago.match(/(\d+)\s*(second|minute|hour|day|week|month|year)/i);
-  if (!m) return fallbackMs;
-  const n = parseInt(m[1], 10);
-  const unit = m[2].toLowerCase();
-  const unitMs = {
-    second: 1e3,
-    minute: 6e4,
-    hour: 36e5,
-    day: 864e5,
-    week: 6048e5,
-    month: 2592e6,
-    year: 31536e6
-  };
-  return n * (unitMs[unit] ?? 864e5);
-}
-var DAYS_BACK_DEFAULT, MAX_RESULTS_DEFAULT, youtubeSearchTool;
-var init_youtubeSearch = __esm({
-  "server/agent/tools/youtubeSearch.ts"() {
-    "use strict";
-    DAYS_BACK_DEFAULT = 5;
-    MAX_RESULTS_DEFAULT = 15;
-    youtubeSearchTool = {
-      name: "search_youtube",
-      description: "Search YouTube server-side and return structured results: title, channel, view count, published date, video ID, and URL. Use this for YouTube video research, competitor analysis, and finding content in any niche. Pass trending:true ONLY when the user explicitly asks for 'trending', 'viral', 'gaining momentum', or 'views per hour' \u2014 this sorts by views-per-hour velocity instead of total views, and filters to videos published within daysBack days. For general YouTube search (without trending language), use standard mode (trending:false or omitted).",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "YouTube search query, e.g. 'ADHD productivity tools 2024' or 'AI video editing tutorials'"
-          },
-          trending: {
-            type: "boolean",
-            description: "If true, sort by views-per-hour (velocity) instead of total views. ONLY use when the user explicitly says 'trending', 'viral', 'momentum', or 'views per hour'."
-          },
-          daysBack: {
-            type: "number",
-            description: "When trending:true, only include videos published within this many days (default 5). Use 1 for last 24h, 7 for last week."
-          },
-          maxResults: {
-            type: "number",
-            description: "Maximum results to return (1\u201315, default 15)."
-          }
-        },
-        required: ["query"]
-      },
-      async execute(args, ctx) {
-        const query = String(args.query || "").trim();
-        if (!query) {
-          return { ok: false, content: "Please provide a search query.", label: "Missing query" };
-        }
-        const trendingMode = !!args.trending;
-        const daysBack = typeof args.daysBack === "number" ? Math.max(args.daysBack, 1) : DAYS_BACK_DEFAULT;
-        const maxResults = typeof args.maxResults === "number" ? Math.min(Math.max(args.maxResults, 1), MAX_RESULTS_DEFAULT) : MAX_RESULTS_DEFAULT;
-        const daysMs = daysBack * 24 * 60 * 60 * 1e3;
-        console.log(
-          `[search_youtube] query="${query}" trending=${trendingMode} daysBack=${daysBack} max=${maxResults} (user=${ctx.userId})`
-        );
-        try {
-          const ytSearch2 = (await import("yt-search")).default;
-          const searchResult = await ytSearch2({ query, pageStart: 1, pageEnd: 1 });
-          let rawVideos = searchResult.videos || [];
-          let videos = rawVideos.map((v) => {
-            const viewCount = typeof v.views === "number" ? v.views : parseInt(String(v.views || "0").replace(/[^0-9]/g, ""), 10) || 0;
-            const ago = v.ago || "";
-            const fallbackMs = daysBack * 24 * 60 * 60 * 1e3;
-            const ageMs = ago ? parseAgoToMs(ago, fallbackMs) : fallbackMs;
-            const ageHours = Math.max(ageMs / 36e5, 1);
-            const viewsPerHour = Math.round(viewCount / ageHours);
-            return {
-              title: v.title || "(no title)",
-              channelName: v.author?.name || v.channel?.name || "unknown",
-              viewCount,
-              viewsPerHour,
-              ago: ago || "unknown date",
-              ageHours,
-              videoId: v.videoId || "",
-              url: v.url || `https://youtube.com/watch?v=${v.videoId}`
-            };
-          });
-          if (trendingMode) {
-            videos = videos.filter((v) => {
-              const ageMs = v.ageHours * 36e5;
-              return ageMs <= daysMs;
-            }).sort((a, b) => b.viewsPerHour - a.viewsPerHour).slice(0, maxResults);
-            if (videos.length === 0) {
-              return {
-                ok: false,
-                content: `No trending videos found in the last ${daysBack} days for: "${query}". Try increasing daysBack or use a broader query.`,
-                label: "No trending results"
-              };
-            }
-            const tableHeader2 = `Rank | Title | Channel | Views/hr | Total Views | Published
-${"\u2500".repeat(80)}`;
-            const rows2 = videos.map((v, i) => {
-              const views = v.viewCount.toLocaleString();
-              const vph = v.viewsPerHour.toLocaleString();
-              return `${String(i + 1).padStart(2)}. **${v.title}**
-    Channel: ${v.channelName} | Views/hr: ${vph} | Total: ${views} | Posted: ${v.ago}
-    URL: ${v.url}`;
-            });
-            const content2 = `**YouTube Trending: "${query}"** (last ${daysBack} days, sorted by views/hour)
-
-${tableHeader2}
-
-${rows2.join("\n\n")}`;
-            return {
-              ok: true,
-              content: content2,
-              label: `YouTube trending (${videos.length} results): ${query}`
-            };
-          }
-          videos = [...videos].sort((a, b) => b.viewCount - a.viewCount).slice(0, maxResults);
-          if (videos.length === 0) {
-            return {
-              ok: false,
-              content: `No YouTube videos found for: "${query}".`,
-              label: "No results"
-            };
-          }
-          const tableHeader = `Rank | Title | Channel | Total Views | Published
-${"\u2500".repeat(70)}`;
-          const rows = videos.map((v, i) => {
-            const views = v.viewCount.toLocaleString();
-            return `${String(i + 1).padStart(2)}. **${v.title}**
-    Channel: ${v.channelName} | Views: ${views} | Posted: ${v.ago}
-    URL: ${v.url}`;
-          });
-          const content = `**YouTube Search: "${query}"** (sorted by total views)
-
-${tableHeader}
-
-${rows.join("\n\n")}`;
-          return {
-            ok: true,
-            content,
-            label: `YouTube search (${videos.length} results): ${query}`
-          };
-        } catch (err2) {
-          const msg = err2 instanceof Error ? err2.message : String(err2);
-          console.error(`[search_youtube] failed: ${msg}`);
-          return {
-            ok: false,
-            content: `YouTube search failed: ${msg}`,
-            label: "YouTube search error"
-          };
-        }
-      }
-    };
-  }
-});
-
-// server/lib/geminiTranscript.ts
-var geminiTranscript_exports = {};
-__export(geminiTranscript_exports, {
-  fetchTranscriptViaGemini: () => fetchTranscriptViaGemini,
-  isGeminiTranscriptAvailable: () => isGeminiTranscriptAvailable,
-  isTranscriptRefusal: () => isTranscriptRefusal,
-  normalizeVideoUrl: () => normalizeVideoUrl,
-  transcribeVideoFromUrl: () => transcribeVideoFromUrl
-});
-import { GoogleGenAI } from "@google/genai";
-function getClient() {
-  if (_client) return _client;
-  const directKey = process.env.GOOGLE_GEMINI_API_KEY;
-  if (directKey) {
-    _client = new GoogleGenAI({ apiKey: directKey });
-    return _client;
-  }
-  const proxyKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  if (!proxyKey) throw new Error("No Gemini API key configured \u2014 set GOOGLE_GEMINI_API_KEY or AI_INTEGRATIONS_GEMINI_API_KEY");
-  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-  _client = new GoogleGenAI({
-    apiKey: proxyKey,
-    ...baseUrl ? { httpOptions: { baseUrl } } : {}
-  });
-  return _client;
-}
-function isUsingDirectKey() {
-  return !!process.env.GOOGLE_GEMINI_API_KEY;
-}
-function isGatewayEndpointError(err2) {
-  const msg = err2 instanceof Error ? err2.message : String(err2);
-  return msg.includes("INVALID_ENDPOINT") || /endpoint[^.]*is not supported/i.test(msg) || /not supported.*endpoint/i.test(msg);
-}
-function isPrimaryModelRejection(err2) {
-  const msg = err2 instanceof Error ? err2.message : String(err2);
-  return PRIMARY_REJECTION_PATTERNS.some((p) => p.test(msg));
-}
-function isTranscriptRefusal(text2) {
-  const opening = text2.slice(0, 600);
-  return GEMINI_REFUSAL_PATTERNS.some((p) => p.test(opening));
-}
-async function callGemini(model, videoUrl) {
-  const client = getClient();
-  const timeoutPromise = new Promise(
-    (_, reject) => setTimeout(() => reject(new Error(`Gemini model ${model} timed out after ${GEMINI_CALL_TIMEOUT_MS / 1e3}s`)), GEMINI_CALL_TIMEOUT_MS)
-  );
-  const response = await Promise.race([
-    client.models.generateContent({
-      model,
-      contents: [
-        {
-          parts: [
-            { fileData: { mimeType: "video/mp4", fileUri: videoUrl } },
-            { text: TRANSCRIPT_PROMPT }
-          ]
-        }
-      ]
-    }),
-    timeoutPromise
-  ]);
-  const text2 = response.text;
-  if (!text2 || !text2.trim()) {
-    throw new Error(`Gemini model ${model} returned an empty transcript for this video`);
-  }
-  const trimmed = text2.trim();
-  if (isTranscriptRefusal(trimmed)) {
-    throw new Error(
-      `Gemini model ${model} declined to transcribe this video (refusal detected). Response started with: "${trimmed.slice(0, 120).replace(/\n/g, " ")}"`
+      { priority: HOOK_PRIORITY.APPROVAL }
     );
-  }
-  return trimmed;
-}
-async function fetchTranscriptViaGemini(videoUrl) {
-  if (_phase0GatewayUnsupported && !isUsingDirectKey()) {
-    throw new Error(
-      "GATEWAY_UNSUPPORTED: Replit AI proxy does not support the multimodal endpoint \u2014 Phase 0 skipped for this process. Add a GOOGLE_GEMINI_API_KEY secret (free at https://aistudio.google.com/apikey) to enable YouTube transcription."
-    );
-  }
-  try {
-    return await callGemini("gemini-2.5-flash", videoUrl);
-  } catch (flashErr) {
-    if (isGatewayEndpointError(flashErr) && !isUsingDirectKey()) {
-      if (!_phase0GatewayUnsupported) {
-        _phase0GatewayUnsupported = true;
-        console.warn(
-          "[geminiTranscript] Replit AI proxy rejected multimodal endpoint (INVALID_ENDPOINT). Phase 0 will be skipped for this process lifetime. To enable Gemini YouTube transcription, add a GOOGLE_GEMINI_API_KEY secret (free key at https://aistudio.google.com/apikey)."
-        );
-      }
-      throw Object.assign(
-        new Error(`gemini-2.5-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
-        { cause: flashErr }
-      );
-    }
-    if (isPrimaryModelRejection(flashErr)) {
-      const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
-      console.warn(
-        `[geminiTranscript] gemini-2.5-flash rejected video (${flashMsg}) \u2014 retrying with gemini-2.5-pro`
-      );
-      return await callGemini("gemini-2.5-pro", videoUrl);
-    }
-    throw Object.assign(
-      new Error(`gemini-2.5-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
-      { cause: flashErr }
-    );
-  }
-}
-async function uploadVideoStream(downloadResponse, mimeType, contentLength, apiKey) {
-  const initiateHeaders = {
-    "X-Goog-Upload-Protocol": "resumable",
-    "X-Goog-Upload-Command": "start",
-    "X-Goog-Upload-Header-Content-Type": mimeType,
-    "Content-Type": "application/json"
-  };
-  if (contentLength !== null) {
-    initiateHeaders["X-Goog-Upload-Header-Content-Length"] = String(contentLength);
-  }
-  const initiateRes = await fetch(
-    `https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=resumable&key=${apiKey}`,
-    {
-      method: "POST",
-      headers: initiateHeaders,
-      body: JSON.stringify({ file: { display_name: "jarvis-video-upload" } })
-    }
-  );
-  if (!initiateRes.ok) {
-    const errText = await initiateRes.text().catch(() => "(no body)");
-    throw new Error(
-      `Resumable upload initiation failed: HTTP ${initiateRes.status} \u2014 ${errText}`
-    );
-  }
-  const uploadUrl = initiateRes.headers.get("x-goog-upload-url") ?? initiateRes.headers.get("X-Goog-Upload-URL");
-  if (!uploadUrl) {
-    throw new Error("Google File API did not return a resumable upload URL");
-  }
-  let uploadBody;
-  let uploadContentLength;
-  if (contentLength !== null) {
-    if (!downloadResponse.body) {
-      throw new Error(
-        "Download response has no readable body stream \u2014 cannot stream to Google File API"
-      );
-    }
-    uploadBody = downloadResponse.body;
-    uploadContentLength = contentLength;
-  } else {
-    const arrayBuffer = await downloadResponse.arrayBuffer();
-    const bytes = arrayBuffer.byteLength;
-    if (bytes > MAX_BUFFER_BYTES) {
-      throw new Error(
-        `Video is too large (${Math.round(bytes / 1024 / 1024)} MB). Maximum supported size for videos without a Content-Length header is ${Math.round(MAX_BUFFER_BYTES / 1024 / 1024)} MB.`
-      );
-    }
-    uploadBody = arrayBuffer;
-    uploadContentLength = bytes;
-  }
-  const uploadHeaders = {
-    "Content-Type": mimeType,
-    "Content-Length": String(uploadContentLength),
-    "X-Goog-Upload-Offset": "0",
-    "X-Goog-Upload-Command": "upload, finalize"
-  };
-  const uploadRes = await fetch(uploadUrl, {
-    method: "POST",
-    headers: uploadHeaders,
-    body: uploadBody,
-    // Required for Node.js 18+ streaming request bodies
-    // @ts-ignore
-    duplex: "half"
-  });
-  if (!uploadRes.ok) {
-    const errText = await uploadRes.text().catch(() => "(no body)");
-    throw new Error(`Resumable upload failed: HTTP ${uploadRes.status} \u2014 ${errText}`);
-  }
-  const data = await uploadRes.json();
-  const fileName = data?.file?.name;
-  if (!fileName) {
-    throw new Error("Google File API upload response is missing file.name");
-  }
-  return fileName;
-}
-function normalizeVideoUrl(url) {
-  try {
-    const parsed = new URL(url);
-    if (parsed.hostname === "drive.google.com") {
-      const fileMatch = parsed.pathname.match(/\/file\/d\/([^/]+)/);
-      if (fileMatch) {
-        return `https://drive.google.com/uc?export=download&id=${fileMatch[1]}&confirm=t`;
-      }
-      const openId = parsed.searchParams.get("id");
-      if (openId) {
-        return `https://drive.google.com/uc?export=download&id=${openId}&confirm=t`;
-      }
-    }
-    if (parsed.hostname.includes("dropbox.com")) {
-      parsed.searchParams.set("dl", "1");
-      return parsed.toString();
-    }
-    return url;
-  } catch {
-    return url;
-  }
-}
-function inferMimeType(url) {
-  try {
-    const pathname = new URL(url).pathname.toLowerCase();
-    if (pathname.endsWith(".mov") || pathname.endsWith(".qt")) return "video/quicktime";
-    if (pathname.endsWith(".avi")) return "video/x-msvideo";
-    if (pathname.endsWith(".webm")) return "video/webm";
-    if (pathname.endsWith(".mkv")) return "video/x-matroska";
-    if (pathname.endsWith(".3gp")) return "video/3gpp";
-  } catch {
-  }
-  return "video/mp4";
-}
-function assertSafeUrl(url) {
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error(`Invalid URL: ${url}`);
-  }
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    throw new Error(`Unsupported URL scheme "${parsed.protocol}" \u2014 only http/https is allowed`);
-  }
-  const hostname = parsed.hostname.toLowerCase();
-  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname.endsWith(".localhost")) {
-    throw new Error(`Blocked URL: loopback addresses are not allowed`);
-  }
-  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-    if (a === 10 || // 10.0.0.0/8
-    a === 172 && b >= 16 && b <= 31 || // 172.16.0.0/12
-    a === 192 && b === 168 || // 192.168.0.0/16
-    a === 169 && b === 254 || // 169.254.0.0/16 link-local
-    a === 0) {
-      throw new Error(`Blocked URL: private/link-local IP addresses are not allowed`);
-    }
-  }
-  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal") {
-    throw new Error(`Blocked URL: cloud metadata endpoints are not allowed`);
-  }
-}
-function assertVideoContentType(contentType, url) {
-  if (!contentType) return;
-  const ct = contentType.split(";")[0].trim().toLowerCase();
-  if (ct === "text/html" || ct === "application/xhtml+xml" || ct === "text/xml") {
-    throw new Error(
-      `The URL did not return a video file (got Content-Type: ${ct}). This often happens with Google Drive links that require sign-in or show a virus-scan warning. Make sure the file is shared with "Anyone with the link" and try again.`
-    );
-  }
-}
-async function callGeminiWithFile(model, fileUri, mimeType) {
-  const client = getClient();
-  const response = await client.models.generateContent({
-    model,
-    contents: [
-      {
-        parts: [
-          { fileData: { fileUri, mimeType } },
-          { text: TRANSCRIPT_PROMPT }
-        ]
-      }
-    ]
-  });
-  const text2 = response.text;
-  if (!text2 || !text2.trim()) {
-    throw new Error(`Gemini model ${model} returned an empty transcript for this video file`);
-  }
-  const trimmed = text2.trim();
-  if (isTranscriptRefusal(trimmed)) {
-    throw new Error(
-      `Gemini model ${model} declined to transcribe this video file (refusal detected). Response started with: "${trimmed.slice(0, 120).replace(/\n/g, " ")}"`
-    );
-  }
-  return trimmed;
-}
-async function transcribeVideoFromUrl(videoUrl, mimeType) {
-  assertSafeUrl(videoUrl);
-  const downloadUrl = normalizeVideoUrl(videoUrl);
-  assertSafeUrl(downloadUrl);
-  const resolvedMime = mimeType ?? inferMimeType(downloadUrl);
-  console.log(
-    `[geminiTranscript] Downloading video for File API upload: ${downloadUrl} (mime=${resolvedMime})`
-  );
-  let response;
-  try {
-    response = await fetch(downloadUrl, {
-      redirect: "follow",
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; Jarvis-Bot/1.0)" }
-    });
-  } catch (fetchErr) {
-    throw new Error(
-      `Failed to reach video URL: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`
-    );
-  }
-  if (!response.ok) {
-    throw new Error(
-      `Video download failed: HTTP ${response.status} from ${downloadUrl}`
-    );
-  }
-  assertVideoContentType(response.headers.get("content-type"), downloadUrl);
-  const rawContentLength = response.headers.get("content-length");
-  const parsedLength = rawContentLength ? parseInt(rawContentLength, 10) : NaN;
-  const contentLength = Number.isFinite(parsedLength) && parsedLength > 0 ? parsedLength : null;
-  if (contentLength !== null && contentLength > MAX_STREAM_BYTES) {
-    throw new Error(
-      `Video is too large (${Math.round(contentLength / 1024 / 1024)} MB). Maximum supported size is ${Math.round(MAX_STREAM_BYTES / 1024 / 1024 / 1024)} GB.`
-    );
-  }
-  const streamMode = contentLength !== null;
-  console.log(
-    `[geminiTranscript] Starting ${streamMode ? "streaming" : "buffered"} upload to File API` + (contentLength !== null ? ` (${Math.round(contentLength / 1024 / 1024)} MB)` : " (size unknown)")
-  );
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("AI_INTEGRATIONS_GEMINI_API_KEY is not set");
-  let fileName;
-  try {
-    fileName = await uploadVideoStream(response, resolvedMime, contentLength, apiKey);
-  } catch (uploadErr) {
-    throw new Error(
-      `File API upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`
-    );
-  }
-  console.log(`[geminiTranscript] Uploaded \u2014 file name: ${fileName}, polling for ACTIVE state`);
-  const client = getClient();
-  const POLL_INTERVAL_MS = 5e3;
-  const MAX_POLL_ATTEMPTS = 60;
-  try {
-    let fileInfo = await client.files.get({ name: fileName });
-    let attempts = 0;
-    while (fileInfo.state === "PROCESSING" && attempts < MAX_POLL_ATTEMPTS) {
-      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
-      fileInfo = await client.files.get({ name: fileName });
-      attempts++;
-    }
-    if (fileInfo.state !== "ACTIVE") {
-      throw new Error(
-        `File processing ended in state "${fileInfo.state}" after ${attempts} polls \u2014 cannot transcribe`
-      );
-    }
-    const fileUri = fileInfo.uri;
-    if (!fileUri) {
-      throw new Error("File API did not return a URI for the uploaded file");
-    }
-    console.log(`[geminiTranscript] File ACTIVE (uri=${fileUri}) \u2014 running Gemini transcription`);
-    try {
-      return await callGeminiWithFile("gemini-2.5-flash", fileUri, resolvedMime);
-    } catch (flashErr) {
-      if (isPrimaryModelRejection(flashErr)) {
-        const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
-        console.warn(
-          `[geminiTranscript] gemini-2.5-flash rejected uploaded file (${flashMsg}) \u2014 retrying with gemini-2.5-pro`
-        );
-        return await callGeminiWithFile("gemini-2.5-pro", fileUri, resolvedMime);
-      }
-      throw Object.assign(
-        new Error(
-          `Gemini transcription failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`
-        ),
-        { cause: flashErr }
-      );
-    }
-  } finally {
-    try {
-      await client.files.delete({ name: fileName });
-      console.log(`[geminiTranscript] Cleaned up uploaded file: ${fileName}`);
-    } catch (cleanupErr) {
-      console.warn(
-        `[geminiTranscript] Failed to delete uploaded file ${fileName}:`,
-        cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
-      );
-    }
-  }
-}
-function isGeminiTranscriptAvailable() {
-  return !!(process.env.GOOGLE_GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY);
-}
-var _client, _phase0GatewayUnsupported, TRANSCRIPT_PROMPT, PRIMARY_REJECTION_PATTERNS, GEMINI_REFUSAL_PATTERNS, GEMINI_CALL_TIMEOUT_MS, MAX_STREAM_BYTES, MAX_BUFFER_BYTES;
-var init_geminiTranscript = __esm({
-  "server/lib/geminiTranscript.ts"() {
-    "use strict";
-    _client = null;
-    _phase0GatewayUnsupported = false;
-    TRANSCRIPT_PROMPT = "Transcribe all the speech in this video. Write out everything that is spoken, capturing every word said by each speaker. Plain text only. Use natural paragraph breaks to separate topics or speakers. At the start of each new paragraph, insert a timestamp in [HH:MM:SS] format indicating when that paragraph begins in the video. Do not include speaker labels or any other formatting \u2014 just timestamps and the spoken words.";
-    PRIMARY_REJECTION_PATTERNS = [
-      // Video / modality support
-      /video.*not supported/i,
-      /unsupported.*video/i,
-      /model.*not support/i,
-      // Content policy / safety (1.5 and 2.0 wording)
-      /content.*policy/i,
-      /safety.*block/i,
-      /blocked.*safety|safety.*blocked|response.*blocked|candidate.*blocked/i,
-      /harm.*categor/i,
-      /finish.*reason.*safety/i,
-      /recitation/i,
-      /prohibited.*content/i,
-      // Token / context limits (1.5 and 2.0 wording)
-      /token.*limit/i,
-      /context.*length/i,
-      /context.*window/i,
-      /maximum.*token/i,
-      /too.*long/i,
-      // Quota / rate limits (RESOURCE_EXHAUSTED)
-      /resource.*exhaust/i,
-      /quota.*exceed/i
-    ];
-    GEMINI_REFUSAL_PATTERNS = [
-      /\bI (cannot|can't|am unable to|don't have access to)\b/i,
-      /\bI'?m unable to\b/i,
-      /cannot (access|provide|retrieve) (the|a) (audio|transcript|captions)/i,
-      /unable to (access|provide|retrieve) (the|a) (audio|transcript|captions)/i,
-      /no official (transcript|captions)/i,
-      /official (transcript|captions) (is|are) not available/i,
-      /official (transcript|captions) (could not|cannot) be retrieved/i,
-      /does not have (official )?(captions|a transcript)/i,
-      /doesn't have (official )?(captions|a transcript)/i,
-      /automatic transcription.*failed/i,
-      /transcription is not available/i,
-      /do not have access to the (actual |real )?(audio|video content)/i
-    ];
-    GEMINI_CALL_TIMEOUT_MS = 3e4;
-    MAX_STREAM_BYTES = 2 * 1024 * 1024 * 1024;
-    MAX_BUFFER_BYTES = 1 * 1024 * 1024 * 1024;
-  }
-});
-
-// server/channels/telegramChannel.ts
-import { eq as eq28 } from "drizzle-orm";
-async function lookupChatId(userId) {
-  const ts = linkCacheTimestamps.get(userId);
-  if (ts && Date.now() - ts < LINK_CACHE_TTL) {
-    return linkCache.get(userId) ?? null;
-  }
-  try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq28(telegramLinks.userId, userId)).limit(1);
-    const chatId = rows[0]?.chatId ?? null;
-    linkCache.set(userId, chatId);
-    linkCacheTimestamps.set(userId, Date.now());
-    return chatId;
-  } catch (err2) {
-    console.error("[telegramChannel] link lookup failed:", err2);
-    return null;
-  }
-}
-var linkCache, LINK_CACHE_TTL, linkCacheTimestamps, telegramChannel;
-var init_telegramChannel = __esm({
-  "server/channels/telegramChannel.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_telegram();
-    init_attachmentHelpers();
-    linkCache = /* @__PURE__ */ new Map();
-    LINK_CACHE_TTL = 6e4;
-    linkCacheTimestamps = /* @__PURE__ */ new Map();
-    telegramChannel = {
-      name: "telegram",
-      // Full coaching surface — Telegram is Jarvis's primary conversational channel.
-      // schedule_jarvis_task is already included via the "coaching" group.
-      toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "scheduling", "media", "self_edit", "browser", "mcp"],
-      isConfigured: () => isTelegramConfigured(),
-      isLinkedFor: async (userId) => !!await lookupChatId(userId),
-      async sendMessage(userId, text2, opts = {}) {
-        const chatId = await lookupChatId(userId);
-        if (!chatId) return { ok: false, error: "no telegram link" };
-        try {
-          const attachments = opts.attachments || [];
-          const markdownExtra = collectMarkdownExtras(attachments);
-          const fullText = markdownExtra ? text2 ? `${text2}
-
-${markdownExtra}` : markdownExtra : text2;
-          if (fullText && fullText.trim()) await sendLongMessage(chatId, fullText);
-          for (const att of attachments) {
-            if (att.kind === "document") {
-              await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
-            } else if (att.kind === "image") {
-              const buf = await attachmentToBuffer(att).catch(() => null);
-              if (buf) {
-                await sendPhoto(chatId, buf, att.caption);
-              } else {
-                console.warn("[telegramChannel] image attachment had no usable source \u2014 skipping");
-              }
-            } else if (att.kind === "file") {
-              const buf = await attachmentToBuffer(att).catch(() => null);
-              if (buf) {
-                await sendTelegramDocument(chatId, att.filename, buf, att.caption, att.mimeType);
-              } else {
-                console.warn(`[telegramChannel] file attachment ${att.filename} had no usable source \u2014 skipping`);
-              }
-            }
-          }
-          return { ok: true, messageId: chatId };
-        } catch (err2) {
-          return { ok: false, error: String(err2) };
-        }
-      }
-    };
-  }
-});
-
-// server/channels/whatsappChannel.ts
-import { eq as eq29, and as and21 } from "drizzle-orm";
-function isTwilioConfigured() {
-  return !!(TWILIO_SID && TWILIO_TOKEN && TWILIO_FROM);
-}
-async function sendWhatsAppMessage(toAddress, body) {
-  if (!isTwilioConfigured()) return { ok: false, error: "twilio not configured" };
-  const to = toAddress.startsWith("whatsapp:") ? toAddress : `whatsapp:${toAddress}`;
-  const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
-  const auth = Buffer.from(`${TWILIO_SID}:${TWILIO_TOKEN}`).toString("base64");
-  const params = new URLSearchParams({ From: TWILIO_FROM, To: to, Body: body });
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${auth}`,
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
-      body: params.toString()
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      return { ok: false, error: `${data.message || "twilio error"} (code ${data.code || res.status})` };
-    }
-    return { ok: true, sid: data.sid };
-  } catch (err2) {
-    return { ok: false, error: String(err2) };
-  }
-}
-async function lookupAddress(userId) {
-  try {
-    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and21(eq29(channelLinks.userId, userId), eq29(channelLinks.channel, "whatsapp"))).limit(1);
-    return rows[0]?.address ?? null;
-  } catch (err2) {
-    console.error("[whatsappChannel] link lookup failed:", err2);
-    return null;
-  }
-}
-var TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM, whatsappChannel;
-var init_whatsappChannel = __esm({
-  "server/channels/whatsappChannel.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
-    TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-    TWILIO_FROM = process.env.TWILIO_WHATSAPP_NUMBER;
-    whatsappChannel = {
-      name: "whatsapp",
-      // Lightweight coaching — tasks, calendar reminders, quick memory lookups.
-      toolGroups: ["coaching", "calendar", "memory", "connections", "scheduling"],
-      isConfigured: () => isTwilioConfigured(),
-      isLinkedFor: async (userId) => !!await lookupAddress(userId),
-      async sendMessage(userId, text2, opts = {}) {
-        const address = await lookupAddress(userId);
-        if (!address) return { ok: false, error: "no whatsapp link" };
-        let body = text2 || "";
-        if (opts.attachments && opts.attachments.length > 0) {
-          body = body ? `${body}
-
-(${opts.attachments.length} attachment(s) generated \u2014 open the GamePlan app to download.)` : `(${opts.attachments.length} attachment(s) generated \u2014 open the GamePlan app to download.)`;
-        }
-        const result = await sendWhatsAppMessage(address, body);
-        return { ok: result.ok, messageId: result.sid, error: result.error };
-      }
-    };
-  }
-});
-
-// server/channels/daemonChannel.ts
-import { eq as eq30, and as and22 } from "drizzle-orm";
-async function lookupDaemon(userId) {
-  try {
-    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and22(eq30(channelLinks.userId, userId), eq30(channelLinks.channel, "daemon"))).limit(1);
-    return rows.length > 0;
-  } catch (err2) {
-    console.error("[daemonChannel] link lookup failed:", err2);
-    return false;
-  }
-}
-var daemonChannel;
-var init_daemonChannel = __esm({
-  "server/channels/daemonChannel.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_bridge();
-    daemonChannel = {
-      name: "daemon",
-      // Desktop automation channel — needs system commands, task/calendar management.
-      toolGroups: ["coaching", "calendar", "memory", "connections", "scheduling", "system"],
-      isConfigured: () => true,
-      async isLinkedFor(userId) {
-        return await lookupDaemon(userId) && isUserPaired(userId);
-      },
-      async sendMessage(userId, text2, _opts = {}) {
-        if (!isUserPaired(userId)) return { ok: false, error: "daemon not connected" };
-        if (!await isDaemonActionAllowed(userId, "notify")) {
-          return { ok: false, error: "daemon notify permission disabled by user" };
-        }
-        try {
-          const title = "GamePlan Coach";
-          const result = await sendDaemonOp(userId, { type: "notify", title, body: text2 }, 5e3);
-          if (!result.ok) return { ok: false, error: result.error || "daemon notify failed" };
-          return { ok: true };
-        } catch (err2) {
-          return { ok: false, error: String(err2) };
-        }
-      }
-    };
-  }
-});
-
-// server/channels/discordChannel.ts
-import { eq as eq31, and as and23 } from "drizzle-orm";
-async function isDiscordRecentlyActive(userId) {
-  try {
-    const rows = await db.select({ lastSeenAt: channelLinks.lastSeenAt }).from(channelLinks).where(and23(eq31(channelLinks.userId, userId), eq31(channelLinks.channel, "discord"))).limit(1);
-    const ts = rows[0]?.lastSeenAt;
-    if (!ts) return false;
-    return Date.now() - new Date(ts).getTime() < DISCORD_ACTIVE_TTL_MS;
-  } catch {
-    return false;
-  }
-}
-var DISCORD_ACTIVE_TTL_MS, discordChannel;
-var init_discordChannel = __esm({
-  "server/channels/discordChannel.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_userTokenStore();
-    init_manager();
-    init_attachmentHelpers();
-    DISCORD_ACTIVE_TTL_MS = 3 * 60 * 1e3;
-    discordChannel = {
-      name: "discord",
-      // Research, posting, document export, and media generation — covers web search,
-      // Discord management, PDF/PPTX export, and image/video generation tools.
-      toolGroups: ["research", "discord", "memory", "documents", "scheduling", "media", "self_edit"],
-      isConfigured() {
-        return true;
-      },
-      async isLinkedFor(userId) {
-        try {
-          const [tok, link] = await Promise.all([
-            getUserToken(userId, "discord_bot"),
-            db.select({ id: channelLinks.id }).from(channelLinks).where(and23(eq31(channelLinks.userId, userId), eq31(channelLinks.channel, "discord"))).limit(1)
-          ]);
-          return !!(tok && link.length > 0 && getBotStatus(userId) === "running");
-        } catch {
-          return false;
-        }
-      },
-      async sendMessage(userId, text2, opts = {}) {
-        if (opts.skipIfDiscordActive && await isDiscordRecentlyActive(userId)) {
-          return { ok: false, error: "user_active_in_discord" };
-        }
-        const attachments = opts.attachments || [];
-        const markdownExtra = collectMarkdownExtras(attachments);
-        const fullText = markdownExtra ? text2 ? `${text2}
-
-${markdownExtra}` : markdownExtra : text2;
-        let anySent = false;
-        if (fullText?.trim()) {
-          const sent = await sendToDiscordUser(userId, fullText);
-          if (!sent) return { ok: false, error: "Discord send failed \u2014 bot not running or user not linked" };
-          anySent = true;
-        }
-        for (const att of attachments) {
-          if (att.kind === "document") {
-            const fileContent = Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content);
-            const sent = await sendFileToDiscordUser(userId, att.filename, fileContent, att.caption);
-            if (sent) anySent = true;
-            else console.warn(`[discordChannel] file send failed for user ${userId}: ${att.filename}`);
-          } else if (att.kind === "image") {
-            const buf = await attachmentToBuffer(att).catch(() => null);
-            if (buf) {
-              const sent = await sendFileToDiscordUser(userId, imageFilename(att.mimeType), buf, att.caption);
-              if (sent) anySent = true;
-              else console.warn(`[discordChannel] image send failed for user ${userId}`);
-            } else {
-              console.warn(`[discordChannel] image attachment had no usable source for user ${userId} \u2014 skipping`);
-            }
-          } else if (att.kind === "file") {
-            const buf = await attachmentToBuffer(att).catch(() => null);
-            if (buf) {
-              const sent = await sendFileToDiscordUser(userId, att.filename, buf, att.caption);
-              if (sent) anySent = true;
-              else console.warn(`[discordChannel] file send failed for user ${userId}: ${att.filename}`);
-            } else {
-              console.warn(`[discordChannel] file attachment ${att.filename} had no usable source for user ${userId} \u2014 skipping`);
-            }
-          }
-        }
-        if (!anySent && !fullText?.trim()) return { ok: true };
-        return { ok: true };
-      }
-    };
   }
 });
 
@@ -23674,3483 +22484,6 @@ var init_inAppChannel = __esm({
         }
       }
     };
-  }
-});
-
-// server/channels/webchatChannel.ts
-var webchatChannel;
-var init_webchatChannel = __esm({
-  "server/channels/webchatChannel.ts"() {
-    "use strict";
-    init_inAppChannel();
-    init_webchatSSE();
-    webchatChannel = {
-      name: "webchat",
-      toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "scheduling", "media", "system", "self_edit", "browser", "mcp"],
-      isConfigured: () => true,
-      isLinkedFor: async (_userId) => true,
-      async sendMessage(userId, text2, opts = {}) {
-        if (hasSubscriber(userId)) {
-          const delivered = pushToSubscriber(userId, text2);
-          if (delivered) {
-            console.log(`[WebchatSSE] Pushed message to active SSE subscriber for user ${userId}`);
-            return { ok: true };
-          }
-        }
-        return inAppChannel.sendMessage(userId, text2, opts);
-      }
-    };
-  }
-});
-
-// server/channels/index.ts
-var channels_exports = {};
-__export(channels_exports, {
-  getActiveChannelsFor: () => getActiveChannelsFor,
-  getAllPreferences: () => getAllPreferences,
-  getChannel: () => getChannel,
-  initChannels: () => initChannels,
-  listChannels: () => listChannels,
-  notifyUser: () => notifyUser,
-  runCoachAgent: () => runCoachAgent,
-  setPreference: () => setPreference
-});
-function initChannels() {
-  registerChannel(telegramChannel);
-  registerChannel(whatsappChannel);
-  registerChannel(slackChannel);
-  registerChannel(daemonChannel);
-  registerChannel(discordChannel);
-  registerChannel(inAppChannel);
-  registerChannel(webchatChannel);
-  console.log("[channels] registered: telegram, whatsapp, slack, daemon, discord, in_app, webchat");
-}
-var init_channels = __esm({
-  "server/channels/index.ts"() {
-    "use strict";
-    init_registry();
-    init_telegramChannel();
-    init_whatsappChannel();
-    init_slackChannel();
-    init_daemonChannel();
-    init_discordChannel();
-    init_inAppChannel();
-    init_webchatChannel();
-    init_registry();
-    init_coachAgent();
-  }
-});
-
-// server/lib/transcriptJobTracker.ts
-var transcriptJobTracker_exports = {};
-__export(transcriptJobTracker_exports, {
-  cancelUserTranscriptJobs: () => cancelUserTranscriptJobs,
-  getCompletedTranscript: () => getCompletedTranscript,
-  runBackgroundPoller: () => runBackgroundPoller,
-  startSupadataJob: () => startSupadataJob
-});
-import { eq as eq32, and as and24 } from "drizzle-orm";
-async function startSupadataJob(userId, videoId, supadataJobId) {
-  await db.insert(transcriptJobs).values({
-    userId,
-    videoId,
-    supadataJobId,
-    status: "pending"
-  });
-  console.log(`[transcriptJobTracker] Started async job ${supadataJobId} for video ${videoId} (user=${userId})`);
-}
-async function getCompletedTranscript(userId, videoId) {
-  const rows = await db.select().from(transcriptJobs).where(
-    and24(
-      eq32(transcriptJobs.userId, userId),
-      eq32(transcriptJobs.videoId, videoId),
-      eq32(transcriptJobs.status, "completed")
-    )
-  ).limit(1);
-  if (rows.length === 0 || !rows[0].result) return null;
-  try {
-    const segments = JSON.parse(rows[0].result);
-    console.log(`[transcriptJobTracker] Found completed cached job for ${videoId} (user=${userId}) \u2014 ${segments.length} segs`);
-    return segments;
-  } catch {
-    return null;
-  }
-}
-async function cancelUserTranscriptJobs(userId) {
-  const result = await db.update(transcriptJobs).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(
-    and24(
-      eq32(transcriptJobs.userId, userId),
-      eq32(transcriptJobs.status, "pending")
-    )
-  );
-  return result.rowCount ?? 0;
-}
-async function checkAndFinishJob(row) {
-  try {
-    const { Supadata } = await import("@supadata/js");
-    const apiKey = process.env.SUPADATA_API_KEY;
-    if (!apiKey) return null;
-    const client = new Supadata({ apiKey });
-    const job = await client.transcript.getJobStatus(row.supadataJobId);
-    if (job.status === "completed" && job.result) {
-      const content = job.result.content;
-      let segments;
-      if (typeof content === "string") {
-        segments = [{ text: content.trim(), offset: 0, duration: 0, lang: job.result.lang ?? "en" }];
-      } else if (Array.isArray(content) && content.length > 0) {
-        segments = content.map((chunk) => ({
-          text: chunk.text,
-          offset: chunk.offset,
-          duration: chunk.duration,
-          lang: chunk.lang ?? job.result?.lang ?? "en"
-        }));
-      } else {
-        segments = [];
-      }
-      await db.update(transcriptJobs).set({
-        status: "completed",
-        result: JSON.stringify(segments),
-        updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq32(transcriptJobs.id, row.id));
-      console.log(`[transcriptJobTracker] Job ${row.supadataJobId} completed \u2014 ${segments.length} segs for video ${row.videoId}`);
-      return segments;
-    }
-    if (job.status === "failed") {
-      await db.update(transcriptJobs).set({
-        status: "failed",
-        updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq32(transcriptJobs.id, row.id));
-      console.warn(`[transcriptJobTracker] Job ${row.supadataJobId} failed for video ${row.videoId}`);
-      return null;
-    }
-    return null;
-  } catch (err2) {
-    console.warn(
-      `[transcriptJobTracker] Error checking job ${row.supadataJobId}: ${err2 instanceof Error ? err2.message : String(err2)}`
-    );
-    return null;
-  }
-}
-function runBackgroundPoller() {
-  const POLL_INTERVAL_MS = 3e4;
-  const poll = async () => {
-    try {
-      const pending = await db.select().from(transcriptJobs).where(eq32(transcriptJobs.status, "pending"));
-      if (pending.length === 0) return;
-      console.log(`[transcriptJobTracker] Polling ${pending.length} pending job(s)`);
-      for (const row of pending) {
-        const segments = await checkAndFinishJob(row);
-        if (!segments || segments.length === 0) continue;
-        try {
-          const { storeCachedTranscript: storeCachedTranscript2 } = await Promise.resolve().then(() => (init_transcriptCache(), transcriptCache_exports));
-          storeCachedTranscript2(row.videoId, segments, "supadata");
-        } catch (cacheErr) {
-          console.warn(`[transcriptJobTracker] Failed to update transcript cache: ${cacheErr instanceof Error ? cacheErr.message : String(cacheErr)}`);
-        }
-        try {
-          const { notifyUser: notifyUser2 } = await Promise.resolve().then(() => (init_channels(), channels_exports));
-          await notifyUser2(
-            row.userId,
-            "general",
-            `\u2705 Your transcript for that video is ready! Just ask me to summarize it or answer questions about it \u2014 I've already loaded it.`
-          );
-          console.log(`[transcriptJobTracker] Notified user ${row.userId} \u2014 transcript ready for ${row.videoId}`);
-        } catch (notifyErr) {
-          console.warn(`[transcriptJobTracker] Failed to notify user ${row.userId}: ${notifyErr instanceof Error ? notifyErr.message : String(notifyErr)}`);
-        }
-      }
-    } catch (err2) {
-      console.warn(`[transcriptJobTracker] Poll cycle error: ${err2 instanceof Error ? err2.message : String(err2)}`);
-    }
-  };
-  setInterval(poll, POLL_INTERVAL_MS);
-  console.log("[transcriptJobTracker] Background poller started (30s interval)");
-}
-var init_transcriptJobTracker = __esm({
-  "server/lib/transcriptJobTracker.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-  }
-});
-
-// server/lib/supadataTranscript.ts
-var supadataTranscript_exports = {};
-__export(supadataTranscript_exports, {
-  SupadataJobPendingError: () => SupadataJobPendingError,
-  fetchTranscriptViaSupadata: () => fetchTranscriptViaSupadata,
-  isSupadataAvailable: () => isSupadataAvailable
-});
-function isSupadataAvailable() {
-  return !!process.env.SUPADATA_API_KEY;
-}
-async function fetchTranscriptViaSupadata(videoId, options) {
-  const { userId, signal } = options ?? {};
-  const apiKey = process.env.SUPADATA_API_KEY;
-  if (!apiKey) throw new Error("SUPADATA_API_KEY is not set");
-  const headers = {
-    "x-api-key": apiKey,
-    "Content-Type": "application/json"
-  };
-  const nativeUrl = `${BASE2}/youtube/transcript?videoId=${encodeURIComponent(videoId)}&lang=en&mode=native`;
-  console.log(`[supadataTranscript] Trying native captions for ${videoId}`);
-  let nativeRes;
-  try {
-    nativeRes = await fetch(nativeUrl, { headers });
-  } catch (fetchErr) {
-    throw new Error(
-      `Supadata network error (native): ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`
-    );
-  }
-  if (nativeRes.ok) {
-    const data = await nativeRes.json();
-    const segments = parseSupadataResponse(videoId, data);
-    if (segments.length > 0) {
-      console.log(`[supadataTranscript] Native captions OK for ${videoId} \u2014 ${segments.length} segs`);
-      return segments;
-    }
-    console.log(`[supadataTranscript] Native captions returned empty for ${videoId} \u2014 trying AI generation`);
-  } else if (nativeRes.status === 404 || nativeRes.status === 400) {
-    const body = await nativeRes.text().catch(() => "");
-    console.log(`[supadataTranscript] No native captions for ${videoId} (${nativeRes.status}) \u2014 trying AI generation. Body: ${body.slice(0, 200)}`);
-  } else {
-    const body = await nativeRes.text().catch(() => "");
-    console.warn(`[supadataTranscript] Native captions unexpected ${nativeRes.status} for ${videoId}: ${body.slice(0, 200)}`);
-  }
-  const autoUrl = `${BASE2}/youtube/transcript?videoId=${encodeURIComponent(videoId)}&lang=en&mode=auto`;
-  console.log(`[supadataTranscript] Requesting AI generation (mode=auto) for ${videoId}`);
-  let autoRes;
-  try {
-    autoRes = await fetch(autoUrl, { headers });
-  } catch (fetchErr) {
-    throw new Error(
-      `Supadata network error (auto): ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`
-    );
-  }
-  if (autoRes.status === 202) {
-    const jobData = await autoRes.json();
-    const jobId = jobData.jobId;
-    console.log(`[supadataTranscript] Async job started: ${jobId} for ${videoId}`);
-    if (userId) {
-      const { startSupadataJob: startSupadataJob2 } = await Promise.resolve().then(() => (init_transcriptJobTracker(), transcriptJobTracker_exports));
-      await startSupadataJob2(userId, videoId, jobId);
-      throw new SupadataJobPendingError(jobId);
-    } else {
-      return await pollSupadataJob(apiKey, jobId, videoId, signal);
-    }
-  }
-  if (autoRes.ok) {
-    const data = await autoRes.json();
-    const segments = parseSupadataResponse(videoId, data);
-    if (segments.length > 0) {
-      console.log(`[supadataTranscript] AI generation OK for ${videoId} \u2014 ${segments.length} segs`);
-      return segments;
-    }
-    throw new Error(`Supadata returned empty transcript for ${videoId} (mode=auto)`);
-  }
-  const errBody = await autoRes.text().catch(() => "(could not read body)");
-  throw new Error(`Supadata ${autoRes.status} for ${videoId}: ${errBody}`);
-}
-function parseSupadataResponse(videoId, transcript) {
-  const content = transcript.content;
-  if (typeof content === "string") {
-    if (!content.trim()) return [];
-    return [{ text: content.trim(), offset: 0, duration: 0, lang: transcript.lang ?? "en" }];
-  }
-  if (!Array.isArray(content) || content.length === 0) return [];
-  return content.map((chunk) => ({
-    text: chunk.text,
-    offset: chunk.offset,
-    duration: chunk.duration,
-    lang: chunk.lang ?? transcript.lang ?? "en"
-  }));
-}
-async function pollSupadataJob(apiKey, jobId, videoId, signal) {
-  const headers = {
-    "x-api-key": apiKey,
-    "Content-Type": "application/json"
-  };
-  const statusUrl = `${BASE2}/youtube/transcript/${encodeURIComponent(jobId)}`;
-  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
-  let intervalMs = JOB_POLL_INTERVAL_START_MS;
-  let lastLogAt = Date.now();
-  console.log(`[supadataTranscript] Polling job ${jobId} for ${videoId} (max ${JOB_POLL_TIMEOUT_MS / 1e3}s)`);
-  while (Date.now() < deadline) {
-    if (signal?.aborted) {
-      console.log(`[supadataTranscript] Job ${jobId} polling aborted by user signal`);
-      throw new DOMException("Aborted by user", "AbortError");
-    }
-    await sleep2(intervalMs);
-    if (signal?.aborted) {
-      console.log(`[supadataTranscript] Job ${jobId} polling aborted by user signal`);
-      throw new DOMException("Aborted by user", "AbortError");
-    }
-    const elapsed = Math.round((Date.now() - (deadline - JOB_POLL_TIMEOUT_MS)) / 1e3);
-    if (Date.now() - lastLogAt >= JOB_POLL_LOG_INTERVAL_MS) {
-      console.log(`[supadataTranscript] Still waiting for job ${jobId} \u2014 ${elapsed}s elapsed`);
-      lastLogAt = Date.now();
-    }
-    let res;
-    try {
-      res = await fetch(statusUrl, { headers });
-    } catch (fetchErr) {
-      console.warn(`[supadataTranscript] Poll network error for job ${jobId}: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`);
-      intervalMs = Math.min(intervalMs * 2, JOB_POLL_INTERVAL_MAX_MS);
-      continue;
-    }
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.warn(`[supadataTranscript] Poll error ${res.status} for job ${jobId}: ${body.slice(0, 200)}`);
-      intervalMs = Math.min(intervalMs * 2, JOB_POLL_INTERVAL_MAX_MS);
-      continue;
-    }
-    const job = await res.json();
-    if (job.status === "completed" && job.result) {
-      const segments = parseSupadataResponse(videoId, job.result);
-      const elapsed2 = Math.round((Date.now() - (deadline - JOB_POLL_TIMEOUT_MS)) / 1e3);
-      if (segments.length === 0) {
-        throw new Error(
-          `Supadata job ${jobId} completed for ${videoId} but returned empty content (no speech detected or AI generation produced no output).`
-        );
-      }
-      console.log(`[supadataTranscript] Job ${jobId} completed after ${elapsed2}s \u2014 ${segments.length} segs`);
-      return segments;
-    }
-    if (job.status === "failed") {
-      const errMsg = job.error?.error ?? job.error?.message ?? "unknown error";
-      throw new Error(`Supadata job ${jobId} failed for ${videoId}: ${errMsg}`);
-    }
-    intervalMs = Math.min(intervalMs * 2, JOB_POLL_INTERVAL_MAX_MS);
-  }
-  throw new Error(
-    `Supadata AI generation timed out after ${JOB_POLL_TIMEOUT_MS / 6e4} min for ${videoId}. This video has no native captions and AI generation is slow for long videos. The job (${jobId}) may still be running \u2014 try again in a few minutes.`
-  );
-}
-function sleep2(ms) {
-  return new Promise((resolve8) => setTimeout(resolve8, ms));
-}
-var BASE2, JOB_POLL_TIMEOUT_MS, JOB_POLL_INTERVAL_START_MS, JOB_POLL_INTERVAL_MAX_MS, JOB_POLL_LOG_INTERVAL_MS, SupadataJobPendingError;
-var init_supadataTranscript = __esm({
-  "server/lib/supadataTranscript.ts"() {
-    "use strict";
-    BASE2 = "https://api.supadata.ai/v1";
-    JOB_POLL_TIMEOUT_MS = 6e5;
-    JOB_POLL_INTERVAL_START_MS = 3e3;
-    JOB_POLL_INTERVAL_MAX_MS = 3e4;
-    JOB_POLL_LOG_INTERVAL_MS = 3e4;
-    SupadataJobPendingError = class extends Error {
-      constructor(jobId) {
-        super(`SUPADATA_JOB_PENDING:${jobId}`);
-        this.jobId = jobId;
-        this.name = "SupadataJobPendingError";
-      }
-    };
-  }
-});
-
-// server/lib/transcriptCache.ts
-var transcriptCache_exports = {};
-__export(transcriptCache_exports, {
-  ensureYtdlpUpgraded: () => ensureYtdlpUpgraded,
-  extractVideoId: () => extractVideoId,
-  fetchTranscriptCached: () => fetchTranscriptCached,
-  getAudioTranscriptTelemetry: () => getAudioTranscriptTelemetry,
-  getYtdlpCmd: () => getYtdlpCmd,
-  getYtdlpStatus: () => getYtdlpStatus,
-  invalidateTranscript: () => invalidateTranscript,
-  isPlaylistUrl: () => isPlaylistUrl,
-  parseTimedTextXml: () => parseTimedTextXml,
-  storeCachedTranscript: () => storeCachedTranscript,
-  transcriptCacheSize: () => transcriptCacheSize
-});
-import { exec, spawn as spawn4 } from "child_process";
-import { promisify } from "util";
-import { readdir, readFile as readFile3, rm as rm2, stat as fsStat, writeFile as writeFile2 } from "fs/promises";
-import { mkdtempSync } from "fs";
-import path6 from "path";
-import os3 from "os";
-function spawnYtdlp(cmd, timeoutMs) {
-  return new Promise((resolve8, reject) => {
-    const child = spawn4(cmd, { shell: true, stdio: ["ignore", "pipe", "pipe"] });
-    const startMs = Date.now();
-    const stderrChunks = [];
-    let aborted = false;
-    const abort = (code, fullStderr) => {
-      if (aborted) return;
-      aborted = true;
-      clearTimeout(timer);
-      try {
-        child.kill("SIGKILL");
-      } catch {
-      }
-      const err2 = Object.assign(
-        new Error(`${code}: ${fullStderr}`),
-        { stderr: fullStderr }
-      );
-      reject(err2);
-    };
-    const timer = setTimeout(() => {
-      const fullStderr = stderrChunks.map((b) => b.toString()).join("").trim();
-      abort("YTDLP_TIMEOUT", fullStderr || "yt-dlp timed out");
-    }, timeoutMs);
-    child.stderr.on("data", (chunk) => {
-      stderrChunks.push(chunk);
-      if (aborted) return;
-      const accumulated = stderrChunks.map((b) => b.toString()).join("");
-      const window = accumulated.length > 512 ? accumulated.slice(-512) : accumulated;
-      for (const { pattern, code } of YTDLP_EARLY_ABORT_PATTERNS) {
-        if (pattern.test(window)) {
-          const elapsedMs = Date.now() - startMs;
-          console.warn(
-            `[transcriptCache] yt-dlp early abort (${code}) after ${elapsedMs} ms \u2014 pattern matched in stderr: ${chunk.toString().trim()}`
-          );
-          abort(code, accumulated.trim());
-          return;
-        }
-      }
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      if (aborted) return;
-      const fullStderr = stderrChunks.map((b) => b.toString()).join("").trim();
-      if (code !== 0) {
-        reject(Object.assign(
-          new Error(`yt-dlp exited with code ${code}: ${fullStderr}`),
-          { stderr: fullStderr }
-        ));
-      } else {
-        resolve8();
-      }
-    });
-    child.on("error", (err2) => {
-      clearTimeout(timer);
-      if (!aborted) reject(err2);
-    });
-  });
-}
-async function loadPersistedImpersonateDisabled() {
-  try {
-    const raw = await readFile3(YTDLP_FLAGS_PATH, "utf8");
-    const data = JSON.parse(raw);
-    return data.impersonateDisabled === true;
-  } catch {
-    return false;
-  }
-}
-async function persistImpersonateDisabled() {
-  try {
-    await writeFile2(YTDLP_FLAGS_PATH, JSON.stringify({ impersonateDisabled: true }), "utf8");
-  } catch (e) {
-    console.warn("[transcriptCache] Failed to persist impersonate flag:", e instanceof Error ? e.message : String(e));
-  }
-}
-async function clearPersistedImpersonateDisabled() {
-  try {
-    await rm2(YTDLP_FLAGS_PATH, { force: true });
-  } catch {
-  }
-}
-function parseYtdlpVersionDate(v) {
-  const m = v.match(/^(\d{4}\.\d{2}\.\d{2})/);
-  return m ? m[1] : "";
-}
-function getYtdlpCmd() {
-  return ytdlpCmd;
-}
-function getYtdlpStatus() {
-  return { available: ytdlpAvailable, cmd: ytdlpCmd };
-}
-async function ensureYtdlpUpgraded() {
-  if (ytdlpUpgradePromise) return ytdlpUpgradePromise;
-  ytdlpUpgradePromise = (async () => {
-    const persistedDisabled = await loadPersistedImpersonateDisabled();
-    if (persistedDisabled) {
-      ytdlpSupportsImpersonate = false;
-      console.log("[transcriptCache] Loaded persisted impersonate=false override from disk");
-    }
-    try {
-      let nixParsed = "";
-      let nixVersion = "unknown";
-      try {
-        const { stdout: nixVer } = await execAsync("yt-dlp --version", { timeout: 1e4 });
-        nixVersion = nixVer.trim();
-        nixParsed = parseYtdlpVersionDate(nixVersion);
-      } catch {
-      }
-      await execAsync(
-        "python3 -m pip install --user -U yt-dlp --quiet --disable-pip-version-check --break-system-packages",
-        { timeout: 6e4 }
-      ).catch(() => null);
-      const { stdout: modVer } = await execAsync(
-        "python3 -m yt_dlp --version",
-        { timeout: 1e4 }
-      );
-      const version = modVer.trim();
-      const modParsed = parseYtdlpVersionDate(version);
-      if (modParsed && modParsed > nixParsed) {
-        ytdlpCmd = "python3 -m yt_dlp";
-        console.log(`[transcriptCache] yt-dlp upgraded to ${version} (using python3 -m yt_dlp)`);
-        ytdlpSupportsImpersonate = modParsed >= MIN_IMPERSONATE_VERSION;
-        if (ytdlpSupportsImpersonate) {
-          await clearPersistedImpersonateDisabled();
-        } else {
-          console.warn(
-            `[transcriptCache] yt-dlp too old for --impersonate (v${version}) \u2014 running without browser impersonation`
-          );
-        }
-      } else {
-        const { stdout: base } = await execAsync("python3 -m site --user-base", { timeout: 5e3 });
-        const userBin = `${base.trim()}/bin`;
-        if (!process.env.PATH?.startsWith(userBin)) {
-          process.env.PATH = `${userBin}:${process.env.PATH ?? ""}`;
-        }
-        let activeVersion = nixVersion;
-        let activeParsed = nixParsed;
-        try {
-          const { stdout: postVer } = await execAsync("yt-dlp --version", { timeout: 1e4 });
-          const v = postVer.trim();
-          if (v) {
-            activeVersion = v;
-            activeParsed = parseYtdlpVersionDate(v);
-          }
-        } catch {
-        }
-        console.log(`[transcriptCache] yt-dlp version: ${activeVersion} (using Nix binary)`);
-        ytdlpSupportsImpersonate = !!activeParsed && activeParsed >= MIN_IMPERSONATE_VERSION;
-        if (ytdlpSupportsImpersonate) {
-          await clearPersistedImpersonateDisabled();
-        } else {
-          console.warn(
-            `[transcriptCache] yt-dlp too old for --impersonate (v${activeVersion}) \u2014 running without browser impersonation`
-          );
-        }
-      }
-    } catch (err2) {
-      console.warn(
-        `[transcriptCache] yt-dlp upgrade skipped: ${err2 instanceof Error ? err2.message : String(err2)}`
-      );
-    }
-    try {
-      await execAsync(`${ytdlpCmd} --version`, { timeout: 1e4 });
-      ytdlpAvailable = true;
-    } catch {
-      ytdlpAvailable = false;
-      console.warn(
-        `[transcriptCache] yt-dlp is NOT available (cmd: "${ytdlpCmd}" did not respond to --version). Audio transcription will fail until yt-dlp is installed. Install it via: python3 -m pip install yt-dlp`
-      );
-    }
-  })();
-  return ytdlpUpgradePromise;
-}
-function extractVideoId(input) {
-  const bare = input.trim();
-  if (/^[a-zA-Z0-9_-]{11}$/.test(bare)) return bare;
-  const pat = /(?:youtube\.com\/(?:watch\?(?:[^\s#&]*&)*v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i;
-  const m = pat.exec(bare);
-  return m ? m[1] : null;
-}
-function isPlaylistUrl(input) {
-  try {
-    const url = new URL(input.trim());
-    const list = url.searchParams.get("list");
-    const videoId = url.searchParams.get("v");
-    if (list && !videoId) return true;
-  } catch {
-  }
-  return false;
-}
-function parseSrt(content) {
-  const blocks = content.trim().split(/\n\s*\n/);
-  const segments = [];
-  const tsRe = /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})/;
-  for (const block of blocks) {
-    const lines = block.trim().split("\n");
-    if (lines.length < 2) continue;
-    const tsLineIdx = lines.findIndex((l) => tsRe.test(l));
-    if (tsLineIdx === -1) continue;
-    const m = tsRe.exec(lines[tsLineIdx]);
-    const startMs = (parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3])) * 1e3 + parseInt(m[4]);
-    const endMs = (parseInt(m[5]) * 3600 + parseInt(m[6]) * 60 + parseInt(m[7])) * 1e3 + parseInt(m[8]);
-    const textLines = lines.slice(tsLineIdx + 1).map(
-      (l) => l.replace(/<[^>]+>/g, "").replace(/\{[^}]+\}/g, "").trim()
-    ).filter(Boolean);
-    const text2 = textLines.join(" ");
-    if (!text2) continue;
-    segments.push({ text: text2, offset: startMs, duration: endMs - startMs, lang: "en" });
-  }
-  return segments;
-}
-async function fetchYtDlpTranscript(videoId) {
-  if (isRateLimitCircuitOpen()) {
-    const remainingSec = Math.ceil((ytdlpRateLimitedUntil - Date.now()) / 1e3);
-    console.warn(
-      `[transcriptCache] circuit OPEN \u2014 skipping subtitle download for ${videoId} (${remainingSec} s remaining in cool-down). Returning [].`
-    );
-    return [];
-  }
-  let tmpDir;
-  try {
-    tmpDir = mkdtempSync(path6.join(os3.tmpdir(), `ytdlp-${videoId}-`));
-  } catch {
-    return [];
-  }
-  try {
-    const outputTemplate = path6.join(tmpDir, "%(id)s");
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
-    await execAsync(
-      `yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en.*,en" --convert-subs srt --no-playlist --no-warnings --quiet --no-progress --output "${outputTemplate}" -- "${url}"`,
-      { timeout: 45e3 }
-    );
-    const files = await readdir(tmpDir).catch(() => []);
-    const srtFiles = files.filter((f) => f.endsWith(".srt"));
-    if (srtFiles.length === 0) return [];
-    const best = srtFiles.find((f) => /\.(en|en-US|en-GB)\[.*manual\]\.srt$/.test(f)) ?? srtFiles.find((f) => /\.(en|en-US|en-GB)\.srt$/.test(f)) ?? srtFiles.find((f) => /\.en/.test(f)) ?? srtFiles[0];
-    const content = await readFile3(path6.join(tmpDir, best), "utf-8");
-    const segments = parseSrt(content);
-    if (segments.length > 0) {
-      console.log(
-        `[transcriptCache] yt-dlp OK ${videoId} \u2014 ${segments.length} segs via ${best}`
-      );
-    }
-    return segments;
-  } catch (err2) {
-    const raw = err2 instanceof Error ? err2.message : String(err2);
-    const lower = raw.toLowerCase();
-    if (lower.includes("video unavailable") || lower.includes("private video")) {
-      throw new Error(`LOGIN_REQUIRED: ${raw}`);
-    }
-    if (lower.includes("age-restricted") || lower.includes("sign in to confirm")) {
-      throw new Error(`CONTENT_RESTRICTED: ${raw}`);
-    }
-    if (lower.includes("429") || lower.includes("too many requests")) {
-      openRateLimitCircuit();
-      throw new Error(`TOO_MANY_REQUESTS: ${raw}`);
-    }
-    console.warn(`[transcriptCache] yt-dlp non-terminal failure for ${videoId}: ${raw}`);
-    return [];
-  } finally {
-    rm2(tmpDir, { recursive: true, force: true }).catch(() => {
-    });
-  }
-}
-function evictExpired() {
-  const now = Date.now();
-  for (const [id, entry] of cache3) {
-    if (now - entry.cachedAt >= TTL_MS2) cache3.delete(id);
-  }
-}
-function evictOldest() {
-  let oldestKey;
-  let oldestTime = Infinity;
-  for (const [id, entry] of cache3) {
-    if (entry.cachedAt < oldestTime) {
-      oldestTime = entry.cachedAt;
-      oldestKey = id;
-    }
-  }
-  if (oldestKey) cache3.delete(oldestKey);
-}
-function openRateLimitCircuit() {
-  const wasOpen = Date.now() < ytdlpRateLimitedUntil;
-  ytdlpRateLimitedUntil = Date.now() + YTDLP_RATE_LIMIT_COOLDOWN_MS;
-  if (!wasOpen) {
-    console.warn(
-      `[transcriptCache] circuit OPEN \u2014 YouTube rate-limited (429). Audio downloads paused for ${YTDLP_RATE_LIMIT_COOLDOWN_MS / 1e3} s (until ${new Date(ytdlpRateLimitedUntil).toISOString()}).`
-    );
-  }
-}
-function isRateLimitCircuitOpen() {
-  if (ytdlpRateLimitedUntil === 0) return false;
-  if (Date.now() >= ytdlpRateLimitedUntil) {
-    console.log(`[transcriptCache] circuit RESET \u2014 rate-limit cool-down expired. Resuming audio downloads.`);
-    ytdlpRateLimitedUntil = 0;
-    return false;
-  }
-  return true;
-}
-function recordAudioFailure(videoId, errorClass, noCaptions, message) {
-  audioFailureCounts[errorClass] = (audioFailureCounts[errorClass] ?? 0) + 1;
-  const event = {
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    videoId,
-    errorClass,
-    noCaptions,
-    message: message.slice(0, 500)
-  };
-  audioFailureEvents.push(event);
-  if (audioFailureEvents.length > AUDIO_TELEMETRY_MAX) audioFailureEvents.shift();
-  console.log(
-    `[audio-telemetry] FAILURE videoId=${videoId} class=${errorClass} noCaptions=${noCaptions} msg=${message.slice(0, 200)}`
-  );
-}
-function classifyAudioError(msg) {
-  const lower = msg.toLowerCase();
-  if (lower.includes("whisper") || lower.includes("transcri")) return "whisper-failure";
-  if (lower.includes("ffmpeg")) return "ffmpeg-failure";
-  if (lower.includes("yt-dlp") || lower.includes("download") || lower.includes("audio_download")) {
-    return "yt-dlp-download-failed";
-  }
-  return "non-terminal-error";
-}
-function getAudioTranscriptTelemetry() {
-  const totalFailures = Object.values(audioFailureCounts).reduce((a, b) => a + b, 0);
-  return {
-    attempts: audioAttemptCount,
-    totalFailures,
-    failureRate: audioAttemptCount > 0 ? totalFailures / audioAttemptCount : null,
-    counts: { ...audioFailureCounts },
-    recentFailures: [...audioFailureEvents].reverse().slice(0, 50)
-  };
-}
-async function transcribeBuffer(buf, ext) {
-  const { openai: openai20 } = await Promise.resolve().then(() => (init_client(), client_exports));
-  const { toFile: toFile2 } = await import("openai");
-  const file = await toFile2(buf, `audio.${ext}`, { type: `audio/${ext}` });
-  const resp = await openai20.audio.transcriptions.create({
-    file,
-    model: "whisper-1",
-    language: "en",
-    response_format: "text"
-  });
-  return typeof resp === "string" ? resp : resp.text ?? "";
-}
-async function fetchAudioTranscript(videoId, originalInput) {
-  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
-  if (isRateLimitCircuitOpen()) {
-    const remainingSec = Math.ceil((ytdlpRateLimitedUntil - Date.now()) / 1e3);
-    console.warn(
-      `[transcriptCache] circuit OPEN \u2014 skipping audio download for ${videoId} (${remainingSec} s remaining in cool-down). Throwing RATE_LIMITED.`
-    );
-    throw new Error(`RATE_LIMITED: YouTube is rate-limiting this server. Retry in ${remainingSec} s.`);
-  }
-  await ensureYtdlpUpgraded();
-  if (!ytdlpAvailable) {
-    throw new Error(
-      "YTDLP_UNAVAILABLE: Audio transcription is temporarily unavailable \u2014 the yt-dlp dependency is not installed or could not be found. Please try again later or contact support."
-    );
-  }
-  let tmpDir;
-  try {
-    tmpDir = mkdtempSync(path6.join(os3.tmpdir(), `ytaudio-${videoId}-`));
-  } catch {
-    return [];
-  }
-  try {
-    const outputTemplate = path6.join(tmpDir, "%(id)s.%(ext)s");
-    const isShorts = originalInput ? /\/shorts\//i.test(originalInput) : false;
-    const urlCandidates = isShorts ? [
-      `https://www.youtube.com/shorts/${videoId}`,
-      `https://www.youtube.com/watch?v=${videoId}`
-    ] : [`https://www.youtube.com/watch?v=${videoId}`];
-    let downloadedFile;
-    let lastNonTerminalStderr = "";
-    for (const url of urlCandidates) {
-      try {
-        const buildCmd = (withImpersonate) => {
-          const impersonateFlag = withImpersonate ? "--impersonate chrome " : "";
-          return (
-            // Use worstaudio quality (32 kbps) so 3-hour videos fit in ~43 MB.
-            // --audio-quality 9 = worst (smallest file, fine for speech).
-            // --postprocessor-args forces mono + 16 kHz (matches Whisper's expected rate).
-            // Raised filesize cap to 200M to match AUDIO_MAX_BYTES.
-            `${ytdlpCmd} -f "bestaudio[filesize<200M]/worstaudio" --extract-audio --audio-format mp3 --audio-quality 9 --postprocessor-args "ffmpeg:-ac 1 -ar 16000" --no-playlist --no-warnings --quiet --no-progress --max-filesize 200M --retries 3 ${impersonateFlag}--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" --output "${outputTemplate}" -- "${url}"`
-          );
-        };
-        try {
-          await spawnYtdlp(buildCmd(ytdlpSupportsImpersonate), 12e4);
-        } catch (firstErr) {
-          const firstErrObj = firstErr;
-          const firstStderr = (firstErrObj.stderr ?? "").trim() || (firstErr instanceof Error ? firstErr.message : String(firstErr));
-          const firstLower = firstStderr.toLowerCase();
-          if (ytdlpSupportsImpersonate && (firstLower.includes("unrecognised option") || firstLower.includes("invalid option"))) {
-            console.warn(
-              `[transcriptCache] yt-dlp rejected --impersonate for ${videoId} \u2014 disabling flag and retrying without it. stderr: ${firstStderr}`
-            );
-            ytdlpSupportsImpersonate = false;
-            persistImpersonateDisabled().catch(() => null);
-            await spawnYtdlp(buildCmd(false), 12e4);
-          } else {
-            throw firstErr;
-          }
-        }
-      } catch (dlErr) {
-        const errObj = dlErr;
-        const stderrMsg = (errObj.stderr ?? "").trim() || (dlErr instanceof Error ? dlErr.message : String(dlErr));
-        console.warn(
-          `[transcriptCache] yt-dlp audio download failed for ${videoId} (url=${url}):
-${stderrMsg}`
-        );
-        const errMsg = dlErr instanceof Error ? dlErr.message : String(dlErr);
-        const lower = stderrMsg.toLowerCase();
-        if (errMsg.startsWith("LOGIN_REQUIRED") || lower.includes("private video") || lower.includes("video unavailable")) {
-          throw new Error(`LOGIN_REQUIRED: ${stderrMsg}`);
-        }
-        if (errMsg.startsWith("CONTENT_RESTRICTED") || lower.includes("age-restricted") || lower.includes("sign in to confirm") || lower.includes("http error 403") || lower.includes(": 403")) {
-          throw new Error(`CONTENT_RESTRICTED: ${stderrMsg}`);
-        }
-        if (errMsg.startsWith("TOO_MANY_REQUESTS") || lower.includes("429") || lower.includes("too many requests") || lower.includes("http error 429")) {
-          openRateLimitCircuit();
-          throw new Error(`TOO_MANY_REQUESTS: ${stderrMsg}`);
-        }
-        lastNonTerminalStderr = stderrMsg;
-        continue;
-      }
-      const filesAfter = await readdir(tmpDir).catch(() => []);
-      const mp3Candidate = filesAfter.find((f) => f.endsWith(".mp3")) ?? filesAfter.find((f) => f.endsWith(".m4a"));
-      if (mp3Candidate) {
-        downloadedFile = mp3Candidate;
-        break;
-      }
-    }
-    if (!downloadedFile) {
-      if (lastNonTerminalStderr) {
-        throw new Error(`AUDIO_DOWNLOAD_FAILED: ${lastNonTerminalStderr}`);
-      }
-      return [];
-    }
-    const mp3File = downloadedFile;
-    const mp3Path = path6.join(tmpDir, mp3File);
-    const mp3Stat = await fsStat(mp3Path);
-    if (mp3Stat.size > AUDIO_MAX_BYTES) {
-      console.warn(
-        `[transcriptCache] audio: ${videoId} exceeds size limit (${mp3Stat.size} bytes) \u2014 skipping`
-      );
-      return [];
-    }
-    const wavPath = path6.join(tmpDir, `${videoId}.wav`);
-    await execAsync(
-      `ffmpeg -i "${mp3Path}" -ar 16000 -ac 1 -acodec pcm_s16le -y "${wavPath}"`,
-      { timeout: 12e4 }
-    );
-    const wavStat = await fsStat(wavPath);
-    let fullText = "";
-    if (wavStat.size <= WHISPER_MAX_BYTES) {
-      const buf = await readFile3(wavPath);
-      fullText = await transcribeBuffer(buf, "wav");
-    } else {
-      const { stdout } = await execAsync(
-        `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${wavPath}"`,
-        { timeout: 15e3 }
-      );
-      const totalDuration = parseFloat(stdout.trim()) || 0;
-      if (!totalDuration) {
-        const buf = await readFile3(wavPath);
-        fullText = await transcribeBuffer(buf, "wav");
-      } else {
-        const chunks = [];
-        let offset = 0;
-        let chunkNum = 0;
-        while (offset < totalDuration) {
-          const chunkPath = path6.join(tmpDir, `chunk-${chunkNum}.wav`);
-          await execAsync(
-            `ffmpeg -i "${wavPath}" -ss ${offset} -t ${AUDIO_CHUNK_SECS} -ar 16000 -ac 1 -acodec pcm_s16le -y "${chunkPath}"`,
-            { timeout: 6e4 }
-          );
-          const buf = await readFile3(chunkPath);
-          const text2 = await transcribeBuffer(buf, "wav").catch(() => "");
-          if (text2.trim()) chunks.push(text2.trim());
-          offset += AUDIO_CHUNK_SECS;
-          chunkNum++;
-        }
-        fullText = chunks.join(" ");
-      }
-    }
-    if (!fullText.trim()) return [];
-    console.log(
-      `[transcriptCache] audio transcription OK ${videoId} \u2014 ${fullText.length} chars`
-    );
-    return [
-      {
-        text: `[AI-generated transcript \u2014 no official captions available]
-
-${fullText.trim()}`,
-        offset: 0,
-        duration: 0,
-        lang: "en"
-      }
-    ];
-  } catch (err2) {
-    const raw = err2 instanceof Error ? err2.message : String(err2);
-    if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(raw)) throw err2;
-    const lower = raw.toLowerCase();
-    if (lower.includes("private video") || lower.includes("video unavailable")) {
-      throw new Error(`LOGIN_REQUIRED: ${raw}`);
-    }
-    if (lower.includes("age-restricted") || lower.includes("sign in to confirm")) {
-      throw new Error(`CONTENT_RESTRICTED: ${raw}`);
-    }
-    if (lower.includes("429") || lower.includes("too many requests")) {
-      throw new Error(`TOO_MANY_REQUESTS: ${raw}`);
-    }
-    console.warn(`[transcriptCache] audio transcription non-terminal failure for ${videoId}: ${raw}`);
-    return [];
-  } finally {
-    rm2(tmpDir, { recursive: true, force: true }).catch(() => {
-    });
-  }
-}
-function safeStr(v) {
-  return typeof v === "string" ? v : void 0;
-}
-function parseTimedTextXml(xml) {
-  const results = [];
-  const textTagRx = /<text\s+([^>]*)>([\s\S]*?)<\/text>/g;
-  const attrRx = /(\w+)="([^"]*)"/g;
-  let match;
-  while ((match = textTagRx.exec(xml)) !== null) {
-    const attrs = {};
-    let attrMatch;
-    while ((attrMatch = attrRx.exec(match[1])) !== null) {
-      attrs[attrMatch[1]] = attrMatch[2];
-    }
-    attrRx.lastIndex = 0;
-    const rawText = match[2].replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/<[^>]+>/g, "").trim();
-    if (!rawText) continue;
-    results.push({
-      start: attrs.start ?? "0",
-      dur: attrs.dur ?? "0",
-      text: rawText
-    });
-  }
-  return results;
-}
-function rankCaptionTracks(tracks) {
-  return [...tracks].sort((a, b) => {
-    const aEn = a.languageCode.startsWith("en");
-    const bEn = b.languageCode.startsWith("en");
-    const aAsr = a.kind === "asr";
-    const bAsr = b.kind === "asr";
-    if (aEn && !aAsr && (!bEn || bAsr)) return -1;
-    if (bEn && !bAsr && (!aEn || aAsr)) return 1;
-    if (aEn && !bEn) return -1;
-    if (bEn && !aEn) return 1;
-    return 0;
-  });
-}
-async function checkInnerTubePlayerData(videoId) {
-  for (const client of INNERTUBE_CLIENTS) {
-    try {
-      const playerRes = await fetch(
-        `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`,
-        {
-          method: "POST",
-          headers: client.headers,
-          body: JSON.stringify({
-            context: client.context,
-            videoId,
-            playbackContext: { contentPlaybackContext: { signatureTimestamp: 0 } }
-          })
-        }
-      );
-      if (!playerRes.ok) {
-        if (playerRes.status === 429) {
-          return {
-            status: "terminal",
-            error: new Error("TOO_MANY_REQUESTS: YouTube is rate-limiting requests. Please try again shortly.")
-          };
-        }
-        console.warn(`[transcriptCache] metadata check ${client.name} HTTP ${playerRes.status} for ${videoId}`);
-        continue;
-      }
-      const player = await playerRes.json();
-      const playStatus = safeStr(player.playabilityStatus?.status);
-      if (playStatus && INNERTUBE_TERMINAL_STATUSES.has(playStatus)) {
-        if (playStatus === "LOGIN_REQUIRED") {
-          return {
-            status: "terminal",
-            error: new Error("LOGIN_REQUIRED: This video requires a signed-in YouTube account to access.")
-          };
-        }
-        if (playStatus === "AGE_CHECK_REQUIRED" || playStatus === "AGE_VERIFICATION_REQUIRED") {
-          return {
-            status: "terminal",
-            error: new Error("CONTENT_RESTRICTED: This video is age-restricted and cannot be accessed without sign-in.")
-          };
-        }
-        const reason = safeStr(player.playabilityStatus?.reason) ?? playStatus;
-        return {
-          status: "terminal",
-          error: new Error(`CONTENT_RESTRICTED: YouTube reports this video is restricted \u2014 ${reason}`)
-        };
-      }
-      const tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
-      if (tracks.length === 0) {
-        console.log(`[transcriptCache] metadata/${client.name}: no caption tracks for ${videoId}`);
-        return { status: "no-captions" };
-      }
-      console.log(
-        `[transcriptCache] metadata/${client.name}: ${tracks.length} caption track(s) for ${videoId}`
-      );
-      return { status: "has-captions", tracks, clientName: client.name };
-    } catch (err2) {
-      const msg = err2 instanceof Error ? err2.message : String(err2);
-      console.warn(`[transcriptCache] metadata check ${client.name} failed for ${videoId}: ${msg}`);
-    }
-  }
-  return { status: "blocked" };
-}
-async function fetchCaptionsFromTracks(tracks, videoId, userAgent) {
-  const ranked = rankCaptionTracks(tracks);
-  const best = ranked[0];
-  if (!best?.baseUrl) return [];
-  const captionUrl = new URL(best.baseUrl);
-  captionUrl.searchParams.set("fmt", "srv3");
-  captionUrl.searchParams.set("tlang", "en");
-  const res = await fetch(captionUrl.toString(), {
-    headers: {
-      "User-Agent": userAgent ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    }
-  });
-  if (!res.ok) {
-    console.warn(
-      `[transcriptCache] fetchCaptionsFromTracks: HTTP ${res.status} for ${videoId} (${best.languageCode})`
-    );
-    return [];
-  }
-  const xml = await res.text();
-  const elements = parseTimedTextXml(xml);
-  if (elements.length === 0) return [];
-  console.log(
-    `[transcriptCache] fetchCaptionsFromTracks OK ${videoId} lang=${best.languageCode} \u2014 ${elements.length} segs`
-  );
-  return elements.map((el) => ({
-    text: el.text,
-    offset: parseFloat(el.start) * 1e3,
-    duration: parseFloat(el.dur) * 1e3,
-    lang: best.languageCode
-  }));
-}
-async function fetchTimedTextTranscript(videoId) {
-  const langs = ["en", "en-US", "en-GB", "a.en"];
-  for (const lang of langs) {
-    try {
-      const url = `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${lang}&fmt=srv3`;
-      const res = await fetch(url, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-          "Accept-Language": "en-US,en;q=0.9"
-        }
-      });
-      if (!res.ok) continue;
-      const xml = await res.text();
-      if (!xml.trim().startsWith("<")) continue;
-      const elements = parseTimedTextXml(xml);
-      if (elements.length === 0) continue;
-      console.log(`[transcriptCache] timedtext OK lang=${lang} ${videoId} \u2014 ${elements.length} segs`);
-      return elements.map((el) => ({
-        text: el.text,
-        offset: parseFloat(el.start) * 1e3,
-        duration: parseFloat(el.dur) * 1e3,
-        lang
-      }));
-    } catch {
-    }
-  }
-  return [];
-}
-async function fetchTranscriptCached(input, options = {}) {
-  const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart, userId, signal } = options;
-  const videoId = extractVideoId(input);
-  if (videoId && !bypassCache && !audioOnly) {
-    evictExpired();
-    const hit = cache3.get(videoId);
-    if (hit) {
-      const GEMINI_LABEL = "[AI-generated transcript via Gemini]";
-      if (hit.segments.length === 1 && hit.segments[0].text.startsWith(GEMINI_LABEL)) {
-        const body = hit.segments[0].text.slice(GEMINI_LABEL.length).trimStart();
-        _isTranscriptRefusal ??= (await Promise.resolve().then(() => (init_geminiTranscript(), geminiTranscript_exports))).isTranscriptRefusal;
-        if (_isTranscriptRefusal(body)) {
-          console.warn(
-            `[transcriptCache] EVICT ${videoId} \u2014 cached entry contains a Gemini refusal (stale). Fetching live.`
-          );
-          cache3.delete(videoId);
-        } else {
-          const age = Math.round((Date.now() - hit.cachedAt) / 1e3);
-          console.log(`[transcriptCache] HIT  ${videoId} \u2014 ${hit.segments.length} segs, cached ${age}s ago`);
-          return { segments: hit.segments, noCaptionsDetected: false, source: hit.source ?? "cache" };
-        }
-      } else {
-        const age = Math.round((Date.now() - hit.cachedAt) / 1e3);
-        console.log(`[transcriptCache] HIT  ${videoId} \u2014 ${hit.segments.length} segs, cached ${age}s ago`);
-        return { segments: hit.segments, noCaptionsDetected: false, source: hit.source ?? "cache" };
-      }
-    }
-  }
-  if (videoId && bypassCache) {
-    console.log(`[transcriptCache] BYPASS ${videoId} \u2014 fetching live and overwriting cache`);
-  }
-  onFetchStart?.();
-  const resolvedId = videoId ?? input.trim();
-  let segments = [];
-  let source = "unknown";
-  const phaseErrors = {};
-  let supadataTimedOut = false;
-  if (videoId && !captionsOnly && !audioOnly) {
-    try {
-      const { fetchTranscriptViaSupadata: fetchTranscriptViaSupadata2, isSupadataAvailable: isSupadataAvailable2, SupadataJobPendingError: SupadataJobPendingError2 } = await Promise.resolve().then(() => (init_supadataTranscript(), supadataTranscript_exports));
-      if (isSupadataAvailable2()) {
-        if (userId) {
-          const { getCompletedTranscript: getCompletedTranscript2 } = await Promise.resolve().then(() => (init_transcriptJobTracker(), transcriptJobTracker_exports));
-          const cached = await getCompletedTranscript2(userId, videoId);
-          if (cached && cached.length > 0) {
-            segments = cached;
-            source = "supadata";
-            console.log(`[transcriptCache] Phase 0 async job result loaded for ${resolvedId} \u2014 ${cached.length} segs`);
-            evictExpired();
-            if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
-            cache3.set(videoId, { segments, cachedAt: Date.now(), source });
-            return { segments, noCaptionsDetected: false, source };
-          }
-        }
-        const refreshTag = bypassCache ? " (bypass/refresh)" : "";
-        console.log(`[transcriptCache] Phase 0: trying Supadata for ${resolvedId}${refreshTag}`);
-        const supadataSegs = await fetchTranscriptViaSupadata2(resolvedId, { userId, signal });
-        if (supadataSegs.length > 0) {
-          segments = supadataSegs;
-          source = "supadata";
-          const totalChars = supadataSegs.reduce((n, s) => n + s.text.length, 0);
-          console.log(
-            `[transcriptCache] Phase 0 Supadata OK ${resolvedId} \u2014 ${supadataSegs.length} segs, ${totalChars} chars`
-          );
-          evictExpired();
-          if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
-          cache3.set(videoId, { segments, cachedAt: Date.now(), source });
-          const reason = bypassCache ? "BYPASS\u2192stored" : "MISS\u2192stored";
-          console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache3.size})`);
-          return { segments, noCaptionsDetected: false, source };
-        }
-      } else {
-        console.log(
-          "[transcriptCache] Phase 0 skipped \u2014 SUPADATA_API_KEY not set (get a free key at https://dash.supadata.ai)"
-        );
-      }
-    } catch (supadataErr) {
-      const { SupadataJobPendingError: SupadataJobPendingError2 } = await Promise.resolve().then(() => (init_supadataTranscript(), supadataTranscript_exports));
-      if (supadataErr instanceof SupadataJobPendingError2) {
-        const jobId = supadataErr.jobId;
-        console.log(
-          `[transcriptCache] Phase 0 async job pending for ${resolvedId} \u2014 jobId=${jobId}. 3-hour video: Supadata AI generation started, transcript will arrive via notification.`
-        );
-        return {
-          segments: [],
-          noCaptionsDetected: true,
-          source: "supadata",
-          asyncJobPending: true,
-          jobId
-        };
-      }
-      const msg = supadataErr instanceof Error ? supadataErr.message : String(supadataErr);
-      phaseErrors.supadata = msg;
-      if (msg.toLowerCase().includes("timed out after")) {
-        supadataTimedOut = true;
-      }
-      console.warn(`[transcriptCache] Phase 0 (Supadata) FAILED for ${resolvedId}:`, {
-        error: msg,
-        hint: "Check SUPADATA_API_KEY is valid. For no-caption videos, AI generation takes 5-10 min."
-      });
-    }
-  }
-  if (videoId && segments.length === 0 && !captionsOnly && !audioOnly) {
-    try {
-      const { fetchTranscriptViaGemini: fetchTranscriptViaGemini2, isGeminiTranscriptAvailable: isGeminiTranscriptAvailable2 } = await Promise.resolve().then(() => (init_geminiTranscript(), geminiTranscript_exports));
-      if (isGeminiTranscriptAvailable2()) {
-        const refreshTag = bypassCache ? " (bypass/refresh)" : "";
-        console.log(`[transcriptCache] Phase 0.5: trying Gemini (fallback) for ${resolvedId}${refreshTag}`);
-        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-        const geminiText = await fetchTranscriptViaGemini2(videoUrl);
-        if (geminiText) {
-          segments = [{ text: `[AI-generated transcript via Gemini]
-
-${geminiText}`, offset: 0, duration: 0, lang: "en" }];
-          source = "gemini";
-          console.log(`[transcriptCache] Phase 0.5 Gemini OK ${resolvedId} \u2014 ${geminiText.length} chars`);
-          evictExpired();
-          if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
-          cache3.set(videoId, { segments, cachedAt: Date.now(), source });
-          const reason = bypassCache ? "BYPASS\u2192stored" : "MISS\u2192stored";
-          console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache3.size})`);
-          return { segments, noCaptionsDetected: false, source };
-        }
-      } else {
-        console.warn("[transcriptCache] Phase 0.5 skipped \u2014 no Gemini key configured (set GOOGLE_GEMINI_API_KEY for direct access, or AI_INTEGRATIONS_GEMINI_API_KEY for proxy)");
-      }
-    } catch (geminiErr) {
-      const geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
-      const geminiCause = geminiErr instanceof Error && geminiErr.cause ? ` (cause: ${geminiErr.cause instanceof Error ? geminiErr.cause.message : String(geminiErr.cause)})` : "";
-      const fullMsg = geminiErrMsg + geminiCause;
-      phaseErrors.gemini = fullMsg;
-      console.warn(`[transcriptCache] Phase 0.5 (Gemini) FAILED for ${resolvedId}:`, {
-        error: fullMsg,
-        stack: geminiErr instanceof Error ? geminiErr.stack?.slice(0, 400) : void 0,
-        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key (not the Replit proxy key)"
-      });
-    }
-  }
-  if (supadataTimedOut && segments.length === 0) {
-    console.warn(`[transcriptCache] Supadata timed out and Gemini fallback produced nothing for ${resolvedId} \u2014 skipping Phases 1-4 (all IP-blocked on datacenter)`);
-    return { segments: [], noCaptionsDetected: true, source: "supadata", phaseErrors, supadataTimedOut: true };
-  }
-  if (audioOnly) {
-    console.log(`[transcriptCache] audioOnly=true for ${resolvedId} \u2014 going straight to audio transcription`);
-    audioAttemptCount++;
-    try {
-      const audioSegs = await fetchAudioTranscript(resolvedId, input);
-      if (audioSegs.length > 0) {
-        segments = audioSegs;
-        source = "audio-transcription";
-        console.log(
-          `[transcriptCache] yt-dlp audio download OK ${resolvedId} \u2014 ${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
-        );
-      } else {
-        const hasOpenAIKey = !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-        const emptyReason = hasOpenAIKey ? "fetchAudioTranscript returned 0 segments (Whisper empty output, file too large, or audio download produced no file)" : "OpenAI API key not configured \u2014 audio transcription skipped";
-        recordAudioFailure(resolvedId, "empty-output", true, emptyReason);
-      }
-    } catch (audioErr) {
-      const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
-        console.warn(`[transcriptCache] audio transcription skipped: yt-dlp not available`);
-        recordAudioFailure(resolvedId, "yt-dlp-not-installed", true, msg);
-        throw audioErr;
-      }
-      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS|RATE_LIMITED):/.test(msg)) {
-        recordAudioFailure(resolvedId, "yt-dlp-blocked", true, msg);
-        throw audioErr;
-      }
-      if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
-        const detail = msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim();
-        console.warn(`[transcriptCache] audio-download-failed for ${resolvedId}: ${detail}`);
-        recordAudioFailure(resolvedId, "yt-dlp-download-failed", true, detail);
-        throw audioErr;
-      }
-      console.warn(`[transcriptCache] audio transcription failed for ${resolvedId}: ${msg}`);
-      recordAudioFailure(resolvedId, classifyAudioError(msg), true, msg);
-    }
-    if (videoId && segments.length > 0) {
-      evictExpired();
-      if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
-      cache3.set(videoId, { segments, cachedAt: Date.now(), source });
-      const reason = bypassCache ? "BYPASS\u2192stored" : "MISS\u2192stored";
-      console.log(
-        `[transcriptCache] ${reason} ${videoId} via ${source} \u2014 ${segments.length} segs (cache size: ${cache3.size})`
-      );
-    }
-    return { segments, noCaptionsDetected: false, source };
-  }
-  const meta = await checkInnerTubePlayerData(resolvedId);
-  if (meta.status === "terminal") {
-    console.log(`[transcriptCache] terminal error from metadata check for ${resolvedId}: ${meta.error.message}`);
-    throw meta.error;
-  }
-  const hasCaptions = meta.status === "has-captions";
-  const noCaptions = meta.status === "no-captions";
-  const isBlocked = meta.status === "blocked";
-  if (noCaptions) {
-    console.log(
-      `[transcriptCache] no captions confirmed for ${resolvedId} \u2014 skipping subtitle strategies`
-    );
-  } else {
-    if (hasCaptions) {
-      try {
-        const clientHeaders = INNERTUBE_CLIENTS.find((c) => c.name === meta.clientName)?.headers;
-        const userAgent = clientHeaders?.["User-Agent"];
-        segments = await fetchCaptionsFromTracks(meta.tracks, resolvedId, userAgent);
-        if (segments.length > 0) {
-          source = `innertube/${meta.clientName}`;
-        } else {
-          console.log(
-            `[transcriptCache] InnerTube caption XML returned 0 segs for ${resolvedId} \u2014 trying yt-dlp`
-          );
-        }
-      } catch (err2) {
-        const msg = err2 instanceof Error ? err2.message : String(err2);
-        if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw err2;
-        console.warn(`[transcriptCache] InnerTube caption download failed for ${resolvedId}: ${msg}`);
-      }
-    } else {
-      console.log(
-        `[transcriptCache] InnerTube blocked for ${resolvedId} \u2014 trying yt-dlp subtitles`
-      );
-    }
-    if (segments.length === 0) {
-      try {
-        segments = await fetchYtDlpTranscript(resolvedId);
-        if (segments.length > 0) {
-          source = "yt-dlp";
-        } else {
-          console.log(`[transcriptCache] yt-dlp 0 segs for ${resolvedId} \u2014 trying timedtext`);
-        }
-      } catch (err2) {
-        const msg = err2 instanceof Error ? err2.message : String(err2);
-        if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw err2;
-        console.warn(`[transcriptCache] yt-dlp failed for ${resolvedId}: ${msg}`);
-      }
-    }
-    if (segments.length === 0) {
-      try {
-        segments = await fetchTimedTextTranscript(resolvedId);
-        if (segments.length > 0) {
-          source = "timedtext";
-          console.log(`[transcriptCache] timedtext OK ${resolvedId} \u2014 ${segments.length} segs`);
-        } else {
-          console.log(`[transcriptCache] timedtext 0 segs for ${resolvedId} \u2014 trying youtube-transcript`);
-        }
-      } catch (err2) {
-        console.warn(
-          `[transcriptCache] timedtext failed for ${resolvedId}: ${err2 instanceof Error ? err2.message : String(err2)}`
-        );
-      }
-    }
-    if (segments.length === 0) {
-      try {
-        const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
-        segments = await YoutubeTranscript.fetchTranscript(input, config);
-        if (segments.length > 0) {
-          source = "youtube-transcript";
-          console.log(`[transcriptCache] youtube-transcript OK ${resolvedId} \u2014 ${segments.length} segs`);
-        }
-      } catch (err2) {
-        const msg = err2 instanceof Error ? err2.message : String(err2);
-        console.warn(`[transcriptCache] youtube-transcript failed for ${resolvedId}: ${msg}`);
-      }
-    }
-  }
-  if (segments.length === 0 && !captionsOnly) {
-    const reason = noCaptions ? "no captions \u2014 going straight to audio transcription" : "all subtitle strategies failed \u2014 trying audio transcription";
-    console.log(`[transcriptCache] ${reason} for ${resolvedId}`);
-    audioAttemptCount++;
-    try {
-      const audioSegs = await fetchAudioTranscript(resolvedId, input);
-      if (audioSegs.length > 0) {
-        segments = audioSegs;
-        source = "audio-transcription";
-        console.log(
-          `[transcriptCache] yt-dlp audio download OK ${resolvedId} \u2014 ${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
-        );
-      } else {
-        const hasOpenAIKey = !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-        const emptyReason = hasOpenAIKey ? "fetchAudioTranscript returned 0 segments (Whisper empty output, file too large, or audio download produced no file)" : "OpenAI API key not configured \u2014 audio transcription skipped";
-        recordAudioFailure(resolvedId, "empty-output", noCaptions, emptyReason);
-      }
-    } catch (audioErr) {
-      const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
-        console.warn(`[transcriptCache] audio transcription skipped: yt-dlp not available`);
-        recordAudioFailure(resolvedId, "yt-dlp-not-installed", noCaptions, msg);
-        throw audioErr;
-      }
-      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS|RATE_LIMITED):/.test(msg)) {
-        recordAudioFailure(resolvedId, "yt-dlp-blocked", noCaptions, msg);
-        throw audioErr;
-      }
-      if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
-        const detail = msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim();
-        console.warn(
-          `[transcriptCache] audio-download-failed for ${resolvedId}: ${detail}`
-        );
-        recordAudioFailure(resolvedId, "yt-dlp-download-failed", noCaptions, detail);
-        throw audioErr;
-      }
-      console.warn(`[transcriptCache] audio transcription non-terminal failure for ${resolvedId}: ${msg}`);
-      recordAudioFailure(resolvedId, classifyAudioError(msg), noCaptions, msg);
-    }
-  }
-  if (videoId && segments && segments.length > 0) {
-    evictExpired();
-    if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
-    cache3.set(videoId, { segments, cachedAt: Date.now(), source });
-    const reason = bypassCache ? "BYPASS\u2192stored" : "MISS\u2192stored";
-    console.log(
-      `[transcriptCache] ${reason} ${videoId} via ${source} \u2014 ${segments.length} segs (cache size: ${cache3.size})`
-    );
-  }
-  const hasPhaseErrors = Object.keys(phaseErrors).length > 0;
-  return {
-    segments,
-    noCaptionsDetected: noCaptions,
-    source,
-    ...hasPhaseErrors ? { phaseErrors } : {},
-    ...supadataTimedOut ? { supadataTimedOut: true } : {}
-  };
-}
-function invalidateTranscript(input) {
-  const videoId = extractVideoId(input);
-  if (!videoId) return false;
-  const deleted = cache3.delete(videoId);
-  if (deleted) console.log(`[transcriptCache] INVALIDATED ${videoId}`);
-  return deleted;
-}
-function transcriptCacheSize() {
-  evictExpired();
-  return cache3.size;
-}
-function storeCachedTranscript(videoId, segments, source = "supadata") {
-  evictExpired();
-  if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
-  cache3.set(videoId, { segments, cachedAt: Date.now(), source });
-  console.log(`[transcriptCache] STORED async result for ${videoId} via ${source} \u2014 ${segments.length} segs`);
-}
-var execAsync, YTDLP_EARLY_ABORT_PATTERNS, ytdlpUpgradePromise, ytdlpCmd, ytdlpSupportsImpersonate, ytdlpAvailable, YTDLP_FLAGS_PATH, MIN_IMPERSONATE_VERSION, TTL_MS2, MAX_ENTRIES, cache3, _isTranscriptRefusal, YTDLP_RATE_LIMIT_COOLDOWN_MS, ytdlpRateLimitedUntil, AUDIO_MAX_BYTES, WHISPER_MAX_BYTES, AUDIO_CHUNK_SECS, AUDIO_TELEMETRY_MAX, audioFailureEvents, audioFailureCounts, audioAttemptCount, INNERTUBE_KEY, INNERTUBE_CLIENTS, INNERTUBE_TERMINAL_STATUSES;
-var init_transcriptCache = __esm({
-  "server/lib/transcriptCache.ts"() {
-    "use strict";
-    execAsync = promisify(exec);
-    YTDLP_EARLY_ABORT_PATTERNS = [
-      { pattern: /sign in to confirm|sign in to watch|not a bot/i, code: "CONTENT_RESTRICTED" },
-      { pattern: /age.?restricted|age.?gated/i, code: "CONTENT_RESTRICTED" },
-      { pattern: /http error 403|: 403\b/i, code: "CONTENT_RESTRICTED" },
-      { pattern: /too many requests|http error 429|: 429\b/i, code: "TOO_MANY_REQUESTS" },
-      { pattern: /private video|video unavailable|this video is unavailable/i, code: "LOGIN_REQUIRED" }
-    ];
-    ytdlpUpgradePromise = null;
-    ytdlpCmd = "yt-dlp";
-    ytdlpSupportsImpersonate = false;
-    ytdlpAvailable = false;
-    YTDLP_FLAGS_PATH = path6.join(process.cwd(), ".ytdlp-flags.json");
-    MIN_IMPERSONATE_VERSION = "2023.11.16";
-    TTL_MS2 = 24 * 60 * 60 * 1e3;
-    MAX_ENTRIES = 500;
-    cache3 = /* @__PURE__ */ new Map();
-    YTDLP_RATE_LIMIT_COOLDOWN_MS = parseInt(process.env.YTDLP_RATE_LIMIT_COOLDOWN_MS ?? "", 10) || 9e4;
-    ytdlpRateLimitedUntil = 0;
-    AUDIO_MAX_BYTES = 200 * 1024 * 1024;
-    WHISPER_MAX_BYTES = 23 * 1024 * 1024;
-    AUDIO_CHUNK_SECS = 600;
-    AUDIO_TELEMETRY_MAX = 200;
-    audioFailureEvents = [];
-    audioFailureCounts = {
-      "empty-output": 0,
-      "yt-dlp-not-installed": 0,
-      "yt-dlp-blocked": 0,
-      "yt-dlp-download-failed": 0,
-      "whisper-failure": 0,
-      "ffmpeg-failure": 0,
-      "non-terminal-error": 0
-    };
-    audioAttemptCount = 0;
-    INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
-    INNERTUBE_CLIENTS = [
-      {
-        name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-        headers: {
-          "Content-Type": "application/json",
-          "X-YouTube-Client-Name": "85",
-          "X-YouTube-Client-Version": "2.0",
-          "Accept-Language": "en-US,en;q=0.9"
-        },
-        context: {
-          client: {
-            clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-            clientVersion: "2.0",
-            hl: "en",
-            gl: "US"
-          }
-        }
-      },
-      {
-        name: "IOS",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)",
-          "X-YouTube-Client-Name": "5",
-          "X-YouTube-Client-Version": "19.29.1",
-          "Accept-Language": "en-US,en;q=0.9"
-        },
-        context: {
-          client: {
-            clientName: "IOS",
-            clientVersion: "19.29.1",
-            deviceMake: "Apple",
-            deviceModel: "iPhone16,2",
-            osName: "iPhone",
-            osVersion: "17.5.1.21F90",
-            hl: "en",
-            gl: "US"
-          }
-        }
-      },
-      {
-        name: "ANDROID",
-        headers: {
-          "Content-Type": "application/json",
-          "User-Agent": "com.google.android.youtube/19.29.34 (Linux; U; Android 11) gzip",
-          "X-YouTube-Client-Name": "3",
-          "X-YouTube-Client-Version": "19.29.34",
-          "Accept-Language": "en-US,en;q=0.9"
-        },
-        context: {
-          client: {
-            clientName: "ANDROID",
-            clientVersion: "19.29.34",
-            androidSdkVersion: 30,
-            hl: "en",
-            gl: "US"
-          }
-        }
-      }
-    ];
-    INNERTUBE_TERMINAL_STATUSES = /* @__PURE__ */ new Set([
-      "LOGIN_REQUIRED",
-      "CONTENT_RESTRICTED",
-      "AGE_CHECK_REQUIRED",
-      "AGE_VERIFICATION_REQUIRED",
-      "UNPLAYABLE"
-    ]);
-  }
-});
-
-// server/lib/transcriptSourceLabel.ts
-function humanReadableSource(src) {
-  if (!src || src === "unknown" || src === "cache") return null;
-  if (src === "gemini") return null;
-  if (src === "supadata") return "Supadata (verbatim captions)";
-  if (src.startsWith("innertube/") || src === "yt-dlp" || src === "timedtext" || src === "youtube-transcript")
-    return "YouTube captions (verbatim)";
-  if (src === "audio-transcription" || src.startsWith("audio-transcription"))
-    return "Whisper (AI audio transcription)";
-  if (src === "browser") return "browser";
-  if (src === "local-worker") return "local worker";
-  return src;
-}
-var init_transcriptSourceLabel = __esm({
-  "server/lib/transcriptSourceLabel.ts"() {
-    "use strict";
-  }
-});
-
-// server/lib/videoFrames.ts
-import { exec as exec2 } from "child_process";
-import { promisify as promisify2 } from "util";
-import { readdir as readdir2, readFile as readFile4, rm as rm3 } from "fs/promises";
-import { mkdtempSync as mkdtempSync2 } from "fs";
-import path7 from "path";
-import os4 from "os";
-function evictExpiredVisual() {
-  const now = Date.now();
-  for (const [id, entry] of visualSummaryCache) {
-    if (now - entry.cachedAt >= VISUAL_TTL_MS) visualSummaryCache.delete(id);
-  }
-}
-function evictOldestVisual() {
-  let oldestKey;
-  let oldestTime = Infinity;
-  for (const [id, entry] of visualSummaryCache) {
-    if (entry.cachedAt < oldestTime) {
-      oldestTime = entry.cachedAt;
-      oldestKey = id;
-    }
-  }
-  if (oldestKey) visualSummaryCache.delete(oldestKey);
-}
-function formatSec(totalSecs) {
-  const h = Math.floor(totalSecs / 3600);
-  const m = Math.floor(totalSecs % 3600 / 60);
-  const s = Math.floor(totalSecs % 60);
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-async function getVideoDuration(videoPath) {
-  try {
-    const { stdout } = await execAsync2(
-      `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${videoPath}"`,
-      { timeout: 15e3 }
-    );
-    return parseFloat(stdout.trim()) || 0;
-  } catch {
-    return 0;
-  }
-}
-async function extractFrameAt(videoPath, timestampSec, outputPath) {
-  try {
-    await execAsync2(
-      `ffmpeg -ss ${timestampSec.toFixed(2)} -i "${videoPath}" -frames:v 1 -vf "scale=640:-2" -q:v 3 "${outputPath}" -y`,
-      { timeout: 3e4 }
-    );
-    return await readFile4(outputPath);
-  } catch {
-    return null;
-  }
-}
-async function extractKeyframes(videoId, intervalSecs) {
-  let tmpDir;
-  try {
-    tmpDir = mkdtempSync2(path7.join(os4.tmpdir(), `ytviz-${videoId}-`));
-  } catch {
-    return [];
-  }
-  try {
-    await ensureYtdlpUpgraded();
-    const cmd = getYtdlpCmd();
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const videoPath = path7.join(tmpDir, `${videoId}.mp4`);
-    await execAsync2(
-      `${cmd} -f "worstvideo[ext=mp4]/worstvideo/worst[ext=mp4]/worst" --no-playlist --no-warnings --quiet --no-progress --max-filesize 150M --output "${videoPath}" -- "${url}"`,
-      { timeout: 12e4 }
-    );
-    const files = await readdir2(tmpDir).catch(() => []);
-    const videoFile = files.find(
-      (f) => f.endsWith(".mp4") || f.endsWith(".webm") || f.endsWith(".mkv")
-    );
-    if (!videoFile) return [];
-    const actualVideoPath = path7.join(tmpDir, videoFile);
-    const duration = await getVideoDuration(actualVideoPath);
-    const framesDir = path7.join(tmpDir, "frames");
-    await execAsync2(`mkdir -p "${framesDir}"`, { timeout: 5e3 });
-    const keyframes = [];
-    if (duration > 0 && duration < 90) {
-      const targetFrames = Math.max(3, Math.min(5, Math.round(duration / 15)));
-      const timestamps = [];
-      for (let i = 1; i <= targetFrames; i++) {
-        timestamps.push(Math.round(duration / (targetFrames + 1) * i));
-      }
-      for (let i = 0; i < timestamps.length; i++) {
-        const ts = timestamps[i];
-        const framePath = path7.join(framesDir, `frame-${String(i + 1).padStart(4, "0")}.jpg`);
-        const buf = await extractFrameAt(actualVideoPath, ts, framePath);
-        if (buf) keyframes.push({ timestampSec: ts, jpegBuffer: buf });
-      }
-    } else {
-      const interval = intervalSecs ?? 30;
-      const maxFrames = 20;
-      const fpsExpr = `1/${interval}`;
-      await execAsync2(
-        `ffmpeg -i "${actualVideoPath}" -vf "fps=${fpsExpr},scale=640:-2" -frames:v ${maxFrames} -q:v 3 "${framesDir}/frame-%04d.jpg" -y`,
-        { timeout: 12e4 }
-      );
-      const frameFiles = (await readdir2(framesDir).catch(() => [])).filter((f) => f.endsWith(".jpg")).sort();
-      for (let i = 0; i < frameFiles.length; i++) {
-        const timestampSec = i * interval;
-        try {
-          const buf = await readFile4(path7.join(framesDir, frameFiles[i]));
-          keyframes.push({ timestampSec, jpegBuffer: buf });
-        } catch {
-        }
-      }
-    }
-    console.log(
-      `[videoFrames] extracted ${keyframes.length} keyframes for ${videoId} (duration=${Math.round(duration)}s)`
-    );
-    return keyframes;
-  } catch (err2) {
-    const msg = err2 instanceof Error ? err2.message : String(err2);
-    console.warn(`[videoFrames] keyframe extraction failed for ${videoId}: ${msg}`);
-    return [];
-  } finally {
-    rm3(tmpDir, { recursive: true, force: true }).catch(() => {
-    });
-  }
-}
-async function describeFrames(frames) {
-  if (frames.length === 0) return [];
-  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
-  try {
-    const { openai: openai20 } = await Promise.resolve().then(() => (init_client(), client_exports));
-    const BATCH_SIZE2 = 10;
-    const observations = [];
-    for (let i = 0; i < frames.length; i += BATCH_SIZE2) {
-      const batch = frames.slice(i, i + BATCH_SIZE2);
-      const imageContent = batch.map((frame) => ({
-        type: "image_url",
-        image_url: {
-          url: `data:image/jpeg;base64,${frame.jpegBuffer.toString("base64")}`,
-          detail: "low"
-        }
-      }));
-      const timestampList = batch.map((f, idx) => `Frame ${idx + 1}: [${formatSec(f.timestampSec)}]`).join(", ");
-      const response = await openai20.chat.completions.create({
-        model: "gpt-4o",
-        max_tokens: 800,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `You are analysing video keyframes. The frames correspond to these timestamps: ${timestampList}. For each frame in order, write one brief sentence describing what is visually shown \u2014 objects, text on screen, setting, people, diagrams, code, etc. Be specific and factual. Respond with JSON in this exact shape: {"descriptions": ["...", "..."]} with exactly ${batch.length} string(s) in the array, one per frame.`
-              },
-              ...imageContent
-            ]
-          }
-        ]
-      });
-      const raw = response.choices[0]?.message?.content ?? "";
-      let descriptions = [];
-      try {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed.descriptions)) {
-          descriptions = parsed.descriptions.map(String);
-        }
-      } catch {
-        try {
-          const jsonMatch = raw.match(/\[[\s\S]*\]/);
-          if (jsonMatch) descriptions = JSON.parse(jsonMatch[0]);
-        } catch {
-          descriptions = raw.split("\n").map((l) => l.replace(/^[-•*\d.]+\s*/, "").trim()).filter(Boolean);
-        }
-      }
-      for (let j = 0; j < batch.length; j++) {
-        const desc46 = descriptions[j]?.trim();
-        if (desc46) {
-          observations.push({
-            timestamp: formatSec(batch[j].timestampSec),
-            description: desc46
-          });
-        }
-      }
-    }
-    console.log(`[videoFrames] vision analysis produced ${observations.length} observations`);
-    return observations;
-  } catch (err2) {
-    const msg = err2 instanceof Error ? err2.message : String(err2);
-    console.warn(`[videoFrames] vision analysis failed: ${msg}`);
-    return [];
-  }
-}
-async function buildVisualSummary(videoId, intervalSecs, bypassVisualCache = false) {
-  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return null;
-  if (!bypassVisualCache) {
-    evictExpiredVisual();
-    const hit = visualSummaryCache.get(videoId);
-    if (hit) {
-      const ageSec = Math.round((Date.now() - hit.cachedAt) / 1e3);
-      console.log(`[videoFrames] cache HIT ${videoId} \u2014 visual summary cached ${ageSec}s ago`);
-      return hit.summary;
-    }
-  } else {
-    console.log(`[videoFrames] cache BYPASS ${videoId} \u2014 forcing fresh visual analysis`);
-  }
-  try {
-    const frames = await extractKeyframes(videoId, intervalSecs);
-    if (frames.length === 0) return null;
-    const observations = await describeFrames(frames);
-    if (observations.length === 0) return null;
-    const lines = observations.map((o) => `[${o.timestamp}] ${o.description}`);
-    const summary = `Visual Summary
-${"\u2500".repeat(60)}
-` + lines.join("\n");
-    evictExpiredVisual();
-    if (!visualSummaryCache.has(videoId) && visualSummaryCache.size >= VISUAL_MAX_ENTRIES) {
-      evictOldestVisual();
-    }
-    visualSummaryCache.set(videoId, { summary, cachedAt: Date.now() });
-    console.log(`[videoFrames] cache SET ${videoId} \u2014 visual summary stored`);
-    return summary;
-  } catch (err2) {
-    console.warn(
-      `[videoFrames] buildVisualSummary failed for ${videoId}: ${err2 instanceof Error ? err2.message : String(err2)}`
-    );
-    return null;
-  }
-}
-var execAsync2, VISUAL_TTL_MS, VISUAL_MAX_ENTRIES, visualSummaryCache;
-var init_videoFrames = __esm({
-  "server/lib/videoFrames.ts"() {
-    "use strict";
-    init_transcriptCache();
-    execAsync2 = promisify2(exec2);
-    VISUAL_TTL_MS = 24 * 60 * 60 * 1e3;
-    VISUAL_MAX_ENTRIES = 500;
-    visualSummaryCache = /* @__PURE__ */ new Map();
-  }
-});
-
-// server/lib/localWorkerQueue.ts
-var localWorkerQueue_exports = {};
-__export(localWorkerQueue_exports, {
-  claimNextJob: () => claimNextJob,
-  completeJob: () => completeJob,
-  failJob: () => failJob,
-  getOrCreateWorkerToken: () => getOrCreateWorkerToken,
-  getUserIdByToken: () => getUserIdByToken,
-  heartbeat: () => heartbeat,
-  isWorkerOnline: () => isWorkerOnline,
-  queueTranscriptJob: () => queueTranscriptJob
-});
-import crypto6 from "crypto";
-function getOrCreateWorkerToken(userId) {
-  const existing = userTokenMap.get(userId);
-  if (existing && tokenRegistry.has(existing)) return existing;
-  const token = `lw_${userId.slice(0, 8)}_${crypto6.randomBytes(16).toString("hex")}`;
-  tokenRegistry.set(token, { userId, token, lastSeen: 0 });
-  userTokenMap.set(userId, token);
-  return token;
-}
-function getUserIdByToken(token) {
-  return tokenRegistry.get(token)?.userId ?? null;
-}
-function heartbeat(token) {
-  const reg = tokenRegistry.get(token);
-  if (!reg) return false;
-  reg.lastSeen = Date.now();
-  return true;
-}
-function isWorkerOnline(userId) {
-  const token = userTokenMap.get(userId);
-  if (!token) return false;
-  const reg = tokenRegistry.get(token);
-  if (!reg) return false;
-  return Date.now() - reg.lastSeen < WORKER_ONLINE_WINDOW_MS;
-}
-function queueTranscriptJob(userId, url, timeoutMs = 3e4) {
-  return new Promise((resolve8, reject) => {
-    const id = `lwj_${Date.now()}_${crypto6.randomBytes(4).toString("hex")}`;
-    const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve8, reject };
-    jobStore.set(id, job);
-    setTimeout(() => {
-      if (jobStore.has(id)) {
-        jobStore.delete(id);
-        reject(new Error("LOCAL_WORKER_TIMEOUT: Local worker did not respond within 30 seconds."));
-      }
-    }, timeoutMs);
-  });
-}
-function claimNextJob(token) {
-  const reg = tokenRegistry.get(token);
-  if (!reg) return null;
-  reg.lastSeen = Date.now();
-  for (const [id, job] of jobStore) {
-    if (job.userId === reg.userId && job.status === "pending") {
-      job.status = "claimed";
-      return { id, url: job.url };
-    }
-  }
-  return null;
-}
-function completeJob(jobId, token, segments) {
-  const job = jobStore.get(jobId);
-  if (!job) return false;
-  const reg = tokenRegistry.get(token);
-  if (!reg || reg.userId !== job.userId) return false;
-  job.status = "done";
-  jobStore.delete(jobId);
-  job.resolve(segments);
-  return true;
-}
-function failJob(jobId, token, error) {
-  const job = jobStore.get(jobId);
-  if (!job) return false;
-  const reg = tokenRegistry.get(token);
-  if (!reg || reg.userId !== job.userId) return false;
-  job.status = "failed";
-  jobStore.delete(jobId);
-  job.reject(new Error(`LOCAL_WORKER_ERROR: ${error}`));
-  return true;
-}
-var tokenRegistry, userTokenMap, jobStore, WORKER_ONLINE_WINDOW_MS, JOB_TTL_MS;
-var init_localWorkerQueue = __esm({
-  "server/lib/localWorkerQueue.ts"() {
-    "use strict";
-    tokenRegistry = /* @__PURE__ */ new Map();
-    userTokenMap = /* @__PURE__ */ new Map();
-    jobStore = /* @__PURE__ */ new Map();
-    WORKER_ONLINE_WINDOW_MS = 2 * 60 * 1e3;
-    JOB_TTL_MS = 5 * 60 * 1e3;
-    setInterval(() => {
-      const now = Date.now();
-      for (const [id, job] of jobStore) {
-        if (now - job.createdAt > JOB_TTL_MS) {
-          jobStore.delete(id);
-          try {
-            job.reject(new Error("LOCAL_WORKER_TIMEOUT: Job expired."));
-          } catch {
-          }
-        }
-      }
-    }, 2 * 60 * 1e3);
-  }
-});
-
-// server/agent/tools/youtubeTranscript.ts
-function formatTimestamp(ms) {
-  const totalSecs = Math.floor(ms / 1e3);
-  const h = Math.floor(totalSecs / 3600);
-  const m = Math.floor(totalSecs % 3600 / 60);
-  const s = totalSecs % 60;
-  if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  }
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-async function fetchTranscriptViaBrowser(input, userId) {
-  const extractText = (result) => (result.content || []).map((c) => c.text || "").join("");
-  const videoId = extractVideoId(input) ?? input.trim();
-  try {
-    await callBrowserTool(userId, "browser_navigate", {
-      url: `https://www.youtube.com/watch?v=${videoId}`
-    });
-    for (const lang of ["en", "en-US", "a.en"]) {
-      const timedtextUrl = `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${lang}&fmt=srv3`;
-      await callBrowserTool(userId, "browser_navigate", { url: timedtextUrl });
-      const snap = await callBrowserTool(userId, "browser_snapshot", {});
-      if (snap.isError) continue;
-      const raw = extractText(snap);
-      if (!raw.includes("<text ")) continue;
-      const elements = parseTimedTextXml(raw);
-      if (elements.length === 0) continue;
-      console.log(
-        `[get_youtube_transcript] browser fallback OK lang=${lang} videoId=${videoId} \u2014 ${elements.length} segs`
-      );
-      return elements.map((el) => ({
-        text: el.text,
-        offset: parseFloat(el.start) * 1e3,
-        duration: parseFloat(el.dur) * 1e3
-      }));
-    }
-    return [];
-  } catch (err2) {
-    console.warn(
-      `[get_youtube_transcript] browser fallback failed for ${videoId}: ${err2 instanceof Error ? err2.message : String(err2)}`
-    );
-    return [];
-  }
-}
-async function fetchViaTavily(input) {
-  if (!process.env.TAVILY_API_KEY) return null;
-  const { tavilySearch: tavilySearch2 } = await Promise.resolve().then(() => (init_search(), search_exports));
-  const videoId = extractVideoId(input);
-  const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : input;
-  try {
-    const [urlRes, transcriptRes] = await Promise.allSettled([
-      tavilySearch2(videoUrl, 5),
-      tavilySearch2(`${videoId ?? input} youtube transcript`, 5)
-    ]);
-    const parts = [];
-    if (urlRes.status === "fulfilled" && urlRes.value.answer) {
-      parts.push(`**What the web says about this video:**
-${urlRes.value.answer}`);
-    }
-    if (transcriptRes.status === "fulfilled" && transcriptRes.value.answer) {
-      parts.push(`**Transcript search summary:**
-${transcriptRes.value.answer}`);
-    }
-    const seen = /* @__PURE__ */ new Set();
-    const results = [];
-    for (const pool2 of [urlRes, transcriptRes]) {
-      if (pool2.status !== "fulfilled") continue;
-      for (const r of pool2.value.results) {
-        if (!seen.has(r.url)) {
-          seen.add(r.url);
-          results.push(r);
-        }
-      }
-    }
-    if (results.length > 0) {
-      parts.push(
-        "**Related sources:**\n" + results.slice(0, 6).map((r) => `- [${r.title}](${r.url})
-  ${r.content.slice(0, 250)}`).join("\n\n")
-      );
-    }
-    if (parts.length === 0) return null;
-    const header = `\u26A0\uFE0F No official transcript could be retrieved \u2014 showing web search results instead.
-These are NOT a word-for-word transcript but may still help.
-${"\u2500".repeat(60)}
-`;
-    return {
-      ok: true,
-      content: header + parts.join("\n\n"),
-      label: "get_youtube_transcript: tavily-search fallback"
-    };
-  } catch (err2) {
-    console.warn(
-      `[get_youtube_transcript] Tavily fallback error: ${err2 instanceof Error ? err2.message : String(err2)}`
-    );
-    return null;
-  }
-}
-var MAX_CHARS, youtubeTranscriptTool;
-var init_youtubeTranscript = __esm({
-  "server/agent/tools/youtubeTranscript.ts"() {
-    "use strict";
-    init_transcriptCache();
-    init_transcriptSourceLabel();
-    init_videoFrames();
-    init_playwrightMcpClient();
-    init_localWorkerQueue();
-    MAX_CHARS = 12e4;
-    youtubeTranscriptTool = {
-      name: "get_youtube_transcript",
-      description: "Retrieve the full spoken transcript AND visual context from a YouTube video. Uses Google Gemini AI natively as the primary transcription method (Phase 0) \u2014 call this tool whenever the user shares a YouTube URL, asks to 'use Gemini' for a video, or mentions AI transcription / Gemini transcripts. You do NOT need any separate Gemini tool; Gemini is already built into this tool and runs automatically. Returns timestamped transcript segments so you can cite specific moments, plus a Visual Summary describing what is shown on screen at key moments \u2014 diagrams, code, slides, people, text on screen, settings, and visual demonstrations. Works for short clips, YouTube Shorts, and videos over an hour long. Use this when the user shares a YouTube URL and wants you to read, summarize, quote, analyse, or extract insights from it \u2014 including visual or on-screen content. IMPORTANT: Only call this tool when the user has explicitly provided a YouTube URL or video ID in their current message. Never re-use a video URL or ID from an earlier part of the conversation \u2014 if the user asks about 'another video' or 'a different video' without providing a URL, ask them to share the link first. Always tell the user which method successfully retrieved the transcript (e.g. 'via Supadata', 'via YouTube captions', 'via Whisper') \u2014 this information is in the result label and transcript header. Set refresh=true when the user asks to re-read, refresh, or get the latest version of a video. Set includeVisuals=false only if the user explicitly wants transcript text only with no visual analysis. Set force_audio=true to skip caption lookups entirely and transcribe the audio directly via Whisper \u2014 this is the best option when official captions are unavailable (e.g. Alex Hormozi videos, channels that disable captions) or when previous attempts returned empty results. Returns a clear error message if the video has no captions available.",
-      parameters: {
-        type: "object",
-        properties: {
-          url: {
-            type: "string",
-            description: "YouTube video URL (e.g. https://youtube.com/watch?v=dQw4w9WgXcQ) or bare video ID (e.g. dQw4w9WgXcQ)."
-          },
-          refresh: {
-            type: "boolean",
-            description: "Set to true to bypass the transcript cache and fetch a fresh copy directly from YouTube. Use when the user explicitly asks to re-read, refresh, or get an updated transcript."
-          },
-          includeVisuals: {
-            type: "boolean",
-            description: "Whether to include a visual summary of keyframes (default: true). Set to false only when the user explicitly wants transcript text only."
-          },
-          force_audio: {
-            type: "boolean",
-            description: "Skip all caption-fetching strategies and go straight to audio download + Whisper transcription. Use this when official captions are unavailable, the channel has captions disabled, or previous transcript attempts returned empty or unhelpful results. Produces a word-for-word AI-generated transcript from the actual audio."
-          }
-        },
-        required: ["url"]
-      },
-      async execute(args, ctx) {
-        const input = String(args.url || "").trim();
-        if (!input) {
-          return { ok: false, content: "Please provide a YouTube URL or video ID.", label: "get_youtube_transcript: missing input" };
-        }
-        if (isPlaylistUrl(input)) {
-          return {
-            ok: false,
-            content: "That looks like a YouTube playlist URL. I can only fetch transcripts for individual videos. Please share a single video URL (e.g. https://youtube.com/watch?v=VIDEO_ID).",
-            label: "get_youtube_transcript: playlist URL rejected"
-          };
-        }
-        const bypassCache = args.refresh === true;
-        const includeVisuals = args.includeVisuals !== false;
-        const forceAudio = args.force_audio === true;
-        const videoId = extractVideoId(input);
-        console.log(
-          `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals}, forceAudio=${forceAudio})`
-        );
-        const visualPromise = includeVisuals && videoId ? buildVisualSummary(videoId, void 0, bypassCache).catch(() => null) : Promise.resolve(null);
-        const FILE_THRESHOLD2 = 4e4;
-        const buildResult = (rawSegments, source) => {
-          const readableSource = humanReadableSource(source);
-          const sourceTag = readableSource ? ` \xB7 via ${readableSource}` : "";
-          const isAiGenerated = rawSegments.length === 1 && rawSegments[0].offset === 0 && rawSegments[0].duration === 0 && rawSegments[0].text.startsWith("[AI-generated transcript");
-          if (isAiGenerated) {
-            const body2 = rawSegments[0].text;
-            const isGeminiTranscript = body2.startsWith("[AI-generated transcript via Gemini]");
-            const transcriptMethod = isGeminiTranscript ? "via Gemini" : "audio transcription";
-            const header2 = `AI-Generated Transcript (${transcriptMethod}${sourceTag})
-${"\u2500".repeat(60)}
-`;
-            const fullText2 = header2 + body2;
-            if (body2.length > FILE_THRESHOLD2) {
-              const pending = ctx.state.pendingAttachments ||= [];
-              pending.push({
-                kind: "document",
-                filename: `transcript-${extractVideoId(input) ?? "video"}.txt`,
-                content: fullText2,
-                caption: isGeminiTranscript ? `Full transcript via Gemini (no official captions needed).` : `AI-generated transcript (no official captions were available).`,
-                mimeType: "text/plain"
-              });
-              return {
-                ok: true,
-                content: isGeminiTranscript ? `Transcript complete via Gemini (~${Math.round(body2.length / 1e3)} k chars). Sending as a text file.` : `Audio transcription complete (~${Math.round(body2.length / 1e3)} k chars). No official captions were available, so the audio was transcribed via AI. Sending the full transcript as a text file.`,
-                label: isGeminiTranscript ? `get_youtube_transcript: gemini \u2192 file` : `get_youtube_transcript: ai-audio-transcription \u2192 file`
-              };
-            }
-            let inlineBody2 = body2;
-            let truncNote = "";
-            if (inlineBody2.length > MAX_CHARS) {
-              inlineBody2 = inlineBody2.slice(0, MAX_CHARS);
-              truncNote = `
-
-[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters.]`;
-            }
-            return {
-              ok: true,
-              content: header2 + inlineBody2 + truncNote,
-              label: isGeminiTranscript ? `get_youtube_transcript: gemini` : `get_youtube_transcript: ai-audio-transcription`
-            };
-          }
-          const lastSeg = rawSegments[rawSegments.length - 1];
-          const lastRawOffset = lastSeg.offset + (lastSeg.duration ?? 0);
-          const avgRawPerSegment = lastRawOffset / rawSegments.length;
-          const toMs = avgRawPerSegment < 100 ? 1e3 : 1;
-          const CHUNK_MS = 3e4;
-          const lines = [];
-          let chunkStartMs = rawSegments[0].offset * toMs;
-          let chunkText = [];
-          for (const seg of rawSegments) {
-            const text2 = seg.text.trim();
-            if (!text2) continue;
-            const offsetMs = seg.offset * toMs;
-            if (offsetMs - chunkStartMs >= CHUNK_MS && chunkText.length > 0) {
-              lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
-              chunkStartMs = offsetMs;
-              chunkText = [];
-            }
-            chunkText.push(text2);
-          }
-          if (chunkText.length > 0) {
-            lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
-          }
-          const totalDuration = formatTimestamp(lastRawOffset * toMs);
-          const header = `Transcript (${rawSegments.length} segments, ~${totalDuration} duration${sourceTag})
-${"\u2500".repeat(60)}
-`;
-          const body = lines.join("\n");
-          const fullText = header + body;
-          if (body.length > FILE_THRESHOLD2) {
-            const pending = ctx.state.pendingAttachments ||= [];
-            pending.push({
-              kind: "document",
-              filename: `transcript-${extractVideoId(input) ?? "video"}.txt`,
-              content: fullText,
-              caption: `Full transcript (~${totalDuration}) \u2014 ${rawSegments.length} segments.`,
-              mimeType: "text/plain"
-            });
-            return {
-              ok: true,
-              content: `Transcript retrieved (${rawSegments.length} segments, ~${totalDuration}${sourceTag}). The full text is long (~${Math.round(body.length / 1e3)} k chars) \u2014 I'm sending it as a text file so it's easy to save or search.`,
-              label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}${sourceTag} \u2192 file`
-            };
-          }
-          let inlineBody = body;
-          let truncationNote = "";
-          if (inlineBody.length > MAX_CHARS) {
-            inlineBody = inlineBody.slice(0, MAX_CHARS);
-            truncationNote = `
-
-[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters. The video is very long \u2014 the above covers the first portion.]`;
-          }
-          return {
-            ok: true,
-            content: header + inlineBody + truncationNote,
-            label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}${sourceTag}`
-          };
-        };
-        const withVisuals = async (result) => {
-          if (!result.ok) return result;
-          try {
-            const visualSummary = await visualPromise;
-            if (visualSummary) {
-              return {
-                ...result,
-                content: result.content + `
-
-${"\u2500".repeat(60)}
-` + visualSummary
-              };
-            }
-          } catch {
-          }
-          return result;
-        };
-        if (forceAudio) {
-          const { available: ytdlpOk } = getYtdlpStatus();
-          if (!ytdlpOk) {
-            return {
-              ok: false,
-              content: "Audio transcription is temporarily unavailable \u2014 the yt-dlp dependency is not installed on this server. Please try again later. If you have the local worker running on your PC it can handle audio transcription instead.",
-              label: "get_youtube_transcript: yt-dlp unavailable"
-            };
-          }
-        }
-        try {
-          const { segments: rawSegments, noCaptionsDetected, source: fetchedSource, asyncJobPending, jobId } = await fetchTranscriptCached(input, {
-            bypassCache,
-            audioOnly: forceAudio,
-            userId: ctx.userId,
-            signal: ctx.signal,
-            onFetchStart: () => {
-              ctx.state.onProgressMessage?.("\u{1F4DD} Fetching transcript\u2026");
-            }
-          });
-          if (asyncJobPending) {
-            const videoIdLabel = videoId ?? "this video";
-            return {
-              ok: true,
-              content: `I've started generating the transcript for this video using Supadata AI. This typically takes **5\u201310 minutes** for long videos. I'll send you a notification when it's ready \u2014 you can then ask me to summarize it or answer questions about it. Press the \u2B1B stop button to cancel transcript generation at any time.` + (jobId ? ` (job: ${jobId})` : ""),
-              label: `get_youtube_transcript: supadata-async-job-started (${videoIdLabel})`
-            };
-          }
-          let segments = rawSegments;
-          if (!segments || segments.length === 0) {
-            console.log(`[get_youtube_transcript] server strategies returned 0 segs \u2014 trying browser fallback`);
-            const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
-            if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
-            if (isWorkerOnline(ctx.userId)) {
-              console.log(`[get_youtube_transcript] browser fallback empty \u2014 forwarding to local worker`);
-              try {
-                const localSegs = await queueTranscriptJob(ctx.userId, input);
-                if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
-              } catch (lwErr) {
-                console.warn(`[get_youtube_transcript] local worker failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
-              }
-            }
-            if (noCaptionsDetected && !forceAudio) {
-              const { available: ytdlpOk } = getYtdlpStatus();
-              if (!ytdlpOk) {
-                console.log(`[get_youtube_transcript] noCaptionsDetected but yt-dlp unavailable \u2014 skipping audio auto-retry`);
-              } else {
-                console.log(`[get_youtube_transcript] noCaptionsDetected \u2014 auto-retrying with audioOnly=true`);
-                try {
-                  const { segments: audioSegs, source: audioRetrySource } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
-                  if (audioSegs.length > 0) {
-                    return withVisuals(buildResult(audioSegs, audioRetrySource));
-                  }
-                } catch (audioRetryErr) {
-                  const retryMsg = audioRetryErr instanceof Error ? audioRetryErr.message : String(audioRetryErr);
-                  if (retryMsg.startsWith("YTDLP_UNAVAILABLE:")) {
-                    console.warn(`[get_youtube_transcript] audio auto-retry skipped: yt-dlp unavailable`);
-                  } else {
-                    console.warn(`[get_youtube_transcript] audio auto-retry failed: ${retryMsg}`);
-                  }
-                }
-              }
-            }
-            const { available: ytdlpOkForHint } = getYtdlpStatus();
-            const audioHint = noCaptionsDetected && !forceAudio ? ytdlpOkForHint ? "\n\n\u{1F4A1} **This video has no official captions and the automatic audio transcription also failed.** To retry via direct audio transcription, call `get_youtube_transcript` again with `force_audio=true` \u2014 this downloads and transcribes the audio using Whisper and bypasses caption lookups entirely." : "\n\n\u26A0\uFE0F **This video has no official captions, and audio transcription is currently unavailable** because the yt-dlp dependency is not installed on this server. Please try again later." : "";
-            console.log(`[get_youtube_transcript] all strategies empty \u2014 trying Tavily web search`);
-            const tavilyResult = await fetchViaTavily(input);
-            if (tavilyResult) {
-              return {
-                ...tavilyResult,
-                content: tavilyResult.content + audioHint
-              };
-            }
-            return {
-              ok: false,
-              content: "No transcript could be retrieved for this video. It may have captions disabled, be a live stream, or be blocked from server access. If you have the local worker running on your PC, it can often succeed where the server cannot." + audioHint,
-              label: "get_youtube_transcript: all strategies exhausted"
-            };
-          }
-          return withVisuals(buildResult(segments, fetchedSource));
-        } catch (err2) {
-          if (err2 instanceof Error && (err2.name === "AbortError" || err2.message?.includes("aborted"))) {
-            throw err2;
-          }
-          const msg = err2 instanceof Error ? err2.message : String(err2);
-          const lower = msg.toLowerCase();
-          if (msg.startsWith("LOGIN_REQUIRED")) {
-            return {
-              ok: false,
-              content: "This video requires a signed-in YouTube account to access (private or members-only video). I can't retrieve its transcript.",
-              label: "get_youtube_transcript: login required"
-            };
-          }
-          if (msg.startsWith("CONTENT_RESTRICTED")) {
-            return {
-              ok: false,
-              content: "This video is restricted (age-restricted, region-locked, or not available). I can't retrieve its transcript without a logged-in account.",
-              label: "get_youtube_transcript: content restricted"
-            };
-          }
-          if (msg.startsWith("TOO_MANY_REQUESTS") || msg.startsWith("RATE_LIMITED") || lower.includes("too many requests") || lower.includes("429")) {
-            return {
-              ok: false,
-              content: "YouTube is rate-limiting transcript requests right now. Please wait a moment and try again.",
-              label: "get_youtube_transcript: rate limited"
-            };
-          }
-          if (lower.includes("disabled") || lower.includes("no transcript") || lower === "transcript is disabled on this video") {
-            return {
-              ok: false,
-              content: "This video doesn't have captions available. The creator may have disabled transcripts, or it may be a live stream. To attempt audio transcription directly via Whisper, call `get_youtube_transcript` again with `force_audio=true`.",
-              label: "get_youtube_transcript: no captions"
-            };
-          }
-          if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
-            return {
-              ok: false,
-              content: "Audio transcription is temporarily unavailable \u2014 the yt-dlp dependency is not installed on this server. Please try again later. If you have the local worker running on your PC it can handle audio transcription instead.",
-              label: "get_youtube_transcript: yt-dlp unavailable"
-            };
-          }
-          if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
-            console.warn(`[get_youtube_transcript] audio-download-failed for ${videoId ?? input}: ${msg}`);
-            return {
-              ok: false,
-              content: "The audio download failed \u2014 YouTube may be blocking this request from the server. You can try again in a moment, or start the local worker on your PC for better results.",
-              label: "get_youtube_transcript: audio-download-failed"
-            };
-          }
-          console.log(`[get_youtube_transcript] non-terminal error (${msg}) \u2014 trying browser fallback`);
-          const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
-          if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
-          if (isWorkerOnline(ctx.userId)) {
-            console.log(`[get_youtube_transcript] browser also failed \u2014 forwarding to local worker`);
-            try {
-              const localSegs = await queueTranscriptJob(ctx.userId, input);
-              if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
-            } catch (lwErr) {
-              console.warn(`[get_youtube_transcript] local worker also failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
-            }
-          }
-          console.log(`[get_youtube_transcript] all strategies failed \u2014 trying Tavily web search`);
-          const tavilyFallback = await fetchViaTavily(input);
-          if (tavilyFallback) return tavilyFallback;
-          console.error(`[get_youtube_transcript] all strategies exhausted: ${msg}`);
-          return {
-            ok: false,
-            content: "Couldn't retrieve the transcript for this video right now. The video may be private, have captions disabled, or YouTube is blocking server access. You can try again in a moment, or start the local worker on your PC for better results.",
-            label: "get_youtube_transcript: all strategies exhausted"
-          };
-        }
-      }
-    };
-  }
-});
-
-// server/agent/tools/videoTranscript.ts
-var FILE_THRESHOLD, MAX_CHARS2, videoTranscriptTool;
-var init_videoTranscript = __esm({
-  "server/agent/tools/videoTranscript.ts"() {
-    "use strict";
-    init_geminiTranscript();
-    FILE_THRESHOLD = 4e4;
-    MAX_CHARS2 = 12e4;
-    videoTranscriptTool = {
-      name: "transcribe_video_url",
-      description: "Transcribe any publicly accessible video file using Google Gemini AI \u2014 Google Drive share links, Dropbox links, direct mp4/mov/webm URLs, or any other publicly reachable video up to 2 GB. The video is streamed directly to Google's File API and transcribed by Gemini natively. Use this when the user shares a direct video file link and asks for a transcript, summary, or mentions Gemini transcription for a non-YouTube video file. Do NOT use this for YouTube URLs \u2014 use get_youtube_transcript for those instead (it handles YouTube natively without downloading the video).",
-      parameters: {
-        type: "object",
-        properties: {
-          url: {
-            type: "string",
-            description: "Public URL to the video file. Supported: Google Drive share links (drive.google.com/file/d/\u2026), Dropbox share links, direct .mp4/.mov/.webm URLs, etc."
-          },
-          mime_type: {
-            type: "string",
-            description: "Optional MIME type override (e.g. 'video/mp4', 'video/quicktime'). If omitted, it is inferred from the URL extension \u2014 usually this is fine."
-          }
-        },
-        required: ["url"]
-      },
-      async execute(args, ctx) {
-        const rawUrl = String(args.url || "").trim();
-        if (!rawUrl) {
-          return {
-            ok: false,
-            content: "Please provide a public video URL to transcribe.",
-            label: "transcribe_video_url: missing URL"
-          };
-        }
-        if (/youtube\.com|youtu\.be/i.test(rawUrl)) {
-          return {
-            ok: false,
-            content: "That looks like a YouTube URL. Use the get_youtube_transcript tool for YouTube videos \u2014 it can fetch them without downloading the full video file.",
-            label: "transcribe_video_url: YouTube URL rejected"
-          };
-        }
-        if (!isGeminiTranscriptAvailable()) {
-          return {
-            ok: false,
-            content: "Video transcription via File API is not available \u2014 the Gemini API key is not configured.",
-            label: "transcribe_video_url: Gemini not available"
-          };
-        }
-        const mimeType = args.mime_type ? String(args.mime_type) : void 0;
-        const normalizedUrl = normalizeVideoUrl(rawUrl);
-        console.log(
-          `[transcribe_video_url] Starting transcription for user=${ctx.userId} url="${rawUrl}"`
-        );
-        let transcript;
-        try {
-          transcript = await transcribeVideoFromUrl(rawUrl, mimeType);
-        } catch (err2) {
-          const msg = err2 instanceof Error ? err2.message : String(err2);
-          console.error(`[transcribe_video_url] Failed for "${rawUrl}":`, msg);
-          return {
-            ok: false,
-            content: `Could not transcribe the video: ${msg}`,
-            label: "transcribe_video_url: error"
-          };
-        }
-        if (!transcript || !transcript.trim()) {
-          return {
-            ok: false,
-            content: "Gemini returned an empty transcript. The video may contain no speech, or the file could not be processed. Please check the URL and try again.",
-            label: "transcribe_video_url: empty transcript"
-          };
-        }
-        const header = `[AI-generated transcript via Gemini File API]
-Source: ${normalizedUrl !== rawUrl ? `${rawUrl} (resolved to direct download)` : rawUrl}
-${"\u2500".repeat(60)}
-`;
-        const fullText = header + transcript;
-        if (transcript.length > FILE_THRESHOLD) {
-          const pending = ctx.state.pendingAttachments ||= [];
-          pending.push({
-            kind: "document",
-            filename: `transcript-video.txt`,
-            content: fullText,
-            caption: `Full video transcript (~${Math.round(transcript.length / 1e3)} k chars).`,
-            mimeType: "text/plain"
-          });
-          return {
-            ok: true,
-            content: `Transcript complete (~${Math.round(transcript.length / 1e3)} k chars). Sending as a text file so it's easy to save or search.`,
-            label: "transcribe_video_url: gemini \u2192 file"
-          };
-        }
-        let inlineBody = transcript;
-        let truncNote = "";
-        if (inlineBody.length > MAX_CHARS2) {
-          inlineBody = inlineBody.slice(0, MAX_CHARS2);
-          truncNote = `
-
-[Transcript truncated at ${MAX_CHARS2.toLocaleString()} characters.]`;
-        }
-        return {
-          ok: true,
-          content: header + inlineBody + truncNote,
-          label: "transcribe_video_url: gemini"
-        };
-      }
-    };
-  }
-});
-
-// server/agent/tools/xSearch.ts
-function formatTimestamp2(iso2) {
-  if (!iso2) return "unknown time";
-  try {
-    const d = new Date(iso2);
-    const now = Date.now();
-    const diffMs = now - d.getTime();
-    const diffMins = Math.floor(diffMs / 6e4);
-    if (diffMins < 60) return `${diffMins}m ago`;
-    const diffHrs = Math.floor(diffMins / 60);
-    if (diffHrs < 24) return `${diffHrs}h ago`;
-    const diffDays = Math.floor(diffHrs / 24);
-    return `${diffDays}d ago`;
-  } catch {
-    return iso2;
-  }
-}
-function formatNumber(n) {
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
-  return String(n);
-}
-function formatResults(tweets, userMap, query) {
-  if (tweets.length === 0) return `No posts found on X for: "${query}"`;
-  const lines = [`**X Search: "${query}"** \u2014 ${tweets.length} result${tweets.length === 1 ? "" : "s"}
-`];
-  for (let i = 0; i < tweets.length; i++) {
-    const t = tweets[i];
-    const user = t.author_id ? userMap.get(t.author_id) : void 0;
-    const handle = user ? `@${user.username}` : "(unknown)";
-    const name = user?.name || handle;
-    const when = formatTimestamp2(t.created_at);
-    const url = `https://x.com/${user?.username || "i"}/status/${t.id}`;
-    const metrics = t.public_metrics;
-    const statsStr = metrics ? `\u2764\uFE0F ${formatNumber(metrics.like_count)}  \u{1F501} ${formatNumber(metrics.retweet_count)}  \u{1F4AC} ${formatNumber(metrics.reply_count)}` : "";
-    lines.push(
-      `${i + 1}. **${name}** (${handle}) \xB7 ${when}
-   ${t.text.replace(/\n+/g, " ")}
-` + (statsStr ? `   ${statsStr}
-` : "") + `   ${url}`
-    );
-  }
-  return lines.join("\n");
-}
-var X_API_BASE, xSearchTool;
-var init_xSearch = __esm({
-  "server/agent/tools/xSearch.ts"() {
-    "use strict";
-    X_API_BASE = "https://api.twitter.com/2";
-    xSearchTool = {
-      name: "x_search",
-      description: "Search X (Twitter) for recent posts about a topic, brand, person, or event. Returns real-time results including post text, author, timestamp, likes, retweets, and URL. Use this when the user wants social signals, trending topics, public reactions, brand mentions, or thought-leader opinions on X. Different from web_search \u2014 this surfaces live social conversation, not indexed web pages.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "X search query. Supports keywords, hashtags (#AI), mentions (@elonmusk), and operators like 'from:username', 'lang:en'. Example: 'OpenAI GPT-5 lang:en'"
-          },
-          max_results: {
-            type: "number",
-            description: "Number of posts to return (10\u201350, default 20)."
-          },
-          sort_order: {
-            type: "string",
-            enum: ["recency", "relevancy"],
-            description: "Sort by 'recency' (newest first, default) or 'relevancy' (most relevant first)."
-          }
-        },
-        required: ["query"]
-      },
-      async execute(args, ctx) {
-        const bearerToken = process.env.X_BEARER_TOKEN;
-        if (!bearerToken) {
-          return {
-            ok: false,
-            content: "X search is not configured. The X_BEARER_TOKEN secret is missing.",
-            label: "X search unavailable"
-          };
-        }
-        const query = String(args.query || "").trim();
-        if (!query) {
-          return { ok: false, content: "Please provide a search query.", label: "Missing query" };
-        }
-        const maxResults = typeof args.max_results === "number" ? Math.min(Math.max(Math.round(args.max_results), 10), 50) : 20;
-        const sortOrder = args.sort_order === "relevancy" ? "relevancy" : "recency";
-        console.log(`[x_search] query="${query}" max=${maxResults} sort=${sortOrder} (user=${ctx.userId})`);
-        try {
-          const params = new URLSearchParams({
-            query,
-            max_results: String(maxResults),
-            sort_order: sortOrder,
-            "tweet.fields": "created_at,author_id,public_metrics",
-            expansions: "author_id",
-            "user.fields": "username,name"
-          });
-          const response = await fetch(`${X_API_BASE}/tweets/search/recent?${params.toString()}`, {
-            method: "GET",
-            headers: {
-              Authorization: `Bearer ${bearerToken}`,
-              "Content-Type": "application/json"
-            },
-            signal: AbortSignal.timeout(15e3)
-          });
-          const body = await response.json();
-          if (!response.ok) {
-            const errTitle = body.title || "X API error";
-            const errDetail = body.detail || body.errors?.[0]?.message || response.statusText;
-            if (response.status === 401 || response.status === 403) {
-              return {
-                ok: false,
-                content: `X search authentication failed (${response.status}). Please check your X_BEARER_TOKEN.`,
-                label: "X auth failed",
-                detail: errDetail
-              };
-            }
-            if (response.status === 429) {
-              return {
-                ok: false,
-                content: "X search rate limit reached. Please try again shortly.",
-                label: "X rate limited"
-              };
-            }
-            return {
-              ok: false,
-              content: `X search error (${response.status}): ${errTitle} \u2014 ${errDetail}`,
-              label: "X search failed",
-              detail: errDetail
-            };
-          }
-          const tweets = body.data ?? [];
-          const users3 = body.includes?.users ?? [];
-          const resultCount = body.meta?.result_count ?? tweets.length;
-          if (resultCount === 0 || tweets.length === 0) {
-            return {
-              ok: true,
-              content: `No recent posts found on X for: "${query}". The query may be too specific or there's no recent activity.`,
-              label: `X search: no results for "${query}"`
-            };
-          }
-          const userMap = new Map(users3.map((u) => [u.id, u]));
-          const formatted = formatResults(tweets, userMap, query);
-          return {
-            ok: true,
-            content: formatted,
-            label: `X search (${tweets.length} posts): ${query}`,
-            detail: `Found ${tweets.length} posts, sorted by ${sortOrder}`
-          };
-        } catch (err2) {
-          const msg = err2 instanceof Error ? err2.message : String(err2);
-          if (msg.includes("TimeoutError") || msg.includes("timed out") || msg.includes("ETIMEDOUT")) {
-            return { ok: false, content: "X search timed out. Please try again.", label: "X search timeout" };
-          }
-          console.error(`[x_search] error: ${msg}`);
-          return {
-            ok: false,
-            content: `X search failed: ${msg}`,
-            label: "X search error",
-            detail: msg
-          };
-        }
-      }
-    };
-  }
-});
-
-// server/agent/tools/registerApproval.ts
-var registerApprovalTool;
-var init_registerApproval = __esm({
-  "server/agent/tools/registerApproval.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    registerApprovalTool = {
-      name: "register_approval",
-      description: "Register a Discord message as requiring user approval via emoji reaction (\u2705 or \u274C). Use this AFTER posting a script, plan, draft, or other item to Discord that needs the user's sign-off. When the user reacts with \u2705, the onApprove action fires automatically; \u274C fires onReject. The onApprove/onReject actions define what happens next: run_prompt, run_schedule, spawn_subagent, or notify_only.",
-      parameters: {
-        type: "object",
-        properties: {
-          messageId: {
-            type: "string",
-            description: "The Discord message ID of the posted item awaiting approval."
-          },
-          channelId: {
-            type: "string",
-            description: "The Discord channel ID where the message was posted."
-          },
-          guildId: {
-            type: "string",
-            description: "Optional: the Discord guild/server ID."
-          },
-          type: {
-            type: "string",
-            enum: ["script", "task", "plan", "custom"],
-            description: "The type of item awaiting approval."
-          },
-          content: {
-            type: "string",
-            description: "The text content of the posted item (used as context for the approval action)."
-          },
-          onApprove: {
-            type: "object",
-            description: "Action to execute when the user reacts with \u2705. Types: run_prompt, run_schedule, spawn_subagent, notify_only.",
-            properties: {
-              type: { type: "string" },
-              prompt: { type: "string" },
-              scheduleId: { type: "string" },
-              agentType: { type: "string" },
-              title: { type: "string" }
-            }
-          },
-          onReject: {
-            type: "object",
-            description: "Optional: action to execute when the user reacts with \u274C.",
-            properties: {
-              type: { type: "string" },
-              prompt: { type: "string" }
-            }
-          }
-        },
-        required: ["messageId", "channelId", "type", "content", "onApprove"]
-      },
-      async execute(args, ctx) {
-        const { userId } = ctx;
-        const typedArgs = args;
-        try {
-          await db.insert(discordPendingApprovals).values({
-            messageId: typedArgs.messageId,
-            userId,
-            channelId: typedArgs.channelId,
-            guildId: typedArgs.guildId,
-            type: typedArgs.type,
-            content: typedArgs.content,
-            onApprove: typedArgs.onApprove,
-            onReject: typedArgs.onReject ?? null,
-            status: "pending"
-          }).onConflictDoNothing();
-          return {
-            ok: true,
-            content: `Approval registered for message ${typedArgs.messageId}. The user can react with \u2705 to approve or \u274C to skip.`,
-            label: "Approval registered"
-          };
-        } catch (err2) {
-          const msg = err2 instanceof Error ? err2.message : String(err2);
-          return { ok: false, content: `Failed to register approval: ${msg}`, label: "Approval registration failed" };
-        }
-      }
-    };
-  }
-});
-
-// server/agent/tools/discordPinMessage.ts
-var discordPinMessageTool;
-var init_discordPinMessage = __esm({
-  "server/agent/tools/discordPinMessage.ts"() {
-    "use strict";
-    init_manager();
-    discordPinMessageTool = {
-      name: "discord_pin_message",
-      description: "Pin a message in a Discord channel so it appears at the top for easy reference. Use this when the user says 'pin that', when Jarvis creates a formal deliverable (architecture document, research report, project plan), or when posting something that should be permanently accessible in the channel.",
-      parameters: {
-        type: "object",
-        properties: {
-          channelId: {
-            type: "string",
-            description: "The Discord channel ID where the message was posted."
-          },
-          messageId: {
-            type: "string",
-            description: "The Discord message ID to pin."
-          }
-        },
-        required: ["channelId", "messageId"]
-      },
-      async execute(args, ctx) {
-        const { channelId, messageId } = args;
-        const { userId } = ctx;
-        const pinned = await pinDiscordMessage(userId, channelId, messageId);
-        if (!pinned) {
-          return {
-            ok: false,
-            content: "Couldn't pin the message \u2014 the bot may not have the Manage Messages permission, or the message wasn't found.",
-            label: "Pin failed"
-          };
-        }
-        return {
-          ok: true,
-          content: `Message ${messageId} has been pinned in the channel.`,
-          label: "Message pinned"
-        };
-      }
-    };
-  }
-});
-
-// server/agent/tools/discordSendToChannel.ts
-var discordSendToChannelTool;
-var init_discordSendToChannel = __esm({
-  "server/agent/tools/discordSendToChannel.ts"() {
-    "use strict";
-    init_manager();
-    discordSendToChannelTool = {
-      name: "discord_send_to_channel",
-      description: "Send a message to any channel in the user's Discord server by name. Use this after discord_create_channel to post content into the newly created channel, or any time the user asks you to post a message to a specific channel by name. channelName should match the channel name exactly (lowercase, hyphens, e.g. 'test-research'). Only post content sourced from real tool results \u2014 never post hallucinated content.",
-      parameters: {
-        type: "object",
-        properties: {
-          channelName: {
-            type: "string",
-            description: "The name of the target channel (lowercase, hyphens instead of spaces). Must match an existing channel in the user's Discord server."
-          },
-          message: {
-            type: "string",
-            description: "The message to post. Markdown is supported. Long messages are split into multiple Discord messages automatically."
-          }
-        },
-        required: ["channelName", "message"]
-      },
-      async execute(args, ctx) {
-        const { channelName, message } = args;
-        const { userId } = ctx;
-        const ok3 = await postToDiscordChannel(userId, channelName, null, message);
-        if (!ok3) {
-          return {
-            ok: false,
-            content: `Could not post to #${channelName}. Check that the channel exists, the bot has access to it, and the Discord integration is running.`,
-            label: `Discord post to #${channelName} failed`
-          };
-        }
-        return {
-          ok: true,
-          content: `Posted to #${args.channelName}.`,
-          label: `Discord \u2192 #${args.channelName}`
-        };
-      }
-    };
-  }
-});
-
-// server/agent/tools/setupNamedAgent.ts
-var DEFAULT_PERSONAS, DEFAULT_NAMES, setupNamedAgentTool;
-var init_setupNamedAgent = __esm({
-  "server/agent/tools/setupNamedAgent.ts"() {
-    "use strict";
-    init_manager();
-    DEFAULT_PERSONAS = {
-      coder: "You are a focused software engineer. You implement features, write clean code, and provide detailed progress updates. Always summarize what you just built and what you're working on next.",
-      researcher: "You are a deep research specialist. You find information, synthesize stories, and produce structured briefings. Always cite sources and provide multiple angles on each story.",
-      writer: "You are a content writing agent. You write scripts, posts, and articles in the user's established voice and style. Always match the tone of prior approved content.",
-      visual: "You are a visual concepts specialist. You generate detailed thumbnail concepts, design briefs, and visual direction notes with specific color palettes, layouts, and text overlay suggestions.",
-      custom: "You are a specialized assistant. Focus on the task at hand and provide high-quality, actionable outputs."
-    };
-    DEFAULT_NAMES = {
-      coder: "Charlie",
-      researcher: "Echo",
-      writer: "Quill",
-      visual: "Pixel"
-    };
-    setupNamedAgentTool = {
-      name: "setup_named_agent",
-      description: "Create a named AI sub-agent with a distinct persona that lives in its own dedicated Discord channel. Built-in roles: coder (Charlie), researcher (Echo), writer (Quill), visual (Pixel). Use when the user asks to 'set up a coding agent', 'create a research assistant in Discord', etc. Each agent gets its own channel and responds with a focused persona when messaged there. Optionally enable an autonomous loop where the agent proactively works on tasks at a set interval.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: {
-            type: "string",
-            description: "The agent's name (e.g. 'Charlie', 'Echo'). Defaults to the role's default name if omitted."
-          },
-          role: {
-            type: "string",
-            enum: ["coder", "researcher", "writer", "visual", "custom"],
-            description: "The agent's role. Determines the default persona and channel name."
-          },
-          persona: {
-            type: "string",
-            description: "Optional custom persona text. Defaults to the built-in persona for the role."
-          },
-          loopEnabled: {
-            type: "boolean",
-            description: "Set to true to enable autonomous operation \u2014 the agent will proactively work on tasks at the set interval."
-          },
-          loopIntervalMinutes: {
-            type: "number",
-            description: "How often the autonomous loop fires in minutes. Default: 60."
-          },
-          loopPrompt: {
-            type: "string",
-            description: "What the looping agent does each cycle (e.g. 'Check the goal list and work on the next highest-priority task')."
-          }
-        },
-        required: ["role"]
-      },
-      async execute(args, ctx) {
-        const { userId } = ctx;
-        const typedArgs = args;
-        const role = typedArgs.role || "custom";
-        const name = typedArgs.name || DEFAULT_NAMES[role] || "Agent";
-        const persona = typedArgs.persona || DEFAULT_PERSONAS[role] || DEFAULT_PERSONAS.custom;
-        const channelName = `${name.toLowerCase()}-${role}`;
-        const channelResult = await createDiscordChannel(userId, {
-          channelName,
-          topic: `${name} \u2014 ${role} agent. ${persona.slice(0, 100)}`,
-          categoryName: "\u{1F9E0} Jarvis Workspace",
-          pinMessage: `**${name} \u2014 ${role.charAt(0).toUpperCase() + role.slice(1)} Agent**
-
-${persona}
-
-_Message ${name} here to get started. ${typedArgs.loopEnabled ? `I'll also proactively post updates every ${typedArgs.loopIntervalMinutes ?? 60} minutes.` : "I respond to your messages."}_`
-        });
-        const channelId = channelResult.channelId;
-        const agentId = await registerNamedAgent(userId, {
-          name,
-          role,
-          persona,
-          channelId,
-          channelName,
-          loopEnabled: typedArgs.loopEnabled,
-          loopIntervalMinutes: typedArgs.loopIntervalMinutes,
-          loopPrompt: typedArgs.loopPrompt
-        });
-        const loopInfo = typedArgs.loopEnabled ? ` The loop is enabled \u2014 ${name} will proactively post updates every ${typedArgs.loopIntervalMinutes ?? 60} minutes.` : "";
-        return {
-          ok: true,
-          content: `Created **${name}** (${role} agent) with a dedicated #${channelName} channel.${loopInfo} Message ${name} in that channel to get started. Agent ID: \`${agentId}\`.`,
-          label: `Agent created: ${name} (${role})`,
-          detail: agentId
-        };
-      }
-    };
-  }
-});
-
-// server/agent/agentLogger.ts
-var agentLogger_exports = {};
-__export(agentLogger_exports, {
-  logAgentEvent: () => logAgentEvent
-});
-function logAgentEvent(e) {
-  try {
-    const payload = { event: e.event };
-    if (e.agentId) payload.agentId = e.agentId;
-    if (e.userId) payload.userId = e.userId;
-    if (e.toolName) payload.toolName = e.toolName;
-    if (e.taskId) payload.taskId = e.taskId;
-    if (e.durationMs !== void 0) payload.durationMs = e.durationMs;
-    if (e.detail) payload.detail = e.detail;
-    console.log(`[AgentManager] ${JSON.stringify(payload)}`);
-  } catch {
-  }
-}
-var init_agentLogger = __esm({
-  "server/agent/agentLogger.ts"() {
-    "use strict";
-  }
-});
-
-// server/agent/agentManager.ts
-var agentManager_exports = {};
-__export(agentManager_exports, {
-  assignChannel: () => assignChannel,
-  createAgent: () => createAgent,
-  deleteAgent: () => deleteAgent,
-  disableAgent: () => disableAgent,
-  enableAgent: () => enableAgent,
-  getActiveAgentsForUser: () => getActiveAgentsForUser,
-  getAgent: () => getAgent,
-  getAgentForChannel: () => getAgentForChannel,
-  listAgents: () => listAgents,
-  loadAgentConfig: () => loadAgentConfig,
-  removeChannel: () => removeChannel,
-  updateAgent: () => updateAgent
-});
-import { eq as eq33, and as and25 } from "drizzle-orm";
-function mergePermissions(partial) {
-  if (!partial) return { ...DEFAULT_AGENT_PERMISSIONS };
-  return { ...DEFAULT_AGENT_PERMISSIONS, ...partial };
-}
-async function createAgent(userId, config) {
-  const name = config.name.trim();
-  if (!name) throw new Error("Agent name is required");
-  const allActive = await db.select().from(discordAgents).where(and25(eq33(discordAgents.userId, userId), eq33(discordAgents.isActive, 1)));
-  const nameLower = name.toLowerCase();
-  const conflict = allActive.find((a) => a.name.toLowerCase() === nameLower);
-  if (conflict) {
-    throw new Error(`Agent "${name}" already exists for this user. Choose a different name.`);
-  }
-  const values = {
-    userId,
-    name,
-    role: config.role || "custom",
-    persona: config.persona,
-    channelId: config.channelId,
-    channelName: config.channelName,
-    isActive: 1,
-    loopEnabled: config.loopEnabled ? 1 : 0,
-    loopIntervalMinutes: config.loopIntervalMinutes ?? 60,
-    loopPrompt: config.loopPrompt,
-    platforms: config.platforms ?? ["discord"],
-    permissions: mergePermissions(config.permissions),
-    memoryScope: config.memoryScope ?? "agent_private",
-    accessGlobalMemory: config.accessGlobalMemory ?? false,
-    allowedUsers: [],
-    allowedConversations: [],
-    privateMode: config.privateMode ?? false,
-    platformChannels: config.platformChannels ?? {},
-    configJson: config.configJson,
-    heartbeatFailCount: 0,
-    mentionPatterns: config.mentionPatterns ?? []
-  };
-  const [row] = await db.insert(discordAgents).values(values).returning({ id: discordAgents.id });
-  const agentId = row.id;
-  logAgentEvent({
-    event: "agent_created",
-    agentId,
-    userId,
-    detail: `role=${values.role} platforms=${values.platforms.join(",")}`
-  });
-  console.log(`[AgentManager] created agent "${name}" (${agentId}) for user ${userId}`);
-  return agentId;
-}
-async function getAgent(agentId) {
-  const [row] = await db.select().from(discordAgents).where(eq33(discordAgents.id, agentId)).limit(1);
-  return row ?? null;
-}
-async function listAgents(userId, includeDisabled = false) {
-  if (includeDisabled) {
-    return db.select().from(discordAgents).where(eq33(discordAgents.userId, userId));
-  }
-  return db.select().from(discordAgents).where(
-    and25(eq33(discordAgents.userId, userId), eq33(discordAgents.isActive, 1))
-  );
-}
-async function updateAgent(agentId, patch) {
-  const updates = {};
-  if (patch.name !== void 0) updates.name = patch.name;
-  if (patch.role !== void 0) updates.role = patch.role;
-  if (patch.persona !== void 0) updates.persona = patch.persona;
-  if (patch.platforms !== void 0) updates.platforms = patch.platforms;
-  if (patch.permissions !== void 0) {
-    const existing = await getAgent(agentId);
-    const current = existing?.permissions ?? DEFAULT_AGENT_PERMISSIONS;
-    updates.permissions = { ...current, ...patch.permissions };
-  }
-  if (patch.memoryScope !== void 0) updates.memoryScope = patch.memoryScope;
-  if (patch.accessGlobalMemory !== void 0) updates.accessGlobalMemory = patch.accessGlobalMemory;
-  if (patch.privateMode !== void 0) updates.privateMode = patch.privateMode;
-  if (patch.channelId !== void 0) updates.channelId = patch.channelId;
-  if (patch.channelName !== void 0) updates.channelName = patch.channelName;
-  if (patch.loopEnabled !== void 0) updates.loopEnabled = patch.loopEnabled ? 1 : 0;
-  if (patch.loopIntervalMinutes !== void 0) updates.loopIntervalMinutes = patch.loopIntervalMinutes;
-  if (patch.loopPrompt !== void 0) updates.loopPrompt = patch.loopPrompt;
-  if (patch.platformChannels !== void 0) updates.platformChannels = patch.platformChannels;
-  if (patch.isActive !== void 0) updates.isActive = patch.isActive ? 1 : 0;
-  if (patch.mentionPatterns !== void 0) updates.mentionPatterns = patch.mentionPatterns;
-  if (Object.keys(updates).length === 0) return;
-  await db.update(discordAgents).set(updates).where(eq33(discordAgents.id, agentId));
-  console.log(`[AgentManager] updated agent ${agentId}`);
-}
-async function disableAgent(agentId) {
-  await db.update(discordAgents).set({ isActive: 0 }).where(eq33(discordAgents.id, agentId));
-  logAgentEvent({ event: "agent_disabled_stuck", agentId, detail: "manually disabled" });
-  console.log(`[AgentManager] disabled agent ${agentId}`);
-}
-async function enableAgent(agentId) {
-  await db.update(discordAgents).set({ isActive: 1, stuckSince: null, heartbeatFailCount: 0 }).where(eq33(discordAgents.id, agentId));
-  console.log(`[AgentManager] enabled agent ${agentId}`);
-}
-async function deleteAgent(agentId) {
-  await db.delete(discordAgents).where(eq33(discordAgents.id, agentId));
-  console.log(`[AgentManager] deleted agent ${agentId}`);
-}
-async function assignChannel(agentId, platform, channelId) {
-  const agent = await getAgent(agentId);
-  if (!agent) throw new Error(`Agent ${agentId} not found`);
-  const channels2 = agent.platformChannels ?? {};
-  const existing = channels2[platform] ?? [];
-  if (!existing.includes(channelId)) {
-    channels2[platform] = [...existing, channelId];
-  }
-  const updates = { platformChannels: channels2 };
-  if (platform === "discord" && !agent.channelId) {
-    updates.channelId = channelId;
-  }
-  await db.update(discordAgents).set(updates).where(eq33(discordAgents.id, agentId));
-  console.log(`[AgentManager] assigned ${platform}:${channelId} to agent ${agentId}`);
-}
-async function removeChannel(agentId, platform, channelId) {
-  const agent = await getAgent(agentId);
-  if (!agent) throw new Error(`Agent ${agentId} not found`);
-  const channels2 = agent.platformChannels ?? {};
-  channels2[platform] = (channels2[platform] ?? []).filter((id) => id !== channelId);
-  await db.update(discordAgents).set({ platformChannels: channels2 }).where(eq33(discordAgents.id, agentId));
-  console.log(`[AgentManager] removed ${platform}:${channelId} from agent ${agentId}`);
-}
-async function getActiveAgentsForUser(userId) {
-  return db.select().from(discordAgents).where(and25(eq33(discordAgents.userId, userId), eq33(discordAgents.isActive, 1)));
-}
-async function getAgentForChannel(userId, platform, channelId) {
-  const agents = await getActiveAgentsForUser(userId);
-  for (const agent of agents) {
-    if (agent.channelId === channelId) return agent;
-    const pc = agent.platformChannels ?? {};
-    if (pc[platform]?.includes(channelId)) return agent;
-  }
-  return null;
-}
-async function loadAgentConfig(userId, configJson) {
-  const config = {
-    name: String(configJson.name || ""),
-    role: String(configJson.role || "custom"),
-    persona: configJson.personality_prompt ? String(configJson.personality_prompt) : void 0,
-    platforms: Array.isArray(configJson.platforms) ? configJson.platforms : ["discord"],
-    permissions: configJson.permissions ?? {},
-    memoryScope: configJson.memory_scope ?? "agent_private",
-    accessGlobalMemory: Boolean(configJson.can_access_global_memory ?? false),
-    configJson
-  };
-  if (!config.name) throw new Error("Config must include a 'name' field");
-  return createAgent(userId, config);
-}
-var init_agentManager = __esm({
-  "server/agent/agentManager.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_agentLogger();
-  }
-});
-
-// server/agent/approvalReceipt.ts
-function isRecord(value) {
-  return !!value && typeof value === "object" && !Array.isArray(value);
-}
-function isIsoDateLike(value) {
-  return !Number.isNaN(Date.parse(value));
-}
-function createApprovalReceipt(input) {
-  const expiresAt = input.expiresAt instanceof Date ? input.expiresAt.toISOString() : typeof input.expiresAt === "string" ? input.expiresAt : void 0;
-  return {
-    gateId: input.gateId,
-    userId: input.userId,
-    toolName: input.toolName,
-    scope: "top_level_action",
-    originalUserText: input.originalUserText,
-    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-    ...expiresAt ? { expiresAt } : {}
-  };
-}
-function normalizeApprovalReceipt(value) {
-  if (!isRecord(value)) return void 0;
-  const gateId = typeof value.gateId === "string" ? value.gateId.trim() : "";
-  const userId = typeof value.userId === "string" ? value.userId.trim() : "";
-  const toolName = typeof value.toolName === "string" ? value.toolName.trim() : "";
-  const scope = value.scope;
-  const originalUserText = typeof value.originalUserText === "string" ? value.originalUserText.trim() : "";
-  const createdAt = typeof value.createdAt === "string" ? value.createdAt.trim() : "";
-  const expiresAt = typeof value.expiresAt === "string" ? value.expiresAt.trim() : void 0;
-  if (!gateId || !userId || !toolName || scope !== "top_level_action" || !originalUserText) {
-    return void 0;
-  }
-  if (!createdAt || !isIsoDateLike(createdAt)) return void 0;
-  if (expiresAt && !isIsoDateLike(expiresAt)) return void 0;
-  return {
-    gateId,
-    userId,
-    toolName,
-    scope,
-    originalUserText,
-    createdAt,
-    ...expiresAt ? { expiresAt } : {}
-  };
-}
-function approvalReceiptCoversToolCall(receiptValue, call, now = /* @__PURE__ */ new Date()) {
-  const receipt = normalizeApprovalReceipt(receiptValue);
-  if (!receipt) return false;
-  if (!call.userId || call.userId !== receipt.userId) return false;
-  if (call.toolName !== receipt.toolName) return false;
-  if (receipt.expiresAt && Date.parse(receipt.expiresAt) < now.getTime()) return false;
-  return true;
-}
-var init_approvalReceipt = __esm({
-  "server/agent/approvalReceipt.ts"() {
-    "use strict";
-  }
-});
-
-// server/agent/agentPolicyManager.ts
-import { eq as eq34, and as and26, sql as sql12 } from "drizzle-orm";
-async function getAgentPolicy(agentId) {
-  const [policyRow] = await db.select().from(agentApprovalPolicies).where(eq34(agentApprovalPolicies.agentId, agentId)).limit(1);
-  const allowlist = await db.select().from(agentApprovalAllowlist).where(eq34(agentApprovalAllowlist.agentId, agentId)).orderBy(agentApprovalAllowlist.createdAt);
-  if (!policyRow) {
-    return allowlist.length > 0 ? { agentId, scope: "global", allowlist } : null;
-  }
-  return {
-    agentId,
-    scope: policyRow.scope,
-    allowlist
-  };
-}
-async function setAgentPolicyScope(agentId, userId, scope) {
-  await db.insert(agentApprovalPolicies).values({ agentId, userId, scope, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
-    target: agentApprovalPolicies.agentId,
-    set: { scope, updatedAt: /* @__PURE__ */ new Date() }
-  });
-}
-async function addAllowlistPattern(agentId, userId, pattern) {
-  const [entry] = await db.insert(agentApprovalAllowlist).values({ agentId, userId, pattern: pattern.trim() }).returning();
-  return entry;
-}
-async function removeAllowlistPattern(patternId, agentId) {
-  const result = await db.delete(agentApprovalAllowlist).where(
-    and26(
-      eq34(agentApprovalAllowlist.id, patternId),
-      eq34(agentApprovalAllowlist.agentId, agentId)
-    )
-  );
-  return (result.rowCount ?? 0) > 0;
-}
-function matchesPattern(toolName, pattern) {
-  if (pattern.endsWith("*")) {
-    const prefix = pattern.slice(0, -1);
-    return toolName.startsWith(prefix);
-  }
-  return toolName === pattern;
-}
-function recordAllowlistHit(patternId) {
-  db.update(agentApprovalAllowlist).set({
-    useCount: sql12`use_count + 1`,
-    lastUsedAt: /* @__PURE__ */ new Date()
-  }).where(eq34(agentApprovalAllowlist.id, patternId)).catch(() => {
-  });
-}
-async function evaluatePolicyForTool(agentId, toolName, isStrictlyIrreversible) {
-  let policy;
-  try {
-    policy = await getAgentPolicy(agentId);
-  } catch {
-    return { action: "use_global", reason: "policy load failed" };
-  }
-  if (!policy || policy.scope === "global") {
-    if (policy && policy.allowlist.length > 0) {
-      const hit = policy.allowlist.find((e) => matchesPattern(toolName, e.pattern));
-      if (hit && !isStrictlyIrreversible) {
-        recordAllowlistHit(hit.id);
-        return { action: "auto_approve", reason: `allowlist pattern "${hit.pattern}"`, patternId: hit.id };
-      }
-    }
-    return { action: "use_global", reason: "no custom policy" };
-  }
-  if (policy.scope === "strict") {
-    return { action: "require_approval", reason: "agent policy is strict" };
-  }
-  if (policy.scope === "permissive") {
-    if (isStrictlyIrreversible) {
-      return { action: "require_approval", reason: "strictly irreversible tool \u2014 permissive policy still requires approval" };
-    }
-    return { action: "auto_approve", reason: "agent policy is permissive" };
-  }
-  if (policy.scope === "custom") {
-    const hit = policy.allowlist.find((e) => matchesPattern(toolName, e.pattern));
-    if (hit && !isStrictlyIrreversible) {
-      recordAllowlistHit(hit.id);
-      return { action: "auto_approve", reason: `custom allowlist pattern "${hit.pattern}"`, patternId: hit.id };
-    }
-    return { action: "require_approval", reason: "no matching custom allowlist pattern" };
-  }
-  return { action: "use_global", reason: "unknown scope" };
-}
-var init_agentPolicyManager = __esm({
-  "server/agent/agentPolicyManager.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-  }
-});
-
-// server/agent/agentApproval.ts
-var agentApproval_exports = {};
-__export(agentApproval_exports, {
-  STRICTLY_IRREVERSIBLE_TOOLS: () => STRICTLY_IRREVERSIBLE_TOOLS,
-  approveGate: () => approveGate,
-  awaitApproval: () => awaitApproval,
-  getGate: () => getGate,
-  listAllGates: () => listAllGates,
-  listPendingGates: () => listPendingGates,
-  rejectGate: () => rejectGate,
-  requestApproval: () => requestApproval,
-  requiresApproval: () => requiresApproval
-});
-import { eq as eq35, and as and27, lt as lt3 } from "drizzle-orm";
-import { EventEmitter } from "events";
-function requiresApproval(toolName) {
-  return HIGH_RISK_TOOLS.has(toolName);
-}
-function rowToGate(row) {
-  return {
-    id: row.id,
-    agentId: row.agentId,
-    userId: row.userId,
-    toolName: row.toolName,
-    toolArgs: row.toolArgs,
-    description: row.description,
-    status: row.status,
-    createdAt: row.createdAt,
-    expiresAt: row.expiresAt,
-    resolvedAt: row.resolvedAt ?? void 0,
-    resolvedBy: row.resolvedBy ?? void 0
-  };
-}
-async function requestApproval(req) {
-  const id = `gate_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  const now = /* @__PURE__ */ new Date();
-  const ttl = req.ttlMs ?? DEFAULT_TTL_MS;
-  const expiresAt = new Date(now.getTime() + ttl);
-  const isJarvisInitiated = req.initiatedBy === "jarvis";
-  const isStrictlyIrreversible = STRICTLY_IRREVERSIBLE_TOOLS.has(req.toolName);
-  let autoApprove = isJarvisInitiated && !isStrictlyIrreversible;
-  let policyApplied = "global";
-  try {
-    const decision = await evaluatePolicyForTool(req.agentId, req.toolName, isStrictlyIrreversible);
-    if (decision.action === "auto_approve") {
-      autoApprove = true;
-      policyApplied = decision.reason;
-    } else if (decision.action === "require_approval") {
-      autoApprove = false;
-      policyApplied = decision.reason;
-    }
-  } catch {
-  }
-  await db.insert(agentApprovalGates).values({
-    id,
-    agentId: req.agentId,
-    userId: req.userId,
-    toolName: req.toolName,
-    toolArgs: req.toolArgs,
-    description: req.description,
-    status: autoApprove ? "approved" : "pending",
-    initiatedBy: req.initiatedBy ?? "user",
-    createdAt: now,
-    expiresAt,
-    ...autoApprove ? { resolvedAt: now, resolvedBy: autoApprove && policyApplied !== "global" ? `policy:${policyApplied}` : "jarvis_triage" } : {}
-  });
-  if (!autoApprove) {
-    try {
-      const schema = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      await db.insert(schema.deliverables).values({
-        userId: req.userId,
-        agentType: "named_agent",
-        type: "approval_gate",
-        title: `Approve: ${req.toolName}`,
-        summary: req.description,
-        body: req.description,
-        meta: {
-          gateId: id,
-          agentId: req.agentId,
-          toolName: req.toolName,
-          toolArgs: req.toolArgs,
-          initiatedBy: req.initiatedBy ?? "user",
-          policyApplied
-        },
-        status: "pending_approval",
-        triageStatus: "needs_attention"
-      });
-    } catch (delivErr) {
-      console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
-    }
-  }
-  if (autoApprove) {
-    logAgentEvent({
-      event: "tool_approved",
-      agentId: req.agentId,
-      userId: req.userId,
-      detail: `gate=${id} tool=${req.toolName} auto-approved policy=${policyApplied}`
-    });
-    setImmediate(() => {
-      gateEmitter.emit(id, { approved: true });
-    });
-  } else {
-    logAgentEvent({
-      event: "tool_blocked",
-      agentId: req.agentId,
-      userId: req.userId,
-      detail: `gate=${id} tool=${req.toolName}`
-    });
-  }
-  return {
-    id,
-    agentId: req.agentId,
-    userId: req.userId,
-    toolName: req.toolName,
-    toolArgs: req.toolArgs,
-    description: req.description,
-    status: autoApprove ? "approved" : "pending",
-    createdAt: now,
-    expiresAt
-  };
-}
-function awaitApproval(gateId, ttlMs, signal) {
-  return new Promise((resolve8) => {
-    if (signal?.aborted) {
-      resolve8(false);
-      return;
-    }
-    const timeout = ttlMs ?? DEFAULT_TTL_MS + 5e3;
-    const cleanup = (result) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      gateEmitter.removeAllListeners(gateId);
-      resolve8(result);
-    };
-    const timer = setTimeout(() => cleanup(false), timeout);
-    const onAbort = () => cleanup(false);
-    signal?.addEventListener("abort", onAbort, { once: true });
-    gateEmitter.once(gateId, (result) => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      resolve8(result.approved);
-    });
-  });
-}
-async function approveGate(gateId, resolvedBy) {
-  const now = /* @__PURE__ */ new Date();
-  try {
-    const result = await db.update(agentApprovalGates).set({ status: "approved", resolvedAt: now, resolvedBy }).where(
-      and27(
-        eq35(agentApprovalGates.id, gateId),
-        eq35(agentApprovalGates.userId, resolvedBy),
-        eq35(agentApprovalGates.status, "pending")
-      )
-    );
-    const rows = result.rowCount ?? 0;
-    if (rows === 0) {
-      return false;
-    }
-    gateEmitter.emit(gateId, { approved: true });
-    logAgentEvent({ event: "tool_approved", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId}` });
-    return true;
-  } catch (err2) {
-    console.error("[AgentApproval] approveGate DB error:", err2);
-    return false;
-  }
-}
-async function rejectGate(gateId, resolvedBy) {
-  const now = /* @__PURE__ */ new Date();
-  try {
-    const result = await db.update(agentApprovalGates).set({ status: "rejected", resolvedAt: now, resolvedBy }).where(
-      and27(
-        eq35(agentApprovalGates.id, gateId),
-        eq35(agentApprovalGates.userId, resolvedBy),
-        eq35(agentApprovalGates.status, "pending")
-      )
-    );
-    const rows = result.rowCount ?? 0;
-    if (rows === 0) {
-      return false;
-    }
-    gateEmitter.emit(gateId, { approved: false, reason: "rejected" });
-    logAgentEvent({ event: "tool_blocked", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId} rejected` });
-    return true;
-  } catch (err2) {
-    console.error("[AgentApproval] rejectGate DB error:", err2);
-    return false;
-  }
-}
-async function getGate(gateId) {
-  const rows = await db.select().from(agentApprovalGates).where(eq35(agentApprovalGates.id, gateId)).limit(1);
-  return rows[0] ? rowToGate(rows[0]) : void 0;
-}
-async function listPendingGates(userId) {
-  const rows = await db.select().from(agentApprovalGates).where(and27(eq35(agentApprovalGates.userId, userId), eq35(agentApprovalGates.status, "pending")));
-  return rows.map(rowToGate);
-}
-async function listAllGates(userId) {
-  const { desc: desc46 } = await import("drizzle-orm");
-  const rows = await db.select().from(agentApprovalGates).where(eq35(agentApprovalGates.userId, userId)).orderBy(desc46(agentApprovalGates.createdAt)).limit(50);
-  return rows.map(rowToGate);
-}
-var HIGH_RISK_TOOLS, STRICTLY_IRREVERSIBLE_TOOLS, gateEmitter, DEFAULT_TTL_MS, _cleanupTimer;
-var init_agentApproval = __esm({
-  "server/agent/agentApproval.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_agentLogger();
-    init_toolCallHooks();
-    init_agentPolicyManager();
-    HIGH_RISK_TOOLS = /* @__PURE__ */ new Set([
-      // Email
-      "send_email",
-      "gmail_action",
-      "gmail_draft",
-      // Public posting / messaging
-      "discord_post",
-      "connect_channel",
-      "sessions_send",
-      // Voice / call user
-      "speak",
-      // Memory clear (permanent, irreversible)
-      "clear_memory",
-      "agent_memory_clear",
-      // Browser control
-      "browser_navigate",
-      "browser_click",
-      "browser_type",
-      "browser_select",
-      "browser_clear_session",
-      // File / cloud storage
-      "create_document",
-      "drive_create_file",
-      // Agent management (creating new agents)
-      "setup_named_agent",
-      // OS / system actions via daemon
-      "daemon_action",
-      // Delegating to Codex may transitively reach local MCP/CLI capabilities.
-      "delegate_to_codex"
-    ]);
-    STRICTLY_IRREVERSIBLE_TOOLS = /* @__PURE__ */ new Set([
-      "send_email",
-      "gmail_action",
-      "daemon_action",
-      "discord_post",
-      "speak",
-      "sessions_send"
-    ]);
-    gateEmitter = new EventEmitter();
-    gateEmitter.setMaxListeners(200);
-    DEFAULT_TTL_MS = 24 * 60 * 60 * 1e3;
-    _cleanupTimer = setInterval(async () => {
-      try {
-        const now = /* @__PURE__ */ new Date();
-        const expired = await db.update(agentApprovalGates).set({ status: "expired", resolvedAt: now }).where(and27(eq35(agentApprovalGates.status, "pending"), lt3(agentApprovalGates.expiresAt, now))).returning({ id: agentApprovalGates.id });
-        for (const row of expired) {
-          gateEmitter.emit(row.id, { approved: false, reason: "expired" });
-        }
-      } catch {
-      }
-    }, 2 * 60 * 1e3);
-    if (typeof _cleanupTimer.unref === "function") {
-      _cleanupTimer.unref();
-    }
-    toolCallHooks.register(
-      (ctx) => {
-        if (!requiresApproval(ctx.toolName)) return void 0;
-        return {
-          requireApproval: {
-            title: `Approve: ${ctx.toolName}`,
-            description: `Agent "${ctx.agentName}" wants to run tool: ${ctx.toolName}`,
-            severity: "info"
-          }
-        };
-      },
-      { priority: HOOK_PRIORITY.APPROVAL }
-    );
   }
 });
 
@@ -27516,8 +22849,8 @@ __export(agentMemory_exports, {
   summarizeAgentMemory: () => summarizeAgentMemory,
   writeAgentMemory: () => writeAgentMemory
 });
-import { eq as eq36, and as and28, desc as desc9 } from "drizzle-orm";
-import { sql as sql13 } from "drizzle-orm";
+import { eq as eq27, and as and20, desc as desc9 } from "drizzle-orm";
+import { sql as sql12 } from "drizzle-orm";
 async function writeAgentMemory(agentId, userId, content, category = "fact") {
   const [row] = await db.insert(agentMemories).values({ agentId, userId, content, category }).returning({ id: agentMemories.id });
   logAgentEvent({ event: "memory_written", agentId, userId, detail: `category=${category}` });
@@ -27529,10 +22862,10 @@ async function readAgentMemories(agentId, userId, query, limit = 10) {
   const safeLimit = Math.min(limit, 25);
   const trimmedQuery = (query || "").trim();
   if (!trimmedQuery) {
-    return db.select().from(agentMemories).where(and28(eq36(agentMemories.agentId, agentId), eq36(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
+    return db.select().from(agentMemories).where(and20(eq27(agentMemories.agentId, agentId), eq27(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
   }
   try {
-    const rows = await db.execute(sql13`
+    const rows = await db.execute(sql12`
       SELECT *, ts_rank(
         to_tsvector('english', content),
         plainto_tsquery('english', ${trimmedQuery})
@@ -27546,16 +22879,16 @@ async function readAgentMemories(agentId, userId, query, limit = 10) {
     `);
     return rows.rows;
   } catch {
-    return db.select().from(agentMemories).where(and28(eq36(agentMemories.agentId, agentId), eq36(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
+    return db.select().from(agentMemories).where(and20(eq27(agentMemories.agentId, agentId), eq27(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
   }
 }
 async function summarizeAgentMemory(agentId, userId) {
-  const count2 = await db.execute(sql13`
+  const count2 = await db.execute(sql12`
     SELECT COUNT(*) AS count FROM agent_memories WHERE agent_id = ${agentId} AND user_id = ${userId}
   `);
   const total = parseInt(count2.rows[0]?.count ?? "0", 10);
   if (total < SUMMARIZATION_THRESHOLD) return;
-  const toSummarize = await db.select().from(agentMemories).where(and28(eq36(agentMemories.agentId, agentId), eq36(agentMemories.userId, userId))).orderBy(agentMemories.createdAt).limit(200);
+  const toSummarize = await db.select().from(agentMemories).where(and20(eq27(agentMemories.agentId, agentId), eq27(agentMemories.userId, userId))).orderBy(agentMemories.createdAt).limit(200);
   if (toSummarize.length < 10) return;
   const memoryText = toSummarize.map((m) => `[${m.category}] ${m.content}`).join("\n");
   let summary = "";
@@ -27587,7 +22920,7 @@ ${summary}`,
     });
     for (let i = 0; i < ids.length; i += 50) {
       const batch = ids.slice(i, i + 50);
-      await tx.execute(sql13`
+      await tx.execute(sql12`
         DELETE FROM agent_memories WHERE id = ANY(${batch}::varchar[])
       `);
     }
@@ -27601,7 +22934,7 @@ ${summary}`,
   console.log(`[AgentMemory] summarized ${ids.length} memories for agent ${agentId}`);
 }
 async function clearAgentMemory(agentId, userId) {
-  const result = await db.execute(sql13`
+  const result = await db.execute(sql12`
     DELETE FROM agent_memories WHERE agent_id = ${agentId} AND user_id = ${userId}
     RETURNING id
   `);
@@ -27610,7 +22943,7 @@ async function clearAgentMemory(agentId, userId) {
   return deleted;
 }
 async function getAgentMemoryCount(agentId, userId) {
-  const result = await db.execute(sql13`
+  const result = await db.execute(sql12`
     SELECT COUNT(*) AS count FROM agent_memories WHERE agent_id = ${agentId} AND user_id = ${userId}
   `);
   return parseInt(result.rows[0]?.count ?? "0", 10);
@@ -27636,10 +22969,10 @@ var init_agentMemory = __esm({
 
 // server/agent/contextRegistry.ts
 import fs5 from "fs/promises";
-import path8 from "path";
+import path6 from "path";
 async function readRepoDoc(relativePath, maxChars = MAX_CONTEXT_DOC_CHARS) {
   try {
-    const fullPath = path8.resolve(REPO_ROOT, relativePath);
+    const fullPath = path6.resolve(REPO_ROOT, relativePath);
     if (!fullPath.startsWith(REPO_ROOT)) return "";
     const content = await fs5.readFile(fullPath, "utf-8");
     return content.trim().slice(0, maxChars);
@@ -27777,7 +23110,7 @@ ${workspace}` : ""
 import {
   ChannelType
 } from "discord.js";
-import { eq as eq37, and as and29 } from "drizzle-orm";
+import { eq as eq28, and as and21 } from "drizzle-orm";
 function classifyTopic(text2) {
   const lower = text2.toLowerCase();
   let best = { key: "thinking", score: 0 };
@@ -27866,7 +23199,7 @@ _Jarvis will post your daily summary here every evening at 9pm._`
       categoryId: category.id,
       channels: channelIds
     };
-    const rows = await db.select().from(channelLinks).where(and29(eq37(channelLinks.userId, userId), eq37(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and21(eq28(channelLinks.userId, userId), eq28(channelLinks.channel, "discord"))).limit(1);
     if (rows.length > 0) {
       const existing = rows[0].metadata || {};
       const existingAllowlist = existing.allowlistedGuilds || [];
@@ -27882,7 +23215,7 @@ _Jarvis will post your daily summary here every evening at 9pm._`
         (g) => !(g.guildId === guildId && workspaceChannelIds.has(g.channelId))
       );
       const mergedAllowlist = [...keptExisting, ...workspaceEntries];
-      await db.update(channelLinks).set({ metadata: { ...existing, workspace, allowlistedGuilds: mergedAllowlist } }).where(and29(eq37(channelLinks.userId, userId), eq37(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...existing, workspace, allowlistedGuilds: mergedAllowlist } }).where(and21(eq28(channelLinks.userId, userId), eq28(channelLinks.channel, "discord")));
     }
     return { ok: true, workspace };
   } catch (err2) {
@@ -27993,7 +23326,7 @@ var init_workspace = __esm({
 });
 
 // server/agent/providers/topicContext.ts
-import { eq as eq38, and as and30 } from "drizzle-orm";
+import { eq as eq29, and as and22 } from "drizzle-orm";
 var init_topicContext = __esm({
   "server/agent/providers/topicContext.ts"() {
     "use strict";
@@ -28005,7 +23338,7 @@ var init_topicContext = __esm({
       async (input) => {
         if (input.platform !== "discord" || !input.channelId) return;
         try {
-          const [link] = await db.select().from(channelLinks).where(and30(eq38(channelLinks.userId, input.userId), eq38(channelLinks.channel, "discord"))).limit(1);
+          const [link] = await db.select().from(channelLinks).where(and22(eq29(channelLinks.userId, input.userId), eq29(channelLinks.channel, "discord"))).limit(1);
           if (!link?.metadata) return;
           const workspace = link.metadata.workspace;
           if (!workspace) return;
@@ -28032,14 +23365,14 @@ __export(runNamedAgent_exports, {
   runNamedAgent: () => runNamedAgent
 });
 import fs6 from "fs";
-import path9 from "path";
-import { eq as eq39 } from "drizzle-orm";
+import path7 from "path";
+import { eq as eq30 } from "drizzle-orm";
 function depthKey(userId, agentId) {
   return `${userId}:${agentId}`;
 }
 function getCrewToolAllowlists() {
   if (_crewToolAllowlists) return _crewToolAllowlists;
-  const filePath = path9.join(CREW_DIR, "tools.json");
+  const filePath = path7.join(CREW_DIR, "tools.json");
   try {
     const raw = JSON.parse(fs6.readFileSync(filePath, "utf8"));
     _crewToolAllowlists = Object.fromEntries(
@@ -28055,7 +23388,7 @@ function getCrewToolAllowlists() {
 }
 function loadCrewReinforcement(crewRole) {
   if (_reinforcementCache.has(crewRole)) return _reinforcementCache.get(crewRole);
-  const filePath = path9.join(CREW_DIR, `${crewRole}.md`);
+  const filePath = path7.join(CREW_DIR, `${crewRole}.md`);
   try {
     const content = fs6.readFileSync(filePath, "utf8");
     _reinforcementCache.set(crewRole, content);
@@ -28305,7 +23638,7 @@ ${registryCtx.systemContext}` : systemPromptBase;
     let qualityCheckEnabled = true;
     if (!opts.isRevisionPass && userId) {
       try {
-        const prefRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq39(userPreferences.userId, userId)).limit(1);
+        const prefRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq30(userPreferences.userId, userId)).limit(1);
         const prefs = prefRows[0]?.data ?? {};
         if (prefs.responseQualityCheck === false) qualityCheckEnabled = false;
       } catch {
@@ -28508,19 +23841,19 @@ var init_runNamedAgent = __esm({
     invocationDepths = /* @__PURE__ */ new Map();
     MAX_DEPTH = 3;
     _reinforcementCache = /* @__PURE__ */ new Map();
-    CREW_DIR = path9.resolve(process.cwd(), "agents/crew");
+    CREW_DIR = path7.resolve(process.cwd(), "agents/crew");
     _crewToolAllowlists = null;
   }
 });
 
 // server/agent/crewRouter.ts
-import { eq as eq40, and as and31 } from "drizzle-orm";
+import { eq as eq31, and as and23 } from "drizzle-orm";
 async function resolveSpecialist(assignTo, userId) {
   if (!assignTo) return null;
   const normalised = assignTo.trim().toUpperCase();
   const crewRole = NAME_TO_ROLE[normalised] ?? assignTo.toLowerCase();
   try {
-    const allAgents = await db.select().from(discordAgents).where(and31(eq40(discordAgents.userId, userId), eq40(discordAgents.isActive, 1)));
+    const allAgents = await db.select().from(discordAgents).where(and23(eq31(discordAgents.userId, userId), eq31(discordAgents.isActive, 1)));
     const match = allAgents.find((a) => {
       const cfg = a.configJson ?? {};
       if (cfg.crewRole === "orchestrator") return false;
@@ -28559,7 +23892,7 @@ Assignment rules:
 - Use ECHO when the sub-task requires the user's personal history or preferences.
 - Omit "assignTo" (or set to null) only for truly generic tasks with no specialist fit.`;
   try {
-    const allAgents = await db.select().from(discordAgents).where(and31(eq40(discordAgents.userId, userId), eq40(discordAgents.isActive, 1)));
+    const allAgents = await db.select().from(discordAgents).where(and23(eq31(discordAgents.userId, userId), eq31(discordAgents.isActive, 1)));
     const crew = allAgents.filter((a) => {
       const cfg = a.configJson ?? {};
       return cfg.isCrewMember === true && cfg.crewRole !== "orchestrator";
@@ -29312,7 +24645,7 @@ var init_orchestrator = __esm({
 });
 
 // server/agent/tools/jobDuplicateGuard.ts
-import { eq as eq41, and as and32, gte as gte4, inArray as inArray2 } from "drizzle-orm";
+import { eq as eq32, and as and24, gte as gte4, inArray as inArray2 } from "drizzle-orm";
 function normalizeTitle(title) {
   return title.toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -29335,9 +24668,9 @@ function titlesAreSimilar(a, b) {
 async function findDuplicateJob(userId, agentType, title, windowMs = 10 * 60 * 1e3) {
   const since = new Date(Date.now() - windowMs);
   const activeJobs = await db.select({ id: agentJobs.id, title: agentJobs.title }).from(agentJobs).where(
-    and32(
-      eq41(agentJobs.userId, userId),
-      eq41(agentJobs.agentType, agentType),
+    and24(
+      eq32(agentJobs.userId, userId),
+      eq32(agentJobs.agentType, agentType),
       inArray2(agentJobs.status, ["queued", "running"]),
       gte4(agentJobs.createdAt, since)
     )
@@ -29362,7 +24695,7 @@ __export(jobClient_exports, {
   getModelForJobType: () => getModelForJobType2,
   submitAgentJob: () => submitAgentJob2
 });
-import { eq as eq42, and as and33, inArray as inArray3 } from "drizzle-orm";
+import { eq as eq33, and as and25, inArray as inArray3 } from "drizzle-orm";
 function getModelForJobType2(agentType) {
   return SUB_AGENT_MODEL_ROUTING[agentType];
 }
@@ -29409,11 +24742,11 @@ async function submitAgentJob2(input, deps = {}) {
   return { id, isDuplicate: false };
 }
 async function cancelAllForUser(userId) {
-  const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(and33(eq42(agentJobs.userId, userId), eq42(agentJobs.status, "queued"))).returning({ id: agentJobs.id });
-  const cancelling = await db.update(agentJobs).set({ status: "cancelling" }).where(and33(eq42(agentJobs.userId, userId), eq42(agentJobs.status, "running"))).returning({ id: agentJobs.id });
+  const cancelled = await db.update(agentJobs).set({ status: "cancelled", completedAt: /* @__PURE__ */ new Date() }).where(and25(eq33(agentJobs.userId, userId), eq33(agentJobs.status, "queued"))).returning({ id: agentJobs.id });
+  const cancelling = await db.update(agentJobs).set({ status: "cancelling" }).where(and25(eq33(agentJobs.userId, userId), eq33(agentJobs.status, "running"))).returning({ id: agentJobs.id });
   const paused = await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(
-    and33(
-      eq42(agentWorkflows.userId, userId),
+    and25(
+      eq33(agentWorkflows.userId, userId),
       inArray3(agentWorkflows.status, ["active", "paused_waiting"])
     )
   ).returning({ id: agentWorkflows.id });
@@ -29451,13 +24784,13 @@ __export(projectShellTool_exports, {
   projectShellTool: () => projectShellTool,
   stopProjectServer: () => stopProjectServer
 });
-import { spawn as spawn5, execSync } from "child_process";
+import { spawn as spawn4, execSync } from "child_process";
 import * as fs7 from "fs";
-import * as path10 from "path";
-import * as os5 from "os";
-import { eq as eq43 } from "drizzle-orm";
+import * as path8 from "path";
+import * as os3 from "os";
+import { eq as eq34 } from "drizzle-orm";
 function pidFilePath(workspaceDir) {
-  return path10.join(workspaceDir, ".jarvis-dev-server.json");
+  return path8.join(workspaceDir, ".jarvis-dev-server.json");
 }
 function writePidFile(workspaceDir, pid, port) {
   try {
@@ -29472,7 +24805,7 @@ function removePidFile(workspaceDir) {
   }
 }
 function cleanupOrphanedDevServers() {
-  const projectsRoot = path10.join(process.cwd(), "projects");
+  const projectsRoot = path8.join(process.cwd(), "projects");
   if (!fs7.existsSync(projectsRoot)) return;
   let entries;
   try {
@@ -29481,7 +24814,7 @@ function cleanupOrphanedDevServers() {
     return;
   }
   for (const entry of entries) {
-    const pidFile = path10.join(projectsRoot, entry, ".jarvis-dev-server.json");
+    const pidFile = path8.join(projectsRoot, entry, ".jarvis-dev-server.json");
     if (!fs7.existsSync(pidFile)) continue;
     let data = {};
     try {
@@ -29530,24 +24863,24 @@ function hasCdOutside(command, workspaceDir) {
   const cdMatch = command.match(/(?:^|\s)cd\s+([^\s;&|]+)/);
   if (!cdMatch) return false;
   const target = cdMatch[1];
-  const resolvedWorkspace = path10.resolve(workspaceDir);
-  const resolvedTarget = path10.resolve(workspaceDir, target);
-  return !resolvedTarget.startsWith(resolvedWorkspace + path10.sep) && resolvedTarget !== resolvedWorkspace;
+  const resolvedWorkspace = path8.resolve(workspaceDir);
+  const resolvedTarget = path8.resolve(workspaceDir, target);
+  return !resolvedTarget.startsWith(resolvedWorkspace + path8.sep) && resolvedTarget !== resolvedWorkspace;
 }
 function looksLikePath(value) {
   return value.startsWith("/") || value === ".." || value.startsWith("../") || value.includes("/..") || value.startsWith("~/");
 }
 function resolvePathValue(value, workspaceDir) {
   if (value.startsWith("~/")) {
-    return path10.resolve(os5.homedir(), value.slice(2));
+    return path8.resolve(os3.homedir(), value.slice(2));
   }
-  return path10.resolve(workspaceDir, value);
+  return path8.resolve(workspaceDir, value);
 }
 function hasUnsafePathArgs(command, workspaceDir) {
   const tokens = command.trim().split(/\s+/).slice(1);
-  const resolvedWorkspace = path10.resolve(workspaceDir);
+  const resolvedWorkspace = path8.resolve(workspaceDir);
   function isOutside(resolved) {
-    return !resolved.startsWith(resolvedWorkspace + path10.sep) && resolved !== resolvedWorkspace;
+    return !resolved.startsWith(resolvedWorkspace + path8.sep) && resolved !== resolvedWorkspace;
   }
   for (const token of tokens) {
     if (!token) continue;
@@ -29570,9 +24903,9 @@ async function runCommand(command, cwd, timeoutSeconds) {
     const tokens = command.trim().split(/\s+/);
     const executable = tokens[0];
     const args = tokens.slice(1);
-    const child = spawn5(executable, args, {
+    const child = spawn4(executable, args, {
       cwd,
-      env: { ...process.env, HOME: os5.homedir(), PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin" },
+      env: { ...process.env, HOME: os3.homedir(), PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin" },
       stdio: ["ignore", "pipe", "pipe"],
       shell: false
     });
@@ -29604,14 +24937,14 @@ async function runDevServer(command, cwd, projectId, port) {
   return new Promise((resolve8) => {
     const env = {
       ...process.env,
-      HOME: os5.homedir(),
+      HOME: os3.homedir(),
       PATH: process.env.PATH ?? "/usr/bin:/bin:/usr/local/bin",
       PORT: String(port)
     };
     const devTokens = command.trim().split(/\s+/);
     const devExecutable = devTokens[0];
     const devArgs = devTokens.slice(1);
-    const child = spawn5(devExecutable, devArgs, {
+    const child = spawn4(devExecutable, devArgs, {
       cwd,
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -29734,15 +25067,15 @@ The tool returns the local URL where the app is running so you can immediately t
         if (!projectId) {
           return { ok: false, content: "project_shell requires a projectId in context", label: "No project context" };
         }
-        const [project] = await db.select().from(jarvisProjects).where(eq43(jarvisProjects.id, projectId)).limit(1);
+        const [project] = await db.select().from(jarvisProjects).where(eq34(jarvisProjects.id, projectId)).limit(1);
         if (!project) {
           return { ok: false, content: `Project ${projectId} not found`, label: "Project not found" };
         }
         let workspaceDir = project.workspaceDir;
         if (!workspaceDir) {
-          workspaceDir = path10.join(process.cwd(), "projects", projectId);
+          workspaceDir = path8.join(process.cwd(), "projects", projectId);
           fs7.mkdirSync(workspaceDir, { recursive: true });
-          await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq43(jarvisProjects.id, projectId));
+          await db.update(jarvisProjects).set({ workspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq34(jarvisProjects.id, projectId));
         }
         if (!fs7.existsSync(workspaceDir)) {
           fs7.mkdirSync(workspaceDir, { recursive: true });
@@ -29780,7 +25113,7 @@ The tool returns the local URL where the app is running so you can immediately t
           let port = project.devServerPort ?? 0;
           if (!port || port < PORT_RANGE_START || port > PORT_RANGE_END) {
             port = findAvailablePort();
-            await db.update(jarvisProjects).set({ devServerPort: port, updatedAt: /* @__PURE__ */ new Date() }).where(eq43(jarvisProjects.id, projectId));
+            await db.update(jarvisProjects).set({ devServerPort: port, updatedAt: /* @__PURE__ */ new Date() }).where(eq34(jarvisProjects.id, projectId));
           }
           stopProjectServer(projectId);
           const { pid, url } = await runDevServer(command, workspaceDir, projectId, port);
@@ -31184,11 +26517,11 @@ __export(appProjectRunner_exports, {
   runAppProjectSession: () => runAppProjectSession,
   startAppProject: () => startAppProject
 });
-import * as path11 from "path";
+import * as path9 from "path";
 import * as fs8 from "fs";
 import { spawnSync } from "child_process";
-import * as os6 from "os";
-import { eq as eq44, asc as asc2 } from "drizzle-orm";
+import * as os4 from "os";
+import { eq as eq35, asc as asc2 } from "drizzle-orm";
 function appToolGroupsForPhase(phase) {
   const p = phase.toUpperCase();
   if (p === "SCAFFOLD") return ["app_build", "research"];
@@ -31201,11 +26534,11 @@ function appToolGroupsForPhase(phase) {
 async function runDeterministicVerification(phase, workspaceDir, reply, projectId) {
   const p = phase.toUpperCase();
   if (p.startsWith("IMPLEMENT") || p === "INTEGRATE") {
-    const tsconfigPath = path11.join(workspaceDir, "tsconfig.json");
+    const tsconfigPath = path9.join(workspaceDir, "tsconfig.json");
     if (!fs8.existsSync(tsconfigPath)) return null;
     const result = spawnSync("npx", ["tsc", "--noEmit", "--skipLibCheck"], {
       cwd: workspaceDir,
-      env: { ...process.env, HOME: os6.homedir() },
+      env: { ...process.env, HOME: os4.homedir() },
       encoding: "utf8",
       timeout: 12e4
     });
@@ -31287,7 +26620,7 @@ function buildAppStepPrompt(project, step, sessionHistory, userAnswer) {
   const completedSteps = plan.filter((s) => s.status === "complete");
   const completedSummary = completedSteps.length > 0 ? completedSteps.map((s) => `- ${s.label}: ${s.output?.slice(0, 200) || "completed"}`).join("\n") : "(none yet)";
   const devPort = project.devServerPort;
-  const workspaceDir = project.workspaceDir ?? path11.join(process.cwd(), "projects", project.id);
+  const workspaceDir = project.workspaceDir ?? path9.join(process.cwd(), "projects", project.id);
   const framework = project.appFramework ?? "custom";
   const answerContext = userAnswer ? `
 
@@ -31370,7 +26703,7 @@ async function sendAppProjectQuestion(userId, originChannel, message) {
   return {};
 }
 async function startAppProject(input) {
-  const workspaceDir = path11.join(process.cwd(), "projects", "placeholder");
+  const workspaceDir = path9.join(process.cwd(), "projects", "placeholder");
   const [project] = await db.insert(jarvisProjects).values({
     userId: input.userId,
     title: input.title,
@@ -31383,9 +26716,9 @@ async function startAppProject(input) {
     updatedAt: /* @__PURE__ */ new Date()
   }).returning({ id: jarvisProjects.id });
   const projectId = project.id;
-  const realWorkspaceDir = path11.join(process.cwd(), "projects", projectId);
+  const realWorkspaceDir = path9.join(process.cwd(), "projects", projectId);
   fs8.mkdirSync(realWorkspaceDir, { recursive: true });
-  await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
+  await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
   console.log(`[AppProjectRunner] startAppProject: created project ${projectId} for user ${input.userId} framework=${input.framework}`);
   await submitAgentJob2({
     userId: input.userId,
@@ -31398,12 +26731,12 @@ async function startAppProject(input) {
 }
 async function runAppProjectSession(projectId, _sessionNumber, userAnswer) {
   const startTime = Date.now();
-  const [project] = await db.select().from(jarvisProjects).where(eq44(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq35(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`App project ${projectId} not found`);
   if (project.status === "paused" || project.status === "complete" || project.status === "failed") {
     return { status: project.status, stepsCompleted: 0, summary: `Project is ${project.status}` };
   }
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq44(jarvisProjectSessions.projectId, projectId)).orderBy(asc2(jarvisProjectSessions.sessionNumber));
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq35(jarvisProjectSessions.projectId, projectId)).orderBy(asc2(jarvisProjectSessions.sessionNumber));
   const sessionNumber = sessions2.length + 1;
   const sessionHistory = sessions2.slice(-3).map((s) => `Session ${s.sessionNumber}: ${s.summary || "completed"}`).join("\n");
   if (project.status === "planning") {
@@ -31419,7 +26752,7 @@ ${project.questionPending}`
     );
     if (project.autonomousMode) {
       const nextReminder = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES * 60 * 1e3);
-      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
     }
     return { status: "waiting_for_input", stepsCompleted: 0, summary: "Waiting for user input" };
   }
@@ -31458,7 +26791,7 @@ ${project.questionPending}`
           messages: [
             {
               role: "system",
-              content: `You are Jarvis, building a standalone app. Your workspace is at ${project.workspaceDir ?? path11.join(process.cwd(), "projects", projectId)}.
+              content: `You are Jarvis, building a standalone app. Your workspace is at ${project.workspaceDir ?? path9.join(process.cwd(), "projects", projectId)}.
 Use project_shell for ALL file system operations and commands. Never touch Jarvis's own source files.`
             },
             { role: "user", content: prompt }
@@ -31478,7 +26811,7 @@ Use project_shell for ALL file system operations and commands. Never touch Jarvi
         });
         reply = result.reply?.trim() || "";
         if (reply.startsWith("QUESTION:")) break;
-        const workspaceForVerify = project.workspaceDir ?? path11.join(process.cwd(), "projects", projectId);
+        const workspaceForVerify = project.workspaceDir ?? path9.join(process.cwd(), "projects", projectId);
         const deterministicFailure = await runDeterministicVerification(step.phase, workspaceForVerify, reply, projectId);
         if (deterministicFailure) {
           correctionContext = deterministicFailure;
@@ -31508,7 +26841,7 @@ Acceptance criteria: ${acceptanceCriteria}`,
       console.error(`[AppProjectRunner] step "${step.label}" threw error:`, err2);
       const newErrors = (project.consecutiveErrors ?? 0) + 1;
       if (newErrors >= MAX_CONSECUTIVE_ERRORS) {
-        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
+        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
         await sendAppProjectMessage(
           project.userId,
           project.originChannel ?? void 0,
@@ -31518,7 +26851,7 @@ Last error: ${String(err2).slice(0, 200)}`
         );
         return { status: "paused", stepsCompleted: completedLabels.length, summary: "Paused after too many errors" };
       }
-      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
+      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
       continue;
     }
     if (reply.startsWith("QUESTION:")) {
@@ -31536,7 +26869,7 @@ ${question}`
         status: "waiting_for_input",
         consecutiveErrors: 0,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq44(jarvisProjects.id, projectId));
+      }).where(eq35(jarvisProjects.id, projectId));
       const durationMs2 = Date.now() - startTime;
       await db.insert(jarvisProjectSessions).values({
         projectId,
@@ -31563,7 +26896,7 @@ ${question}`
       lastProgressAt: /* @__PURE__ */ new Date(),
       consecutiveErrors: 0,
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq44(jarvisProjects.id, projectId));
+    }).where(eq35(jarvisProjects.id, projectId));
     completedLabels.push(step.label);
     sessionSummary = stepOutput;
     console.log(`[AppProjectRunner] completed step "${step.label}" for project ${projectId}`);
@@ -31594,7 +26927,7 @@ ${question}`
   await sendAppProjectMessage(project.userId, project.originChannel ?? void 0, progressMsg);
   if (project.autonomousMode) {
     const nextRunAt = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES * 60 * 1e3);
-    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, projectId));
+    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, projectId));
     console.log(`[AppProjectRunner] autonomous project ${projectId} scheduled for ${nextRunAt.toISOString()}`);
   }
   return {
@@ -31642,7 +26975,7 @@ async function runAppPlanningSession(project, sessionNumber, startTime) {
     console.error(`[AppProjectRunner] failed to parse planning response for project ${project.id}`);
   }
   if (!planData?.plan?.length) {
-    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, project.id));
     return { status: "failed", stepsCompleted: 0, summary: "Planning failed: could not generate a plan" };
   }
   const plan = planData.plan.map((s, i) => ({
@@ -31671,9 +27004,9 @@ ${questionText}`
 ${questionText}`,
       questionAskedAt: /* @__PURE__ */ new Date(),
       updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq44(jarvisProjects.id, project.id));
+    }).where(eq35(jarvisProjects.id, project.id));
   } else {
-    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, project.id));
+    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, project.id));
     await sendAppProjectMessage(
       project.userId,
       project.originChannel ?? void 0,
@@ -31706,18 +27039,18 @@ Starting build now \u2014 I'll update you every ${AUTONOMOUS_INTERVAL_MINUTES} m
 }
 async function markAppProjectComplete(project, sessionNumber) {
   stopProjectServer(project.id);
-  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq44(jarvisProjects.id, project.id));
+  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq35(jarvisProjects.id, project.id));
   console.log(`[AppProjectRunner] project ${project.id} complete \u2014 handing off to appDelivery`);
 }
 async function answerAppProjectQuestion(projectId, answer) {
-  const [project] = await db.select().from(jarvisProjects).where(eq44(jarvisProjects.id, projectId)).limit(1);
+  const [project] = await db.select().from(jarvisProjects).where(eq35(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`App project ${projectId} not found`);
   await db.update(jarvisProjects).set({
     questionPending: null,
     questionAskedAt: null,
     status: "building",
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq44(jarvisProjects.id, projectId));
+  }).where(eq35(jarvisProjects.id, projectId));
   await submitAgentJob2({
     userId: project.userId,
     agentType: "app_project",
@@ -31745,6 +27078,5371 @@ var init_appProjectRunner = __esm({
     STEPS_PER_SESSION = 2;
     MAX_STEP_VERIFY_RETRIES = 2;
     MAX_CONSECUTIVE_ERRORS = 3;
+  }
+});
+
+// server/agent/projectRunner.ts
+var projectRunner_exports = {};
+__export(projectRunner_exports, {
+  answerProjectQuestion: () => answerProjectQuestion,
+  getProjectStatus: () => getProjectStatus,
+  getUserProjects: () => getUserProjects,
+  pauseProject: () => pauseProject,
+  resumeProject: () => resumeProject,
+  runProjectSession: () => runProjectSession,
+  setAutonomousMode: () => setAutonomousMode,
+  startProject: () => startProject
+});
+import { eq as eq36, asc as asc3, desc as desc10, inArray as inArray4 } from "drizzle-orm";
+function toolGroupsForPhase(phase) {
+  const normalized = phase.toLowerCase();
+  if (normalized.includes("implement") || normalized.includes("test") || normalized.includes("deploy")) {
+    return ["system", "self_edit", "memory", "research"];
+  }
+  if (normalized.includes("research")) {
+    return ["research", "browser", "memory"];
+  }
+  if (normalized.includes("design")) {
+    return ["research", "system", "memory"];
+  }
+  return ["research", "system", "memory"];
+}
+function asPlan2(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw;
+}
+function buildPlanningPrompt(title, description, goal) {
+  return `You are Jarvis, an autonomous AI project manager. The user wants to start a new project.
+
+**Project Title:** ${title}
+**Description:** ${description || "(none provided)"}
+**Goal (what done looks like):** ${goal}
+
+Your task: produce a detailed, phased execution plan for this project.
+
+Respond with a JSON object in this exact format:
+{
+  "plan": [
+    {
+      "step_id": "step_001",
+      "label": "Research existing solutions",
+      "phase": "Research",
+      "acceptance_criteria": "Summary of 3+ existing approaches documented"
+    },
+    ...more steps...
+  ],
+  "questions": ["Any ambiguity 1", "Any ambiguity 2"],
+  "summary": "One paragraph overview of the plan"
+}
+
+Rules:
+- Use phases: Research \u2192 Design \u2192 Implement \u2192 Test \u2192 Deploy (use only relevant phases)
+- Each step should be completable in one autonomous session (15-30 min of work)
+- Include 4-14 steps total
+- acceptance_criteria should be specific and verifiable
+- If you have critical questions that would change the plan significantly, list up to 3 in "questions"
+- If no questions, return an empty array
+- Return ONLY the JSON object, nothing else`;
+}
+function buildStepPrompt(project, step, sessionHistory, userAnswer) {
+  const plan = asPlan2(project.plan);
+  const completedSteps = plan.filter((s) => s.status === "complete");
+  const completedSummary = completedSteps.length > 0 ? completedSteps.map((s) => `- ${s.label}: ${s.output?.slice(0, 200) || "completed"}`).join("\n") : "(none yet)";
+  const answerContext = userAnswer ? `
+
+**User's answer to the previous question:**
+${userAnswer}
+
+Use this answer to guide this step.` : "";
+  return `You are Jarvis, executing a step in an autonomous project.
+
+**Project:** ${project.title}
+**Goal:** ${project.goal}
+
+**Session history:**
+${sessionHistory || "(this is the first session)"}
+
+**Previously completed steps:**
+${completedSummary}${answerContext}
+
+**Current step to complete:**
+Label: ${step.label}
+Phase: ${step.phase}
+Acceptance criteria: ${step.acceptance_criteria || "step completed successfully"}
+
+Your task: execute this step autonomously using your available tools and knowledge.
+
+Produce a clear, detailed output that satisfies the acceptance criteria.
+At the end, include a section:
+## Step Output Summary
+<one paragraph summary of what was accomplished>
+
+If you need to ask the user a critical question before you can continue, respond with ONLY:
+QUESTION: <your question here>
+
+Otherwise, just complete the step and show your work.`;
+}
+async function startProject(userId, title, description, goal, originChannel) {
+  const [project] = await db.insert(jarvisProjects).values({
+    userId,
+    title,
+    description,
+    goal,
+    status: "planning",
+    originChannel,
+    updatedAt: /* @__PURE__ */ new Date()
+  }).returning({ id: jarvisProjects.id });
+  const projectId = project.id;
+  console.log(`[ProjectRunner] startProject: created project ${projectId} for user ${userId}`);
+  await submitAgentJob2({
+    userId,
+    agentType: "project_session",
+    title: `Plan project: ${title}`,
+    prompt: `Run planning phase for project ${projectId}`,
+    input: { projectId, phase: "planning", originChannel }
+  });
+  return projectId;
+}
+async function runProjectSession(projectId, userAnswer) {
+  const startTime = Date.now();
+  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  if (!project) throw new Error(`Project ${projectId} not found`);
+  if (project.status === "paused" || project.status === "complete" || project.status === "failed") {
+    return { status: project.status, stepsCompleted: 0, summary: `Project is ${project.status}` };
+  }
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq36(jarvisProjectSessions.projectId, projectId)).orderBy(asc3(jarvisProjectSessions.sessionNumber));
+  const sessionNumber = sessions2.length + 1;
+  const sessionHistory = sessions2.slice(-3).map((s) => `Session ${s.sessionNumber}: ${s.summary || "completed"}`).join("\n");
+  if (project.status === "planning") {
+    return await runPlanningSession(project, sessionNumber, startTime);
+  }
+  if (project.status === "waiting_for_input" && project.questionPending && !userAnswer) {
+    await sendProjectMessage(
+      project.userId,
+      project.originChannel ?? void 0,
+      `\u23F3 **Project: ${project.title}** is still waiting for your answer:
+
+${project.questionPending}
+
+Reply to my earlier message or use: \`/project answer ${projectId} <your answer>\``
+    );
+    if (project.autonomousMode) {
+      const nextReminder = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES2 * 60 * 1e3);
+      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+    }
+    return { status: "waiting_for_input", stepsCompleted: 0, summary: "Waiting for user input" };
+  }
+  let currentPlan = asPlan2(project.plan);
+  const pendingSteps = currentPlan.map((s, i) => ({ ...s, _idx: i })).filter((s) => s.status === "pending");
+  if (pendingSteps.length === 0) {
+    await markProjectComplete(project, sessions2.length);
+    return { status: "complete", stepsCompleted: 0, summary: "All steps complete!" };
+  }
+  const stepsToRun = pendingSteps.slice(0, STEPS_PER_SESSION2);
+  const completedLabels = [];
+  let verificationRetriesTotal = 0;
+  let sessionSummary = "";
+  let remainingAnswer = userAnswer;
+  const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
+  const orchModel = await getModel2(project.userId, "orchestrator");
+  for (const step of stepsToRun) {
+    let tokens = [];
+    try {
+      tokens = await getValidGoogleTokens(project.userId);
+    } catch {
+    }
+    const hasGoogle = tokens.length > 0;
+    const googleAccessToken = tokens[0] ?? null;
+    const stepTools = filterToolsByGroups(toolGroupsForPhase(step.phase), hasGoogle);
+    const stepPrompt = buildStepPrompt(project, step, sessionHistory, remainingAnswer);
+    remainingAnswer = void 0;
+    let reply = "";
+    try {
+      let correctionContext;
+      for (let attempt = 0; attempt <= MAX_STEP_VERIFY_RETRIES2; attempt++) {
+        const prompt = correctionContext ? `${stepPrompt}
+
+[Previous attempt rejected: ${correctionContext}. Address this in your response.]` : stepPrompt;
+        const result = await runAgent({
+          messages: [
+            { role: "system", content: "You are Jarvis, an autonomous AI assistant executing a project step. Use your tools to complete the step thoroughly." },
+            { role: "user", content: prompt }
+          ],
+          tools: stepTools,
+          context: {
+            userId: project.userId,
+            googleAccessToken,
+            channel: "ProjectRunner",
+            state: { pendingAttachments: [] }
+          },
+          maxTurns: 8
+        });
+        reply = result.reply?.trim() || "";
+        if (reply.startsWith("QUESTION:")) break;
+        const verification = await verifyJobOutput({
+          agentType: "project_step",
+          originalPrompt: `Phase: ${step.phase}
+Label: ${step.label}
+Acceptance criteria: ${step.acceptance_criteria || "step completed successfully"}`,
+          result: reply,
+          orchestratorModel: orchModel,
+          correctionContext
+        });
+        if (verification.passed === true || verification.passed === null) break;
+        correctionContext = verification.reason;
+        if (attempt < MAX_STEP_VERIFY_RETRIES2) {
+          verificationRetriesTotal++;
+          console.log(`[ProjectRunner] step "${step.label}" verify retry ${attempt + 1}/${MAX_STEP_VERIFY_RETRIES2}: ${verification.reason}`);
+        }
+      }
+    } catch (err2) {
+      console.error(`[ProjectRunner] step "${step.label}" threw error:`, err2);
+      const newErrors = (project.consecutiveErrors ?? 0) + 1;
+      if (newErrors >= MAX_CONSECUTIVE_ERRORS2) {
+        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+        await sendProjectMessage(
+          project.userId,
+          project.originChannel ?? void 0,
+          `\u26A0\uFE0F **Project: ${project.title}** has been paused after ${newErrors} consecutive errors.
+
+Last error: ${String(err2).slice(0, 200)}
+
+Use \`/project resume ${projectId}\` to retry.`
+        );
+        return { status: "paused", stepsCompleted: completedLabels.length, summary: "Paused after too many errors" };
+      }
+      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+      continue;
+    }
+    if (reply.startsWith("QUESTION:")) {
+      const question = reply.slice("QUESTION:".length).trim();
+      const questionMeta = await sendProjectQuestion(
+        project.userId,
+        project.originChannel ?? void 0,
+        `\u2753 **Project: ${project.title}** needs your input before continuing:
+
+${question}
+
+Reply to this message or use: \`/project answer ${projectId} <your answer>\``
+      );
+      await db.update(jarvisProjects).set({
+        questionPending: question,
+        questionAskedAt: /* @__PURE__ */ new Date(),
+        questionMeta,
+        status: "waiting_for_input",
+        consecutiveErrors: 0,
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq36(jarvisProjects.id, projectId));
+      const durationMs2 = Date.now() - startTime;
+      await db.insert(jarvisProjectSessions).values({
+        projectId,
+        sessionNumber,
+        stepsCompleted: completedLabels.length,
+        stepLabels: completedLabels,
+        durationMs: durationMs2,
+        status: "waiting_for_input",
+        summary: `Paused: Jarvis needs to know \u2014 ${question.slice(0, 200)}`
+      });
+      return { status: "waiting_for_input", stepsCompleted: completedLabels.length, summary: question };
+    }
+    const extractSummary = (text2) => {
+      const match = text2.match(/## Step Output Summary\s*([\s\S]*?)(?:\n##|$)/);
+      return match ? match[1].trim().slice(0, 500) : text2.slice(0, 300);
+    };
+    const stepOutput = extractSummary(reply);
+    currentPlan = currentPlan.map((s, i) => {
+      if (i === step._idx) {
+        return { ...s, status: "complete", output: stepOutput, completedAt: (/* @__PURE__ */ new Date()).toISOString() };
+      }
+      return s;
+    });
+    await db.update(jarvisProjects).set({
+      plan: currentPlan,
+      currentStepIndex: step._idx + 1,
+      lastProgressAt: /* @__PURE__ */ new Date(),
+      consecutiveErrors: 0,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq36(jarvisProjects.id, projectId));
+    completedLabels.push(step.label);
+    sessionSummary = stepOutput;
+    console.log(`[ProjectRunner] completed step "${step.label}" for project ${projectId}`);
+  }
+  const durationMs = Date.now() - startTime;
+  const remainingAfterSession = currentPlan.filter((s) => s.status === "pending").length;
+  const totalComplete = currentPlan.filter((s) => s.status === "complete").length;
+  await db.insert(jarvisProjectSessions).values({
+    projectId,
+    sessionNumber,
+    stepsCompleted: completedLabels.length,
+    stepLabels: completedLabels,
+    durationMs,
+    verificationRetries: verificationRetriesTotal,
+    status: "complete",
+    summary: sessionSummary || completedLabels.join(", ")
+  });
+  if (remainingAfterSession === 0) {
+    await markProjectComplete(project, sessionNumber);
+    return { status: "complete", stepsCompleted: completedLabels.length, summary: "All steps complete!" };
+  }
+  const nextLabel = currentPlan.find((s) => s.status === "pending")?.label ?? "next step";
+  const progressMsg = `\u{1F4CB} **Project: ${project.title}** \u2014 Session ${sessionNumber} complete
+\u2705 Steps done: ${totalComplete}/${currentPlan.length}
+\u{1F528} This session: ${completedLabels.map((l) => `"${l}"`).join(", ")}
+\u23ED Next: "${nextLabel}"
+` + (project.autonomousMode ? `\u{1F550} Next session in ${AUTONOMOUS_INTERVAL_MINUTES2} min (autonomous mode)` : `\u23F8 Paused \u2014 use /project resume ${projectId} to continue`);
+  await sendProjectMessage(project.userId, project.originChannel ?? void 0, progressMsg);
+  if (project.autonomousMode) {
+    const nextRunAt = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES2 * 60 * 1e3);
+    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+    console.log(`[ProjectRunner] autonomous project ${projectId} scheduled for ${nextRunAt.toISOString()}`);
+  }
+  return {
+    status: "building",
+    stepsCompleted: completedLabels.length,
+    summary: sessionSummary
+  };
+}
+async function runPlanningSession(project, sessionNumber, startTime) {
+  let tokens = [];
+  try {
+    tokens = await getValidGoogleTokens(project.userId);
+  } catch {
+  }
+  const googleAccessToken = tokens[0] ?? null;
+  const planningPrompt = buildPlanningPrompt(
+    project.title ?? "Untitled Project",
+    project.description ?? "",
+    project.goal ?? ""
+  );
+  const result = await runAgent({
+    messages: [
+      { role: "system", content: "You are Jarvis, an autonomous AI project planner. Respond with JSON only." },
+      { role: "user", content: planningPrompt }
+    ],
+    tools: [],
+    context: {
+      userId: project.userId,
+      googleAccessToken,
+      channel: "ProjectRunner/planning",
+      state: { pendingAttachments: [] }
+    },
+    maxTurns: 3
+  });
+  let planData = null;
+  try {
+    const jsonMatch = result.reply.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      planData = JSON.parse(jsonMatch[0]);
+    }
+  } catch {
+    console.error(`[ProjectRunner] failed to parse planning response for project ${project.id}`);
+  }
+  if (!planData?.plan?.length) {
+    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, project.id));
+    return { status: "failed", stepsCompleted: 0, summary: "Planning failed: could not generate a plan" };
+  }
+  const plan = planData.plan.map((s, i) => ({
+    ...s,
+    step_id: s.step_id || `step_${String(i + 1).padStart(3, "0")}`,
+    status: "pending"
+  }));
+  const questions = planData.questions?.filter(Boolean) ?? [];
+  const durationMs = Date.now() - startTime;
+  if (questions.length > 0) {
+    const questionText = questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
+    const planningQuestionMeta = await sendProjectQuestion(
+      project.userId,
+      project.originChannel ?? void 0,
+      `\u{1F4CB} **Project: ${project.title}** \u2014 Plan created with ${plan.length} steps!
+
+Before I start building, I have a few questions:
+
+${questionText}
+
+Reply to this message or use: \`/project answer ${project.id} <your answers>\``
+    );
+    await db.update(jarvisProjects).set({
+      plan,
+      status: "waiting_for_input",
+      questionPending: `Before I start building, I have a few questions:
+
+${questionText}
+
+Please answer as many as you can.`,
+      questionAskedAt: /* @__PURE__ */ new Date(),
+      questionMeta: planningQuestionMeta,
+      updatedAt: /* @__PURE__ */ new Date()
+    }).where(eq36(jarvisProjects.id, project.id));
+  } else {
+    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, project.id));
+    await sendProjectMessage(
+      project.userId,
+      project.originChannel ?? void 0,
+      `\u{1F4CB} **Project: ${project.title}** \u2014 Plan ready!
+
+${plan.length} steps across ${[...new Set(plan.map((s) => s.phase))].join(" \u2192 ")}
+
+${planData.summary || ""}
+
+Starting first session now...`
+    );
+    await submitAgentJob2({
+      userId: project.userId,
+      agentType: "project_session",
+      title: `Build: ${project.title} (session 1)`,
+      prompt: `Continue building project ${project.id}`,
+      input: { projectId: project.id }
+    });
+  }
+  await db.insert(jarvisProjectSessions).values({
+    projectId: project.id,
+    sessionNumber,
+    stepsCompleted: 0,
+    stepLabels: [],
+    durationMs,
+    status: "complete",
+    summary: `Planning complete: ${plan.length} steps created`
+  });
+  return { status: questions.length > 0 ? "waiting_for_input" : "building", stepsCompleted: 0, summary: planData.summary || "" };
+}
+async function markProjectComplete(project, sessionNumber) {
+  const plan = asPlan2(project.plan);
+  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, project.id));
+  await sendProjectMessage(
+    project.userId,
+    project.originChannel ?? void 0,
+    `\u{1F389} **Project: ${project.title}** is complete!
+
+All ${plan.length} steps finished across ${sessionNumber} session(s).
+
+Open the Projects tab to review all outputs.`
+  );
+  console.log(`[ProjectRunner] project ${project.id} complete`);
+}
+async function answerProjectQuestion(projectId, answer) {
+  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  if (!project) throw new Error(`Project ${projectId} not found`);
+  await db.update(jarvisProjects).set({
+    questionPending: null,
+    questionAskedAt: null,
+    status: "building",
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(eq36(jarvisProjects.id, projectId));
+  console.log(`[ProjectRunner] answerProjectQuestion: project ${projectId} unblocked with answer`);
+  await submitAgentJob2({
+    userId: project.userId,
+    agentType: "project_session",
+    title: `Build: ${project.title} (resumed after answer)`,
+    prompt: `Continue building project ${projectId}. User answered the pending question.`,
+    input: { projectId, userAnswer: answer }
+  });
+}
+async function pauseProject(projectId) {
+  await db.update(jarvisProjects).set({ status: "paused", autonomousMode: false, nextRunAt: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+}
+async function resumeProject(projectId) {
+  await db.update(jarvisProjects).set({ status: "building", consecutiveErrors: 0, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
+  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  if (project) {
+    await submitAgentJob2({
+      userId: project.userId,
+      agentType: "project_session",
+      title: `Build: ${project.title} (resumed)`,
+      prompt: `Continue building project ${projectId}`,
+      input: { projectId }
+    });
+  }
+}
+async function setAutonomousMode(projectId, enabled) {
+  const updates = {
+    autonomousMode: enabled,
+    updatedAt: /* @__PURE__ */ new Date()
+  };
+  if (!enabled) {
+    updates.nextRunAt = null;
+  }
+  await db.update(jarvisProjects).set(updates).where(eq36(jarvisProjects.id, projectId));
+  if (enabled) {
+    await db.update(jarvisProjects).set({ nextRunAt: new Date(Date.now() + 10 * 1e3) }).where(
+      eq36(jarvisProjects.id, projectId)
+    );
+  }
+}
+async function getProjectStatus(projectId) {
+  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  if (!project) return null;
+  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq36(jarvisProjectSessions.projectId, projectId)).orderBy(desc10(jarvisProjectSessions.sessionNumber));
+  const plan = asPlan2(project.plan);
+  const completedCount = plan.filter((s) => s.status === "complete").length;
+  const nextStep = plan.find((s) => s.status === "pending") ?? null;
+  return { project, sessions: sessions2, plan, completedCount, totalCount: plan.length, nextStep };
+}
+async function getUserProjects(userId) {
+  const projects = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.userId, userId)).orderBy(desc10(jarvisProjects.updatedAt));
+  if (projects.length === 0) return [];
+  const projectIds = projects.map((p) => p.id);
+  const recentSessions = await db.select({
+    projectId: jarvisProjectSessions.projectId,
+    sessionNumber: jarvisProjectSessions.sessionNumber,
+    summary: jarvisProjectSessions.summary
+  }).from(jarvisProjectSessions).where(inArray4(jarvisProjectSessions.projectId, projectIds)).orderBy(desc10(jarvisProjectSessions.sessionNumber));
+  const latestSummaryByProject = /* @__PURE__ */ new Map();
+  for (const session of recentSessions) {
+    if (!latestSummaryByProject.has(session.projectId)) {
+      latestSummaryByProject.set(session.projectId, session.summary);
+    }
+  }
+  return projects.map((p) => ({
+    ...p,
+    lastSessionSummary: latestSummaryByProject.get(p.id) ?? null
+  }));
+}
+async function sendProjectMessage(userId, originChannel, message) {
+  try {
+    const origin = (originChannel ?? "").toLowerCase();
+    if (origin === "telegram") {
+      const telegramCh = getChannel("telegram");
+      if (telegramCh) await telegramCh.sendMessage(userId, message, {}).catch(() => {
+      });
+    } else if (origin.startsWith("discord")) {
+      const { sendToDiscordUser: sendToDiscordUser2 } = await Promise.resolve().then(() => (init_manager(), manager_exports));
+      await sendToDiscordUser2(userId, message).catch(() => {
+      });
+    }
+    const inAppCh = getChannel("in_app");
+    if (inAppCh) await inAppCh.sendMessage(userId, message, {}).catch(() => {
+    });
+  } catch (err2) {
+    console.error("[ProjectRunner] sendProjectMessage failed:", err2);
+  }
+}
+async function sendProjectQuestion(userId, originChannel, message) {
+  const meta = {};
+  try {
+    const origin = (originChannel ?? "").toLowerCase();
+    if (origin === "telegram") {
+      const { sendMessageGetId: sendMessageGetId2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
+      const linkRows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq36(telegramLinks.userId, userId)).limit(1);
+      const chatId = linkRows[0]?.chatId;
+      if (chatId) {
+        const msgId = await sendMessageGetId2(chatId, message).catch(() => null);
+        if (msgId) {
+          meta.telegramChatId = chatId;
+          meta.telegramMessageId = msgId;
+        }
+      }
+    } else if (origin.startsWith("discord")) {
+      const { sendToDiscordUserGetId: sendToDiscordUserGetId2 } = await Promise.resolve().then(() => (init_manager(), manager_exports));
+      const result = await sendToDiscordUserGetId2(userId, message).catch(() => ({ sent: false }));
+      if (result.sent && result.messageId && result.channelId) {
+        meta.discordMessageId = result.messageId;
+        meta.discordChannelId = result.channelId;
+      }
+    }
+    const inAppCh = getChannel("in_app");
+    if (inAppCh) await inAppCh.sendMessage(userId, message, {}).catch(() => {
+    });
+  } catch (err2) {
+    console.error("[ProjectRunner] sendProjectQuestion failed:", err2);
+  }
+  return meta;
+}
+var AUTONOMOUS_INTERVAL_MINUTES2, MAX_CONSECUTIVE_ERRORS2, STEPS_PER_SESSION2, MAX_STEP_VERIFY_RETRIES2;
+var init_projectRunner = __esm({
+  "server/agent/projectRunner.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_harness();
+    init_orchestrator();
+    init_tools();
+    init_userTokenStore();
+    init_jobClient();
+    init_registry();
+    AUTONOMOUS_INTERVAL_MINUTES2 = 30;
+    MAX_CONSECUTIVE_ERRORS2 = 3;
+    STEPS_PER_SESSION2 = 2;
+    MAX_STEP_VERIFY_RETRIES2 = 2;
+  }
+});
+
+// server/agent/tools/startProject.ts
+function cleanString(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+function normalizeProjectKind(value, framework) {
+  const raw = cleanString(value).toLowerCase();
+  if (raw === "app" || raw === "website" || raw === "web_app" || raw === "web-app") return "app";
+  if (framework) return "app";
+  return "general";
+}
+function normalizeFramework(value) {
+  const raw = cleanString(value).toLowerCase();
+  if (raw === "react-vite") return "react-vite";
+  if (raw === "node-express") return "node-express";
+  if (raw === "custom") return "custom";
+  return "nextjs";
+}
+var startProjectTool;
+var init_startProject = __esm({
+  "server/agent/tools/startProject.ts"() {
+    "use strict";
+    startProjectTool = {
+      name: "start_project",
+      description: "Create a persistent Jarvis project and queue its planning session. Use this when the user asks to start, create, open, or set up a project. For websites, landing pages, dashboards, tools, or standalone apps, set project_kind='app' so Jarvis builds it in an isolated workspace. If the user only gives a title, use that as the initial goal instead of saying there is no project tool.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "Short project name, e.g. 'Battles Budz landing page'."
+          },
+          goal: {
+            type: "string",
+            description: "What done looks like. If missing, use the project title as a lightweight initial goal and let the planning session ask follow-up questions."
+          },
+          description: {
+            type: "string",
+            description: "Optional extra context for Jarvis."
+          },
+          project_kind: {
+            type: "string",
+            enum: ["general", "app"],
+            description: "Use 'app' for websites, landing pages, dashboards, tools, or standalone apps."
+          },
+          framework: {
+            type: "string",
+            enum: ["nextjs", "react-vite", "node-express", "custom"],
+            description: "Framework for app projects. Defaults to nextjs."
+          },
+          autonomous_mode: {
+            type: "boolean",
+            description: "Whether Jarvis should keep working every 30 minutes. Defaults to true for app projects and false for general projects."
+          }
+        },
+        required: ["title"]
+      },
+      async execute(args, ctx) {
+        const title = cleanString(args.title);
+        if (!title) {
+          return { ok: false, content: "title is required.", label: "Missing project title" };
+        }
+        const description = cleanString(args.description);
+        const goal = cleanString(args.goal) || description || title;
+        const framework = normalizeFramework(args.framework);
+        const projectKind = normalizeProjectKind(args.project_kind, cleanString(args.framework));
+        const autonomousMode = typeof args.autonomous_mode === "boolean" ? args.autonomous_mode : projectKind === "app";
+        if (projectKind === "app") {
+          const { startAppProject: startAppProject2 } = await Promise.resolve().then(() => (init_appProjectRunner(), appProjectRunner_exports));
+          const { projectId: projectId2 } = await startAppProject2({
+            userId: ctx.userId,
+            title,
+            description,
+            goal,
+            framework,
+            originChannel: ctx.channel
+          });
+          return {
+            ok: true,
+            content: `App project created: ${title} (projectId=${projectId2}, framework=${framework}). Jarvis queued the planning/build session and will deliver the app when it is ready.`,
+            label: "App project started",
+            detail: projectId2,
+            metadata: { projectId: projectId2, projectKind, framework }
+          };
+        }
+        const { startProject: startProject2, setAutonomousMode: setAutonomousMode2 } = await Promise.resolve().then(() => (init_projectRunner(), projectRunner_exports));
+        const projectId = await startProject2(ctx.userId, title, description, goal, ctx.channel);
+        if (autonomousMode) {
+          await setAutonomousMode2(projectId, true);
+        }
+        return {
+          ok: true,
+          content: `Project created: ${title} (projectId=${projectId}). Jarvis queued the planning session and will continue from the Projects tab.`,
+          label: "Project started",
+          detail: projectId,
+          metadata: { projectId, projectKind }
+        };
+      }
+    };
+  }
+});
+
+// server/agent/discordConfirmStore.ts
+var discordConfirmStore_exports = {};
+__export(discordConfirmStore_exports, {
+  cleanUpExpiredDiscordConfirmTokens: () => cleanUpExpiredDiscordConfirmTokens,
+  clearConfirmToken: () => clearConfirmToken,
+  consumeConfirmToken: () => consumeConfirmToken,
+  seedConfirmTokenCache: () => seedConfirmTokenCache,
+  setConfirmToken: () => setConfirmToken
+});
+import { eq as eq37, lt as lt3, and as and26, gt as gt3 } from "drizzle-orm";
+async function setConfirmToken(userId, action) {
+  const expiresAt = new Date(Date.now() + TTL_MS);
+  _cache.set(userId, { action, expiresAt: expiresAt.getTime() });
+  try {
+    await db.insert(discordConfirmTokens).values({ userId, action, expiresAt }).onConflictDoUpdate({
+      target: discordConfirmTokens.userId,
+      set: { action, expiresAt, createdAt: /* @__PURE__ */ new Date() }
+    });
+  } catch (err2) {
+    console.error("[DiscordConfirmStore] setConfirmToken DB write failed:", err2);
+  }
+}
+async function consumeConfirmToken(userId, action) {
+  const now = Date.now();
+  const cached = _cache.get(userId);
+  if (cached) {
+    _cache.delete(userId);
+    if (now > cached.expiresAt) {
+      _deleteFromDb(userId);
+      return false;
+    }
+    if (cached.action !== action) return false;
+    try {
+      await db.delete(discordConfirmTokens).where(eq37(discordConfirmTokens.userId, userId));
+    } catch (err2) {
+      console.error("[DiscordConfirmStore] consumeConfirmToken DB delete failed (L1 path):", err2);
+    }
+    return true;
+  }
+  try {
+    const deleted = await db.delete(discordConfirmTokens).where(
+      and26(
+        eq37(discordConfirmTokens.userId, userId),
+        eq37(discordConfirmTokens.action, action),
+        gt3(discordConfirmTokens.expiresAt, new Date(now))
+      )
+    ).returning({ userId: discordConfirmTokens.userId });
+    return deleted.length > 0;
+  } catch (err2) {
+    console.error("[DiscordConfirmStore] consumeConfirmToken DB delete failed (L2 path):", err2);
+    return false;
+  }
+}
+async function clearConfirmToken(userId) {
+  _cache.delete(userId);
+  _deleteFromDb(userId);
+}
+function _deleteFromDb(userId) {
+  db.delete(discordConfirmTokens).where(eq37(discordConfirmTokens.userId, userId)).catch((err2) => console.error("[DiscordConfirmStore] DB delete failed:", err2));
+}
+async function seedConfirmTokenCache() {
+  try {
+    const now = /* @__PURE__ */ new Date();
+    const rows = await db.select().from(discordConfirmTokens).where(gt3(discordConfirmTokens.expiresAt, now));
+    for (const row of rows) {
+      _cache.set(row.userId, {
+        action: row.action,
+        expiresAt: row.expiresAt.getTime()
+      });
+    }
+    console.log(`[DiscordConfirmStore] Cache seeded with ${rows.length} token(s)`);
+  } catch (err2) {
+    console.error("[DiscordConfirmStore] seedConfirmTokenCache failed:", err2);
+  }
+}
+async function cleanUpExpiredDiscordConfirmTokens() {
+  try {
+    const now = /* @__PURE__ */ new Date();
+    const deleted = await db.delete(discordConfirmTokens).where(lt3(discordConfirmTokens.expiresAt, now)).returning({ userId: discordConfirmTokens.userId });
+    for (const row of deleted) {
+      _cache.delete(row.userId);
+    }
+    console.log(`[DiscordConfirmStore] Expired token cleanup: ${deleted.length} row(s) deleted`);
+  } catch (err2) {
+    console.error("[DiscordConfirmStore] cleanUpExpiredDiscordConfirmTokens failed:", err2);
+  }
+}
+var TTL_MS, _cache;
+var init_discordConfirmStore = __esm({
+  "server/agent/discordConfirmStore.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    TTL_MS = 5 * 60 * 1e3;
+    _cache = /* @__PURE__ */ new Map();
+  }
+});
+
+// server/agent/tools/discordPost.ts
+var topicList, discordPostTool;
+var init_discordPost = __esm({
+  "server/agent/tools/discordPost.ts"() {
+    "use strict";
+    init_manager();
+    init_discordConfirmStore();
+    topicList = WORKSPACE_TOPICS.map((t) => `\`${t.key}\` (${t.emoji} ${t.name})`).join(", ");
+    discordPostTool = {
+      name: "discord_post",
+      description: `Post a message or insight to a specific topic channel in the user's Jarvis Discord Workspace. Use this to log useful thoughts, plans, or progress notes that belong in a particular life area \u2014 so the user has an organised record in Discord. Available topics: ${topicList}. If unsure which topic fits, omit the topic and it will be auto-classified. Only post content that has been generated from real tool results (research_topic, web_search, etc). Never post hallucinated content. Never post to #general or announcement channels without explicit user instruction. IMPORTANT CONFIRMATION FLOW: Before calling this tool you MUST first call discord_request_confirm (action='post') to register a server-side confirmation token and get the question to ask the user. Only call this tool after the user has replied with explicit confirmation. Do not call this in the same turn as discord_request_confirm. If you attempt to call this tool without a valid pending confirmation token, it will be rejected.`,
+      parameters: {
+        type: "object",
+        properties: {
+          message: {
+            type: "string",
+            description: "The message to post. Can include markdown formatting. Keep it concise and useful \u2014 this is a log entry, not a conversation reply."
+          },
+          topic: {
+            type: "string",
+            enum: WORKSPACE_TOPICS.map((t) => t.key),
+            description: "The workspace channel to post to. If omitted, the topic is inferred from the message content."
+          }
+        },
+        required: ["message"]
+      },
+      async execute(args, ctx) {
+        const { message, topic } = args;
+        const { userId } = ctx;
+        if (!await consumeConfirmToken(userId, "post")) {
+          return {
+            ok: false,
+            content: "No valid confirmation token found. You must call discord_request_confirm (action='post') first, wait for the user's explicit confirmation, and then call this tool. Please start the confirmation flow again.",
+            label: "Discord post blocked \u2014 no confirmation token"
+          };
+        }
+        const topicKey = topic ?? classifyTopic(message);
+        const topicMeta = WORKSPACE_TOPICS.find((t) => t.key === topicKey);
+        const posted = await postToDiscordWorkspace(userId, topicKey, message);
+        if (!posted) {
+          return {
+            ok: false,
+            content: "Couldn't post to Discord \u2014 the workspace may not be set up yet, or the bot isn't running. Ask the user to go to Profile \u2192 Connected Channels \u2192 Discord \u2192 Setup Workspace.",
+            label: "Discord post failed"
+          };
+        }
+        return {
+          ok: true,
+          content: `Posted to ${topicMeta ? `${topicMeta.emoji} #${topicMeta.name}` : `#${topicKey}`} in your Discord workspace.`,
+          label: `Discord \u2192 #${topicKey}`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordCreateChannel.ts
+var discordCreateChannelTool;
+var init_discordCreateChannel = __esm({
+  "server/agent/tools/discordCreateChannel.ts"() {
+    "use strict";
+    init_manager();
+    init_discordConfirmStore();
+    discordCreateChannelTool = {
+      name: "discord_create_channel",
+      description: "Create a new text channel in the user's Discord server. Jarvis CAN create Discord channels \u2014 do not tell users otherwise. You must provide a channel name (lowercase, hyphens instead of spaces). Optionally set a topic/description and a category name to nest it under. IMPORTANT CONFIRMATION FLOW: Before calling this tool you MUST first call discord_request_confirm (action='create_channel') to register a server-side confirmation token and get the question to ask the user. Only call this tool after the user has replied 'yes', 'confirm', 'go ahead', 'create it', or equivalent explicit confirmation. Do not call this in the same turn as discord_request_confirm. If you attempt to call this tool without a valid pending confirmation token, it will be rejected.",
+      parameters: {
+        type: "object",
+        properties: {
+          channelName: {
+            type: "string",
+            description: "The channel name. Use lowercase letters, numbers, and hyphens only (e.g. 'welcome', 'daily-tasks', 'project-alpha')."
+          },
+          topic: {
+            type: "string",
+            description: "Optional channel topic/description shown at the top of the channel."
+          },
+          categoryName: {
+            type: "string",
+            description: "Optional name of an existing category to put this channel in."
+          },
+          pinMessage: {
+            type: "string",
+            description: "Optional message to send and pin in the new channel."
+          }
+        },
+        required: ["channelName"]
+      },
+      async execute(args, ctx) {
+        const { channelName, topic, categoryName, pinMessage } = args;
+        const { userId } = ctx;
+        if (!await consumeConfirmToken(userId, "create_channel")) {
+          return {
+            ok: false,
+            content: "No valid confirmation token found. You must call discord_request_confirm (action='create_channel') first, wait for the user's explicit 'yes', and then call this tool. Please start the confirmation flow again.",
+            label: "Discord channel creation blocked \u2014 no confirmation token"
+          };
+        }
+        const result = await createDiscordChannel(userId, {
+          channelName,
+          topic,
+          categoryName,
+          pinMessage,
+          ctxGuildId: ctx.discordGuildId
+        });
+        if (!result.ok) {
+          return {
+            ok: false,
+            content: `Couldn't create the channel: ${result.error}`,
+            label: "Discord channel creation failed"
+          };
+        }
+        return {
+          ok: true,
+          content: `Created #${args.channelName} in your Discord server.${args.pinMessage ? " Pinned the intro message." : ""}`,
+          label: `Discord: created #${args.channelName}`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordRequestConfirm.ts
+var discordRequestConfirmTool;
+var init_discordRequestConfirm = __esm({
+  "server/agent/tools/discordRequestConfirm.ts"() {
+    "use strict";
+    init_discordConfirmStore();
+    discordRequestConfirmTool = {
+      name: "discord_request_confirm",
+      description: "Register a server-side pending-confirmation token and return the exact confirmation question to show the user. Call this tool INSTEAD OF asking the user directly when you need confirmation before creating a Discord channel or posting to Discord. The token expires in 5 minutes \u2014 if the user takes too long to reply you will need to call this tool again. After calling this tool, relay the returned question to the user verbatim and wait for their explicit reply ('yes', 'confirm', 'go ahead', 'create it', or equivalent) before calling discord_create_channel or discord_post. Do NOT call discord_create_channel or discord_post in the same turn as this tool.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["create_channel", "post"],
+            description: "The Discord action requiring confirmation: 'create_channel' or 'post'."
+          },
+          question: {
+            type: "string",
+            description: 'The confirmation question to show the user, e.g. "Should I create the channel #daily-tasks?" or "Should I post this summary to your Discord workspace?"'
+          }
+        },
+        required: ["action", "question"]
+      },
+      async execute(args, ctx) {
+        const { action, question } = args;
+        const { userId } = ctx;
+        await setConfirmToken(userId, action);
+        return {
+          ok: true,
+          content: question,
+          label: `Discord: awaiting confirmation for ${action}`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordDeleteChannel.ts
+var discordDeleteChannelTool;
+var init_discordDeleteChannel = __esm({
+  "server/agent/tools/discordDeleteChannel.ts"() {
+    "use strict";
+    init_manager();
+    discordDeleteChannelTool = {
+      name: "discord_delete_channel",
+      description: "Delete a text channel from the user's Discord server by name or ID. IMPORTANT: You MUST first tell the user the exact channel name and server you will delete, then wait for them to explicitly say yes/confirm before calling this tool with confirmed=true. Only call with confirmed=true after the user has given explicit approval in this conversation. If channelId is not known, pass channelName first \u2014 if there are duplicates, the tool will return all matching channel IDs so you can ask the user which copy to remove. Only text channels can be deleted; categories and voice channels are not supported.",
+      parameters: {
+        type: "object",
+        properties: {
+          confirmed: {
+            type: "boolean",
+            description: "REQUIRED. Must be true. Only pass true after the user has explicitly confirmed the deletion (channel name + server) in this conversation. Never pass true speculatively."
+          },
+          channelName: {
+            type: "string",
+            description: "The channel name to delete (e.g. 'thinking', '\u{1F9E0}thinking'). Omit if channelId is provided. If multiple channels share this name the tool will return a disambiguation list instead of deleting."
+          },
+          channelId: {
+            type: "string",
+            description: "The exact Discord channel ID to delete. Preferred over channelName when targeting one specific channel among duplicates."
+          },
+          guildId: {
+            type: "string",
+            description: "Optional Discord server (guild) ID. Must match the user's linked Jarvis server \u2014 deletion in any other server is refused."
+          }
+        },
+        required: ["confirmed"]
+      },
+      async execute(args, ctx) {
+        const { userId } = ctx;
+        if (!args.confirmed) {
+          return {
+            ok: false,
+            content: "I need you to confirm the deletion first. Please tell me the channel name and server you'd like to delete, and I'll ask for your approval before proceeding.",
+            label: "discord_delete_channel: confirmation required"
+          };
+        }
+        if (!args.channelName && !args.channelId) {
+          return {
+            ok: false,
+            content: "Please specify either a channel name or a channel ID to delete.",
+            label: "discord_delete_channel: missing channel identifier"
+          };
+        }
+        const result = await deleteDiscordChannel(userId, {
+          channelName: args.channelName,
+          channelId: args.channelId,
+          guildId: args.guildId,
+          ctxGuildId: ctx.discordGuildId
+        });
+        if (result.ambiguous && result.matches) {
+          const list = result.matches.map((m, i) => `${i + 1}. #${m.name} (ID: \`${m.id}\`)`).join("\n");
+          return {
+            ok: false,
+            content: `There are ${result.matches.length} channels named **#${args.channelName}**:
+${list}
+
+Which one should I delete? Please confirm the channel ID and I'll remove it.`,
+            label: `discord_delete_channel: ambiguous \u2014 ${result.matches.length} matches for "${args.channelName}"`
+          };
+        }
+        if (!result.ok) {
+          return {
+            ok: false,
+            content: `Couldn't delete the channel: ${result.error}`,
+            label: "Discord channel deletion failed"
+          };
+        }
+        return {
+          ok: true,
+          content: `\u2705 Deleted #${result.channelName} from your Discord server.`,
+          label: `Discord: deleted #${result.channelName}`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordListChannels.ts
+import { eq as eq38, and as and27 } from "drizzle-orm";
+var discordListChannelsTool;
+var init_discordListChannels = __esm({
+  "server/agent/tools/discordListChannels.ts"() {
+    "use strict";
+    init_manager();
+    init_db();
+    init_schema();
+    discordListChannelsTool = {
+      name: "discord_list_channels",
+      description: "List all text channels in the user's linked Discord server and identify any duplicate channel names. Use this FIRST whenever the user asks to scan for duplicates, clean up channels, or wants to know what channels exist. Returns the full channel list plus a clearly-marked list of duplicate names so you can ask the user which ones to delete. Do NOT use web search or background jobs for this \u2014 it reads directly from the Discord server.",
+      parameters: {
+        type: "object",
+        properties: {
+          guildId: {
+            type: "string",
+            description: "Optional Discord server ID to scan. If omitted, the user's linked Jarvis workspace server is used automatically."
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const { userId } = ctx;
+        let resolvedGuildId = args.guildId;
+        if (!resolvedGuildId) {
+          const linkRow = await db.select().from(channelLinks).where(and27(eq38(channelLinks.userId, userId), eq38(channelLinks.channel, "discord"))).limit(1);
+          const linkMeta = linkRow[0]?.metadata ?? {};
+          resolvedGuildId = linkMeta.workspace?.guildId;
+        }
+        if (!resolvedGuildId && ctx.discordGuildId) {
+          resolvedGuildId = ctx.discordGuildId;
+        }
+        if (!resolvedGuildId) {
+          return {
+            ok: false,
+            content: "No linked Discord server found. Message Jarvis from inside your Discord server first so it can identify which server to scan.",
+            label: "discord_list_channels: no guild"
+          };
+        }
+        const channels2 = await getChannelsForGuild(userId, resolvedGuildId);
+        if (channels2.length === 0) {
+          return {
+            ok: false,
+            content: "Could not fetch channels \u2014 the bot may not be in that server, or it may be offline. Check that the bot is running and has been added to the server.",
+            label: "discord_list_channels: fetch failed"
+          };
+        }
+        function slugify2(name) {
+          return name.toLowerCase().replace(/[^\w\s-]/g, "").replace(/[\s_]+/g, "-").replace(/-+/g, "-").trim();
+        }
+        const bySlug = /* @__PURE__ */ new Map();
+        for (const ch of channels2) {
+          const slug = slugify2(ch.name);
+          const existing = bySlug.get(slug) ?? [];
+          existing.push(ch);
+          bySlug.set(slug, existing);
+        }
+        const duplicateGroups = [...bySlug.values()].filter((group) => group.length > 1);
+        const totalCount = channels2.length;
+        const duplicateCount = duplicateGroups.reduce((s, g) => s + g.length, 0);
+        const allLines = channels2.map((ch) => `#${ch.name} (ID: ${ch.id})`).join("\n");
+        let duplicateSection = "";
+        if (duplicateGroups.length === 0) {
+          duplicateSection = "No duplicate channel names found.";
+        } else {
+          duplicateSection = duplicateGroups.map((group) => {
+            const header = `Duplicate: "${group[0].name}" \u2014 ${group.length} copies`;
+            const entries = group.map((ch) => `  \u2022 #${ch.name} (ID: \`${ch.id}\`)`).join("\n");
+            return `${header}
+${entries}`;
+          }).join("\n\n");
+        }
+        return {
+          ok: true,
+          content: `Found ${totalCount} text channel(s) in the server.
+
+--- DUPLICATES (${duplicateCount} channels across ${duplicateGroups.length} duplicate name(s)) ---
+${duplicateSection}
+
+--- ALL CHANNELS ---
+${allLines}`,
+          label: `discord_list_channels: ${totalCount} channels, ${duplicateGroups.length} duplicate name(s)`
+        };
+      }
+    };
+  }
+});
+
+// server/jarvisScheduledTasks.ts
+import { and as and28, eq as eq39, isNull as isNull2, sql as sql13 } from "drizzle-orm";
+function normalizeText(value) {
+  return String(value ?? "").trim();
+}
+async function createJarvisScheduledTask(input) {
+  const title = normalizeText(input.title);
+  const description = normalizeText(input.description) || null;
+  const recurrence = normalizeText(input.recurrence) || null;
+  const recurrencePredicate = recurrence ? eq39(jarvisScheduledTasks.recurrence, recurrence) : isNull2(jarvisScheduledTasks.recurrence);
+  const [existing] = await db.select().from(jarvisScheduledTasks).where(and28(
+    eq39(jarvisScheduledTasks.userId, input.userId),
+    sql13`LOWER(TRIM(${jarvisScheduledTasks.title})) = ${title.toLowerCase()}`,
+    eq39(jarvisScheduledTasks.scheduledAt, input.scheduledAt),
+    recurrencePredicate,
+    isNull2(jarvisScheduledTasks.completedAt),
+    eq39(jarvisScheduledTasks.active, true)
+  )).limit(1);
+  if (existing) {
+    return { task: existing, deduped: true };
+  }
+  const [task] = await db.insert(jarvisScheduledTasks).values({
+    userId: input.userId,
+    title,
+    description,
+    scheduledAt: input.scheduledAt,
+    recurrence
+  }).returning();
+  return { task, deduped: false };
+}
+var init_jarvisScheduledTasks = __esm({
+  "server/jarvisScheduledTasks.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+  }
+});
+
+// server/agent/tools/scheduleJarvisTask.ts
+var scheduleJarvisTaskTool;
+var init_scheduleJarvisTask = __esm({
+  "server/agent/tools/scheduleJarvisTask.ts"() {
+    "use strict";
+    init_jarvisScheduledTasks();
+    scheduleJarvisTaskTool = {
+      name: "schedule_jarvis_task",
+      description: "Schedule a recurring or one-off task for Jarvis to perform automatically. Use this when the user asks you to 'remind me every Monday to...', 'check my inbox every morning', 'do X at Y time', or any request to schedule a future autonomous action. These tasks appear in the user's Mission Control calendar so they can verify Jarvis is actually scheduled to do what they asked.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: {
+            type: "string",
+            description: "Short title for the scheduled task (e.g. 'Morning inbox scan', 'Weekly goal review')"
+          },
+          description: {
+            type: "string",
+            description: "What Jarvis will do when this task runs. Be specific."
+          },
+          scheduledAt: {
+            type: "string",
+            description: "When to first run this task. ISO 8601 datetime string (e.g. '2025-05-01T09:00:00Z'). For daily/recurring tasks, use the next scheduled occurrence."
+          },
+          recurrence: {
+            type: "string",
+            description: "Optional recurrence rule in plain English (e.g. 'daily', 'every Monday', 'weekdays at 9am', 'every Sunday at 8pm'). Omit for one-off tasks."
+          }
+        },
+        required: ["title", "scheduledAt"]
+      },
+      async execute(args, ctx) {
+        const a = args;
+        const title = String(a.title || "").trim();
+        const scheduledAtStr = String(a.scheduledAt || "").trim();
+        if (!title) {
+          return { ok: false, content: "title is required.", label: "Missing title" };
+        }
+        if (!scheduledAtStr) {
+          return { ok: false, content: "scheduledAt is required.", label: "Missing scheduledAt" };
+        }
+        const scheduledAt = new Date(scheduledAtStr);
+        if (isNaN(scheduledAt.getTime())) {
+          return { ok: false, content: `Invalid scheduledAt: "${scheduledAtStr}". Use ISO 8601 format.`, label: "Invalid date" };
+        }
+        try {
+          const { task, deduped } = await createJarvisScheduledTask({
+            userId: ctx.userId,
+            title,
+            description: a.description ? String(a.description).trim() : null,
+            scheduledAt,
+            recurrence: a.recurrence ? String(a.recurrence).trim() : null
+          });
+          const when = scheduledAt.toLocaleDateString("en-US", {
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit"
+          });
+          const actionLabel = deduped ? "Already scheduled" : "Scheduled";
+          return {
+            ok: true,
+            content: `${actionLabel}: "${title}" for ${when}${a.recurrence ? ` (${a.recurrence})` : ""}.
+
+[View in Scheduled Tasks ->](gameplan://scheduled)`,
+            label: `${actionLabel}: ${title}`,
+            detail: JSON.stringify({ id: task.id, title, scheduledAt: task.scheduledAt, deduped })
+          };
+        } catch (err2) {
+          const msg = err2 instanceof Error ? err2.message : String(err2);
+          console.error("[schedule_jarvis_task] failed:", msg);
+          return { ok: false, content: `Failed to schedule task: ${msg}`, label: "Schedule failed", detail: msg };
+        }
+      }
+    };
+  }
+});
+
+// server/discord/schedules.ts
+import { eq as eq40, and as and29 } from "drizzle-orm";
+function detectTemplate(input) {
+  const lower = input.toLowerCase();
+  for (const tpl of Object.values(SCHEDULE_TEMPLATES)) {
+    if (tpl.triggerPhrases.some((p) => lower.includes(p))) {
+      return tpl;
+    }
+  }
+  return null;
+}
+async function createSchedule(userId, params) {
+  const [row] = await db.insert(discordChannelSchedules).values({
+    userId,
+    channelName: params.channelName,
+    label: params.label,
+    cronExpression: params.cronExpression,
+    prompt: params.prompt,
+    guildId: params.guildId,
+    channelId: params.channelId,
+    pipelineNext: params.pipelineNext,
+    enabled: true
+  }).returning();
+  return row;
+}
+async function listSchedules(userId) {
+  return db.select().from(discordChannelSchedules).where(eq40(discordChannelSchedules.userId, userId));
+}
+async function getSchedule(id) {
+  const rows = await db.select().from(discordChannelSchedules).where(eq40(discordChannelSchedules.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+async function deleteSchedule(userId, id) {
+  await db.delete(discordChannelSchedules).where(
+    and29(
+      eq40(discordChannelSchedules.id, id),
+      eq40(discordChannelSchedules.userId, userId)
+    )
+  );
+}
+async function toggleSchedule(userId, id, enabled) {
+  await db.update(discordChannelSchedules).set({ enabled }).where(
+    and29(
+      eq40(discordChannelSchedules.id, id),
+      eq40(discordChannelSchedules.userId, userId)
+    )
+  );
+}
+async function runSchedule(id, previousOutput) {
+  const schedule = await getSchedule(id);
+  if (!schedule) {
+    console.warn(`[DiscordSchedules] schedule ${id} not found`);
+    return;
+  }
+  if (!schedule.enabled) {
+    console.log(`[DiscordSchedules] schedule ${id} is disabled \u2014 skipping`);
+    return;
+  }
+  console.log(`[DiscordSchedules] Running schedule "${schedule.label}" for user ${schedule.userId}`);
+  let prompt = schedule.prompt;
+  if (previousOutput) {
+    prompt = prompt.replace(/\{\{previousOutput\}\}/g, previousOutput);
+  }
+  let result = "";
+  try {
+    const agentResult = await runCoachAgent({
+      userId: schedule.userId,
+      userText: prompt,
+      channelName: "Discord Schedule Runner"
+    });
+    result = agentResult.reply || "";
+  } catch (err2) {
+    console.error(`[DiscordSchedules] runCoachAgent failed for schedule ${id}:`, err2);
+    result = `\u26A0\uFE0F Schedule run failed: ${err2 instanceof Error ? err2.message : String(err2)}`;
+  }
+  const isMultiScript = result.includes(SCRIPT_DELIMITER);
+  if (isMultiScript) {
+    const scripts = result.split(SCRIPT_DELIMITER).map((s) => s.trim()).filter(Boolean);
+    console.log(`[DiscordSchedules] Multi-script mode \u2014 posting ${scripts.length} scripts to #${schedule.channelName}`);
+    await postToDiscordChannel(
+      schedule.userId,
+      schedule.channelName,
+      schedule.channelId ?? null,
+      `\u270D\uFE0F **${schedule.label}** \u2014 ${scripts.length} script${scripts.length !== 1 ? "s" : ""} ready for review:`
+    );
+    for (let i = 0; i < scripts.length; i++) {
+      const scriptText = scripts[i];
+      const postBody = scriptText + "\n\n_React \u2705 to generate thumbnail concepts \u2014 \u274C to skip._";
+      const msgId = await postMessageAndGetId(
+        schedule.userId,
+        schedule.channelName,
+        schedule.channelId ?? null,
+        postBody
+      );
+      if (msgId) {
+        await db.insert(discordPendingApprovals).values({
+          messageId: msgId,
+          userId: schedule.userId,
+          channelId: schedule.channelId ?? msgId,
+          type: "script",
+          content: scriptText,
+          onApprove: {
+            type: "run_prompt",
+            prompt: "Generate 3 detailed thumbnail concepts for this YouTube script. For each concept: 1. Background scene description, 2. Main text overlay (bold, short), 3. Color palette (2-3 colors), 4. Composition notes (where the subject sits, camera angle). Script content:\n\n{{content}}",
+            channelName: "ideas"
+          },
+          onReject: { type: "notify_only" },
+          status: "pending"
+        }).onConflictDoNothing();
+        console.log(`[DiscordSchedules] Registered approval for script ${i + 1} (msgId=${msgId})`);
+      }
+      if (i < scripts.length - 1) {
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+    }
+  } else {
+    const header = `\u{1F4CA} **${schedule.label}**
+`;
+    const fullText = header + result;
+    const postInfo = await postMessageAndGetInfo(
+      schedule.userId,
+      schedule.channelName,
+      schedule.channelId ?? null,
+      fullText
+    );
+    if (!postInfo) {
+      console.warn(`[DiscordSchedules] Failed to post schedule ${id} to channel ${schedule.channelName}`);
+    } else {
+      const isDeliverable = result.length > 600 || result.match(/^#{1,3}\s/m) !== null || result.match(/^\*\*[^*]+\*\*/m) !== null && result.length > 300 || result.match(/^\d+\.\s/m) !== null && result.split("\n").length > 8;
+      if (isDeliverable) {
+        const pinned = await pinDiscordMessage(
+          schedule.userId,
+          postInfo.channelId,
+          postInfo.messageId
+        ).catch(() => false);
+        if (pinned) {
+          console.log(`[DiscordSchedules] Auto-pinned report (schedule=${id}, msg=${postInfo.messageId})`);
+        }
+      }
+    }
+  }
+  await db.update(discordChannelSchedules).set({ lastRun: /* @__PURE__ */ new Date(), lastOutput: result.slice(0, 5e3) }).where(eq40(discordChannelSchedules.id, id));
+  if (schedule.pipelineNext) {
+    console.log(`[DiscordSchedules] Chaining to pipeline stage ${schedule.pipelineNext}`);
+    setTimeout(() => {
+      runSchedule(schedule.pipelineNext, result).catch((err2) => {
+        console.error(`[DiscordSchedules] Pipeline chain failed for ${schedule.pipelineNext}:`, err2);
+      });
+    }, 500);
+  }
+}
+function matchesCron(cron, date2) {
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const [min, hr, dom, mon, dow] = parts;
+  const matches = (field, value) => {
+    if (field === "*") return true;
+    const options = field.split(",").map((s) => parseInt(s, 10));
+    return options.includes(value);
+  };
+  return matches(min, date2.getMinutes()) && matches(hr, date2.getHours()) && matches(dom, date2.getDate()) && matches(mon, date2.getMonth() + 1) && matches(dow, date2.getDay());
+}
+function parseCronExpression(natural) {
+  const lower = natural.toLowerCase();
+  const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+  let hour = 9;
+  let minute = 0;
+  if (timeMatch) {
+    hour = parseInt(timeMatch[1], 10);
+    minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+    if (timeMatch[3] === "pm" && hour < 12) hour += 12;
+    if (timeMatch[3] === "am" && hour === 12) hour = 0;
+  }
+  if (lower.includes("monday")) return `${minute} ${hour} * * 1`;
+  if (lower.includes("tuesday")) return `${minute} ${hour} * * 2`;
+  if (lower.includes("wednesday")) return `${minute} ${hour} * * 3`;
+  if (lower.includes("thursday")) return `${minute} ${hour} * * 4`;
+  if (lower.includes("friday")) return `${minute} ${hour} * * 5`;
+  if (lower.includes("saturday")) return `${minute} ${hour} * * 6`;
+  if (lower.includes("sunday")) return `${minute} ${hour} * * 0`;
+  if (lower.includes("weekday")) return `${minute} ${hour} * * 1-5`;
+  if (lower.includes("weekend")) return `${minute} ${hour} * * 0,6`;
+  if (lower.includes("every hour") || lower.includes("hourly")) return `${minute} * * * *`;
+  return `${minute} ${hour} * * *`;
+}
+function nextRunTime(cron) {
+  const now = /* @__PURE__ */ new Date();
+  const check = new Date(now);
+  check.setSeconds(0, 0);
+  check.setMinutes(check.getMinutes() + 1);
+  for (let i = 0; i < 60 * 24 * 7; i++) {
+    if (matchesCron(cron, check)) return new Date(check);
+    check.setMinutes(check.getMinutes() + 1);
+  }
+  return null;
+}
+var SCRIPT_DELIMITER, SCHEDULE_TEMPLATES;
+var init_schedules = __esm({
+  "server/discord/schedules.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_coachAgent();
+    init_manager();
+    SCRIPT_DELIMITER = "---SCRIPT---";
+    SCHEDULE_TEMPLATES = {
+      stockResearch: {
+        label: "AI Stock Research",
+        channelName: "stock-research",
+        cronExpression: "0 7 * * 1,2,3,4,5",
+        prompt: "Research the top 8 AI infrastructure stocks with competitive moats \u2014 chips, energy, memory, GPUs, and supply chain companies that stand to benefit most from the AI buildout over the next decade. For each stock: company name, ticker symbol, 1-sentence investment thesis, and the single most important news item from the last 24 hours. Format clearly with sections per company. Keep the report concise and actionable.",
+        triggerPhrases: ["stock research", "ai stocks", "stock report", "market research", "ai infrastructure stocks"]
+      },
+      competitorYoutube: {
+        label: "Competitor YouTube Research",
+        channelName: "competitor-research",
+        cronExpression: "0 8 * * *",
+        prompt: "Search YouTube for [TOPIC] videos published in the last 5 days. Rank by total view count (highest first). List the top 15 results in a table: rank | title | channel | total views | days since posted. Add a brief note for any video standing out as unusually high-performing. Keep the report tight and scannable.",
+        triggerPhrases: ["competitor youtube", "youtube research", "competitor research", "youtube competitor"]
+      }
+    };
+  }
+});
+
+// server/agent/tools/scheduleChannelReport.ts
+var scheduleChannelReportTool, listChannelSchedulesTool, deleteChannelScheduleTool;
+var init_scheduleChannelReport = __esm({
+  "server/agent/tools/scheduleChannelReport.ts"() {
+    "use strict";
+    init_schedules();
+    init_manager();
+    scheduleChannelReportTool = {
+      name: "schedule_channel_report",
+      description: "Create a recurring automated research report that Jarvis runs at a scheduled time and posts to a specific Discord channel. Use this when the user asks to set up a daily/recurring automated report in Discord \u2014 for example 'set up a daily stock research report at 7am' or 'every morning at 8am, post YouTube competitor research to #competitor-research'. Jarvis will create the channel if it doesn't exist, then schedule the recurring report. Built-in templates are available: say 'stock research' to use the AI stock template, or 'competitor YouTube' to use the YouTube research template. The schedule parameter accepts natural language (e.g. 'every morning at 7am', 'every Monday at 9am'). IMPORTANT: Only use this for creating scheduled DISCORD channel reports. For general reminders, use schedule_jarvis_task instead.",
+      parameters: {
+        type: "object",
+        properties: {
+          channelName: {
+            type: "string",
+            description: "The Discord channel name to post to (e.g. 'stock-research', 'competitor-research'). Use lowercase with hyphens. The channel will be created if it doesn't exist. If omitted and a template is matched, the template's default channel name will be used."
+          },
+          label: {
+            type: "string",
+            description: "A short human-readable label for this schedule (e.g. 'AI Stock Research', 'Competitor YouTube Report'). If omitted and a template is matched, the template's default label will be used."
+          },
+          schedule: {
+            type: "string",
+            description: "When to run the report, in natural language (e.g. 'every morning at 7am', 'daily at 8pm', 'every Monday at 9am'). If omitted and a template is matched, the template's default schedule will be used."
+          },
+          prompt: {
+            type: "string",
+            description: "The research instructions Jarvis will execute when the schedule fires. Be specific. If omitted, Jarvis will try to detect a built-in template from the label or channel name. Example: 'Research the top 8 AI infrastructure stocks. For each: ticker, thesis, latest news.'"
+          },
+          pipelineNext: {
+            type: "string",
+            description: "Optional: the ID of another schedule to trigger after this one completes (for chained pipelines)."
+          },
+          topic: {
+            type: "string",
+            description: "Optional. For competitor/niche YouTube research, the topic keywords to search for (e.g. 'ADHD productivity', 'AI tools for developers'). Replaces the [TOPIC] placeholder in the YouTube research template prompt."
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const { userId } = ctx;
+        const rawLabel = args.label ? String(args.label).trim() : "";
+        const rawChannel = args.channelName ? String(args.channelName).trim() : "";
+        const rawPrompt = args.prompt ? String(args.prompt).trim() : "";
+        const rawSchedule = args.schedule ? String(args.schedule).trim() : "";
+        const rawTopic = args.topic ? String(args.topic).trim() : "";
+        const pipelineNext = args.pipelineNext ? String(args.pipelineNext).trim() : void 0;
+        const templateLookup = rawLabel || rawPrompt || rawChannel;
+        const matchedTemplate = templateLookup ? detectTemplate(templateLookup) : null;
+        const channelName = (rawChannel || matchedTemplate?.channelName || "").toLowerCase().replace(/\s+/g, "-");
+        const label = rawLabel || matchedTemplate?.label || "";
+        let prompt = rawPrompt || matchedTemplate?.prompt || "";
+        if (rawTopic && prompt.includes("[TOPIC]")) {
+          prompt = prompt.replace(/\[TOPIC\]/g, rawTopic);
+        } else if (prompt.includes("[TOPIC]") && !rawTopic) {
+          return {
+            ok: false,
+            content: "The YouTube competitor research template needs a topic to search for. For example: 'Set up competitor YouTube research for ADHD productivity'. What topic or niche should I search YouTube for?",
+            label: "Missing topic for YouTube template"
+          };
+        }
+        if (!channelName) {
+          return {
+            ok: false,
+            content: "Please provide a channelName for the report (e.g. 'stock-research').\n\n**Available templates:** say 'stock research' or 'competitor YouTube'.",
+            label: "Missing channelName"
+          };
+        }
+        if (!label) {
+          return { ok: false, content: "Please provide a label for this schedule (e.g. 'AI Stock Research').", label: "Missing label" };
+        }
+        if (!prompt) {
+          return {
+            ok: false,
+            content: "Please provide the research prompt for this schedule, or say something like 'stock research' or 'competitor YouTube' to use a built-in template.",
+            label: "Missing prompt"
+          };
+        }
+        const scheduleInput = rawSchedule || matchedTemplate?.cronExpression || "0 7 * * *";
+        const cronExpression = /^\S+ \S+ \S+ \S+ \S+$/.test(scheduleInput) ? scheduleInput : parseCronExpression(scheduleInput);
+        await createDiscordChannel(userId, {
+          channelName,
+          topic: `Automated reports: ${label}`,
+          categoryName: "\u{1F9E0} Jarvis Workspace"
+        });
+        const schedule = await createSchedule(userId, {
+          channelName,
+          label,
+          cronExpression,
+          prompt,
+          pipelineNext
+        });
+        const templateNote = matchedTemplate ? " (using built-in template)" : "";
+        return {
+          ok: true,
+          content: `\u2705 Scheduled **${label}**${templateNote} \u2014 runs \`${cronExpression}\` and posts to #${channelName}.
+Schedule ID: \`${schedule.id}\`
+To cancel: say "delete my ${label} schedule" or "cancel ${channelName} report".`,
+          label: `Schedule created: ${label}`,
+          detail: schedule.id
+        };
+      }
+    };
+    listChannelSchedulesTool = {
+      name: "list_channel_schedules",
+      description: "List all active Discord channel report schedules for the user. Use when the user asks 'what automations do I have?', 'what schedules are running?', or 'show my Discord reports'.",
+      parameters: {
+        type: "object",
+        properties: {},
+        required: []
+      },
+      async execute(_args, ctx) {
+        const { userId } = ctx;
+        try {
+          const schedules = await listSchedules(userId);
+          if (schedules.length === 0) {
+            return {
+              ok: true,
+              content: "No Discord channel schedules set up yet. Ask me to set up a stock research report or any other recurring automation.\n\n**Available templates:**\n\u2022 **AI Stock Research** \u2014 weekdays at 7am, posts to #stock-research\n\u2022 **Competitor YouTube Research** \u2014 daily at 8am, posts to #competitor-research",
+              label: "No schedules"
+            };
+          }
+          const lines = schedules.map((s) => {
+            const status = s.enabled ? "\u2705 Active" : "\u23F8 Paused";
+            const lastRun = s.lastRun ? `Last run: ${new Date(s.lastRun).toLocaleString()}` : "Never run";
+            return `\u2022 **${s.label}** \u2192 #${s.channelName} | \`${s.cronExpression}\` | ${status} | ${lastRun} | ID: \`${s.id}\``;
+          });
+          return {
+            ok: true,
+            content: `**Your Discord Channel Schedules (${schedules.length}):**
+
+${lines.join("\n")}`,
+            label: `${schedules.length} schedule(s)`
+          };
+        } catch (err2) {
+          const msg = err2 instanceof Error ? err2.message : String(err2);
+          return { ok: false, content: `Failed to list schedules: ${msg}`, label: "List failed" };
+        }
+      }
+    };
+    deleteChannelScheduleTool = {
+      name: "delete_channel_schedule",
+      description: "Cancel and delete a Discord channel report schedule. Use when the user says 'cancel my stock report', 'stop the YouTube research', 'delete schedule X', or any request to remove an automated Discord report. You can match by label (partial, case-insensitive) or by the exact schedule ID.",
+      parameters: {
+        type: "object",
+        properties: {
+          label: {
+            type: "string",
+            description: "The label (or partial label) of the schedule to delete. Case-insensitive match. Example: 'stock research' will match 'AI Stock Research'."
+          },
+          scheduleId: {
+            type: "string",
+            description: "The exact schedule ID (UUID) to delete. Use when the user specifies it directly."
+          }
+        },
+        required: []
+      },
+      async execute(args, ctx) {
+        const { userId } = ctx;
+        const labelQuery = args.label ? String(args.label).toLowerCase().trim() : null;
+        const scheduleId = args.scheduleId ? String(args.scheduleId).trim() : null;
+        if (!labelQuery && !scheduleId) {
+          return {
+            ok: false,
+            content: "Please provide either a label or a schedule ID to delete.",
+            label: "Missing identifier"
+          };
+        }
+        try {
+          const all = await listSchedules(userId);
+          let target = null;
+          if (scheduleId) {
+            target = all.find((s) => s.id === scheduleId) ?? null;
+          } else if (labelQuery) {
+            target = all.find((s) => s.label.toLowerCase().includes(labelQuery)) ?? null;
+          }
+          if (!target) {
+            const names = all.map((s) => `"${s.label}"`).join(", ");
+            return {
+              ok: false,
+              content: `No schedule found matching "${labelQuery ?? scheduleId}". ` + (all.length > 0 ? `Your schedules: ${names}` : "You have no schedules set up."),
+              label: "Schedule not found"
+            };
+          }
+          await deleteSchedule(userId, target.id);
+          return {
+            ok: true,
+            content: `Cancelled "${target.label}" \u2014 it will no longer post to #${target.channelName}.`,
+            label: `Deleted: ${target.label}`
+          };
+        } catch (err2) {
+          const msg = err2 instanceof Error ? err2.message : String(err2);
+          return { ok: false, content: `Failed to delete schedule: ${msg}`, label: "Delete failed" };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/youtubeSearch.ts
+function parseAgoToMs(ago, fallbackMs) {
+  const m = ago.match(/(\d+)\s*(second|minute|hour|day|week|month|year)/i);
+  if (!m) return fallbackMs;
+  const n = parseInt(m[1], 10);
+  const unit = m[2].toLowerCase();
+  const unitMs = {
+    second: 1e3,
+    minute: 6e4,
+    hour: 36e5,
+    day: 864e5,
+    week: 6048e5,
+    month: 2592e6,
+    year: 31536e6
+  };
+  return n * (unitMs[unit] ?? 864e5);
+}
+var DAYS_BACK_DEFAULT, MAX_RESULTS_DEFAULT, youtubeSearchTool;
+var init_youtubeSearch = __esm({
+  "server/agent/tools/youtubeSearch.ts"() {
+    "use strict";
+    DAYS_BACK_DEFAULT = 5;
+    MAX_RESULTS_DEFAULT = 15;
+    youtubeSearchTool = {
+      name: "search_youtube",
+      description: "Search YouTube server-side and return structured results: title, channel, view count, published date, video ID, and URL. Use this for YouTube video research, competitor analysis, and finding content in any niche. Pass trending:true ONLY when the user explicitly asks for 'trending', 'viral', 'gaining momentum', or 'views per hour' \u2014 this sorts by views-per-hour velocity instead of total views, and filters to videos published within daysBack days. For general YouTube search (without trending language), use standard mode (trending:false or omitted).",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "YouTube search query, e.g. 'ADHD productivity tools 2024' or 'AI video editing tutorials'"
+          },
+          trending: {
+            type: "boolean",
+            description: "If true, sort by views-per-hour (velocity) instead of total views. ONLY use when the user explicitly says 'trending', 'viral', 'momentum', or 'views per hour'."
+          },
+          daysBack: {
+            type: "number",
+            description: "When trending:true, only include videos published within this many days (default 5). Use 1 for last 24h, 7 for last week."
+          },
+          maxResults: {
+            type: "number",
+            description: "Maximum results to return (1\u201315, default 15)."
+          }
+        },
+        required: ["query"]
+      },
+      async execute(args, ctx) {
+        const query = String(args.query || "").trim();
+        if (!query) {
+          return { ok: false, content: "Please provide a search query.", label: "Missing query" };
+        }
+        const trendingMode = !!args.trending;
+        const daysBack = typeof args.daysBack === "number" ? Math.max(args.daysBack, 1) : DAYS_BACK_DEFAULT;
+        const maxResults = typeof args.maxResults === "number" ? Math.min(Math.max(args.maxResults, 1), MAX_RESULTS_DEFAULT) : MAX_RESULTS_DEFAULT;
+        const daysMs = daysBack * 24 * 60 * 60 * 1e3;
+        console.log(
+          `[search_youtube] query="${query}" trending=${trendingMode} daysBack=${daysBack} max=${maxResults} (user=${ctx.userId})`
+        );
+        try {
+          const ytSearch2 = (await import("yt-search")).default;
+          const searchResult = await ytSearch2({ query, pageStart: 1, pageEnd: 1 });
+          let rawVideos = searchResult.videos || [];
+          let videos = rawVideos.map((v) => {
+            const viewCount = typeof v.views === "number" ? v.views : parseInt(String(v.views || "0").replace(/[^0-9]/g, ""), 10) || 0;
+            const ago = v.ago || "";
+            const fallbackMs = daysBack * 24 * 60 * 60 * 1e3;
+            const ageMs = ago ? parseAgoToMs(ago, fallbackMs) : fallbackMs;
+            const ageHours = Math.max(ageMs / 36e5, 1);
+            const viewsPerHour = Math.round(viewCount / ageHours);
+            return {
+              title: v.title || "(no title)",
+              channelName: v.author?.name || v.channel?.name || "unknown",
+              viewCount,
+              viewsPerHour,
+              ago: ago || "unknown date",
+              ageHours,
+              videoId: v.videoId || "",
+              url: v.url || `https://youtube.com/watch?v=${v.videoId}`
+            };
+          });
+          if (trendingMode) {
+            videos = videos.filter((v) => {
+              const ageMs = v.ageHours * 36e5;
+              return ageMs <= daysMs;
+            }).sort((a, b) => b.viewsPerHour - a.viewsPerHour).slice(0, maxResults);
+            if (videos.length === 0) {
+              return {
+                ok: false,
+                content: `No trending videos found in the last ${daysBack} days for: "${query}". Try increasing daysBack or use a broader query.`,
+                label: "No trending results"
+              };
+            }
+            const tableHeader2 = `Rank | Title | Channel | Views/hr | Total Views | Published
+${"\u2500".repeat(80)}`;
+            const rows2 = videos.map((v, i) => {
+              const views = v.viewCount.toLocaleString();
+              const vph = v.viewsPerHour.toLocaleString();
+              return `${String(i + 1).padStart(2)}. **${v.title}**
+    Channel: ${v.channelName} | Views/hr: ${vph} | Total: ${views} | Posted: ${v.ago}
+    URL: ${v.url}`;
+            });
+            const content2 = `**YouTube Trending: "${query}"** (last ${daysBack} days, sorted by views/hour)
+
+${tableHeader2}
+
+${rows2.join("\n\n")}`;
+            return {
+              ok: true,
+              content: content2,
+              label: `YouTube trending (${videos.length} results): ${query}`
+            };
+          }
+          videos = [...videos].sort((a, b) => b.viewCount - a.viewCount).slice(0, maxResults);
+          if (videos.length === 0) {
+            return {
+              ok: false,
+              content: `No YouTube videos found for: "${query}".`,
+              label: "No results"
+            };
+          }
+          const tableHeader = `Rank | Title | Channel | Total Views | Published
+${"\u2500".repeat(70)}`;
+          const rows = videos.map((v, i) => {
+            const views = v.viewCount.toLocaleString();
+            return `${String(i + 1).padStart(2)}. **${v.title}**
+    Channel: ${v.channelName} | Views: ${views} | Posted: ${v.ago}
+    URL: ${v.url}`;
+          });
+          const content = `**YouTube Search: "${query}"** (sorted by total views)
+
+${tableHeader}
+
+${rows.join("\n\n")}`;
+          return {
+            ok: true,
+            content,
+            label: `YouTube search (${videos.length} results): ${query}`
+          };
+        } catch (err2) {
+          const msg = err2 instanceof Error ? err2.message : String(err2);
+          console.error(`[search_youtube] failed: ${msg}`);
+          return {
+            ok: false,
+            content: `YouTube search failed: ${msg}`,
+            label: "YouTube search error"
+          };
+        }
+      }
+    };
+  }
+});
+
+// server/lib/geminiTranscript.ts
+var geminiTranscript_exports = {};
+__export(geminiTranscript_exports, {
+  fetchTranscriptViaGemini: () => fetchTranscriptViaGemini,
+  isGeminiTranscriptAvailable: () => isGeminiTranscriptAvailable,
+  isTranscriptRefusal: () => isTranscriptRefusal,
+  normalizeVideoUrl: () => normalizeVideoUrl,
+  transcribeVideoFromUrl: () => transcribeVideoFromUrl
+});
+import { GoogleGenAI } from "@google/genai";
+function getClient() {
+  if (_client) return _client;
+  const directKey = process.env.GOOGLE_GEMINI_API_KEY;
+  if (directKey) {
+    _client = new GoogleGenAI({ apiKey: directKey });
+    return _client;
+  }
+  const proxyKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  if (!proxyKey) throw new Error("No Gemini API key configured \u2014 set GOOGLE_GEMINI_API_KEY or AI_INTEGRATIONS_GEMINI_API_KEY");
+  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
+  _client = new GoogleGenAI({
+    apiKey: proxyKey,
+    ...baseUrl ? { httpOptions: { baseUrl } } : {}
+  });
+  return _client;
+}
+function isUsingDirectKey() {
+  return !!process.env.GOOGLE_GEMINI_API_KEY;
+}
+function isGatewayEndpointError(err2) {
+  const msg = err2 instanceof Error ? err2.message : String(err2);
+  return msg.includes("INVALID_ENDPOINT") || /endpoint[^.]*is not supported/i.test(msg) || /not supported.*endpoint/i.test(msg);
+}
+function isPrimaryModelRejection(err2) {
+  const msg = err2 instanceof Error ? err2.message : String(err2);
+  return PRIMARY_REJECTION_PATTERNS.some((p) => p.test(msg));
+}
+function isTranscriptRefusal(text2) {
+  const opening = text2.slice(0, 600);
+  return GEMINI_REFUSAL_PATTERNS.some((p) => p.test(opening));
+}
+async function callGemini(model, videoUrl) {
+  const client = getClient();
+  const timeoutPromise = new Promise(
+    (_, reject) => setTimeout(() => reject(new Error(`Gemini model ${model} timed out after ${GEMINI_CALL_TIMEOUT_MS / 1e3}s`)), GEMINI_CALL_TIMEOUT_MS)
+  );
+  const response = await Promise.race([
+    client.models.generateContent({
+      model,
+      contents: [
+        {
+          parts: [
+            { fileData: { mimeType: "video/mp4", fileUri: videoUrl } },
+            { text: TRANSCRIPT_PROMPT }
+          ]
+        }
+      ]
+    }),
+    timeoutPromise
+  ]);
+  const text2 = response.text;
+  if (!text2 || !text2.trim()) {
+    throw new Error(`Gemini model ${model} returned an empty transcript for this video`);
+  }
+  const trimmed = text2.trim();
+  if (isTranscriptRefusal(trimmed)) {
+    throw new Error(
+      `Gemini model ${model} declined to transcribe this video (refusal detected). Response started with: "${trimmed.slice(0, 120).replace(/\n/g, " ")}"`
+    );
+  }
+  return trimmed;
+}
+async function fetchTranscriptViaGemini(videoUrl) {
+  if (_phase0GatewayUnsupported && !isUsingDirectKey()) {
+    throw new Error(
+      "GATEWAY_UNSUPPORTED: Replit AI proxy does not support the multimodal endpoint \u2014 Phase 0 skipped for this process. Add a GOOGLE_GEMINI_API_KEY secret (free at https://aistudio.google.com/apikey) to enable YouTube transcription."
+    );
+  }
+  try {
+    return await callGemini("gemini-2.5-flash", videoUrl);
+  } catch (flashErr) {
+    if (isGatewayEndpointError(flashErr) && !isUsingDirectKey()) {
+      if (!_phase0GatewayUnsupported) {
+        _phase0GatewayUnsupported = true;
+        console.warn(
+          "[geminiTranscript] Replit AI proxy rejected multimodal endpoint (INVALID_ENDPOINT). Phase 0 will be skipped for this process lifetime. To enable Gemini YouTube transcription, add a GOOGLE_GEMINI_API_KEY secret (free key at https://aistudio.google.com/apikey)."
+        );
+      }
+      throw Object.assign(
+        new Error(`gemini-2.5-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
+        { cause: flashErr }
+      );
+    }
+    if (isPrimaryModelRejection(flashErr)) {
+      const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
+      console.warn(
+        `[geminiTranscript] gemini-2.5-flash rejected video (${flashMsg}) \u2014 retrying with gemini-2.5-pro`
+      );
+      return await callGemini("gemini-2.5-pro", videoUrl);
+    }
+    throw Object.assign(
+      new Error(`gemini-2.5-flash failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`),
+      { cause: flashErr }
+    );
+  }
+}
+async function uploadVideoStream(downloadResponse, mimeType, contentLength, apiKey) {
+  const initiateHeaders = {
+    "X-Goog-Upload-Protocol": "resumable",
+    "X-Goog-Upload-Command": "start",
+    "X-Goog-Upload-Header-Content-Type": mimeType,
+    "Content-Type": "application/json"
+  };
+  if (contentLength !== null) {
+    initiateHeaders["X-Goog-Upload-Header-Content-Length"] = String(contentLength);
+  }
+  const initiateRes = await fetch(
+    `https://generativelanguage.googleapis.com/upload/v1beta/files?uploadType=resumable&key=${apiKey}`,
+    {
+      method: "POST",
+      headers: initiateHeaders,
+      body: JSON.stringify({ file: { display_name: "jarvis-video-upload" } })
+    }
+  );
+  if (!initiateRes.ok) {
+    const errText = await initiateRes.text().catch(() => "(no body)");
+    throw new Error(
+      `Resumable upload initiation failed: HTTP ${initiateRes.status} \u2014 ${errText}`
+    );
+  }
+  const uploadUrl = initiateRes.headers.get("x-goog-upload-url") ?? initiateRes.headers.get("X-Goog-Upload-URL");
+  if (!uploadUrl) {
+    throw new Error("Google File API did not return a resumable upload URL");
+  }
+  let uploadBody;
+  let uploadContentLength;
+  if (contentLength !== null) {
+    if (!downloadResponse.body) {
+      throw new Error(
+        "Download response has no readable body stream \u2014 cannot stream to Google File API"
+      );
+    }
+    uploadBody = downloadResponse.body;
+    uploadContentLength = contentLength;
+  } else {
+    const arrayBuffer = await downloadResponse.arrayBuffer();
+    const bytes = arrayBuffer.byteLength;
+    if (bytes > MAX_BUFFER_BYTES) {
+      throw new Error(
+        `Video is too large (${Math.round(bytes / 1024 / 1024)} MB). Maximum supported size for videos without a Content-Length header is ${Math.round(MAX_BUFFER_BYTES / 1024 / 1024)} MB.`
+      );
+    }
+    uploadBody = arrayBuffer;
+    uploadContentLength = bytes;
+  }
+  const uploadHeaders = {
+    "Content-Type": mimeType,
+    "Content-Length": String(uploadContentLength),
+    "X-Goog-Upload-Offset": "0",
+    "X-Goog-Upload-Command": "upload, finalize"
+  };
+  const uploadRes = await fetch(uploadUrl, {
+    method: "POST",
+    headers: uploadHeaders,
+    body: uploadBody,
+    // Required for Node.js 18+ streaming request bodies
+    // @ts-ignore
+    duplex: "half"
+  });
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text().catch(() => "(no body)");
+    throw new Error(`Resumable upload failed: HTTP ${uploadRes.status} \u2014 ${errText}`);
+  }
+  const data = await uploadRes.json();
+  const fileName = data?.file?.name;
+  if (!fileName) {
+    throw new Error("Google File API upload response is missing file.name");
+  }
+  return fileName;
+}
+function normalizeVideoUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname === "drive.google.com") {
+      const fileMatch = parsed.pathname.match(/\/file\/d\/([^/]+)/);
+      if (fileMatch) {
+        return `https://drive.google.com/uc?export=download&id=${fileMatch[1]}&confirm=t`;
+      }
+      const openId = parsed.searchParams.get("id");
+      if (openId) {
+        return `https://drive.google.com/uc?export=download&id=${openId}&confirm=t`;
+      }
+    }
+    if (parsed.hostname.includes("dropbox.com")) {
+      parsed.searchParams.set("dl", "1");
+      return parsed.toString();
+    }
+    return url;
+  } catch {
+    return url;
+  }
+}
+function inferMimeType(url) {
+  try {
+    const pathname = new URL(url).pathname.toLowerCase();
+    if (pathname.endsWith(".mov") || pathname.endsWith(".qt")) return "video/quicktime";
+    if (pathname.endsWith(".avi")) return "video/x-msvideo";
+    if (pathname.endsWith(".webm")) return "video/webm";
+    if (pathname.endsWith(".mkv")) return "video/x-matroska";
+    if (pathname.endsWith(".3gp")) return "video/3gpp";
+  } catch {
+  }
+  return "video/mp4";
+}
+function assertSafeUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid URL: ${url}`);
+  }
+  if (!["http:", "https:"].includes(parsed.protocol)) {
+    throw new Error(`Unsupported URL scheme "${parsed.protocol}" \u2014 only http/https is allowed`);
+  }
+  const hostname = parsed.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname.endsWith(".localhost")) {
+    throw new Error(`Blocked URL: loopback addresses are not allowed`);
+  }
+  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const [, a, b] = ipv4Match.map(Number);
+    if (a === 10 || // 10.0.0.0/8
+    a === 172 && b >= 16 && b <= 31 || // 172.16.0.0/12
+    a === 192 && b === 168 || // 192.168.0.0/16
+    a === 169 && b === 254 || // 169.254.0.0/16 link-local
+    a === 0) {
+      throw new Error(`Blocked URL: private/link-local IP addresses are not allowed`);
+    }
+  }
+  if (hostname === "169.254.169.254" || hostname === "metadata.google.internal") {
+    throw new Error(`Blocked URL: cloud metadata endpoints are not allowed`);
+  }
+}
+function assertVideoContentType(contentType, url) {
+  if (!contentType) return;
+  const ct = contentType.split(";")[0].trim().toLowerCase();
+  if (ct === "text/html" || ct === "application/xhtml+xml" || ct === "text/xml") {
+    throw new Error(
+      `The URL did not return a video file (got Content-Type: ${ct}). This often happens with Google Drive links that require sign-in or show a virus-scan warning. Make sure the file is shared with "Anyone with the link" and try again.`
+    );
+  }
+}
+async function callGeminiWithFile(model, fileUri, mimeType) {
+  const client = getClient();
+  const response = await client.models.generateContent({
+    model,
+    contents: [
+      {
+        parts: [
+          { fileData: { fileUri, mimeType } },
+          { text: TRANSCRIPT_PROMPT }
+        ]
+      }
+    ]
+  });
+  const text2 = response.text;
+  if (!text2 || !text2.trim()) {
+    throw new Error(`Gemini model ${model} returned an empty transcript for this video file`);
+  }
+  const trimmed = text2.trim();
+  if (isTranscriptRefusal(trimmed)) {
+    throw new Error(
+      `Gemini model ${model} declined to transcribe this video file (refusal detected). Response started with: "${trimmed.slice(0, 120).replace(/\n/g, " ")}"`
+    );
+  }
+  return trimmed;
+}
+async function transcribeVideoFromUrl(videoUrl, mimeType) {
+  assertSafeUrl(videoUrl);
+  const downloadUrl = normalizeVideoUrl(videoUrl);
+  assertSafeUrl(downloadUrl);
+  const resolvedMime = mimeType ?? inferMimeType(downloadUrl);
+  console.log(
+    `[geminiTranscript] Downloading video for File API upload: ${downloadUrl} (mime=${resolvedMime})`
+  );
+  let response;
+  try {
+    response = await fetch(downloadUrl, {
+      redirect: "follow",
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; Jarvis-Bot/1.0)" }
+    });
+  } catch (fetchErr) {
+    throw new Error(
+      `Failed to reach video URL: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`
+    );
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Video download failed: HTTP ${response.status} from ${downloadUrl}`
+    );
+  }
+  assertVideoContentType(response.headers.get("content-type"), downloadUrl);
+  const rawContentLength = response.headers.get("content-length");
+  const parsedLength = rawContentLength ? parseInt(rawContentLength, 10) : NaN;
+  const contentLength = Number.isFinite(parsedLength) && parsedLength > 0 ? parsedLength : null;
+  if (contentLength !== null && contentLength > MAX_STREAM_BYTES) {
+    throw new Error(
+      `Video is too large (${Math.round(contentLength / 1024 / 1024)} MB). Maximum supported size is ${Math.round(MAX_STREAM_BYTES / 1024 / 1024 / 1024)} GB.`
+    );
+  }
+  const streamMode = contentLength !== null;
+  console.log(
+    `[geminiTranscript] Starting ${streamMode ? "streaming" : "buffered"} upload to File API` + (contentLength !== null ? ` (${Math.round(contentLength / 1024 / 1024)} MB)` : " (size unknown)")
+  );
+  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("AI_INTEGRATIONS_GEMINI_API_KEY is not set");
+  let fileName;
+  try {
+    fileName = await uploadVideoStream(response, resolvedMime, contentLength, apiKey);
+  } catch (uploadErr) {
+    throw new Error(
+      `File API upload failed: ${uploadErr instanceof Error ? uploadErr.message : String(uploadErr)}`
+    );
+  }
+  console.log(`[geminiTranscript] Uploaded \u2014 file name: ${fileName}, polling for ACTIVE state`);
+  const client = getClient();
+  const POLL_INTERVAL_MS = 5e3;
+  const MAX_POLL_ATTEMPTS = 60;
+  try {
+    let fileInfo = await client.files.get({ name: fileName });
+    let attempts = 0;
+    while (fileInfo.state === "PROCESSING" && attempts < MAX_POLL_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      fileInfo = await client.files.get({ name: fileName });
+      attempts++;
+    }
+    if (fileInfo.state !== "ACTIVE") {
+      throw new Error(
+        `File processing ended in state "${fileInfo.state}" after ${attempts} polls \u2014 cannot transcribe`
+      );
+    }
+    const fileUri = fileInfo.uri;
+    if (!fileUri) {
+      throw new Error("File API did not return a URI for the uploaded file");
+    }
+    console.log(`[geminiTranscript] File ACTIVE (uri=${fileUri}) \u2014 running Gemini transcription`);
+    try {
+      return await callGeminiWithFile("gemini-2.5-flash", fileUri, resolvedMime);
+    } catch (flashErr) {
+      if (isPrimaryModelRejection(flashErr)) {
+        const flashMsg = flashErr instanceof Error ? flashErr.message : String(flashErr);
+        console.warn(
+          `[geminiTranscript] gemini-2.5-flash rejected uploaded file (${flashMsg}) \u2014 retrying with gemini-2.5-pro`
+        );
+        return await callGeminiWithFile("gemini-2.5-pro", fileUri, resolvedMime);
+      }
+      throw Object.assign(
+        new Error(
+          `Gemini transcription failed: ${flashErr instanceof Error ? flashErr.message : String(flashErr)}`
+        ),
+        { cause: flashErr }
+      );
+    }
+  } finally {
+    try {
+      await client.files.delete({ name: fileName });
+      console.log(`[geminiTranscript] Cleaned up uploaded file: ${fileName}`);
+    } catch (cleanupErr) {
+      console.warn(
+        `[geminiTranscript] Failed to delete uploaded file ${fileName}:`,
+        cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)
+      );
+    }
+  }
+}
+function isGeminiTranscriptAvailable() {
+  return !!(process.env.GOOGLE_GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY);
+}
+var _client, _phase0GatewayUnsupported, TRANSCRIPT_PROMPT, PRIMARY_REJECTION_PATTERNS, GEMINI_REFUSAL_PATTERNS, GEMINI_CALL_TIMEOUT_MS, MAX_STREAM_BYTES, MAX_BUFFER_BYTES;
+var init_geminiTranscript = __esm({
+  "server/lib/geminiTranscript.ts"() {
+    "use strict";
+    _client = null;
+    _phase0GatewayUnsupported = false;
+    TRANSCRIPT_PROMPT = "Transcribe all the speech in this video. Write out everything that is spoken, capturing every word said by each speaker. Plain text only. Use natural paragraph breaks to separate topics or speakers. At the start of each new paragraph, insert a timestamp in [HH:MM:SS] format indicating when that paragraph begins in the video. Do not include speaker labels or any other formatting \u2014 just timestamps and the spoken words.";
+    PRIMARY_REJECTION_PATTERNS = [
+      // Video / modality support
+      /video.*not supported/i,
+      /unsupported.*video/i,
+      /model.*not support/i,
+      // Content policy / safety (1.5 and 2.0 wording)
+      /content.*policy/i,
+      /safety.*block/i,
+      /blocked.*safety|safety.*blocked|response.*blocked|candidate.*blocked/i,
+      /harm.*categor/i,
+      /finish.*reason.*safety/i,
+      /recitation/i,
+      /prohibited.*content/i,
+      // Token / context limits (1.5 and 2.0 wording)
+      /token.*limit/i,
+      /context.*length/i,
+      /context.*window/i,
+      /maximum.*token/i,
+      /too.*long/i,
+      // Quota / rate limits (RESOURCE_EXHAUSTED)
+      /resource.*exhaust/i,
+      /quota.*exceed/i
+    ];
+    GEMINI_REFUSAL_PATTERNS = [
+      /\bI (cannot|can't|am unable to|don't have access to)\b/i,
+      /\bI'?m unable to\b/i,
+      /cannot (access|provide|retrieve) (the|a) (audio|transcript|captions)/i,
+      /unable to (access|provide|retrieve) (the|a) (audio|transcript|captions)/i,
+      /no official (transcript|captions)/i,
+      /official (transcript|captions) (is|are) not available/i,
+      /official (transcript|captions) (could not|cannot) be retrieved/i,
+      /does not have (official )?(captions|a transcript)/i,
+      /doesn't have (official )?(captions|a transcript)/i,
+      /automatic transcription.*failed/i,
+      /transcription is not available/i,
+      /do not have access to the (actual |real )?(audio|video content)/i
+    ];
+    GEMINI_CALL_TIMEOUT_MS = 3e4;
+    MAX_STREAM_BYTES = 2 * 1024 * 1024 * 1024;
+    MAX_BUFFER_BYTES = 1 * 1024 * 1024 * 1024;
+  }
+});
+
+// server/channels/telegramChannel.ts
+import { eq as eq41 } from "drizzle-orm";
+async function lookupChatId(userId) {
+  const ts = linkCacheTimestamps.get(userId);
+  if (ts && Date.now() - ts < LINK_CACHE_TTL) {
+    return linkCache.get(userId) ?? null;
+  }
+  try {
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq41(telegramLinks.userId, userId)).limit(1);
+    const chatId = rows[0]?.chatId ?? null;
+    linkCache.set(userId, chatId);
+    linkCacheTimestamps.set(userId, Date.now());
+    return chatId;
+  } catch (err2) {
+    console.error("[telegramChannel] link lookup failed:", err2);
+    return null;
+  }
+}
+var linkCache, LINK_CACHE_TTL, linkCacheTimestamps, telegramChannel;
+var init_telegramChannel = __esm({
+  "server/channels/telegramChannel.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_telegram();
+    init_attachmentHelpers();
+    linkCache = /* @__PURE__ */ new Map();
+    LINK_CACHE_TTL = 6e4;
+    linkCacheTimestamps = /* @__PURE__ */ new Map();
+    telegramChannel = {
+      name: "telegram",
+      // Full coaching surface — Telegram is Jarvis's primary conversational channel.
+      // schedule_jarvis_task is already included via the "coaching" group.
+      toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "scheduling", "media", "self_edit", "browser", "mcp"],
+      isConfigured: () => isTelegramConfigured(),
+      isLinkedFor: async (userId) => !!await lookupChatId(userId),
+      async sendMessage(userId, text2, opts = {}) {
+        const chatId = await lookupChatId(userId);
+        if (!chatId) return { ok: false, error: "no telegram link" };
+        try {
+          const attachments = opts.attachments || [];
+          const markdownExtra = collectMarkdownExtras(attachments);
+          const fullText = markdownExtra ? text2 ? `${text2}
+
+${markdownExtra}` : markdownExtra : text2;
+          if (fullText && fullText.trim()) await sendLongMessage(chatId, fullText);
+          for (const att of attachments) {
+            if (att.kind === "document") {
+              await sendTelegramDocument(chatId, att.filename, att.content, att.caption, att.mimeType);
+            } else if (att.kind === "image") {
+              const buf = await attachmentToBuffer(att).catch(() => null);
+              if (buf) {
+                await sendPhoto(chatId, buf, att.caption);
+              } else {
+                console.warn("[telegramChannel] image attachment had no usable source \u2014 skipping");
+              }
+            } else if (att.kind === "file") {
+              const buf = await attachmentToBuffer(att).catch(() => null);
+              if (buf) {
+                await sendTelegramDocument(chatId, att.filename, buf, att.caption, att.mimeType);
+              } else {
+                console.warn(`[telegramChannel] file attachment ${att.filename} had no usable source \u2014 skipping`);
+              }
+            }
+          }
+          return { ok: true, messageId: chatId };
+        } catch (err2) {
+          return { ok: false, error: String(err2) };
+        }
+      }
+    };
+  }
+});
+
+// server/channels/whatsappChannel.ts
+import { eq as eq42, and as and30 } from "drizzle-orm";
+function isTwilioConfigured() {
+  return !!(TWILIO_SID && TWILIO_TOKEN && TWILIO_FROM);
+}
+async function sendWhatsAppMessage(toAddress, body) {
+  if (!isTwilioConfigured()) return { ok: false, error: "twilio not configured" };
+  const to = toAddress.startsWith("whatsapp:") ? toAddress : `whatsapp:${toAddress}`;
+  const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
+  const auth = Buffer.from(`${TWILIO_SID}:${TWILIO_TOKEN}`).toString("base64");
+  const params = new URLSearchParams({ From: TWILIO_FROM, To: to, Body: body });
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: params.toString()
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      return { ok: false, error: `${data.message || "twilio error"} (code ${data.code || res.status})` };
+    }
+    return { ok: true, sid: data.sid };
+  } catch (err2) {
+    return { ok: false, error: String(err2) };
+  }
+}
+async function lookupAddress(userId) {
+  try {
+    const rows = await db.select({ address: channelLinks.address }).from(channelLinks).where(and30(eq42(channelLinks.userId, userId), eq42(channelLinks.channel, "whatsapp"))).limit(1);
+    return rows[0]?.address ?? null;
+  } catch (err2) {
+    console.error("[whatsappChannel] link lookup failed:", err2);
+    return null;
+  }
+}
+var TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM, whatsappChannel;
+var init_whatsappChannel = __esm({
+  "server/channels/whatsappChannel.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
+    TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+    TWILIO_FROM = process.env.TWILIO_WHATSAPP_NUMBER;
+    whatsappChannel = {
+      name: "whatsapp",
+      // Lightweight coaching — tasks, calendar reminders, quick memory lookups.
+      toolGroups: ["coaching", "calendar", "memory", "connections", "scheduling"],
+      isConfigured: () => isTwilioConfigured(),
+      isLinkedFor: async (userId) => !!await lookupAddress(userId),
+      async sendMessage(userId, text2, opts = {}) {
+        const address = await lookupAddress(userId);
+        if (!address) return { ok: false, error: "no whatsapp link" };
+        let body = text2 || "";
+        if (opts.attachments && opts.attachments.length > 0) {
+          body = body ? `${body}
+
+(${opts.attachments.length} attachment(s) generated \u2014 open the GamePlan app to download.)` : `(${opts.attachments.length} attachment(s) generated \u2014 open the GamePlan app to download.)`;
+        }
+        const result = await sendWhatsAppMessage(address, body);
+        return { ok: result.ok, messageId: result.sid, error: result.error };
+      }
+    };
+  }
+});
+
+// server/channels/daemonChannel.ts
+import { eq as eq43, and as and31 } from "drizzle-orm";
+async function lookupDaemon(userId) {
+  try {
+    const rows = await db.select({ id: channelLinks.id }).from(channelLinks).where(and31(eq43(channelLinks.userId, userId), eq43(channelLinks.channel, "daemon"))).limit(1);
+    return rows.length > 0;
+  } catch (err2) {
+    console.error("[daemonChannel] link lookup failed:", err2);
+    return false;
+  }
+}
+var daemonChannel;
+var init_daemonChannel = __esm({
+  "server/channels/daemonChannel.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_bridge();
+    daemonChannel = {
+      name: "daemon",
+      // Desktop automation channel — needs system commands, task/calendar management.
+      toolGroups: ["coaching", "calendar", "memory", "connections", "scheduling", "system"],
+      isConfigured: () => true,
+      async isLinkedFor(userId) {
+        return await lookupDaemon(userId) && isUserPaired(userId);
+      },
+      async sendMessage(userId, text2, _opts = {}) {
+        if (!isUserPaired(userId)) return { ok: false, error: "daemon not connected" };
+        if (!await isDaemonActionAllowed(userId, "notify")) {
+          return { ok: false, error: "daemon notify permission disabled by user" };
+        }
+        try {
+          const title = "GamePlan Coach";
+          const result = await sendDaemonOp(userId, { type: "notify", title, body: text2 }, 5e3);
+          if (!result.ok) return { ok: false, error: result.error || "daemon notify failed" };
+          return { ok: true };
+        } catch (err2) {
+          return { ok: false, error: String(err2) };
+        }
+      }
+    };
+  }
+});
+
+// server/channels/discordChannel.ts
+import { eq as eq44, and as and32 } from "drizzle-orm";
+async function isDiscordRecentlyActive(userId) {
+  try {
+    const rows = await db.select({ lastSeenAt: channelLinks.lastSeenAt }).from(channelLinks).where(and32(eq44(channelLinks.userId, userId), eq44(channelLinks.channel, "discord"))).limit(1);
+    const ts = rows[0]?.lastSeenAt;
+    if (!ts) return false;
+    return Date.now() - new Date(ts).getTime() < DISCORD_ACTIVE_TTL_MS;
+  } catch {
+    return false;
+  }
+}
+var DISCORD_ACTIVE_TTL_MS, discordChannel;
+var init_discordChannel = __esm({
+  "server/channels/discordChannel.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_userTokenStore();
+    init_manager();
+    init_attachmentHelpers();
+    DISCORD_ACTIVE_TTL_MS = 3 * 60 * 1e3;
+    discordChannel = {
+      name: "discord",
+      // Research, posting, document export, and media generation — covers web search,
+      // Discord management, PDF/PPTX export, and image/video generation tools.
+      toolGroups: ["research", "discord", "memory", "documents", "scheduling", "media", "self_edit"],
+      isConfigured() {
+        return true;
+      },
+      async isLinkedFor(userId) {
+        try {
+          const [tok, link] = await Promise.all([
+            getUserToken(userId, "discord_bot"),
+            db.select({ id: channelLinks.id }).from(channelLinks).where(and32(eq44(channelLinks.userId, userId), eq44(channelLinks.channel, "discord"))).limit(1)
+          ]);
+          return !!(tok && link.length > 0 && getBotStatus(userId) === "running");
+        } catch {
+          return false;
+        }
+      },
+      async sendMessage(userId, text2, opts = {}) {
+        if (opts.skipIfDiscordActive && await isDiscordRecentlyActive(userId)) {
+          return { ok: false, error: "user_active_in_discord" };
+        }
+        const attachments = opts.attachments || [];
+        const markdownExtra = collectMarkdownExtras(attachments);
+        const fullText = markdownExtra ? text2 ? `${text2}
+
+${markdownExtra}` : markdownExtra : text2;
+        let anySent = false;
+        if (fullText?.trim()) {
+          const sent = await sendToDiscordUser(userId, fullText);
+          if (!sent) return { ok: false, error: "Discord send failed \u2014 bot not running or user not linked" };
+          anySent = true;
+        }
+        for (const att of attachments) {
+          if (att.kind === "document") {
+            const fileContent = Buffer.isBuffer(att.content) ? att.content : Buffer.from(att.content);
+            const sent = await sendFileToDiscordUser(userId, att.filename, fileContent, att.caption);
+            if (sent) anySent = true;
+            else console.warn(`[discordChannel] file send failed for user ${userId}: ${att.filename}`);
+          } else if (att.kind === "image") {
+            const buf = await attachmentToBuffer(att).catch(() => null);
+            if (buf) {
+              const sent = await sendFileToDiscordUser(userId, imageFilename(att.mimeType), buf, att.caption);
+              if (sent) anySent = true;
+              else console.warn(`[discordChannel] image send failed for user ${userId}`);
+            } else {
+              console.warn(`[discordChannel] image attachment had no usable source for user ${userId} \u2014 skipping`);
+            }
+          } else if (att.kind === "file") {
+            const buf = await attachmentToBuffer(att).catch(() => null);
+            if (buf) {
+              const sent = await sendFileToDiscordUser(userId, att.filename, buf, att.caption);
+              if (sent) anySent = true;
+              else console.warn(`[discordChannel] file send failed for user ${userId}: ${att.filename}`);
+            } else {
+              console.warn(`[discordChannel] file attachment ${att.filename} had no usable source for user ${userId} \u2014 skipping`);
+            }
+          }
+        }
+        if (!anySent && !fullText?.trim()) return { ok: true };
+        return { ok: true };
+      }
+    };
+  }
+});
+
+// server/channels/webchatChannel.ts
+var webchatChannel;
+var init_webchatChannel = __esm({
+  "server/channels/webchatChannel.ts"() {
+    "use strict";
+    init_inAppChannel();
+    init_webchatSSE();
+    webchatChannel = {
+      name: "webchat",
+      toolGroups: ["coaching", "calendar", "email", "memory", "documents", "research", "connections", "scheduling", "media", "system", "self_edit", "browser", "mcp"],
+      isConfigured: () => true,
+      isLinkedFor: async (_userId) => true,
+      async sendMessage(userId, text2, opts = {}) {
+        if (hasSubscriber(userId)) {
+          const delivered = pushToSubscriber(userId, text2);
+          if (delivered) {
+            console.log(`[WebchatSSE] Pushed message to active SSE subscriber for user ${userId}`);
+            return { ok: true };
+          }
+        }
+        return inAppChannel.sendMessage(userId, text2, opts);
+      }
+    };
+  }
+});
+
+// server/channels/index.ts
+var channels_exports = {};
+__export(channels_exports, {
+  getActiveChannelsFor: () => getActiveChannelsFor,
+  getAllPreferences: () => getAllPreferences,
+  getChannel: () => getChannel,
+  initChannels: () => initChannels,
+  listChannels: () => listChannels,
+  notifyUser: () => notifyUser,
+  runCoachAgent: () => runCoachAgent,
+  setPreference: () => setPreference
+});
+function initChannels() {
+  registerChannel(telegramChannel);
+  registerChannel(whatsappChannel);
+  registerChannel(slackChannel);
+  registerChannel(daemonChannel);
+  registerChannel(discordChannel);
+  registerChannel(inAppChannel);
+  registerChannel(webchatChannel);
+  console.log("[channels] registered: telegram, whatsapp, slack, daemon, discord, in_app, webchat");
+}
+var init_channels = __esm({
+  "server/channels/index.ts"() {
+    "use strict";
+    init_registry();
+    init_telegramChannel();
+    init_whatsappChannel();
+    init_slackChannel();
+    init_daemonChannel();
+    init_discordChannel();
+    init_inAppChannel();
+    init_webchatChannel();
+    init_registry();
+    init_coachAgent();
+  }
+});
+
+// server/lib/transcriptJobTracker.ts
+var transcriptJobTracker_exports = {};
+__export(transcriptJobTracker_exports, {
+  cancelUserTranscriptJobs: () => cancelUserTranscriptJobs,
+  getCompletedTranscript: () => getCompletedTranscript,
+  runBackgroundPoller: () => runBackgroundPoller,
+  startSupadataJob: () => startSupadataJob
+});
+import { eq as eq45, and as and33 } from "drizzle-orm";
+async function startSupadataJob(userId, videoId, supadataJobId) {
+  await db.insert(transcriptJobs).values({
+    userId,
+    videoId,
+    supadataJobId,
+    status: "pending"
+  });
+  console.log(`[transcriptJobTracker] Started async job ${supadataJobId} for video ${videoId} (user=${userId})`);
+}
+async function getCompletedTranscript(userId, videoId) {
+  const rows = await db.select().from(transcriptJobs).where(
+    and33(
+      eq45(transcriptJobs.userId, userId),
+      eq45(transcriptJobs.videoId, videoId),
+      eq45(transcriptJobs.status, "completed")
+    )
+  ).limit(1);
+  if (rows.length === 0 || !rows[0].result) return null;
+  try {
+    const segments = JSON.parse(rows[0].result);
+    console.log(`[transcriptJobTracker] Found completed cached job for ${videoId} (user=${userId}) \u2014 ${segments.length} segs`);
+    return segments;
+  } catch {
+    return null;
+  }
+}
+async function cancelUserTranscriptJobs(userId) {
+  const result = await db.update(transcriptJobs).set({ status: "cancelled", updatedAt: /* @__PURE__ */ new Date() }).where(
+    and33(
+      eq45(transcriptJobs.userId, userId),
+      eq45(transcriptJobs.status, "pending")
+    )
+  );
+  return result.rowCount ?? 0;
+}
+async function checkAndFinishJob(row) {
+  try {
+    const { Supadata } = await import("@supadata/js");
+    const apiKey = process.env.SUPADATA_API_KEY;
+    if (!apiKey) return null;
+    const client = new Supadata({ apiKey });
+    const job = await client.transcript.getJobStatus(row.supadataJobId);
+    if (job.status === "completed" && job.result) {
+      const content = job.result.content;
+      let segments;
+      if (typeof content === "string") {
+        segments = [{ text: content.trim(), offset: 0, duration: 0, lang: job.result.lang ?? "en" }];
+      } else if (Array.isArray(content) && content.length > 0) {
+        segments = content.map((chunk) => ({
+          text: chunk.text,
+          offset: chunk.offset,
+          duration: chunk.duration,
+          lang: chunk.lang ?? job.result?.lang ?? "en"
+        }));
+      } else {
+        segments = [];
+      }
+      await db.update(transcriptJobs).set({
+        status: "completed",
+        result: JSON.stringify(segments),
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq45(transcriptJobs.id, row.id));
+      console.log(`[transcriptJobTracker] Job ${row.supadataJobId} completed \u2014 ${segments.length} segs for video ${row.videoId}`);
+      return segments;
+    }
+    if (job.status === "failed") {
+      await db.update(transcriptJobs).set({
+        status: "failed",
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq45(transcriptJobs.id, row.id));
+      console.warn(`[transcriptJobTracker] Job ${row.supadataJobId} failed for video ${row.videoId}`);
+      return null;
+    }
+    return null;
+  } catch (err2) {
+    console.warn(
+      `[transcriptJobTracker] Error checking job ${row.supadataJobId}: ${err2 instanceof Error ? err2.message : String(err2)}`
+    );
+    return null;
+  }
+}
+function runBackgroundPoller() {
+  const POLL_INTERVAL_MS = 3e4;
+  const poll = async () => {
+    try {
+      const pending = await db.select().from(transcriptJobs).where(eq45(transcriptJobs.status, "pending"));
+      if (pending.length === 0) return;
+      console.log(`[transcriptJobTracker] Polling ${pending.length} pending job(s)`);
+      for (const row of pending) {
+        const segments = await checkAndFinishJob(row);
+        if (!segments || segments.length === 0) continue;
+        try {
+          const { storeCachedTranscript: storeCachedTranscript2 } = await Promise.resolve().then(() => (init_transcriptCache(), transcriptCache_exports));
+          storeCachedTranscript2(row.videoId, segments, "supadata");
+        } catch (cacheErr) {
+          console.warn(`[transcriptJobTracker] Failed to update transcript cache: ${cacheErr instanceof Error ? cacheErr.message : String(cacheErr)}`);
+        }
+        try {
+          const { notifyUser: notifyUser2 } = await Promise.resolve().then(() => (init_channels(), channels_exports));
+          await notifyUser2(
+            row.userId,
+            "general",
+            `\u2705 Your transcript for that video is ready! Just ask me to summarize it or answer questions about it \u2014 I've already loaded it.`
+          );
+          console.log(`[transcriptJobTracker] Notified user ${row.userId} \u2014 transcript ready for ${row.videoId}`);
+        } catch (notifyErr) {
+          console.warn(`[transcriptJobTracker] Failed to notify user ${row.userId}: ${notifyErr instanceof Error ? notifyErr.message : String(notifyErr)}`);
+        }
+      }
+    } catch (err2) {
+      console.warn(`[transcriptJobTracker] Poll cycle error: ${err2 instanceof Error ? err2.message : String(err2)}`);
+    }
+  };
+  setInterval(poll, POLL_INTERVAL_MS);
+  console.log("[transcriptJobTracker] Background poller started (30s interval)");
+}
+var init_transcriptJobTracker = __esm({
+  "server/lib/transcriptJobTracker.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+  }
+});
+
+// server/lib/supadataTranscript.ts
+var supadataTranscript_exports = {};
+__export(supadataTranscript_exports, {
+  SupadataJobPendingError: () => SupadataJobPendingError,
+  fetchTranscriptViaSupadata: () => fetchTranscriptViaSupadata,
+  isSupadataAvailable: () => isSupadataAvailable
+});
+function isSupadataAvailable() {
+  return !!process.env.SUPADATA_API_KEY;
+}
+async function fetchTranscriptViaSupadata(videoId, options) {
+  const { userId, signal } = options ?? {};
+  const apiKey = process.env.SUPADATA_API_KEY;
+  if (!apiKey) throw new Error("SUPADATA_API_KEY is not set");
+  const headers = {
+    "x-api-key": apiKey,
+    "Content-Type": "application/json"
+  };
+  const nativeUrl = `${BASE2}/youtube/transcript?videoId=${encodeURIComponent(videoId)}&lang=en&mode=native`;
+  console.log(`[supadataTranscript] Trying native captions for ${videoId}`);
+  let nativeRes;
+  try {
+    nativeRes = await fetch(nativeUrl, { headers });
+  } catch (fetchErr) {
+    throw new Error(
+      `Supadata network error (native): ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`
+    );
+  }
+  if (nativeRes.ok) {
+    const data = await nativeRes.json();
+    const segments = parseSupadataResponse(videoId, data);
+    if (segments.length > 0) {
+      console.log(`[supadataTranscript] Native captions OK for ${videoId} \u2014 ${segments.length} segs`);
+      return segments;
+    }
+    console.log(`[supadataTranscript] Native captions returned empty for ${videoId} \u2014 trying AI generation`);
+  } else if (nativeRes.status === 404 || nativeRes.status === 400) {
+    const body = await nativeRes.text().catch(() => "");
+    console.log(`[supadataTranscript] No native captions for ${videoId} (${nativeRes.status}) \u2014 trying AI generation. Body: ${body.slice(0, 200)}`);
+  } else {
+    const body = await nativeRes.text().catch(() => "");
+    console.warn(`[supadataTranscript] Native captions unexpected ${nativeRes.status} for ${videoId}: ${body.slice(0, 200)}`);
+  }
+  const autoUrl = `${BASE2}/youtube/transcript?videoId=${encodeURIComponent(videoId)}&lang=en&mode=auto`;
+  console.log(`[supadataTranscript] Requesting AI generation (mode=auto) for ${videoId}`);
+  let autoRes;
+  try {
+    autoRes = await fetch(autoUrl, { headers });
+  } catch (fetchErr) {
+    throw new Error(
+      `Supadata network error (auto): ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`
+    );
+  }
+  if (autoRes.status === 202) {
+    const jobData = await autoRes.json();
+    const jobId = jobData.jobId;
+    console.log(`[supadataTranscript] Async job started: ${jobId} for ${videoId}`);
+    if (userId) {
+      const { startSupadataJob: startSupadataJob2 } = await Promise.resolve().then(() => (init_transcriptJobTracker(), transcriptJobTracker_exports));
+      await startSupadataJob2(userId, videoId, jobId);
+      throw new SupadataJobPendingError(jobId);
+    } else {
+      return await pollSupadataJob(apiKey, jobId, videoId, signal);
+    }
+  }
+  if (autoRes.ok) {
+    const data = await autoRes.json();
+    const segments = parseSupadataResponse(videoId, data);
+    if (segments.length > 0) {
+      console.log(`[supadataTranscript] AI generation OK for ${videoId} \u2014 ${segments.length} segs`);
+      return segments;
+    }
+    throw new Error(`Supadata returned empty transcript for ${videoId} (mode=auto)`);
+  }
+  const errBody = await autoRes.text().catch(() => "(could not read body)");
+  throw new Error(`Supadata ${autoRes.status} for ${videoId}: ${errBody}`);
+}
+function parseSupadataResponse(videoId, transcript) {
+  const content = transcript.content;
+  if (typeof content === "string") {
+    if (!content.trim()) return [];
+    return [{ text: content.trim(), offset: 0, duration: 0, lang: transcript.lang ?? "en" }];
+  }
+  if (!Array.isArray(content) || content.length === 0) return [];
+  return content.map((chunk) => ({
+    text: chunk.text,
+    offset: chunk.offset,
+    duration: chunk.duration,
+    lang: chunk.lang ?? transcript.lang ?? "en"
+  }));
+}
+async function pollSupadataJob(apiKey, jobId, videoId, signal) {
+  const headers = {
+    "x-api-key": apiKey,
+    "Content-Type": "application/json"
+  };
+  const statusUrl = `${BASE2}/youtube/transcript/${encodeURIComponent(jobId)}`;
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+  let intervalMs = JOB_POLL_INTERVAL_START_MS;
+  let lastLogAt = Date.now();
+  console.log(`[supadataTranscript] Polling job ${jobId} for ${videoId} (max ${JOB_POLL_TIMEOUT_MS / 1e3}s)`);
+  while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      console.log(`[supadataTranscript] Job ${jobId} polling aborted by user signal`);
+      throw new DOMException("Aborted by user", "AbortError");
+    }
+    await sleep2(intervalMs);
+    if (signal?.aborted) {
+      console.log(`[supadataTranscript] Job ${jobId} polling aborted by user signal`);
+      throw new DOMException("Aborted by user", "AbortError");
+    }
+    const elapsed = Math.round((Date.now() - (deadline - JOB_POLL_TIMEOUT_MS)) / 1e3);
+    if (Date.now() - lastLogAt >= JOB_POLL_LOG_INTERVAL_MS) {
+      console.log(`[supadataTranscript] Still waiting for job ${jobId} \u2014 ${elapsed}s elapsed`);
+      lastLogAt = Date.now();
+    }
+    let res;
+    try {
+      res = await fetch(statusUrl, { headers });
+    } catch (fetchErr) {
+      console.warn(`[supadataTranscript] Poll network error for job ${jobId}: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}`);
+      intervalMs = Math.min(intervalMs * 2, JOB_POLL_INTERVAL_MAX_MS);
+      continue;
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.warn(`[supadataTranscript] Poll error ${res.status} for job ${jobId}: ${body.slice(0, 200)}`);
+      intervalMs = Math.min(intervalMs * 2, JOB_POLL_INTERVAL_MAX_MS);
+      continue;
+    }
+    const job = await res.json();
+    if (job.status === "completed" && job.result) {
+      const segments = parseSupadataResponse(videoId, job.result);
+      const elapsed2 = Math.round((Date.now() - (deadline - JOB_POLL_TIMEOUT_MS)) / 1e3);
+      if (segments.length === 0) {
+        throw new Error(
+          `Supadata job ${jobId} completed for ${videoId} but returned empty content (no speech detected or AI generation produced no output).`
+        );
+      }
+      console.log(`[supadataTranscript] Job ${jobId} completed after ${elapsed2}s \u2014 ${segments.length} segs`);
+      return segments;
+    }
+    if (job.status === "failed") {
+      const errMsg = job.error?.error ?? job.error?.message ?? "unknown error";
+      throw new Error(`Supadata job ${jobId} failed for ${videoId}: ${errMsg}`);
+    }
+    intervalMs = Math.min(intervalMs * 2, JOB_POLL_INTERVAL_MAX_MS);
+  }
+  throw new Error(
+    `Supadata AI generation timed out after ${JOB_POLL_TIMEOUT_MS / 6e4} min for ${videoId}. This video has no native captions and AI generation is slow for long videos. The job (${jobId}) may still be running \u2014 try again in a few minutes.`
+  );
+}
+function sleep2(ms) {
+  return new Promise((resolve8) => setTimeout(resolve8, ms));
+}
+var BASE2, JOB_POLL_TIMEOUT_MS, JOB_POLL_INTERVAL_START_MS, JOB_POLL_INTERVAL_MAX_MS, JOB_POLL_LOG_INTERVAL_MS, SupadataJobPendingError;
+var init_supadataTranscript = __esm({
+  "server/lib/supadataTranscript.ts"() {
+    "use strict";
+    BASE2 = "https://api.supadata.ai/v1";
+    JOB_POLL_TIMEOUT_MS = 6e5;
+    JOB_POLL_INTERVAL_START_MS = 3e3;
+    JOB_POLL_INTERVAL_MAX_MS = 3e4;
+    JOB_POLL_LOG_INTERVAL_MS = 3e4;
+    SupadataJobPendingError = class extends Error {
+      constructor(jobId) {
+        super(`SUPADATA_JOB_PENDING:${jobId}`);
+        this.jobId = jobId;
+        this.name = "SupadataJobPendingError";
+      }
+    };
+  }
+});
+
+// server/lib/transcriptCache.ts
+var transcriptCache_exports = {};
+__export(transcriptCache_exports, {
+  ensureYtdlpUpgraded: () => ensureYtdlpUpgraded,
+  extractVideoId: () => extractVideoId,
+  fetchTranscriptCached: () => fetchTranscriptCached,
+  getAudioTranscriptTelemetry: () => getAudioTranscriptTelemetry,
+  getYtdlpCmd: () => getYtdlpCmd,
+  getYtdlpStatus: () => getYtdlpStatus,
+  invalidateTranscript: () => invalidateTranscript,
+  isPlaylistUrl: () => isPlaylistUrl,
+  parseTimedTextXml: () => parseTimedTextXml,
+  storeCachedTranscript: () => storeCachedTranscript,
+  transcriptCacheSize: () => transcriptCacheSize
+});
+import { exec, spawn as spawn5 } from "child_process";
+import { promisify } from "util";
+import { readdir, readFile as readFile3, rm as rm2, stat as fsStat, writeFile as writeFile2 } from "fs/promises";
+import { mkdtempSync } from "fs";
+import path10 from "path";
+import os5 from "os";
+function spawnYtdlp(cmd, timeoutMs) {
+  return new Promise((resolve8, reject) => {
+    const child = spawn5(cmd, { shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    const startMs = Date.now();
+    const stderrChunks = [];
+    let aborted = false;
+    const abort = (code, fullStderr) => {
+      if (aborted) return;
+      aborted = true;
+      clearTimeout(timer);
+      try {
+        child.kill("SIGKILL");
+      } catch {
+      }
+      const err2 = Object.assign(
+        new Error(`${code}: ${fullStderr}`),
+        { stderr: fullStderr }
+      );
+      reject(err2);
+    };
+    const timer = setTimeout(() => {
+      const fullStderr = stderrChunks.map((b) => b.toString()).join("").trim();
+      abort("YTDLP_TIMEOUT", fullStderr || "yt-dlp timed out");
+    }, timeoutMs);
+    child.stderr.on("data", (chunk) => {
+      stderrChunks.push(chunk);
+      if (aborted) return;
+      const accumulated = stderrChunks.map((b) => b.toString()).join("");
+      const window = accumulated.length > 512 ? accumulated.slice(-512) : accumulated;
+      for (const { pattern, code } of YTDLP_EARLY_ABORT_PATTERNS) {
+        if (pattern.test(window)) {
+          const elapsedMs = Date.now() - startMs;
+          console.warn(
+            `[transcriptCache] yt-dlp early abort (${code}) after ${elapsedMs} ms \u2014 pattern matched in stderr: ${chunk.toString().trim()}`
+          );
+          abort(code, accumulated.trim());
+          return;
+        }
+      }
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (aborted) return;
+      const fullStderr = stderrChunks.map((b) => b.toString()).join("").trim();
+      if (code !== 0) {
+        reject(Object.assign(
+          new Error(`yt-dlp exited with code ${code}: ${fullStderr}`),
+          { stderr: fullStderr }
+        ));
+      } else {
+        resolve8();
+      }
+    });
+    child.on("error", (err2) => {
+      clearTimeout(timer);
+      if (!aborted) reject(err2);
+    });
+  });
+}
+async function loadPersistedImpersonateDisabled() {
+  try {
+    const raw = await readFile3(YTDLP_FLAGS_PATH, "utf8");
+    const data = JSON.parse(raw);
+    return data.impersonateDisabled === true;
+  } catch {
+    return false;
+  }
+}
+async function persistImpersonateDisabled() {
+  try {
+    await writeFile2(YTDLP_FLAGS_PATH, JSON.stringify({ impersonateDisabled: true }), "utf8");
+  } catch (e) {
+    console.warn("[transcriptCache] Failed to persist impersonate flag:", e instanceof Error ? e.message : String(e));
+  }
+}
+async function clearPersistedImpersonateDisabled() {
+  try {
+    await rm2(YTDLP_FLAGS_PATH, { force: true });
+  } catch {
+  }
+}
+function parseYtdlpVersionDate(v) {
+  const m = v.match(/^(\d{4}\.\d{2}\.\d{2})/);
+  return m ? m[1] : "";
+}
+function getYtdlpCmd() {
+  return ytdlpCmd;
+}
+function getYtdlpStatus() {
+  return { available: ytdlpAvailable, cmd: ytdlpCmd };
+}
+async function ensureYtdlpUpgraded() {
+  if (ytdlpUpgradePromise) return ytdlpUpgradePromise;
+  ytdlpUpgradePromise = (async () => {
+    const persistedDisabled = await loadPersistedImpersonateDisabled();
+    if (persistedDisabled) {
+      ytdlpSupportsImpersonate = false;
+      console.log("[transcriptCache] Loaded persisted impersonate=false override from disk");
+    }
+    try {
+      let nixParsed = "";
+      let nixVersion = "unknown";
+      try {
+        const { stdout: nixVer } = await execAsync("yt-dlp --version", { timeout: 1e4 });
+        nixVersion = nixVer.trim();
+        nixParsed = parseYtdlpVersionDate(nixVersion);
+      } catch {
+      }
+      await execAsync(
+        "python3 -m pip install --user -U yt-dlp --quiet --disable-pip-version-check --break-system-packages",
+        { timeout: 6e4 }
+      ).catch(() => null);
+      const { stdout: modVer } = await execAsync(
+        "python3 -m yt_dlp --version",
+        { timeout: 1e4 }
+      );
+      const version = modVer.trim();
+      const modParsed = parseYtdlpVersionDate(version);
+      if (modParsed && modParsed > nixParsed) {
+        ytdlpCmd = "python3 -m yt_dlp";
+        console.log(`[transcriptCache] yt-dlp upgraded to ${version} (using python3 -m yt_dlp)`);
+        ytdlpSupportsImpersonate = modParsed >= MIN_IMPERSONATE_VERSION;
+        if (ytdlpSupportsImpersonate) {
+          await clearPersistedImpersonateDisabled();
+        } else {
+          console.warn(
+            `[transcriptCache] yt-dlp too old for --impersonate (v${version}) \u2014 running without browser impersonation`
+          );
+        }
+      } else {
+        const { stdout: base } = await execAsync("python3 -m site --user-base", { timeout: 5e3 });
+        const userBin = `${base.trim()}/bin`;
+        if (!process.env.PATH?.startsWith(userBin)) {
+          process.env.PATH = `${userBin}:${process.env.PATH ?? ""}`;
+        }
+        let activeVersion = nixVersion;
+        let activeParsed = nixParsed;
+        try {
+          const { stdout: postVer } = await execAsync("yt-dlp --version", { timeout: 1e4 });
+          const v = postVer.trim();
+          if (v) {
+            activeVersion = v;
+            activeParsed = parseYtdlpVersionDate(v);
+          }
+        } catch {
+        }
+        console.log(`[transcriptCache] yt-dlp version: ${activeVersion} (using Nix binary)`);
+        ytdlpSupportsImpersonate = !!activeParsed && activeParsed >= MIN_IMPERSONATE_VERSION;
+        if (ytdlpSupportsImpersonate) {
+          await clearPersistedImpersonateDisabled();
+        } else {
+          console.warn(
+            `[transcriptCache] yt-dlp too old for --impersonate (v${activeVersion}) \u2014 running without browser impersonation`
+          );
+        }
+      }
+    } catch (err2) {
+      console.warn(
+        `[transcriptCache] yt-dlp upgrade skipped: ${err2 instanceof Error ? err2.message : String(err2)}`
+      );
+    }
+    try {
+      await execAsync(`${ytdlpCmd} --version`, { timeout: 1e4 });
+      ytdlpAvailable = true;
+    } catch {
+      ytdlpAvailable = false;
+      console.warn(
+        `[transcriptCache] yt-dlp is NOT available (cmd: "${ytdlpCmd}" did not respond to --version). Audio transcription will fail until yt-dlp is installed. Install it via: python3 -m pip install yt-dlp`
+      );
+    }
+  })();
+  return ytdlpUpgradePromise;
+}
+function extractVideoId(input) {
+  const bare = input.trim();
+  if (/^[a-zA-Z0-9_-]{11}$/.test(bare)) return bare;
+  const pat = /(?:youtube\.com\/(?:watch\?(?:[^\s#&]*&)*v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i;
+  const m = pat.exec(bare);
+  return m ? m[1] : null;
+}
+function isPlaylistUrl(input) {
+  try {
+    const url = new URL(input.trim());
+    const list = url.searchParams.get("list");
+    const videoId = url.searchParams.get("v");
+    if (list && !videoId) return true;
+  } catch {
+  }
+  return false;
+}
+function parseSrt(content) {
+  const blocks = content.trim().split(/\n\s*\n/);
+  const segments = [];
+  const tsRe = /(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})/;
+  for (const block of blocks) {
+    const lines = block.trim().split("\n");
+    if (lines.length < 2) continue;
+    const tsLineIdx = lines.findIndex((l) => tsRe.test(l));
+    if (tsLineIdx === -1) continue;
+    const m = tsRe.exec(lines[tsLineIdx]);
+    const startMs = (parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseInt(m[3])) * 1e3 + parseInt(m[4]);
+    const endMs = (parseInt(m[5]) * 3600 + parseInt(m[6]) * 60 + parseInt(m[7])) * 1e3 + parseInt(m[8]);
+    const textLines = lines.slice(tsLineIdx + 1).map(
+      (l) => l.replace(/<[^>]+>/g, "").replace(/\{[^}]+\}/g, "").trim()
+    ).filter(Boolean);
+    const text2 = textLines.join(" ");
+    if (!text2) continue;
+    segments.push({ text: text2, offset: startMs, duration: endMs - startMs, lang: "en" });
+  }
+  return segments;
+}
+async function fetchYtDlpTranscript(videoId) {
+  if (isRateLimitCircuitOpen()) {
+    const remainingSec = Math.ceil((ytdlpRateLimitedUntil - Date.now()) / 1e3);
+    console.warn(
+      `[transcriptCache] circuit OPEN \u2014 skipping subtitle download for ${videoId} (${remainingSec} s remaining in cool-down). Returning [].`
+    );
+    return [];
+  }
+  let tmpDir;
+  try {
+    tmpDir = mkdtempSync(path10.join(os5.tmpdir(), `ytdlp-${videoId}-`));
+  } catch {
+    return [];
+  }
+  try {
+    const outputTemplate = path10.join(tmpDir, "%(id)s");
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    await execAsync(
+      `yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en.*,en" --convert-subs srt --no-playlist --no-warnings --quiet --no-progress --output "${outputTemplate}" -- "${url}"`,
+      { timeout: 45e3 }
+    );
+    const files = await readdir(tmpDir).catch(() => []);
+    const srtFiles = files.filter((f) => f.endsWith(".srt"));
+    if (srtFiles.length === 0) return [];
+    const best = srtFiles.find((f) => /\.(en|en-US|en-GB)\[.*manual\]\.srt$/.test(f)) ?? srtFiles.find((f) => /\.(en|en-US|en-GB)\.srt$/.test(f)) ?? srtFiles.find((f) => /\.en/.test(f)) ?? srtFiles[0];
+    const content = await readFile3(path10.join(tmpDir, best), "utf-8");
+    const segments = parseSrt(content);
+    if (segments.length > 0) {
+      console.log(
+        `[transcriptCache] yt-dlp OK ${videoId} \u2014 ${segments.length} segs via ${best}`
+      );
+    }
+    return segments;
+  } catch (err2) {
+    const raw = err2 instanceof Error ? err2.message : String(err2);
+    const lower = raw.toLowerCase();
+    if (lower.includes("video unavailable") || lower.includes("private video")) {
+      throw new Error(`LOGIN_REQUIRED: ${raw}`);
+    }
+    if (lower.includes("age-restricted") || lower.includes("sign in to confirm")) {
+      throw new Error(`CONTENT_RESTRICTED: ${raw}`);
+    }
+    if (lower.includes("429") || lower.includes("too many requests")) {
+      openRateLimitCircuit();
+      throw new Error(`TOO_MANY_REQUESTS: ${raw}`);
+    }
+    console.warn(`[transcriptCache] yt-dlp non-terminal failure for ${videoId}: ${raw}`);
+    return [];
+  } finally {
+    rm2(tmpDir, { recursive: true, force: true }).catch(() => {
+    });
+  }
+}
+function evictExpired() {
+  const now = Date.now();
+  for (const [id, entry] of cache3) {
+    if (now - entry.cachedAt >= TTL_MS2) cache3.delete(id);
+  }
+}
+function evictOldest() {
+  let oldestKey;
+  let oldestTime = Infinity;
+  for (const [id, entry] of cache3) {
+    if (entry.cachedAt < oldestTime) {
+      oldestTime = entry.cachedAt;
+      oldestKey = id;
+    }
+  }
+  if (oldestKey) cache3.delete(oldestKey);
+}
+function openRateLimitCircuit() {
+  const wasOpen = Date.now() < ytdlpRateLimitedUntil;
+  ytdlpRateLimitedUntil = Date.now() + YTDLP_RATE_LIMIT_COOLDOWN_MS;
+  if (!wasOpen) {
+    console.warn(
+      `[transcriptCache] circuit OPEN \u2014 YouTube rate-limited (429). Audio downloads paused for ${YTDLP_RATE_LIMIT_COOLDOWN_MS / 1e3} s (until ${new Date(ytdlpRateLimitedUntil).toISOString()}).`
+    );
+  }
+}
+function isRateLimitCircuitOpen() {
+  if (ytdlpRateLimitedUntil === 0) return false;
+  if (Date.now() >= ytdlpRateLimitedUntil) {
+    console.log(`[transcriptCache] circuit RESET \u2014 rate-limit cool-down expired. Resuming audio downloads.`);
+    ytdlpRateLimitedUntil = 0;
+    return false;
+  }
+  return true;
+}
+function recordAudioFailure(videoId, errorClass, noCaptions, message) {
+  audioFailureCounts[errorClass] = (audioFailureCounts[errorClass] ?? 0) + 1;
+  const event = {
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    videoId,
+    errorClass,
+    noCaptions,
+    message: message.slice(0, 500)
+  };
+  audioFailureEvents.push(event);
+  if (audioFailureEvents.length > AUDIO_TELEMETRY_MAX) audioFailureEvents.shift();
+  console.log(
+    `[audio-telemetry] FAILURE videoId=${videoId} class=${errorClass} noCaptions=${noCaptions} msg=${message.slice(0, 200)}`
+  );
+}
+function classifyAudioError(msg) {
+  const lower = msg.toLowerCase();
+  if (lower.includes("whisper") || lower.includes("transcri")) return "whisper-failure";
+  if (lower.includes("ffmpeg")) return "ffmpeg-failure";
+  if (lower.includes("yt-dlp") || lower.includes("download") || lower.includes("audio_download")) {
+    return "yt-dlp-download-failed";
+  }
+  return "non-terminal-error";
+}
+function getAudioTranscriptTelemetry() {
+  const totalFailures = Object.values(audioFailureCounts).reduce((a, b) => a + b, 0);
+  return {
+    attempts: audioAttemptCount,
+    totalFailures,
+    failureRate: audioAttemptCount > 0 ? totalFailures / audioAttemptCount : null,
+    counts: { ...audioFailureCounts },
+    recentFailures: [...audioFailureEvents].reverse().slice(0, 50)
+  };
+}
+async function transcribeBuffer(buf, ext) {
+  const { openai: openai20 } = await Promise.resolve().then(() => (init_client(), client_exports));
+  const { toFile: toFile2 } = await import("openai");
+  const file = await toFile2(buf, `audio.${ext}`, { type: `audio/${ext}` });
+  const resp = await openai20.audio.transcriptions.create({
+    file,
+    model: "whisper-1",
+    language: "en",
+    response_format: "text"
+  });
+  return typeof resp === "string" ? resp : resp.text ?? "";
+}
+async function fetchAudioTranscript(videoId, originalInput) {
+  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
+  if (isRateLimitCircuitOpen()) {
+    const remainingSec = Math.ceil((ytdlpRateLimitedUntil - Date.now()) / 1e3);
+    console.warn(
+      `[transcriptCache] circuit OPEN \u2014 skipping audio download for ${videoId} (${remainingSec} s remaining in cool-down). Throwing RATE_LIMITED.`
+    );
+    throw new Error(`RATE_LIMITED: YouTube is rate-limiting this server. Retry in ${remainingSec} s.`);
+  }
+  await ensureYtdlpUpgraded();
+  if (!ytdlpAvailable) {
+    throw new Error(
+      "YTDLP_UNAVAILABLE: Audio transcription is temporarily unavailable \u2014 the yt-dlp dependency is not installed or could not be found. Please try again later or contact support."
+    );
+  }
+  let tmpDir;
+  try {
+    tmpDir = mkdtempSync(path10.join(os5.tmpdir(), `ytaudio-${videoId}-`));
+  } catch {
+    return [];
+  }
+  try {
+    const outputTemplate = path10.join(tmpDir, "%(id)s.%(ext)s");
+    const isShorts = originalInput ? /\/shorts\//i.test(originalInput) : false;
+    const urlCandidates = isShorts ? [
+      `https://www.youtube.com/shorts/${videoId}`,
+      `https://www.youtube.com/watch?v=${videoId}`
+    ] : [`https://www.youtube.com/watch?v=${videoId}`];
+    let downloadedFile;
+    let lastNonTerminalStderr = "";
+    for (const url of urlCandidates) {
+      try {
+        const buildCmd = (withImpersonate) => {
+          const impersonateFlag = withImpersonate ? "--impersonate chrome " : "";
+          return (
+            // Use worstaudio quality (32 kbps) so 3-hour videos fit in ~43 MB.
+            // --audio-quality 9 = worst (smallest file, fine for speech).
+            // --postprocessor-args forces mono + 16 kHz (matches Whisper's expected rate).
+            // Raised filesize cap to 200M to match AUDIO_MAX_BYTES.
+            `${ytdlpCmd} -f "bestaudio[filesize<200M]/worstaudio" --extract-audio --audio-format mp3 --audio-quality 9 --postprocessor-args "ffmpeg:-ac 1 -ar 16000" --no-playlist --no-warnings --quiet --no-progress --max-filesize 200M --retries 3 ${impersonateFlag}--user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36" --output "${outputTemplate}" -- "${url}"`
+          );
+        };
+        try {
+          await spawnYtdlp(buildCmd(ytdlpSupportsImpersonate), 12e4);
+        } catch (firstErr) {
+          const firstErrObj = firstErr;
+          const firstStderr = (firstErrObj.stderr ?? "").trim() || (firstErr instanceof Error ? firstErr.message : String(firstErr));
+          const firstLower = firstStderr.toLowerCase();
+          if (ytdlpSupportsImpersonate && (firstLower.includes("unrecognised option") || firstLower.includes("invalid option"))) {
+            console.warn(
+              `[transcriptCache] yt-dlp rejected --impersonate for ${videoId} \u2014 disabling flag and retrying without it. stderr: ${firstStderr}`
+            );
+            ytdlpSupportsImpersonate = false;
+            persistImpersonateDisabled().catch(() => null);
+            await spawnYtdlp(buildCmd(false), 12e4);
+          } else {
+            throw firstErr;
+          }
+        }
+      } catch (dlErr) {
+        const errObj = dlErr;
+        const stderrMsg = (errObj.stderr ?? "").trim() || (dlErr instanceof Error ? dlErr.message : String(dlErr));
+        console.warn(
+          `[transcriptCache] yt-dlp audio download failed for ${videoId} (url=${url}):
+${stderrMsg}`
+        );
+        const errMsg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+        const lower = stderrMsg.toLowerCase();
+        if (errMsg.startsWith("LOGIN_REQUIRED") || lower.includes("private video") || lower.includes("video unavailable")) {
+          throw new Error(`LOGIN_REQUIRED: ${stderrMsg}`);
+        }
+        if (errMsg.startsWith("CONTENT_RESTRICTED") || lower.includes("age-restricted") || lower.includes("sign in to confirm") || lower.includes("http error 403") || lower.includes(": 403")) {
+          throw new Error(`CONTENT_RESTRICTED: ${stderrMsg}`);
+        }
+        if (errMsg.startsWith("TOO_MANY_REQUESTS") || lower.includes("429") || lower.includes("too many requests") || lower.includes("http error 429")) {
+          openRateLimitCircuit();
+          throw new Error(`TOO_MANY_REQUESTS: ${stderrMsg}`);
+        }
+        lastNonTerminalStderr = stderrMsg;
+        continue;
+      }
+      const filesAfter = await readdir(tmpDir).catch(() => []);
+      const mp3Candidate = filesAfter.find((f) => f.endsWith(".mp3")) ?? filesAfter.find((f) => f.endsWith(".m4a"));
+      if (mp3Candidate) {
+        downloadedFile = mp3Candidate;
+        break;
+      }
+    }
+    if (!downloadedFile) {
+      if (lastNonTerminalStderr) {
+        throw new Error(`AUDIO_DOWNLOAD_FAILED: ${lastNonTerminalStderr}`);
+      }
+      return [];
+    }
+    const mp3File = downloadedFile;
+    const mp3Path = path10.join(tmpDir, mp3File);
+    const mp3Stat = await fsStat(mp3Path);
+    if (mp3Stat.size > AUDIO_MAX_BYTES) {
+      console.warn(
+        `[transcriptCache] audio: ${videoId} exceeds size limit (${mp3Stat.size} bytes) \u2014 skipping`
+      );
+      return [];
+    }
+    const wavPath = path10.join(tmpDir, `${videoId}.wav`);
+    await execAsync(
+      `ffmpeg -i "${mp3Path}" -ar 16000 -ac 1 -acodec pcm_s16le -y "${wavPath}"`,
+      { timeout: 12e4 }
+    );
+    const wavStat = await fsStat(wavPath);
+    let fullText = "";
+    if (wavStat.size <= WHISPER_MAX_BYTES) {
+      const buf = await readFile3(wavPath);
+      fullText = await transcribeBuffer(buf, "wav");
+    } else {
+      const { stdout } = await execAsync(
+        `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${wavPath}"`,
+        { timeout: 15e3 }
+      );
+      const totalDuration = parseFloat(stdout.trim()) || 0;
+      if (!totalDuration) {
+        const buf = await readFile3(wavPath);
+        fullText = await transcribeBuffer(buf, "wav");
+      } else {
+        const chunks = [];
+        let offset = 0;
+        let chunkNum = 0;
+        while (offset < totalDuration) {
+          const chunkPath = path10.join(tmpDir, `chunk-${chunkNum}.wav`);
+          await execAsync(
+            `ffmpeg -i "${wavPath}" -ss ${offset} -t ${AUDIO_CHUNK_SECS} -ar 16000 -ac 1 -acodec pcm_s16le -y "${chunkPath}"`,
+            { timeout: 6e4 }
+          );
+          const buf = await readFile3(chunkPath);
+          const text2 = await transcribeBuffer(buf, "wav").catch(() => "");
+          if (text2.trim()) chunks.push(text2.trim());
+          offset += AUDIO_CHUNK_SECS;
+          chunkNum++;
+        }
+        fullText = chunks.join(" ");
+      }
+    }
+    if (!fullText.trim()) return [];
+    console.log(
+      `[transcriptCache] audio transcription OK ${videoId} \u2014 ${fullText.length} chars`
+    );
+    return [
+      {
+        text: `[AI-generated transcript \u2014 no official captions available]
+
+${fullText.trim()}`,
+        offset: 0,
+        duration: 0,
+        lang: "en"
+      }
+    ];
+  } catch (err2) {
+    const raw = err2 instanceof Error ? err2.message : String(err2);
+    if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(raw)) throw err2;
+    const lower = raw.toLowerCase();
+    if (lower.includes("private video") || lower.includes("video unavailable")) {
+      throw new Error(`LOGIN_REQUIRED: ${raw}`);
+    }
+    if (lower.includes("age-restricted") || lower.includes("sign in to confirm")) {
+      throw new Error(`CONTENT_RESTRICTED: ${raw}`);
+    }
+    if (lower.includes("429") || lower.includes("too many requests")) {
+      throw new Error(`TOO_MANY_REQUESTS: ${raw}`);
+    }
+    console.warn(`[transcriptCache] audio transcription non-terminal failure for ${videoId}: ${raw}`);
+    return [];
+  } finally {
+    rm2(tmpDir, { recursive: true, force: true }).catch(() => {
+    });
+  }
+}
+function safeStr(v) {
+  return typeof v === "string" ? v : void 0;
+}
+function parseTimedTextXml(xml) {
+  const results = [];
+  const textTagRx = /<text\s+([^>]*)>([\s\S]*?)<\/text>/g;
+  const attrRx = /(\w+)="([^"]*)"/g;
+  let match;
+  while ((match = textTagRx.exec(xml)) !== null) {
+    const attrs = {};
+    let attrMatch;
+    while ((attrMatch = attrRx.exec(match[1])) !== null) {
+      attrs[attrMatch[1]] = attrMatch[2];
+    }
+    attrRx.lastIndex = 0;
+    const rawText = match[2].replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/<[^>]+>/g, "").trim();
+    if (!rawText) continue;
+    results.push({
+      start: attrs.start ?? "0",
+      dur: attrs.dur ?? "0",
+      text: rawText
+    });
+  }
+  return results;
+}
+function rankCaptionTracks(tracks) {
+  return [...tracks].sort((a, b) => {
+    const aEn = a.languageCode.startsWith("en");
+    const bEn = b.languageCode.startsWith("en");
+    const aAsr = a.kind === "asr";
+    const bAsr = b.kind === "asr";
+    if (aEn && !aAsr && (!bEn || bAsr)) return -1;
+    if (bEn && !bAsr && (!aEn || aAsr)) return 1;
+    if (aEn && !bEn) return -1;
+    if (bEn && !aEn) return 1;
+    return 0;
+  });
+}
+async function checkInnerTubePlayerData(videoId) {
+  for (const client of INNERTUBE_CLIENTS) {
+    try {
+      const playerRes = await fetch(
+        `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_KEY}`,
+        {
+          method: "POST",
+          headers: client.headers,
+          body: JSON.stringify({
+            context: client.context,
+            videoId,
+            playbackContext: { contentPlaybackContext: { signatureTimestamp: 0 } }
+          })
+        }
+      );
+      if (!playerRes.ok) {
+        if (playerRes.status === 429) {
+          return {
+            status: "terminal",
+            error: new Error("TOO_MANY_REQUESTS: YouTube is rate-limiting requests. Please try again shortly.")
+          };
+        }
+        console.warn(`[transcriptCache] metadata check ${client.name} HTTP ${playerRes.status} for ${videoId}`);
+        continue;
+      }
+      const player = await playerRes.json();
+      const playStatus = safeStr(player.playabilityStatus?.status);
+      if (playStatus && INNERTUBE_TERMINAL_STATUSES.has(playStatus)) {
+        if (playStatus === "LOGIN_REQUIRED") {
+          return {
+            status: "terminal",
+            error: new Error("LOGIN_REQUIRED: This video requires a signed-in YouTube account to access.")
+          };
+        }
+        if (playStatus === "AGE_CHECK_REQUIRED" || playStatus === "AGE_VERIFICATION_REQUIRED") {
+          return {
+            status: "terminal",
+            error: new Error("CONTENT_RESTRICTED: This video is age-restricted and cannot be accessed without sign-in.")
+          };
+        }
+        const reason = safeStr(player.playabilityStatus?.reason) ?? playStatus;
+        return {
+          status: "terminal",
+          error: new Error(`CONTENT_RESTRICTED: YouTube reports this video is restricted \u2014 ${reason}`)
+        };
+      }
+      const tracks = player.captions?.playerCaptionsTracklistRenderer?.captionTracks ?? [];
+      if (tracks.length === 0) {
+        console.log(`[transcriptCache] metadata/${client.name}: no caption tracks for ${videoId}`);
+        return { status: "no-captions" };
+      }
+      console.log(
+        `[transcriptCache] metadata/${client.name}: ${tracks.length} caption track(s) for ${videoId}`
+      );
+      return { status: "has-captions", tracks, clientName: client.name };
+    } catch (err2) {
+      const msg = err2 instanceof Error ? err2.message : String(err2);
+      console.warn(`[transcriptCache] metadata check ${client.name} failed for ${videoId}: ${msg}`);
+    }
+  }
+  return { status: "blocked" };
+}
+async function fetchCaptionsFromTracks(tracks, videoId, userAgent) {
+  const ranked = rankCaptionTracks(tracks);
+  const best = ranked[0];
+  if (!best?.baseUrl) return [];
+  const captionUrl = new URL(best.baseUrl);
+  captionUrl.searchParams.set("fmt", "srv3");
+  captionUrl.searchParams.set("tlang", "en");
+  const res = await fetch(captionUrl.toString(), {
+    headers: {
+      "User-Agent": userAgent ?? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    }
+  });
+  if (!res.ok) {
+    console.warn(
+      `[transcriptCache] fetchCaptionsFromTracks: HTTP ${res.status} for ${videoId} (${best.languageCode})`
+    );
+    return [];
+  }
+  const xml = await res.text();
+  const elements = parseTimedTextXml(xml);
+  if (elements.length === 0) return [];
+  console.log(
+    `[transcriptCache] fetchCaptionsFromTracks OK ${videoId} lang=${best.languageCode} \u2014 ${elements.length} segs`
+  );
+  return elements.map((el) => ({
+    text: el.text,
+    offset: parseFloat(el.start) * 1e3,
+    duration: parseFloat(el.dur) * 1e3,
+    lang: best.languageCode
+  }));
+}
+async function fetchTimedTextTranscript(videoId) {
+  const langs = ["en", "en-US", "en-GB", "a.en"];
+  for (const lang of langs) {
+    try {
+      const url = `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${lang}&fmt=srv3`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Accept-Language": "en-US,en;q=0.9"
+        }
+      });
+      if (!res.ok) continue;
+      const xml = await res.text();
+      if (!xml.trim().startsWith("<")) continue;
+      const elements = parseTimedTextXml(xml);
+      if (elements.length === 0) continue;
+      console.log(`[transcriptCache] timedtext OK lang=${lang} ${videoId} \u2014 ${elements.length} segs`);
+      return elements.map((el) => ({
+        text: el.text,
+        offset: parseFloat(el.start) * 1e3,
+        duration: parseFloat(el.dur) * 1e3,
+        lang
+      }));
+    } catch {
+    }
+  }
+  return [];
+}
+async function fetchTranscriptCached(input, options = {}) {
+  const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart, userId, signal } = options;
+  const videoId = extractVideoId(input);
+  if (videoId && !bypassCache && !audioOnly) {
+    evictExpired();
+    const hit = cache3.get(videoId);
+    if (hit) {
+      const GEMINI_LABEL = "[AI-generated transcript via Gemini]";
+      if (hit.segments.length === 1 && hit.segments[0].text.startsWith(GEMINI_LABEL)) {
+        const body = hit.segments[0].text.slice(GEMINI_LABEL.length).trimStart();
+        _isTranscriptRefusal ??= (await Promise.resolve().then(() => (init_geminiTranscript(), geminiTranscript_exports))).isTranscriptRefusal;
+        if (_isTranscriptRefusal(body)) {
+          console.warn(
+            `[transcriptCache] EVICT ${videoId} \u2014 cached entry contains a Gemini refusal (stale). Fetching live.`
+          );
+          cache3.delete(videoId);
+        } else {
+          const age = Math.round((Date.now() - hit.cachedAt) / 1e3);
+          console.log(`[transcriptCache] HIT  ${videoId} \u2014 ${hit.segments.length} segs, cached ${age}s ago`);
+          return { segments: hit.segments, noCaptionsDetected: false, source: hit.source ?? "cache" };
+        }
+      } else {
+        const age = Math.round((Date.now() - hit.cachedAt) / 1e3);
+        console.log(`[transcriptCache] HIT  ${videoId} \u2014 ${hit.segments.length} segs, cached ${age}s ago`);
+        return { segments: hit.segments, noCaptionsDetected: false, source: hit.source ?? "cache" };
+      }
+    }
+  }
+  if (videoId && bypassCache) {
+    console.log(`[transcriptCache] BYPASS ${videoId} \u2014 fetching live and overwriting cache`);
+  }
+  onFetchStart?.();
+  const resolvedId = videoId ?? input.trim();
+  let segments = [];
+  let source = "unknown";
+  const phaseErrors = {};
+  let supadataTimedOut = false;
+  if (videoId && !captionsOnly && !audioOnly) {
+    try {
+      const { fetchTranscriptViaSupadata: fetchTranscriptViaSupadata2, isSupadataAvailable: isSupadataAvailable2, SupadataJobPendingError: SupadataJobPendingError2 } = await Promise.resolve().then(() => (init_supadataTranscript(), supadataTranscript_exports));
+      if (isSupadataAvailable2()) {
+        if (userId) {
+          const { getCompletedTranscript: getCompletedTranscript2 } = await Promise.resolve().then(() => (init_transcriptJobTracker(), transcriptJobTracker_exports));
+          const cached = await getCompletedTranscript2(userId, videoId);
+          if (cached && cached.length > 0) {
+            segments = cached;
+            source = "supadata";
+            console.log(`[transcriptCache] Phase 0 async job result loaded for ${resolvedId} \u2014 ${cached.length} segs`);
+            evictExpired();
+            if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
+            cache3.set(videoId, { segments, cachedAt: Date.now(), source });
+            return { segments, noCaptionsDetected: false, source };
+          }
+        }
+        const refreshTag = bypassCache ? " (bypass/refresh)" : "";
+        console.log(`[transcriptCache] Phase 0: trying Supadata for ${resolvedId}${refreshTag}`);
+        const supadataSegs = await fetchTranscriptViaSupadata2(resolvedId, { userId, signal });
+        if (supadataSegs.length > 0) {
+          segments = supadataSegs;
+          source = "supadata";
+          const totalChars = supadataSegs.reduce((n, s) => n + s.text.length, 0);
+          console.log(
+            `[transcriptCache] Phase 0 Supadata OK ${resolvedId} \u2014 ${supadataSegs.length} segs, ${totalChars} chars`
+          );
+          evictExpired();
+          if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
+          cache3.set(videoId, { segments, cachedAt: Date.now(), source });
+          const reason = bypassCache ? "BYPASS\u2192stored" : "MISS\u2192stored";
+          console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache3.size})`);
+          return { segments, noCaptionsDetected: false, source };
+        }
+      } else {
+        console.log(
+          "[transcriptCache] Phase 0 skipped \u2014 SUPADATA_API_KEY not set (get a free key at https://dash.supadata.ai)"
+        );
+      }
+    } catch (supadataErr) {
+      const { SupadataJobPendingError: SupadataJobPendingError2 } = await Promise.resolve().then(() => (init_supadataTranscript(), supadataTranscript_exports));
+      if (supadataErr instanceof SupadataJobPendingError2) {
+        const jobId = supadataErr.jobId;
+        console.log(
+          `[transcriptCache] Phase 0 async job pending for ${resolvedId} \u2014 jobId=${jobId}. 3-hour video: Supadata AI generation started, transcript will arrive via notification.`
+        );
+        return {
+          segments: [],
+          noCaptionsDetected: true,
+          source: "supadata",
+          asyncJobPending: true,
+          jobId
+        };
+      }
+      const msg = supadataErr instanceof Error ? supadataErr.message : String(supadataErr);
+      phaseErrors.supadata = msg;
+      if (msg.toLowerCase().includes("timed out after")) {
+        supadataTimedOut = true;
+      }
+      console.warn(`[transcriptCache] Phase 0 (Supadata) FAILED for ${resolvedId}:`, {
+        error: msg,
+        hint: "Check SUPADATA_API_KEY is valid. For no-caption videos, AI generation takes 5-10 min."
+      });
+    }
+  }
+  if (videoId && segments.length === 0 && !captionsOnly && !audioOnly) {
+    try {
+      const { fetchTranscriptViaGemini: fetchTranscriptViaGemini2, isGeminiTranscriptAvailable: isGeminiTranscriptAvailable2 } = await Promise.resolve().then(() => (init_geminiTranscript(), geminiTranscript_exports));
+      if (isGeminiTranscriptAvailable2()) {
+        const refreshTag = bypassCache ? " (bypass/refresh)" : "";
+        console.log(`[transcriptCache] Phase 0.5: trying Gemini (fallback) for ${resolvedId}${refreshTag}`);
+        const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+        const geminiText = await fetchTranscriptViaGemini2(videoUrl);
+        if (geminiText) {
+          segments = [{ text: `[AI-generated transcript via Gemini]
+
+${geminiText}`, offset: 0, duration: 0, lang: "en" }];
+          source = "gemini";
+          console.log(`[transcriptCache] Phase 0.5 Gemini OK ${resolvedId} \u2014 ${geminiText.length} chars`);
+          evictExpired();
+          if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
+          cache3.set(videoId, { segments, cachedAt: Date.now(), source });
+          const reason = bypassCache ? "BYPASS\u2192stored" : "MISS\u2192stored";
+          console.log(`[transcriptCache] ${reason} ${videoId} via ${source} (cache size: ${cache3.size})`);
+          return { segments, noCaptionsDetected: false, source };
+        }
+      } else {
+        console.warn("[transcriptCache] Phase 0.5 skipped \u2014 no Gemini key configured (set GOOGLE_GEMINI_API_KEY for direct access, or AI_INTEGRATIONS_GEMINI_API_KEY for proxy)");
+      }
+    } catch (geminiErr) {
+      const geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
+      const geminiCause = geminiErr instanceof Error && geminiErr.cause ? ` (cause: ${geminiErr.cause instanceof Error ? geminiErr.cause.message : String(geminiErr.cause)})` : "";
+      const fullMsg = geminiErrMsg + geminiCause;
+      phaseErrors.gemini = fullMsg;
+      console.warn(`[transcriptCache] Phase 0.5 (Gemini) FAILED for ${resolvedId}:`, {
+        error: fullMsg,
+        stack: geminiErr instanceof Error ? geminiErr.stack?.slice(0, 400) : void 0,
+        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key (not the Replit proxy key)"
+      });
+    }
+  }
+  if (supadataTimedOut && segments.length === 0) {
+    console.warn(`[transcriptCache] Supadata timed out and Gemini fallback produced nothing for ${resolvedId} \u2014 skipping Phases 1-4 (all IP-blocked on datacenter)`);
+    return { segments: [], noCaptionsDetected: true, source: "supadata", phaseErrors, supadataTimedOut: true };
+  }
+  if (audioOnly) {
+    console.log(`[transcriptCache] audioOnly=true for ${resolvedId} \u2014 going straight to audio transcription`);
+    audioAttemptCount++;
+    try {
+      const audioSegs = await fetchAudioTranscript(resolvedId, input);
+      if (audioSegs.length > 0) {
+        segments = audioSegs;
+        source = "audio-transcription";
+        console.log(
+          `[transcriptCache] yt-dlp audio download OK ${resolvedId} \u2014 ${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
+        );
+      } else {
+        const hasOpenAIKey = !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+        const emptyReason = hasOpenAIKey ? "fetchAudioTranscript returned 0 segments (Whisper empty output, file too large, or audio download produced no file)" : "OpenAI API key not configured \u2014 audio transcription skipped";
+        recordAudioFailure(resolvedId, "empty-output", true, emptyReason);
+      }
+    } catch (audioErr) {
+      const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
+        console.warn(`[transcriptCache] audio transcription skipped: yt-dlp not available`);
+        recordAudioFailure(resolvedId, "yt-dlp-not-installed", true, msg);
+        throw audioErr;
+      }
+      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS|RATE_LIMITED):/.test(msg)) {
+        recordAudioFailure(resolvedId, "yt-dlp-blocked", true, msg);
+        throw audioErr;
+      }
+      if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
+        const detail = msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim();
+        console.warn(`[transcriptCache] audio-download-failed for ${resolvedId}: ${detail}`);
+        recordAudioFailure(resolvedId, "yt-dlp-download-failed", true, detail);
+        throw audioErr;
+      }
+      console.warn(`[transcriptCache] audio transcription failed for ${resolvedId}: ${msg}`);
+      recordAudioFailure(resolvedId, classifyAudioError(msg), true, msg);
+    }
+    if (videoId && segments.length > 0) {
+      evictExpired();
+      if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
+      cache3.set(videoId, { segments, cachedAt: Date.now(), source });
+      const reason = bypassCache ? "BYPASS\u2192stored" : "MISS\u2192stored";
+      console.log(
+        `[transcriptCache] ${reason} ${videoId} via ${source} \u2014 ${segments.length} segs (cache size: ${cache3.size})`
+      );
+    }
+    return { segments, noCaptionsDetected: false, source };
+  }
+  const meta = await checkInnerTubePlayerData(resolvedId);
+  if (meta.status === "terminal") {
+    console.log(`[transcriptCache] terminal error from metadata check for ${resolvedId}: ${meta.error.message}`);
+    throw meta.error;
+  }
+  const hasCaptions = meta.status === "has-captions";
+  const noCaptions = meta.status === "no-captions";
+  const isBlocked = meta.status === "blocked";
+  if (noCaptions) {
+    console.log(
+      `[transcriptCache] no captions confirmed for ${resolvedId} \u2014 skipping subtitle strategies`
+    );
+  } else {
+    if (hasCaptions) {
+      try {
+        const clientHeaders = INNERTUBE_CLIENTS.find((c) => c.name === meta.clientName)?.headers;
+        const userAgent = clientHeaders?.["User-Agent"];
+        segments = await fetchCaptionsFromTracks(meta.tracks, resolvedId, userAgent);
+        if (segments.length > 0) {
+          source = `innertube/${meta.clientName}`;
+        } else {
+          console.log(
+            `[transcriptCache] InnerTube caption XML returned 0 segs for ${resolvedId} \u2014 trying yt-dlp`
+          );
+        }
+      } catch (err2) {
+        const msg = err2 instanceof Error ? err2.message : String(err2);
+        if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw err2;
+        console.warn(`[transcriptCache] InnerTube caption download failed for ${resolvedId}: ${msg}`);
+      }
+    } else {
+      console.log(
+        `[transcriptCache] InnerTube blocked for ${resolvedId} \u2014 trying yt-dlp subtitles`
+      );
+    }
+    if (segments.length === 0) {
+      try {
+        segments = await fetchYtDlpTranscript(resolvedId);
+        if (segments.length > 0) {
+          source = "yt-dlp";
+        } else {
+          console.log(`[transcriptCache] yt-dlp 0 segs for ${resolvedId} \u2014 trying timedtext`);
+        }
+      } catch (err2) {
+        const msg = err2 instanceof Error ? err2.message : String(err2);
+        if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS):/.test(msg)) throw err2;
+        console.warn(`[transcriptCache] yt-dlp failed for ${resolvedId}: ${msg}`);
+      }
+    }
+    if (segments.length === 0) {
+      try {
+        segments = await fetchTimedTextTranscript(resolvedId);
+        if (segments.length > 0) {
+          source = "timedtext";
+          console.log(`[transcriptCache] timedtext OK ${resolvedId} \u2014 ${segments.length} segs`);
+        } else {
+          console.log(`[transcriptCache] timedtext 0 segs for ${resolvedId} \u2014 trying youtube-transcript`);
+        }
+      } catch (err2) {
+        console.warn(
+          `[transcriptCache] timedtext failed for ${resolvedId}: ${err2 instanceof Error ? err2.message : String(err2)}`
+        );
+      }
+    }
+    if (segments.length === 0) {
+      try {
+        const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
+        segments = await YoutubeTranscript.fetchTranscript(input, config);
+        if (segments.length > 0) {
+          source = "youtube-transcript";
+          console.log(`[transcriptCache] youtube-transcript OK ${resolvedId} \u2014 ${segments.length} segs`);
+        }
+      } catch (err2) {
+        const msg = err2 instanceof Error ? err2.message : String(err2);
+        console.warn(`[transcriptCache] youtube-transcript failed for ${resolvedId}: ${msg}`);
+      }
+    }
+  }
+  if (segments.length === 0 && !captionsOnly) {
+    const reason = noCaptions ? "no captions \u2014 going straight to audio transcription" : "all subtitle strategies failed \u2014 trying audio transcription";
+    console.log(`[transcriptCache] ${reason} for ${resolvedId}`);
+    audioAttemptCount++;
+    try {
+      const audioSegs = await fetchAudioTranscript(resolvedId, input);
+      if (audioSegs.length > 0) {
+        segments = audioSegs;
+        source = "audio-transcription";
+        console.log(
+          `[transcriptCache] yt-dlp audio download OK ${resolvedId} \u2014 ${audioSegs.reduce((n, s) => n + s.text.length, 0)} chars`
+        );
+      } else {
+        const hasOpenAIKey = !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+        const emptyReason = hasOpenAIKey ? "fetchAudioTranscript returned 0 segments (Whisper empty output, file too large, or audio download produced no file)" : "OpenAI API key not configured \u2014 audio transcription skipped";
+        recordAudioFailure(resolvedId, "empty-output", noCaptions, emptyReason);
+      }
+    } catch (audioErr) {
+      const msg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
+        console.warn(`[transcriptCache] audio transcription skipped: yt-dlp not available`);
+        recordAudioFailure(resolvedId, "yt-dlp-not-installed", noCaptions, msg);
+        throw audioErr;
+      }
+      if (/^(LOGIN_REQUIRED|CONTENT_RESTRICTED|TOO_MANY_REQUESTS|RATE_LIMITED):/.test(msg)) {
+        recordAudioFailure(resolvedId, "yt-dlp-blocked", noCaptions, msg);
+        throw audioErr;
+      }
+      if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
+        const detail = msg.slice("AUDIO_DOWNLOAD_FAILED:".length).trim();
+        console.warn(
+          `[transcriptCache] audio-download-failed for ${resolvedId}: ${detail}`
+        );
+        recordAudioFailure(resolvedId, "yt-dlp-download-failed", noCaptions, detail);
+        throw audioErr;
+      }
+      console.warn(`[transcriptCache] audio transcription non-terminal failure for ${resolvedId}: ${msg}`);
+      recordAudioFailure(resolvedId, classifyAudioError(msg), noCaptions, msg);
+    }
+  }
+  if (videoId && segments && segments.length > 0) {
+    evictExpired();
+    if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
+    cache3.set(videoId, { segments, cachedAt: Date.now(), source });
+    const reason = bypassCache ? "BYPASS\u2192stored" : "MISS\u2192stored";
+    console.log(
+      `[transcriptCache] ${reason} ${videoId} via ${source} \u2014 ${segments.length} segs (cache size: ${cache3.size})`
+    );
+  }
+  const hasPhaseErrors = Object.keys(phaseErrors).length > 0;
+  return {
+    segments,
+    noCaptionsDetected: noCaptions,
+    source,
+    ...hasPhaseErrors ? { phaseErrors } : {},
+    ...supadataTimedOut ? { supadataTimedOut: true } : {}
+  };
+}
+function invalidateTranscript(input) {
+  const videoId = extractVideoId(input);
+  if (!videoId) return false;
+  const deleted = cache3.delete(videoId);
+  if (deleted) console.log(`[transcriptCache] INVALIDATED ${videoId}`);
+  return deleted;
+}
+function transcriptCacheSize() {
+  evictExpired();
+  return cache3.size;
+}
+function storeCachedTranscript(videoId, segments, source = "supadata") {
+  evictExpired();
+  if (!cache3.has(videoId) && cache3.size >= MAX_ENTRIES) evictOldest();
+  cache3.set(videoId, { segments, cachedAt: Date.now(), source });
+  console.log(`[transcriptCache] STORED async result for ${videoId} via ${source} \u2014 ${segments.length} segs`);
+}
+var execAsync, YTDLP_EARLY_ABORT_PATTERNS, ytdlpUpgradePromise, ytdlpCmd, ytdlpSupportsImpersonate, ytdlpAvailable, YTDLP_FLAGS_PATH, MIN_IMPERSONATE_VERSION, TTL_MS2, MAX_ENTRIES, cache3, _isTranscriptRefusal, YTDLP_RATE_LIMIT_COOLDOWN_MS, ytdlpRateLimitedUntil, AUDIO_MAX_BYTES, WHISPER_MAX_BYTES, AUDIO_CHUNK_SECS, AUDIO_TELEMETRY_MAX, audioFailureEvents, audioFailureCounts, audioAttemptCount, INNERTUBE_KEY, INNERTUBE_CLIENTS, INNERTUBE_TERMINAL_STATUSES;
+var init_transcriptCache = __esm({
+  "server/lib/transcriptCache.ts"() {
+    "use strict";
+    execAsync = promisify(exec);
+    YTDLP_EARLY_ABORT_PATTERNS = [
+      { pattern: /sign in to confirm|sign in to watch|not a bot/i, code: "CONTENT_RESTRICTED" },
+      { pattern: /age.?restricted|age.?gated/i, code: "CONTENT_RESTRICTED" },
+      { pattern: /http error 403|: 403\b/i, code: "CONTENT_RESTRICTED" },
+      { pattern: /too many requests|http error 429|: 429\b/i, code: "TOO_MANY_REQUESTS" },
+      { pattern: /private video|video unavailable|this video is unavailable/i, code: "LOGIN_REQUIRED" }
+    ];
+    ytdlpUpgradePromise = null;
+    ytdlpCmd = "yt-dlp";
+    ytdlpSupportsImpersonate = false;
+    ytdlpAvailable = false;
+    YTDLP_FLAGS_PATH = path10.join(process.cwd(), ".ytdlp-flags.json");
+    MIN_IMPERSONATE_VERSION = "2023.11.16";
+    TTL_MS2 = 24 * 60 * 60 * 1e3;
+    MAX_ENTRIES = 500;
+    cache3 = /* @__PURE__ */ new Map();
+    YTDLP_RATE_LIMIT_COOLDOWN_MS = parseInt(process.env.YTDLP_RATE_LIMIT_COOLDOWN_MS ?? "", 10) || 9e4;
+    ytdlpRateLimitedUntil = 0;
+    AUDIO_MAX_BYTES = 200 * 1024 * 1024;
+    WHISPER_MAX_BYTES = 23 * 1024 * 1024;
+    AUDIO_CHUNK_SECS = 600;
+    AUDIO_TELEMETRY_MAX = 200;
+    audioFailureEvents = [];
+    audioFailureCounts = {
+      "empty-output": 0,
+      "yt-dlp-not-installed": 0,
+      "yt-dlp-blocked": 0,
+      "yt-dlp-download-failed": 0,
+      "whisper-failure": 0,
+      "ffmpeg-failure": 0,
+      "non-terminal-error": 0
+    };
+    audioAttemptCount = 0;
+    INNERTUBE_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8";
+    INNERTUBE_CLIENTS = [
+      {
+        name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+        headers: {
+          "Content-Type": "application/json",
+          "X-YouTube-Client-Name": "85",
+          "X-YouTube-Client-Version": "2.0",
+          "Accept-Language": "en-US,en;q=0.9"
+        },
+        context: {
+          client: {
+            clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+            clientVersion: "2.0",
+            hl: "en",
+            gl: "US"
+          }
+        }
+      },
+      {
+        name: "IOS",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X)",
+          "X-YouTube-Client-Name": "5",
+          "X-YouTube-Client-Version": "19.29.1",
+          "Accept-Language": "en-US,en;q=0.9"
+        },
+        context: {
+          client: {
+            clientName: "IOS",
+            clientVersion: "19.29.1",
+            deviceMake: "Apple",
+            deviceModel: "iPhone16,2",
+            osName: "iPhone",
+            osVersion: "17.5.1.21F90",
+            hl: "en",
+            gl: "US"
+          }
+        }
+      },
+      {
+        name: "ANDROID",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "com.google.android.youtube/19.29.34 (Linux; U; Android 11) gzip",
+          "X-YouTube-Client-Name": "3",
+          "X-YouTube-Client-Version": "19.29.34",
+          "Accept-Language": "en-US,en;q=0.9"
+        },
+        context: {
+          client: {
+            clientName: "ANDROID",
+            clientVersion: "19.29.34",
+            androidSdkVersion: 30,
+            hl: "en",
+            gl: "US"
+          }
+        }
+      }
+    ];
+    INNERTUBE_TERMINAL_STATUSES = /* @__PURE__ */ new Set([
+      "LOGIN_REQUIRED",
+      "CONTENT_RESTRICTED",
+      "AGE_CHECK_REQUIRED",
+      "AGE_VERIFICATION_REQUIRED",
+      "UNPLAYABLE"
+    ]);
+  }
+});
+
+// server/lib/transcriptSourceLabel.ts
+function humanReadableSource(src) {
+  if (!src || src === "unknown" || src === "cache") return null;
+  if (src === "gemini") return null;
+  if (src === "supadata") return "Supadata (verbatim captions)";
+  if (src.startsWith("innertube/") || src === "yt-dlp" || src === "timedtext" || src === "youtube-transcript")
+    return "YouTube captions (verbatim)";
+  if (src === "audio-transcription" || src.startsWith("audio-transcription"))
+    return "Whisper (AI audio transcription)";
+  if (src === "browser") return "browser";
+  if (src === "local-worker") return "local worker";
+  return src;
+}
+var init_transcriptSourceLabel = __esm({
+  "server/lib/transcriptSourceLabel.ts"() {
+    "use strict";
+  }
+});
+
+// server/lib/videoFrames.ts
+import { exec as exec2 } from "child_process";
+import { promisify as promisify2 } from "util";
+import { readdir as readdir2, readFile as readFile4, rm as rm3 } from "fs/promises";
+import { mkdtempSync as mkdtempSync2 } from "fs";
+import path11 from "path";
+import os6 from "os";
+function evictExpiredVisual() {
+  const now = Date.now();
+  for (const [id, entry] of visualSummaryCache) {
+    if (now - entry.cachedAt >= VISUAL_TTL_MS) visualSummaryCache.delete(id);
+  }
+}
+function evictOldestVisual() {
+  let oldestKey;
+  let oldestTime = Infinity;
+  for (const [id, entry] of visualSummaryCache) {
+    if (entry.cachedAt < oldestTime) {
+      oldestTime = entry.cachedAt;
+      oldestKey = id;
+    }
+  }
+  if (oldestKey) visualSummaryCache.delete(oldestKey);
+}
+function formatSec(totalSecs) {
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor(totalSecs % 3600 / 60);
+  const s = Math.floor(totalSecs % 60);
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+async function getVideoDuration(videoPath) {
+  try {
+    const { stdout } = await execAsync2(
+      `ffprobe -v quiet -show_entries format=duration -of csv=p=0 "${videoPath}"`,
+      { timeout: 15e3 }
+    );
+    return parseFloat(stdout.trim()) || 0;
+  } catch {
+    return 0;
+  }
+}
+async function extractFrameAt(videoPath, timestampSec, outputPath) {
+  try {
+    await execAsync2(
+      `ffmpeg -ss ${timestampSec.toFixed(2)} -i "${videoPath}" -frames:v 1 -vf "scale=640:-2" -q:v 3 "${outputPath}" -y`,
+      { timeout: 3e4 }
+    );
+    return await readFile4(outputPath);
+  } catch {
+    return null;
+  }
+}
+async function extractKeyframes(videoId, intervalSecs) {
+  let tmpDir;
+  try {
+    tmpDir = mkdtempSync2(path11.join(os6.tmpdir(), `ytviz-${videoId}-`));
+  } catch {
+    return [];
+  }
+  try {
+    await ensureYtdlpUpgraded();
+    const cmd = getYtdlpCmd();
+    const url = `https://www.youtube.com/watch?v=${videoId}`;
+    const videoPath = path11.join(tmpDir, `${videoId}.mp4`);
+    await execAsync2(
+      `${cmd} -f "worstvideo[ext=mp4]/worstvideo/worst[ext=mp4]/worst" --no-playlist --no-warnings --quiet --no-progress --max-filesize 150M --output "${videoPath}" -- "${url}"`,
+      { timeout: 12e4 }
+    );
+    const files = await readdir2(tmpDir).catch(() => []);
+    const videoFile = files.find(
+      (f) => f.endsWith(".mp4") || f.endsWith(".webm") || f.endsWith(".mkv")
+    );
+    if (!videoFile) return [];
+    const actualVideoPath = path11.join(tmpDir, videoFile);
+    const duration = await getVideoDuration(actualVideoPath);
+    const framesDir = path11.join(tmpDir, "frames");
+    await execAsync2(`mkdir -p "${framesDir}"`, { timeout: 5e3 });
+    const keyframes = [];
+    if (duration > 0 && duration < 90) {
+      const targetFrames = Math.max(3, Math.min(5, Math.round(duration / 15)));
+      const timestamps = [];
+      for (let i = 1; i <= targetFrames; i++) {
+        timestamps.push(Math.round(duration / (targetFrames + 1) * i));
+      }
+      for (let i = 0; i < timestamps.length; i++) {
+        const ts = timestamps[i];
+        const framePath = path11.join(framesDir, `frame-${String(i + 1).padStart(4, "0")}.jpg`);
+        const buf = await extractFrameAt(actualVideoPath, ts, framePath);
+        if (buf) keyframes.push({ timestampSec: ts, jpegBuffer: buf });
+      }
+    } else {
+      const interval = intervalSecs ?? 30;
+      const maxFrames = 20;
+      const fpsExpr = `1/${interval}`;
+      await execAsync2(
+        `ffmpeg -i "${actualVideoPath}" -vf "fps=${fpsExpr},scale=640:-2" -frames:v ${maxFrames} -q:v 3 "${framesDir}/frame-%04d.jpg" -y`,
+        { timeout: 12e4 }
+      );
+      const frameFiles = (await readdir2(framesDir).catch(() => [])).filter((f) => f.endsWith(".jpg")).sort();
+      for (let i = 0; i < frameFiles.length; i++) {
+        const timestampSec = i * interval;
+        try {
+          const buf = await readFile4(path11.join(framesDir, frameFiles[i]));
+          keyframes.push({ timestampSec, jpegBuffer: buf });
+        } catch {
+        }
+      }
+    }
+    console.log(
+      `[videoFrames] extracted ${keyframes.length} keyframes for ${videoId} (duration=${Math.round(duration)}s)`
+    );
+    return keyframes;
+  } catch (err2) {
+    const msg = err2 instanceof Error ? err2.message : String(err2);
+    console.warn(`[videoFrames] keyframe extraction failed for ${videoId}: ${msg}`);
+    return [];
+  } finally {
+    rm3(tmpDir, { recursive: true, force: true }).catch(() => {
+    });
+  }
+}
+async function describeFrames(frames) {
+  if (frames.length === 0) return [];
+  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
+  try {
+    const { openai: openai20 } = await Promise.resolve().then(() => (init_client(), client_exports));
+    const BATCH_SIZE2 = 10;
+    const observations = [];
+    for (let i = 0; i < frames.length; i += BATCH_SIZE2) {
+      const batch = frames.slice(i, i + BATCH_SIZE2);
+      const imageContent = batch.map((frame) => ({
+        type: "image_url",
+        image_url: {
+          url: `data:image/jpeg;base64,${frame.jpegBuffer.toString("base64")}`,
+          detail: "low"
+        }
+      }));
+      const timestampList = batch.map((f, idx) => `Frame ${idx + 1}: [${formatSec(f.timestampSec)}]`).join(", ");
+      const response = await openai20.chat.completions.create({
+        model: "gpt-4o",
+        max_tokens: 800,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: `You are analysing video keyframes. The frames correspond to these timestamps: ${timestampList}. For each frame in order, write one brief sentence describing what is visually shown \u2014 objects, text on screen, setting, people, diagrams, code, etc. Be specific and factual. Respond with JSON in this exact shape: {"descriptions": ["...", "..."]} with exactly ${batch.length} string(s) in the array, one per frame.`
+              },
+              ...imageContent
+            ]
+          }
+        ]
+      });
+      const raw = response.choices[0]?.message?.content ?? "";
+      let descriptions = [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.descriptions)) {
+          descriptions = parsed.descriptions.map(String);
+        }
+      } catch {
+        try {
+          const jsonMatch = raw.match(/\[[\s\S]*\]/);
+          if (jsonMatch) descriptions = JSON.parse(jsonMatch[0]);
+        } catch {
+          descriptions = raw.split("\n").map((l) => l.replace(/^[-•*\d.]+\s*/, "").trim()).filter(Boolean);
+        }
+      }
+      for (let j = 0; j < batch.length; j++) {
+        const desc46 = descriptions[j]?.trim();
+        if (desc46) {
+          observations.push({
+            timestamp: formatSec(batch[j].timestampSec),
+            description: desc46
+          });
+        }
+      }
+    }
+    console.log(`[videoFrames] vision analysis produced ${observations.length} observations`);
+    return observations;
+  } catch (err2) {
+    const msg = err2 instanceof Error ? err2.message : String(err2);
+    console.warn(`[videoFrames] vision analysis failed: ${msg}`);
+    return [];
+  }
+}
+async function buildVisualSummary(videoId, intervalSecs, bypassVisualCache = false) {
+  if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return null;
+  if (!bypassVisualCache) {
+    evictExpiredVisual();
+    const hit = visualSummaryCache.get(videoId);
+    if (hit) {
+      const ageSec = Math.round((Date.now() - hit.cachedAt) / 1e3);
+      console.log(`[videoFrames] cache HIT ${videoId} \u2014 visual summary cached ${ageSec}s ago`);
+      return hit.summary;
+    }
+  } else {
+    console.log(`[videoFrames] cache BYPASS ${videoId} \u2014 forcing fresh visual analysis`);
+  }
+  try {
+    const frames = await extractKeyframes(videoId, intervalSecs);
+    if (frames.length === 0) return null;
+    const observations = await describeFrames(frames);
+    if (observations.length === 0) return null;
+    const lines = observations.map((o) => `[${o.timestamp}] ${o.description}`);
+    const summary = `Visual Summary
+${"\u2500".repeat(60)}
+` + lines.join("\n");
+    evictExpiredVisual();
+    if (!visualSummaryCache.has(videoId) && visualSummaryCache.size >= VISUAL_MAX_ENTRIES) {
+      evictOldestVisual();
+    }
+    visualSummaryCache.set(videoId, { summary, cachedAt: Date.now() });
+    console.log(`[videoFrames] cache SET ${videoId} \u2014 visual summary stored`);
+    return summary;
+  } catch (err2) {
+    console.warn(
+      `[videoFrames] buildVisualSummary failed for ${videoId}: ${err2 instanceof Error ? err2.message : String(err2)}`
+    );
+    return null;
+  }
+}
+var execAsync2, VISUAL_TTL_MS, VISUAL_MAX_ENTRIES, visualSummaryCache;
+var init_videoFrames = __esm({
+  "server/lib/videoFrames.ts"() {
+    "use strict";
+    init_transcriptCache();
+    execAsync2 = promisify2(exec2);
+    VISUAL_TTL_MS = 24 * 60 * 60 * 1e3;
+    VISUAL_MAX_ENTRIES = 500;
+    visualSummaryCache = /* @__PURE__ */ new Map();
+  }
+});
+
+// server/lib/localWorkerQueue.ts
+var localWorkerQueue_exports = {};
+__export(localWorkerQueue_exports, {
+  claimNextJob: () => claimNextJob,
+  completeJob: () => completeJob,
+  failJob: () => failJob,
+  getOrCreateWorkerToken: () => getOrCreateWorkerToken,
+  getUserIdByToken: () => getUserIdByToken,
+  heartbeat: () => heartbeat,
+  isWorkerOnline: () => isWorkerOnline,
+  queueTranscriptJob: () => queueTranscriptJob
+});
+import crypto6 from "crypto";
+function getOrCreateWorkerToken(userId) {
+  const existing = userTokenMap.get(userId);
+  if (existing && tokenRegistry.has(existing)) return existing;
+  const token = `lw_${userId.slice(0, 8)}_${crypto6.randomBytes(16).toString("hex")}`;
+  tokenRegistry.set(token, { userId, token, lastSeen: 0 });
+  userTokenMap.set(userId, token);
+  return token;
+}
+function getUserIdByToken(token) {
+  return tokenRegistry.get(token)?.userId ?? null;
+}
+function heartbeat(token) {
+  const reg = tokenRegistry.get(token);
+  if (!reg) return false;
+  reg.lastSeen = Date.now();
+  return true;
+}
+function isWorkerOnline(userId) {
+  const token = userTokenMap.get(userId);
+  if (!token) return false;
+  const reg = tokenRegistry.get(token);
+  if (!reg) return false;
+  return Date.now() - reg.lastSeen < WORKER_ONLINE_WINDOW_MS;
+}
+function queueTranscriptJob(userId, url, timeoutMs = 3e4) {
+  return new Promise((resolve8, reject) => {
+    const id = `lwj_${Date.now()}_${crypto6.randomBytes(4).toString("hex")}`;
+    const job = { id, userId, url, status: "pending", createdAt: Date.now(), resolve: resolve8, reject };
+    jobStore.set(id, job);
+    setTimeout(() => {
+      if (jobStore.has(id)) {
+        jobStore.delete(id);
+        reject(new Error("LOCAL_WORKER_TIMEOUT: Local worker did not respond within 30 seconds."));
+      }
+    }, timeoutMs);
+  });
+}
+function claimNextJob(token) {
+  const reg = tokenRegistry.get(token);
+  if (!reg) return null;
+  reg.lastSeen = Date.now();
+  for (const [id, job] of jobStore) {
+    if (job.userId === reg.userId && job.status === "pending") {
+      job.status = "claimed";
+      return { id, url: job.url };
+    }
+  }
+  return null;
+}
+function completeJob(jobId, token, segments) {
+  const job = jobStore.get(jobId);
+  if (!job) return false;
+  const reg = tokenRegistry.get(token);
+  if (!reg || reg.userId !== job.userId) return false;
+  job.status = "done";
+  jobStore.delete(jobId);
+  job.resolve(segments);
+  return true;
+}
+function failJob(jobId, token, error) {
+  const job = jobStore.get(jobId);
+  if (!job) return false;
+  const reg = tokenRegistry.get(token);
+  if (!reg || reg.userId !== job.userId) return false;
+  job.status = "failed";
+  jobStore.delete(jobId);
+  job.reject(new Error(`LOCAL_WORKER_ERROR: ${error}`));
+  return true;
+}
+var tokenRegistry, userTokenMap, jobStore, WORKER_ONLINE_WINDOW_MS, JOB_TTL_MS;
+var init_localWorkerQueue = __esm({
+  "server/lib/localWorkerQueue.ts"() {
+    "use strict";
+    tokenRegistry = /* @__PURE__ */ new Map();
+    userTokenMap = /* @__PURE__ */ new Map();
+    jobStore = /* @__PURE__ */ new Map();
+    WORKER_ONLINE_WINDOW_MS = 2 * 60 * 1e3;
+    JOB_TTL_MS = 5 * 60 * 1e3;
+    setInterval(() => {
+      const now = Date.now();
+      for (const [id, job] of jobStore) {
+        if (now - job.createdAt > JOB_TTL_MS) {
+          jobStore.delete(id);
+          try {
+            job.reject(new Error("LOCAL_WORKER_TIMEOUT: Job expired."));
+          } catch {
+          }
+        }
+      }
+    }, 2 * 60 * 1e3);
+  }
+});
+
+// server/agent/tools/youtubeTranscript.ts
+function formatTimestamp(ms) {
+  const totalSecs = Math.floor(ms / 1e3);
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor(totalSecs % 3600 / 60);
+  const s = totalSecs % 60;
+  if (h > 0) {
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+async function fetchTranscriptViaBrowser(input, userId) {
+  const extractText = (result) => (result.content || []).map((c) => c.text || "").join("");
+  const videoId = extractVideoId(input) ?? input.trim();
+  try {
+    await callBrowserTool(userId, "browser_navigate", {
+      url: `https://www.youtube.com/watch?v=${videoId}`
+    });
+    for (const lang of ["en", "en-US", "a.en"]) {
+      const timedtextUrl = `https://www.youtube.com/api/timedtext?v=${encodeURIComponent(videoId)}&lang=${lang}&fmt=srv3`;
+      await callBrowserTool(userId, "browser_navigate", { url: timedtextUrl });
+      const snap = await callBrowserTool(userId, "browser_snapshot", {});
+      if (snap.isError) continue;
+      const raw = extractText(snap);
+      if (!raw.includes("<text ")) continue;
+      const elements = parseTimedTextXml(raw);
+      if (elements.length === 0) continue;
+      console.log(
+        `[get_youtube_transcript] browser fallback OK lang=${lang} videoId=${videoId} \u2014 ${elements.length} segs`
+      );
+      return elements.map((el) => ({
+        text: el.text,
+        offset: parseFloat(el.start) * 1e3,
+        duration: parseFloat(el.dur) * 1e3
+      }));
+    }
+    return [];
+  } catch (err2) {
+    console.warn(
+      `[get_youtube_transcript] browser fallback failed for ${videoId}: ${err2 instanceof Error ? err2.message : String(err2)}`
+    );
+    return [];
+  }
+}
+async function fetchViaTavily(input) {
+  if (!process.env.TAVILY_API_KEY) return null;
+  const { tavilySearch: tavilySearch2 } = await Promise.resolve().then(() => (init_search(), search_exports));
+  const videoId = extractVideoId(input);
+  const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : input;
+  try {
+    const [urlRes, transcriptRes] = await Promise.allSettled([
+      tavilySearch2(videoUrl, 5),
+      tavilySearch2(`${videoId ?? input} youtube transcript`, 5)
+    ]);
+    const parts = [];
+    if (urlRes.status === "fulfilled" && urlRes.value.answer) {
+      parts.push(`**What the web says about this video:**
+${urlRes.value.answer}`);
+    }
+    if (transcriptRes.status === "fulfilled" && transcriptRes.value.answer) {
+      parts.push(`**Transcript search summary:**
+${transcriptRes.value.answer}`);
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const results = [];
+    for (const pool2 of [urlRes, transcriptRes]) {
+      if (pool2.status !== "fulfilled") continue;
+      for (const r of pool2.value.results) {
+        if (!seen.has(r.url)) {
+          seen.add(r.url);
+          results.push(r);
+        }
+      }
+    }
+    if (results.length > 0) {
+      parts.push(
+        "**Related sources:**\n" + results.slice(0, 6).map((r) => `- [${r.title}](${r.url})
+  ${r.content.slice(0, 250)}`).join("\n\n")
+      );
+    }
+    if (parts.length === 0) return null;
+    const header = `\u26A0\uFE0F No official transcript could be retrieved \u2014 showing web search results instead.
+These are NOT a word-for-word transcript but may still help.
+${"\u2500".repeat(60)}
+`;
+    return {
+      ok: true,
+      content: header + parts.join("\n\n"),
+      label: "get_youtube_transcript: tavily-search fallback"
+    };
+  } catch (err2) {
+    console.warn(
+      `[get_youtube_transcript] Tavily fallback error: ${err2 instanceof Error ? err2.message : String(err2)}`
+    );
+    return null;
+  }
+}
+var MAX_CHARS, youtubeTranscriptTool;
+var init_youtubeTranscript = __esm({
+  "server/agent/tools/youtubeTranscript.ts"() {
+    "use strict";
+    init_transcriptCache();
+    init_transcriptSourceLabel();
+    init_videoFrames();
+    init_playwrightMcpClient();
+    init_localWorkerQueue();
+    MAX_CHARS = 12e4;
+    youtubeTranscriptTool = {
+      name: "get_youtube_transcript",
+      description: "Retrieve the full spoken transcript AND visual context from a YouTube video. Uses Google Gemini AI natively as the primary transcription method (Phase 0) \u2014 call this tool whenever the user shares a YouTube URL, asks to 'use Gemini' for a video, or mentions AI transcription / Gemini transcripts. You do NOT need any separate Gemini tool; Gemini is already built into this tool and runs automatically. Returns timestamped transcript segments so you can cite specific moments, plus a Visual Summary describing what is shown on screen at key moments \u2014 diagrams, code, slides, people, text on screen, settings, and visual demonstrations. Works for short clips, YouTube Shorts, and videos over an hour long. Use this when the user shares a YouTube URL and wants you to read, summarize, quote, analyse, or extract insights from it \u2014 including visual or on-screen content. IMPORTANT: Only call this tool when the user has explicitly provided a YouTube URL or video ID in their current message. Never re-use a video URL or ID from an earlier part of the conversation \u2014 if the user asks about 'another video' or 'a different video' without providing a URL, ask them to share the link first. Always tell the user which method successfully retrieved the transcript (e.g. 'via Supadata', 'via YouTube captions', 'via Whisper') \u2014 this information is in the result label and transcript header. Set refresh=true when the user asks to re-read, refresh, or get the latest version of a video. Set includeVisuals=false only if the user explicitly wants transcript text only with no visual analysis. Set force_audio=true to skip caption lookups entirely and transcribe the audio directly via Whisper \u2014 this is the best option when official captions are unavailable (e.g. Alex Hormozi videos, channels that disable captions) or when previous attempts returned empty results. Returns a clear error message if the video has no captions available.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "YouTube video URL (e.g. https://youtube.com/watch?v=dQw4w9WgXcQ) or bare video ID (e.g. dQw4w9WgXcQ)."
+          },
+          refresh: {
+            type: "boolean",
+            description: "Set to true to bypass the transcript cache and fetch a fresh copy directly from YouTube. Use when the user explicitly asks to re-read, refresh, or get an updated transcript."
+          },
+          includeVisuals: {
+            type: "boolean",
+            description: "Whether to include a visual summary of keyframes (default: true). Set to false only when the user explicitly wants transcript text only."
+          },
+          force_audio: {
+            type: "boolean",
+            description: "Skip all caption-fetching strategies and go straight to audio download + Whisper transcription. Use this when official captions are unavailable, the channel has captions disabled, or previous transcript attempts returned empty or unhelpful results. Produces a word-for-word AI-generated transcript from the actual audio."
+          }
+        },
+        required: ["url"]
+      },
+      async execute(args, ctx) {
+        const input = String(args.url || "").trim();
+        if (!input) {
+          return { ok: false, content: "Please provide a YouTube URL or video ID.", label: "get_youtube_transcript: missing input" };
+        }
+        if (isPlaylistUrl(input)) {
+          return {
+            ok: false,
+            content: "That looks like a YouTube playlist URL. I can only fetch transcripts for individual videos. Please share a single video URL (e.g. https://youtube.com/watch?v=VIDEO_ID).",
+            label: "get_youtube_transcript: playlist URL rejected"
+          };
+        }
+        const bypassCache = args.refresh === true;
+        const includeVisuals = args.includeVisuals !== false;
+        const forceAudio = args.force_audio === true;
+        const videoId = extractVideoId(input);
+        console.log(
+          `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals}, forceAudio=${forceAudio})`
+        );
+        const visualPromise = includeVisuals && videoId ? buildVisualSummary(videoId, void 0, bypassCache).catch(() => null) : Promise.resolve(null);
+        const FILE_THRESHOLD2 = 4e4;
+        const buildResult = (rawSegments, source) => {
+          const readableSource = humanReadableSource(source);
+          const sourceTag = readableSource ? ` \xB7 via ${readableSource}` : "";
+          const isAiGenerated = rawSegments.length === 1 && rawSegments[0].offset === 0 && rawSegments[0].duration === 0 && rawSegments[0].text.startsWith("[AI-generated transcript");
+          if (isAiGenerated) {
+            const body2 = rawSegments[0].text;
+            const isGeminiTranscript = body2.startsWith("[AI-generated transcript via Gemini]");
+            const transcriptMethod = isGeminiTranscript ? "via Gemini" : "audio transcription";
+            const header2 = `AI-Generated Transcript (${transcriptMethod}${sourceTag})
+${"\u2500".repeat(60)}
+`;
+            const fullText2 = header2 + body2;
+            if (body2.length > FILE_THRESHOLD2) {
+              const pending = ctx.state.pendingAttachments ||= [];
+              pending.push({
+                kind: "document",
+                filename: `transcript-${extractVideoId(input) ?? "video"}.txt`,
+                content: fullText2,
+                caption: isGeminiTranscript ? `Full transcript via Gemini (no official captions needed).` : `AI-generated transcript (no official captions were available).`,
+                mimeType: "text/plain"
+              });
+              return {
+                ok: true,
+                content: isGeminiTranscript ? `Transcript complete via Gemini (~${Math.round(body2.length / 1e3)} k chars). Sending as a text file.` : `Audio transcription complete (~${Math.round(body2.length / 1e3)} k chars). No official captions were available, so the audio was transcribed via AI. Sending the full transcript as a text file.`,
+                label: isGeminiTranscript ? `get_youtube_transcript: gemini \u2192 file` : `get_youtube_transcript: ai-audio-transcription \u2192 file`
+              };
+            }
+            let inlineBody2 = body2;
+            let truncNote = "";
+            if (inlineBody2.length > MAX_CHARS) {
+              inlineBody2 = inlineBody2.slice(0, MAX_CHARS);
+              truncNote = `
+
+[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters.]`;
+            }
+            return {
+              ok: true,
+              content: header2 + inlineBody2 + truncNote,
+              label: isGeminiTranscript ? `get_youtube_transcript: gemini` : `get_youtube_transcript: ai-audio-transcription`
+            };
+          }
+          const lastSeg = rawSegments[rawSegments.length - 1];
+          const lastRawOffset = lastSeg.offset + (lastSeg.duration ?? 0);
+          const avgRawPerSegment = lastRawOffset / rawSegments.length;
+          const toMs = avgRawPerSegment < 100 ? 1e3 : 1;
+          const CHUNK_MS = 3e4;
+          const lines = [];
+          let chunkStartMs = rawSegments[0].offset * toMs;
+          let chunkText = [];
+          for (const seg of rawSegments) {
+            const text2 = seg.text.trim();
+            if (!text2) continue;
+            const offsetMs = seg.offset * toMs;
+            if (offsetMs - chunkStartMs >= CHUNK_MS && chunkText.length > 0) {
+              lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
+              chunkStartMs = offsetMs;
+              chunkText = [];
+            }
+            chunkText.push(text2);
+          }
+          if (chunkText.length > 0) {
+            lines.push(`[${formatTimestamp(chunkStartMs)}] ${chunkText.join(" ")}`);
+          }
+          const totalDuration = formatTimestamp(lastRawOffset * toMs);
+          const header = `Transcript (${rawSegments.length} segments, ~${totalDuration} duration${sourceTag})
+${"\u2500".repeat(60)}
+`;
+          const body = lines.join("\n");
+          const fullText = header + body;
+          if (body.length > FILE_THRESHOLD2) {
+            const pending = ctx.state.pendingAttachments ||= [];
+            pending.push({
+              kind: "document",
+              filename: `transcript-${extractVideoId(input) ?? "video"}.txt`,
+              content: fullText,
+              caption: `Full transcript (~${totalDuration}) \u2014 ${rawSegments.length} segments.`,
+              mimeType: "text/plain"
+            });
+            return {
+              ok: true,
+              content: `Transcript retrieved (${rawSegments.length} segments, ~${totalDuration}${sourceTag}). The full text is long (~${Math.round(body.length / 1e3)} k chars) \u2014 I'm sending it as a text file so it's easy to save or search.`,
+              label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}${sourceTag} \u2192 file`
+            };
+          }
+          let inlineBody = body;
+          let truncationNote = "";
+          if (inlineBody.length > MAX_CHARS) {
+            inlineBody = inlineBody.slice(0, MAX_CHARS);
+            truncationNote = `
+
+[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters. The video is very long \u2014 the above covers the first portion.]`;
+          }
+          return {
+            ok: true,
+            content: header + inlineBody + truncationNote,
+            label: `get_youtube_transcript: ${rawSegments.length} segments, ~${totalDuration}${sourceTag}`
+          };
+        };
+        const withVisuals = async (result) => {
+          if (!result.ok) return result;
+          try {
+            const visualSummary = await visualPromise;
+            if (visualSummary) {
+              return {
+                ...result,
+                content: result.content + `
+
+${"\u2500".repeat(60)}
+` + visualSummary
+              };
+            }
+          } catch {
+          }
+          return result;
+        };
+        if (forceAudio) {
+          const { available: ytdlpOk } = getYtdlpStatus();
+          if (!ytdlpOk) {
+            return {
+              ok: false,
+              content: "Audio transcription is temporarily unavailable \u2014 the yt-dlp dependency is not installed on this server. Please try again later. If you have the local worker running on your PC it can handle audio transcription instead.",
+              label: "get_youtube_transcript: yt-dlp unavailable"
+            };
+          }
+        }
+        try {
+          const { segments: rawSegments, noCaptionsDetected, source: fetchedSource, asyncJobPending, jobId } = await fetchTranscriptCached(input, {
+            bypassCache,
+            audioOnly: forceAudio,
+            userId: ctx.userId,
+            signal: ctx.signal,
+            onFetchStart: () => {
+              ctx.state.onProgressMessage?.("\u{1F4DD} Fetching transcript\u2026");
+            }
+          });
+          if (asyncJobPending) {
+            const videoIdLabel = videoId ?? "this video";
+            return {
+              ok: true,
+              content: `I've started generating the transcript for this video using Supadata AI. This typically takes **5\u201310 minutes** for long videos. I'll send you a notification when it's ready \u2014 you can then ask me to summarize it or answer questions about it. Press the \u2B1B stop button to cancel transcript generation at any time.` + (jobId ? ` (job: ${jobId})` : ""),
+              label: `get_youtube_transcript: supadata-async-job-started (${videoIdLabel})`
+            };
+          }
+          let segments = rawSegments;
+          if (!segments || segments.length === 0) {
+            console.log(`[get_youtube_transcript] server strategies returned 0 segs \u2014 trying browser fallback`);
+            const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
+            if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
+            if (isWorkerOnline(ctx.userId)) {
+              console.log(`[get_youtube_transcript] browser fallback empty \u2014 forwarding to local worker`);
+              try {
+                const localSegs = await queueTranscriptJob(ctx.userId, input);
+                if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
+              } catch (lwErr) {
+                console.warn(`[get_youtube_transcript] local worker failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
+              }
+            }
+            if (noCaptionsDetected && !forceAudio) {
+              const { available: ytdlpOk } = getYtdlpStatus();
+              if (!ytdlpOk) {
+                console.log(`[get_youtube_transcript] noCaptionsDetected but yt-dlp unavailable \u2014 skipping audio auto-retry`);
+              } else {
+                console.log(`[get_youtube_transcript] noCaptionsDetected \u2014 auto-retrying with audioOnly=true`);
+                try {
+                  const { segments: audioSegs, source: audioRetrySource } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
+                  if (audioSegs.length > 0) {
+                    return withVisuals(buildResult(audioSegs, audioRetrySource));
+                  }
+                } catch (audioRetryErr) {
+                  const retryMsg = audioRetryErr instanceof Error ? audioRetryErr.message : String(audioRetryErr);
+                  if (retryMsg.startsWith("YTDLP_UNAVAILABLE:")) {
+                    console.warn(`[get_youtube_transcript] audio auto-retry skipped: yt-dlp unavailable`);
+                  } else {
+                    console.warn(`[get_youtube_transcript] audio auto-retry failed: ${retryMsg}`);
+                  }
+                }
+              }
+            }
+            const { available: ytdlpOkForHint } = getYtdlpStatus();
+            const audioHint = noCaptionsDetected && !forceAudio ? ytdlpOkForHint ? "\n\n\u{1F4A1} **This video has no official captions and the automatic audio transcription also failed.** To retry via direct audio transcription, call `get_youtube_transcript` again with `force_audio=true` \u2014 this downloads and transcribes the audio using Whisper and bypasses caption lookups entirely." : "\n\n\u26A0\uFE0F **This video has no official captions, and audio transcription is currently unavailable** because the yt-dlp dependency is not installed on this server. Please try again later." : "";
+            console.log(`[get_youtube_transcript] all strategies empty \u2014 trying Tavily web search`);
+            const tavilyResult = await fetchViaTavily(input);
+            if (tavilyResult) {
+              return {
+                ...tavilyResult,
+                content: tavilyResult.content + audioHint
+              };
+            }
+            return {
+              ok: false,
+              content: "No transcript could be retrieved for this video. It may have captions disabled, be a live stream, or be blocked from server access. If you have the local worker running on your PC, it can often succeed where the server cannot." + audioHint,
+              label: "get_youtube_transcript: all strategies exhausted"
+            };
+          }
+          return withVisuals(buildResult(segments, fetchedSource));
+        } catch (err2) {
+          if (err2 instanceof Error && (err2.name === "AbortError" || err2.message?.includes("aborted"))) {
+            throw err2;
+          }
+          const msg = err2 instanceof Error ? err2.message : String(err2);
+          const lower = msg.toLowerCase();
+          if (msg.startsWith("LOGIN_REQUIRED")) {
+            return {
+              ok: false,
+              content: "This video requires a signed-in YouTube account to access (private or members-only video). I can't retrieve its transcript.",
+              label: "get_youtube_transcript: login required"
+            };
+          }
+          if (msg.startsWith("CONTENT_RESTRICTED")) {
+            return {
+              ok: false,
+              content: "This video is restricted (age-restricted, region-locked, or not available). I can't retrieve its transcript without a logged-in account.",
+              label: "get_youtube_transcript: content restricted"
+            };
+          }
+          if (msg.startsWith("TOO_MANY_REQUESTS") || msg.startsWith("RATE_LIMITED") || lower.includes("too many requests") || lower.includes("429")) {
+            return {
+              ok: false,
+              content: "YouTube is rate-limiting transcript requests right now. Please wait a moment and try again.",
+              label: "get_youtube_transcript: rate limited"
+            };
+          }
+          if (lower.includes("disabled") || lower.includes("no transcript") || lower === "transcript is disabled on this video") {
+            return {
+              ok: false,
+              content: "This video doesn't have captions available. The creator may have disabled transcripts, or it may be a live stream. To attempt audio transcription directly via Whisper, call `get_youtube_transcript` again with `force_audio=true`.",
+              label: "get_youtube_transcript: no captions"
+            };
+          }
+          if (msg.startsWith("YTDLP_UNAVAILABLE:")) {
+            return {
+              ok: false,
+              content: "Audio transcription is temporarily unavailable \u2014 the yt-dlp dependency is not installed on this server. Please try again later. If you have the local worker running on your PC it can handle audio transcription instead.",
+              label: "get_youtube_transcript: yt-dlp unavailable"
+            };
+          }
+          if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
+            console.warn(`[get_youtube_transcript] audio-download-failed for ${videoId ?? input}: ${msg}`);
+            return {
+              ok: false,
+              content: "The audio download failed \u2014 YouTube may be blocking this request from the server. You can try again in a moment, or start the local worker on your PC for better results.",
+              label: "get_youtube_transcript: audio-download-failed"
+            };
+          }
+          console.log(`[get_youtube_transcript] non-terminal error (${msg}) \u2014 trying browser fallback`);
+          const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
+          if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
+          if (isWorkerOnline(ctx.userId)) {
+            console.log(`[get_youtube_transcript] browser also failed \u2014 forwarding to local worker`);
+            try {
+              const localSegs = await queueTranscriptJob(ctx.userId, input);
+              if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
+            } catch (lwErr) {
+              console.warn(`[get_youtube_transcript] local worker also failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
+            }
+          }
+          console.log(`[get_youtube_transcript] all strategies failed \u2014 trying Tavily web search`);
+          const tavilyFallback = await fetchViaTavily(input);
+          if (tavilyFallback) return tavilyFallback;
+          console.error(`[get_youtube_transcript] all strategies exhausted: ${msg}`);
+          return {
+            ok: false,
+            content: "Couldn't retrieve the transcript for this video right now. The video may be private, have captions disabled, or YouTube is blocking server access. You can try again in a moment, or start the local worker on your PC for better results.",
+            label: "get_youtube_transcript: all strategies exhausted"
+          };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/videoTranscript.ts
+var FILE_THRESHOLD, MAX_CHARS2, videoTranscriptTool;
+var init_videoTranscript = __esm({
+  "server/agent/tools/videoTranscript.ts"() {
+    "use strict";
+    init_geminiTranscript();
+    FILE_THRESHOLD = 4e4;
+    MAX_CHARS2 = 12e4;
+    videoTranscriptTool = {
+      name: "transcribe_video_url",
+      description: "Transcribe any publicly accessible video file using Google Gemini AI \u2014 Google Drive share links, Dropbox links, direct mp4/mov/webm URLs, or any other publicly reachable video up to 2 GB. The video is streamed directly to Google's File API and transcribed by Gemini natively. Use this when the user shares a direct video file link and asks for a transcript, summary, or mentions Gemini transcription for a non-YouTube video file. Do NOT use this for YouTube URLs \u2014 use get_youtube_transcript for those instead (it handles YouTube natively without downloading the video).",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description: "Public URL to the video file. Supported: Google Drive share links (drive.google.com/file/d/\u2026), Dropbox share links, direct .mp4/.mov/.webm URLs, etc."
+          },
+          mime_type: {
+            type: "string",
+            description: "Optional MIME type override (e.g. 'video/mp4', 'video/quicktime'). If omitted, it is inferred from the URL extension \u2014 usually this is fine."
+          }
+        },
+        required: ["url"]
+      },
+      async execute(args, ctx) {
+        const rawUrl = String(args.url || "").trim();
+        if (!rawUrl) {
+          return {
+            ok: false,
+            content: "Please provide a public video URL to transcribe.",
+            label: "transcribe_video_url: missing URL"
+          };
+        }
+        if (/youtube\.com|youtu\.be/i.test(rawUrl)) {
+          return {
+            ok: false,
+            content: "That looks like a YouTube URL. Use the get_youtube_transcript tool for YouTube videos \u2014 it can fetch them without downloading the full video file.",
+            label: "transcribe_video_url: YouTube URL rejected"
+          };
+        }
+        if (!isGeminiTranscriptAvailable()) {
+          return {
+            ok: false,
+            content: "Video transcription via File API is not available \u2014 the Gemini API key is not configured.",
+            label: "transcribe_video_url: Gemini not available"
+          };
+        }
+        const mimeType = args.mime_type ? String(args.mime_type) : void 0;
+        const normalizedUrl = normalizeVideoUrl(rawUrl);
+        console.log(
+          `[transcribe_video_url] Starting transcription for user=${ctx.userId} url="${rawUrl}"`
+        );
+        let transcript;
+        try {
+          transcript = await transcribeVideoFromUrl(rawUrl, mimeType);
+        } catch (err2) {
+          const msg = err2 instanceof Error ? err2.message : String(err2);
+          console.error(`[transcribe_video_url] Failed for "${rawUrl}":`, msg);
+          return {
+            ok: false,
+            content: `Could not transcribe the video: ${msg}`,
+            label: "transcribe_video_url: error"
+          };
+        }
+        if (!transcript || !transcript.trim()) {
+          return {
+            ok: false,
+            content: "Gemini returned an empty transcript. The video may contain no speech, or the file could not be processed. Please check the URL and try again.",
+            label: "transcribe_video_url: empty transcript"
+          };
+        }
+        const header = `[AI-generated transcript via Gemini File API]
+Source: ${normalizedUrl !== rawUrl ? `${rawUrl} (resolved to direct download)` : rawUrl}
+${"\u2500".repeat(60)}
+`;
+        const fullText = header + transcript;
+        if (transcript.length > FILE_THRESHOLD) {
+          const pending = ctx.state.pendingAttachments ||= [];
+          pending.push({
+            kind: "document",
+            filename: `transcript-video.txt`,
+            content: fullText,
+            caption: `Full video transcript (~${Math.round(transcript.length / 1e3)} k chars).`,
+            mimeType: "text/plain"
+          });
+          return {
+            ok: true,
+            content: `Transcript complete (~${Math.round(transcript.length / 1e3)} k chars). Sending as a text file so it's easy to save or search.`,
+            label: "transcribe_video_url: gemini \u2192 file"
+          };
+        }
+        let inlineBody = transcript;
+        let truncNote = "";
+        if (inlineBody.length > MAX_CHARS2) {
+          inlineBody = inlineBody.slice(0, MAX_CHARS2);
+          truncNote = `
+
+[Transcript truncated at ${MAX_CHARS2.toLocaleString()} characters.]`;
+        }
+        return {
+          ok: true,
+          content: header + inlineBody + truncNote,
+          label: "transcribe_video_url: gemini"
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/xSearch.ts
+function formatTimestamp2(iso2) {
+  if (!iso2) return "unknown time";
+  try {
+    const d = new Date(iso2);
+    const now = Date.now();
+    const diffMs = now - d.getTime();
+    const diffMins = Math.floor(diffMs / 6e4);
+    if (diffMins < 60) return `${diffMins}m ago`;
+    const diffHrs = Math.floor(diffMins / 60);
+    if (diffHrs < 24) return `${diffHrs}h ago`;
+    const diffDays = Math.floor(diffHrs / 24);
+    return `${diffDays}d ago`;
+  } catch {
+    return iso2;
+  }
+}
+function formatNumber(n) {
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  return String(n);
+}
+function formatResults(tweets, userMap, query) {
+  if (tweets.length === 0) return `No posts found on X for: "${query}"`;
+  const lines = [`**X Search: "${query}"** \u2014 ${tweets.length} result${tweets.length === 1 ? "" : "s"}
+`];
+  for (let i = 0; i < tweets.length; i++) {
+    const t = tweets[i];
+    const user = t.author_id ? userMap.get(t.author_id) : void 0;
+    const handle = user ? `@${user.username}` : "(unknown)";
+    const name = user?.name || handle;
+    const when = formatTimestamp2(t.created_at);
+    const url = `https://x.com/${user?.username || "i"}/status/${t.id}`;
+    const metrics = t.public_metrics;
+    const statsStr = metrics ? `\u2764\uFE0F ${formatNumber(metrics.like_count)}  \u{1F501} ${formatNumber(metrics.retweet_count)}  \u{1F4AC} ${formatNumber(metrics.reply_count)}` : "";
+    lines.push(
+      `${i + 1}. **${name}** (${handle}) \xB7 ${when}
+   ${t.text.replace(/\n+/g, " ")}
+` + (statsStr ? `   ${statsStr}
+` : "") + `   ${url}`
+    );
+  }
+  return lines.join("\n");
+}
+var X_API_BASE, xSearchTool;
+var init_xSearch = __esm({
+  "server/agent/tools/xSearch.ts"() {
+    "use strict";
+    X_API_BASE = "https://api.twitter.com/2";
+    xSearchTool = {
+      name: "x_search",
+      description: "Search X (Twitter) for recent posts about a topic, brand, person, or event. Returns real-time results including post text, author, timestamp, likes, retweets, and URL. Use this when the user wants social signals, trending topics, public reactions, brand mentions, or thought-leader opinions on X. Different from web_search \u2014 this surfaces live social conversation, not indexed web pages.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "X search query. Supports keywords, hashtags (#AI), mentions (@elonmusk), and operators like 'from:username', 'lang:en'. Example: 'OpenAI GPT-5 lang:en'"
+          },
+          max_results: {
+            type: "number",
+            description: "Number of posts to return (10\u201350, default 20)."
+          },
+          sort_order: {
+            type: "string",
+            enum: ["recency", "relevancy"],
+            description: "Sort by 'recency' (newest first, default) or 'relevancy' (most relevant first)."
+          }
+        },
+        required: ["query"]
+      },
+      async execute(args, ctx) {
+        const bearerToken = process.env.X_BEARER_TOKEN;
+        if (!bearerToken) {
+          return {
+            ok: false,
+            content: "X search is not configured. The X_BEARER_TOKEN secret is missing.",
+            label: "X search unavailable"
+          };
+        }
+        const query = String(args.query || "").trim();
+        if (!query) {
+          return { ok: false, content: "Please provide a search query.", label: "Missing query" };
+        }
+        const maxResults = typeof args.max_results === "number" ? Math.min(Math.max(Math.round(args.max_results), 10), 50) : 20;
+        const sortOrder = args.sort_order === "relevancy" ? "relevancy" : "recency";
+        console.log(`[x_search] query="${query}" max=${maxResults} sort=${sortOrder} (user=${ctx.userId})`);
+        try {
+          const params = new URLSearchParams({
+            query,
+            max_results: String(maxResults),
+            sort_order: sortOrder,
+            "tweet.fields": "created_at,author_id,public_metrics",
+            expansions: "author_id",
+            "user.fields": "username,name"
+          });
+          const response = await fetch(`${X_API_BASE}/tweets/search/recent?${params.toString()}`, {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${bearerToken}`,
+              "Content-Type": "application/json"
+            },
+            signal: AbortSignal.timeout(15e3)
+          });
+          const body = await response.json();
+          if (!response.ok) {
+            const errTitle = body.title || "X API error";
+            const errDetail = body.detail || body.errors?.[0]?.message || response.statusText;
+            if (response.status === 401 || response.status === 403) {
+              return {
+                ok: false,
+                content: `X search authentication failed (${response.status}). Please check your X_BEARER_TOKEN.`,
+                label: "X auth failed",
+                detail: errDetail
+              };
+            }
+            if (response.status === 429) {
+              return {
+                ok: false,
+                content: "X search rate limit reached. Please try again shortly.",
+                label: "X rate limited"
+              };
+            }
+            return {
+              ok: false,
+              content: `X search error (${response.status}): ${errTitle} \u2014 ${errDetail}`,
+              label: "X search failed",
+              detail: errDetail
+            };
+          }
+          const tweets = body.data ?? [];
+          const users3 = body.includes?.users ?? [];
+          const resultCount = body.meta?.result_count ?? tweets.length;
+          if (resultCount === 0 || tweets.length === 0) {
+            return {
+              ok: true,
+              content: `No recent posts found on X for: "${query}". The query may be too specific or there's no recent activity.`,
+              label: `X search: no results for "${query}"`
+            };
+          }
+          const userMap = new Map(users3.map((u) => [u.id, u]));
+          const formatted = formatResults(tweets, userMap, query);
+          return {
+            ok: true,
+            content: formatted,
+            label: `X search (${tweets.length} posts): ${query}`,
+            detail: `Found ${tweets.length} posts, sorted by ${sortOrder}`
+          };
+        } catch (err2) {
+          const msg = err2 instanceof Error ? err2.message : String(err2);
+          if (msg.includes("TimeoutError") || msg.includes("timed out") || msg.includes("ETIMEDOUT")) {
+            return { ok: false, content: "X search timed out. Please try again.", label: "X search timeout" };
+          }
+          console.error(`[x_search] error: ${msg}`);
+          return {
+            ok: false,
+            content: `X search failed: ${msg}`,
+            label: "X search error",
+            detail: msg
+          };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/registerApproval.ts
+var registerApprovalTool;
+var init_registerApproval = __esm({
+  "server/agent/tools/registerApproval.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    registerApprovalTool = {
+      name: "register_approval",
+      description: "Register a Discord message as requiring user approval via emoji reaction (\u2705 or \u274C). Use this AFTER posting a script, plan, draft, or other item to Discord that needs the user's sign-off. When the user reacts with \u2705, the onApprove action fires automatically; \u274C fires onReject. The onApprove/onReject actions define what happens next: run_prompt, run_schedule, spawn_subagent, or notify_only.",
+      parameters: {
+        type: "object",
+        properties: {
+          messageId: {
+            type: "string",
+            description: "The Discord message ID of the posted item awaiting approval."
+          },
+          channelId: {
+            type: "string",
+            description: "The Discord channel ID where the message was posted."
+          },
+          guildId: {
+            type: "string",
+            description: "Optional: the Discord guild/server ID."
+          },
+          type: {
+            type: "string",
+            enum: ["script", "task", "plan", "custom"],
+            description: "The type of item awaiting approval."
+          },
+          content: {
+            type: "string",
+            description: "The text content of the posted item (used as context for the approval action)."
+          },
+          onApprove: {
+            type: "object",
+            description: "Action to execute when the user reacts with \u2705. Types: run_prompt, run_schedule, spawn_subagent, notify_only.",
+            properties: {
+              type: { type: "string" },
+              prompt: { type: "string" },
+              scheduleId: { type: "string" },
+              agentType: { type: "string" },
+              title: { type: "string" }
+            }
+          },
+          onReject: {
+            type: "object",
+            description: "Optional: action to execute when the user reacts with \u274C.",
+            properties: {
+              type: { type: "string" },
+              prompt: { type: "string" }
+            }
+          }
+        },
+        required: ["messageId", "channelId", "type", "content", "onApprove"]
+      },
+      async execute(args, ctx) {
+        const { userId } = ctx;
+        const typedArgs = args;
+        try {
+          await db.insert(discordPendingApprovals).values({
+            messageId: typedArgs.messageId,
+            userId,
+            channelId: typedArgs.channelId,
+            guildId: typedArgs.guildId,
+            type: typedArgs.type,
+            content: typedArgs.content,
+            onApprove: typedArgs.onApprove,
+            onReject: typedArgs.onReject ?? null,
+            status: "pending"
+          }).onConflictDoNothing();
+          return {
+            ok: true,
+            content: `Approval registered for message ${typedArgs.messageId}. The user can react with \u2705 to approve or \u274C to skip.`,
+            label: "Approval registered"
+          };
+        } catch (err2) {
+          const msg = err2 instanceof Error ? err2.message : String(err2);
+          return { ok: false, content: `Failed to register approval: ${msg}`, label: "Approval registration failed" };
+        }
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordPinMessage.ts
+var discordPinMessageTool;
+var init_discordPinMessage = __esm({
+  "server/agent/tools/discordPinMessage.ts"() {
+    "use strict";
+    init_manager();
+    discordPinMessageTool = {
+      name: "discord_pin_message",
+      description: "Pin a message in a Discord channel so it appears at the top for easy reference. Use this when the user says 'pin that', when Jarvis creates a formal deliverable (architecture document, research report, project plan), or when posting something that should be permanently accessible in the channel.",
+      parameters: {
+        type: "object",
+        properties: {
+          channelId: {
+            type: "string",
+            description: "The Discord channel ID where the message was posted."
+          },
+          messageId: {
+            type: "string",
+            description: "The Discord message ID to pin."
+          }
+        },
+        required: ["channelId", "messageId"]
+      },
+      async execute(args, ctx) {
+        const { channelId, messageId } = args;
+        const { userId } = ctx;
+        const pinned = await pinDiscordMessage(userId, channelId, messageId);
+        if (!pinned) {
+          return {
+            ok: false,
+            content: "Couldn't pin the message \u2014 the bot may not have the Manage Messages permission, or the message wasn't found.",
+            label: "Pin failed"
+          };
+        }
+        return {
+          ok: true,
+          content: `Message ${messageId} has been pinned in the channel.`,
+          label: "Message pinned"
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/discordSendToChannel.ts
+var discordSendToChannelTool;
+var init_discordSendToChannel = __esm({
+  "server/agent/tools/discordSendToChannel.ts"() {
+    "use strict";
+    init_manager();
+    discordSendToChannelTool = {
+      name: "discord_send_to_channel",
+      description: "Send a message to any channel in the user's Discord server by name. Use this after discord_create_channel to post content into the newly created channel, or any time the user asks you to post a message to a specific channel by name. channelName should match the channel name exactly (lowercase, hyphens, e.g. 'test-research'). Only post content sourced from real tool results \u2014 never post hallucinated content.",
+      parameters: {
+        type: "object",
+        properties: {
+          channelName: {
+            type: "string",
+            description: "The name of the target channel (lowercase, hyphens instead of spaces). Must match an existing channel in the user's Discord server."
+          },
+          message: {
+            type: "string",
+            description: "The message to post. Markdown is supported. Long messages are split into multiple Discord messages automatically."
+          }
+        },
+        required: ["channelName", "message"]
+      },
+      async execute(args, ctx) {
+        const { channelName, message } = args;
+        const { userId } = ctx;
+        const ok3 = await postToDiscordChannel(userId, channelName, null, message);
+        if (!ok3) {
+          return {
+            ok: false,
+            content: `Could not post to #${channelName}. Check that the channel exists, the bot has access to it, and the Discord integration is running.`,
+            label: `Discord post to #${channelName} failed`
+          };
+        }
+        return {
+          ok: true,
+          content: `Posted to #${args.channelName}.`,
+          label: `Discord \u2192 #${args.channelName}`
+        };
+      }
+    };
+  }
+});
+
+// server/agent/tools/setupNamedAgent.ts
+var DEFAULT_PERSONAS, DEFAULT_NAMES, setupNamedAgentTool;
+var init_setupNamedAgent = __esm({
+  "server/agent/tools/setupNamedAgent.ts"() {
+    "use strict";
+    init_manager();
+    DEFAULT_PERSONAS = {
+      coder: "You are a focused software engineer. You implement features, write clean code, and provide detailed progress updates. Always summarize what you just built and what you're working on next.",
+      researcher: "You are a deep research specialist. You find information, synthesize stories, and produce structured briefings. Always cite sources and provide multiple angles on each story.",
+      writer: "You are a content writing agent. You write scripts, posts, and articles in the user's established voice and style. Always match the tone of prior approved content.",
+      visual: "You are a visual concepts specialist. You generate detailed thumbnail concepts, design briefs, and visual direction notes with specific color palettes, layouts, and text overlay suggestions.",
+      custom: "You are a specialized assistant. Focus on the task at hand and provide high-quality, actionable outputs."
+    };
+    DEFAULT_NAMES = {
+      coder: "Charlie",
+      researcher: "Echo",
+      writer: "Quill",
+      visual: "Pixel"
+    };
+    setupNamedAgentTool = {
+      name: "setup_named_agent",
+      description: "Create a named AI sub-agent with a distinct persona that lives in its own dedicated Discord channel. Built-in roles: coder (Charlie), researcher (Echo), writer (Quill), visual (Pixel). Use when the user asks to 'set up a coding agent', 'create a research assistant in Discord', etc. Each agent gets its own channel and responds with a focused persona when messaged there. Optionally enable an autonomous loop where the agent proactively works on tasks at a set interval.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "The agent's name (e.g. 'Charlie', 'Echo'). Defaults to the role's default name if omitted."
+          },
+          role: {
+            type: "string",
+            enum: ["coder", "researcher", "writer", "visual", "custom"],
+            description: "The agent's role. Determines the default persona and channel name."
+          },
+          persona: {
+            type: "string",
+            description: "Optional custom persona text. Defaults to the built-in persona for the role."
+          },
+          loopEnabled: {
+            type: "boolean",
+            description: "Set to true to enable autonomous operation \u2014 the agent will proactively work on tasks at the set interval."
+          },
+          loopIntervalMinutes: {
+            type: "number",
+            description: "How often the autonomous loop fires in minutes. Default: 60."
+          },
+          loopPrompt: {
+            type: "string",
+            description: "What the looping agent does each cycle (e.g. 'Check the goal list and work on the next highest-priority task')."
+          }
+        },
+        required: ["role"]
+      },
+      async execute(args, ctx) {
+        const { userId } = ctx;
+        const typedArgs = args;
+        const role = typedArgs.role || "custom";
+        const name = typedArgs.name || DEFAULT_NAMES[role] || "Agent";
+        const persona = typedArgs.persona || DEFAULT_PERSONAS[role] || DEFAULT_PERSONAS.custom;
+        const channelName = `${name.toLowerCase()}-${role}`;
+        const channelResult = await createDiscordChannel(userId, {
+          channelName,
+          topic: `${name} \u2014 ${role} agent. ${persona.slice(0, 100)}`,
+          categoryName: "\u{1F9E0} Jarvis Workspace",
+          pinMessage: `**${name} \u2014 ${role.charAt(0).toUpperCase() + role.slice(1)} Agent**
+
+${persona}
+
+_Message ${name} here to get started. ${typedArgs.loopEnabled ? `I'll also proactively post updates every ${typedArgs.loopIntervalMinutes ?? 60} minutes.` : "I respond to your messages."}_`
+        });
+        const channelId = channelResult.channelId;
+        const agentId = await registerNamedAgent(userId, {
+          name,
+          role,
+          persona,
+          channelId,
+          channelName,
+          loopEnabled: typedArgs.loopEnabled,
+          loopIntervalMinutes: typedArgs.loopIntervalMinutes,
+          loopPrompt: typedArgs.loopPrompt
+        });
+        const loopInfo = typedArgs.loopEnabled ? ` The loop is enabled \u2014 ${name} will proactively post updates every ${typedArgs.loopIntervalMinutes ?? 60} minutes.` : "";
+        return {
+          ok: true,
+          content: `Created **${name}** (${role} agent) with a dedicated #${channelName} channel.${loopInfo} Message ${name} in that channel to get started. Agent ID: \`${agentId}\`.`,
+          label: `Agent created: ${name} (${role})`,
+          detail: agentId
+        };
+      }
+    };
   }
 });
 
@@ -32227,7 +32925,7 @@ For each topic, research the story more deeply: what happened, why audiences in 
 });
 
 // server/agent/tools/setupDiscordWorkspace.ts
-import { eq as eq45, and as and34 } from "drizzle-orm";
+import { eq as eq46, and as and34 } from "drizzle-orm";
 var ALL_CHANNELS, channelList, setupDiscordWorkspaceTool;
 var init_setupDiscordWorkspace = __esm({
   "server/agent/tools/setupDiscordWorkspace.ts"() {
@@ -32268,7 +32966,7 @@ var init_setupDiscordWorkspace = __esm({
           }
           guildId = guilds[0].id;
         }
-        const rows = await db.select().from(channelLinks).where(and34(eq45(channelLinks.userId, userId), eq45(channelLinks.channel, "discord"))).limit(1);
+        const rows = await db.select().from(channelLinks).where(and34(eq46(channelLinks.userId, userId), eq46(channelLinks.channel, "discord"))).limit(1);
         const existingMeta = rows[0]?.metadata ?? {};
         const existingWorkspace = existingMeta.workspace;
         if (existingWorkspace && existingWorkspace.guildId === guildId) {
@@ -32801,7 +33499,7 @@ var init_weatherLookup = __esm({
 });
 
 // server/agent/tools/sessionTools.ts
-import { eq as eq46, and as and35, desc as desc10 } from "drizzle-orm";
+import { eq as eq47, and as and35, desc as desc11 } from "drizzle-orm";
 function formatAge(date2) {
   if (!date2) return "unknown";
   const diffMs = Date.now() - new Date(date2).getTime();
@@ -32861,10 +33559,10 @@ var init_sessionTools = __esm({
             toolCallsCount: agentJobs.toolCallsCount
           }).from(agentJobs).where(
             and35(
-              eq46(agentJobs.userId, ctx.userId),
-              eq46(agentJobs.status, statusFilter)
+              eq47(agentJobs.userId, ctx.userId),
+              eq47(agentJobs.status, statusFilter)
             )
-          ).orderBy(desc10(agentJobs.createdAt)).limit(limit) : await db.select({
+          ).orderBy(desc11(agentJobs.createdAt)).limit(limit) : await db.select({
             id: agentJobs.id,
             agentType: agentJobs.agentType,
             title: agentJobs.title,
@@ -32873,7 +33571,7 @@ var init_sessionTools = __esm({
             completedAt: agentJobs.completedAt,
             turns: agentJobs.turns,
             toolCallsCount: agentJobs.toolCallsCount
-          }).from(agentJobs).where(eq46(agentJobs.userId, ctx.userId)).orderBy(desc10(agentJobs.createdAt)).limit(limit);
+          }).from(agentJobs).where(eq47(agentJobs.userId, ctx.userId)).orderBy(desc11(agentJobs.createdAt)).limit(limit);
           if (rows.length === 0) {
             return {
               ok: true,
@@ -32925,8 +33623,8 @@ ${lines.join("\n")}`;
         try {
           const [job] = await db.select().from(agentJobs).where(
             and35(
-              eq46(agentJobs.id, jobId),
-              eq46(agentJobs.userId, ctx.userId)
+              eq47(agentJobs.id, jobId),
+              eq47(agentJobs.userId, ctx.userId)
             )
           ).limit(1);
           if (!job) {
@@ -32966,7 +33664,7 @@ ${JSON.stringify(r, null, 2)}`);
             summary: deliverables.summary,
             body: deliverables.body,
             status: deliverables.status
-          }).from(deliverables).where(eq46(deliverables.jobId, jobId)).limit(1);
+          }).from(deliverables).where(eq47(deliverables.jobId, jobId)).limit(1);
           const del = deliverables2[0];
           if (del) {
             parts.push(
@@ -33106,7 +33804,7 @@ The agent is now running. You can check its status with sessions_list or read it
           return { ok: false, content: "No job_id provided.", label: "sessions_cancel: no ID" };
         }
         try {
-          const [job] = await db.select().from(agentJobs).where(and35(eq46(agentJobs.id, jobId), eq46(agentJobs.userId, ctx.userId))).limit(1);
+          const [job] = await db.select().from(agentJobs).where(and35(eq47(agentJobs.id, jobId), eq47(agentJobs.userId, ctx.userId))).limit(1);
           if (!job) {
             return {
               ok: false,
@@ -33132,7 +33830,7 @@ The agent is now running. You can check its status with sessions_list or read it
           await db.update(agentJobs).set({
             status: newStatus,
             completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0
-          }).where(eq46(agentJobs.id, jobId));
+          }).where(eq47(agentJobs.id, jobId));
           const msg = newStatus === "cancelled" ? `Job "${job.title}" cancelled immediately \u2014 it was still queued and never started.` : `Job "${job.title}" marked for cancellation. It will stop at the next checkpoint (usually within seconds).`;
           console.log(
             `[${ctx.channel || "Agent"}] sessions_cancel job=${jobId} "${job.title}" \u2192 ${newStatus}`
@@ -33149,10 +33847,10 @@ The agent is now running. You can check its status with sessions_list or read it
 
 // server/agent/tools/imageGenerate.ts
 import OpenAI7 from "openai";
-import { eq as eq47 } from "drizzle-orm";
+import { eq as eq48 } from "drizzle-orm";
 async function getTelegramChatId(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq47(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq48(telegramLinks.userId, userId)).limit(1);
     return rows[0]?.chatId ?? null;
   } catch {
     return null;
@@ -33533,10 +34231,10 @@ var init_imageGenerate = __esm({
 });
 
 // server/agent/tools/videoGenerate.ts
-import { eq as eq48 } from "drizzle-orm";
+import { eq as eq49 } from "drizzle-orm";
 async function getTelegramChatId2(userId) {
   try {
-    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq48(telegramLinks.userId, userId)).limit(1);
+    const rows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq49(telegramLinks.userId, userId)).limit(1);
     return rows[0]?.chatId ?? null;
   } catch {
     return null;
@@ -33814,7 +34512,7 @@ __export(cronTools_exports, {
   parseNaturalTime: () => parseNaturalTime,
   parseRecurringExpr: () => parseRecurringExpr
 });
-import { eq as eq49, and as and36, or as or2, desc as desc11, gte as gte5, isNotNull } from "drizzle-orm";
+import { eq as eq50, and as and36, or as or2, desc as desc12, gte as gte5, isNotNull } from "drizzle-orm";
 function parseTimeOfDay(str) {
   const m = str.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);
   if (!m) return null;
@@ -34128,9 +34826,9 @@ Job ID: ${task.id}
         try {
           const now = /* @__PURE__ */ new Date();
           const recentWindow = new Date(now.getTime() - 24 * 3600 * 1e3);
-          const rows = includeCompleted ? await db.select().from(jarvisScheduledTasks).where(eq49(jarvisScheduledTasks.userId, ctx.userId)).orderBy(desc11(jarvisScheduledTasks.scheduledAt)).limit(limit) : await db.select().from(jarvisScheduledTasks).where(
+          const rows = includeCompleted ? await db.select().from(jarvisScheduledTasks).where(eq50(jarvisScheduledTasks.userId, ctx.userId)).orderBy(desc12(jarvisScheduledTasks.scheduledAt)).limit(limit) : await db.select().from(jarvisScheduledTasks).where(
             and36(
-              eq49(jarvisScheduledTasks.userId, ctx.userId),
+              eq50(jarvisScheduledTasks.userId, ctx.userId),
               or2(
                 gte5(jarvisScheduledTasks.scheduledAt, now),
                 and36(
@@ -34191,8 +34889,8 @@ ${lines.join("\n")}`;
         try {
           const existing = await db.select({ id: jarvisScheduledTasks.id, title: jarvisScheduledTasks.title }).from(jarvisScheduledTasks).where(
             and36(
-              eq49(jarvisScheduledTasks.id, jobId),
-              eq49(jarvisScheduledTasks.userId, ctx.userId)
+              eq50(jarvisScheduledTasks.id, jobId),
+              eq50(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).limit(1);
           if (existing.length === 0) {
@@ -34204,8 +34902,8 @@ ${lines.join("\n")}`;
           }
           await db.delete(jarvisScheduledTasks).where(
             and36(
-              eq49(jarvisScheduledTasks.id, jobId),
-              eq49(jarvisScheduledTasks.userId, ctx.userId)
+              eq50(jarvisScheduledTasks.id, jobId),
+              eq50(jarvisScheduledTasks.userId, ctx.userId)
             )
           );
           console.log(`[${ctx.channel || "Agent"}] cron_delete id=${jobId} title="${existing[0].title}"`);
@@ -34259,8 +34957,8 @@ ${lines.join("\n")}`;
         try {
           const existing = await db.select().from(jarvisScheduledTasks).where(
             and36(
-              eq49(jarvisScheduledTasks.id, jobId),
-              eq49(jarvisScheduledTasks.userId, ctx.userId)
+              eq50(jarvisScheduledTasks.id, jobId),
+              eq50(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).limit(1);
           if (existing.length === 0) {
@@ -34313,8 +35011,8 @@ ${lines.join("\n")}`;
           }
           const [updated] = await db.update(jarvisScheduledTasks).set(patch).where(
             and36(
-              eq49(jarvisScheduledTasks.id, jobId),
-              eq49(jarvisScheduledTasks.userId, ctx.userId)
+              eq50(jarvisScheduledTasks.id, jobId),
+              eq50(jarvisScheduledTasks.userId, ctx.userId)
             )
           ).returning();
           const title = updated.title;
@@ -34338,8 +35036,8 @@ Shell command: \`${updated.shellCommand}\`` : patch.shellCommand === null ? "\nS
 });
 
 // server/agent/workflowEngine.ts
-import { eq as eq50 } from "drizzle-orm";
-function buildStepPrompt(workflow, stepIdx) {
+import { eq as eq51 } from "drizzle-orm";
+function buildStepPrompt2(workflow, stepIdx) {
   const steps = workflow.steps;
   const step = steps[stepIdx];
   const completedBefore = steps.slice(0, stepIdx).filter((s) => s.status === "complete");
@@ -34365,7 +35063,7 @@ async function executeWorkflowStep(workflow, stepIdx) {
   const steps = workflow.steps.map(
     (s, i) => i === stepIdx ? { ...s, status: "running", startedAt: (/* @__PURE__ */ new Date()).toISOString() } : s
   );
-  const enrichedPrompt = buildStepPrompt({ ...workflow, steps }, stepIdx);
+  const enrichedPrompt = buildStepPrompt2({ ...workflow, steps }, stepIdx);
   const step = steps[stepIdx];
   const { id: jobId } = await submitAgentJob2({
     userId: workflow.userId,
@@ -34380,14 +35078,14 @@ async function executeWorkflowStep(workflow, stepIdx) {
     currentStepIndex: stepIdx,
     status: "paused_waiting",
     updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq50(agentWorkflows.id, workflow.id));
+  }).where(eq51(agentWorkflows.id, workflow.id));
   console.log(
     `[Workflow] queued step ${stepIdx + 1}/${workflow.steps.length} workflow="${workflow.title}" job=${jobId}`
   );
   return jobId;
 }
 async function onWorkflowJobComplete(workflowId, stepIndex, _jobId, output) {
-  const [workflow] = await db.select().from(agentWorkflows).where(eq50(agentWorkflows.id, workflowId)).limit(1);
+  const [workflow] = await db.select().from(agentWorkflows).where(eq51(agentWorkflows.id, workflowId)).limit(1);
   if (!workflow) {
     console.warn(`[Workflow] onJobComplete: workflow ${workflowId} not found`);
     return;
@@ -34397,14 +35095,14 @@ async function onWorkflowJobComplete(workflowId, stepIndex, _jobId, output) {
   );
   const nextPendingIdx = steps.findIndex((s) => s.status === "pending");
   if (workflow.status !== "paused_waiting") {
-    await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq50(agentWorkflows.id, workflowId));
+    await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, workflowId));
     console.log(
       `[Workflow] step ${stepIndex + 1} complete (workflow paused \u2014 not advancing)`
     );
     return;
   }
   if (nextPendingIdx === -1) {
-    await db.update(agentWorkflows).set({ steps, status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq50(agentWorkflows.id, workflowId));
+    await db.update(agentWorkflows).set({ steps, status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, workflowId));
     console.log(`[Workflow] "${workflow.title}" complete \u2014 all steps done`);
     await notifyUser(
       workflow.userId,
@@ -34424,19 +35122,19 @@ All ${steps.length} step(s) finished.`
     return;
   }
   const updatedWorkflow = { ...workflow, steps };
-  await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq50(agentWorkflows.id, workflowId));
+  await db.update(agentWorkflows).set({ steps, updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, workflowId));
   const nextJobId = await executeWorkflowStep(updatedWorkflow, nextPendingIdx);
   console.log(
     `[Workflow] "${workflow.title}" auto-advanced \u2192 step ${nextPendingIdx + 1} job=${nextJobId}`
   );
 }
 async function onWorkflowJobFail(workflowId, stepIndex, error) {
-  const [workflow] = await db.select().from(agentWorkflows).where(eq50(agentWorkflows.id, workflowId)).limit(1);
+  const [workflow] = await db.select().from(agentWorkflows).where(eq51(agentWorkflows.id, workflowId)).limit(1);
   if (!workflow) return;
   const steps = workflow.steps.map(
     (s, i) => i === stepIndex ? { ...s, status: "failed", output: `Error: ${error}`, completedAt: (/* @__PURE__ */ new Date()).toISOString() } : s
   );
-  await db.update(agentWorkflows).set({ steps, status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq50(agentWorkflows.id, workflowId));
+  await db.update(agentWorkflows).set({ steps, status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, workflowId));
   await notifyUser(
     workflow.userId,
     "approval_request",
@@ -34466,7 +35164,7 @@ var init_workflowEngine = __esm({
 });
 
 // server/agent/tools/workflowTools.ts
-import { eq as eq51, and as and37, desc as desc12 } from "drizzle-orm";
+import { eq as eq52, and as and37, desc as desc13 } from "drizzle-orm";
 function stepStatusIcon(s) {
   switch (s.status) {
     case "complete":
@@ -34492,7 +35190,7 @@ function workflowSummary(w) {
   return lines.join("\n");
 }
 async function loadWorkflow(workflowId, userId) {
-  const [row] = await db.select().from(agentWorkflows).where(and37(eq51(agentWorkflows.id, workflowId), eq51(agentWorkflows.userId, userId))).limit(1);
+  const [row] = await db.select().from(agentWorkflows).where(and37(eq52(agentWorkflows.id, workflowId), eq52(agentWorkflows.userId, userId))).limit(1);
   return row || null;
 }
 var workflowCreateTool, workflowRunTool, workflowStatusTool, workflowPauseTool, workflowResumeTool, workflowListTool;
@@ -34596,7 +35294,7 @@ Call workflow_run with this ID to start execution.`,
         const steps = wf.steps;
         const nextIdx = steps.findIndex((s) => s.status === "pending");
         if (nextIdx === -1) {
-          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, wf.id));
+          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, wf.id));
           return { ok: true, content: "All steps were already complete. Workflow marked done.", label: "workflow_run: already done" };
         }
         try {
@@ -34672,7 +35370,7 @@ ${s.output.slice(0, 2e3)}`);
         if (wf.status === "paused") {
           return { ok: true, content: "Workflow is already paused.", label: "workflow_pause: already paused" };
         }
-        await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(and37(eq51(agentWorkflows.id, workflowId), eq51(agentWorkflows.userId, ctx.userId)));
+        await db.update(agentWorkflows).set({ status: "paused", updatedAt: /* @__PURE__ */ new Date() }).where(and37(eq52(agentWorkflows.id, workflowId), eq52(agentWorkflows.userId, ctx.userId)));
         console.log(`[${ctx.channel || "Agent"}] workflow_pause wf=${workflowId}`);
         return {
           ok: true,
@@ -34706,10 +35404,10 @@ ${s.output.slice(0, 2e3)}`);
         const steps = wf.steps;
         const nextIdx = steps.findIndex((s) => s.status === "pending");
         if (nextIdx === -1) {
-          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, wf.id));
+          await db.update(agentWorkflows).set({ status: "complete", updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, wf.id));
           return { ok: true, content: "All steps were already complete. Workflow marked done.", label: "workflow_resume: done" };
         }
-        await db.update(agentWorkflows).set({ status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq51(agentWorkflows.id, wf.id));
+        await db.update(agentWorkflows).set({ status: "active", updatedAt: /* @__PURE__ */ new Date() }).where(eq52(agentWorkflows.id, wf.id));
         try {
           const jobId = await executeWorkflowStep({ ...wf, status: "active" }, nextIdx);
           console.log(`[${ctx.channel || "Agent"}] workflow_resume wf=${workflowId} step=${nextIdx + 1} job=${jobId}`);
@@ -34738,7 +35436,7 @@ Background job queued: ${jobId}`,
       },
       async execute(args, ctx) {
         const includeComplete = args.include_complete === true;
-        const rows = await db.select().from(agentWorkflows).where(eq51(agentWorkflows.userId, ctx.userId)).orderBy(desc12(agentWorkflows.updatedAt)).limit(20);
+        const rows = await db.select().from(agentWorkflows).where(eq52(agentWorkflows.userId, ctx.userId)).orderBy(desc13(agentWorkflows.updatedAt)).limit(20);
         const filtered = includeComplete ? rows : rows.filter((w) => !["complete", "failed"].includes(w.status));
         if (filtered.length === 0) {
           return {
@@ -35054,7 +35752,7 @@ var init_safeWritePolicy = __esm({
 });
 
 // server/agent/tools/buildFeatureTool.ts
-import { and as and38, desc as desc13, eq as eq52, isNotNull as isNotNull2 } from "drizzle-orm";
+import { and as and38, desc as desc14, eq as eq53, isNotNull as isNotNull2 } from "drizzle-orm";
 function initToolResolver(resolver) {
   _toolResolver = resolver;
 }
@@ -35338,11 +36036,11 @@ Constraints: no uuid package; use Math.random().toString(36) for IDs; handle err
         try {
           const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
             and38(
-              eq52(openclawBuildLog.userId, ctx.userId),
-              eq52(openclawBuildLog.featureName, featureName),
-              eq52(openclawBuildLog.smokeTestPassed, true)
+              eq53(openclawBuildLog.userId, ctx.userId),
+              eq53(openclawBuildLog.featureName, featureName),
+              eq53(openclawBuildLog.smokeTestPassed, true)
             )
-          ).orderBy(desc13(openclawBuildLog.createdAt)).limit(1);
+          ).orderBy(desc14(openclawBuildLog.createdAt)).limit(1);
           const stored = priorRows[0]?.smokeTestArgs;
           if (stored && typeof stored === "object" && !Array.isArray(stored)) {
             priorPassingArgs = stored;
@@ -35473,12 +36171,12 @@ Fix the tool_code and call build_feature again with the corrected code.`,
         try {
           const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
             and38(
-              eq52(openclawBuildLog.userId, ctx.userId),
-              eq52(openclawBuildLog.featureName, toolName),
-              eq52(openclawBuildLog.smokeTestPassed, true),
+              eq53(openclawBuildLog.userId, ctx.userId),
+              eq53(openclawBuildLog.featureName, toolName),
+              eq53(openclawBuildLog.smokeTestPassed, true),
               isNotNull2(openclawBuildLog.smokeTestArgs)
             )
-          ).orderBy(desc13(openclawBuildLog.createdAt)).limit(1);
+          ).orderBy(desc14(openclawBuildLog.createdAt)).limit(1);
           const stored = priorRows[0]?.smokeTestArgs;
           if (stored && typeof stored === "object" && !Array.isArray(stored)) {
             priorPassingArgs = stored;
@@ -35635,7 +36333,7 @@ __export(capabilityGapAnalyzer_exports, {
   markCapabilityGapEntriesAddressed: () => markCapabilityGapEntriesAddressed,
   runCapabilityGapAnalysis: () => runCapabilityGapAnalysis
 });
-import { eq as eq53, and as and39, gte as gte6, or as or3, sql as sql16 } from "drizzle-orm";
+import { eq as eq54, and as and39, gte as gte6, or as or3, sql as sql16 } from "drizzle-orm";
 async function createGapInboxItem(userId, cluster) {
   try {
     const proposal = cluster.toolProposal;
@@ -35675,15 +36373,15 @@ function markCapabilityGapEntriesAddressed(userId, entries) {
   setImmediate(() => {
     const pairConditions = entries.map(
       (e) => and39(
-        eq53(capabilityGaps.userMessage, e.userMessage),
-        eq53(capabilityGaps.detectedReason, e.detectedReason)
+        eq54(capabilityGaps.userMessage, e.userMessage),
+        eq54(capabilityGaps.detectedReason, e.detectedReason)
       )
     );
     const pairFilter = pairConditions.length === 1 ? pairConditions[0] : or3(...pairConditions);
     db.update(capabilityGaps).set({ addressed: true }).where(
       and39(
-        eq53(capabilityGaps.userId, userId),
-        eq53(capabilityGaps.addressed, false),
+        eq54(capabilityGaps.userId, userId),
+        eq54(capabilityGaps.addressed, false),
         pairFilter
       )
     ).catch((err2) => {
@@ -35708,9 +36406,9 @@ async function _runAnalysisInner(userId) {
     count: sql16`COUNT(*)::int`
   }).from(capabilityGaps).where(
     and39(
-      eq53(capabilityGaps.userId, userId),
+      eq54(capabilityGaps.userId, userId),
       gte6(capabilityGaps.createdAt, sevenDaysAgo),
-      eq53(capabilityGaps.addressed, false)
+      eq54(capabilityGaps.addressed, false)
     )
   ).groupBy(
     capabilityGaps.userMessage,
@@ -35936,7 +36634,7 @@ var init_runGapAnalysisTool = __esm({
 // server/agent/tools/selfEditTools.ts
 import fs9 from "fs/promises";
 import path13 from "path";
-import { desc as desc14, and as and40, eq as eq54, gte as gte7 } from "drizzle-orm";
+import { desc as desc15, and as and40, eq as eq55, gte as gte7 } from "drizzle-orm";
 async function collectSourceFiles(absDir, root) {
   const results = [];
   let entries;
@@ -36102,7 +36800,7 @@ ${numbered}${truncNote}`,
         const sourceFilter = typeof args.source_filter === "string" ? args.source_filter.trim().toLowerCase() : null;
         try {
           const since = new Date(Date.now() - lookbackMinutes * 60 * 1e3);
-          const rows = await db.select().from(systemErrorLog).where(gte7(systemErrorLog.createdAt, since)).orderBy(desc14(systemErrorLog.createdAt)).limit(sourceFilter ? 200 : limit);
+          const rows = await db.select().from(systemErrorLog).where(gte7(systemErrorLog.createdAt, since)).orderBy(desc15(systemErrorLog.createdAt)).limit(sourceFilter ? 200 : limit);
           const filtered = sourceFilter ? rows.filter((r) => r.source.toLowerCase().includes(sourceFilter)).slice(0, limit) : rows;
           if (filtered.length === 0) {
             return {
@@ -36201,9 +36899,9 @@ ${formatted}`,
         try {
           const existing = await db.select({ id: codeProposals.id }).from(codeProposals).where(
             and40(
-              eq54(codeProposals.userId, ctx.userId),
-              eq54(codeProposals.filePath, filePath),
-              eq54(codeProposals.status, "pending")
+              eq55(codeProposals.userId, ctx.userId),
+              eq55(codeProposals.filePath, filePath),
+              eq55(codeProposals.status, "pending")
             )
           ).limit(1);
           if (existing.length > 0) {
@@ -36301,7 +36999,7 @@ __export(applyCodeChangeTool_exports, {
 });
 import fs10 from "fs/promises";
 import path14 from "path";
-import { and as and41, eq as eq55 } from "drizzle-orm";
+import { and as and41, eq as eq56 } from "drizzle-orm";
 function _setAuditTimestampForTest(fp, ts) {
   lastAuditTimestamp.set(fp, ts);
 }
@@ -36434,7 +37132,7 @@ async function recordVerificationResult(filePaths, result, summary, userId) {
     const ts = lastAuditTimestamp.get(fp);
     if (!ts) continue;
     const summaryPart = summary ? ` \u2014 ${summary}` : "";
-    db.update(selfHealAuditLog).set({ verified: `${result}${summaryPart}` }).where(and41(eq55(selfHealAuditLog.timestamp, ts), eq55(selfHealAuditLog.file, fp))).catch(() => {
+    db.update(selfHealAuditLog).set({ verified: `${result}${summaryPart}` }).where(and41(eq56(selfHealAuditLog.timestamp, ts), eq56(selfHealAuditLog.file, fp))).catch(() => {
     });
   }
   let resolvedUserId = userId;
@@ -37677,7 +38375,7 @@ var init_workspaceUpdateTool = __esm({
 });
 
 // server/agent/tools/listCustomAgents.ts
-import { eq as eq56 } from "drizzle-orm";
+import { eq as eq57 } from "drizzle-orm";
 var listCustomAgentsTool;
 var init_listCustomAgents = __esm({
   "server/agent/tools/listCustomAgents.ts"() {
@@ -37714,7 +38412,7 @@ If the user says "run my X agent", find the matching slug here, then queue a cus
       },
       execute: async (args, context) => {
         const { userId } = context;
-        const agents = await db.select().from(customAgents).where(eq56(customAgents.userId, userId)).orderBy(customAgents.createdAt);
+        const agents = await db.select().from(customAgents).where(eq57(customAgents.userId, userId)).orderBy(customAgents.createdAt);
         if (agents.length === 0) {
           return {
             ok: true,
@@ -37945,7 +38643,7 @@ __export(github_exports, {
   pushWorkspaceToGitHub: () => pushWorkspaceToGitHub,
   saveGitHubSettings: () => saveGitHubSettings
 });
-import { eq as eq57 } from "drizzle-orm";
+import { eq as eq58 } from "drizzle-orm";
 async function getGitHubUser(token) {
   try {
     const res = await githubRequest(token, "/user");
@@ -37960,7 +38658,7 @@ async function getGitHubSettings(userId) {
   const token = await getUserToken(userId, "github").catch(() => null);
   const pat = token?.accessToken || null;
   const tokenType = token?.accountEmail === "oauth" ? "oauth" : pat ? "pat" : void 0;
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq57(userPreferences.userId, userId)).limit(1);
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq58(userPreferences.userId, userId)).limit(1);
   const prefs = rows[0]?.data || {};
   return {
     pat,
@@ -37983,7 +38681,7 @@ async function saveGitHubSettings(userId, patch) {
   }
   const needsPrefsUpdate = patch.repos !== void 0 || patch.username !== void 0;
   if (needsPrefsUpdate) {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq57(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq58(userPreferences.userId, userId)).limit(1);
     const current = rows[0]?.data || {};
     const updated = { ...current };
     if (patch.repos !== void 0) updated.github_repos = patch.repos;
@@ -38825,7 +39523,7 @@ var init_cloudDeploy = __esm({
 });
 
 // server/agent/tools/deployApp.ts
-import { desc as desc15, eq as eq58 } from "drizzle-orm";
+import { desc as desc16, eq as eq59 } from "drizzle-orm";
 var deployAppTool;
 var init_deployApp = __esm({
   "server/agent/tools/deployApp.ts"() {
@@ -38858,7 +39556,7 @@ var init_deployApp = __esm({
         const provider = rawProvider === "vercel" ? "vercel" : rawProvider === "railway" ? "railway" : "auto";
         let project;
         if (providedProjectId) {
-          const rows = await db.select().from(jarvisProjects).where(eq58(jarvisProjects.id, providedProjectId)).limit(1);
+          const rows = await db.select().from(jarvisProjects).where(eq59(jarvisProjects.id, providedProjectId)).limit(1);
           project = rows[0];
           if (!project) {
             return { ok: false, content: `Project "${providedProjectId}" not found.` };
@@ -38867,7 +39565,7 @@ var init_deployApp = __esm({
             return { ok: false, content: "You don't have access to that project." };
           }
         } else {
-          const rows = await db.select().from(jarvisProjects).where(eq58(jarvisProjects.userId, userId)).orderBy(desc15(jarvisProjects.updatedAt)).limit(20);
+          const rows = await db.select().from(jarvisProjects).where(eq59(jarvisProjects.userId, userId)).orderBy(desc16(jarvisProjects.updatedAt)).limit(20);
           project = rows.find((r) => r.status === "complete");
           if (!project) {
             const latest = rows[0];
@@ -39390,6 +40088,7 @@ __export(tools_exports, {
   setupNamedAgentTool: () => setupNamedAgentTool,
   spawnSubagentTool: () => spawnSubagentTool,
   speakTool: () => speakTool,
+  startProjectTool: () => startProjectTool,
   telegramCoachTools: () => telegramCoachTools,
   testToolTool: () => testToolTool,
   videoGenerateTool: () => videoGenerateTool,
@@ -39464,6 +40163,7 @@ var init_tools = __esm({
     init_sendEmail();
     init_fetchEmails();
     init_connectChannel();
+    init_startProject();
     init_discordPost();
     init_discordCreateChannel();
     init_discordRequestConfirm();
@@ -40245,7 +40945,7 @@ __export(websiteCrawler_exports, {
   startWebsiteCrawl: () => startWebsiteCrawl
 });
 import * as cheerio2 from "cheerio";
-import { eq as eq59 } from "drizzle-orm";
+import { eq as eq60 } from "drizzle-orm";
 import * as dns from "node:dns/promises";
 import * as net from "node:net";
 function isPrivateIp(ip) {
@@ -40449,17 +41149,17 @@ ${text2}`);
     if (combinedText.trim()) {
       summary = await distillSummary(url, combinedText);
     }
-    await db.update(websiteCrawls).set({ status: "done", pageCount, summary, crawledAt: /* @__PURE__ */ new Date() }).where(eq59(websiteCrawls.userId, userId));
+    await db.update(websiteCrawls).set({ status: "done", pageCount, summary, crawledAt: /* @__PURE__ */ new Date() }).where(eq60(websiteCrawls.userId, userId));
     console.log(`[websiteCrawler] done for user ${userId}: ${pageCount} pages`);
   } catch (err2) {
     const msg = err2 instanceof Error ? err2.message : String(err2);
     console.error("[websiteCrawler] error:", msg);
-    await db.update(websiteCrawls).set({ status: "error" }).where(eq59(websiteCrawls.userId, userId));
+    await db.update(websiteCrawls).set({ status: "error" }).where(eq60(websiteCrawls.userId, userId));
   }
 }
 async function getWebsiteCrawlSummaryBlock(userId) {
   try {
-    const rows = await db.select().from(websiteCrawls).where(eq59(websiteCrawls.userId, userId)).limit(1);
+    const rows = await db.select().from(websiteCrawls).where(eq60(websiteCrawls.userId, userId)).limit(1);
     const row = rows[0];
     if (!row || row.status !== "done" || !row.summary) return "";
     return `
@@ -40553,18 +41253,18 @@ __export(vaultWriter_exports, {
   lintWikiForAllUsers: () => lintWikiForAllUsers,
   maybeRegenerateVault: () => maybeRegenerateVault
 });
-import { eq as eq60, and as and42, desc as desc16, gte as gte8, sql as sql17, count, isNull as isNull3 } from "drizzle-orm";
+import { eq as eq61, and as and42, desc as desc17, gte as gte8, sql as sql17, count, isNull as isNull3 } from "drizzle-orm";
 async function buildAboutYouSource(userId) {
   const [soulRows, memRows] = await Promise.all([
-    db.select({ content: jarvisSouls.content }).from(jarvisSouls).where(eq60(jarvisSouls.userId, userId)).limit(1),
+    db.select({ content: jarvisSouls.content }).from(jarvisSouls).where(eq61(jarvisSouls.userId, userId)).limit(1),
     db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(
       and42(
-        eq60(userMemories.userId, userId),
-        eq60(userMemories.tier, "long_term"),
+        eq61(userMemories.userId, userId),
+        eq61(userMemories.tier, "long_term"),
         sql17`${userMemories.category} IN ('values','communication_style','preferences','fact')`,
-        eq60(userMemories.reviewStatus, "active")
+        eq61(userMemories.reviewStatus, "active")
       )
-    ).orderBy(desc16(userMemories.extractedAt)).limit(80)
+    ).orderBy(desc17(userMemories.extractedAt)).limit(80)
   ]);
   const soulText = soulRows[0]?.content || "";
   const memList = memRows.map((m) => `[${m.category}] ${m.content}`).join("\n");
@@ -40578,13 +41278,13 @@ async function buildProjectsSource(userId) {
   const [memRows, goalRows] = await Promise.all([
     db.select({ content: userMemories.content }).from(userMemories).where(
       and42(
-        eq60(userMemories.userId, userId),
-        eq60(userMemories.tier, "long_term"),
+        eq61(userMemories.userId, userId),
+        eq61(userMemories.tier, "long_term"),
         sql17`${userMemories.category} IN ('goals_history','accomplishments')`,
-        eq60(userMemories.reviewStatus, "active")
+        eq61(userMemories.reviewStatus, "active")
       )
-    ).orderBy(desc16(userMemories.extractedAt)).limit(60),
-    db.select({ data: goals.data }).from(goals).where(eq60(goals.userId, userId)).limit(1)
+    ).orderBy(desc17(userMemories.extractedAt)).limit(60),
+    db.select({ data: goals.data }).from(goals).where(eq61(goals.userId, userId)).limit(1)
   ]);
   const memList = memRows.map((m) => `- ${m.content}`).join("\n");
   const goalData = goalRows[0]?.data;
@@ -40604,14 +41304,14 @@ async function buildPeopleSource(userId) {
       notes: people.notes,
       interactionCount: people.interactionCount,
       lastInteractionAt: people.lastInteractionAt
-    }).from(people).where(eq60(people.userId, userId)).orderBy(desc16(people.interactionCount)).limit(50),
+    }).from(people).where(eq61(people.userId, userId)).orderBy(desc17(people.interactionCount)).limit(50),
     db.select({ content: userMemories.content }).from(userMemories).where(
       and42(
-        eq60(userMemories.userId, userId),
-        eq60(userMemories.category, "relationships"),
-        eq60(userMemories.reviewStatus, "active")
+        eq61(userMemories.userId, userId),
+        eq61(userMemories.category, "relationships"),
+        eq61(userMemories.reviewStatus, "active")
       )
-    ).orderBy(desc16(userMemories.extractedAt)).limit(40)
+    ).orderBy(desc17(userMemories.extractedAt)).limit(40)
   ]);
   const peopleList = peopleRows.map((p) => {
     const parts = [`**${p.name}**`];
@@ -40630,8 +41330,8 @@ ${memList}`;
 }
 async function buildPatternsSource(userId) {
   const [weeklyRows, dreamRows] = await Promise.all([
-    db.select({ patterns: weeklyInsights.patterns, summary: weeklyInsights.summary, weekOf: weeklyInsights.weekOf }).from(weeklyInsights).where(eq60(weeklyInsights.userId, userId)).orderBy(desc16(weeklyInsights.createdAt)).limit(6),
-    db.select({ insightText: dreamInsights.insightText, confidenceScore: dreamInsights.confidenceScore }).from(dreamInsights).where(eq60(dreamInsights.userId, userId)).orderBy(desc16(dreamInsights.createdAt)).limit(20)
+    db.select({ patterns: weeklyInsights.patterns, summary: weeklyInsights.summary, weekOf: weeklyInsights.weekOf }).from(weeklyInsights).where(eq61(weeklyInsights.userId, userId)).orderBy(desc17(weeklyInsights.createdAt)).limit(6),
+    db.select({ insightText: dreamInsights.insightText, confidenceScore: dreamInsights.confidenceScore }).from(dreamInsights).where(eq61(dreamInsights.userId, userId)).orderBy(desc17(dreamInsights.createdAt)).limit(20)
   ]);
   const weeklyText = weeklyRows.map((row) => {
     const pats = Array.isArray(row.patterns) ? row.patterns : [];
@@ -40649,12 +41349,12 @@ ${dreamText || "No dream insights yet."}`;
 async function buildDecisionsSource(userId) {
   const rows = await db.select({ content: userMemories.content, category: userMemories.category, extractedAt: userMemories.extractedAt }).from(userMemories).where(
     and42(
-      eq60(userMemories.userId, userId),
+      eq61(userMemories.userId, userId),
       sql17`${userMemories.category} IN ('goals_history','values','blockers')`,
-      eq60(userMemories.tier, "long_term"),
-      eq60(userMemories.reviewStatus, "active")
+      eq61(userMemories.tier, "long_term"),
+      eq61(userMemories.reviewStatus, "active")
     )
-  ).orderBy(desc16(userMemories.extractedAt)).limit(80);
+  ).orderBy(desc17(userMemories.extractedAt)).limit(80);
   const grouped = {};
   for (const r of rows) {
     if (!grouped[r.category]) grouped[r.category] = [];
@@ -40669,7 +41369,7 @@ async function isVaultStale(userId) {
   try {
     const pages = await db.select({ slug: knowledgeVaultPages.slug, generatedAt: knowledgeVaultPages.generatedAt }).from(knowledgeVaultPages).where(
       and42(
-        eq60(knowledgeVaultPages.userId, userId),
+        eq61(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -40684,7 +41384,7 @@ async function isVaultStale(userId) {
     if (ageMs > VAULT_TTL_MS) return true;
     const newMemories = await db.select({ count: count() }).from(userMemories).where(
       and42(
-        eq60(userMemories.userId, userId),
+        eq61(userMemories.userId, userId),
         gte8(userMemories.extractedAt, oldestGeneratedAt)
       )
     );
@@ -40777,7 +41477,7 @@ async function generateWikiIndex(userId, model) {
       archivedAt: knowledgeVaultPages.archivedAt
     }).from(knowledgeVaultPages).where(
       and42(
-        eq60(knowledgeVaultPages.userId, userId),
+        eq61(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     ).orderBy(knowledgeVaultPages.pageType, knowledgeVaultPages.slug);
@@ -40794,7 +41494,7 @@ async function generateWikiIndex(userId, model) {
       return `- [${p.pageType}] [[${p.slug}]] \u2014 ${p.title} (updated: ${date2})`;
     }).join("\n");
     const top5 = Object.entries(backlinkCount).sort(([, a], [, b]) => b - a).slice(0, 5).map(([slug, cnt]) => `- [[${slug}]] (${cnt} reference${cnt !== 1 ? "s" : ""})`).join("\n");
-    const lintRows = await db.select({ ranAt: wikiLintLog.ranAt, summary: wikiLintLog.summary }).from(wikiLintLog).where(eq60(wikiLintLog.userId, userId)).orderBy(desc16(wikiLintLog.ranAt)).limit(1);
+    const lintRows = await db.select({ ranAt: wikiLintLog.ranAt, summary: wikiLintLog.summary }).from(wikiLintLog).where(eq61(wikiLintLog.userId, userId)).orderBy(desc17(wikiLintLog.ranAt)).limit(1);
     const lintLogSection = lintRows.length > 0 ? `
 
 ## Lint Log
@@ -40858,7 +41558,7 @@ async function ingestSource(userId, sourceText, sourceType) {
       crossRefs: knowledgeVaultPages.crossRefs
     }).from(knowledgeVaultPages).where(
       and42(
-        eq60(knowledgeVaultPages.userId, userId),
+        eq61(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -41064,15 +41764,15 @@ A: ${answer.slice(0, 600)}`
     const title = typeof parsed.title === "string" ? parsed.title : question.slice(0, 80);
     const existingPages = await db.select({ slug: knowledgeVaultPages.slug }).from(knowledgeVaultPages).where(
       and42(
-        eq60(knowledgeVaultPages.userId, userId),
+        eq61(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
     const allSlugs = existingPages.map((p) => p.slug);
     const existing = await db.select({ content: knowledgeVaultPages.content, crossRefs: knowledgeVaultPages.crossRefs }).from(knowledgeVaultPages).where(
       and42(
-        eq60(knowledgeVaultPages.userId, userId),
-        eq60(knowledgeVaultPages.slug, safeSlug)
+        eq61(knowledgeVaultPages.userId, userId),
+        eq61(knowledgeVaultPages.slug, safeSlug)
       )
     ).limit(1);
     const slugsBlock = allSlugs.length > 0 ? `Other wiki pages you can cross-link:
@@ -41150,7 +41850,7 @@ async function lintWiki(userId) {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1e3);
     const pages = await db.select().from(knowledgeVaultPages).where(
       and42(
-        eq60(knowledgeVaultPages.userId, userId),
+        eq61(knowledgeVaultPages.userId, userId),
         isNull3(knowledgeVaultPages.archivedAt)
       )
     );
@@ -41168,8 +41868,8 @@ async function lintWiki(userId) {
       if (lastActivity < thirtyDaysAgo) {
         await db.update(knowledgeVaultPages).set({ archivedAt: /* @__PURE__ */ new Date() }).where(
           and42(
-            eq60(knowledgeVaultPages.userId, userId),
-            eq60(knowledgeVaultPages.slug, page.slug)
+            eq61(knowledgeVaultPages.userId, userId),
+            eq61(knowledgeVaultPages.slug, page.slug)
           )
         );
         stats2.pagesArchived++;
@@ -41238,8 +41938,8 @@ Return {"corrections": []} if no issues found. Only include entries where revisi
           updatedAt: /* @__PURE__ */ new Date()
         }).where(
           and42(
-            eq60(knowledgeVaultPages.userId, userId),
-            eq60(knowledgeVaultPages.slug, correction.slug)
+            eq61(knowledgeVaultPages.userId, userId),
+            eq61(knowledgeVaultPages.slug, correction.slug)
           )
         );
         stats2.pagesUpdated++;
@@ -41378,7 +42078,7 @@ var coachAgent_exports = {};
 __export(coachAgent_exports, {
   runCoachAgent: () => runCoachAgent
 });
-import { eq as eq61, and as and43, desc as desc17, gte as gte9 } from "drizzle-orm";
+import { eq as eq62, and as and43, desc as desc18, gte as gte9 } from "drizzle-orm";
 function getMaxTokensForChannel(channelName) {
   if (channelName.startsWith("Discord")) return 1200;
   if (channelName === "Daemon") return 200;
@@ -41445,14 +42145,14 @@ async function runCoachAgent(input) {
     return null;
   });
   const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, prefsRow, recentInteractionsResult, surfacedItemsResult, soulBlockResult, websiteCrawlResult, todayPlanRow, orchestratorModelResult, preThinkResult] = await Promise.allSettled([
-    db.select().from(goals).where(eq61(goals.userId, userId)).limit(1),
-    db.select().from(stats).where(eq61(stats.userId, userId)).limit(1),
-    db.select().from(lifeContext).where(eq61(lifeContext.userId, userId)).limit(1),
+    db.select().from(goals).where(eq62(goals.userId, userId)).limit(1),
+    db.select().from(stats).where(eq62(stats.userId, userId)).limit(1),
+    db.select().from(lifeContext).where(eq62(lifeContext.userId, userId)).limit(1),
     // Skip chat_history fetch when the session cache is warm — the cached
     // message list replaces the rolling 10-message DB window.
-    sessionResumed ? Promise.resolve([]) : db.select().from(chatHistory).where(eq61(chatHistory.userId, userId)).limit(1),
-    db.select().from(commitments).where(and43(eq61(commitments.userId, userId), eq61(commitments.status, "pending"))).orderBy(desc17(commitments.extractedAt)).limit(10),
-    db.select().from(userPreferences).where(eq61(userPreferences.userId, userId)).limit(1),
+    sessionResumed ? Promise.resolve([]) : db.select().from(chatHistory).where(eq62(chatHistory.userId, userId)).limit(1),
+    db.select().from(commitments).where(and43(eq62(commitments.userId, userId), eq62(commitments.status, "pending"))).orderBy(desc18(commitments.extractedAt)).limit(10),
+    db.select().from(userPreferences).where(eq62(userPreferences.userId, userId)).limit(1),
     getRecentInteractions(userId, 20),
     db.select({
       sourceType: inboxItems.sourceType,
@@ -41462,9 +42162,9 @@ async function runCoachAgent(input) {
       jarvisReason: inboxItems.jarvisReason,
       surfacedAt: inboxItems.surfacedAt
     }).from(inboxItems).where(and43(
-      eq61(inboxItems.userId, userId),
+      eq62(inboxItems.userId, userId),
       gte9(inboxItems.surfacedAt, twentyFourHoursAgo)
-    )).orderBy(desc17(inboxItems.surfacedAt)).limit(5),
+    )).orderBy(desc18(inboxItems.surfacedAt)).limit(5),
     // Soul and website crawl blocks are independent of DB results — run them
     // concurrently with the rest of the batch instead of serially after it.
     getSoulPromptBlock(userId),
@@ -41479,7 +42179,7 @@ async function runCoachAgent(input) {
     // todayPlan — fetched with tentative UTC date key so it runs in the
     // parallel batch; reconciled below if the user's timezone-adjusted date
     // differs from the UTC date (rare, only near day boundaries).
-    db.select().from(plans).where(and43(eq61(plans.userId, userId), eq61(plans.date, tentativeDateKey))).limit(1),
+    db.select().from(plans).where(and43(eq62(plans.userId, userId), eq62(plans.date, tentativeDateKey))).limit(1),
     // Resolved per-user orchestrator model (already fired above).
     _orchestratorModelPromise,
     // Pre-think fires as soon as the model resolves (already chained above).
@@ -41520,7 +42220,7 @@ async function runCoachAgent(input) {
   }
   if (dateKey !== tentativeDateKey) {
     try {
-      const planRows = await db.select().from(plans).where(and43(eq61(plans.userId, userId), eq61(plans.date, dateKey))).limit(1);
+      const planRows = await db.select().from(plans).where(and43(eq62(plans.userId, userId), eq62(plans.date, dateKey))).limit(1);
       todayPlan = planRows[0]?.data || null;
     } catch (err2) {
       console.error("[coach] plan re-fetch (timezone reconcile) failed:", err2);
@@ -41976,7 +42676,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
       let storedSession = null;
       let storedSessionId = null;
       try {
-        const rows = await db.select().from(buildSessions).where(eq61(buildSessions.userId, userId)).orderBy(desc17(buildSessions.createdAt)).limit(1);
+        const rows = await db.select().from(buildSessions).where(eq62(buildSessions.userId, userId)).orderBy(desc18(buildSessions.createdAt)).limit(1);
         if (rows.length > 0) {
           const row = rows[0];
           storedSessionId = row.id;
@@ -42007,7 +42707,7 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
           `[${channelName}] suspended-build reminder appended (ackAge=${Math.round(ackAgeMs / 36e5)}h, build="${buildDescription.slice(0, 60)}")`
         );
         if (storedSessionId) {
-          db.update(buildSessions).set({ reminded: true }).where(eq61(buildSessions.id, storedSessionId)).catch((err2) => console.error("[coach] build-session remind flag update failed:", err2));
+          db.update(buildSessions).set({ reminded: true }).where(eq62(buildSessions.id, storedSessionId)).catch((err2) => console.error("[coach] build-session remind flag update failed:", err2));
         }
       }
     } catch (reminderErr) {
@@ -42468,591 +43168,6 @@ var init_voiceBridge = __esm({
     "use strict";
     MIN_OPUS_FRAMES = 24;
     activeSessions = /* @__PURE__ */ new Map();
-  }
-});
-
-// server/agent/projectRunner.ts
-var projectRunner_exports = {};
-__export(projectRunner_exports, {
-  answerProjectQuestion: () => answerProjectQuestion,
-  getProjectStatus: () => getProjectStatus,
-  getUserProjects: () => getUserProjects,
-  pauseProject: () => pauseProject,
-  resumeProject: () => resumeProject,
-  runProjectSession: () => runProjectSession,
-  setAutonomousMode: () => setAutonomousMode,
-  startProject: () => startProject
-});
-import { eq as eq62, asc as asc3, desc as desc18, inArray as inArray4 } from "drizzle-orm";
-function toolGroupsForPhase(phase) {
-  const normalized = phase.toLowerCase();
-  if (normalized.includes("implement") || normalized.includes("test") || normalized.includes("deploy")) {
-    return ["system", "self_edit", "memory", "research"];
-  }
-  if (normalized.includes("research")) {
-    return ["research", "browser", "memory"];
-  }
-  if (normalized.includes("design")) {
-    return ["research", "system", "memory"];
-  }
-  return ["research", "system", "memory"];
-}
-function asPlan2(raw) {
-  if (!Array.isArray(raw)) return [];
-  return raw;
-}
-function buildPlanningPrompt(title, description, goal) {
-  return `You are Jarvis, an autonomous AI project manager. The user wants to start a new project.
-
-**Project Title:** ${title}
-**Description:** ${description || "(none provided)"}
-**Goal (what done looks like):** ${goal}
-
-Your task: produce a detailed, phased execution plan for this project.
-
-Respond with a JSON object in this exact format:
-{
-  "plan": [
-    {
-      "step_id": "step_001",
-      "label": "Research existing solutions",
-      "phase": "Research",
-      "acceptance_criteria": "Summary of 3+ existing approaches documented"
-    },
-    ...more steps...
-  ],
-  "questions": ["Any ambiguity 1", "Any ambiguity 2"],
-  "summary": "One paragraph overview of the plan"
-}
-
-Rules:
-- Use phases: Research \u2192 Design \u2192 Implement \u2192 Test \u2192 Deploy (use only relevant phases)
-- Each step should be completable in one autonomous session (15-30 min of work)
-- Include 4-14 steps total
-- acceptance_criteria should be specific and verifiable
-- If you have critical questions that would change the plan significantly, list up to 3 in "questions"
-- If no questions, return an empty array
-- Return ONLY the JSON object, nothing else`;
-}
-function buildStepPrompt2(project, step, sessionHistory, userAnswer) {
-  const plan = asPlan2(project.plan);
-  const completedSteps = plan.filter((s) => s.status === "complete");
-  const completedSummary = completedSteps.length > 0 ? completedSteps.map((s) => `- ${s.label}: ${s.output?.slice(0, 200) || "completed"}`).join("\n") : "(none yet)";
-  const answerContext = userAnswer ? `
-
-**User's answer to the previous question:**
-${userAnswer}
-
-Use this answer to guide this step.` : "";
-  return `You are Jarvis, executing a step in an autonomous project.
-
-**Project:** ${project.title}
-**Goal:** ${project.goal}
-
-**Session history:**
-${sessionHistory || "(this is the first session)"}
-
-**Previously completed steps:**
-${completedSummary}${answerContext}
-
-**Current step to complete:**
-Label: ${step.label}
-Phase: ${step.phase}
-Acceptance criteria: ${step.acceptance_criteria || "step completed successfully"}
-
-Your task: execute this step autonomously using your available tools and knowledge.
-
-Produce a clear, detailed output that satisfies the acceptance criteria.
-At the end, include a section:
-## Step Output Summary
-<one paragraph summary of what was accomplished>
-
-If you need to ask the user a critical question before you can continue, respond with ONLY:
-QUESTION: <your question here>
-
-Otherwise, just complete the step and show your work.`;
-}
-async function startProject(userId, title, description, goal, originChannel) {
-  const [project] = await db.insert(jarvisProjects).values({
-    userId,
-    title,
-    description,
-    goal,
-    status: "planning",
-    originChannel,
-    updatedAt: /* @__PURE__ */ new Date()
-  }).returning({ id: jarvisProjects.id });
-  const projectId = project.id;
-  console.log(`[ProjectRunner] startProject: created project ${projectId} for user ${userId}`);
-  await submitAgentJob2({
-    userId,
-    agentType: "project_session",
-    title: `Plan project: ${title}`,
-    prompt: `Run planning phase for project ${projectId}`,
-    input: { projectId, phase: "planning", originChannel }
-  });
-  return projectId;
-}
-async function runProjectSession(projectId, userAnswer) {
-  const startTime = Date.now();
-  const [project] = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.id, projectId)).limit(1);
-  if (!project) throw new Error(`Project ${projectId} not found`);
-  if (project.status === "paused" || project.status === "complete" || project.status === "failed") {
-    return { status: project.status, stepsCompleted: 0, summary: `Project is ${project.status}` };
-  }
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq62(jarvisProjectSessions.projectId, projectId)).orderBy(asc3(jarvisProjectSessions.sessionNumber));
-  const sessionNumber = sessions2.length + 1;
-  const sessionHistory = sessions2.slice(-3).map((s) => `Session ${s.sessionNumber}: ${s.summary || "completed"}`).join("\n");
-  if (project.status === "planning") {
-    return await runPlanningSession(project, sessionNumber, startTime);
-  }
-  if (project.status === "waiting_for_input" && project.questionPending && !userAnswer) {
-    await sendProjectMessage(
-      project.userId,
-      project.originChannel ?? void 0,
-      `\u23F3 **Project: ${project.title}** is still waiting for your answer:
-
-${project.questionPending}
-
-Reply to my earlier message or use: \`/project answer ${projectId} <your answer>\``
-    );
-    if (project.autonomousMode) {
-      const nextReminder = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES2 * 60 * 1e3);
-      await db.update(jarvisProjects).set({ nextRunAt: nextReminder, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
-    }
-    return { status: "waiting_for_input", stepsCompleted: 0, summary: "Waiting for user input" };
-  }
-  let currentPlan = asPlan2(project.plan);
-  const pendingSteps = currentPlan.map((s, i) => ({ ...s, _idx: i })).filter((s) => s.status === "pending");
-  if (pendingSteps.length === 0) {
-    await markProjectComplete(project, sessions2.length);
-    return { status: "complete", stepsCompleted: 0, summary: "All steps complete!" };
-  }
-  const stepsToRun = pendingSteps.slice(0, STEPS_PER_SESSION2);
-  const completedLabels = [];
-  let verificationRetriesTotal = 0;
-  let sessionSummary = "";
-  let remainingAnswer = userAnswer;
-  const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-  const orchModel = await getModel2(project.userId, "orchestrator");
-  for (const step of stepsToRun) {
-    let tokens = [];
-    try {
-      tokens = await getValidGoogleTokens(project.userId);
-    } catch {
-    }
-    const hasGoogle = tokens.length > 0;
-    const googleAccessToken = tokens[0] ?? null;
-    const stepTools = filterToolsByGroups(toolGroupsForPhase(step.phase), hasGoogle);
-    const stepPrompt = buildStepPrompt2(project, step, sessionHistory, remainingAnswer);
-    remainingAnswer = void 0;
-    let reply = "";
-    try {
-      let correctionContext;
-      for (let attempt = 0; attempt <= MAX_STEP_VERIFY_RETRIES2; attempt++) {
-        const prompt = correctionContext ? `${stepPrompt}
-
-[Previous attempt rejected: ${correctionContext}. Address this in your response.]` : stepPrompt;
-        const result = await runAgent({
-          messages: [
-            { role: "system", content: "You are Jarvis, an autonomous AI assistant executing a project step. Use your tools to complete the step thoroughly." },
-            { role: "user", content: prompt }
-          ],
-          tools: stepTools,
-          context: {
-            userId: project.userId,
-            googleAccessToken,
-            channel: "ProjectRunner",
-            state: { pendingAttachments: [] }
-          },
-          maxTurns: 8
-        });
-        reply = result.reply?.trim() || "";
-        if (reply.startsWith("QUESTION:")) break;
-        const verification = await verifyJobOutput({
-          agentType: "project_step",
-          originalPrompt: `Phase: ${step.phase}
-Label: ${step.label}
-Acceptance criteria: ${step.acceptance_criteria || "step completed successfully"}`,
-          result: reply,
-          orchestratorModel: orchModel,
-          correctionContext
-        });
-        if (verification.passed === true || verification.passed === null) break;
-        correctionContext = verification.reason;
-        if (attempt < MAX_STEP_VERIFY_RETRIES2) {
-          verificationRetriesTotal++;
-          console.log(`[ProjectRunner] step "${step.label}" verify retry ${attempt + 1}/${MAX_STEP_VERIFY_RETRIES2}: ${verification.reason}`);
-        }
-      }
-    } catch (err2) {
-      console.error(`[ProjectRunner] step "${step.label}" threw error:`, err2);
-      const newErrors = (project.consecutiveErrors ?? 0) + 1;
-      if (newErrors >= MAX_CONSECUTIVE_ERRORS2) {
-        await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
-        await sendProjectMessage(
-          project.userId,
-          project.originChannel ?? void 0,
-          `\u26A0\uFE0F **Project: ${project.title}** has been paused after ${newErrors} consecutive errors.
-
-Last error: ${String(err2).slice(0, 200)}
-
-Use \`/project resume ${projectId}\` to retry.`
-        );
-        return { status: "paused", stepsCompleted: completedLabels.length, summary: "Paused after too many errors" };
-      }
-      await db.update(jarvisProjects).set({ consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
-      continue;
-    }
-    if (reply.startsWith("QUESTION:")) {
-      const question = reply.slice("QUESTION:".length).trim();
-      const questionMeta = await sendProjectQuestion(
-        project.userId,
-        project.originChannel ?? void 0,
-        `\u2753 **Project: ${project.title}** needs your input before continuing:
-
-${question}
-
-Reply to this message or use: \`/project answer ${projectId} <your answer>\``
-      );
-      await db.update(jarvisProjects).set({
-        questionPending: question,
-        questionAskedAt: /* @__PURE__ */ new Date(),
-        questionMeta,
-        status: "waiting_for_input",
-        consecutiveErrors: 0,
-        updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq62(jarvisProjects.id, projectId));
-      const durationMs2 = Date.now() - startTime;
-      await db.insert(jarvisProjectSessions).values({
-        projectId,
-        sessionNumber,
-        stepsCompleted: completedLabels.length,
-        stepLabels: completedLabels,
-        durationMs: durationMs2,
-        status: "waiting_for_input",
-        summary: `Paused: Jarvis needs to know \u2014 ${question.slice(0, 200)}`
-      });
-      return { status: "waiting_for_input", stepsCompleted: completedLabels.length, summary: question };
-    }
-    const extractSummary = (text2) => {
-      const match = text2.match(/## Step Output Summary\s*([\s\S]*?)(?:\n##|$)/);
-      return match ? match[1].trim().slice(0, 500) : text2.slice(0, 300);
-    };
-    const stepOutput = extractSummary(reply);
-    currentPlan = currentPlan.map((s, i) => {
-      if (i === step._idx) {
-        return { ...s, status: "complete", output: stepOutput, completedAt: (/* @__PURE__ */ new Date()).toISOString() };
-      }
-      return s;
-    });
-    await db.update(jarvisProjects).set({
-      plan: currentPlan,
-      currentStepIndex: step._idx + 1,
-      lastProgressAt: /* @__PURE__ */ new Date(),
-      consecutiveErrors: 0,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq62(jarvisProjects.id, projectId));
-    completedLabels.push(step.label);
-    sessionSummary = stepOutput;
-    console.log(`[ProjectRunner] completed step "${step.label}" for project ${projectId}`);
-  }
-  const durationMs = Date.now() - startTime;
-  const remainingAfterSession = currentPlan.filter((s) => s.status === "pending").length;
-  const totalComplete = currentPlan.filter((s) => s.status === "complete").length;
-  await db.insert(jarvisProjectSessions).values({
-    projectId,
-    sessionNumber,
-    stepsCompleted: completedLabels.length,
-    stepLabels: completedLabels,
-    durationMs,
-    verificationRetries: verificationRetriesTotal,
-    status: "complete",
-    summary: sessionSummary || completedLabels.join(", ")
-  });
-  if (remainingAfterSession === 0) {
-    await markProjectComplete(project, sessionNumber);
-    return { status: "complete", stepsCompleted: completedLabels.length, summary: "All steps complete!" };
-  }
-  const nextLabel = currentPlan.find((s) => s.status === "pending")?.label ?? "next step";
-  const progressMsg = `\u{1F4CB} **Project: ${project.title}** \u2014 Session ${sessionNumber} complete
-\u2705 Steps done: ${totalComplete}/${currentPlan.length}
-\u{1F528} This session: ${completedLabels.map((l) => `"${l}"`).join(", ")}
-\u23ED Next: "${nextLabel}"
-` + (project.autonomousMode ? `\u{1F550} Next session in ${AUTONOMOUS_INTERVAL_MINUTES2} min (autonomous mode)` : `\u23F8 Paused \u2014 use /project resume ${projectId} to continue`);
-  await sendProjectMessage(project.userId, project.originChannel ?? void 0, progressMsg);
-  if (project.autonomousMode) {
-    const nextRunAt = new Date(Date.now() + AUTONOMOUS_INTERVAL_MINUTES2 * 60 * 1e3);
-    await db.update(jarvisProjects).set({ nextRunAt, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
-    console.log(`[ProjectRunner] autonomous project ${projectId} scheduled for ${nextRunAt.toISOString()}`);
-  }
-  return {
-    status: "building",
-    stepsCompleted: completedLabels.length,
-    summary: sessionSummary
-  };
-}
-async function runPlanningSession(project, sessionNumber, startTime) {
-  let tokens = [];
-  try {
-    tokens = await getValidGoogleTokens(project.userId);
-  } catch {
-  }
-  const googleAccessToken = tokens[0] ?? null;
-  const planningPrompt = buildPlanningPrompt(
-    project.title ?? "Untitled Project",
-    project.description ?? "",
-    project.goal ?? ""
-  );
-  const result = await runAgent({
-    messages: [
-      { role: "system", content: "You are Jarvis, an autonomous AI project planner. Respond with JSON only." },
-      { role: "user", content: planningPrompt }
-    ],
-    tools: [],
-    context: {
-      userId: project.userId,
-      googleAccessToken,
-      channel: "ProjectRunner/planning",
-      state: { pendingAttachments: [] }
-    },
-    maxTurns: 3
-  });
-  let planData = null;
-  try {
-    const jsonMatch = result.reply.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      planData = JSON.parse(jsonMatch[0]);
-    }
-  } catch {
-    console.error(`[ProjectRunner] failed to parse planning response for project ${project.id}`);
-  }
-  if (!planData?.plan?.length) {
-    await db.update(jarvisProjects).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, project.id));
-    return { status: "failed", stepsCompleted: 0, summary: "Planning failed: could not generate a plan" };
-  }
-  const plan = planData.plan.map((s, i) => ({
-    ...s,
-    step_id: s.step_id || `step_${String(i + 1).padStart(3, "0")}`,
-    status: "pending"
-  }));
-  const questions = planData.questions?.filter(Boolean) ?? [];
-  const durationMs = Date.now() - startTime;
-  if (questions.length > 0) {
-    const questionText = questions.map((q, i) => `${i + 1}. ${q}`).join("\n");
-    const planningQuestionMeta = await sendProjectQuestion(
-      project.userId,
-      project.originChannel ?? void 0,
-      `\u{1F4CB} **Project: ${project.title}** \u2014 Plan created with ${plan.length} steps!
-
-Before I start building, I have a few questions:
-
-${questionText}
-
-Reply to this message or use: \`/project answer ${project.id} <your answers>\``
-    );
-    await db.update(jarvisProjects).set({
-      plan,
-      status: "waiting_for_input",
-      questionPending: `Before I start building, I have a few questions:
-
-${questionText}
-
-Please answer as many as you can.`,
-      questionAskedAt: /* @__PURE__ */ new Date(),
-      questionMeta: planningQuestionMeta,
-      updatedAt: /* @__PURE__ */ new Date()
-    }).where(eq62(jarvisProjects.id, project.id));
-  } else {
-    await db.update(jarvisProjects).set({ plan, status: "building", updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, project.id));
-    await sendProjectMessage(
-      project.userId,
-      project.originChannel ?? void 0,
-      `\u{1F4CB} **Project: ${project.title}** \u2014 Plan ready!
-
-${plan.length} steps across ${[...new Set(plan.map((s) => s.phase))].join(" \u2192 ")}
-
-${planData.summary || ""}
-
-Starting first session now...`
-    );
-    await submitAgentJob2({
-      userId: project.userId,
-      agentType: "project_session",
-      title: `Build: ${project.title} (session 1)`,
-      prompt: `Continue building project ${project.id}`,
-      input: { projectId: project.id }
-    });
-  }
-  await db.insert(jarvisProjectSessions).values({
-    projectId: project.id,
-    sessionNumber,
-    stepsCompleted: 0,
-    stepLabels: [],
-    durationMs,
-    status: "complete",
-    summary: `Planning complete: ${plan.length} steps created`
-  });
-  return { status: questions.length > 0 ? "waiting_for_input" : "building", stepsCompleted: 0, summary: planData.summary || "" };
-}
-async function markProjectComplete(project, sessionNumber) {
-  const plan = asPlan2(project.plan);
-  await db.update(jarvisProjects).set({ status: "complete", lastProgressAt: /* @__PURE__ */ new Date(), updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, project.id));
-  await sendProjectMessage(
-    project.userId,
-    project.originChannel ?? void 0,
-    `\u{1F389} **Project: ${project.title}** is complete!
-
-All ${plan.length} steps finished across ${sessionNumber} session(s).
-
-Open the Projects tab to review all outputs.`
-  );
-  console.log(`[ProjectRunner] project ${project.id} complete`);
-}
-async function answerProjectQuestion(projectId, answer) {
-  const [project] = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.id, projectId)).limit(1);
-  if (!project) throw new Error(`Project ${projectId} not found`);
-  await db.update(jarvisProjects).set({
-    questionPending: null,
-    questionAskedAt: null,
-    status: "building",
-    updatedAt: /* @__PURE__ */ new Date()
-  }).where(eq62(jarvisProjects.id, projectId));
-  console.log(`[ProjectRunner] answerProjectQuestion: project ${projectId} unblocked with answer`);
-  await submitAgentJob2({
-    userId: project.userId,
-    agentType: "project_session",
-    title: `Build: ${project.title} (resumed after answer)`,
-    prompt: `Continue building project ${projectId}. User answered the pending question.`,
-    input: { projectId, userAnswer: answer }
-  });
-}
-async function pauseProject(projectId) {
-  await db.update(jarvisProjects).set({ status: "paused", autonomousMode: false, nextRunAt: null, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
-}
-async function resumeProject(projectId) {
-  await db.update(jarvisProjects).set({ status: "building", consecutiveErrors: 0, updatedAt: /* @__PURE__ */ new Date() }).where(eq62(jarvisProjects.id, projectId));
-  const [project] = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.id, projectId)).limit(1);
-  if (project) {
-    await submitAgentJob2({
-      userId: project.userId,
-      agentType: "project_session",
-      title: `Build: ${project.title} (resumed)`,
-      prompt: `Continue building project ${projectId}`,
-      input: { projectId }
-    });
-  }
-}
-async function setAutonomousMode(projectId, enabled) {
-  const updates = {
-    autonomousMode: enabled,
-    updatedAt: /* @__PURE__ */ new Date()
-  };
-  if (!enabled) {
-    updates.nextRunAt = null;
-  }
-  await db.update(jarvisProjects).set(updates).where(eq62(jarvisProjects.id, projectId));
-  if (enabled) {
-    await db.update(jarvisProjects).set({ nextRunAt: new Date(Date.now() + 10 * 1e3) }).where(
-      eq62(jarvisProjects.id, projectId)
-    );
-  }
-}
-async function getProjectStatus(projectId) {
-  const [project] = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.id, projectId)).limit(1);
-  if (!project) return null;
-  const sessions2 = await db.select().from(jarvisProjectSessions).where(eq62(jarvisProjectSessions.projectId, projectId)).orderBy(desc18(jarvisProjectSessions.sessionNumber));
-  const plan = asPlan2(project.plan);
-  const completedCount = plan.filter((s) => s.status === "complete").length;
-  const nextStep = plan.find((s) => s.status === "pending") ?? null;
-  return { project, sessions: sessions2, plan, completedCount, totalCount: plan.length, nextStep };
-}
-async function getUserProjects(userId) {
-  const projects = await db.select().from(jarvisProjects).where(eq62(jarvisProjects.userId, userId)).orderBy(desc18(jarvisProjects.updatedAt));
-  if (projects.length === 0) return [];
-  const projectIds = projects.map((p) => p.id);
-  const recentSessions = await db.select({
-    projectId: jarvisProjectSessions.projectId,
-    sessionNumber: jarvisProjectSessions.sessionNumber,
-    summary: jarvisProjectSessions.summary
-  }).from(jarvisProjectSessions).where(inArray4(jarvisProjectSessions.projectId, projectIds)).orderBy(desc18(jarvisProjectSessions.sessionNumber));
-  const latestSummaryByProject = /* @__PURE__ */ new Map();
-  for (const session of recentSessions) {
-    if (!latestSummaryByProject.has(session.projectId)) {
-      latestSummaryByProject.set(session.projectId, session.summary);
-    }
-  }
-  return projects.map((p) => ({
-    ...p,
-    lastSessionSummary: latestSummaryByProject.get(p.id) ?? null
-  }));
-}
-async function sendProjectMessage(userId, originChannel, message) {
-  try {
-    const origin = (originChannel ?? "").toLowerCase();
-    if (origin === "telegram") {
-      const telegramCh = getChannel("telegram");
-      if (telegramCh) await telegramCh.sendMessage(userId, message, {}).catch(() => {
-      });
-    } else if (origin.startsWith("discord")) {
-      const { sendToDiscordUser: sendToDiscordUser2 } = await Promise.resolve().then(() => (init_manager(), manager_exports));
-      await sendToDiscordUser2(userId, message).catch(() => {
-      });
-    }
-    const inAppCh = getChannel("in_app");
-    if (inAppCh) await inAppCh.sendMessage(userId, message, {}).catch(() => {
-    });
-  } catch (err2) {
-    console.error("[ProjectRunner] sendProjectMessage failed:", err2);
-  }
-}
-async function sendProjectQuestion(userId, originChannel, message) {
-  const meta = {};
-  try {
-    const origin = (originChannel ?? "").toLowerCase();
-    if (origin === "telegram") {
-      const { sendMessageGetId: sendMessageGetId2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
-      const linkRows = await db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq62(telegramLinks.userId, userId)).limit(1);
-      const chatId = linkRows[0]?.chatId;
-      if (chatId) {
-        const msgId = await sendMessageGetId2(chatId, message).catch(() => null);
-        if (msgId) {
-          meta.telegramChatId = chatId;
-          meta.telegramMessageId = msgId;
-        }
-      }
-    } else if (origin.startsWith("discord")) {
-      const { sendToDiscordUserGetId: sendToDiscordUserGetId2 } = await Promise.resolve().then(() => (init_manager(), manager_exports));
-      const result = await sendToDiscordUserGetId2(userId, message).catch(() => ({ sent: false }));
-      if (result.sent && result.messageId && result.channelId) {
-        meta.discordMessageId = result.messageId;
-        meta.discordChannelId = result.channelId;
-      }
-    }
-    const inAppCh = getChannel("in_app");
-    if (inAppCh) await inAppCh.sendMessage(userId, message, {}).catch(() => {
-    });
-  } catch (err2) {
-    console.error("[ProjectRunner] sendProjectQuestion failed:", err2);
-  }
-  return meta;
-}
-var AUTONOMOUS_INTERVAL_MINUTES2, MAX_CONSECUTIVE_ERRORS2, STEPS_PER_SESSION2, MAX_STEP_VERIFY_RETRIES2;
-var init_projectRunner = __esm({
-  "server/agent/projectRunner.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_harness();
-    init_orchestrator();
-    init_tools();
-    init_userTokenStore();
-    init_jobClient();
-    init_registry();
-    AUTONOMOUS_INTERVAL_MINUTES2 = 30;
-    MAX_CONSECUTIVE_ERRORS2 = 3;
-    STEPS_PER_SESSION2 = 2;
-    MAX_STEP_VERIFY_RETRIES2 = 2;
   }
 });
 
@@ -50571,6 +50686,7 @@ var init_coachingCapability = __esm({
     init_manageTasks();
     init_queueBackgroundJob();
     init_scheduleJarvisTask();
+    init_startProject();
     coachingCapability = {
       id: "coaching",
       label: "Coaching",
@@ -50578,7 +50694,7 @@ var init_coachingCapability = __esm({
       toolGroupOverrides: {
         schedule_jarvis_task: ["coaching", "scheduling"]
       },
-      tools: [manageTasksTool, queueBackgroundJobTool, scheduleJarvisTaskTool],
+      tools: [manageTasksTool, queueBackgroundJobTool, scheduleJarvisTaskTool, startProjectTool],
       configRequirements: [],
       async healthCheck() {
         return { healthy: true };
@@ -69709,6 +69825,7 @@ Do not give a capability disclaimer until you have tried the matching tool path 
           "build_feature",
           "test_tool",
           "queue_background_job",
+          "start_project",
           "spawn_subagent",
           "jarvis_self_diagnose",
           "list_source_files",

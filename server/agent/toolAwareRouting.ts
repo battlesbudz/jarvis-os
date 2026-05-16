@@ -8,6 +8,7 @@ export type ToolAwareIntent =
   | "browser"
   | "github"
   | "railway"
+  | "project"
   | "code";
 
 export interface ToolAwareRoutePlan {
@@ -109,6 +110,18 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     guidance: "For Railway/deploy/status requests, use Railway MCP/deploy/project tools when available before falling back to docs or a setup explanation.",
   },
   {
+    intent: "project",
+    patterns: [
+      /\b(start|create|make|open|set up|setup)\s+(a\s+|new\s+)?project\b/i,
+      /\bproject\s+(called|named|titled)\b/i,
+      /\bnew\s+project\b/i,
+    ],
+    capabilityIds: ["coaching"],
+    toolGroups: ["coaching"],
+    priorityToolNames: ["start_project", "queue_background_job"],
+    guidance: "For project creation requests, use start_project. For websites, landing pages, dashboards, tools, or standalone apps, set project_kind='app'. If the user only supplies a project name, create the project with that name as the initial goal instead of claiming no project API exists.",
+  },
+  {
     intent: "code",
     patterns: [
       /\b(build|create|make|implement|add|code|write|fix|debug|inspect|edit|test)\s+.*\b(app|website|feature|tool|script|function|repo|repository|source|code|bug|integration|connector)\b/i,
@@ -152,4 +165,3 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
     shouldPreferTool: true,
   };
 }
-
