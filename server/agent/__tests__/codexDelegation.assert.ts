@@ -18,7 +18,20 @@ async function main(): Promise<void> {
   assert.match(prompt, /Use Codex-side tools to summarize the current GitHub PR status\./);
   assert.match(prompt, /The user wants a read-only summary\./);
   assert.match(prompt, /Do not send, post, delete, purchase, deploy, merge, commit, or mutate external systems/i);
+  assert.match(prompt, /commit\/push still needs explicit approval/i);
   console.log("OK: Codex delegation prompt carries task, context, and read-only side-effect boundary");
+  }
+
+  {
+  const prompt = buildCodexDelegationPrompt({
+    task: "Fix the dashboard bug, commit it, and push the branch.",
+    context: "The user explicitly asked for the fix to be permanent.",
+    allowExternalSideEffects: true,
+  });
+
+  assert.match(prompt, /commit the scoped changes, and push the target branch/i);
+  assert.match(prompt, /only where the user explicitly requested them/i);
+  console.log("OK: Codex delegation prompt carries explicit commit/push instructions when approved");
   }
 
   {

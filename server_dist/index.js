@@ -10667,7 +10667,7 @@ var init_toolAwareRouting = __esm({
         capabilityIds: ["system", "self_edit", "agent_delegation"],
         toolGroups: ["system", "self_edit", "app_build", "mcp"],
         priorityToolNames: ["delegate_to_codex", "build_feature", "queue_background_job", "project_shell", "list_source_files", "read_source_file", "propose_code_change"],
-        guidance: "For code-writing or self-improvement requests, route to Codex delegation/build/self-edit tools before replying in plain text."
+        guidance: "For code-writing or self-improvement requests, route to Codex delegation/build/self-edit tools before replying in plain text. If the user explicitly asks for the fix to be permanent, pushed, published, deployed, or on GitHub, include the commit/push/publish requirement in the Codex delegation and allow external side effects only for that exact requested action."
       }
     ];
     EMPTY_PLAN = {
@@ -40565,9 +40565,11 @@ function abortError() {
 function buildCodexDelegationPrompt(input) {
   const sideEffectBoundary = input.allowExternalSideEffects ? [
     "External side effects are allowed only where the user explicitly requested them in this task.",
+    "For repo changes the user asked to make permanent, verify the work, commit the scoped changes, and push the target branch when that push was explicitly requested.",
     "Before any irreversible action, use Codex's normal approval and safety behavior."
   ].join("\n") : [
     "Do not send, post, delete, purchase, deploy, merge, commit, or mutate external systems.",
+    "For repo changes, leave edits local and report that commit/push still needs explicit approval.",
     "If the task requires an external side effect, stop and explain what approval is needed."
   ].join("\n");
   return [
@@ -71122,7 +71124,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const lastUserOrigText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
       const youtubeCtxBlock = lastUserOrigText ? await buildYouTubeContextBlock(lastUserOrigText).catch(() => "") : "";
       const codexDelegationEnabled = isCodexDelegationEnabled();
-      const buildInstruction = codexDelegationEnabled ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work." : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
+      const buildInstruction = codexDelegationEnabled ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work. If the user explicitly asks for the change to be permanent, pushed, published, deployed, or on GitHub, delegate that commit/push/publish requirement to Codex too and set allow_external_side_effects=true only for that exact requested action. If the user did not explicitly ask for commit/push/deploy, keep the work local and say that it still needs approval to be pushed." : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
       const toolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
       const toolAwareInstruction = toolAwareRoute.shouldPreferTool ? `
 

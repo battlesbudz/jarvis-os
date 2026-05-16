@@ -68,10 +68,12 @@ export function buildCodexDelegationPrompt(input: CodexDelegationPromptInput): s
   const sideEffectBoundary = input.allowExternalSideEffects
     ? [
         "External side effects are allowed only where the user explicitly requested them in this task.",
+        "For repo changes the user asked to make permanent, verify the work, commit the scoped changes, and push the target branch when that push was explicitly requested.",
         "Before any irreversible action, use Codex's normal approval and safety behavior.",
       ].join("\n")
     : [
         "Do not send, post, delete, purchase, deploy, merge, commit, or mutate external systems.",
+        "For repo changes, leave edits local and report that commit/push still needs explicit approval.",
         "If the task requires an external side effect, stop and explain what approval is needed.",
       ].join("\n");
 

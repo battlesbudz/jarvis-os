@@ -85,6 +85,12 @@ assertRoute(
   ["system", "self_edit"],
   ["delegate_to_codex", "build_feature"],
 );
+{
+  const plan = classifyToolAwareRoute("fix this bug and push it to GitHub");
+  assert(plan.shouldPreferTool, "code push: prefers tool use");
+  assert(plan.guidance.includes("allow external side effects"), "code push: guidance mentions side-effect approval");
+  assert(plan.guidance.includes("commit/push/publish"), "code push: guidance carries commit/push requirement");
+}
 
 console.log(`\nResults: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

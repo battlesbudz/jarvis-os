@@ -130,7 +130,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     capabilityIds: ["system", "self_edit", "agent_delegation"],
     toolGroups: ["system", "self_edit", "app_build", "mcp"],
     priorityToolNames: ["delegate_to_codex", "build_feature", "queue_background_job", "project_shell", "list_source_files", "read_source_file", "propose_code_change"],
-    guidance: "For code-writing or self-improvement requests, route to Codex delegation/build/self-edit tools before replying in plain text.",
+    guidance: "For code-writing or self-improvement requests, route to Codex delegation/build/self-edit tools before replying in plain text. If the user explicitly asks for the fix to be permanent, pushed, published, deployed, or on GitHub, include the commit/push/publish requirement in the Codex delegation and allow external side effects only for that exact requested action.",
   },
 ];
 
