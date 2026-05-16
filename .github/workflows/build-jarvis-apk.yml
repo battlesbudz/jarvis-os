@@ -137,9 +137,19 @@ jobs:
             echo "No APK found after build" && exit 1
           fi
           cp "$APK" dist/jarvis-app.apk
+          SHA256=$(sha256sum dist/jarvis-app.apk | awk '{print $1}')
           echo "APK ready: $(ls -lh dist/jarvis-app.apk)"
-          printf '{"versionCode":%d,"versionName":"1.0.%d"}' \
-            ${{ github.run_number }} ${{ github.run_number }} > dist/version.json
+          cat > dist/version.json <<JSON
+          {
+            "platform": "android",
+            "versionCode": ${{ github.run_number }},
+            "versionName": "1.0.${{ github.run_number }}",
+            "apkUrl": "https://github.com/battlesbudz/Gameplanjarvisai/releases/download/jarvis-app-latest/jarvis-app.apk",
+            "releaseUrl": "https://github.com/battlesbudz/Gameplanjarvisai/releases/tag/jarvis-app-latest",
+            "sha256": "$SHA256",
+            "notes": "Jarvis App build ${{ github.run_number }}"
+          }
+          JSON
           echo "version.json: $(cat dist/version.json)"
 
       - name: Upload APK artifact

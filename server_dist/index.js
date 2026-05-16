@@ -69138,6 +69138,38 @@ async function registerRoutes(app2) {
       });
     }
   });
+  app2.get("/api/app-update/android", async (_req, res) => {
+    const releaseBase = (process.env.JARVIS_ANDROID_UPDATE_RELEASE_BASE || "https://github.com/battlesbudz/Gameplanjarvisai/releases/download/jarvis-app-latest").replace(/\/+$/, "");
+    const manifestUrl = process.env.JARVIS_ANDROID_UPDATE_MANIFEST_URL || `${releaseBase}/version.json`;
+    const fallbackApkUrl = process.env.JARVIS_ANDROID_APK_URL || `${releaseBase}/jarvis-app.apk`;
+    const releaseUrl = process.env.JARVIS_ANDROID_RELEASE_URL || "https://github.com/battlesbudz/Gameplanjarvisai/releases/tag/jarvis-app-latest";
+    try {
+      const manifestRes = await fetch(manifestUrl, {
+        headers: { Accept: "application/json" }
+      });
+      if (!manifestRes.ok) {
+        return res.status(502).json({
+          error: `Android update manifest returned ${manifestRes.status}`
+        });
+      }
+      const manifest = await manifestRes.json();
+      return res.json({
+        platform: "android",
+        versionCode: Number(manifest.versionCode || 0),
+        versionName: manifest.versionName || null,
+        apkUrl: manifest.apkUrl || fallbackApkUrl,
+        releaseUrl: manifest.releaseUrl || releaseUrl,
+        notes: manifest.notes || null,
+        sha256: manifest.sha256 || null,
+        checkedAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    } catch (error) {
+      console.error("[AppUpdate] Android update check failed:", error);
+      return res.status(502).json({
+        error: "Failed to fetch Android update manifest"
+      });
+    }
+  });
   app2.use(authMiddleware);
   app2.get("/api/webchat/events", (req, res) => {
     const userId = req.userId;
