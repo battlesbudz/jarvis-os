@@ -53,6 +53,42 @@ export interface FallbackChainEntry {
   model: string;
 }
 
+function collectErrorSignals(err: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = err;
+
+  for (let depth = 0; current != null && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current);
+
+    if (current instanceof Error) {
+      parts.push(current.name, current.message);
+      const anyErr = current as Record<string, unknown>;
+      for (const key of ["code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+
+    if (typeof current === "object") {
+      const anyErr = current as Record<string, unknown>;
+      for (const key of ["name", "message", "code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+
+    parts.push(String(current));
+    break;
+  }
+
+  return parts.join(" ");
+}
+
 /**
  * Returns true for errors that warrant trying a backup provider:
  *   - HTTP 5xx (provider-side outage / maintenance)
@@ -65,6 +101,8 @@ export interface FallbackChainEntry {
  * exception because another model/provider may have a larger context or TPM cap.
  */
 export function isRetriableProviderError(err: unknown): boolean {
+  if (err instanceof Error && err.name === "AbortError") return false;
+
   // Check numeric `.status` property emitted by OpenAI / Anthropic SDKs
   const anyErr = err as Record<string, unknown>;
   if (typeof anyErr.status === "number") {
@@ -72,7 +110,7 @@ export function isRetriableProviderError(err: unknown): boolean {
     if (s === 413 || s === 429 || (s >= 500 && s < 600)) return true;
   }
 
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg = collectErrorSignals(err);
   const lower = msg.toLowerCase();
 
   // Numeric status codes embedded in the error message
@@ -94,10 +132,18 @@ export function isRetriableProviderError(err: unknown): boolean {
     "please reduce your message size",
     "context length",
     "maximum context",
+    "fetch failed",
     "timeout",
     "timed out",
+    "headers timeout",
+    "headerstimeouterror",
+    "und_err_headers_timeout",
+    "body timeout",
+    "und_err_body_timeout",
     "econnrefused",
     "econnreset",
+    "econnaborted",
+    "socket hang up",
     "network error",
     "service unavailable",
     "overloaded",
