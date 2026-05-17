@@ -218,6 +218,12 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { focus } = useLocalSearchParams<{ focus?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
+  const aboutSectionRef = useRef<View>(null);
+  const memorySectionRef = useRef<View>(null);
+  const appsSectionRef = useRef<View>(null);
+  const channelsSectionRef = useRef<View>(null);
+  const contentSectionRef = useRef<View>(null);
+  const settingsSectionRef = useRef<View>(null);
   const webhookRowRef = useRef<View>(null);
   const driveRowRef = useRef<View>(null);
   const { logout, username: authUsername, userEmail: authUserEmail } = useAuth();
@@ -1934,6 +1940,18 @@ export default function ProfileScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
+  const scrollToProfileSection = useCallback((sectionRef: React.RefObject<any>) => {
+    const scrollNode = findNodeHandle(scrollViewRef.current);
+    if (!scrollNode || !sectionRef.current) return;
+    sectionRef.current.measureLayout(
+      scrollNode,
+      (_x: number, y: number) => {
+        scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 18), animated: true });
+      },
+      () => {}
+    );
+  }, []);
+
   return (
     <View style={styles.container}>
       <ScrollView
@@ -1949,6 +1967,48 @@ export default function ProfileScreen() {
       >
         <Animated.View entering={FadeInDown.duration(400).delay(100)}>
           <Text style={styles.title}>{userName || 'Profile'}</Text>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.duration(400).delay(150)} style={styles.profileHub}>
+          <View style={styles.profileHubTop}>
+            <View style={styles.profileHubCopy}>
+              <Text style={styles.profileHubEyebrow}>Profile Control Center</Text>
+              <Text style={styles.profileHubTitle}>Jump straight to what you need</Text>
+            </View>
+            <View style={styles.profileHubStatus}>
+              <Ionicons name="sparkles" size={15} color={Colors.primaryLight} />
+            </View>
+          </View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.quickNavContent}
+          >
+            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(aboutSectionRef)}>
+              <Ionicons name="person-circle-outline" size={15} color={Colors.primaryLight} />
+              <Text style={styles.quickNavText}>About</Text>
+            </Pressable>
+            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(memorySectionRef)}>
+              <Ionicons name="library-outline" size={15} color={Colors.secondaryLight} />
+              <Text style={styles.quickNavText}>Memory</Text>
+            </Pressable>
+            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(appsSectionRef)}>
+              <Ionicons name="grid-outline" size={15} color={Colors.cyan} />
+              <Text style={styles.quickNavText}>Apps</Text>
+            </Pressable>
+            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(channelsSectionRef)}>
+              <Ionicons name="radio-outline" size={15} color={Colors.warningLight} />
+              <Text style={styles.quickNavText}>Channels</Text>
+            </Pressable>
+            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(contentSectionRef)}>
+              <Ionicons name="folder-open-outline" size={15} color={Colors.successLight} />
+              <Text style={styles.quickNavText}>Content</Text>
+            </Pressable>
+            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(settingsSectionRef)}>
+              <Ionicons name="settings-outline" size={15} color={Colors.textSecondary} />
+              <Text style={styles.quickNavText}>Settings</Text>
+            </Pressable>
+          </ScrollView>
         </Animated.View>
 
         {/* Level + XP card */}
@@ -2127,7 +2187,7 @@ export default function ProfileScreen() {
 
         {/* About You */}
         <Animated.View entering={FadeInDown.duration(400).delay(400)}>
-          <View style={styles.sectionHeaderRow}>
+          <View ref={aboutSectionRef} style={styles.sectionHeaderRow}>
             <Text style={[styles.sectionTitle, { marginTop: 28 }]}>About You</Text>
             {lifeContext && (
               <Pressable style={styles.editBtn} onPress={() => setSheetVisible(true)}>
@@ -2199,7 +2259,7 @@ export default function ProfileScreen() {
 
         {/* JARVIS Soul */}
         <Animated.View entering={FadeInDown.duration(400).delay(410)}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
+          <View ref={memorySectionRef} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
             <Text style={styles.sectionTitle}>JARVIS Soul</Text>
             <Pressable
               onPress={handleRegenerateSoul}
@@ -2945,7 +3005,9 @@ export default function ProfileScreen() {
 
         {/* Connected Apps */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
+          <View ref={appsSectionRef}>
+            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
+          </View>
           <Text style={styles.sectionSubtitle}>
             Real data feeds your daily plan and coach
           </Text>
@@ -3273,7 +3335,9 @@ export default function ProfileScreen() {
 
         {/* Connected Channels (Phase 5: multi-channel + desktop daemon) */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Channels</Text>
+          <View ref={channelsSectionRef}>
+            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Channels</Text>
+          </View>
           <View style={styles.platformsList}>
             <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
               <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
@@ -4143,7 +4207,7 @@ export default function ProfileScreen() {
                     Step 1 — Get the app
                   </Text>
                   <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 10 }}>
-                    Download the Jarvis Daemon APK and install it on your Android phone. Enable "Install from unknown sources" when prompted.
+                    Download the Jarvis Daemon APK and install it on your Android phone. Enable Install from unknown sources when prompted.
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ alignItems: 'center' }}>
@@ -4165,7 +4229,7 @@ export default function ProfileScreen() {
                         <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Download APK</Text>
                       </Pressable>
                       <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 6, lineHeight: 16 }}>
-                        Tap "Pair" above after installing to get your connection code.
+                        Tap Pair above after installing to get your connection code.
                       </Text>
                     </View>
                   </View>
@@ -4472,7 +4536,9 @@ export default function ProfileScreen() {
 
         {/* My Website */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>My Website</Text>
+          <View ref={contentSectionRef}>
+            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>My Website</Text>
+          </View>
           <View style={styles.platformsList}>
             <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 14 }}>
               <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
@@ -4996,7 +5062,9 @@ export default function ProfileScreen() {
 
         {/* Settings */}
         <Animated.View entering={FadeInDown.duration(400).delay(480)}>
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Settings</Text>
+          <View ref={settingsSectionRef}>
+            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Settings</Text>
+          </View>
           <View style={styles.platformsList}>
             <Pressable 
               style={styles.platformRow}
@@ -5297,7 +5365,7 @@ function formatRelativeDate(iso: string): string {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.background,
   },
   scrollContent: {
     paddingHorizontal: 20,
@@ -5306,17 +5374,76 @@ const styles = StyleSheet.create({
     fontSize: 28,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
-    marginBottom: 20,
+    marginBottom: 14,
+  },
+  profileHub: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.borderViolet,
+    padding: 14,
+    marginBottom: 16,
+  },
+  profileHubTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
+  profileHubCopy: {
+    flex: 1,
+  },
+  profileHubEyebrow: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.primaryLight,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+    marginBottom: 3,
+  },
+  profileHubTitle: {
+    fontSize: 15,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  profileHubStatus: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: Colors.greenDim,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickNavContent: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  quickNavChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+    borderRadius: 12,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  quickNavText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
   },
 
   /* Level card */
   levelCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 16,
     padding: 20,
-    marginBottom: 28,
+    marginBottom: 24,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderGlow,
   },
   levelTopRow: {
     flexDirection: 'row',
@@ -5420,17 +5547,18 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
     marginBottom: 14,
+    lineHeight: 18,
   },
 
   /* Knowledge Vault row */
   vaultRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderViolet,
     gap: 12,
     marginTop: 12,
   },
@@ -5466,25 +5594,25 @@ const styles = StyleSheet.create({
   },
   badgeCell: {
     width: '30.5%',
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 14,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: Colors.borderLight,
+    borderColor: Colors.border,
     position: 'relative',
     opacity: 0.5,
   },
   badgeCellUnlocked: {
     opacity: 1,
     borderColor: Colors.primary + '40',
-    backgroundColor: Colors.primary + '08',
+    backgroundColor: Colors.greenDim,
   },
   badgeIcon: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
@@ -5521,10 +5649,10 @@ const styles = StyleSheet.create({
 
   /* Calendars */
   platformsList: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderGlow,
     overflow: 'hidden',
   },
   platformRow: {
@@ -5534,7 +5662,7 @@ const styles = StyleSheet.create({
   },
   platformRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: Colors.border,
   },
   platformIcon: {
     width: 42,
@@ -5691,11 +5819,11 @@ const styles = StyleSheet.create({
   aboutEmptyCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderGlow,
     gap: 12,
   },
   aboutEmptyIcon: {
@@ -5721,10 +5849,10 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   aboutFilledCard: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderGlow,
     overflow: 'hidden',
   },
   aboutRow: {
@@ -5733,7 +5861,7 @@ const styles = StyleSheet.create({
   },
   aboutRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: Colors.border,
   },
   aboutLabel: {
     fontSize: 10,
@@ -5755,8 +5883,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
-    backgroundColor: Colors.surface,
+    borderTopColor: Colors.border,
+    backgroundColor: Colors.background,
   },
   aboutUpdated: {
     fontSize: 11,
@@ -5769,11 +5897,11 @@ const styles = StyleSheet.create({
     color: Colors.primary,
   },
   memoryEmptyCard: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 16,
     padding: 24,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderViolet,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
@@ -5782,7 +5910,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 12,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.background,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5793,10 +5921,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   memoryList: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderViolet,
     overflow: 'hidden',
   },
   memoryRow: {
@@ -5807,7 +5935,7 @@ const styles = StyleSheet.create({
   },
   memoryRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: Colors.border,
   },
   memoryContent: {
     flex: 1,
@@ -5875,10 +6003,10 @@ const styles = StyleSheet.create({
 
   /* Rewards */
   rewardsList: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: Colors.borderGlow,
     overflow: 'hidden',
   },
   rewardRow: {
@@ -5988,7 +6116,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   telegramCodeCard: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: '#229ED940',
@@ -6053,7 +6181,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   tzSheet: {
-    backgroundColor: Colors.white,
+    backgroundColor: Colors.surfaceAlt,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: 20,
