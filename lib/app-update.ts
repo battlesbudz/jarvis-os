@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Application from "expo-application";
 import Constants from "expo-constants";
 import { fetch } from "expo/fetch";
 import * as Linking from "expo-linking";
@@ -24,13 +25,21 @@ type CheckAndroidApkUpdateOptions = {
 const LAST_CHECK_KEY = "jarvis_android_update_last_check_at";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
+function toPositiveVersionCode(value: unknown): number | null {
+  const versionCode = Number(value);
+  return Number.isFinite(versionCode) && versionCode > 0 ? versionCode : null;
+}
+
 function currentAndroidVersionCode(): number {
-  const nativeBuildVersion = Number(Constants.nativeBuildVersion);
-  if (Number.isFinite(nativeBuildVersion) && nativeBuildVersion > 0) return nativeBuildVersion;
+  const nativeVersionCode = toPositiveVersionCode(Application.nativeBuildVersion);
+  if (nativeVersionCode) return nativeVersionCode;
+
+  const constantsNativeVersionCode = toPositiveVersionCode(Constants.nativeBuildVersion);
+  if (constantsNativeVersionCode) return constantsNativeVersionCode;
 
   const androidConfig = Constants.expoConfig?.android as { versionCode?: number } | undefined;
-  const configVersionCode = Number(androidConfig?.versionCode);
-  if (Number.isFinite(configVersionCode) && configVersionCode > 0) return configVersionCode;
+  const configVersionCode = toPositiveVersionCode(androidConfig?.versionCode);
+  if (configVersionCode) return configVersionCode;
 
   return 0;
 }
