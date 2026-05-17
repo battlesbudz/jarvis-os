@@ -22,6 +22,7 @@
     },
     "android": {
       "package": "com.gameplan",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#6366F1",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
