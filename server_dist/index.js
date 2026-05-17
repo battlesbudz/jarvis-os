@@ -5344,6 +5344,28 @@ var init_categories = __esm({
   }
 });
 
+// server/memory/soulCuration.ts
+function compactSoulText(value, maxChars = SOUL_BULLET_MAX_CHARS) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}\u2026`;
+}
+function shouldIncludeMemoryInSoul(memory) {
+  const sourceType = memory.sourceType ?? memory.source_type ?? null;
+  if (sourceType && SOUL_EXCLUDED_SOURCE_TYPES.has(sourceType)) return false;
+  return !TRANSIENT_SOUL_MEMORY_RE.test(memory.content);
+}
+var SOUL_FIELD_MAX_CHARS, SOUL_BULLET_MAX_CHARS, SOUL_EXCLUDED_SOURCE_TYPES, TRANSIENT_SOUL_MEMORY_RE;
+var init_soulCuration = __esm({
+  "server/memory/soulCuration.ts"() {
+    "use strict";
+    SOUL_FIELD_MAX_CHARS = 360;
+    SOUL_BULLET_MAX_CHARS = 260;
+    SOUL_EXCLUDED_SOURCE_TYPES = /* @__PURE__ */ new Set(["inbox_triage", "jarvis_self_knowledge"]);
+    TRANSIENT_SOUL_MEMORY_RE = /\b(Browser QA|Test Projedct|codex-chat-delegation-smoke|Embeddings skipped|Router works|OpenCode|manual action of creating project|cannot start project from here)\b/i;
+  }
+});
+
 // server/memory/soul.ts
 var soul_exports = {};
 __export(soul_exports, {
@@ -5402,7 +5424,12 @@ async function buildSoulMarkdown(userId) {
     morningNoteRows
   ] = await Promise.all([
     // 1. Identity Core — long_term semantic + procedural (values, communication_style, preferences)
-    db.select({ id: userMemories.id, content: userMemories.content, category: userMemories.category }).from(userMemories).where(
+    db.select({
+      id: userMemories.id,
+      content: userMemories.content,
+      category: userMemories.category,
+      sourceType: userMemories.sourceType
+    }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.tier, "long_term"),
@@ -5412,7 +5439,7 @@ async function buildSoulMarkdown(userId) {
       )
     ).orderBy(desc3(userMemories.relevanceScore), desc3(userMemories.confidence)).limit(16),
     // 2. Current State — short_term contextual
-    db.select({ content: userMemories.content }).from(userMemories).where(
+    db.select({ content: userMemories.content, sourceType: userMemories.sourceType }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.tier, "short_term"),
@@ -5421,7 +5448,11 @@ async function buildSoulMarkdown(userId) {
       )
     ).orderBy(desc3(userMemories.extractedAt)).limit(12),
     // 3. Episodic Highlights — episodic memories in last 7 days
-    db.select({ content: userMemories.content, extractedAt: userMemories.extractedAt }).from(userMemories).where(
+    db.select({
+      content: userMemories.content,
+      extractedAt: userMemories.extractedAt,
+      sourceType: userMemories.sourceType
+    }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.memoryType, "episodic"),
@@ -5430,7 +5461,11 @@ async function buildSoulMarkdown(userId) {
       )
     ).orderBy(desc3(userMemories.extractedAt)).limit(8),
     // 4. Long-Term Patterns — high-relevance long_term in work/energy/accomplishments
-    db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(
+    db.select({
+      content: userMemories.content,
+      category: userMemories.category,
+      sourceType: userMemories.sourceType
+    }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.tier, "long_term"),
@@ -5440,7 +5475,7 @@ async function buildSoulMarkdown(userId) {
       )
     ).orderBy(desc3(userMemories.relevanceScore), desc3(userMemories.extractedAt)).limit(24),
     // 7. Aspirations — goals_history category memories
-    db.select({ content: userMemories.content }).from(userMemories).where(
+    db.select({ content: userMemories.content, sourceType: userMemories.sourceType }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.category, "goals_history"),
@@ -5479,10 +5514,10 @@ async function buildSoulMarkdown(userId) {
     "_Structured self-model \u2014 regenerated from memories, life context, and nightly synthesis. Sections reflect distinct cognitive layers._"
   );
   const identityByCat = /* @__PURE__ */ new Map();
-  for (const m of identityCoreRows) {
+  for (const m of identityCoreRows.filter(shouldIncludeMemoryInSoul)) {
     const cat = normalizeCategory(m.category);
     const arr = identityByCat.get(cat) || [];
-    arr.push(m.content);
+    arr.push(compactSoulText(m.content));
     identityByCat.set(cat, arr);
   }
   const identityCatOrder = ["values", "communication_style", "preferences", "fact"];
@@ -5505,11 +5540,11 @@ async function buildSoulMarkdown(userId) {
   }
   const currentStateLines = [];
   if (lc) {
-    if (lc.priorityGoal) currentStateLines.push(`- **Top priority:** ${lc.priorityGoal}`);
-    if (lc.upcomingDeadline) currentStateLines.push(`- **Upcoming deadline:** ${lc.upcomingDeadline}`);
-    if (lc.improvementArea) currentStateLines.push(`- **Improvement area:** ${lc.improvementArea}`);
-    if (lc.currentBlocker) currentStateLines.push(`- **Current blocker:** ${lc.currentBlocker}`);
-    if (lc.freeText) currentStateLines.push(`- ${lc.freeText}`);
+    if (lc.priorityGoal) currentStateLines.push(`- **Top priority:** ${compactSoulText(lc.priorityGoal, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.upcomingDeadline) currentStateLines.push(`- **Timing:** ${compactSoulText(lc.upcomingDeadline, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.improvementArea) currentStateLines.push(`- **Improvement area:** ${compactSoulText(lc.improvementArea, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.currentBlocker) currentStateLines.push(`- **Current blocker:** ${compactSoulText(lc.currentBlocker, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.freeText) currentStateLines.push(`- ${compactSoulText(lc.freeText, SOUL_FIELD_MAX_CHARS)}`);
   }
   const es = emotionalStateRows[0];
   if (es) {
@@ -5517,31 +5552,33 @@ async function buildSoulMarkdown(userId) {
     const stressNote = es.stressScore > 6 ? " (elevated stress)" : es.stressScore < 3 ? " (low stress)" : "";
     const flowNote = es.flowScore > 6 ? ", high flow" : es.flowScore < 3 ? ", low flow" : "";
     currentStateLines.push(`- **Emotional state:** ${effectiveLabel}${stressNote}${flowNote}`);
-    if (es.explanation) currentStateLines.push(`- _${es.explanation}_`);
+    if (es.explanation) currentStateLines.push(`- _${compactSoulText(es.explanation, SOUL_FIELD_MAX_CHARS)}_`);
   }
   const mn = morningNoteRows[0];
   if (mn) {
-    if (mn.moodSignal) currentStateLines.push(`- **Morning mood:** ${mn.moodSignal}${mn.recordedAt ? ` (${mn.recordedAt})` : ""}`);
-    if (mn.intention) currentStateLines.push(`- **Today's intention:** ${mn.intention}`);
+    if (mn.moodSignal)
+      currentStateLines.push(`- **Morning mood:** ${compactSoulText(mn.moodSignal)}${mn.recordedAt ? ` (${mn.recordedAt})` : ""}`);
+    if (mn.intention) currentStateLines.push(`- **Today's intention:** ${compactSoulText(mn.intention)}`);
   }
-  for (const m of currentStateRows) {
-    currentStateLines.push(`- ${m.content}`);
+  for (const m of currentStateRows.filter(shouldIncludeMemoryInSoul)) {
+    currentStateLines.push(`- ${compactSoulText(m.content)}`);
   }
   if (currentStateLines.length > 0) {
     sections.push("## 2. Current State");
     sections.push(...currentStateLines);
   }
-  if (episodicRows.length > 0) {
+  const includedEpisodicRows = episodicRows.filter(shouldIncludeMemoryInSoul);
+  if (includedEpisodicRows.length > 0) {
     sections.push("## 3. Episodic Highlights _(last 7 days)_");
-    for (const m of episodicRows) {
-      sections.push(`- ${m.content}`);
+    for (const m of includedEpisodicRows) {
+      sections.push(`- ${compactSoulText(m.content)}`);
     }
   }
   const patternByCat = /* @__PURE__ */ new Map();
-  for (const m of longTermPatternRows) {
+  for (const m of longTermPatternRows.filter(shouldIncludeMemoryInSoul)) {
     const cat = normalizeCategory(m.category);
     const arr = patternByCat.get(cat) || [];
-    arr.push(m.content);
+    arr.push(compactSoulText(m.content));
     patternByCat.set(cat, arr);
   }
   const patternCatOrder = ["work_patterns", "energy_rhythms", "accomplishments", "blockers"];
@@ -5569,20 +5606,21 @@ async function buildSoulMarkdown(userId) {
       sections.push(`- ${d.insightText}${conf}`);
     }
   }
-  if (peopleRows.length > 0) {
+  const relationshipRows = peopleRows.filter((p) => p.relationship !== "email correspondent").slice(0, 8);
+  if (relationshipRows.length > 0) {
     sections.push("## 6. Relationships");
-    for (const p of peopleRows) {
+    for (const p of relationshipRows) {
       const role = p.relationship ? ` \u2014 ${p.relationship}` : "";
-      const note = p.notes ? ` (${p.notes})` : "";
+      const note = p.notes ? ` (${compactSoulText(p.notes, 120)})` : "";
       const lastSeen = p.lastInteractionAt ? ` [last: ${new Date(p.lastInteractionAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}]` : "";
       sections.push(`- **${p.name}**${role}${note}${lastSeen}`);
     }
   }
   const aspirationLines = [];
-  if (lc?.priorityGoal) aspirationLines.push(`- **Priority goal:** ${lc.priorityGoal}`);
-  if (lc?.improvementArea) aspirationLines.push(`- **Improving:** ${lc.improvementArea}`);
-  for (const m of aspirationRows) {
-    aspirationLines.push(`- ${m.content}`);
+  if (lc?.priorityGoal) aspirationLines.push(`- **Priority goal:** ${compactSoulText(lc.priorityGoal, SOUL_FIELD_MAX_CHARS)}`);
+  if (lc?.improvementArea) aspirationLines.push(`- **Improving:** ${compactSoulText(lc.improvementArea, SOUL_FIELD_MAX_CHARS)}`);
+  for (const m of aspirationRows.filter(shouldIncludeMemoryInSoul)) {
+    aspirationLines.push(`- ${compactSoulText(m.content)}`);
   }
   if (aspirationLines.length > 0) {
     sections.push("## 7. Aspirations");
@@ -5728,6 +5766,7 @@ var init_soul = __esm({
     init_db();
     init_schema();
     init_categories();
+    init_soulCuration();
     SOUL_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
     SOUL_NOVELTY_THRESHOLD = 5;
     SOUL_COMPACT_THRESHOLD = 4e3;
@@ -67130,8 +67169,33 @@ __export(deliverableReviewHttpRoutes_exports, {
   registerDeliverableReviewRoutes: () => registerDeliverableReviewRoutes
 });
 import { and as and82, eq as eq107 } from "drizzle-orm";
+async function defaultApproveGate(gateId, userId) {
+  const { approveGate: approveGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
+  await approveGate2(gateId, userId);
+}
+async function defaultRejectGate(gateId, userId) {
+  const { rejectGate: rejectGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
+  await rejectGate2(gateId, userId);
+}
+async function defaultGetGate(gateId) {
+  const { getGate: getGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
+  return getGate2(gateId);
+}
+async function defaultContinueTopLevelApproval(gate) {
+  const { continueTopLevelApproval: continueTopLevelApproval2 } = await Promise.resolve().then(() => (init_topLevelApprovalContinuation(), topLevelApprovalContinuation_exports));
+  return continueTopLevelApproval2(gate);
+}
+async function defaultSubmitAgentJob(input) {
+  const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
+  return submitAgentJob3(input);
+}
 function registerDeliverableReviewRoutes(app2, deps) {
   const { db: db2 } = deps;
+  const approveGate2 = deps.approveGate ?? defaultApproveGate;
+  const rejectGate2 = deps.rejectGate ?? defaultRejectGate;
+  const getGate2 = deps.getGate ?? defaultGetGate;
+  const continueTopLevelApproval2 = deps.continueTopLevelApproval ?? defaultContinueTopLevelApproval;
+  const submitAgentJob3 = deps.submitAgentJob ?? defaultSubmitAgentJob;
   app2.post("/api/deliverables/:id/approve", async (req, res) => {
     try {
       const userId = req.userId;
@@ -67142,8 +67206,6 @@ function registerDeliverableReviewRoutes(app2, deps) {
       const d = reviewAction.deliverable;
       let resultExtra = {};
       if (d.type === "approval_gate") {
-        const { approveGate: approveGate2, getGate: getGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
-        const { continueTopLevelApproval: continueTopLevelApproval2 } = await Promise.resolve().then(() => (init_topLevelApprovalContinuation(), topLevelApprovalContinuation_exports));
         const meta = d.meta || {};
         const gate = meta.gateId ? await getGate2(meta.gateId) : void 0;
         if (meta.gateId) await approveGate2(meta.gateId, userId);
@@ -67197,7 +67259,6 @@ function registerDeliverableReviewRoutes(app2, deps) {
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
       if (d.type === "approval_gate") {
-        const { rejectGate: rejectGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
         const meta = d.meta || {};
         if (meta.gateId) await rejectGate2(meta.gateId, userId);
       }
@@ -67245,7 +67306,6 @@ function registerDeliverableReviewRoutes(app2, deps) {
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
       const [job] = d.jobId ? await db2.select().from(agentJobs).where(and82(eq107(agentJobs.id, d.jobId), eq107(agentJobs.userId, userId))).limit(1) : [];
-      const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
       const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
       delete baseInput.retryCount;
       const revisionPrompt = [
