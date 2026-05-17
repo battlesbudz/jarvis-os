@@ -9,7 +9,8 @@ export type ToolAwareIntent =
   | "github"
   | "railway"
   | "project"
-  | "code";
+  | "code"
+  | "diagnostics";
 
 export interface ToolAwareRoutePlan {
   intents: ToolAwareIntent[];
@@ -131,6 +132,17 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     toolGroups: ["system", "self_edit", "app_build", "mcp"],
     priorityToolNames: ["delegate_to_codex", "build_feature", "queue_background_job", "project_shell", "list_source_files", "read_source_file", "propose_code_change"],
     guidance: "For code-writing or self-improvement requests, route to Codex delegation/build/self-edit tools before replying in plain text. If the user explicitly asks for the fix to be permanent, pushed, published, deployed, or on GitHub, include the commit/push/publish requirement in the Codex delegation and allow external side effects only for that exact requested action.",
+  },
+  {
+    intent: "diagnostics",
+    patterns: [
+      /\b(what'?s wrong|what is wrong|why did .{0,80}\bfail|why (is|are) .* not working|are you ok|are you okay|system health|self[- ]?diagnos(e|is)|diagnose yourself)\b/i,
+      /\b(browser|tool|gateway|codex|railway|deploy|deployment|server|app|jarvis).*\b(broken|fail|failing|failed|down|stuck|not working)\b/i,
+    ],
+    capabilityIds: ["system"],
+    toolGroups: ["system"],
+    priorityToolNames: ["jarvis_self_diagnose"],
+    guidance: "For Jarvis health, failure, or reliability questions, call jarvis_self_diagnose before answering so the reply is based on current subsystem status instead of stale chat history.",
   },
 ];
 
