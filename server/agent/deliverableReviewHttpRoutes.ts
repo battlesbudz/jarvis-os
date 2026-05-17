@@ -4,17 +4,55 @@ import * as schema from "@shared/schema";
 import { userDocuments } from "@shared/schema";
 import type { db as dbType } from "../db";
 import { loadDeliverableForReviewAction } from "./deliverableReviewActions";
+import type { ApprovalGate } from "./agentApproval";
+import type { SubmitJobInput, SubmitJobResult } from "./jobClient";
+import type { ContinueTopLevelApprovalResult } from "./topLevelApprovalContinuation";
 
 type Db = typeof dbType;
 
 export interface DeliverableReviewRoutesDeps {
   db: Db;
+  approveGate?: (gateId: string, userId: string) => Promise<void>;
+  rejectGate?: (gateId: string, userId: string) => Promise<void>;
+  getGate?: (gateId: string) => Promise<ApprovalGate | undefined>;
+  continueTopLevelApproval?: (gate: ApprovalGate) => Promise<ContinueTopLevelApprovalResult>;
+  submitAgentJob?: (input: SubmitJobInput) => Promise<SubmitJobResult>;
 }
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
 
+async function defaultApproveGate(gateId: string, userId: string): Promise<void> {
+  const { approveGate } = await import("./agentApproval");
+  await approveGate(gateId, userId);
+}
+
+async function defaultRejectGate(gateId: string, userId: string): Promise<void> {
+  const { rejectGate } = await import("./agentApproval");
+  await rejectGate(gateId, userId);
+}
+
+async function defaultGetGate(gateId: string): Promise<ApprovalGate | undefined> {
+  const { getGate } = await import("./agentApproval");
+  return getGate(gateId);
+}
+
+async function defaultContinueTopLevelApproval(gate: ApprovalGate): Promise<ContinueTopLevelApprovalResult> {
+  const { continueTopLevelApproval } = await import("./topLevelApprovalContinuation");
+  return continueTopLevelApproval(gate);
+}
+
+async function defaultSubmitAgentJob(input: SubmitJobInput): Promise<SubmitJobResult> {
+  const { submitAgentJob } = await import("./jobQueue");
+  return submitAgentJob(input);
+}
+
 export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableReviewRoutesDeps): void {
   const { db } = deps;
+  const approveGate = deps.approveGate ?? defaultApproveGate;
+  const rejectGate = deps.rejectGate ?? defaultRejectGate;
+  const getGate = deps.getGate ?? defaultGetGate;
+  const continueTopLevelApproval = deps.continueTopLevelApproval ?? defaultContinueTopLevelApproval;
+  const submitAgentJob = deps.submitAgentJob ?? defaultSubmitAgentJob;
 
   app.post("/api/deliverables/:id/approve", async (req: Request, res: Response) => {
     try {
@@ -28,8 +66,6 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       let resultExtra: Record<string, unknown> = {};
 
       if (d.type === "approval_gate") {
-        const { approveGate, getGate } = await import("./agentApproval");
-        const { continueTopLevelApproval } = await import("./topLevelApprovalContinuation");
         const meta = (d.meta as { gateId?: string }) || {};
         const gate = meta.gateId ? await getGate(meta.gateId) : undefined;
         if (meta.gateId) await approveGate(meta.gateId, userId);
@@ -97,7 +133,6 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
       if (d.type === "approval_gate") {
-        const { rejectGate } = await import("./agentApproval");
         const meta = (d.meta as { gateId?: string }) || {};
         if (meta.gateId) await rejectGate(meta.gateId, userId);
       }
@@ -168,7 +203,6 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
             .limit(1)
         : [];
 
-      const { submitAgentJob } = await import("./jobQueue");
       const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input)
         ? { ...(job.input as Record<string, unknown>) }
         : {};
