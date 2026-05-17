@@ -10822,6 +10822,17 @@ var init_toolAwareRouting = __esm({
         toolGroups: ["system", "self_edit", "app_build", "mcp"],
         priorityToolNames: ["delegate_to_codex", "build_feature", "queue_background_job", "project_shell", "list_source_files", "read_source_file", "propose_code_change"],
         guidance: "For code-writing or self-improvement requests, route to Codex delegation/build/self-edit tools before replying in plain text. If the user explicitly asks for the fix to be permanent, pushed, published, deployed, or on GitHub, include the commit/push/publish requirement in the Codex delegation and allow external side effects only for that exact requested action."
+      },
+      {
+        intent: "diagnostics",
+        patterns: [
+          /\b(what'?s wrong|what is wrong|why did .{0,80}\bfail|why (is|are) .* not working|are you ok|are you okay|system health|self[- ]?diagnos(e|is)|diagnose yourself)\b/i,
+          /\b(browser|tool|gateway|codex|railway|deploy|deployment|server|app|jarvis).*\b(broken|fail|failing|failed|down|stuck|not working)\b/i
+        ],
+        capabilityIds: ["system"],
+        toolGroups: ["system"],
+        priorityToolNames: ["jarvis_self_diagnose"],
+        guidance: "For Jarvis health, failure, or reliability questions, call jarvis_self_diagnose before answering so the reply is based on current subsystem status instead of stale chat history."
       }
     ];
     EMPTY_PLAN = {
@@ -71665,6 +71676,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 ## Tool-Aware Routing
 ${toolAwareRoute.guidance}
 Do not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.` : "";
+      const isDiagnosticsRequest = toolAwareRoute.intents.includes("diagnostics");
       const chatMessages = [
         { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally \u2014 do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session \u2014 call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked.\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools \u2014 list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review \u2014 you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
         ...toolAwareInstruction ? [{ role: "system", content: toolAwareInstruction }] : [],
@@ -71797,9 +71809,10 @@ Do not give a capability disclaimer until you have tried the matching tool path 
           const phase1 = await runCoachModelTurn({
             messages: currentMessages,
             tools: requestTools,
-            // Force a tool call on turn 0 for device-control requests.
+            // Force a tool call on turn 0 for requests where a plain-text guess
+            // is especially likely to repeat stale chat history.
             // Subsequent turns use "auto" so the model can stop and respond.
-            toolChoice: turn === 0 && isDeviceControlRequest ? "required" : "auto",
+            toolChoice: turn === 0 && (isDeviceControlRequest || isDiagnosticsRequest) ? "required" : "auto",
             maxCompletionTokens: 2048,
             signal,
             logPrefix: "[CoachChat]"
