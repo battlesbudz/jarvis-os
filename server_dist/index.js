@@ -4197,6 +4197,27 @@ function getCodexGatewayUrl() {
 function getCodexGatewayToken() {
   return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
 }
+function createLinkedAbortController(signal) {
+  const controller = new AbortController();
+  let didTimeout = false;
+  const abortFromCaller = () => {
+    controller.abort(new DOMException("Codex OAuth provider aborted", "AbortError"));
+  };
+  const timer = Number.isFinite(CODEX_GATEWAY_TIMEOUT_MS) && CODEX_GATEWAY_TIMEOUT_MS > 0 ? setTimeout(() => {
+    didTimeout = true;
+    controller.abort(new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`));
+  }, CODEX_GATEWAY_TIMEOUT_MS) : null;
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  return {
+    controller,
+    cleanup: () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromCaller);
+    },
+    timedOut: () => didTimeout
+  };
+}
 function buildCodexOAuthProviderPrompt(params) {
   const sections = params.messages.map((message, index) => {
     const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
@@ -4286,16 +4307,31 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
 async function runRemoteCodexOAuthPrompt(gatewayUrl, prompt, signal) {
   const token = getCodexGatewayToken();
   if (!token) throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
-  const response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ prompt }),
-    signal
-  });
-  const raw = await response.text();
+  const linkedAbort = createLinkedAbortController(signal);
+  let response;
+  let raw;
+  try {
+    response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt }),
+      signal: linkedAbort.controller.signal
+    });
+    raw = await response.text();
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new DOMException("Codex OAuth provider aborted", "AbortError");
+    }
+    if (linkedAbort.timedOut()) {
+      throw new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`, { cause: error });
+    }
+    throw error;
+  } finally {
+    linkedAbort.cleanup();
+  }
   let payload = {};
   try {
     payload = raw ? JSON.parse(raw) : {};
@@ -4307,13 +4343,14 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl, prompt, signal) {
   }
   return String(payload.content || "").trim();
 }
-var CODEX_EXEC_TIMEOUT_MS, CodexOAuthProvider;
+var CODEX_EXEC_TIMEOUT_MS, CODEX_GATEWAY_TIMEOUT_MS, CodexOAuthProvider;
 var init_codexOAuth = __esm({
   "server/agent/providers/codexOAuth.ts"() {
     "use strict";
     init_base();
     init_env();
     CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 3e5);
+    CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 12e4);
     CodexOAuthProvider = class extends BaseProvider {
       async initialize() {
       }
@@ -4390,13 +4427,44 @@ var init_providers = __esm({
 });
 
 // server/agent/providers/fallback.ts
+function collectErrorSignals(err2) {
+  const parts = [];
+  const seen = /* @__PURE__ */ new Set();
+  let current = err2;
+  for (let depth = 0; current != null && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current);
+    if (current instanceof Error) {
+      parts.push(current.name, current.message);
+      const anyErr = current;
+      for (const key of ["code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+    if (typeof current === "object") {
+      const anyErr = current;
+      for (const key of ["name", "message", "code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+    parts.push(String(current));
+    break;
+  }
+  return parts.join(" ");
+}
 function isRetriableProviderError(err2) {
+  if (err2 instanceof Error && err2.name === "AbortError") return false;
   const anyErr = err2;
   if (typeof anyErr.status === "number") {
     const s = anyErr.status;
     if (s === 413 || s === 429 || s >= 500 && s < 600) return true;
   }
-  const msg = err2 instanceof Error ? err2.message : String(err2);
+  const msg = collectErrorSignals(err2);
   const lower = msg.toLowerCase();
   if (/\b(413|429|500|502|503|504|529)\b/.test(msg)) return true;
   const retriableTerms = [
@@ -4414,10 +4482,18 @@ function isRetriableProviderError(err2) {
     "please reduce your message size",
     "context length",
     "maximum context",
+    "fetch failed",
     "timeout",
     "timed out",
+    "headers timeout",
+    "headerstimeouterror",
+    "und_err_headers_timeout",
+    "body timeout",
+    "und_err_body_timeout",
     "econnrefused",
     "econnreset",
+    "econnaborted",
+    "socket hang up",
     "network error",
     "service unavailable",
     "overloaded",
