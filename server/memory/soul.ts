@@ -3,6 +3,11 @@ import { eq, desc, and, inArray, gte, gt, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { normalizeCategory } from "./categories";
 import type { MemoryCategory } from "@shared/schema";
+import {
+  compactSoulText,
+  shouldIncludeMemoryInSoul,
+  SOUL_FIELD_MAX_CHARS,
+} from "./soulCuration";
 
 const SOUL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -80,7 +85,12 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
   ] = await Promise.all([
     // 1. Identity Core — long_term semantic + procedural (values, communication_style, preferences)
     db
-      .select({ id: schema.userMemories.id, content: schema.userMemories.content, category: schema.userMemories.category })
+      .select({
+        id: schema.userMemories.id,
+        content: schema.userMemories.content,
+        category: schema.userMemories.category,
+        sourceType: schema.userMemories.sourceType,
+      })
       .from(schema.userMemories)
       .where(
         and(
@@ -96,7 +106,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
 
     // 2. Current State — short_term contextual
     db
-      .select({ content: schema.userMemories.content })
+      .select({ content: schema.userMemories.content, sourceType: schema.userMemories.sourceType })
       .from(schema.userMemories)
       .where(
         and(
@@ -111,7 +121,11 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
 
     // 3. Episodic Highlights — episodic memories in last 7 days
     db
-      .select({ content: schema.userMemories.content, extractedAt: schema.userMemories.extractedAt })
+      .select({
+        content: schema.userMemories.content,
+        extractedAt: schema.userMemories.extractedAt,
+        sourceType: schema.userMemories.sourceType,
+      })
       .from(schema.userMemories)
       .where(
         and(
@@ -126,7 +140,11 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
 
     // 4. Long-Term Patterns — high-relevance long_term in work/energy/accomplishments
     db
-      .select({ content: schema.userMemories.content, category: schema.userMemories.category })
+      .select({
+        content: schema.userMemories.content,
+        category: schema.userMemories.category,
+        sourceType: schema.userMemories.sourceType,
+      })
       .from(schema.userMemories)
       .where(
         and(
@@ -142,7 +160,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
 
     // 7. Aspirations — goals_history category memories
     db
-      .select({ content: schema.userMemories.content })
+      .select({ content: schema.userMemories.content, sourceType: schema.userMemories.sourceType })
       .from(schema.userMemories)
       .where(
         and(
@@ -213,10 +231,10 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
 
   // ── Section 1: Identity Core ──────────────────────────────────────────────
   const identityByCat = new Map<MemoryCategory, string[]>();
-  for (const m of identityCoreRows) {
+  for (const m of identityCoreRows.filter(shouldIncludeMemoryInSoul)) {
     const cat = normalizeCategory(m.category);
     const arr = identityByCat.get(cat) || [];
-    arr.push(m.content);
+    arr.push(compactSoulText(m.content));
     identityByCat.set(cat, arr);
   }
   const identityCatOrder: MemoryCategory[] = ["values", "communication_style", "preferences", "fact"];
@@ -241,11 +259,11 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
   // ── Section 2: Current State ──────────────────────────────────────────────
   const currentStateLines: string[] = [];
   if (lc) {
-    if (lc.priorityGoal) currentStateLines.push(`- **Top priority:** ${lc.priorityGoal}`);
-    if (lc.upcomingDeadline) currentStateLines.push(`- **Upcoming deadline:** ${lc.upcomingDeadline}`);
-    if (lc.improvementArea) currentStateLines.push(`- **Improvement area:** ${lc.improvementArea}`);
-    if (lc.currentBlocker) currentStateLines.push(`- **Current blocker:** ${lc.currentBlocker}`);
-    if (lc.freeText) currentStateLines.push(`- ${lc.freeText}`);
+    if (lc.priorityGoal) currentStateLines.push(`- **Top priority:** ${compactSoulText(lc.priorityGoal, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.upcomingDeadline) currentStateLines.push(`- **Timing:** ${compactSoulText(lc.upcomingDeadline, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.improvementArea) currentStateLines.push(`- **Improvement area:** ${compactSoulText(lc.improvementArea, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.currentBlocker) currentStateLines.push(`- **Current blocker:** ${compactSoulText(lc.currentBlocker, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.freeText) currentStateLines.push(`- ${compactSoulText(lc.freeText, SOUL_FIELD_MAX_CHARS)}`);
   }
   const es = emotionalStateRows[0];
   if (es) {
@@ -253,15 +271,16 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
     const stressNote = es.stressScore > 6 ? " (elevated stress)" : es.stressScore < 3 ? " (low stress)" : "";
     const flowNote = es.flowScore > 6 ? ", high flow" : es.flowScore < 3 ? ", low flow" : "";
     currentStateLines.push(`- **Emotional state:** ${effectiveLabel}${stressNote}${flowNote}`);
-    if (es.explanation) currentStateLines.push(`- _${es.explanation}_`);
+    if (es.explanation) currentStateLines.push(`- _${compactSoulText(es.explanation, SOUL_FIELD_MAX_CHARS)}_`);
   }
   const mn = morningNoteRows[0];
   if (mn) {
-    if (mn.moodSignal) currentStateLines.push(`- **Morning mood:** ${mn.moodSignal}${mn.recordedAt ? ` (${mn.recordedAt})` : ""}`);
-    if (mn.intention) currentStateLines.push(`- **Today's intention:** ${mn.intention}`);
+    if (mn.moodSignal)
+      currentStateLines.push(`- **Morning mood:** ${compactSoulText(mn.moodSignal)}${mn.recordedAt ? ` (${mn.recordedAt})` : ""}`);
+    if (mn.intention) currentStateLines.push(`- **Today's intention:** ${compactSoulText(mn.intention)}`);
   }
-  for (const m of currentStateRows) {
-    currentStateLines.push(`- ${m.content}`);
+  for (const m of currentStateRows.filter(shouldIncludeMemoryInSoul)) {
+    currentStateLines.push(`- ${compactSoulText(m.content)}`);
   }
   if (currentStateLines.length > 0) {
     sections.push("## 2. Current State");
@@ -269,19 +288,20 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
   }
 
   // ── Section 3: Episodic Highlights ───────────────────────────────────────
-  if (episodicRows.length > 0) {
+  const includedEpisodicRows = episodicRows.filter(shouldIncludeMemoryInSoul);
+  if (includedEpisodicRows.length > 0) {
     sections.push("## 3. Episodic Highlights _(last 7 days)_");
-    for (const m of episodicRows) {
-      sections.push(`- ${m.content}`);
+    for (const m of includedEpisodicRows) {
+      sections.push(`- ${compactSoulText(m.content)}`);
     }
   }
 
   // ── Section 4: Long-Term Patterns ────────────────────────────────────────
   const patternByCat = new Map<MemoryCategory, string[]>();
-  for (const m of longTermPatternRows) {
+  for (const m of longTermPatternRows.filter(shouldIncludeMemoryInSoul)) {
     const cat = normalizeCategory(m.category);
     const arr = patternByCat.get(cat) || [];
-    arr.push(m.content);
+    arr.push(compactSoulText(m.content));
     patternByCat.set(cat, arr);
   }
   const patternCatOrder: MemoryCategory[] = ["work_patterns", "energy_rhythms", "accomplishments", "blockers"];
@@ -313,11 +333,12 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
   }
 
   // ── Section 6: Relationships ──────────────────────────────────────────────
-  if (peopleRows.length > 0) {
+  const relationshipRows = peopleRows.filter((p) => p.relationship !== "email correspondent").slice(0, 8);
+  if (relationshipRows.length > 0) {
     sections.push("## 6. Relationships");
-    for (const p of peopleRows) {
+    for (const p of relationshipRows) {
       const role = p.relationship ? ` — ${p.relationship}` : "";
-      const note = p.notes ? ` (${p.notes})` : "";
+      const note = p.notes ? ` (${compactSoulText(p.notes, 120)})` : "";
       const lastSeen = p.lastInteractionAt
         ? ` [last: ${new Date(p.lastInteractionAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}]`
         : "";
@@ -327,10 +348,10 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
 
   // ── Section 7: Aspirations ────────────────────────────────────────────────
   const aspirationLines: string[] = [];
-  if (lc?.priorityGoal) aspirationLines.push(`- **Priority goal:** ${lc.priorityGoal}`);
-  if (lc?.improvementArea) aspirationLines.push(`- **Improving:** ${lc.improvementArea}`);
-  for (const m of aspirationRows) {
-    aspirationLines.push(`- ${m.content}`);
+  if (lc?.priorityGoal) aspirationLines.push(`- **Priority goal:** ${compactSoulText(lc.priorityGoal, SOUL_FIELD_MAX_CHARS)}`);
+  if (lc?.improvementArea) aspirationLines.push(`- **Improving:** ${compactSoulText(lc.improvementArea, SOUL_FIELD_MAX_CHARS)}`);
+  for (const m of aspirationRows.filter(shouldIncludeMemoryInSoul)) {
+    aspirationLines.push(`- ${compactSoulText(m.content)}`);
   }
   if (aspirationLines.length > 0) {
     sections.push("## 7. Aspirations");

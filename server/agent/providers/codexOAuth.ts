@@ -8,6 +8,7 @@ import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { getCodexOAuthCommand } from "./env";
 
 const CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 300_000);
+const CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 120_000);
 
 export type CodexOAuthOrchestratorOutput =
   | { type: "final"; content: string }
@@ -118,6 +119,38 @@ function getCodexGatewayToken(): string | null {
   return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
 }
 
+function createLinkedAbortController(signal?: AbortSignal): {
+  controller: AbortController;
+  cleanup: () => void;
+  timedOut: () => boolean;
+} {
+  const controller = new AbortController();
+  let didTimeout = false;
+
+  const abortFromCaller = () => {
+    controller.abort(new DOMException("Codex OAuth provider aborted", "AbortError"));
+  };
+
+  const timer = Number.isFinite(CODEX_GATEWAY_TIMEOUT_MS) && CODEX_GATEWAY_TIMEOUT_MS > 0
+    ? setTimeout(() => {
+        didTimeout = true;
+        controller.abort(new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`));
+      }, CODEX_GATEWAY_TIMEOUT_MS)
+    : null;
+
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+
+  return {
+    controller,
+    cleanup: () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromCaller);
+    },
+    timedOut: () => didTimeout,
+  };
+}
+
 export function buildCodexOAuthProviderPrompt(params: ProviderQueryParams): string {
   const sections = params.messages.map((message, index) => {
     const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
@@ -221,17 +254,32 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl: string, prompt: string, sig
   const token = getCodexGatewayToken();
   if (!token) throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
 
-  const response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ prompt }),
-    signal,
-  });
+  const linkedAbort = createLinkedAbortController(signal);
+  let response: Response;
+  let raw: string;
+  try {
+    response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt }),
+      signal: linkedAbort.controller.signal,
+    });
+    raw = await response.text();
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new DOMException("Codex OAuth provider aborted", "AbortError");
+    }
+    if (linkedAbort.timedOut()) {
+      throw new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`, { cause: error });
+    }
+    throw error;
+  } finally {
+    linkedAbort.cleanup();
+  }
 
-  const raw = await response.text();
   let payload: any = {};
   try {
     payload = raw ? JSON.parse(raw) : {};

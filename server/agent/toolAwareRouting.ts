@@ -5,11 +5,13 @@ export type ToolAwareIntent =
   | "calendar"
   | "email"
   | "memory"
+  | "research"
   | "browser"
   | "github"
   | "railway"
   | "project"
-  | "code";
+  | "code"
+  | "diagnostics";
 
 export interface ToolAwareRoutePlan {
   intents: ToolAwareIntent[];
@@ -76,6 +78,17 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     guidance: "For memory or preference questions, search memory/living context before claiming not to know.",
   },
   {
+    intent: "research",
+    patterns: [
+      /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i,
+      /\b(latest|current|recent|today'?s?|news|sources?|articles?|updates?)\b/i,
+    ],
+    capabilityIds: ["research", "browser"],
+    toolGroups: ["research", "browser"],
+    priorityToolNames: ["search_web", "research_topic", "web_fetch", "browser_navigate", "browser_extract"],
+    guidance: "For research, news, source-finding, or current-info requests, call search_web or research_topic before answering. If search is not configured, use browser_navigate and browser_extract as the fallback. Cite useful source URLs from the tool results.",
+  },
+  {
     intent: "browser",
     patterns: [
       /\b(browser|browse|open\s+(a\s+)?(website|site|page|url|tab)|navigate to|click|screenshot of (the )?page)\b/i,
@@ -131,6 +144,17 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     toolGroups: ["system", "self_edit", "app_build", "mcp"],
     priorityToolNames: ["delegate_to_codex", "build_feature", "queue_background_job", "project_shell", "list_source_files", "read_source_file", "propose_code_change"],
     guidance: "For code-writing or self-improvement requests, route to Codex delegation/build/self-edit tools before replying in plain text. If the user explicitly asks for the fix to be permanent, pushed, published, deployed, or on GitHub, include the commit/push/publish requirement in the Codex delegation and allow external side effects only for that exact requested action.",
+  },
+  {
+    intent: "diagnostics",
+    patterns: [
+      /\b(what'?s wrong|what is wrong|why did .{0,80}\bfail|why (is|are) .* not working|are you ok|are you okay|system health|self[- ]?diagnos(e|is)|diagnose yourself)\b/i,
+      /\b(browser|tool|gateway|codex|railway|deploy|deployment|server|app|jarvis).*\b(broken|fail|failing|failed|down|stuck|not working)\b/i,
+    ],
+    capabilityIds: ["system"],
+    toolGroups: ["system"],
+    priorityToolNames: ["jarvis_self_diagnose"],
+    guidance: "For Jarvis health, failure, or reliability questions, call jarvis_self_diagnose before answering so the reply is based on current subsystem status instead of stale chat history.",
   },
 ];
 

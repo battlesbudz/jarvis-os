@@ -62,6 +62,12 @@ assertRoute(
   ["browser_navigate"],
 );
 assertRoute(
+  "Can you search up Cannabis News 2026?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "show me my GitHub pull requests",
   "github",
   ["github"],
@@ -91,6 +97,18 @@ assertRoute(
   assert(plan.guidance.includes("allow external side effects"), "code push: guidance mentions side-effect approval");
   assert(plan.guidance.includes("commit/push/publish"), "code push: guidance carries commit/push requirement");
 }
+assertRoute(
+  "what's wrong?",
+  "diagnostics",
+  ["system"],
+  ["jarvis_self_diagnose"],
+);
+assertRoute(
+  "why did the browser task fail?",
+  "diagnostics",
+  ["system"],
+  ["jarvis_self_diagnose"],
+);
 
 console.log(`\nResults: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
