@@ -1,24 +1,39 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  Pressable,
+  ActivityIndicator,
+  Modal,
+  TextInput,
+  ScrollView,
+  Platform,
+} from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { apiRequest } from '@/lib/query-client';
+import { goalTaskIsInPlan } from '@/lib/goalPlanStatus';
+
+type TaskStatus = 'ready' | 'in_progress' | 'blocked' | 'complete';
+type TreeStatus = 'ready' | 'in_progress' | 'complete';
 
 interface TreeTask {
   id: string;
   title: string;
   description?: string;
   estimateHours?: number;
-  status: 'ready' | 'in_progress' | 'blocked' | 'complete';
+  status: TaskStatus;
+  dueDate?: string;
 }
 
 interface TreeMilestone {
   id: string;
   title: string;
   description?: string;
-  status: 'ready' | 'in_progress' | 'complete';
+  status: TreeStatus;
   tasks: TreeTask[];
 }
 
@@ -26,7 +41,7 @@ interface TreePhase {
   id: string;
   title: string;
   description?: string;
-  status: 'ready' | 'in_progress' | 'complete';
+  status: TreeStatus;
   milestones: TreeMilestone[];
 }
 
@@ -47,29 +62,86 @@ interface JobRow {
   input?: { goalId?: string } | null;
 }
 
+interface TodayPlanResponse {
+  data: { tasks?: unknown[] } | null;
+}
+
 interface Props {
   goalId: string;
   goalTitle: string;
 }
 
+type EditorKind = 'phase' | 'milestone' | 'task';
+type EditorMode = 'add' | 'edit';
+
+interface EditorState {
+  mode: EditorMode;
+  kind: EditorKind;
+  phaseId?: string;
+  milestoneId?: string;
+  taskId?: string;
+  title: string;
+  description: string;
+  estimateHours: string;
+  status: TaskStatus | TreeStatus;
+}
+
 const STATUS_COLOR: Record<string, string> = {
   ready: Colors.primary,
-  in_progress: '#F59E0B',
+  in_progress: Colors.warning,
   blocked: Colors.textTertiary,
   complete: Colors.success,
 };
 
+const TASK_STATUSES: TaskStatus[] = ['ready', 'in_progress', 'blocked', 'complete'];
+const TREE_STATUSES: TreeStatus[] = ['ready', 'in_progress', 'complete'];
+
+function statusLabel(status: string): string {
+  return status.replace('_', ' ');
+}
+
+function summarize(phases: TreePhase[]) {
+  let total = 0;
+  let done = 0;
+  let active = 0;
+  let blocked = 0;
+  let nextTask: TreeTask | null = null;
+
+  for (const phase of phases) {
+    for (const milestone of phase.milestones) {
+      for (const task of milestone.tasks) {
+        total += 1;
+        if (task.status === 'complete') done += 1;
+        if (task.status === 'in_progress') active += 1;
+        if (task.status === 'blocked') blocked += 1;
+        if (!nextTask && (task.status === 'in_progress' || task.status === 'ready')) {
+          nextTask = task;
+        }
+      }
+    }
+  }
+
+  return {
+    total,
+    done,
+    active,
+    blocked,
+    percent: total === 0 ? 0 : Math.round((done / total) * 100),
+    nextTask,
+  };
+}
+
 export default function GoalTreeSection({ goalId, goalTitle }: Props) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState(false);
+  const [editor, setEditor] = useState<EditorState | null>(null);
+  const [handoffTaskId, setHandoffTaskId] = useState<string | null>(null);
 
   const jobsQuery = useQuery<JobRow[]>({
     queryKey: ['/api/agent-jobs'],
     refetchInterval: 10000,
   });
 
-  // Match decompose jobs by the structured input.goalId rather than by
-  // the human-readable title (titles may collide or be edited).
   const decomposing = (jobsQuery.data || []).some(
     (j) =>
       j.agentType === 'goal_decompose' &&
@@ -80,15 +152,17 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
   const treeQuery = useQuery<GoalTreeRow | { hasTree: false }>({
     queryKey: [`/api/goals/${goalId}/tree`],
     retry: false,
-    // While a decompose job for this goal is in flight (queued or
-    // running), poll the tree endpoint so the freshly-generated tree
-    // appears automatically without the user navigating away.
     refetchInterval: decomposing ? 5000 : false,
   });
+  const tree = treeQuery.data && 'tree' in treeQuery.data ? treeQuery.data : null;
+  const hasTree = !!tree;
+  const todayKey = React.useMemo(() => new Date().toISOString().slice(0, 10), []);
 
-  // When the in-flight job count for this goal drops to zero (i.e. the
-  // decompose finished), force one immediate refetch so the tree shows
-  // up the moment the worker writes it.
+  const todayPlanQuery = useQuery<TodayPlanResponse>({
+    queryKey: [`/api/data/plans/${todayKey}`],
+    enabled: hasTree,
+  });
+
   const previousDecomposingRef = React.useRef(decomposing);
   React.useEffect(() => {
     if (previousDecomposingRef.current && !decomposing) {
@@ -105,11 +179,37 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
     onSuccess: () => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       qc.invalidateQueries({ queryKey: ['/api/agent-jobs'] });
-      // Poll the tree until it appears
       setTimeout(() => {
         qc.invalidateQueries({ queryKey: [`/api/goals/${goalId}/tree`] });
       }, 2000);
     },
+  });
+
+  const editMutation = useMutation({
+    mutationFn: async (action: Record<string, unknown>) => {
+      const res = await apiRequest('PATCH', `/api/goals/${goalId}/tree`, { action });
+      return res.json();
+    },
+    onSuccess: () => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setEditor(null);
+      qc.invalidateQueries({ queryKey: [`/api/goals/${goalId}/tree`] });
+    },
+  });
+
+  const addToTodayMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      setHandoffTaskId(taskId);
+      const res = await apiRequest('POST', `/api/goals/${goalId}/tree/tasks/${taskId}/add-to-today`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      qc.invalidateQueries({ queryKey: [`/api/goals/${goalId}/tree`] });
+      qc.invalidateQueries({ queryKey: ['/api/data/plans'] });
+      qc.invalidateQueries({ queryKey: [`/api/data/plans/${todayKey}`] });
+    },
+    onSettled: () => setHandoffTaskId(null),
   });
 
   const onToggle = useCallback(() => {
@@ -117,8 +217,187 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
     Haptics.selectionAsync();
   }, []);
 
-  const tree = treeQuery.data && 'tree' in treeQuery.data ? treeQuery.data : null;
-  const hasTree = !!tree;
+  const phases = tree?.tree.phases || [];
+  const summary = summarize(phases);
+  const canAddToToday = (task: TreeTask): boolean => task.status === 'ready' || task.status === 'in_progress';
+  const isTaskInToday = (task: TreeTask): boolean => {
+    if (!tree) return false;
+    return goalTaskIsInPlan(todayPlanQuery.data?.data, tree.id, task.id);
+  };
+  const addTaskToToday = (task: TreeTask) => {
+    if (!canAddToToday(task) || isTaskInToday(task) || addToTodayMutation.isPending) return;
+    addToTodayMutation.mutate(task.id);
+  };
+
+  const openAddPhase = () => {
+    setEditor({
+      mode: 'add',
+      kind: 'phase',
+      title: '',
+      description: '',
+      estimateHours: '',
+      status: 'ready',
+    });
+  };
+
+  const openEditPhase = (phase: TreePhase) => {
+    setEditor({
+      mode: 'edit',
+      kind: 'phase',
+      phaseId: phase.id,
+      title: phase.title,
+      description: phase.description || '',
+      estimateHours: '',
+      status: phase.status,
+    });
+  };
+
+  const openAddMilestone = (phaseId: string) => {
+    setEditor({
+      mode: 'add',
+      kind: 'milestone',
+      phaseId,
+      title: '',
+      description: '',
+      estimateHours: '',
+      status: 'ready',
+    });
+  };
+
+  const openEditMilestone = (phaseId: string, milestone: TreeMilestone) => {
+    setEditor({
+      mode: 'edit',
+      kind: 'milestone',
+      phaseId,
+      milestoneId: milestone.id,
+      title: milestone.title,
+      description: milestone.description || '',
+      estimateHours: '',
+      status: milestone.status,
+    });
+  };
+
+  const openAddTask = (phaseId: string, milestoneId: string) => {
+    setEditor({
+      mode: 'add',
+      kind: 'task',
+      phaseId,
+      milestoneId,
+      title: '',
+      description: '',
+      estimateHours: '1',
+      status: 'ready',
+    });
+  };
+
+  const openEditTask = (phaseId: string, milestoneId: string, task: TreeTask) => {
+    setEditor({
+      mode: 'edit',
+      kind: 'task',
+      phaseId,
+      milestoneId,
+      taskId: task.id,
+      title: task.title,
+      description: task.description || '',
+      estimateHours: task.estimateHours ? String(task.estimateHours) : '',
+      status: task.status,
+    });
+  };
+
+  const saveEditor = () => {
+    if (!editor || !editor.title.trim()) return;
+
+    if (editor.mode === 'add' && editor.kind === 'phase') {
+      editMutation.mutate({
+        type: 'add_phase',
+        phase: { title: editor.title, description: editor.description },
+      });
+      return;
+    }
+
+    if (editor.mode === 'edit' && editor.kind === 'phase') {
+      editMutation.mutate({
+        type: 'update_phase',
+        phaseId: editor.phaseId,
+        patch: {
+          title: editor.title,
+          description: editor.description,
+          status: editor.status,
+        },
+      });
+      return;
+    }
+
+    if (editor.mode === 'add' && editor.kind === 'milestone') {
+      editMutation.mutate({
+        type: 'add_milestone',
+        phaseId: editor.phaseId,
+        milestone: { title: editor.title, description: editor.description },
+      });
+      return;
+    }
+
+    if (editor.mode === 'edit' && editor.kind === 'milestone') {
+      editMutation.mutate({
+        type: 'update_milestone',
+        phaseId: editor.phaseId,
+        milestoneId: editor.milestoneId,
+        patch: {
+          title: editor.title,
+          description: editor.description,
+          status: editor.status,
+        },
+      });
+      return;
+    }
+
+    if (editor.mode === 'add' && editor.kind === 'task') {
+      editMutation.mutate({
+        type: 'add_task',
+        phaseId: editor.phaseId,
+        milestoneId: editor.milestoneId,
+        task: {
+          title: editor.title,
+          description: editor.description,
+          estimateHours: editor.estimateHours,
+        },
+      });
+      return;
+    }
+
+    editMutation.mutate({
+      type: 'update_task',
+      phaseId: editor.phaseId,
+      milestoneId: editor.milestoneId,
+      taskId: editor.taskId,
+      patch: {
+        title: editor.title,
+        description: editor.description,
+        estimateHours: editor.estimateHours,
+        status: editor.status,
+      },
+    });
+  };
+
+  const deleteEditorTarget = () => {
+    if (!editor || editor.mode !== 'edit') return;
+    if (editor.kind === 'phase') {
+      editMutation.mutate({ type: 'delete_phase', phaseId: editor.phaseId });
+    } else if (editor.kind === 'milestone') {
+      editMutation.mutate({
+        type: 'delete_milestone',
+        phaseId: editor.phaseId,
+        milestoneId: editor.milestoneId,
+      });
+    } else {
+      editMutation.mutate({
+        type: 'delete_task',
+        phaseId: editor.phaseId,
+        milestoneId: editor.milestoneId,
+        taskId: editor.taskId,
+      });
+    }
+  };
 
   if (treeQuery.isLoading) {
     return (
@@ -143,27 +422,12 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
             color={Colors.primary}
           />
           <Text style={styles.generateBtnText}>
-            {decomposing ? 'Jarvis is breaking this down…' : 'Generate breakdown'}
+            {decomposing ? 'Jarvis is breaking this down...' : 'Generate breakdown'}
           </Text>
         </Pressable>
       </View>
     );
   }
-
-  const phases = tree!.tree.phases || [];
-  const totalTasks = phases.reduce(
-    (n, p) => n + p.milestones.reduce((m, mi) => m + mi.tasks.length, 0),
-    0,
-  );
-  const doneTasks = phases.reduce(
-    (n, p) =>
-      n +
-      p.milestones.reduce(
-        (m, mi) => m + mi.tasks.filter((t) => t.status === 'complete').length,
-        0,
-      ),
-    0,
-  );
 
   return (
     <View style={styles.container}>
@@ -173,9 +437,14 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
         testID={`toggle-tree-${goalId}`}
       >
         <Ionicons name="git-branch-outline" size={16} color={Colors.primary} />
-        <Text style={styles.headerText} numberOfLines={1}>
-          Plan · {phases.length} phase{phases.length === 1 ? '' : 's'} · {doneTasks}/{totalTasks} tasks done
-        </Text>
+        <View style={styles.headerTextWrap}>
+          <Text style={styles.headerText} numberOfLines={1}>
+            Plan: {summary.percent}% complete
+          </Text>
+          <Text style={styles.headerSubtext} numberOfLines={1}>
+            {phases.length} phase{phases.length === 1 ? '' : 's'} / {summary.done}/{summary.total} tasks done
+          </Text>
+        </View>
         <Ionicons
           name={expanded ? 'chevron-up' : 'chevron-down'}
           size={16}
@@ -185,49 +454,299 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
 
       {expanded && (
         <View style={styles.treeBody}>
-          {tree!.tree.rationale && (
-            <Text style={styles.rationale}>{tree!.tree.rationale}</Text>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${summary.percent}%` }]} />
+          </View>
+          {summary.nextTask && (
+            <View style={styles.nextTaskBox}>
+              <Ionicons name="navigate-circle-outline" size={16} color={Colors.primary} />
+              <Text style={styles.nextTaskText} numberOfLines={2}>
+                Next: {summary.nextTask.title}
+              </Text>
+              <Pressable
+                onPress={() => addTaskToToday(summary.nextTask!)}
+                disabled={isTaskInToday(summary.nextTask) || addToTodayMutation.isPending}
+                style={({ pressed }) => [
+                  styles.todayBtn,
+                  isTaskInToday(summary.nextTask!) && styles.todayBtnActive,
+                  pressed && { opacity: 0.75 },
+                  addToTodayMutation.isPending && styles.disabledBtn,
+                ]}
+                testID={`add-next-task-today-${goalId}`}
+              >
+                {handoffTaskId === summary.nextTask.id ? (
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                ) : isTaskInToday(summary.nextTask) ? (
+                  <>
+                    <Ionicons name="checkmark-circle-outline" size={13} color={Colors.success} />
+                    <Text style={[styles.todayBtnText, styles.todayBtnTextActive]}>In today</Text>
+                  </>
+                ) : (
+                  <>
+                    <Ionicons name="calendar-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.todayBtnText}>Today</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
           )}
+          {addToTodayMutation.isError && (
+            <Text style={styles.errorText}>Could not add that task to today.</Text>
+          )}
+          {tree!.tree.rationale && <Text style={styles.rationale}>{tree!.tree.rationale}</Text>}
+
           {phases.map((phase, pi) => (
             <View key={phase.id} style={styles.phase}>
-              <Text style={styles.phaseTitle}>
-                {pi + 1}. {phase.title}
-              </Text>
-              {phase.milestones.map((ms) => (
-                <View key={ms.id} style={styles.milestone}>
-                  <Text style={styles.milestoneTitle}>· {ms.title}</Text>
-                  {ms.tasks.map((t) => (
-                    <View key={t.id} style={styles.task}>
-                      <View style={[styles.dot, { backgroundColor: STATUS_COLOR[t.status] || Colors.textTertiary }]} />
+              <Pressable
+                onPress={() => openEditPhase(phase)}
+                style={({ pressed }) => [styles.phaseHeader, pressed && styles.pressedRow]}
+                testID={`edit-phase-${phase.id}`}
+              >
+                <View style={[styles.statusPill, { borderColor: STATUS_COLOR[phase.status] }]}>
+                  <Text style={[styles.statusPillText, { color: STATUS_COLOR[phase.status] }]}>
+                    {statusLabel(phase.status)}
+                  </Text>
+                </View>
+                <Text style={styles.phaseTitle} numberOfLines={2}>
+                  {pi + 1}. {phase.title}
+                </Text>
+                <Ionicons name="create-outline" size={15} color={Colors.textSecondary} />
+              </Pressable>
+
+              {phase.milestones.map((milestone) => (
+                <View key={milestone.id} style={styles.milestone}>
+                  <Pressable
+                    onPress={() => openEditMilestone(phase.id, milestone)}
+                    style={({ pressed }) => [styles.milestoneHeader, pressed && styles.pressedRow]}
+                    testID={`edit-milestone-${milestone.id}`}
+                  >
+                    <View style={[styles.dot, { backgroundColor: STATUS_COLOR[milestone.status] || Colors.textTertiary }]} />
+                    <Text style={styles.milestoneTitle} numberOfLines={2}>
+                      {milestone.title}
+                    </Text>
+                    <Ionicons name="create-outline" size={14} color={Colors.textSecondary} />
+                  </Pressable>
+
+                  {milestone.tasks.map((task) => (
+                    <Pressable
+                      key={task.id}
+                      onPress={() => openEditTask(phase.id, milestone.id, task)}
+                      style={({ pressed }) => [styles.task, pressed && styles.pressedRow]}
+                      testID={`edit-task-${task.id}`}
+                    >
+                      <View style={[styles.dot, { backgroundColor: STATUS_COLOR[task.status] || Colors.textTertiary }]} />
                       <Text
-                        style={[
-                          styles.taskText,
-                          t.status === 'complete' && styles.taskDone,
-                        ]}
+                        style={[styles.taskText, task.status === 'complete' && styles.taskDone]}
                         numberOfLines={2}
                       >
-                        {t.title}
-                        {t.estimateHours ? `  ·  ~${t.estimateHours}h` : ''}
+                        {task.title}
+                        {task.estimateHours ? `  /  ~${task.estimateHours}h` : ''}
                       </Text>
-                    </View>
+                      {canAddToToday(task) && (
+                        <Pressable
+                          onPress={(event) => {
+                            event.stopPropagation();
+                            addTaskToToday(task);
+                          }}
+                          disabled={isTaskInToday(task) || addToTodayMutation.isPending}
+                          style={({ pressed }) => [
+                            styles.taskTodayChip,
+                            isTaskInToday(task) && styles.taskTodayChipActive,
+                            pressed && { opacity: 0.75 },
+                            addToTodayMutation.isPending && styles.disabledBtn,
+                          ]}
+                          testID={`add-task-today-${task.id}`}
+                        >
+                          {handoffTaskId === task.id ? (
+                            <ActivityIndicator size="small" color={Colors.primary} />
+                          ) : isTaskInToday(task) ? (
+                            <>
+                              <Ionicons name="checkmark-circle-outline" size={13} color={Colors.success} />
+                              <Text style={[styles.taskTodayChipText, styles.taskTodayChipTextActive]}>
+                                In today
+                              </Text>
+                            </>
+                          ) : (
+                            <>
+                              <Ionicons name="calendar-outline" size={13} color={Colors.primary} />
+                              <Text style={styles.taskTodayChipText}>Today</Text>
+                            </>
+                          )}
+                        </Pressable>
+                      )}
+                      <Ionicons name="create-outline" size={13} color={Colors.textTertiary} />
+                    </Pressable>
                   ))}
+
+                  <Pressable
+                    onPress={() => openAddTask(phase.id, milestone.id)}
+                    style={({ pressed }) => [styles.inlineAddBtn, pressed && { opacity: 0.75 }]}
+                    testID={`add-task-${milestone.id}`}
+                  >
+                    <Ionicons name="add" size={14} color={Colors.primary} />
+                    <Text style={styles.inlineAddText}>Task</Text>
+                  </Pressable>
                 </View>
               ))}
+
+              <Pressable
+                onPress={() => openAddMilestone(phase.id)}
+                style={({ pressed }) => [styles.inlineAddBtn, pressed && { opacity: 0.75 }]}
+                testID={`add-milestone-${phase.id}`}
+              >
+                <Ionicons name="add-circle-outline" size={14} color={Colors.primary} />
+                <Text style={styles.inlineAddText}>Milestone</Text>
+              </Pressable>
             </View>
           ))}
-          <Pressable
-            onPress={() => decomposeMutation.mutate()}
-            disabled={decomposeMutation.isPending || decomposing}
-            style={({ pressed }) => [styles.regenBtn, pressed && { opacity: 0.85 }]}
-            testID={`regenerate-tree-${goalId}`}
-          >
-            <Ionicons name="refresh" size={14} color={Colors.textSecondary} />
-            <Text style={styles.regenText}>
-              {decomposing ? 'Regenerating…' : 'Regenerate'}
-            </Text>
-          </Pressable>
+
+          <View style={styles.footerActions}>
+            <Pressable
+              onPress={openAddPhase}
+              style={({ pressed }) => [styles.footerBtn, pressed && { opacity: 0.85 }]}
+              testID={`add-phase-${goalId}`}
+            >
+              <Ionicons name="layers-outline" size={14} color={Colors.primary} />
+              <Text style={styles.footerBtnText}>Add phase</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => decomposeMutation.mutate()}
+              disabled={decomposeMutation.isPending || decomposing}
+              style={({ pressed }) => [styles.footerBtn, pressed && { opacity: 0.85 }]}
+              testID={`regenerate-tree-${goalId}`}
+            >
+              <Ionicons name="refresh" size={14} color={Colors.textSecondary} />
+              <Text style={styles.regenText}>{decomposing ? 'Regenerating...' : 'Regenerate'}</Text>
+            </Pressable>
+          </View>
         </View>
       )}
+
+      <Modal
+        visible={!!editor}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditor(null)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalEyebrow}>{goalTitle}</Text>
+                <Text style={styles.modalTitle}>
+                  {editor?.mode === 'add' ? 'Add' : 'Edit'} {editor?.kind}
+                </Text>
+              </View>
+              <Pressable
+                onPress={() => setEditor(null)}
+                style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.7 }]}
+              >
+                <Ionicons name="close" size={20} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
+              <Text style={styles.inputLabel}>Title</Text>
+              <TextInput
+                value={editor?.title || ''}
+                onChangeText={(title) => setEditor((v) => (v ? { ...v, title } : v))}
+                placeholder="Name this step"
+                placeholderTextColor={Colors.textTertiary}
+                style={styles.input}
+              />
+
+              <Text style={styles.inputLabel}>Description</Text>
+              <TextInput
+                value={editor?.description || ''}
+                onChangeText={(description) => setEditor((v) => (v ? { ...v, description } : v))}
+                placeholder="What done looks like"
+                placeholderTextColor={Colors.textTertiary}
+                style={[styles.input, styles.textArea]}
+                multiline
+              />
+
+              {editor?.kind === 'task' && (
+                <>
+                  <Text style={styles.inputLabel}>Estimate hours</Text>
+                  <TextInput
+                    value={editor.estimateHours}
+                    onChangeText={(estimateHours) => setEditor((v) => (v ? { ...v, estimateHours } : v))}
+                    placeholder="1"
+                    placeholderTextColor={Colors.textTertiary}
+                    style={styles.input}
+                    keyboardType="decimal-pad"
+                  />
+                </>
+              )}
+
+              {editor?.mode === 'edit' && (
+                <>
+                  <Text style={styles.inputLabel}>Status</Text>
+                  <View style={styles.statusRow}>
+                    {(editor.kind === 'task' ? TASK_STATUSES : TREE_STATUSES).map((status) => (
+                      <Pressable
+                        key={status}
+                        onPress={() => setEditor((v) => (v ? { ...v, status } : v))}
+                        style={[
+                          styles.statusChip,
+                          editor.status === status && {
+                            borderColor: STATUS_COLOR[status],
+                            backgroundColor: `${STATUS_COLOR[status]}22`,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.statusChipText,
+                            editor.status === status && { color: STATUS_COLOR[status] },
+                          ]}
+                        >
+                          {statusLabel(status)}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </>
+              )}
+            </ScrollView>
+
+            {editMutation.isError && (
+              <Text style={styles.errorText}>
+                {editMutation.error instanceof Error ? editMutation.error.message : 'Could not save change'}
+              </Text>
+            )}
+
+            <View style={styles.modalActions}>
+              {editor?.mode === 'edit' && (
+                <Pressable
+                  onPress={deleteEditorTarget}
+                  disabled={editMutation.isPending}
+                  style={({ pressed }) => [styles.deleteBtn, pressed && { opacity: 0.85 }]}
+                >
+                  <Ionicons name="trash-outline" size={15} color={Colors.error} />
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => setEditor(null)}
+                style={({ pressed }) => [styles.cancelBtn, pressed && { opacity: 0.85 }]}
+              >
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                onPress={saveEditor}
+                disabled={editMutation.isPending || !editor?.title.trim()}
+                style={({ pressed }) => [
+                  styles.saveBtn,
+                  (editMutation.isPending || !editor?.title.trim()) && styles.disabledBtn,
+                  pressed && { opacity: 0.9 },
+                ]}
+              >
+                <Text style={styles.saveBtnText}>{editMutation.isPending ? 'Saving...' : 'Save'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -262,16 +781,77 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     paddingHorizontal: 12,
   },
-  headerText: {
+  headerTextWrap: {
     flex: 1,
+  },
+  headerText: {
     fontSize: 13,
-    fontFamily: 'Inter_600SemiBold',
+    fontFamily: 'Inter_700Bold',
     color: Colors.text,
+  },
+  headerSubtext: {
+    marginTop: 2,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
   },
   treeBody: {
     marginTop: 10,
     paddingHorizontal: 4,
     gap: 12,
+  },
+  progressTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    backgroundColor: Colors.border,
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: Colors.primary,
+  },
+  nextTaskBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 10,
+  },
+  nextTaskText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    lineHeight: 17,
+  },
+  todayBtn: {
+    minHeight: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary + '55',
+    backgroundColor: Colors.primary + '10',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  todayBtnText: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.primary,
+  },
+  todayBtnActive: {
+    borderColor: Colors.success + '55',
+    backgroundColor: Colors.success + '12',
+  },
+  todayBtnTextActive: {
+    color: Colors.success,
   },
   rationale: {
     fontSize: 12,
@@ -282,28 +862,62 @@ const styles = StyleSheet.create({
   },
   phase: {
     gap: 6,
+    borderLeftWidth: 1,
+    borderLeftColor: Colors.border,
+    paddingLeft: 10,
+  },
+  phaseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
   },
   phaseTitle: {
+    flex: 1,
     fontSize: 14,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
+    lineHeight: 19,
+  },
+  statusPill: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  statusPillText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    textTransform: 'uppercase',
   },
   milestone: {
     paddingLeft: 8,
     gap: 4,
     marginTop: 2,
   },
+  milestoneHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 3,
+  },
   milestoneTitle: {
+    flex: 1,
     fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.textSecondary,
+    lineHeight: 18,
   },
   task: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
     paddingLeft: 14,
-    paddingVertical: 2,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  pressedRow: {
+    backgroundColor: Colors.surfaceHover,
   },
   dot: {
     width: 6,
@@ -322,18 +936,206 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
     color: Colors.textTertiary,
   },
-  regenBtn: {
+  taskTodayChip: {
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    borderRadius: 8,
+    backgroundColor: Colors.primary + '10',
+    paddingHorizontal: 7,
+  },
+  taskTodayChipActive: {
+    backgroundColor: Colors.success + '12',
+  },
+  taskTodayChipText: {
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.primary,
+  },
+  taskTodayChipTextActive: {
+    color: Colors.success,
+  },
+  inlineAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    paddingVertical: 5,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+  },
+  inlineAddText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+  },
+  footerActions: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  footerBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    alignSelf: 'flex-start',
-    paddingVertical: 6,
+    paddingVertical: 7,
     paddingHorizontal: 10,
-    marginTop: 4,
+    borderRadius: 9,
+    backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  footerBtnText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
   regenText: {
     fontSize: 12,
     fontFamily: 'Inter_500Medium',
     color: Colors.textSecondary,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 18,
+    backgroundColor: Colors.overlay,
+  },
+  modalCard: {
+    maxHeight: Platform.OS === 'web' ? '86%' : '82%',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  modalEyebrow: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  modalTitle: {
+    marginTop: 3,
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  iconBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surfaceAlt,
+  },
+  modalBody: {
+    padding: 16,
+  },
+  inputLabel: {
+    marginBottom: 7,
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  input: {
+    minHeight: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceAlt,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 14,
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+  },
+  textArea: {
+    minHeight: 86,
+    textAlignVertical: 'top',
+  },
+  statusRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  statusChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  statusChipText: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textSecondary,
+    textTransform: 'capitalize',
+  },
+  errorText: {
+    paddingHorizontal: 16,
+    paddingBottom: 8,
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.error,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+    padding: 16,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  deleteBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.errorDim,
+  },
+  cancelBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  cancelBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textSecondary,
+  },
+  saveBtn: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary,
+  },
+  disabledBtn: {
+    opacity: 0.45,
+  },
+  saveBtnText: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.black,
   },
 });

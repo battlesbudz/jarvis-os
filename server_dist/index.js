@@ -64184,6 +64184,243 @@ var init_vaultRoutes = __esm({
   }
 });
 
+// server/goalTreeEditor.ts
+function cloneTree(tree) {
+  return JSON.parse(JSON.stringify(tree || { phases: [] }));
+}
+function newId2(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+function cleanText(value, max) {
+  if (typeof value !== "string") return void 0;
+  const cleaned = value.trim().slice(0, max);
+  return cleaned || void 0;
+}
+function cleanHours(value) {
+  if (value === void 0 || value === null || value === "") return void 0;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return void 0;
+  return Math.max(0.25, Math.min(40, numeric));
+}
+function assertTitle(value, label) {
+  const title = cleanText(value, 200);
+  if (!title) throw new Error(`${label} title is required`);
+  return title;
+}
+function cleanPhasePatch(patch) {
+  const out = {};
+  if ("title" in patch) out.title = assertTitle(patch.title, "phase");
+  if ("description" in patch) out.description = cleanText(patch.description, 500);
+  if ("status" in patch) out.status = cleanPhaseStatus(patch.status);
+  return out;
+}
+function cleanMilestonePatch(patch) {
+  const out = {};
+  if ("title" in patch) out.title = assertTitle(patch.title, "milestone");
+  if ("description" in patch) out.description = cleanText(patch.description, 500);
+  if ("status" in patch) out.status = cleanMilestoneStatus(patch.status);
+  return out;
+}
+function cleanTaskPatch(patch) {
+  const out = {};
+  if ("title" in patch) out.title = assertTitle(patch.title, "task");
+  if ("description" in patch) out.description = cleanText(patch.description, 500);
+  if ("estimateHours" in patch) out.estimateHours = cleanHours(patch.estimateHours);
+  if ("status" in patch) out.status = cleanTaskStatus(patch.status);
+  if ("dueDate" in patch) out.dueDate = cleanText(patch.dueDate, 40);
+  return out;
+}
+function cleanPhaseStatus(status) {
+  return status === "ready" || status === "in_progress" || status === "complete" ? status : void 0;
+}
+function cleanMilestoneStatus(status) {
+  return status === "ready" || status === "in_progress" || status === "complete" ? status : void 0;
+}
+function cleanTaskStatus(status) {
+  return status === "ready" || status === "in_progress" || status === "blocked" || status === "complete" ? status : void 0;
+}
+function findPhase(tree, phaseId) {
+  const phase = tree.phases.find((p) => p.id === phaseId);
+  if (!phase) throw new Error(`phase not found: ${phaseId}`);
+  return phase;
+}
+function findMilestone(phase, milestoneId) {
+  const milestone = phase.milestones.find((m) => m.id === milestoneId);
+  if (!milestone) throw new Error(`milestone not found: ${milestoneId}`);
+  return milestone;
+}
+function findTask(milestone, taskId) {
+  const task = milestone.tasks.find((t) => t.id === taskId);
+  if (!task) throw new Error(`task not found: ${taskId}`);
+  return task;
+}
+function rollupStatuses(tree) {
+  for (const phase of tree.phases) {
+    for (const milestone of phase.milestones) {
+      if (milestone.tasks.length > 0 && milestone.tasks.every((t) => t.status === "complete")) {
+        milestone.status = "complete";
+      } else if (milestone.tasks.some((t) => t.status === "complete" || t.status === "in_progress")) {
+        milestone.status = "in_progress";
+      } else {
+        milestone.status = milestone.status === "complete" ? "ready" : milestone.status;
+      }
+    }
+    if (phase.milestones.length > 0 && phase.milestones.every((m) => m.status === "complete")) {
+      phase.status = "complete";
+    } else if (phase.milestones.some((m) => m.status === "complete" || m.status === "in_progress")) {
+      phase.status = "in_progress";
+    } else {
+      phase.status = phase.status === "complete" ? "ready" : phase.status;
+    }
+  }
+  return tree;
+}
+function summarizeGoalTree(tree) {
+  const summary = {
+    totalPhases: tree.phases.length,
+    totalMilestones: 0,
+    totalTasks: 0,
+    completeTasks: 0,
+    inProgressTasks: 0,
+    readyTasks: 0,
+    blockedTasks: 0,
+    progressPercent: 0,
+    nextTask: null
+  };
+  for (const phase of tree.phases) {
+    summary.totalMilestones += phase.milestones.length;
+    for (const milestone of phase.milestones) {
+      for (const task of milestone.tasks) {
+        summary.totalTasks += 1;
+        if (task.status === "complete") summary.completeTasks += 1;
+        if (task.status === "in_progress") summary.inProgressTasks += 1;
+        if (task.status === "ready") summary.readyTasks += 1;
+        if (task.status === "blocked") summary.blockedTasks += 1;
+        if (!summary.nextTask && (task.status === "in_progress" || task.status === "ready")) {
+          summary.nextTask = task;
+        }
+      }
+    }
+  }
+  summary.progressPercent = summary.totalTasks === 0 ? 0 : Math.round(summary.completeTasks / summary.totalTasks * 100);
+  return summary;
+}
+function applyGoalTreeEdit(tree, action) {
+  const next = cloneTree(tree);
+  next.phases = Array.isArray(next.phases) ? next.phases : [];
+  if (action.type === "add_phase") {
+    next.phases.push({
+      id: newId2("phase"),
+      title: assertTitle(action.phase.title, "phase"),
+      description: cleanText(action.phase.description, 500),
+      status: "ready",
+      milestones: []
+    });
+    return rollupStatuses(next);
+  }
+  const phase = "phaseId" in action ? findPhase(next, action.phaseId) : null;
+  switch (action.type) {
+    case "update_phase":
+      Object.assign(phase, cleanPhasePatch(action.patch));
+      break;
+    case "delete_phase":
+      next.phases = next.phases.filter((p) => p.id !== action.phaseId);
+      break;
+    case "add_milestone":
+      phase.milestones.push({
+        id: newId2("milestone"),
+        title: assertTitle(action.milestone.title, "milestone"),
+        description: cleanText(action.milestone.description, 500),
+        status: "ready",
+        tasks: []
+      });
+      break;
+    case "update_milestone": {
+      const milestone = findMilestone(phase, action.milestoneId);
+      Object.assign(milestone, cleanMilestonePatch(action.patch));
+      break;
+    }
+    case "delete_milestone":
+      phase.milestones = phase.milestones.filter((m) => m.id !== action.milestoneId);
+      break;
+    case "add_task": {
+      const milestone = findMilestone(phase, action.milestoneId);
+      milestone.tasks.push({
+        id: newId2("task"),
+        title: assertTitle(action.task.title, "task"),
+        description: cleanText(action.task.description, 500),
+        estimateHours: cleanHours(action.task.estimateHours) ?? 1,
+        dueDate: cleanText(action.task.dueDate, 40),
+        status: "ready"
+      });
+      break;
+    }
+    case "update_task": {
+      const milestone = findMilestone(phase, action.milestoneId);
+      const task = findTask(milestone, action.taskId);
+      Object.assign(task, cleanTaskPatch(action.patch));
+      if (task.status === "complete" && !task.completedAt) task.completedAt = (/* @__PURE__ */ new Date()).toISOString();
+      if (task.status !== "complete") delete task.completedAt;
+      break;
+    }
+    case "delete_task": {
+      const milestone = findMilestone(phase, action.milestoneId);
+      milestone.tasks = milestone.tasks.filter((t) => t.id !== action.taskId);
+      break;
+    }
+  }
+  return rollupStatuses(next);
+}
+var init_goalTreeEditor = __esm({
+  "server/goalTreeEditor.ts"() {
+    "use strict";
+  }
+});
+
+// server/goalPlanHandoff.ts
+function buildGoalPlanTask(pick, dateKey, createdAt = Date.now()) {
+  const minutes = Math.max(15, Math.round((pick.estimateHours || 1) * 60));
+  return {
+    id: `goal_${pick.taskId}_${dateKey}`,
+    title: pick.title,
+    category: "goal",
+    priority: "high",
+    duration: minutes,
+    time: void 0,
+    description: pick.description ? `${pick.description} (from goal: ${pick.goalTitle})` : `From goal: ${pick.goalTitle}`,
+    completed: false,
+    createdAt,
+    fromJarvis: true,
+    goalTreeId: pick.goalTreeId,
+    goalTaskId: pick.taskId
+  };
+}
+function mergeGoalTaskIntoPlan(plan, pick, dateKey, createdAt = Date.now()) {
+  const task = buildGoalPlanTask(pick, dateKey, createdAt);
+  const existingTasks = Array.isArray(plan?.tasks) ? plan.tasks : [];
+  const alreadyPresent = existingTasks.some((candidate) => {
+    return candidate.id === task.id || candidate.goalTreeId === task.goalTreeId && candidate.goalTaskId === task.goalTaskId;
+  });
+  const base = {
+    ...plan || {},
+    date: plan?.date || dateKey,
+    tasks: [...existingTasks]
+  };
+  if (alreadyPresent) {
+    return { plan: base, inserted: false, task };
+  }
+  return {
+    plan: { ...base, tasks: [...base.tasks, task] },
+    inserted: true,
+    task
+  };
+}
+var init_goalPlanHandoff = __esm({
+  "server/goalPlanHandoff.ts"() {
+    "use strict";
+  }
+});
+
 // server/memory/people.ts
 import { eq as eq98, and as and73, sql as sql33 } from "drizzle-orm";
 async function listPeople(userId) {
@@ -74737,6 +74974,92 @@ Reply directly to this message with your answer and I'll take it from there.
       res.status(500).json({ error: "Failed to fetch tree" });
     }
   });
+  app2.patch("/api/goals/:id/tree", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const goalId = _p9(req.params.id);
+      const action = req.body?.action;
+      if (!action || typeof action !== "object" || !("type" in action)) {
+        return res.status(400).json({ error: "action is required" });
+      }
+      const [treeRow] = await db.select().from(goalTrees).where(and84(eq112(goalTrees.userId, userId), eq112(goalTrees.goalId, goalId))).limit(1);
+      if (!treeRow) return res.status(404).json({ error: "Goal tree not found" });
+      const tree = applyGoalTreeEdit(treeRow.tree, action);
+      const [updated] = await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(and84(eq112(goalTrees.id, treeRow.id), eq112(goalTrees.userId, userId))).returning();
+      res.json({
+        ok: true,
+        hasTree: true,
+        ...updated,
+        summary: summarizeGoalTree(tree)
+      });
+    } catch (err2) {
+      const message = err2 instanceof Error ? err2.message : "Failed to update goal tree";
+      const status = /not found/i.test(message) ? 404 : /required|invalid/i.test(message) ? 400 : 500;
+      if (status === 500) console.error("Error updating goal tree:", err2);
+      res.status(status).json({ error: message });
+    }
+  });
+  app2.post("/api/goals/:id/tree/tasks/:taskId/add-to-today", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const goalId = _p9(req.params.id);
+      const taskId = _p9(req.params.taskId);
+      const todayKey = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const [treeRow] = await db.select().from(goalTrees).where(and84(eq112(goalTrees.userId, userId), eq112(goalTrees.goalId, goalId))).limit(1);
+      if (!treeRow) return res.status(404).json({ error: "Goal tree not found" });
+      const tree = treeRow.tree || { phases: [] };
+      let pick = null;
+      for (const phase of tree.phases || []) {
+        for (const milestone of phase.milestones || []) {
+          const task = (milestone.tasks || []).find((t) => t.id === taskId);
+          if (!task) continue;
+          if (task.status === "complete") {
+            return res.status(409).json({ error: "Goal task is already complete" });
+          }
+          if (task.status === "blocked") {
+            return res.status(400).json({ error: "Goal task is blocked" });
+          }
+          pick = {
+            goalTreeId: treeRow.id,
+            goalTitle: treeRow.title,
+            phaseId: phase.id,
+            milestoneId: milestone.id,
+            taskId: task.id,
+            title: task.title,
+            description: task.description,
+            estimateHours: task.estimateHours
+          };
+          break;
+        }
+        if (pick) break;
+      }
+      if (!pick) return res.status(404).json({ error: "Goal task not found" });
+      const [planRow] = await db.select({ data: plans.data }).from(plans).where(and84(eq112(plans.userId, userId), eq112(plans.date, todayKey))).limit(1);
+      const currentPlan = planRow?.data || {
+        date: todayKey,
+        tasks: [],
+        greeting: "",
+        insight: ""
+      };
+      const merged = mergeGoalTaskIntoPlan(currentPlan, pick, todayKey);
+      await db.insert(plans).values({ userId, date: todayKey, data: merged.plan, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+        target: [plans.userId, plans.date],
+        set: { data: merged.plan, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      await markTasksInjected(userId, [pick], todayKey);
+      res.json({
+        ok: true,
+        inserted: merged.inserted,
+        date: todayKey,
+        task: merged.task
+      });
+    } catch (err2) {
+      console.error("Error adding goal task to today:", err2);
+      res.status(500).json({ error: "Failed to add goal task to today" });
+    }
+  });
   app2.post("/api/agent-jobs", async (req, res) => {
     try {
       const userId = req.userId;
@@ -76661,6 +76984,9 @@ var init_routes2 = __esm({
     init_doctorRoutes();
     init_downloadRoutes();
     init_vaultRoutes();
+    init_goalTreeEditor();
+    init_goalPlanHandoff();
+    init_goalScheduler();
     init_jarvisScheduledTasks();
     init_integrationOwner();
     init_oauthRoutes();
