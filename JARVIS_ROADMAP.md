@@ -205,7 +205,8 @@ This was added after the original roadmap to make the system dependable before d
 - [x] DB-backed deliverable review action guard proves valid and invalid actions against real persisted deliverables when `DATABASE_URL` is available
 - [x] Deliverable review endpoints can now be mounted as a slim HTTP route slice for focused API-boundary tests
 - [x] Slim HTTP route coverage now verifies approval-gate approve/decline continuations and revision job queueing with mocked side-effect dependencies
-- [ ] Polish mobile/web UX for long deliverables and revision history
+- [x] Inbox review UX can open long deliverables in a full reader and show revision lineage when a deliverable is a revised version
+- [ ] Add richer side-by-side revision comparison and restore-from-version controls
 
 ---
 
