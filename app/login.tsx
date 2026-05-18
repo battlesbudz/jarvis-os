@@ -25,6 +25,7 @@ declare global {
             client_id: string;
             scope: string;
             callback: (response: { access_token?: string; error?: string; error_description?: string }) => void;
+            error_callback?: (error: { type?: string; message?: string }) => void;
             prompt?: string;
           }) => {
             requestAccessToken: (options?: { prompt?: string }) => void;
@@ -95,6 +96,11 @@ function buildMobileAuthUrls(baseUrl: string) {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function isLocalWebPreview(): boolean {
+  if (Platform.OS !== "web" || typeof window === "undefined") return false;
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
@@ -106,6 +112,13 @@ export default function LoginScreen() {
   const [pwLoading, setPwLoading] = useState(false);
   const isAuthenticatedRef = useRef(isAuthenticated);
   useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    loadGisScript().catch((err) => {
+      console.warn("[GoogleAuth] Could not preload Google sign-in:", err);
+    });
+  }, []);
 
   // Detect whether a previous account was signed in (token or email exists in storage)
   useEffect(() => {
@@ -314,6 +327,11 @@ export default function LoginScreen() {
             finish(() => reject(new Error(e.message || "Google sign-in failed")));
           }
         },
+        error_callback: (popupError) => {
+          finish(() => {
+            reject(new Error(popupError.message || popupError.type || "Google sign-in could not open."));
+          });
+        },
       });
 
       if (!tokenClient) {
@@ -335,6 +353,11 @@ export default function LoginScreen() {
     if (typeof window === "undefined") {
       throw new Error("Google sign-in is only available in a browser.");
     }
+    if (isLocalWebPreview()) {
+      throw new Error(
+        "Google popup sign-in was blocked. For local preview, allow popups for localhost or use Dev Login so you stay on the local app.",
+      );
+    }
 
     const baseUrl = getApiUrl();
     const { startUrl } = buildMobileAuthUrls(baseUrl);
@@ -346,6 +369,7 @@ export default function LoginScreen() {
 
   function googleConfigHelp(errorMessage?: string) {
     const base = errorMessage || "Google sign-in could not finish.";
+    if (isLocalWebPreview()) return base;
     return `${base} In Google Cloud Console, make sure this OAuth client allows the JavaScript origin https://gameplanjarvisai.up.railway.app and redirect URI https://gameplanjarvisai.up.railway.app/api/oauth/google/callback.`;
   }
 
@@ -523,9 +547,22 @@ export default function LoginScreen() {
                 try {
                   const base =
                     typeof window !== "undefined" && window.location.hostname === "localhost"
-                      ? "http://localhost:5000"
+                      ? (process.env.EXPO_PUBLIC_DEV_AUTH_URL || "http://localhost:5001")
                       : getApiUrl();
-                  const res = await fetch(new URL("/api/dev-token", base).toString());
+                  const controller = new AbortController();
+                  const timeout = setTimeout(() => controller.abort(), 8000);
+                  let res: Response;
+                  try {
+                    res = await fetch(new URL("/api/dev-token", base).toString(), {
+                      signal: controller.signal,
+                    });
+                  } finally {
+                    clearTimeout(timeout);
+                  }
+                  if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(text || `Dev login failed with ${res.status}`);
+                  }
                   const { token } = await res.json();
                   await loginWithToken(token);
                 } catch (e: any) {
