@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const isWindows = process.platform === "win32";
 
-function loadEnvFile(path) {
+function loadEnvFile(path, { override = false } = {}) {
   if (!existsSync(path)) return;
 
   const content = readFileSync(path, "utf8");
@@ -24,7 +24,7 @@ function loadEnvFile(path) {
     ) {
       value = value.slice(1, -1);
     }
-    if (!process.env[key]) process.env[key] = value;
+    if (override || !process.env[key]) process.env[key] = value;
   }
 }
 
@@ -71,7 +71,7 @@ async function assertCodexOAuthReady() {
 }
 
 loadEnvFile(".env");
-loadEnvFile(".env.local");
+loadEnvFile(".env.local", { override: true });
 
 process.env.JARVIS_CODEX_COMMAND = findInstalledCodexCommand();
 process.env.NODE_ENV ||= "development";
@@ -84,7 +84,11 @@ if (!process.env.DATABASE_URL) {
   process.exit(1);
 }
 
-await assertCodexOAuthReady();
+if (process.env.JARVIS_CODEX_OAUTH_SKIP_CHECK === "true") {
+  console.warn("Skipping Codex OAuth startup probe because JARVIS_CODEX_OAUTH_SKIP_CHECK=true.");
+} else {
+  await assertCodexOAuthReady();
+}
 
 if (process.argv.includes("--check")) {
   console.log("Jarvis local OAuth gateway preflight passed.");
@@ -99,10 +103,19 @@ console.log("AI provider: chatgpt-codex-oauth");
 console.log(`Codex command: ${process.env.JARVIS_CODEX_COMMAND}`);
 console.log(`URL: http://${process.env.HOST}:${process.env.PORT || "5000"}`);
 
-const child = spawn(isWindows ? "npx.cmd" : "npx", ["tsx", "server/index.ts"], {
+const localTsx = join("node_modules", ".bin", isWindows ? "tsx.cmd" : "tsx");
+const serverEntry = process.env.JARVIS_OAUTH_GATEWAY_ENTRY?.trim();
+const serverCommand = serverEntry ? "node.exe" : isWindows ? "cmd.exe" : localTsx;
+const serverArgs = serverEntry
+  ? [serverEntry]
+  : isWindows
+    ? ["/d", "/s", "/c", localTsx, "server/index.ts"]
+    : ["server/index.ts"];
+
+const child = spawn(serverCommand, serverArgs, {
   stdio: "inherit",
   env: process.env,
-  shell: isWindows,
+  shell: false,
 });
 
 child.on("exit", (code, signal) => {

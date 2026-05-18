@@ -29,6 +29,22 @@ JARVIS_CODEX_COMMAND=codex
 JARVIS_CODEX_OAUTH_MODEL=chatgpt-codex-oauth/auto
 ```
 
+Local Windows gateway stability options:
+
+```text
+# Use the built server bundle instead of tsx for the supervised local gateway.
+JARVIS_OAUTH_GATEWAY_ENTRY=server_dist/index.js
+
+# Only use this after `codex login status` succeeds manually on the same machine.
+JARVIS_CODEX_OAUTH_SKIP_CHECK=true
+```
+
+When `JARVIS_OAUTH_GATEWAY_ENTRY=server_dist/index.js` is set, rebuild after server route changes:
+
+```powershell
+npm.cmd run server:build
+```
+
 Then start the gateway:
 
 ```powershell
@@ -85,6 +101,32 @@ JARVIS_CODEX_GATEWAY_TOKEN=<same shared secret>
 ```
 
 With `JARVIS_CODEX_GATEWAY_URL` set, hosted Jarvis exposes `delegate_to_codex` and forwards the scoped task to `/api/codex/delegate` on the gateway. The gateway runs `codex exec` using its local ChatGPT/Codex OAuth login and returns the result.
+
+## Telegram CodeX piggyback
+
+The local Jarvis OAuth gateway can also front the Telegram CodeX gateway so the Telegram Mini App uses the same public Jarvis tunnel instead of a separate tunnel.
+
+Jarvis gateway host:
+
+```txt
+TELEGRAM_CODEX_PROXY_ENABLED=true
+TELEGRAM_CODEX_PROXY_TARGET=http://127.0.0.1:8787
+TELEGRAM_CODEX_PROXY_PATH=/telegram-codex
+```
+
+Telegram CodeX gateway:
+
+```txt
+PUBLIC_BASE_PATH=/telegram-codex
+MINIAPP_PUBLIC_URL=https://<jarvis-public-host>/telegram-codex/miniapp/
+TELEGRAM_UPDATE_MODE=polling
+```
+
+Jarvis proxies `/telegram-codex/*` to the local Telegram CodeX process. Polling remains the simplest Telegram update mode for the local bot. If webhook mode is needed later, set `TELEGRAM_UPDATE_MODE=webhook` and Telegram will call `https://<jarvis-public-host>/telegram-codex/telegram/webhook`.
+
+The proxy forwards the original host through `X-Forwarded-Host`. Telegram CodeX allows the local-dev fallback only for direct local hosts; public proxied requests must include valid Telegram Mini App `initData`.
+
+This only works when the local Jarvis gateway or its tunnel is fronting this PC. A Railway-hosted Jarvis process cannot reach `127.0.0.1` on this desktop unless a secure tunnel back to the machine is also configured.
 
 ## Guardrails
 
