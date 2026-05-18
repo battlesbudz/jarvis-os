@@ -14,11 +14,13 @@ type MilestonePatch = Partial<Pick<GoalTreeMilestone, "title" | "description" | 
 type TaskPatch = Partial<
   Pick<GoalTreeTask, "title" | "description" | "estimateHours" | "status" | "dueDate">
 >;
+type MoveDirection = "up" | "down";
 
 export type GoalTreeEditAction =
   | { type: "add_phase"; phase: { title: string; description?: string } }
   | { type: "update_phase"; phaseId: string; patch: PhasePatch }
   | { type: "delete_phase"; phaseId: string }
+  | { type: "move_phase"; phaseId: string; direction: MoveDirection }
   | {
       type: "add_milestone";
       phaseId: string;
@@ -31,6 +33,7 @@ export type GoalTreeEditAction =
       patch: MilestonePatch;
     }
   | { type: "delete_milestone"; phaseId: string; milestoneId: string }
+  | { type: "move_milestone"; phaseId: string; milestoneId: string; direction: MoveDirection }
   | {
       type: "add_task";
       phaseId: string;
@@ -44,7 +47,8 @@ export type GoalTreeEditAction =
       taskId: string;
       patch: TaskPatch;
     }
-  | { type: "delete_task"; phaseId: string; milestoneId: string; taskId: string };
+  | { type: "delete_task"; phaseId: string; milestoneId: string; taskId: string }
+  | { type: "move_task"; phaseId: string; milestoneId: string; taskId: string; direction: MoveDirection };
 
 export interface GoalTreeSummary {
   totalPhases: number;
@@ -150,6 +154,17 @@ function findTask(milestone: GoalTreeMilestone, taskId: string): GoalTreeTask {
   return task;
 }
 
+function moveById<T extends { id: string }>(items: T[], id: string, direction: MoveDirection, label: string): T[] {
+  const index = items.findIndex((item) => item.id === id);
+  if (index === -1) throw new Error(`${label} not found: ${id}`);
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= items.length) return items;
+  const next = [...items];
+  const [item] = next.splice(index, 1);
+  next.splice(targetIndex, 0, item);
+  return next;
+}
+
 function rollupStatuses(tree: GoalTreeData): GoalTreeData {
   for (const phase of tree.phases) {
     for (const milestone of phase.milestones) {
@@ -234,6 +249,10 @@ export function applyGoalTreeEdit(tree: GoalTreeData, action: GoalTreeEditAction
       next.phases = next.phases.filter((p) => p.id !== action.phaseId);
       break;
 
+    case "move_phase":
+      next.phases = moveById(next.phases, action.phaseId, action.direction, "phase");
+      break;
+
     case "add_milestone":
       phase!.milestones.push({
         id: newId("milestone"),
@@ -252,6 +271,10 @@ export function applyGoalTreeEdit(tree: GoalTreeData, action: GoalTreeEditAction
 
     case "delete_milestone":
       phase!.milestones = phase!.milestones.filter((m) => m.id !== action.milestoneId);
+      break;
+
+    case "move_milestone":
+      phase!.milestones = moveById(phase!.milestones, action.milestoneId, action.direction, "milestone");
       break;
 
     case "add_task": {
@@ -279,6 +302,12 @@ export function applyGoalTreeEdit(tree: GoalTreeData, action: GoalTreeEditAction
     case "delete_task": {
       const milestone = findMilestone(phase!, action.milestoneId);
       milestone.tasks = milestone.tasks.filter((t) => t.id !== action.taskId);
+      break;
+    }
+
+    case "move_task": {
+      const milestone = findMilestone(phase!, action.milestoneId);
+      milestone.tasks = moveById(milestone.tasks, action.taskId, action.direction, "task");
       break;
     }
   }

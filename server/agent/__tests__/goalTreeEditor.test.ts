@@ -42,6 +42,39 @@ const tree: GoalTreeData = {
   ],
 };
 
+const reorderTree: GoalTreeData = {
+  phases: [
+    {
+      id: "phase-a",
+      title: "Phase A",
+      status: "ready",
+      milestones: [
+        {
+          id: "milestone-a1",
+          title: "Milestone A1",
+          status: "ready",
+          tasks: [
+            { id: "task-a1", title: "Task A1", status: "ready" },
+            { id: "task-a2", title: "Task A2", status: "ready" },
+          ],
+        },
+        {
+          id: "milestone-a2",
+          title: "Milestone A2",
+          status: "ready",
+          tasks: [{ id: "task-a3", title: "Task A3", status: "ready" }],
+        },
+      ],
+    },
+    {
+      id: "phase-b",
+      title: "Phase B",
+      status: "ready",
+      milestones: [],
+    },
+  ],
+};
+
 function run(): void {
   const editedPhase = applyGoalTreeEdit(tree, {
     type: "update_phase",
@@ -96,6 +129,43 @@ function run(): void {
   assert.equal(summary.readyTasks, 1);
   assert.equal(summary.progressPercent, 33);
   assert.equal(summary.nextTask?.id, "task-2");
+
+  const phaseReordered = applyGoalTreeEdit(reorderTree, {
+    type: "move_phase",
+    phaseId: "phase-b",
+    direction: "up",
+  });
+  assert.deepEqual(phaseReordered.phases.map((p) => p.id), ["phase-b", "phase-a"]);
+
+  const milestoneReordered = applyGoalTreeEdit(reorderTree, {
+    type: "move_milestone",
+    phaseId: "phase-a",
+    milestoneId: "milestone-a2",
+    direction: "up",
+  });
+  assert.deepEqual(
+    milestoneReordered.phases[0].milestones.map((m) => m.id),
+    ["milestone-a2", "milestone-a1"],
+  );
+
+  const taskReordered = applyGoalTreeEdit(reorderTree, {
+    type: "move_task",
+    phaseId: "phase-a",
+    milestoneId: "milestone-a1",
+    taskId: "task-a2",
+    direction: "up",
+  });
+  assert.deepEqual(
+    taskReordered.phases[0].milestones[0].tasks.map((t) => t.id),
+    ["task-a2", "task-a1"],
+  );
+
+  const noOpTopMove = applyGoalTreeEdit(reorderTree, {
+    type: "move_phase",
+    phaseId: "phase-a",
+    direction: "up",
+  });
+  assert.deepEqual(noOpTopMove.phases.map((p) => p.id), ["phase-a", "phase-b"]);
 
   assert.throws(
     () =>

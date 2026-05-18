@@ -64700,6 +64700,16 @@ function findTask(milestone, taskId) {
   if (!task) throw new Error(`task not found: ${taskId}`);
   return task;
 }
+function moveById(items, id, direction, label) {
+  const index = items.findIndex((item2) => item2.id === id);
+  if (index === -1) throw new Error(`${label} not found: ${id}`);
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= items.length) return items;
+  const next = [...items];
+  const [item] = next.splice(index, 1);
+  next.splice(targetIndex, 0, item);
+  return next;
+}
 function rollupStatuses(tree) {
   for (const phase of tree.phases) {
     for (const milestone of phase.milestones) {
@@ -64772,6 +64782,9 @@ function applyGoalTreeEdit(tree, action) {
     case "delete_phase":
       next.phases = next.phases.filter((p) => p.id !== action.phaseId);
       break;
+    case "move_phase":
+      next.phases = moveById(next.phases, action.phaseId, action.direction, "phase");
+      break;
     case "add_milestone":
       phase.milestones.push({
         id: newId2("milestone"),
@@ -64788,6 +64801,9 @@ function applyGoalTreeEdit(tree, action) {
     }
     case "delete_milestone":
       phase.milestones = phase.milestones.filter((m) => m.id !== action.milestoneId);
+      break;
+    case "move_milestone":
+      phase.milestones = moveById(phase.milestones, action.milestoneId, action.direction, "milestone");
       break;
     case "add_task": {
       const milestone = findMilestone(phase, action.milestoneId);
@@ -64812,6 +64828,11 @@ function applyGoalTreeEdit(tree, action) {
     case "delete_task": {
       const milestone = findMilestone(phase, action.milestoneId);
       milestone.tasks = milestone.tasks.filter((t) => t.id !== action.taskId);
+      break;
+    }
+    case "move_task": {
+      const milestone = findMilestone(phase, action.milestoneId);
+      milestone.tasks = moveById(milestone.tasks, action.taskId, action.direction, "task");
       break;
     }
   }
