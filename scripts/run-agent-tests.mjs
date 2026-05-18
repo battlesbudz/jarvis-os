@@ -17,6 +17,7 @@ const tests = [
   { file: "server/agent/__tests__/goalTreeEditor.test.ts" },
   { file: "server/agent/__tests__/goalPlanHandoff.test.ts" },
   { file: "server/agent/__tests__/goalPlanStatus.test.ts" },
+  { file: "server/agent/__tests__/goalPacing.test.ts" },
   { file: "server/agent/__tests__/deliverableReviewActions.test.ts" },
   { file: "server/agent/__tests__/deliverableReviewHttpRoutes.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },

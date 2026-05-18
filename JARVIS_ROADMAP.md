@@ -176,8 +176,12 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Goal-tree tasks can now be intentionally handed off into today's plan from the project tree without duplicating existing daily-plan tasks
 - [x] Goal-tree handoff controls now show when a task is already in today's plan
 - [x] Morning-plan generation can automatically insert next-ready decomposed goal tasks into daily plans over time
+- [x] Goal task pacing now factors in completion rate, today's energy, and a light/balanced/ambitious user setting
+- [x] Goal pacing now falls back to recent energy patterns when today's energy check-in is missing
+- [x] Goal pacing now reduces task pressure on already-heavy plan days and weak same-weekday completion patterns
+- [x] Goal pacing now reacts to near-term goal/commitment deadlines and timed/calendar-heavy daily plans
 - [ ] Finish advanced project-tree UX polish: reorder controls, generated-plan review, and richer handoff history
-- [ ] Adjust pacing based on completion rate and energy patterns
+- [ ] Replace timed-task calendar-load proxy with first-class persisted calendar-event density once calendar workload is stored consistently
 
 ### 3.2 - Background Job Runner
 

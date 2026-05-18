@@ -12,19 +12,59 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Animated, { FadeInDown } from 'react-native-reanimated';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import GoalCard from '@/components/GoalCard';
 import AddGoalSheet from '@/components/AddGoalSheet';
 import { getGoals, saveGoal, deleteGoal, type Goal } from '@/lib/storage';
 import GoalTreeSection from '@/components/GoalTreeSection';
+import { apiRequest } from '@/lib/query-client';
+
+type GoalPacingMode = 'light' | 'balanced' | 'ambitious';
+
+interface GoalPacingResponse {
+  mode: GoalPacingMode;
+  dailyCap: number;
+  completionRate: number;
+  energyLevel: number | null;
+  historicalEnergyAverage: number | null;
+  workloadTaskCount: number;
+  weekdayCompletionRate: number | null;
+  calendarBusyMinutes: number;
+  nearestDeadlineDays: number | null;
+  reasons: string[];
+}
+
+const PACING_OPTIONS: { mode: GoalPacingMode; label: string }[] = [
+  { mode: 'light', label: 'Light' },
+  { mode: 'balanced', label: 'Balanced' },
+  { mode: 'ambitious', label: 'Ambitious' },
+];
 
 export default function GoalsScreen() {
   const insets = useSafeAreaInsets();
+  const queryClient = useQueryClient();
   const [goals, setGoals] = useState<Goal[]>([]);
   const [showAdd, setShowAdd] = useState(false);
   const [editGoal, setEditGoal] = useState<Goal | null>(null);
   const [loading, setLoading] = useState(true);
   const [deletingGoalId, setDeletingGoalId] = useState<string | null>(null);
+
+  const pacingQuery = useQuery<GoalPacingResponse>({
+    queryKey: ['/api/goals/pacing'],
+    retry: false,
+  });
+
+  const pacingMutation = useMutation({
+    mutationFn: async (mode: GoalPacingMode) => {
+      const res = await apiRequest('PATCH', '/api/goals/pacing', { mode });
+      return res.json() as Promise<GoalPacingResponse>;
+    },
+    onSuccess: () => {
+      Haptics.selectionAsync();
+      queryClient.invalidateQueries({ queryKey: ['/api/goals/pacing'] });
+    },
+  });
 
   const loadGoals = useCallback(async () => {
     const loaded = await getGoals();
@@ -69,6 +109,29 @@ export default function GoalsScreen() {
     setShowAdd(true);
   };
 
+  const selectedPacing = pacingQuery.data?.mode || 'balanced';
+  const pacingReason = pacingQuery.data?.reasons?.[pacingQuery.data.reasons.length - 1];
+  const energySignal =
+    typeof pacingQuery.data?.energyLevel === 'number'
+      ? `Today energy ${pacingQuery.data.energyLevel}/5`
+      : typeof pacingQuery.data?.historicalEnergyAverage === 'number'
+        ? `Recent energy avg ${pacingQuery.data.historicalEnergyAverage}/5`
+        : null;
+  const workloadSignal =
+    typeof pacingQuery.data?.workloadTaskCount === 'number' && pacingQuery.data.workloadTaskCount > 0
+      ? `${pacingQuery.data.workloadTaskCount} task${pacingQuery.data.workloadTaskCount === 1 ? '' : 's'} already planned`
+      : null;
+  const calendarSignal =
+    typeof pacingQuery.data?.calendarBusyMinutes === 'number' && pacingQuery.data.calendarBusyMinutes > 0
+      ? `${Math.round(pacingQuery.data.calendarBusyMinutes / 60)}h calendar load`
+      : null;
+  const deadlineSignal =
+    typeof pacingQuery.data?.nearestDeadlineDays === 'number'
+      ? pacingQuery.data.nearestDeadlineDays <= 0
+        ? 'Deadline due now'
+        : `${pacingQuery.data.nearestDeadlineDays} day${pacingQuery.data.nearestDeadlineDays === 1 ? '' : 's'} to nearest deadline`
+      : null;
+
   if (loading) {
     return (
       <View style={[styles.loadingContainer, { paddingTop: insets.top + (Platform.OS === 'web' ? 67 : 0) }]}>
@@ -106,6 +169,70 @@ export default function GoalsScreen() {
           >
             <Ionicons name="add" size={22} color={Colors.white} />
           </Pressable>
+        </Animated.View>
+
+        <Animated.View entering={FadeInDown.duration(400).delay(150)} style={styles.pacingPanel}>
+          <View style={styles.pacingHeader}>
+            <View style={styles.pacingIcon}>
+              <Ionicons name="speedometer-outline" size={17} color={Colors.primary} />
+            </View>
+            <View style={styles.pacingHeaderText}>
+              <Text style={styles.pacingTitle}>Goal pacing</Text>
+              <Text style={styles.pacingSubtitle}>
+                Up to {pacingQuery.data?.dailyCap ?? 2} goal task{(pacingQuery.data?.dailyCap ?? 2) === 1 ? '' : 's'} / day
+              </Text>
+              {!!energySignal && (
+                <Text style={styles.pacingMeta}>
+                  {energySignal}
+                </Text>
+              )}
+              {!!workloadSignal && (
+                <Text style={styles.pacingMeta}>
+                  {workloadSignal}
+                </Text>
+              )}
+              {!!calendarSignal && (
+                <Text style={styles.pacingMeta}>
+                  {calendarSignal}
+                </Text>
+              )}
+              {!!deadlineSignal && (
+                <Text style={styles.pacingMeta}>
+                  {deadlineSignal}
+                </Text>
+              )}
+            </View>
+          </View>
+
+          <View style={styles.pacingOptions}>
+            {PACING_OPTIONS.map((option) => {
+              const active = selectedPacing === option.mode;
+              return (
+                <Pressable
+                  key={option.mode}
+                  onPress={() => pacingMutation.mutate(option.mode)}
+                  disabled={pacingMutation.isPending || active}
+                  style={({ pressed }) => [
+                    styles.pacingOption,
+                    active && styles.pacingOptionActive,
+                    pressed && { opacity: 0.8 },
+                    pacingMutation.isPending && styles.pacingOptionDisabled,
+                  ]}
+                  testID={`goal-pacing-${option.mode}`}
+                >
+                  <Text style={[styles.pacingOptionText, active && styles.pacingOptionTextActive]}>
+                    {option.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {!!pacingReason && (
+            <Text style={styles.pacingReason} numberOfLines={2}>
+              {pacingReason}
+            </Text>
+          )}
         </Animated.View>
 
         {goals.length === 0 ? (
@@ -226,6 +353,83 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  pacingPanel: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    padding: 12,
+    marginBottom: 18,
+    gap: 10,
+  },
+  pacingHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  pacingIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary + '12',
+  },
+  pacingHeaderText: {
+    flex: 1,
+  },
+  pacingTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  pacingSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  pacingMeta: {
+    marginTop: 2,
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+  },
+  pacingOptions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  pacingOption: {
+    flex: 1,
+    minHeight: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  pacingOptionActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + '12',
+  },
+  pacingOptionDisabled: {
+    opacity: 0.65,
+  },
+  pacingOptionText: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textSecondary,
+  },
+  pacingOptionTextActive: {
+    color: Colors.primary,
+  },
+  pacingReason: {
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+    lineHeight: 16,
   },
   emptyState: {
     alignItems: 'center',
