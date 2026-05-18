@@ -199,8 +199,8 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         ? await db
             .select()
             .from(schema.agentJobs)
-            .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.userId, userId)))
-            .limit(1)
+          .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.userId, userId)))
+          .limit(1)
         : [];
 
       const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input)

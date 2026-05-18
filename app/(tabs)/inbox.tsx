@@ -21,7 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
-import { getApiUrl, apiRequest } from '@/lib/query-client';
+import { apiRequest } from '@/lib/query-client';
 
 class DriveApiError extends Error {
   code: string;
@@ -143,6 +143,38 @@ const JOB_LABEL: Record<string, string> = {
   goal_decompose: 'Goal breakdown',
   weekly_pattern: 'Weekly review',
 };
+
+function normalizePreviewText(value: string | null | undefined): string {
+  return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function getDeliverableBody(d: Deliverable): string {
+  const meta = (d.meta as { emailBody?: string } | null) || {};
+  return d.type === 'email_draft' ? (meta.emailBody || d.body) : d.body;
+}
+
+function isLongDeliverable(d: Deliverable): boolean {
+  const body = getDeliverableBody(d);
+  return body.length > 900 || body.split(/\r?\n/).length > 12;
+}
+
+function getDeliverableRevisionInfo(d: Deliverable): {
+  isRevision: boolean;
+  originalDeliverableId?: string;
+  originalJobId?: string;
+  instructions?: string;
+} {
+  const meta = (d.meta || {}) as Record<string, unknown>;
+  const originalDeliverableId = typeof meta.revisionOfDeliverableId === 'string' ? meta.revisionOfDeliverableId : undefined;
+  const originalJobId = typeof meta.revisionOfJobId === 'string' ? meta.revisionOfJobId : undefined;
+  const instructions = typeof meta.revisionInstructions === 'string' ? meta.revisionInstructions : undefined;
+  return {
+    isRevision: meta.revision === true || Boolean(originalDeliverableId || originalJobId || instructions),
+    originalDeliverableId,
+    originalJobId,
+    instructions,
+  };
+}
 
 function formatElapsed(from: string): string {
   const ms = Date.now() - new Date(from).getTime();
@@ -408,6 +440,7 @@ export default function InboxScreen() {
 
   const [editingDeliverable, setEditingDeliverable] = useState<Deliverable | null>(null);
   const [revisingDeliverable, setRevisingDeliverable] = useState<Deliverable | null>(null);
+  const [viewingDeliverable, setViewingDeliverable] = useState<Deliverable | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editBody, setEditBody] = useState('');
   const [editTo, setEditTo] = useState('');
@@ -435,6 +468,10 @@ export default function InboxScreen() {
   const closeReviseDeliverable = useCallback(() => {
     setRevisingDeliverable(null);
     setRevisionInstructions('');
+  }, []);
+
+  const closeViewingDeliverable = useCallback(() => {
+    setViewingDeliverable(null);
   }, []);
 
   const editDeliverableMutation = useMutation({
@@ -716,6 +753,10 @@ export default function InboxScreen() {
           } | null;
           const verificationPassed = meta?.verificationPassed;
           const verificationRetries = meta?.verificationRetries ?? 0;
+          const bodyText = getDeliverableBody(d);
+          const previewText = review?.preview || normalizePreviewText(d.summary) || bodyText;
+          const longDeliverable = isLongDeliverable(d);
+          const revisionInfo = getDeliverableRevisionInfo(d);
           return (
             <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 60)}>
               <View style={styles.draftCard}>
@@ -762,6 +803,15 @@ export default function InboxScreen() {
                   );
                 })()}
 
+                {revisionInfo.isRevision && (
+                  <View style={styles.revisionLineageRow}>
+                    <Ionicons name="git-compare-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.revisionLineageText} numberOfLines={2}>
+                      Revision{revisionInfo.instructions ? `: ${revisionInfo.instructions}` : ' of an earlier deliverable'}
+                    </Text>
+                  </View>
+                )}
+
                 {meta?.noSourceUrls && (
                   <View style={styles.noSourcesWarning}>
                     <Ionicons name="warning-outline" size={13} color="#B45309" />
@@ -796,11 +846,24 @@ export default function InboxScreen() {
                   </View>
                 )}
 
-                <View style={styles.draftBodyBox}>
+                <Pressable
+                  style={styles.draftBodyBox}
+                  onPress={() => setViewingDeliverable(d)}
+                  testID={`deliverable-open-${d.id}`}
+                >
                   <Text style={styles.draftBodyText} numberOfLines={8}>
-                    {review?.preview || d.summary || d.body}
+                    {previewText}
                   </Text>
-                </View>
+                  <View style={styles.draftBodyFooter}>
+                    <Text style={styles.draftBodyMeta}>
+                      {longDeliverable ? 'Long deliverable' : 'Preview'} · {bodyText.length.toLocaleString()} chars
+                    </Text>
+                    <View style={styles.openDeliverablePill}>
+                      <Ionicons name="reader-outline" size={12} color={Colors.primary} />
+                      <Text style={styles.openDeliverableText}>Open full</Text>
+                    </View>
+                  </View>
+                </Pressable>
 
                 {canSaveToDrive && d.driveLink ? (
                   <Pressable
@@ -1257,6 +1320,12 @@ export default function InboxScreen() {
     );
   };
 
+  const viewingRevisionInfo = viewingDeliverable ? getDeliverableRevisionInfo(viewingDeliverable) : null;
+  const viewingBody = viewingDeliverable ? getDeliverableBody(viewingDeliverable) : '';
+  const viewingTypeLabel = viewingDeliverable
+    ? (DELIVERABLE_LABEL[viewingDeliverable.type] || viewingDeliverable.type)
+    : '';
+
   return (
     <View style={[styles.container, { paddingTop: isWeb ? 67 : insets.top }]}>
       <View style={styles.header}>
@@ -1287,6 +1356,108 @@ export default function InboxScreen() {
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      <Modal
+        visible={!!viewingDeliverable}
+        animationType="slide"
+        transparent
+        onRequestClose={closeViewingDeliverable}
+      >
+        <View style={styles.editModalRoot}>
+          <View style={styles.reviewSheet}>
+            <View style={styles.editHeader}>
+              <View style={styles.reviewHeaderText}>
+                <Text style={styles.editTitle}>Review deliverable</Text>
+                <Text style={styles.reviewKicker} numberOfLines={1}>{viewingTypeLabel}</Text>
+              </View>
+              <Pressable onPress={closeViewingDeliverable} testID="deliverable-view-close">
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            {viewingDeliverable && (
+              <ScrollView style={styles.reviewBodyScroll} contentContainerStyle={styles.reviewBodyContent}>
+                <Text style={styles.reviewTitle}>{viewingDeliverable.title}</Text>
+                <View style={styles.reviewMetaGrid}>
+                  <View style={styles.reviewMetaItem}>
+                    <Text style={styles.reviewMetaLabel}>Created</Text>
+                    <Text style={styles.reviewMetaValue}>
+                      {new Date(viewingDeliverable.createdAt).toLocaleString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </Text>
+                  </View>
+                  <View style={styles.reviewMetaItem}>
+                    <Text style={styles.reviewMetaLabel}>Length</Text>
+                    <Text style={styles.reviewMetaValue}>{viewingBody.length.toLocaleString()} chars</Text>
+                  </View>
+                  <View style={styles.reviewMetaItem}>
+                    <Text style={styles.reviewMetaLabel}>Status</Text>
+                    <Text style={styles.reviewMetaValue}>{viewingDeliverable.review?.label || viewingDeliverable.status}</Text>
+                  </View>
+                </View>
+
+                {viewingRevisionInfo?.isRevision && (
+                  <View style={styles.reviewRevisionBox}>
+                    <View style={styles.reviewRevisionHeader}>
+                      <Ionicons name="git-compare-outline" size={14} color={Colors.primary} />
+                      <Text style={styles.reviewRevisionTitle}>Revision history</Text>
+                    </View>
+                    {viewingRevisionInfo.instructions ? (
+                      <Text style={styles.reviewRevisionText}>{viewingRevisionInfo.instructions}</Text>
+                    ) : (
+                      <Text style={styles.reviewRevisionText}>This is a revised version of an earlier deliverable.</Text>
+                    )}
+                    {(viewingRevisionInfo.originalDeliverableId || viewingRevisionInfo.originalJobId) && (
+                      <Text style={styles.reviewRevisionIds} numberOfLines={2}>
+                        Source {viewingRevisionInfo.originalDeliverableId || viewingRevisionInfo.originalJobId}
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {viewingDeliverable.summary ? (
+                  <View style={styles.reviewSummaryBox}>
+                    <Text style={styles.reviewSectionLabel}>Summary</Text>
+                    <Text style={styles.reviewSummaryText}>{viewingDeliverable.summary}</Text>
+                  </View>
+                ) : null}
+
+                <Text style={styles.reviewSectionLabel}>Full content</Text>
+                <Text style={styles.reviewBodyText}>{viewingBody}</Text>
+              </ScrollView>
+            )}
+
+            {viewingDeliverable && (
+              <View style={styles.editFooter}>
+                <Pressable
+                  style={[styles.actionButton, styles.actionButtonDismiss]}
+                  onPress={closeViewingDeliverable}
+                  testID="deliverable-view-done"
+                >
+                  <Text style={[styles.actionText, styles.actionTextDismiss]}>Done</Text>
+                </Pressable>
+                {viewingDeliverable.review?.canRevise && (
+                  <Pressable
+                    style={styles.actionButton}
+                    onPress={() => {
+                      const target = viewingDeliverable;
+                      closeViewingDeliverable();
+                      openReviseDeliverable(target);
+                    }}
+                    testID="deliverable-view-revise"
+                  >
+                    <Text style={styles.actionText}>Request revision</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={!!editingDeliverable}
@@ -1459,7 +1630,7 @@ export default function InboxScreen() {
                 onPress={() => gutModalSignal && respondGutMutation.mutate({ id: gutModalSignal.id, response: 'dismissed' })}
                 disabled={respondGutMutation.isPending}
               >
-                <Text style={styles.gutModalBtnDismissText}>This one's fine</Text>
+                <Text style={styles.gutModalBtnDismissText}>This one is fine</Text>
               </Pressable>
             </View>
           </View>
@@ -1488,6 +1659,15 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     maxHeight: '85%',
   },
+  reviewSheet: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
+    maxHeight: '90%',
+  },
   editHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1498,6 +1678,113 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
+  },
+  reviewHeaderText: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  reviewKicker: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  reviewBodyScroll: {
+    maxHeight: 620,
+  },
+  reviewBodyContent: {
+    paddingBottom: 8,
+  },
+  reviewTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    lineHeight: 24,
+    marginBottom: 12,
+  },
+  reviewMetaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  reviewMetaItem: {
+    minWidth: 100,
+    flexGrow: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  reviewMetaLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 3,
+  },
+  reviewMetaValue: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  reviewRevisionBox: {
+    backgroundColor: Colors.primary + '10',
+    borderWidth: 1,
+    borderColor: Colors.primary + '25',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+  },
+  reviewRevisionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  reviewRevisionTitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.primary,
+  },
+  reviewRevisionText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  reviewRevisionIds: {
+    marginTop: 6,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
+  },
+  reviewSummaryBox: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+  },
+  reviewSectionLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
+  reviewSummaryText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  reviewBodyText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 21,
   },
   reviseItemTitle: {
     fontSize: 14,
@@ -1741,6 +2028,23 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     lineHeight: 15,
   },
+  revisionLineageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: Colors.primary + '10',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+    marginBottom: 8,
+  },
+  revisionLineageText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+    lineHeight: 16,
+  },
   driveLinkRow: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
@@ -1781,6 +2085,33 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.text,
     lineHeight: 18,
+  },
+  draftBodyFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 10,
+  },
+  draftBodyMeta: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
+  },
+  openDeliverablePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  openDeliverableText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
   autoHandledCard: {
     borderColor: Colors.border,

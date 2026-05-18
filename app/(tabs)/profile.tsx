@@ -213,17 +213,106 @@ const PLATFORMS: PlatformInfo[] = [
   },
 ];
 
+const PROFILE_PANEL = Colors.card;
+const PROFILE_PANEL_MUTED = '#151923';
+const PROFILE_BORDER = Colors.border;
+const PROFILE_BORDER_ACTIVE = Colors.borderGlow;
+const PROFILE_CHIP = '#1B2230';
+const PROFILE_CHIP_MUTED = '#171B24';
+
+type ProfilePanelKey =
+  | 'progress'
+  | 'identity'
+  | 'review'
+  | 'people'
+  | 'memories'
+  | 'notes'
+  | 'connections'
+  | 'agents'
+  | 'settings';
+
+const PROFILE_PANELS: {
+  key: ProfilePanelKey;
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent: string;
+}[] = [
+  {
+    key: 'progress',
+    title: 'Progress',
+    subtitle: 'Achievements and rewards',
+    icon: 'trophy-outline',
+    accent: Colors.primary,
+  },
+  {
+    key: 'identity',
+    title: 'Identity',
+    subtitle: 'About you and Jarvis Soul',
+    icon: 'person-circle-outline',
+    accent: Colors.violet,
+  },
+  {
+    key: 'review',
+    title: 'Review',
+    subtitle: 'Memory and context approvals',
+    icon: 'library-outline',
+    accent: Colors.warning,
+  },
+  {
+    key: 'people',
+    title: 'People',
+    subtitle: 'People Jarvis knows',
+    icon: 'people-outline',
+    accent: Colors.cyan,
+  },
+  {
+    key: 'memories',
+    title: 'Memories',
+    subtitle: 'Stored coach memory',
+    icon: 'bulb-outline',
+    accent: Colors.success,
+  },
+  {
+    key: 'notes',
+    title: 'Notes',
+    subtitle: 'Morning notes and dream cycle',
+    icon: 'mic-outline',
+    accent: Colors.secondary,
+  },
+  {
+    key: 'connections',
+    title: 'Connections',
+    subtitle: 'Apps, channels, files, and website',
+    icon: 'git-network-outline',
+    accent: Colors.cyan,
+  },
+  {
+    key: 'agents',
+    title: 'Agents',
+    subtitle: 'Custom agents and learned skills',
+    icon: 'sparkles-outline',
+    accent: Colors.secondary,
+  },
+  {
+    key: 'settings',
+    title: 'Settings',
+    subtitle: 'Notifications, rules, and account',
+    icon: 'settings-outline',
+    accent: Colors.textSecondary,
+  },
+];
+
+const PROFILE_PANEL_META = PROFILE_PANELS.reduce((acc, panel) => {
+  acc[panel.key] = panel;
+  return acc;
+}, {} as Record<ProfilePanelKey, (typeof PROFILE_PANELS)[number]>);
+
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { focus } = useLocalSearchParams<{ focus?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
-  const aboutSectionRef = useRef<View>(null);
-  const memorySectionRef = useRef<View>(null);
-  const appsSectionRef = useRef<View>(null);
-  const channelsSectionRef = useRef<View>(null);
-  const contentSectionRef = useRef<View>(null);
-  const settingsSectionRef = useRef<View>(null);
   const webhookRowRef = useRef<View>(null);
   const driveRowRef = useRef<View>(null);
   const { logout, username: authUsername, userEmail: authUserEmail } = useAuth();
@@ -275,6 +364,7 @@ export default function ProfileScreen() {
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
   const [rewardModalVisible, setRewardModalVisible] = useState(false);
+  const [activeProfilePanel, setActiveProfilePanel] = useState<ProfilePanelKey | null>(null);
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
   const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
@@ -1861,6 +1951,7 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (focus !== 'telegram_webhook') return;
+    setActiveProfilePanel('connections');
     const timer = setTimeout(() => {
       const scrollNode = findNodeHandle(scrollViewRef.current);
       if (scrollNode && webhookRowRef.current) {
@@ -1878,19 +1969,7 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (focus !== 'drive') return;
-    const timer = setTimeout(() => {
-      const scrollNode = findNodeHandle(scrollViewRef.current);
-      if (scrollNode && driveRowRef.current) {
-        driveRowRef.current.measureLayout(
-          scrollNode,
-          (_x, y) => {
-            scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
-          },
-          () => {}
-        );
-      }
-    }, 600);
-    return () => clearTimeout(timer);
+    setActiveProfilePanel('connections');
   }, [focus]);
 
   const lifetimeXp = getLifetimeXp(stats);
@@ -1940,17 +2019,41 @@ export default function ProfileScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const scrollToProfileSection = useCallback((sectionRef: React.RefObject<any>) => {
-    const scrollNode = findNodeHandle(scrollViewRef.current);
-    if (!scrollNode || !sectionRef.current) return;
-    sectionRef.current.measureLayout(
-      scrollNode,
-      (_x: number, y: number) => {
-        scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 18), animated: true });
-      },
-      () => {}
-    );
-  }, []);
+  const activePanelMeta = activeProfilePanel ? PROFILE_PANEL_META[activeProfilePanel] : null;
+  const getProfilePanelBadge = (key: ProfilePanelKey): string => {
+    switch (key) {
+      case 'progress':
+        return `${stats.badges.length}/${ALL_BADGES.length}`;
+      case 'identity':
+        return soul?.content ? 'Soul ready' : lifeContext ? 'Profile set' : 'Start';
+      case 'review': {
+        const reviewCount = pendingMemories.length + pendingLivingUpdates.length;
+        return reviewCount > 0 ? `${reviewCount} waiting` : 'Clear';
+      }
+      case 'people':
+        return `${people.length} known`;
+      case 'memories':
+        return `${memories.length} stored`;
+      case 'notes':
+        return `${morningNotes.length + dreamInsights.length} items`;
+      case 'connections': {
+        const connectedApps = PLATFORMS.filter((platform) => {
+          const status = oauthStatus[platform.id];
+          return (status?.accounts?.length ?? 0) > 0 || !!status?.connected;
+        }).length;
+        const connectedChannels = channelData
+          ? Object.values(channelData.connected).filter(Boolean).length
+          : 0;
+        return `${connectedApps + connectedChannels} live`;
+      }
+      case 'agents':
+        return `${customAgents.length + activeUserSkills.length} active`;
+      case 'settings':
+        return notificationsEnabled ? 'Reminders on' : 'Reminders off';
+      default:
+        return '';
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -1967,48 +2070,6 @@ export default function ProfileScreen() {
       >
         <Animated.View entering={FadeInDown.duration(400).delay(100)}>
           <Text style={styles.title}>{userName || 'Profile'}</Text>
-        </Animated.View>
-
-        <Animated.View entering={FadeInDown.duration(400).delay(150)} style={styles.profileHub}>
-          <View style={styles.profileHubTop}>
-            <View style={styles.profileHubCopy}>
-              <Text style={styles.profileHubEyebrow}>Profile Control Center</Text>
-              <Text style={styles.profileHubTitle}>Jump straight to what you need</Text>
-            </View>
-            <View style={styles.profileHubStatus}>
-              <Ionicons name="sparkles" size={15} color={Colors.primaryLight} />
-            </View>
-          </View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.quickNavContent}
-          >
-            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(aboutSectionRef)}>
-              <Ionicons name="person-circle-outline" size={15} color={Colors.primaryLight} />
-              <Text style={styles.quickNavText}>About</Text>
-            </Pressable>
-            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(memorySectionRef)}>
-              <Ionicons name="library-outline" size={15} color={Colors.secondaryLight} />
-              <Text style={styles.quickNavText}>Memory</Text>
-            </Pressable>
-            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(appsSectionRef)}>
-              <Ionicons name="grid-outline" size={15} color={Colors.cyan} />
-              <Text style={styles.quickNavText}>Apps</Text>
-            </Pressable>
-            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(channelsSectionRef)}>
-              <Ionicons name="radio-outline" size={15} color={Colors.warningLight} />
-              <Text style={styles.quickNavText}>Channels</Text>
-            </Pressable>
-            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(contentSectionRef)}>
-              <Ionicons name="folder-open-outline" size={15} color={Colors.successLight} />
-              <Text style={styles.quickNavText}>Content</Text>
-            </Pressable>
-            <Pressable style={styles.quickNavChip} onPress={() => scrollToProfileSection(settingsSectionRef)}>
-              <Ionicons name="settings-outline" size={15} color={Colors.textSecondary} />
-              <Text style={styles.quickNavText}>Settings</Text>
-            </Pressable>
-          </ScrollView>
         </Animated.View>
 
         {/* Level + XP card */}
@@ -2058,6 +2119,68 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+        <Animated.View entering={FadeInDown.duration(400).delay(280)} style={styles.profileHub}>
+          <View style={styles.profileHubHeader}>
+            <Text style={styles.sectionTitle}>Profile sections</Text>
+            <Text style={styles.sectionSubtitle}>Open only the area you need</Text>
+          </View>
+          <View style={styles.profilePanelGrid}>
+            {PROFILE_PANELS.map((panel) => (
+              <Pressable
+                key={panel.key}
+                style={styles.profilePanelCard}
+                onPress={() => setActiveProfilePanel(panel.key)}
+              >
+                <View style={[styles.profilePanelIcon, { backgroundColor: panel.accent + '18' }]}>
+                  <Ionicons name={panel.icon} size={20} color={panel.accent} />
+                </View>
+                <View style={styles.profilePanelText}>
+                  <View style={styles.profilePanelTitleRow}>
+                    <Text style={styles.profilePanelTitle}>{panel.title}</Text>
+                    <View style={styles.profilePanelBadge}>
+                      <Text style={styles.profilePanelBadgeText}>{getProfilePanelBadge(panel.key)}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.profilePanelSubtitle}>{panel.subtitle}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
+              </Pressable>
+            ))}
+          </View>
+        </Animated.View>
+      </ScrollView>
+
+      <Modal
+        visible={activeProfilePanel !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setActiveProfilePanel(null)}
+      >
+        <View style={styles.profileModalOverlay}>
+          <Pressable style={styles.profileModalBackdrop} onPress={() => setActiveProfilePanel(null)} />
+          <View style={[styles.profileModalSheet, { paddingTop: Math.max(insets.top, 12) + 12 }]}>
+            <View style={styles.profileModalHeader}>
+              <View style={styles.profileModalTitleWrap}>
+                {activePanelMeta && (
+                  <View style={[styles.profileModalIcon, { backgroundColor: activePanelMeta.accent + '18' }]}>
+                    <Ionicons name={activePanelMeta.icon} size={20} color={activePanelMeta.accent} />
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.profileModalTitle}>{activePanelMeta?.title ?? 'Profile'}</Text>
+                  <Text style={styles.profileModalSubtitle}>{activePanelMeta?.subtitle ?? ''}</Text>
+                </View>
+              </View>
+              <Pressable style={styles.profileModalClose} onPress={() => setActiveProfilePanel(null)} hitSlop={10}>
+                <Ionicons name="close" size={20} color={Colors.text} />
+              </Pressable>
+            </View>
+            <ScrollView
+              contentContainerStyle={styles.profileModalContent}
+              showsVerticalScrollIndicator={false}
+            >
+        {activeProfilePanel === 'progress' && (
+          <>
         {/* Badges */}
         <Animated.View entering={FadeInDown.duration(400).delay(300)}>
           <Text style={styles.sectionTitle}>Achievements</Text>
@@ -2124,7 +2247,7 @@ export default function ProfileScreen() {
                   onPress={() => canTap ? handleOpenReward(reward) : undefined}
                   disabled={!canTap}
                 >
-                  <View style={[styles.rewardIconCircle, { backgroundColor: permanentlyUnlocked ? tierColor + '22' : '#F1F5F9' }]}>
+                  <View style={[styles.rewardIconCircle, { backgroundColor: permanentlyUnlocked ? tierColor + '22' : PROFILE_CHIP_MUTED }]}>
                     <Ionicons
                       name={reward.icon as any}
                       size={22}
@@ -2185,9 +2308,13 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'identity' && (
+          <>
         {/* About You */}
         <Animated.View entering={FadeInDown.duration(400).delay(400)}>
-          <View ref={aboutSectionRef} style={styles.sectionHeaderRow}>
+          <View style={styles.sectionHeaderRow}>
             <Text style={[styles.sectionTitle, { marginTop: 28 }]}>About You</Text>
             {lifeContext && (
               <Pressable style={styles.editBtn} onPress={() => setSheetVisible(true)}>
@@ -2259,7 +2386,7 @@ export default function ProfileScreen() {
 
         {/* JARVIS Soul */}
         <Animated.View entering={FadeInDown.duration(400).delay(410)}>
-          <View ref={memorySectionRef} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
             <Text style={styles.sectionTitle}>JARVIS Soul</Text>
             <Pressable
               onPress={handleRegenerateSoul}
@@ -2421,6 +2548,10 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'review' && (
+          <>
         {/* Memory Review */}
         <Animated.View entering={FadeInDown.duration(400).delay(413)}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
@@ -2689,6 +2820,10 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'people' && (
+          <>
         {/* People */}
         <Animated.View entering={FadeInDown.duration(400).delay(415)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>People</Text>
@@ -2744,6 +2879,10 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'memories' && (
+          <>
         {/* Coach Memory */}
         <Animated.View entering={FadeInDown.duration(400).delay(420)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Coach Memory</Text>
@@ -2793,6 +2932,10 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'notes' && (
+          <>
         {/* Morning Notes */}
         <Animated.View entering={FadeInDown.duration(400).delay(440)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Morning Notes</Text>
@@ -3003,11 +3146,13 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'connections' && (
+          <>
         {/* Connected Apps */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
-          <View ref={appsSectionRef}>
-            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
-          </View>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
           <Text style={styles.sectionSubtitle}>
             Real data feeds your daily plan and coach
           </Text>
@@ -3335,9 +3480,7 @@ export default function ProfileScreen() {
 
         {/* Connected Channels (Phase 5: multi-channel + desktop daemon) */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
-          <View ref={channelsSectionRef}>
-            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Channels</Text>
-          </View>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Channels</Text>
           <View style={styles.platformsList}>
             <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
               <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
@@ -4141,7 +4284,7 @@ export default function ProfileScreen() {
                       )}
                     </View>
                     {(p.key === 'shell' || !!daemonPerms[p.key]) && (
-                      <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: '#FFF4E5', borderWidth: 1, borderColor: '#F0B44A' }}>
+                      <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: Colors.warningDim, borderWidth: 1, borderColor: Colors.warning }}>
                         <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#8A5A00', marginBottom: 2 }}>
                           {p.warning.heading}
                         </Text>
@@ -4207,7 +4350,7 @@ export default function ProfileScreen() {
                     Step 1 — Get the app
                   </Text>
                   <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 10 }}>
-                    Download the Jarvis Daemon APK and install it on your Android phone. Enable Install from unknown sources when prompted.
+                    Download the Jarvis Daemon APK and install it on your Android phone. Enable &quot;Install from unknown sources&quot; when prompted.
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ alignItems: 'center' }}>
@@ -4229,7 +4372,7 @@ export default function ProfileScreen() {
                         <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Download APK</Text>
                       </Pressable>
                       <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 6, lineHeight: 16 }}>
-                        Tap Pair above after installing to get your connection code.
+                        Tap &quot;Pair&quot; above after installing to get your connection code.
                       </Text>
                     </View>
                   </View>
@@ -4255,7 +4398,7 @@ export default function ProfileScreen() {
                     3. Tap <Text style={{ fontFamily: 'Inter_700Bold' }}>Pair</Text>. The dot turns green when connected.
                   </Text>
                 </View>
-                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#FFF9E6', borderWidth: 1, borderColor: '#F0C040' }}>
+                <View style={{ padding: 10, borderRadius: 8, backgroundColor: Colors.warningDim, borderWidth: 1, borderColor: Colors.warning }}>
                   <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#7A5A00', marginBottom: 3 }}>
                     Required permissions in the daemon app:
                   </Text>
@@ -4374,7 +4517,7 @@ export default function ProfileScreen() {
                     </View>
                   );
                   if (hint) {
-                    const bgColor = hint.warn ? '#FFF4E5' : '#EAF4FF';
+                    const bgColor = hint.warn ? Colors.warningDim : Colors.cyanDim;
                     const borderColor = hint.warn ? '#F0B44A' : '#5B9BD5';
                     const textColor = hint.warn ? '#8A5A00' : '#1A4A7A';
                     return (
@@ -4460,7 +4603,7 @@ export default function ProfileScreen() {
                         </View>
                       )}
                       {hasNoActiveChannel && (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#FEF3C7', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, marginLeft: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: Colors.warningDim, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, marginLeft: 8 }}>
                           <Ionicons name="warning-outline" size={11} color="#D97706" />
                           <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#D97706' }}>No channel</Text>
                         </View>
@@ -4536,9 +4679,7 @@ export default function ProfileScreen() {
 
         {/* My Website */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
-          <View ref={contentSectionRef}>
-            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>My Website</Text>
-          </View>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>My Website</Text>
           <View style={styles.platformsList}>
             <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 14 }}>
               <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
@@ -4647,7 +4788,7 @@ export default function ProfileScreen() {
                   gap: 8,
                   paddingVertical: 11,
                   borderRadius: 12,
-                  backgroundColor: documentUploading ? '#E2E8F0' : '#6366F1',
+                  backgroundColor: documentUploading ? PROFILE_CHIP : '#6366F1',
                   opacity: documentUploading || documents.length >= 10 ? 0.6 : 1,
                 }}
                 onPress={handleUploadDocument}
@@ -4738,6 +4879,10 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'agents' && (
+          <>
         {/* Custom Agents */}
         <Animated.View entering={FadeInDown.duration(400).delay(460)}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28, marginBottom: 4 }}>
@@ -5060,11 +5205,13 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'settings' && (
+          <>
         {/* Settings */}
         <Animated.View entering={FadeInDown.duration(400).delay(480)}>
-          <View ref={settingsSectionRef}>
-            <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Settings</Text>
-          </View>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Settings</Text>
           <View style={styles.platformsList}>
             <Pressable 
               style={styles.platformRow}
@@ -5202,7 +5349,12 @@ export default function ProfileScreen() {
             </Pressable>
           )}
         </Animated.View>
+          </>
+        )}
       </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <RewardClaimModal
         visible={rewardModalVisible}
@@ -5369,81 +5521,160 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: 20,
+    width: '100%',
+    maxWidth: 1120,
+    alignSelf: 'center',
   },
   title: {
     fontSize: 28,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
-    marginBottom: 14,
+    marginBottom: 20,
   },
   profileHub: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: Colors.borderViolet,
-    padding: 14,
-    marginBottom: 16,
+    marginTop: 4,
+    marginBottom: 18,
   },
-  profileHubTop: {
+  profileHubHeader: {
+    marginBottom: 12,
+  },
+  profilePanelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  profilePanelCard: {
+    width: Platform.OS === 'web' ? '32%' : '100%',
+    minWidth: Platform.OS === 'web' ? 220 : undefined,
+    flexGrow: 1,
+    minHeight: 88,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: PROFILE_BORDER,
+    backgroundColor: PROFILE_PANEL,
+  },
+  profilePanelIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  profilePanelText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  profilePanelTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 3,
+  },
+  profilePanelTitle: {
+    flexShrink: 1,
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  profilePanelSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  profilePanelBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: PROFILE_CHIP,
+  },
+  profilePanelBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  profileModalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  profileModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.58)',
+  },
+  profileModalSheet: {
+    width: '100%',
+    maxHeight: '92%',
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderWidth: 1,
+    borderColor: PROFILE_BORDER,
+    overflow: 'hidden',
+  },
+  profileModalHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
-    marginBottom: 12,
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: PROFILE_BORDER,
+    backgroundColor: PROFILE_PANEL,
   },
-  profileHubCopy: {
+  profileModalTitleWrap: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
-  profileHubEyebrow: {
-    fontSize: 10,
-    fontFamily: 'Inter_700Bold',
-    color: Colors.primaryLight,
-    textTransform: 'uppercase',
-    letterSpacing: 0.7,
-    marginBottom: 3,
-  },
-  profileHubTitle: {
-    fontSize: 15,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.text,
-  },
-  profileHubStatus: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    backgroundColor: Colors.greenDim,
+  profileModalIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  quickNavContent: {
-    gap: 8,
-    paddingRight: 4,
+  profileModalTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
   },
-  quickNavChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 11,
-    paddingVertical: 8,
-    borderRadius: 12,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  quickNavText: {
+  profileModalSubtitle: {
     fontSize: 12,
-    fontFamily: 'Inter_600SemiBold',
+    fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  profileModalClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: PROFILE_CHIP,
+  },
+  profileModalContent: {
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: Platform.OS === 'web' ? 120 : 48,
+    width: '100%',
+    maxWidth: 1120,
+    alignSelf: 'center',
   },
 
   /* Level card */
   levelCard: {
-    backgroundColor: Colors.surfaceAlt,
+    backgroundColor: PROFILE_PANEL,
     borderRadius: 16,
     padding: 20,
-    marginBottom: 24,
+    marginBottom: 28,
     borderWidth: 1,
-    borderColor: Colors.borderGlow,
+    borderColor: PROFILE_BORDER_ACTIVE,
   },
   levelTopRow: {
     flexDirection: 'row',
@@ -5486,7 +5717,7 @@ const styles = StyleSheet.create({
   },
   xpBarTrack: {
     height: 8,
-    backgroundColor: Colors.borderLight,
+    backgroundColor: PROFILE_CHIP,
     borderRadius: 99,
     overflow: 'hidden',
     marginBottom: 6,
@@ -5507,7 +5738,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: Colors.borderLight,
+    backgroundColor: PROFILE_BORDER,
     marginVertical: 16,
   },
   statsRow: {
@@ -5547,18 +5778,17 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
     marginBottom: 14,
-    lineHeight: 18,
   },
 
   /* Knowledge Vault row */
   vaultRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surfaceAlt,
+    backgroundColor: PROFILE_PANEL,
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: Colors.borderViolet,
+    borderColor: PROFILE_BORDER,
     gap: 12,
     marginTop: 12,
   },
@@ -5594,25 +5824,25 @@ const styles = StyleSheet.create({
   },
   badgeCell: {
     width: '30.5%',
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 14,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 12,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER,
     position: 'relative',
     opacity: 0.5,
   },
   badgeCellUnlocked: {
     opacity: 1,
     borderColor: Colors.primary + '40',
-    backgroundColor: Colors.greenDim,
+    backgroundColor: Colors.primary + '10',
   },
   badgeIcon: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: Colors.background,
+    backgroundColor: PROFILE_CHIP,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
@@ -5649,10 +5879,10 @@ const styles = StyleSheet.create({
 
   /* Calendars */
   platformsList: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.borderGlow,
+    borderColor: PROFILE_BORDER,
     overflow: 'hidden',
   },
   platformRow: {
@@ -5662,7 +5892,7 @@ const styles = StyleSheet.create({
   },
   platformRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: PROFILE_BORDER,
   },
   platformIcon: {
     width: 42,
@@ -5751,9 +5981,9 @@ const styles = StyleSheet.create({
   upgradePermText: {
     fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
-    color: '#D97706',
+    color: Colors.warning,
     marginTop: 3,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: Colors.warningDim,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -5769,7 +5999,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: Colors.successDim,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -5780,7 +6010,7 @@ const styles = StyleSheet.create({
     color: '#059669',
   },
   readOnlyBadge: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: PROFILE_CHIP,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -5819,18 +6049,18 @@ const styles = StyleSheet.create({
   aboutEmptyCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: Colors.borderGlow,
+    borderColor: PROFILE_BORDER,
     gap: 12,
   },
   aboutEmptyIcon: {
     width: 42,
     height: 42,
     borderRadius: 12,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: Colors.violetDim,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5849,10 +6079,10 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   aboutFilledCard: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.borderGlow,
+    borderColor: PROFILE_BORDER,
     overflow: 'hidden',
   },
   aboutRow: {
@@ -5861,7 +6091,7 @@ const styles = StyleSheet.create({
   },
   aboutRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: PROFILE_BORDER,
   },
   aboutLabel: {
     fontSize: 10,
@@ -5883,8 +6113,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    backgroundColor: Colors.background,
+    borderTopColor: PROFILE_BORDER,
+    backgroundColor: PROFILE_PANEL_MUTED,
   },
   aboutUpdated: {
     fontSize: 11,
@@ -5897,11 +6127,11 @@ const styles = StyleSheet.create({
     color: Colors.primary,
   },
   memoryEmptyCard: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     padding: 24,
     borderWidth: 1,
-    borderColor: Colors.borderViolet,
+    borderColor: PROFILE_BORDER,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
@@ -5910,7 +6140,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 12,
-    backgroundColor: Colors.background,
+    backgroundColor: PROFILE_CHIP,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5921,10 +6151,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   memoryList: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.borderViolet,
+    borderColor: PROFILE_BORDER,
     overflow: 'hidden',
   },
   memoryRow: {
@@ -5935,7 +6165,7 @@ const styles = StyleSheet.create({
   },
   memoryRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: PROFILE_BORDER,
   },
   memoryContent: {
     flex: 1,
@@ -6003,10 +6233,10 @@ const styles = StyleSheet.create({
 
   /* Rewards */
   rewardsList: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.borderGlow,
+    borderColor: PROFILE_BORDER,
     overflow: 'hidden',
   },
   rewardRow: {
@@ -6015,7 +6245,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: PROFILE_BORDER,
   },
   rewardRowLocked: {
     opacity: 0.6,
@@ -6075,16 +6305,16 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   rewardPillLocked: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: PROFILE_CHIP,
   },
   rewardPillEarn: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: Colors.warningDim,
   },
   rewardPillSpent: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: Colors.errorDim,
   },
   rewardPillToday: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: Colors.successDim,
   },
   rewardPillTextLocked: {
     fontSize: 10,
@@ -6116,8 +6346,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   telegramCodeCard: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#229ED940',
     padding: 20,
@@ -6181,7 +6411,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   tzSheet: {
-    backgroundColor: Colors.surfaceAlt,
+    backgroundColor: PROFILE_PANEL,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: 20,
