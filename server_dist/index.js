@@ -4197,6 +4197,27 @@ function getCodexGatewayUrl() {
 function getCodexGatewayToken() {
   return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
 }
+function createLinkedAbortController(signal) {
+  const controller = new AbortController();
+  let didTimeout = false;
+  const abortFromCaller = () => {
+    controller.abort(new DOMException("Codex OAuth provider aborted", "AbortError"));
+  };
+  const timer = Number.isFinite(CODEX_GATEWAY_TIMEOUT_MS) && CODEX_GATEWAY_TIMEOUT_MS > 0 ? setTimeout(() => {
+    didTimeout = true;
+    controller.abort(new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`));
+  }, CODEX_GATEWAY_TIMEOUT_MS) : null;
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  return {
+    controller,
+    cleanup: () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromCaller);
+    },
+    timedOut: () => didTimeout
+  };
+}
 function buildCodexOAuthProviderPrompt(params) {
   const sections = params.messages.map((message, index) => {
     const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
@@ -4286,16 +4307,31 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
 async function runRemoteCodexOAuthPrompt(gatewayUrl, prompt, signal) {
   const token = getCodexGatewayToken();
   if (!token) throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
-  const response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ prompt }),
-    signal
-  });
-  const raw = await response.text();
+  const linkedAbort = createLinkedAbortController(signal);
+  let response;
+  let raw;
+  try {
+    response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt }),
+      signal: linkedAbort.controller.signal
+    });
+    raw = await response.text();
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new DOMException("Codex OAuth provider aborted", "AbortError");
+    }
+    if (linkedAbort.timedOut()) {
+      throw new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`, { cause: error });
+    }
+    throw error;
+  } finally {
+    linkedAbort.cleanup();
+  }
   let payload = {};
   try {
     payload = raw ? JSON.parse(raw) : {};
@@ -4307,13 +4343,14 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl, prompt, signal) {
   }
   return String(payload.content || "").trim();
 }
-var CODEX_EXEC_TIMEOUT_MS, CodexOAuthProvider;
+var CODEX_EXEC_TIMEOUT_MS, CODEX_GATEWAY_TIMEOUT_MS, CodexOAuthProvider;
 var init_codexOAuth = __esm({
   "server/agent/providers/codexOAuth.ts"() {
     "use strict";
     init_base();
     init_env();
     CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 3e5);
+    CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 12e4);
     CodexOAuthProvider = class extends BaseProvider {
       async initialize() {
       }
@@ -4390,13 +4427,44 @@ var init_providers = __esm({
 });
 
 // server/agent/providers/fallback.ts
+function collectErrorSignals(err2) {
+  const parts = [];
+  const seen = /* @__PURE__ */ new Set();
+  let current = err2;
+  for (let depth = 0; current != null && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current);
+    if (current instanceof Error) {
+      parts.push(current.name, current.message);
+      const anyErr = current;
+      for (const key of ["code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+    if (typeof current === "object") {
+      const anyErr = current;
+      for (const key of ["name", "message", "code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+    parts.push(String(current));
+    break;
+  }
+  return parts.join(" ");
+}
 function isRetriableProviderError(err2) {
+  if (err2 instanceof Error && err2.name === "AbortError") return false;
   const anyErr = err2;
   if (typeof anyErr.status === "number") {
     const s = anyErr.status;
     if (s === 413 || s === 429 || s >= 500 && s < 600) return true;
   }
-  const msg = err2 instanceof Error ? err2.message : String(err2);
+  const msg = collectErrorSignals(err2);
   const lower = msg.toLowerCase();
   if (/\b(413|429|500|502|503|504|529)\b/.test(msg)) return true;
   const retriableTerms = [
@@ -4414,10 +4482,18 @@ function isRetriableProviderError(err2) {
     "please reduce your message size",
     "context length",
     "maximum context",
+    "fetch failed",
     "timeout",
     "timed out",
+    "headers timeout",
+    "headerstimeouterror",
+    "und_err_headers_timeout",
+    "body timeout",
+    "und_err_body_timeout",
     "econnrefused",
     "econnreset",
+    "econnaborted",
+    "socket hang up",
     "network error",
     "service unavailable",
     "overloaded",
@@ -5344,6 +5420,28 @@ var init_categories = __esm({
   }
 });
 
+// server/memory/soulCuration.ts
+function compactSoulText(value, maxChars = SOUL_BULLET_MAX_CHARS) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}\u2026`;
+}
+function shouldIncludeMemoryInSoul(memory) {
+  const sourceType = memory.sourceType ?? memory.source_type ?? null;
+  if (sourceType && SOUL_EXCLUDED_SOURCE_TYPES.has(sourceType)) return false;
+  return !TRANSIENT_SOUL_MEMORY_RE.test(memory.content);
+}
+var SOUL_FIELD_MAX_CHARS, SOUL_BULLET_MAX_CHARS, SOUL_EXCLUDED_SOURCE_TYPES, TRANSIENT_SOUL_MEMORY_RE;
+var init_soulCuration = __esm({
+  "server/memory/soulCuration.ts"() {
+    "use strict";
+    SOUL_FIELD_MAX_CHARS = 360;
+    SOUL_BULLET_MAX_CHARS = 260;
+    SOUL_EXCLUDED_SOURCE_TYPES = /* @__PURE__ */ new Set(["inbox_triage", "jarvis_self_knowledge"]);
+    TRANSIENT_SOUL_MEMORY_RE = /\b(Browser QA|Test Projedct|codex-chat-delegation-smoke|Embeddings skipped|Router works|OpenCode|manual action of creating project|cannot start project from here)\b/i;
+  }
+});
+
 // server/memory/soul.ts
 var soul_exports = {};
 __export(soul_exports, {
@@ -5402,7 +5500,12 @@ async function buildSoulMarkdown(userId) {
     morningNoteRows
   ] = await Promise.all([
     // 1. Identity Core — long_term semantic + procedural (values, communication_style, preferences)
-    db.select({ id: userMemories.id, content: userMemories.content, category: userMemories.category }).from(userMemories).where(
+    db.select({
+      id: userMemories.id,
+      content: userMemories.content,
+      category: userMemories.category,
+      sourceType: userMemories.sourceType
+    }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.tier, "long_term"),
@@ -5412,7 +5515,7 @@ async function buildSoulMarkdown(userId) {
       )
     ).orderBy(desc3(userMemories.relevanceScore), desc3(userMemories.confidence)).limit(16),
     // 2. Current State — short_term contextual
-    db.select({ content: userMemories.content }).from(userMemories).where(
+    db.select({ content: userMemories.content, sourceType: userMemories.sourceType }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.tier, "short_term"),
@@ -5421,7 +5524,11 @@ async function buildSoulMarkdown(userId) {
       )
     ).orderBy(desc3(userMemories.extractedAt)).limit(12),
     // 3. Episodic Highlights — episodic memories in last 7 days
-    db.select({ content: userMemories.content, extractedAt: userMemories.extractedAt }).from(userMemories).where(
+    db.select({
+      content: userMemories.content,
+      extractedAt: userMemories.extractedAt,
+      sourceType: userMemories.sourceType
+    }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.memoryType, "episodic"),
@@ -5430,7 +5537,11 @@ async function buildSoulMarkdown(userId) {
       )
     ).orderBy(desc3(userMemories.extractedAt)).limit(8),
     // 4. Long-Term Patterns — high-relevance long_term in work/energy/accomplishments
-    db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(
+    db.select({
+      content: userMemories.content,
+      category: userMemories.category,
+      sourceType: userMemories.sourceType
+    }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.tier, "long_term"),
@@ -5440,7 +5551,7 @@ async function buildSoulMarkdown(userId) {
       )
     ).orderBy(desc3(userMemories.relevanceScore), desc3(userMemories.extractedAt)).limit(24),
     // 7. Aspirations — goals_history category memories
-    db.select({ content: userMemories.content }).from(userMemories).where(
+    db.select({ content: userMemories.content, sourceType: userMemories.sourceType }).from(userMemories).where(
       and3(
         eq5(userMemories.userId, userId),
         eq5(userMemories.category, "goals_history"),
@@ -5479,10 +5590,10 @@ async function buildSoulMarkdown(userId) {
     "_Structured self-model \u2014 regenerated from memories, life context, and nightly synthesis. Sections reflect distinct cognitive layers._"
   );
   const identityByCat = /* @__PURE__ */ new Map();
-  for (const m of identityCoreRows) {
+  for (const m of identityCoreRows.filter(shouldIncludeMemoryInSoul)) {
     const cat = normalizeCategory(m.category);
     const arr = identityByCat.get(cat) || [];
-    arr.push(m.content);
+    arr.push(compactSoulText(m.content));
     identityByCat.set(cat, arr);
   }
   const identityCatOrder = ["values", "communication_style", "preferences", "fact"];
@@ -5505,11 +5616,11 @@ async function buildSoulMarkdown(userId) {
   }
   const currentStateLines = [];
   if (lc) {
-    if (lc.priorityGoal) currentStateLines.push(`- **Top priority:** ${lc.priorityGoal}`);
-    if (lc.upcomingDeadline) currentStateLines.push(`- **Upcoming deadline:** ${lc.upcomingDeadline}`);
-    if (lc.improvementArea) currentStateLines.push(`- **Improvement area:** ${lc.improvementArea}`);
-    if (lc.currentBlocker) currentStateLines.push(`- **Current blocker:** ${lc.currentBlocker}`);
-    if (lc.freeText) currentStateLines.push(`- ${lc.freeText}`);
+    if (lc.priorityGoal) currentStateLines.push(`- **Top priority:** ${compactSoulText(lc.priorityGoal, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.upcomingDeadline) currentStateLines.push(`- **Timing:** ${compactSoulText(lc.upcomingDeadline, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.improvementArea) currentStateLines.push(`- **Improvement area:** ${compactSoulText(lc.improvementArea, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.currentBlocker) currentStateLines.push(`- **Current blocker:** ${compactSoulText(lc.currentBlocker, SOUL_FIELD_MAX_CHARS)}`);
+    if (lc.freeText) currentStateLines.push(`- ${compactSoulText(lc.freeText, SOUL_FIELD_MAX_CHARS)}`);
   }
   const es = emotionalStateRows[0];
   if (es) {
@@ -5517,31 +5628,33 @@ async function buildSoulMarkdown(userId) {
     const stressNote = es.stressScore > 6 ? " (elevated stress)" : es.stressScore < 3 ? " (low stress)" : "";
     const flowNote = es.flowScore > 6 ? ", high flow" : es.flowScore < 3 ? ", low flow" : "";
     currentStateLines.push(`- **Emotional state:** ${effectiveLabel}${stressNote}${flowNote}`);
-    if (es.explanation) currentStateLines.push(`- _${es.explanation}_`);
+    if (es.explanation) currentStateLines.push(`- _${compactSoulText(es.explanation, SOUL_FIELD_MAX_CHARS)}_`);
   }
   const mn = morningNoteRows[0];
   if (mn) {
-    if (mn.moodSignal) currentStateLines.push(`- **Morning mood:** ${mn.moodSignal}${mn.recordedAt ? ` (${mn.recordedAt})` : ""}`);
-    if (mn.intention) currentStateLines.push(`- **Today's intention:** ${mn.intention}`);
+    if (mn.moodSignal)
+      currentStateLines.push(`- **Morning mood:** ${compactSoulText(mn.moodSignal)}${mn.recordedAt ? ` (${mn.recordedAt})` : ""}`);
+    if (mn.intention) currentStateLines.push(`- **Today's intention:** ${compactSoulText(mn.intention)}`);
   }
-  for (const m of currentStateRows) {
-    currentStateLines.push(`- ${m.content}`);
+  for (const m of currentStateRows.filter(shouldIncludeMemoryInSoul)) {
+    currentStateLines.push(`- ${compactSoulText(m.content)}`);
   }
   if (currentStateLines.length > 0) {
     sections.push("## 2. Current State");
     sections.push(...currentStateLines);
   }
-  if (episodicRows.length > 0) {
+  const includedEpisodicRows = episodicRows.filter(shouldIncludeMemoryInSoul);
+  if (includedEpisodicRows.length > 0) {
     sections.push("## 3. Episodic Highlights _(last 7 days)_");
-    for (const m of episodicRows) {
-      sections.push(`- ${m.content}`);
+    for (const m of includedEpisodicRows) {
+      sections.push(`- ${compactSoulText(m.content)}`);
     }
   }
   const patternByCat = /* @__PURE__ */ new Map();
-  for (const m of longTermPatternRows) {
+  for (const m of longTermPatternRows.filter(shouldIncludeMemoryInSoul)) {
     const cat = normalizeCategory(m.category);
     const arr = patternByCat.get(cat) || [];
-    arr.push(m.content);
+    arr.push(compactSoulText(m.content));
     patternByCat.set(cat, arr);
   }
   const patternCatOrder = ["work_patterns", "energy_rhythms", "accomplishments", "blockers"];
@@ -5569,20 +5682,21 @@ async function buildSoulMarkdown(userId) {
       sections.push(`- ${d.insightText}${conf}`);
     }
   }
-  if (peopleRows.length > 0) {
+  const relationshipRows = peopleRows.filter((p) => p.relationship !== "email correspondent").slice(0, 8);
+  if (relationshipRows.length > 0) {
     sections.push("## 6. Relationships");
-    for (const p of peopleRows) {
+    for (const p of relationshipRows) {
       const role = p.relationship ? ` \u2014 ${p.relationship}` : "";
-      const note = p.notes ? ` (${p.notes})` : "";
+      const note = p.notes ? ` (${compactSoulText(p.notes, 120)})` : "";
       const lastSeen = p.lastInteractionAt ? ` [last: ${new Date(p.lastInteractionAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}]` : "";
       sections.push(`- **${p.name}**${role}${note}${lastSeen}`);
     }
   }
   const aspirationLines = [];
-  if (lc?.priorityGoal) aspirationLines.push(`- **Priority goal:** ${lc.priorityGoal}`);
-  if (lc?.improvementArea) aspirationLines.push(`- **Improving:** ${lc.improvementArea}`);
-  for (const m of aspirationRows) {
-    aspirationLines.push(`- ${m.content}`);
+  if (lc?.priorityGoal) aspirationLines.push(`- **Priority goal:** ${compactSoulText(lc.priorityGoal, SOUL_FIELD_MAX_CHARS)}`);
+  if (lc?.improvementArea) aspirationLines.push(`- **Improving:** ${compactSoulText(lc.improvementArea, SOUL_FIELD_MAX_CHARS)}`);
+  for (const m of aspirationRows.filter(shouldIncludeMemoryInSoul)) {
+    aspirationLines.push(`- ${compactSoulText(m.content)}`);
   }
   if (aspirationLines.length > 0) {
     sections.push("## 7. Aspirations");
@@ -5728,6 +5842,7 @@ var init_soul = __esm({
     init_db();
     init_schema();
     init_categories();
+    init_soulCuration();
     SOUL_TTL_MS = 7 * 24 * 60 * 60 * 1e3;
     SOUL_NOVELTY_THRESHOLD = 5;
     SOUL_COMPACT_THRESHOLD = 4e3;
@@ -10652,6 +10767,17 @@ var init_toolAwareRouting = __esm({
         guidance: "For memory or preference questions, search memory/living context before claiming not to know."
       },
       {
+        intent: "research",
+        patterns: [
+          /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i,
+          /\b(latest|current|recent|today'?s?|news|sources?|articles?|updates?)\b/i
+        ],
+        capabilityIds: ["research", "browser"],
+        toolGroups: ["research", "browser"],
+        priorityToolNames: ["search_web", "research_topic", "web_fetch", "browser_navigate", "browser_extract"],
+        guidance: "For research, news, source-finding, or current-info requests, call search_web or research_topic before answering. If search is not configured, use browser_navigate and browser_extract as the fallback. Cite useful source URLs from the tool results."
+      },
+      {
         intent: "browser",
         patterns: [
           /\b(browser|browse|open\s+(a\s+)?(website|site|page|url|tab)|navigate to|click|screenshot of (the )?page)\b/i,
@@ -10707,6 +10833,17 @@ var init_toolAwareRouting = __esm({
         toolGroups: ["system", "self_edit", "app_build", "mcp"],
         priorityToolNames: ["delegate_to_codex", "build_feature", "queue_background_job", "project_shell", "list_source_files", "read_source_file", "propose_code_change"],
         guidance: "For code-writing or self-improvement requests, route to Codex delegation/build/self-edit tools before replying in plain text. If the user explicitly asks for the fix to be permanent, pushed, published, deployed, or on GitHub, include the commit/push/publish requirement in the Codex delegation and allow external side effects only for that exact requested action."
+      },
+      {
+        intent: "diagnostics",
+        patterns: [
+          /\b(what'?s wrong|what is wrong|why did .{0,80}\bfail|why (is|are) .* not working|are you ok|are you okay|system health|self[- ]?diagnos(e|is)|diagnose yourself)\b/i,
+          /\b(browser|tool|gateway|codex|railway|deploy|deployment|server|app|jarvis).*\b(broken|fail|failing|failed|down|stuck|not working)\b/i
+        ],
+        capabilityIds: ["system"],
+        toolGroups: ["system"],
+        priorityToolNames: ["jarvis_self_diagnose"],
+        guidance: "For Jarvis health, failure, or reliability questions, call jarvis_self_diagnose before answering so the reply is based on current subsystem status instead of stale chat history."
       }
     ];
     EMPTY_PLAN = {
@@ -12938,6 +13075,27 @@ function isSafeSearchUrl(url) {
     return false;
   }
 }
+function mcpText(content) {
+  return (content ?? []).filter((c) => c.type === "text" && c.text).map((c) => c.text).join("\n").trim();
+}
+async function browserSearchFallback(query, userId) {
+  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+  const navResult = await callBrowserTool(userId, "browser_navigate", { url: searchUrl });
+  if (navResult.isError) {
+    throw new Error(mcpText(navResult.content) || "browser navigation failed");
+  }
+  const snapResult = await callBrowserTool(userId, "browser_snapshot", {});
+  if (snapResult.isError) {
+    throw new Error(mcpText(snapResult.content) || "browser snapshot failed");
+  }
+  const visibleText = mcpText(snapResult.content);
+  return [
+    `Browser search results for: ${query}`,
+    `Search URL: ${searchUrl}`,
+    "",
+    visibleText.slice(0, 6e3) || "(No visible result text found.)"
+  ].join("\n");
+}
 async function enrichSparseResults(results, userId) {
   const enriched = [...results];
   let attempts = 0;
@@ -12987,7 +13145,28 @@ var init_webSearch = __esm({
       },
       async execute(args, ctx) {
         if (!process.env.TAVILY_API_KEY) {
-          return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
+          if (!ctx.userId) {
+            return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
+          }
+          const query2 = String(args.query || "");
+          try {
+            const browserResults = await browserSearchFallback(query2, ctx.userId);
+            console.log(`[${ctx.channel || "Agent"}] search_web browser fallback "${query2}"`);
+            return {
+              ok: true,
+              content: browserResults,
+              label: `Browser search: ${query2}`,
+              detail: "Search API not configured; used browser fallback."
+            };
+          } catch (err2) {
+            const msg = err2 instanceof Error ? err2.message : String(err2);
+            return {
+              ok: false,
+              content: `Web search is not configured, and browser search fallback failed: ${msg}`,
+              label: "Search unavailable",
+              detail: msg
+            };
+          }
         }
         const query = String(args.query || "");
         let entityNote = "";
@@ -25532,7 +25711,7 @@ function validateUrl(url, allowLocalhost) {
   if (PRIVATE_CIDR_PATTERNS.some((rx) => rx.test(host))) return `Blocked: "${host}" is a private/reserved IP address.`;
   return null;
 }
-function mcpText(content) {
+function mcpText2(content) {
   return content.filter((c) => c.type === "text" && c.text).map((c) => c.text).join("\n").trim();
 }
 function findRef(snapshot, description) {
@@ -25548,7 +25727,7 @@ function findRef(snapshot, description) {
 }
 async function snapshotAndResolve(userId, description) {
   const snapResult = await callBrowserTool(userId, "browser_snapshot", {});
-  const snapshot = mcpText(snapResult.content);
+  const snapshot = mcpText2(snapResult.content);
   if (snapResult.isError) return { error: `Snapshot failed: ${snapshot}`, snapshot };
   const ref = findRef(snapshot, description);
   if (!ref) {
@@ -25710,12 +25889,12 @@ var init_browserTools = __esm({
         try {
           const navResult = await callBrowserTool(ctx.userId, "browser_navigate", { url });
           if (navResult.isError) {
-            const msg = mcpText(navResult.content) || "navigation failed";
+            const msg = mcpText2(navResult.content) || "navigation failed";
             return { ok: false, content: `browser_navigate failed: ${msg}`, label: "browser_navigate: error" };
           }
           const snapResult = await callBrowserTool(ctx.userId, "browser_snapshot", {});
-          const navText = mcpText(navResult.content);
-          const pageText = (mcpText(snapResult.content) || navText).slice(0, 4e3);
+          const navText = mcpText2(navResult.content);
+          const pageText = (mcpText2(snapResult.content) || navText).slice(0, 4e3);
           const finalUrl = extractFinalUrl(navText) ?? extractFinalUrl(pageText);
           if (isYouTubeAuthGate(url, pageText, finalUrl)) {
             const effectiveUrl = finalUrl ?? url;
@@ -25792,10 +25971,10 @@ ${pageText || "(No readable content found)"}`,
         try {
           const result = await callBrowserTool(ctx.userId, "browser_click", { ref, element: description || ref });
           if (result.isError) {
-            return { ok: false, content: `browser_click failed: ${mcpText(result.content)}`, label: "browser_click: error" };
+            return { ok: false, content: `browser_click failed: ${mcpText2(result.content)}`, label: "browser_click: error" };
           }
           const snapResult = await callBrowserTool(ctx.userId, "browser_snapshot", {});
-          const pageText = mcpText(snapResult.content).slice(0, 2e3);
+          const pageText = mcpText2(snapResult.content).slice(0, 2e3);
           console.log(`[${ctx.channel || "Agent"}] browser_click ref=${ref} "${description}"`);
           return {
             ok: true,
@@ -25847,7 +26026,7 @@ ${pageText || "(page updated)"}`,
         try {
           const result = await callBrowserTool(ctx.userId, "browser_type", { ref, element: description || ref, text: textToType, submit });
           if (result.isError) {
-            return { ok: false, content: `browser_type failed: ${mcpText(result.content)}`, label: "browser_type: error" };
+            return { ok: false, content: `browser_type failed: ${mcpText2(result.content)}`, label: "browser_type: error" };
           }
           console.log(`[${ctx.channel || "Agent"}] browser_type ref=${ref} into "${description}" submit=${submit}`);
           return {
@@ -25878,7 +26057,7 @@ ${pageText || "(page updated)"}`,
           const fullPage = Boolean(args.full_page);
           const result = await callBrowserTool(ctx.userId, "browser_take_screenshot", { type: "png", fullPage });
           if (result.isError) {
-            return { ok: false, content: `browser_screenshot failed: ${mcpText(result.content)}`, label: "browser_screenshot: error" };
+            return { ok: false, content: `browser_screenshot failed: ${mcpText2(result.content)}`, label: "browser_screenshot: error" };
           }
           const inline = result.content.find((c) => c.type === "image" && c.data);
           let base64 = inline?.data ?? null;
@@ -25893,7 +26072,7 @@ ${pageText || "(page updated)"}`,
           try {
             const snapResult = await callBrowserTool(ctx.userId, "browser_snapshot", {});
             if (!snapResult.isError) {
-              const pageText = mcpText(snapResult.content);
+              const pageText = mcpText2(snapResult.content);
               const currentUrl = extractFinalUrl(pageText) ?? "";
               const socialPlatform = isSocialAuthGate(currentUrl, pageText, null);
               const looksLikeLoginPage = pageText.toLowerCase().includes("log in") && pageText.length < 5e3;
@@ -25952,9 +26131,9 @@ ${pageText || "(page updated)"}`,
           const maxChars = Math.min(3e4, Math.max(500, Number(args.max_chars) || 8e3));
           const result = await callBrowserTool(ctx.userId, "browser_snapshot", {});
           if (result.isError) {
-            return { ok: false, content: `browser_extract failed: ${mcpText(result.content)}`, label: "browser_extract: error" };
+            return { ok: false, content: `browser_extract failed: ${mcpText2(result.content)}`, label: "browser_extract: error" };
           }
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           const trimmed = text2.slice(0, maxChars);
           const wasCut = text2.length > maxChars;
           console.log(`[${ctx.channel || "Agent"}] browser_extract \u2192 ${trimmed.length} chars`);
@@ -25989,7 +26168,7 @@ ${pageText || "(page updated)"}`,
           const mcpArgs = {};
           if (args.depth) mcpArgs.depth = Number(args.depth);
           const result = await callBrowserTool(ctx.userId, "browser_snapshot", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_snapshot failed: ${text2}`, label: "browser_snapshot: error" };
           }
@@ -26030,7 +26209,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_wait_for", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           console.log(`[${ctx.channel || "Agent"}] browser_wait_for ${JSON.stringify(mcpArgs)}`);
           return {
             ok: !result.isError,
@@ -26081,7 +26260,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_select_option", { ref, element: description || ref, values });
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           console.log(`[${ctx.channel || "Agent"}] browser_select ref=${ref} "${description}" values=${values}`);
           return {
             ok: !result.isError,
@@ -26146,7 +26325,7 @@ ${pageText || "(page updated)"}`,
         if (!fn) return { ok: false, content: "`function` is required.", label: "browser_evaluate: no function" };
         try {
           const result = await callBrowserTool(ctx.userId, "browser_evaluate", { function: fn });
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_evaluate failed: ${text2}`, label: "browser_evaluate: error" };
           }
@@ -26189,7 +26368,7 @@ ${pageText || "(page updated)"}`,
         if (args.element) mcpArgs.element = String(args.element);
         try {
           const result = await callBrowserTool(ctx.userId, "browser_scroll", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_scroll failed: ${text2}`, label: "browser_scroll: error" };
           }
@@ -26229,7 +26408,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_hover", { ref, element: description || ref });
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_hover failed: ${text2}`, label: "browser_hover: error" };
           }
@@ -26272,7 +26451,7 @@ ${pageText || "(page updated)"}`,
         if (args.endY != null) mcpArgs.endY = Number(args.endY);
         try {
           const result = await callBrowserTool(ctx.userId, "browser_drag", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_drag failed: ${text2}`, label: "browser_drag: error" };
           }
@@ -26312,7 +26491,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_check", { ref, element: description || ref });
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_check failed: ${text2}`, label: "browser_check: error" };
           }
@@ -26352,7 +26531,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_uncheck", { ref, element: description || ref });
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_uncheck failed: ${text2}`, label: "browser_uncheck: error" };
           }
@@ -26402,7 +26581,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_choose_file", { ref, element: description || ref, paths });
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_choose_file failed: ${text2}`, label: "browser_choose_file: error" };
           }
@@ -26424,7 +26603,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_navigate_back", {});
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_navigate_back failed: ${text2}`, label: "browser_navigate_back: error" };
           }
@@ -26446,7 +26625,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_navigate_forward", {});
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_navigate_forward failed: ${text2}`, label: "browser_navigate_forward: error" };
           }
@@ -26468,7 +26647,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_reload", {});
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_reload failed: ${text2}`, label: "browser_reload: error" };
           }
@@ -26507,7 +26686,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_get_cookies", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_get_cookies failed: ${text2}`, label: "browser_get_cookies: error" };
           }
@@ -26562,7 +26741,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_set_cookies", { cookies });
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_set_cookies failed: ${text2}`, label: "browser_set_cookies: error" };
           }
@@ -26597,7 +26776,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_delete_cookies", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_delete_cookies failed: ${text2}`, label: "browser_delete_cookies: error" };
           }
@@ -26626,7 +26805,7 @@ ${pageText || "(page updated)"}`,
         if (args.filter) mcpArgs.filter = String(args.filter);
         try {
           const result = await callBrowserTool(ctx.userId, "browser_network_requests", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_network_requests failed: ${text2}`, label: "browser_network_requests: error" };
           }
@@ -26659,7 +26838,7 @@ ${pageText || "(page updated)"}`,
         if (args.type && args.type !== "all") mcpArgs.type = String(args.type);
         try {
           const result = await callBrowserTool(ctx.userId, "browser_console_messages", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_console_messages failed: ${text2}`, label: "browser_console_messages: error" };
           }
@@ -26692,7 +26871,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_tab_new", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_tab_new failed: ${text2}`, label: "browser_tab_new: error" };
           }
@@ -26714,7 +26893,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_tab_list", {});
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_tab_list failed: ${text2}`, label: "browser_tab_list: error" };
           }
@@ -26746,7 +26925,7 @@ ${pageText || "(page updated)"}`,
         }
         try {
           const result = await callBrowserTool(ctx.userId, "browser_tab_select", { index });
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_tab_select failed: ${text2}`, label: "browser_tab_select: error" };
           }
@@ -26775,7 +26954,7 @@ ${pageText || "(page updated)"}`,
         if (args.index != null) mcpArgs.index = Number(args.index);
         try {
           const result = await callBrowserTool(ctx.userId, "browser_tab_close", mcpArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_tab_close failed: ${text2}`, label: "browser_tab_close: error" };
           }
@@ -26844,7 +27023,7 @@ ${pageText || "(page updated)"}`,
         if (ssrfError) return { ok: false, content: `SSRF guard: ${ssrfError}`, label: "browser_tool: SSRF blocked" };
         try {
           const result = await callBrowserTool(ctx.userId, toolName, toolArgs);
-          const text2 = mcpText(result.content);
+          const text2 = mcpText2(result.content);
           if (result.isError) {
             return { ok: false, content: `browser_tool(${toolName}) failed: ${text2}`, label: `${toolName}: error` };
           }
@@ -71800,6 +71979,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 ## Tool-Aware Routing
 ${toolAwareRoute.guidance}
 Do not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.` : "";
+      const isDiagnosticsRequest = toolAwareRoute.intents.includes("diagnostics");
+      const isResearchRequest = toolAwareRoute.intents.includes("research");
+      const useToolFocusedLoop = isResearchRequest || isDiagnosticsRequest;
       const chatMessages = [
         { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally \u2014 do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session \u2014 call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked.\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools \u2014 list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review \u2014 you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
         ...toolAwareInstruction ? [{ role: "system", content: toolAwareInstruction }] : [],
@@ -71809,6 +71991,24 @@ Do not give a capability disclaimer until you have tried the matching tool path 
           return { role: m.role, content };
         })
       ];
+      const toolFocusedMessages = useToolFocusedLoop ? [
+        {
+          role: "system",
+          content: [
+            "You are GamePlan Coach, Jarvis's chat persona.",
+            `Current date: ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.`,
+            "This turn has a concrete tool route. Call the matching tool before answering, then summarize the tool result plainly.",
+            toolAwareRoute.guidance,
+            isResearchRequest ? "For current news, recent events, source-finding, or live facts, call search_web first. If search is unavailable, say exactly that instead of inventing a news answer." : "",
+            isDiagnosticsRequest ? "For health or failure questions, call jarvis_self_diagnose first and base the answer on that result." : ""
+          ].filter(Boolean).join("\n\n")
+        },
+        ...messages2.slice(-6).map((m, idx, recent) => {
+          const isLast = idx === recent.length - 1;
+          const content = isLast && m.role === "user" && youtubeCtxBlock ? m.content + youtubeCtxBlock : m.content;
+          return { role: m.role, content };
+        })
+      ] : chatMessages;
       const actionResults = [];
       const allMcpAttachments = [];
       let toolMessages = [];
@@ -71898,6 +72098,24 @@ Do not give a capability disclaimer until you have tried the matching tool path 
         } catch (err2) {
           console.warn("[Coach/MCP] failed to load MCP tools:", err2.message);
         }
+        const focusedToolNames = /* @__PURE__ */ new Set();
+        if (isResearchRequest) {
+          [
+            "search_web",
+            "research_topic",
+            "web_fetch",
+            "web_search",
+            "browser_navigate",
+            "browser_extract",
+            "browser_snapshot"
+          ].forEach((name) => focusedToolNames.add(name));
+          toolAwareRoute.priorityToolNames.forEach((name) => focusedToolNames.add(name));
+        }
+        if (isDiagnosticsRequest) {
+          focusedToolNames.add("jarvis_self_diagnose");
+          toolAwareRoute.priorityToolNames.forEach((name) => focusedToolNames.add(name));
+        }
+        const modelRequestTools = focusedToolNames.size > 0 ? requestTools.filter((tool) => focusedToolNames.has(tool.function.name)) : requestTools;
         const mcpToolCtx = {
           userId,
           channel: originChannel,
@@ -71920,21 +72138,23 @@ Do not give a capability disclaimer until you have tried the matching tool path 
               }
             }
           },
-          allowedToolNames: new Set(requestTools.map((tool) => tool.function.name))
+          allowedToolNames: new Set(modelRequestTools.map((tool) => tool.function.name))
         };
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
           if (signal.aborted) break;
+          const baseMessages = useToolFocusedLoop ? toolFocusedMessages : chatMessages;
           const currentMessages = [
-            ...chatMessages,
+            ...baseMessages,
             ...toolMessages
           ];
           const phase1StartedAt = Date.now();
           const phase1 = await runCoachModelTurn({
             messages: currentMessages,
-            tools: requestTools,
-            // Force a tool call on turn 0 for device-control requests.
+            tools: modelRequestTools,
+            // Force a tool call on turn 0 for requests where a plain-text guess
+            // is especially likely to repeat stale chat history.
             // Subsequent turns use "auto" so the model can stop and respond.
-            toolChoice: turn === 0 && isDeviceControlRequest ? "required" : "auto",
+            toolChoice: turn === 0 && (isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest) ? "required" : "auto",
             maxCompletionTokens: 2048,
             signal,
             logPrefix: "[CoachChat]"
@@ -71952,7 +72172,7 @@ Do not give a capability disclaimer until you have tried the matching tool path 
           );
           const phase1Usage = estimateModelUsage({
             messages: currentMessages,
-            tools: requestTools,
+            tools: modelRequestTools,
             textContent: choice.message.content ?? "",
             toolCallList: phase1ToolCalls
           });
@@ -72085,7 +72305,7 @@ Do not give a capability disclaimer until you have tried the matching tool path 
             break;
           }
           toolMessages.push(choice.message);
-          const hasWebSearch = choice.message.tool_calls.some((tc) => tc.type === "function" && tc.function.name === "web_search");
+          const hasWebSearch = choice.message.tool_calls.some((tc) => tc.type === "function" && (tc.function.name === "web_search" || tc.function.name === "search_web"));
           if (hasWebSearch && !res.headersSent) {
             res.setHeader("Content-Type", "text/event-stream");
             res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -72427,7 +72647,7 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
             res.flushHeaders();
           }
           if (actionResults.length > 0 || allMcpAttachments.length > 0) {
-            const nonSearchActions = actionResults.filter((a) => a.tool !== "web_search");
+            const nonSearchActions = actionResults.filter((a) => a.tool !== "web_search" && a.tool !== "search_web");
             if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
               const actionsPayload = { type: "actions", actions: nonSearchActions };
               if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
@@ -72468,7 +72688,7 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
         res.flushHeaders();
       }
       if (actionResults.length > 0 || allMcpAttachments.length > 0) {
-        const nonSearchActions = actionResults.filter((a) => a.tool !== "web_search");
+        const nonSearchActions = actionResults.filter((a) => a.tool !== "web_search" && a.tool !== "search_web");
         if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
           const actionsPayload = { type: "actions", actions: nonSearchActions };
           if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
@@ -82464,6 +82684,87 @@ function registerGatewayControlPlane(app2, server) {
 
 // server/index.ts
 init_voiceRelayRoutes();
+
+// server/telegramCodexProxy.ts
+var DEFAULT_PROXY_PATH = "/telegram-codex";
+var DEFAULT_TARGET = "http://127.0.0.1:8787";
+var LOCAL_TARGET_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"]);
+function registerTelegramCodexProxy(app2) {
+  const enabled = process.env.TELEGRAM_CODEX_PROXY_ENABLED === "true" || Boolean(process.env.TELEGRAM_CODEX_PROXY_TARGET);
+  if (!enabled) return;
+  const proxyPath = normalizeProxyPath(
+    process.env.TELEGRAM_CODEX_PROXY_PATH || DEFAULT_PROXY_PATH
+  );
+  const target = new URL(process.env.TELEGRAM_CODEX_PROXY_TARGET || DEFAULT_TARGET);
+  if (!LOCAL_TARGET_HOSTS.has(target.hostname) && process.env.TELEGRAM_CODEX_PROXY_ALLOW_REMOTE !== "true") {
+    throw new Error(
+      `Refusing non-local TELEGRAM_CODEX_PROXY_TARGET host: ${target.hostname}`
+    );
+  }
+  app2.use(proxyPath, async (req, res, next) => {
+    try {
+      await proxyTelegramCodexRequest(req, res, target);
+    } catch (error) {
+      next(error);
+    }
+  });
+  console.log(`[TelegramCodeX] Proxy mounted at ${proxyPath} -> ${target.origin}`);
+}
+async function proxyTelegramCodexRequest(req, res, target) {
+  const upstreamUrl = new URL(req.originalUrl, target);
+  const headers = proxiedRequestHeaders(req);
+  const body = proxiedRequestBody(req);
+  if (req.headers.host) headers.set("x-forwarded-host", String(req.headers.host));
+  headers.set("x-forwarded-proto", req.protocol || "http");
+  if (body) headers.set("content-length", String(body.length));
+  const init = {
+    method: req.method,
+    headers,
+    redirect: "manual"
+  };
+  if (body) {
+    init.body = body;
+  }
+  const upstream = await fetch(upstreamUrl, init);
+  res.status(upstream.status);
+  upstream.headers.forEach((value, key) => {
+    const lower = key.toLowerCase();
+    if (lower === "transfer-encoding" || lower === "content-encoding") return;
+    res.setHeader(key, value);
+  });
+  res.end(Buffer.from(await upstream.arrayBuffer()));
+}
+function proxiedRequestHeaders(req) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (!value) continue;
+    const lower = key.toLowerCase();
+    if (lower === "host" || lower === "content-length" || lower === "connection" || lower === "transfer-encoding" || lower === "accept-encoding") {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item);
+    } else {
+      headers.set(key, String(value));
+    }
+  }
+  return headers;
+}
+function proxiedRequestBody(req) {
+  if (req.method === "GET" || req.method === "HEAD") return void 0;
+  const rawBody = req.rawBody;
+  if (Buffer.isBuffer(rawBody)) return rawBody;
+  if (req.body && Object.keys(req.body).length > 0) {
+    return Buffer.from(JSON.stringify(req.body));
+  }
+  return void 0;
+}
+function normalizeProxyPath(value) {
+  const trimmed = value.trim().replace(/^\/+|\/+$/g, "");
+  return trimmed ? `/${trimmed}` : DEFAULT_PROXY_PATH;
+}
+
+// server/index.ts
 init_manager();
 init_applyCodeChangeTool();
 init_schema();
@@ -82781,6 +83082,7 @@ function setupErrorHandler(app2) {
   setupCors(app);
   setupBodyParsing(app);
   setupRequestLogging(app);
+  registerTelegramCodexProxy(app);
   configureExpoAndLanding(app);
   registerTelegramWebhook(app);
   registerWhatsAppWebhook(app);
