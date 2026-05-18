@@ -9,11 +9,11 @@ var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __copyProps = (to, from, except, desc46) => {
+var __copyProps = (to, from, except, desc47) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc46 = __getOwnPropDesc(from, key)) || desc46.enumerable });
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc47 = __getOwnPropDesc(from, key)) || desc47.enumerable });
   }
   return to;
 };
@@ -22487,8 +22487,8 @@ async function listPendingGates(userId) {
   return rows.map(rowToGate);
 }
 async function listAllGates(userId) {
-  const { desc: desc46 } = await import("drizzle-orm");
-  const rows = await db.select().from(agentApprovalGates).where(eq26(agentApprovalGates.userId, userId)).orderBy(desc46(agentApprovalGates.createdAt)).limit(50);
+  const { desc: desc47 } = await import("drizzle-orm");
+  const rows = await db.select().from(agentApprovalGates).where(eq26(agentApprovalGates.userId, userId)).orderBy(desc47(agentApprovalGates.createdAt)).limit(50);
   return rows.map(rowToGate);
 }
 var HIGH_RISK_TOOLS, STRICTLY_IRREVERSIBLE_TOOLS, gateEmitter, DEFAULT_TTL_MS, _cleanupTimer;
@@ -24157,8 +24157,8 @@ Assignment rules:
     if (crew.length === 0) return staticManifest;
     const rows = crew.map((a) => {
       const cfg = a.configJson ?? {};
-      const desc46 = typeof cfg.description === "string" ? cfg.description : a.role;
-      return `| ${a.name.padEnd(6)} | ${(a.role ?? "").padEnd(14)} | ${desc46} |`;
+      const desc47 = typeof cfg.description === "string" ? cfg.description : a.role;
+      return `| ${a.name.padEnd(6)} | ${(a.role ?? "").padEnd(14)} | ${desc47} |`;
     });
     return `## Crew Manifest
 You have access to the following specialist agents. When decomposing sub-tasks, include an "assignTo" field naming the best specialist.
@@ -24354,12 +24354,12 @@ ${opts.task}`;
 }
 async function getTournamentRunners(userId, tournamentId) {
   try {
-    const { eq: eq130, and: and101, desc: desc46 } = await import("drizzle-orm");
+    const { eq: eq130, and: and101, desc: desc47 } = await import("drizzle-orm");
     let rows;
     if (tournamentId) {
       rows = await db.select().from(tournamentRuns).where(and101(eq130(tournamentRuns.id, tournamentId), eq130(tournamentRuns.userId, userId))).limit(1);
     } else {
-      rows = await db.select().from(tournamentRuns).where(eq130(tournamentRuns.userId, userId)).orderBy(desc46(tournamentRuns.createdAt)).limit(1);
+      rows = await db.select().from(tournamentRuns).where(eq130(tournamentRuns.userId, userId)).orderBy(desc47(tournamentRuns.createdAt)).limit(1);
     }
     if (!rows[0]) return { found: false };
     return { found: true, run: rows[0] };
@@ -32407,11 +32407,11 @@ async function describeFrames(frames) {
         }
       }
       for (let j = 0; j < batch.length; j++) {
-        const desc46 = descriptions[j]?.trim();
-        if (desc46) {
+        const desc47 = descriptions[j]?.trim();
+        if (desc47) {
           observations.push({
             timestamp: formatSec(batch[j].timestampSec),
-            description: desc46
+            description: desc47
           });
         }
       }
@@ -35626,9 +35626,9 @@ function nextWeekday(dayIndex, timeStr) {
   const now = /* @__PURE__ */ new Date();
   const result = new Date(now);
   const currentDay = now.getDay();
-  let daysUntil = (dayIndex - currentDay + 7) % 7;
-  if (daysUntil === 0) daysUntil = 7;
-  result.setDate(now.getDate() + daysUntil);
+  let daysUntil2 = (dayIndex - currentDay + 7) % 7;
+  if (daysUntil2 === 0) daysUntil2 = 7;
+  result.setDate(now.getDate() + daysUntil2);
   if (timeStr) {
     const t = parseTimeOfDay(timeStr);
     if (t) {
@@ -60072,14 +60072,128 @@ var init_slack = __esm({
   }
 });
 
+// server/goalPacing.ts
+function normalizeGoalPacingMode(value) {
+  return value === "light" || value === "balanced" || value === "ambitious" ? value : "balanced";
+}
+function clampRate(value) {
+  if (!Number.isFinite(value)) return 1;
+  return Math.max(0, Math.min(1, value));
+}
+function normalizeCount(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+}
+function normalizeMinutes(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.round(value));
+}
+function normalizeDeadlineDays(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(0, Math.round(value));
+}
+function normalizeEnergy(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  return Math.max(1, Math.min(5, Math.round(value)));
+}
+function averageEnergy(values) {
+  if (!Array.isArray(values)) return null;
+  const normalized = values.map(normalizeEnergy).filter((value) => value !== null);
+  if (normalized.length === 0) return null;
+  const average = normalized.reduce((sum, value) => sum + value, 0) / normalized.length;
+  return Math.round(average * 100) / 100;
+}
+function calculateGoalPacing(input2) {
+  const mode = normalizeGoalPacingMode(input2.mode);
+  const completionRate = clampRate(input2.completionRate);
+  const energyLevel = normalizeEnergy(input2.energyLevel);
+  const historicalEnergyAverage = averageEnergy(input2.recentEnergyLevels);
+  const workloadTaskCount = normalizeCount(input2.existingPlanTaskCount);
+  const weekdayCompletionRate2 = typeof input2.weekdayCompletionRate === "number" && Number.isFinite(input2.weekdayCompletionRate) ? clampRate(input2.weekdayCompletionRate) : null;
+  const calendarBusyMinutes = normalizeMinutes(input2.calendarBusyMinutes);
+  const nearestDeadlineDays = normalizeDeadlineDays(input2.nearestDeadlineDays);
+  const reasons = [];
+  let dailyCap = MODE_CAP[mode];
+  if (mode === "light") {
+    reasons.push("Light mode keeps goal-tree handoff to one task.");
+  } else if (mode === "ambitious") {
+    reasons.push("Ambitious mode can surface up to three goal tasks.");
+  } else {
+    reasons.push("Balanced mode starts with two goal tasks.");
+  }
+  if (completionRate < 0.5) {
+    dailyCap = 1;
+    reasons.push("Recent completion is below 50%, so Jarvis lowers goal pressure.");
+  } else if (completionRate >= 0.75 && (energyLevel !== null ? energyLevel >= 4 : historicalEnergyAverage !== null && historicalEnergyAverage >= 4) && mode === "balanced") {
+    dailyCap = 3;
+    reasons.push(
+      energyLevel !== null ? "Strong recent completion plus high energy allows one extra goal task." : "Strong recent completion plus historically strong energy allows one extra goal task."
+    );
+  }
+  if (energyLevel !== null && energyLevel <= 2) {
+    dailyCap = 1;
+    reasons.push("Today's energy is low, so Jarvis keeps goals light.");
+  } else if (energyLevel === null && historicalEnergyAverage !== null && historicalEnergyAverage <= 2.5) {
+    dailyCap = 1;
+    reasons.push("Recent energy pattern is low, so Jarvis keeps goals light.");
+  }
+  if (workloadTaskCount >= 6) {
+    dailyCap = 1;
+    reasons.push(`Today's plan already has ${workloadTaskCount} tasks, so Jarvis keeps goals light.`);
+  } else if (workloadTaskCount >= 4 && dailyCap > 2) {
+    dailyCap = 2;
+    reasons.push(`Today's plan already has ${workloadTaskCount} tasks, so Jarvis avoids extra goal pressure.`);
+  }
+  if (weekdayCompletionRate2 !== null && weekdayCompletionRate2 < 0.5) {
+    dailyCap = 1;
+    reasons.push("Your completion pattern for this weekday is low, so Jarvis keeps goals light.");
+  }
+  if (nearestDeadlineDays !== null && nearestDeadlineDays <= 2 && mode !== "light") {
+    if (dailyCap < 3) dailyCap += 1;
+    reasons.push("A goal deadline is close, so Jarvis adds one focused goal task if capacity allows.");
+  }
+  if (calendarBusyMinutes >= 360) {
+    dailyCap = 1;
+    reasons.push("Today's calendar is packed, so Jarvis keeps goal tasks to one.");
+  } else if (calendarBusyMinutes >= 240 && dailyCap > 2) {
+    dailyCap = 2;
+    reasons.push("Today's calendar has several hours booked, so Jarvis avoids extra goal pressure.");
+  }
+  return {
+    mode,
+    dailyCap: Math.max(1, Math.min(3, dailyCap)),
+    completionRate,
+    energyLevel,
+    historicalEnergyAverage,
+    workloadTaskCount,
+    weekdayCompletionRate: weekdayCompletionRate2,
+    calendarBusyMinutes,
+    nearestDeadlineDays,
+    reasons
+  };
+}
+var MODE_CAP;
+var init_goalPacing = __esm({
+  "server/goalPacing.ts"() {
+    "use strict";
+    MODE_CAP = {
+      light: 1,
+      balanced: 2,
+      ambitious: 3
+    };
+  }
+});
+
 // server/goalScheduler.ts
 var goalScheduler_exports = {};
 __export(goalScheduler_exports, {
+  getGoalPacingDecision: () => getGoalPacingDecision,
   getInjectableGoalTasks: () => getInjectableGoalTasks,
+  getPlanPacingContextFromTasks: () => getPlanPacingContextFromTasks,
   markTasksInjected: () => markTasksInjected,
   markTreeTaskComplete: () => markTreeTaskComplete
 });
-import { eq as eq85, and as and61 } from "drizzle-orm";
+import { eq as eq85, and as and61, desc as desc27 } from "drizzle-orm";
 function isTaskActionable(t) {
   return t.status === "ready" || t.status === "in_progress";
 }
@@ -60118,11 +60232,163 @@ async function recentCompletionRate(userId) {
     return 1;
   }
 }
-async function getInjectableGoalTasks(userId, dateKey) {
+async function weekdayCompletionRate(userId, dateKey) {
+  try {
+    const [row] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq85(completionHistory.userId, userId)).limit(1);
+    const arr = row?.data || [];
+    if (arr.length === 0) return void 0;
+    const targetDay = (/* @__PURE__ */ new Date(`${dateKey}T00:00:00Z`)).getUTCDay();
+    const matching = arr.filter((entry) => {
+      if (!entry.date) return false;
+      return (/* @__PURE__ */ new Date(`${entry.date}T00:00:00Z`)).getUTCDay() === targetDay;
+    });
+    if (matching.length < 3) return void 0;
+    return matching.filter((entry) => entry.completed).length / matching.length;
+  } catch {
+    return void 0;
+  }
+}
+async function getGoalPacingMode(userId) {
+  try {
+    const [row] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq85(userPreferences.userId, userId)).limit(1);
+    return normalizeGoalPacingMode(row?.data?.goalPacingMode);
+  } catch {
+    return "balanced";
+  }
+}
+async function getEnergyLevel(userId, dateKey) {
+  try {
+    const [row] = await db.select({ data: energyCheckins.data }).from(energyCheckins).where(and61(eq85(energyCheckins.userId, userId), eq85(energyCheckins.date, dateKey))).limit(1);
+    const data = row?.data;
+    const value = typeof data?.energy === "number" ? data.energy : data?.level;
+    return typeof value === "number" ? value : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function energyFromData(data) {
+  const value = typeof data?.energy === "number" ? data.energy : data?.level;
+  return typeof value === "number" ? value : void 0;
+}
+async function getRecentEnergyLevels(userId, dateKey) {
+  try {
+    const rows = await db.select({ date: energyCheckins.date, data: energyCheckins.data }).from(energyCheckins).where(eq85(energyCheckins.userId, userId)).orderBy(desc27(energyCheckins.date)).limit(14);
+    return rows.filter((row) => row.date !== dateKey).map((row) => energyFromData(row.data)).filter((value) => typeof value === "number");
+  } catch {
+    return [];
+  }
+}
+function parseDateKey(value) {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const time = (/* @__PURE__ */ new Date(`${value}T00:00:00Z`)).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+function daysUntil(dateKey, dueDate) {
+  const start = parseDateKey(dateKey);
+  const due = parseDateKey(dueDate);
+  if (start === null || due === null) return null;
+  return Math.ceil((due - start) / (24 * 60 * 60 * 1e3));
+}
+function nearestGoalDeadlineDays(trees, dateKey) {
+  let nearest = null;
+  for (const row of trees) {
+    const tree = row.tree || { phases: [] };
+    for (const phase of tree.phases) {
+      for (const milestone of phase.milestones) {
+        for (const task of milestone.tasks) {
+          if (task.status === "complete") continue;
+          const days = daysUntil(dateKey, task.dueDate);
+          if (days === null) continue;
+          nearest = nearest === null ? days : Math.min(nearest, days);
+        }
+      }
+    }
+  }
+  return nearest ?? void 0;
+}
+async function getNearestCommitmentDeadlineDays(userId, dateKey) {
+  try {
+    const rows = await db.select({ dueDate: commitments.dueDate }).from(commitments).where(and61(eq85(commitments.userId, userId), eq85(commitments.status, "pending"))).limit(100);
+    let nearest = null;
+    for (const row of rows) {
+      const days = daysUntil(dateKey, row.dueDate ?? void 0);
+      if (days === null) continue;
+      nearest = nearest === null ? days : Math.min(nearest, days);
+    }
+    return nearest ?? void 0;
+  } catch {
+    return void 0;
+  }
+}
+function taskDurationMinutes(task) {
+  const duration = task?.duration;
+  if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) return 30;
+  return Math.max(5, Math.round(duration));
+}
+function isCalendarBusyTask(task) {
+  const candidate = task;
+  return candidate?.category === "calendar" || typeof candidate?.time === "string";
+}
+function calendarBusyMinutesFromTasks(tasks) {
+  if (!Array.isArray(tasks)) return 0;
+  return tasks.filter(isCalendarBusyTask).reduce((sum, task) => sum + taskDurationMinutes(task), 0);
+}
+function getPlanPacingContextFromTasks(tasks) {
+  return {
+    existingPlanTaskCount: Array.isArray(tasks) ? tasks.length : 0,
+    calendarBusyMinutes: calendarBusyMinutesFromTasks(tasks)
+  };
+}
+async function getExistingPlanSignals(userId, dateKey) {
+  try {
+    const [row] = await db.select({ data: plans.data }).from(plans).where(and61(eq85(plans.userId, userId), eq85(plans.date, dateKey))).limit(1);
+    const tasks = row?.data?.tasks;
+    const context = getPlanPacingContextFromTasks(tasks);
+    return { taskCount: context.existingPlanTaskCount ?? 0, calendarBusyMinutes: context.calendarBusyMinutes ?? 0 };
+  } catch {
+    return { taskCount: 0, calendarBusyMinutes: 0 };
+  }
+}
+async function getGoalPacingDecision(userId, dateKey, context = {}) {
+  const [
+    completionRate,
+    mode,
+    energyLevel,
+    recentEnergyLevels,
+    existingPlanSignals,
+    weekdayRate,
+    activeGoalTrees,
+    commitmentDeadlineDays
+  ] = await Promise.all([
+    recentCompletionRate(userId),
+    getGoalPacingMode(userId),
+    getEnergyLevel(userId, dateKey),
+    getRecentEnergyLevels(userId, dateKey),
+    getExistingPlanSignals(userId, dateKey),
+    weekdayCompletionRate(userId, dateKey),
+    db.select().from(goalTrees).where(and61(eq85(goalTrees.userId, userId), eq85(goalTrees.status, "active"))).catch(() => []),
+    getNearestCommitmentDeadlineDays(userId, dateKey)
+  ]);
+  const goalDeadlineDays = nearestGoalDeadlineDays(activeGoalTrees, dateKey);
+  const deadlineCandidates = [goalDeadlineDays, commitmentDeadlineDays].filter(
+    (days) => typeof days === "number"
+  );
+  return calculateGoalPacing({
+    completionRate,
+    mode,
+    energyLevel,
+    recentEnergyLevels,
+    existingPlanTaskCount: context.existingPlanTaskCount ?? existingPlanSignals.taskCount,
+    weekdayCompletionRate: weekdayRate,
+    calendarBusyMinutes: context.calendarBusyMinutes ?? existingPlanSignals.calendarBusyMinutes,
+    nearestDeadlineDays: deadlineCandidates.length > 0 ? Math.min(...deadlineCandidates) : void 0
+  });
+}
+async function getInjectableGoalTasks(userId, dateKey, context = {}) {
   const trees = await db.select().from(goalTrees).where(and61(eq85(goalTrees.userId, userId), eq85(goalTrees.status, "active")));
   if (trees.length === 0) return [];
-  const rate = await recentCompletionRate(userId);
-  const dailyCap = rate < 0.5 ? 1 : 3;
+  const pacing = await getGoalPacingDecision(userId, dateKey, context);
+  const dailyCap = pacing.dailyCap;
   const candidates = [];
   for (const row of trees) {
     const tree = row.tree || { phases: [] };
@@ -60248,6 +60514,7 @@ var init_goalScheduler = __esm({
     "use strict";
     init_db();
     init_schema();
+    init_goalPacing();
   }
 });
 
@@ -61476,7 +61743,7 @@ var init_routes = __esm({
 });
 
 // server/discord/schedulesRoutes.ts
-import { eq as eq88, and as and64, desc as desc27 } from "drizzle-orm";
+import { eq as eq88, and as and64, desc as desc28 } from "drizzle-orm";
 function registerDiscordScheduleRoutes(app2) {
   app2.get("/api/discord/schedules", authMiddleware, async (req, res) => {
     const userId = req.userId;
@@ -61630,7 +61897,7 @@ function registerDiscordScheduleRoutes(app2) {
           eq88(interactionLog.userId, userId),
           eq88(interactionLog.channel, "discord")
         )
-      ).orderBy(desc27(interactionLog.createdAt)).limit(50);
+      ).orderBy(desc28(interactionLog.createdAt)).limit(50);
       res.json({ activity: logs });
     } catch (err2) {
       console.error("[DiscordSchedules] GET /api/discord/activity failed:", err2);
@@ -61652,10 +61919,10 @@ var init_schedulesRoutes = __esm({
 });
 
 // server/agent/agentBus.ts
-import { eq as eq89, and as and65, desc as desc28 } from "drizzle-orm";
+import { eq as eq89, and as and65, desc as desc29 } from "drizzle-orm";
 import { sql as sql30 } from "drizzle-orm";
 async function getAgentMessages(toAgentId, userId, limit = 20) {
-  return db.select().from(agentMessages).where(and65(eq89(agentMessages.toAgentId, toAgentId), eq89(agentMessages.userId, userId))).orderBy(desc28(agentMessages.createdAt)).limit(limit);
+  return db.select().from(agentMessages).where(and65(eq89(agentMessages.toAgentId, toAgentId), eq89(agentMessages.userId, userId))).orderBy(desc29(agentMessages.createdAt)).limit(limit);
 }
 async function getMessageStats(agentId, userId) {
   const result = await db.execute(sql30`
@@ -62024,7 +62291,7 @@ var init_coreAgentSeed = __esm({
 
 // server/agent/agentRoutes.ts
 import { randomUUID as randomUUID4 } from "crypto";
-import { eq as eq91, sql as sql31, desc as desc29, and as and67 } from "drizzle-orm";
+import { eq as eq91, sql as sql31, desc as desc30, and as and67 } from "drizzle-orm";
 function formatRelative(date2) {
   const diffMs = Date.now() - date2.getTime();
   const diffMin = Math.floor(diffMs / 6e4);
@@ -62092,7 +62359,7 @@ function registerAgentRoutes(app2) {
           eq91(agentJobs.userId, userId),
           eq91(agentJobs.agentType, "named_agent_task")
         )
-      ).orderBy(desc29(agentJobs.createdAt)).limit(50);
+      ).orderBy(desc30(agentJobs.createdAt)).limit(50);
       const now = Date.now();
       const enriched = agents.map((agent) => {
         const lastRun = agent.lastLoopRun?.getTime() ?? 0;
@@ -63066,7 +63333,7 @@ var init_customAgentRoutes = __esm({
 });
 
 // server/agent/codeProposalsRoutes.ts
-import { eq as eq93, and as and69, desc as desc30 } from "drizzle-orm";
+import { eq as eq93, and as and69, desc as desc31 } from "drizzle-orm";
 import fs18 from "fs/promises";
 import path24 from "path";
 async function schedulePostFixVerification(userId, proposalId, filePath, debugCtx) {
@@ -63128,7 +63395,7 @@ function registerCodeProposalsRoutes(app2) {
         debugContext: codeProposals.debugContext,
         createdAt: codeProposals.createdAt,
         appliedAt: codeProposals.appliedAt
-      }).from(codeProposals).where(eq93(codeProposals.userId, userId)).orderBy(desc30(codeProposals.createdAt));
+      }).from(codeProposals).where(eq93(codeProposals.userId, userId)).orderBy(desc31(codeProposals.createdAt));
       return res.json(rows);
     } catch (err2) {
       console.error("[CodeProposals] list error:", err2);
@@ -64741,7 +65008,7 @@ __export(pattern_analyser_exports, {
   analysePatterns: () => analysePatterns,
   detectBehaviorSignals: () => detectBehaviorSignals
 });
-import { eq as eq99, and as and74, gte as gte16, desc as desc31 } from "drizzle-orm";
+import { eq as eq99, and as and74, gte as gte16, desc as desc32 } from "drizzle-orm";
 async function analysePatterns(userId, windowDays = 60) {
   const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1e3);
   const analysedAt = /* @__PURE__ */ new Date();
@@ -64749,11 +65016,11 @@ async function analysePatterns(userId, windowDays = 60) {
     db.select().from(energyCheckins).where(and74(
       eq99(energyCheckins.userId, userId),
       gte16(energyCheckins.date, cutoff.toISOString().slice(0, 10))
-    )).orderBy(desc31(energyCheckins.date)).limit(200),
+    )).orderBy(desc32(energyCheckins.date)).limit(200),
     db.select().from(plans).where(and74(
       eq99(plans.userId, userId),
       gte16(plans.date, cutoff.toISOString().slice(0, 10))
-    )).orderBy(desc31(plans.date)).limit(120),
+    )).orderBy(desc32(plans.date)).limit(120),
     db.select().from(goalTrees).where(and74(
       eq99(goalTrees.userId, userId),
       eq99(goalTrees.status, "active")
@@ -64762,7 +65029,7 @@ async function analysePatterns(userId, windowDays = 60) {
       eq99(inboxItems.userId, userId),
       eq99(inboxItems.sourceType, "email"),
       gte16(inboxItems.surfacedAt, cutoff)
-    )).orderBy(desc31(inboxItems.surfacedAt)).limit(200)
+    )).orderBy(desc32(inboxItems.surfacedAt)).limit(200)
   ]);
   const energyPatterns = buildEnergyPatterns(energyRows);
   const { peakHour, dipHour, peakDay } = findEnergyPeakAndDip(energyPatterns);
@@ -66114,7 +66381,7 @@ __export(skillCurator_exports, {
   emitSynthesiserCandidate: () => emitSynthesiserCandidate
 });
 import OpenAI10 from "openai";
-import { eq as eq103, and as and78, gte as gte19, desc as desc33 } from "drizzle-orm";
+import { eq as eq103, and as and78, gte as gte19, desc as desc34 } from "drizzle-orm";
 async function curateSkillsForUser(userId) {
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1e3);
   const [traces, interactions] = await Promise.all([
@@ -66123,13 +66390,13 @@ async function curateSkillsForUser(userId) {
         eq103(orchestrationTraces.userId, userId),
         gte19(orchestrationTraces.createdAt, cutoff)
       )
-    ).orderBy(desc33(orchestrationTraces.createdAt)).limit(100),
+    ).orderBy(desc34(orchestrationTraces.createdAt)).limit(100),
     db.select({ content: interactionLog.content, label: interactionLog.label, createdAt: interactionLog.createdAt }).from(interactionLog).where(
       and78(
         eq103(interactionLog.userId, userId),
         gte19(interactionLog.createdAt, cutoff)
       )
-    ).orderBy(desc33(interactionLog.createdAt)).limit(200)
+    ).orderBy(desc34(interactionLog.createdAt)).limit(200)
   ]);
   const allRequests = traces.map((t) => t.userRequest).filter(Boolean);
   const allInteractions = interactions.filter((i) => i.content && i.label !== "correction").map((i) => i.content);
@@ -66512,7 +66779,7 @@ __export(dream_exports, {
   markDreamInsightsDelivered: () => markDreamInsightsDelivered,
   runDreamForUser: () => runDreamForUser
 });
-import { eq as eq104, desc as desc34, and as and79, gte as gte20, lt as lt8, sql as sql37, inArray as inArray7 } from "drizzle-orm";
+import { eq as eq104, desc as desc35, and as and79, gte as gte20, lt as lt8, sql as sql37, inArray as inArray7 } from "drizzle-orm";
 async function isMemoryReviewEnabledForUser3(userId) {
   try {
     const rows = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq104(lifeContext.userId, userId)).limit(1);
@@ -66550,20 +66817,20 @@ async function buildCorpus(userId) {
         eq104(userMemories.userId, userId),
         gte20(userMemories.extractedAt, since90)
       )
-    ).orderBy(desc34(userMemories.extractedAt)).limit(200),
-    db.select().from(weeklyInsights).where(eq104(weeklyInsights.userId, userId)).orderBy(desc34(weeklyInsights.createdAt)).limit(4),
+    ).orderBy(desc35(userMemories.extractedAt)).limit(200),
+    db.select().from(weeklyInsights).where(eq104(weeklyInsights.userId, userId)).orderBy(desc35(weeklyInsights.createdAt)).limit(4),
     db.select().from(energyCheckins).where(
       and79(
         eq104(energyCheckins.userId, userId),
         sql37`${energyCheckins.date} >= ${since30Key}`
       )
-    ).orderBy(desc34(energyCheckins.date)).limit(30),
+    ).orderBy(desc35(energyCheckins.date)).limit(30),
     db.select({ date: plans.date, data: plans.data }).from(plans).where(
       and79(
         eq104(plans.userId, userId),
         sql37`${plans.date} >= ${since30Key}`
       )
-    ).orderBy(desc34(plans.date)).limit(30)
+    ).orderBy(desc35(plans.date)).limit(30)
   ]);
   const memoryIds = memoriesRows.map((m) => m.id);
   const sections = [];
@@ -66772,7 +67039,7 @@ async function runSemanticExtractionPass(userId, model) {
       eq104(userMemories.memoryType, "episodic"),
       gte20(userMemories.extractedAt, since7d)
     )
-  ).orderBy(desc34(userMemories.extractedAt)).limit(120);
+  ).orderBy(desc35(userMemories.extractedAt)).limit(120);
   if (episodic.length === 0) return { factsExtracted: 0 };
   const grouped = /* @__PURE__ */ new Map();
   for (const m of episodic) {
@@ -67122,7 +67389,7 @@ async function getPendingDreamInsights(userId) {
       eq104(dreamInsights.userId, userId),
       eq104(dreamInsights.shownToUser, false)
     )
-  ).orderBy(desc34(dreamInsights.createdAt)).limit(3);
+  ).orderBy(desc35(dreamInsights.createdAt)).limit(3);
 }
 async function markDreamInsightsDelivered(ids) {
   if (ids.length === 0) return;
@@ -67808,7 +68075,7 @@ __export(gut_exports, {
   respondToGutSignal: () => respondToGutSignal,
   runGutScanForUser: () => runGutScanForUser
 });
-import { eq as eq108, and as and83, desc as desc35, gte as gte21, sql as sql38, inArray as inArray8 } from "drizzle-orm";
+import { eq as eq108, and as and83, desc as desc36, gte as gte21, sql as sql38, inArray as inArray8 } from "drizzle-orm";
 function getCachedBaseline(userId) {
   const entry = baselineCache.get(userId);
   if (!entry || Date.now() > entry.expiresAt) return null;
@@ -67849,7 +68116,7 @@ async function computeBaseline2(userId, token) {
   } catch {
   }
   try {
-    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq108(plans.userId, userId)).orderBy(desc35(plans.date)).limit(14);
+    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq108(plans.userId, userId)).orderBy(desc36(plans.date)).limit(14);
     const totalTasks = historicPlans.reduce((sum, p) => {
       const tasks = p.data?.tasks || [];
       return sum + tasks.filter((t) => t.completed).length;
@@ -68092,7 +68359,7 @@ async function detectProjectDrift(userId, baseline) {
     if (existing.length > 0) return signals;
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString().slice(0, 10);
-    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and83(eq108(plans.userId, userId), gte21(plans.date, sevenDaysAgo))).orderBy(desc35(plans.date)).limit(7);
+    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and83(eq108(plans.userId, userId), gte21(plans.date, sevenDaysAgo))).orderBy(desc36(plans.date)).limit(7);
     if (recentPlans.length < 3) return signals;
     const completedPerDay = recentPlans.map((p) => {
       const tasks = p.data?.tasks || [];
@@ -68206,7 +68473,7 @@ async function runGutScanForUser(userId, userEmail, now) {
       eq108(inboxItems.userId, userId),
       eq108(inboxItems.status, "pending"),
       gte21(inboxItems.surfacedAt, new Date(now.getTime() - 24 * 60 * 60 * 1e3))
-    )).orderBy(desc35(inboxItems.surfacedAt)).limit(30);
+    )).orderBy(desc36(inboxItems.surfacedAt)).limit(30);
   } catch {
   }
   if (recentInboxItems.length > 0) {
@@ -68233,7 +68500,7 @@ async function getGutSignalsForUser(userId, opts) {
       sql38`(${gutSignals.userResponse} is null or ${gutSignals.userResponse} = 'ignored')`
     );
   }
-  const rows = await db.select().from(gutSignals).where(and83(...conditions)).orderBy(desc35(gutSignals.createdAt)).limit(limit);
+  const rows = await db.select().from(gutSignals).where(and83(...conditions)).orderBy(desc36(gutSignals.createdAt)).limit(limit);
   return rows;
 }
 async function respondToGutSignal(userId, signalId, response) {
@@ -68251,7 +68518,7 @@ async function getAndMarkMorningBriefSignals(userId) {
     eq108(gutSignals.deliveredInMorningBrief, false),
     gte21(gutSignals.createdAt, since),
     sql38`${gutSignals.userResponse} IS NULL`
-  )).orderBy(desc35(gutSignals.confidenceScore)).limit(3);
+  )).orderBy(desc36(gutSignals.confidenceScore)).limit(3);
   const highConf = rows.filter((r) => r.confidenceScore >= 60);
   if (highConf.length === 0) return [];
   const selectedIds = highConf.map((r) => r.id);
@@ -68753,7 +69020,7 @@ __export(voiceRelayRoutes_exports, {
 });
 import { WebSocketServer as WebSocketServer2, WebSocket as WebSocket2 } from "ws";
 import { randomBytes as randomBytes3 } from "crypto";
-import { eq as eq110, desc as desc36 } from "drizzle-orm";
+import { eq as eq110, desc as desc37 } from "drizzle-orm";
 function createRelayTicket(userId) {
   const ticket = randomBytes3(24).toString("hex");
   ticketStore.set(ticket, {
@@ -68808,7 +69075,7 @@ async function loadUserMemories(userId, maxLines = 50) {
       content: userMemories.content,
       category: userMemories.category,
       confidence: userMemories.confidence
-    }).from(userMemories).where(eq110(userMemories.userId, userId)).orderBy(desc36(userMemories.confidence)).limit(30);
+    }).from(userMemories).where(eq110(userMemories.userId, userId)).orderBy(desc37(userMemories.confidence)).limit(30);
     if (!rows.length) return "";
     const lines = [];
     for (const row of rows) {
@@ -69044,7 +69311,7 @@ var storage_exports = {};
 __export(storage_exports, {
   chatStorage: () => chatStorage
 });
-import { eq as eq111, desc as desc37 } from "drizzle-orm";
+import { eq as eq111, desc as desc38 } from "drizzle-orm";
 var chatStorage;
 var init_storage = __esm({
   "server/replit_integrations/chat/storage.ts"() {
@@ -69057,7 +69324,7 @@ var init_storage = __esm({
         return conversation;
       },
       async getAllConversations() {
-        return db.select().from(conversations).orderBy(desc37(conversations.createdAt));
+        return db.select().from(conversations).orderBy(desc38(conversations.createdAt));
       },
       async createConversation(title) {
         const [conversation] = await db.insert(conversations).values({ title }).returning();
@@ -69090,7 +69357,7 @@ import fs21 from "fs";
 import path27 from "path";
 import { createServer } from "node:http";
 import OpenAI11 from "openai";
-import { eq as eq112, and as and84, desc as desc38, sql as sql40, gte as gte22, asc as asc7 } from "drizzle-orm";
+import { eq as eq112, and as and84, desc as desc39, sql as sql40, gte as gte22, asc as asc7 } from "drizzle-orm";
 import ytSearch from "yt-search";
 function providerLabelForModel(model) {
   const normalized = model.toLowerCase();
@@ -69218,7 +69485,7 @@ async function getMorningNoteSummary(userId) {
     const notes = await db.select().from(morningVoiceNotes).where(and84(
       eq112(morningVoiceNotes.userId, userId),
       gte22(morningVoiceNotes.recordedAt, cutoffDate)
-    )).orderBy(desc38(morningVoiceNotes.recordedAt)).limit(30);
+    )).orderBy(desc39(morningVoiceNotes.recordedAt)).limit(30);
     if (notes.length === 0) return "";
     const moodCounts = {};
     const allThemes = {};
@@ -70052,7 +70319,7 @@ async function registerRoutes(app2) {
       const { analyseEgo: analyseEgo2, getISOWeekMonday: getISOWeekMonday2 } = await Promise.resolve().then(() => (init_ego(), ego_exports));
       const weekOf = getISOWeekMonday2(/* @__PURE__ */ new Date());
       const analysis = await analyseEgo2(userId, weekOf);
-      const latestReport = await db.select().from(egoWeeklyReports).where(eq112(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(1);
+      const latestReport = await db.select().from(egoWeeklyReports).where(eq112(egoWeeklyReports.userId, userId)).orderBy(desc39(egoWeeklyReports.createdAt)).limit(1);
       res.json({
         analysis,
         latestReport: latestReport[0] ?? null
@@ -70066,7 +70333,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const reports = await db.select().from(egoWeeklyReports).where(eq112(egoWeeklyReports.userId, userId)).orderBy(desc38(egoWeeklyReports.createdAt)).limit(12);
+      const reports = await db.select().from(egoWeeklyReports).where(eq112(egoWeeklyReports.userId, userId)).orderBy(desc39(egoWeeklyReports.createdAt)).limit(12);
       res.json({ reports });
     } catch (err2) {
       console.error("[Ego] reports failed:", err2);
@@ -71594,7 +71861,7 @@ ${text2}`
           sql40`${proactiveQuestionsSent.answeredAt} IS NULL`,
           sql40`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
         )
-      ).orderBy(desc38(proactiveQuestionsSent.sentAt)).limit(1);
+      ).orderBy(desc39(proactiveQuestionsSent.sentAt)).limit(1);
       if (unanswered.length > 0) {
         const lastUserMessage = messages2.filter((m) => m.role === "user").pop();
         if (!lastUserMessage?.content) return;
@@ -71730,7 +71997,7 @@ Answer (yes/no):`
         userCommitments = [];
         if (userId) {
           try {
-            userCommitments = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(20);
+            userCommitments = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc39(commitments.extractedAt)).limit(20);
           } catch {
           }
         }
@@ -71740,7 +72007,7 @@ Answer (yes/no):`
         if (userId) {
           try {
             const [rows, noteSummary, docsCtx] = await Promise.all([
-              db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq112(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt)).limit(50),
+              db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq112(userMemories.userId, userId)).orderBy(desc39(userMemories.extractedAt)).limit(50),
               getMorningNoteSummary(userId),
               getUserDocumentContext(userId)
             ]);
@@ -71760,7 +72027,7 @@ Answer (yes/no):`
                 sql40`${proactiveQuestionsSent.answeredAt} IS NULL`,
                 sql40`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
               )
-            ).orderBy(desc38(proactiveQuestionsSent.sentAt)).limit(3);
+            ).orderBy(desc39(proactiveQuestionsSent.sentAt)).limit(3);
             if (recentUnanswered.length > 0) {
               proactiveQuestionContext = `
 ## Recent Proactive Questions You Asked (unanswered)
@@ -73611,7 +73878,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt));
+      const rows = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc39(commitments.extractedAt));
       res.json({ commitments: rows });
     } catch (error) {
       console.error("Error fetching commitments:", error);
@@ -73691,7 +73958,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       if (!context) return res.status(400).json({ error: "context is required" });
       let userCommitments = [];
       try {
-        userCommitments = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc38(commitments.extractedAt)).limit(10);
+        userCommitments = await db.select().from(commitments).where(and84(eq112(commitments.userId, userId), eq112(commitments.status, "pending"))).orderBy(desc39(commitments.extractedAt)).limit(10);
       } catch {
       }
       const soulBlock = await getSoulPromptBlock(userId ?? "");
@@ -73787,7 +74054,7 @@ ${context}` },
       try {
         const sevenDaysAgo = /* @__PURE__ */ new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db.select().from(commitments).where(eq112(commitments.userId, userId)).orderBy(desc38(commitments.extractedAt)).limit(30);
+        weekCommitments = await db.select().from(commitments).where(eq112(commitments.userId, userId)).orderBy(desc39(commitments.extractedAt)).limit(30);
         weekCommitments = weekCommitments.filter(
           (c) => new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
         );
@@ -73846,7 +74113,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(userMemories).where(eq112(userMemories.userId, userId)).orderBy(desc38(userMemories.extractedAt));
+      const rows = await db.select().from(userMemories).where(eq112(userMemories.userId, userId)).orderBy(desc39(userMemories.extractedAt));
       res.json({ memories: rows });
     } catch (error) {
       console.error("Error fetching memories:", error);
@@ -74204,7 +74471,7 @@ Return ONLY the JSON object.`;
       if (!await isIntegrationOwner2(userId)) {
         return res.status(403).json({ error: "Owner access required" });
       }
-      const rows = await db.select().from(learningSynthesisLog).orderBy(desc38(learningSynthesisLog.createdAt)).limit(5);
+      const rows = await db.select().from(learningSynthesisLog).orderBy(desc39(learningSynthesisLog.createdAt)).limit(5);
       res.json({ runs: rows });
     } catch (error) {
       console.error("[Workspace] synthesise-history error:", error);
@@ -74280,7 +74547,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(weeklyInsights).where(eq112(weeklyInsights.userId, userId)).orderBy(desc38(weeklyInsights.createdAt)).limit(4);
+      const rows = await db.select().from(weeklyInsights).where(eq112(weeklyInsights.userId, userId)).orderBy(desc39(weeklyInsights.createdAt)).limit(4);
       return res.json({ insights: rows });
     } catch (error) {
       console.error("Error getting weekly insights:", error);
@@ -74291,7 +74558,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(dreamInsights).where(eq112(dreamInsights.userId, userId)).orderBy(desc38(dreamInsights.createdAt)).limit(50);
+      const rows = await db.select().from(dreamInsights).where(eq112(dreamInsights.userId, userId)).orderBy(desc39(dreamInsights.createdAt)).limit(50);
       return res.json({ insights: rows });
     } catch (error) {
       console.error("Error getting dream insights:", error);
@@ -74483,7 +74750,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const limit = parseInt(req.query.limit) || 30;
-      const notes = await db.select().from(morningVoiceNotes).where(eq112(morningVoiceNotes.userId, userId)).orderBy(desc38(morningVoiceNotes.recordedAt)).limit(limit);
+      const notes = await db.select().from(morningVoiceNotes).where(eq112(morningVoiceNotes.userId, userId)).orderBy(desc39(morningVoiceNotes.recordedAt)).limit(limit);
       res.json({ notes });
     } catch (error) {
       console.error("Error fetching morning voice notes:", error);
@@ -74631,7 +74898,7 @@ Return ONLY the JSON object.`;
         eq112(inboxItems.status, statusFilter),
         sql40`${inboxItems.jarvisReason} IS NOT NULL`
       ) : and84(eq112(inboxItems.userId, userId), eq112(inboxItems.status, statusFilter));
-      const items = await db.select().from(inboxItems).where(whereClause).orderBy(desc38(inboxItems.surfacedAt)).limit(50);
+      const items = await db.select().from(inboxItems).where(whereClause).orderBy(desc39(inboxItems.surfacedAt)).limit(50);
       res.json(items);
     } catch (error) {
       console.error("Error fetching inbox items:", error);
@@ -75099,7 +75366,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const drafts = await db.select().from(emailDrafts).where(and84(eq112(emailDrafts.userId, userId), eq112(emailDrafts.status, "pending_approval"))).orderBy(desc38(emailDrafts.createdAt));
+      const drafts = await db.select().from(emailDrafts).where(and84(eq112(emailDrafts.userId, userId), eq112(emailDrafts.status, "pending_approval"))).orderBy(desc39(emailDrafts.createdAt));
       res.json(drafts);
     } catch (error) {
       console.error("Error fetching email drafts:", error);
@@ -75162,6 +75429,42 @@ Reply directly to this message with your answer and I'll take it from there.
     } catch (err2) {
       console.error("Error fetching goals:", err2);
       res.status(500).json({ error: "Failed to fetch goals" });
+    }
+  });
+  app2.get("/api/goals/pacing", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const dateKey = typeof req.query.date === "string" && req.query.date.trim() ? req.query.date.trim() : (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const { getGoalPacingDecision: getGoalPacingDecision2 } = await Promise.resolve().then(() => (init_goalScheduler(), goalScheduler_exports));
+      const pacing = await getGoalPacingDecision2(userId, dateKey);
+      res.json({ ...pacing, date: dateKey });
+    } catch (err2) {
+      console.error("Error fetching goal pacing:", err2);
+      res.status(500).json({ error: "Failed to fetch goal pacing" });
+    }
+  });
+  app2.patch("/api/goals/pacing", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rawMode = req.body?.mode;
+      const mode = normalizeGoalPacingMode(rawMode);
+      if (rawMode !== mode) return res.status(400).json({ error: "Invalid goal pacing mode" });
+      const [existing] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq112(userPreferences.userId, userId)).limit(1);
+      const current = existing?.data || {};
+      const data = { ...current, goalPacingMode: mode };
+      await db.insert(userPreferences).values({ userId, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
+        target: userPreferences.userId,
+        set: { data, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      const { getGoalPacingDecision: getGoalPacingDecision2 } = await Promise.resolve().then(() => (init_goalScheduler(), goalScheduler_exports));
+      const dateKey = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const pacing = await getGoalPacingDecision2(userId, dateKey);
+      res.json({ ...pacing, date: dateKey });
+    } catch (err2) {
+      console.error("Error updating goal pacing:", err2);
+      res.status(500).json({ error: "Failed to update goal pacing" });
     }
   });
   app2.post("/api/goals/:id/decompose", async (req, res) => {
@@ -75313,7 +75616,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
       const status = typeof req.query.status === "string" ? req.query.status : null;
       const where = status ? and84(eq112(agentJobs.userId, userId), eq112(agentJobs.status, status)) : eq112(agentJobs.userId, userId);
-      const jobs = await db.select().from(agentJobs).where(where).orderBy(desc38(agentJobs.createdAt)).limit(limit);
+      const jobs = await db.select().from(agentJobs).where(where).orderBy(desc39(agentJobs.createdAt)).limit(limit);
       const { attachJobReviewState: attachJobReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
       res.json(jobs.map(attachJobReviewState2));
     } catch (err2) {
@@ -75403,12 +75706,12 @@ Reply directly to this message with your answer and I'll take it from there.
             gte22(deliverables.actedAt, since),
             sql40`${deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
           )
-        ).orderBy(desc38(deliverables.createdAt)).limit(20);
+        ).orderBy(desc39(deliverables.createdAt)).limit(20);
         const { attachDeliverableReviewState: attachDeliverableReviewState3 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
         return res.json(items2.map(attachDeliverableReviewState3));
       }
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
-      const items = await db.select().from(deliverables).where(and84(eq112(deliverables.userId, userId), eq112(deliverables.status, status))).orderBy(desc38(deliverables.createdAt)).limit(50);
+      const items = await db.select().from(deliverables).where(and84(eq112(deliverables.userId, userId), eq112(deliverables.status, status))).orderBy(desc39(deliverables.createdAt)).limit(50);
       const { attachDeliverableReviewState: attachDeliverableReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
       res.json(items.map(attachDeliverableReviewState2));
     } catch (err2) {
@@ -75430,7 +75733,7 @@ Reply directly to this message with your answer and I'll take it from there.
         status: userDocuments.status,
         summary: userDocuments.summary,
         uploadedAt: userDocuments.uploadedAt
-      }).from(userDocuments).where(eq112(userDocuments.userId, userId)).orderBy(desc38(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+      }).from(userDocuments).where(eq112(userDocuments.userId, userId)).orderBy(desc39(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
       res.json({ documents: docs });
     } catch (error) {
       console.error("Error fetching documents:", error);
@@ -75669,7 +75972,7 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const rows = await db.select().from(openclawBuildLog).where(eq112(openclawBuildLog.userId, userId)).orderBy(desc38(openclawBuildLog.createdAt)).limit(50);
+      const rows = await db.select().from(openclawBuildLog).where(eq112(openclawBuildLog.userId, userId)).orderBy(desc39(openclawBuildLog.createdAt)).limit(50);
       res.json({ builds: rows });
     } catch (err2) {
       console.error("[jarvis] GET builds failed:", err2);
@@ -75802,7 +76105,7 @@ Extract up to 8 memories per batch.`;
     const parsedLimit = parseInt(req.query.limit || "30", 10);
     const limit = Math.min(100, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 30 : parsedLimit);
     try {
-      const rows = await db.select().from(gutSignals).where(eq112(gutSignals.userId, userId)).orderBy(desc38(gutSignals.createdAt)).limit(limit);
+      const rows = await db.select().from(gutSignals).where(eq112(gutSignals.userId, userId)).orderBy(desc39(gutSignals.createdAt)).limit(limit);
       res.json(rows);
     } catch (err2) {
       console.error("[Gut] threat-log fetch failed:", err2);
@@ -75943,7 +76246,7 @@ Extract up to 8 memories per batch.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
-      const traces = await db.select().from(orchestrationTraces).where(eq112(orchestrationTraces.userId, userId)).orderBy(desc38(orchestrationTraces.createdAt)).limit(20);
+      const traces = await db.select().from(orchestrationTraces).where(eq112(orchestrationTraces.userId, userId)).orderBy(desc39(orchestrationTraces.createdAt)).limit(20);
       res.json({ traces });
     } catch (err2) {
       console.error("[Orchestrator] traces GET failed:", err2);
@@ -76900,7 +77203,7 @@ Extract up to 8 memories per batch.`;
       }
       const parsedLimit = parseInt(String(req.query.limit ?? ""), 10);
       const limit = Number.isNaN(parsedLimit) ? 50 : Math.max(1, Math.min(parsedLimit, 200));
-      const entries = await db.select().from(selfHealAuditLog).orderBy(desc38(selfHealAuditLog.createdAt)).limit(limit);
+      const entries = await db.select().from(selfHealAuditLog).orderBy(desc39(selfHealAuditLog.createdAt)).limit(limit);
       res.json({ entries });
     } catch (err2) {
       console.error("[self-heal-audit] GET error:", err2);
@@ -76910,7 +77213,7 @@ Extract up to 8 memories per batch.`;
   app2.get("/api/button-locations", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const rows = await db.select().from(buttonLocations).where(eq112(buttonLocations.userId, userId)).orderBy(desc38(buttonLocations.updatedAt));
+      const rows = await db.select().from(buttonLocations).where(eq112(buttonLocations.userId, userId)).orderBy(desc39(buttonLocations.updatedAt));
       res.json({ entries: rows });
     } catch (err2) {
       console.error("[button-locations] GET error:", err2);
@@ -77131,7 +77434,7 @@ Extract up to 8 memories per batch.`;
       ).groupBy(
         capabilityGaps.userMessage,
         capabilityGaps.detectedReason
-      ).orderBy(desc38(sql40`MAX(${capabilityGaps.createdAt})`)).limit(50);
+      ).orderBy(desc39(sql40`MAX(${capabilityGaps.createdAt})`)).limit(50);
       res.json({ gaps: rows });
     } catch (err2) {
       console.error("[capability-gaps] GET error:", err2);
@@ -77207,6 +77510,7 @@ var init_routes2 = __esm({
     init_goalTreeEditor();
     init_goalPlanHandoff();
     init_goalScheduler();
+    init_goalPacing();
     init_jarvisScheduledTasks();
     init_integrationOwner();
     init_oauthRoutes();
@@ -77825,7 +78129,7 @@ __export(selfImprovementLoop_exports, {
   runSelfImprovementCycle: () => runSelfImprovementCycle,
   runSelfImprovementForAllUsers: () => runSelfImprovementForAllUsers
 });
-import { gte as gte25, desc as desc40 } from "drizzle-orm";
+import { gte as gte25, desc as desc41 } from "drizzle-orm";
 import fs23 from "fs/promises";
 import path29 from "path";
 function getISOWeekKey(d) {
@@ -77936,7 +78240,7 @@ async function _runCycleInner(userId, signal) {
   const [auditEntries, rawInteractions, recentErrors] = await Promise.all([
     readAuditEntries(50).catch(() => []),
     getRecentInteractions(userId, 100, 7 * 24).catch(() => []),
-    db.select().from(systemErrorLog).where(gte25(systemErrorLog.createdAt, sevenDaysAgo)).orderBy(desc40(systemErrorLog.createdAt)).limit(30).catch(() => [])
+    db.select().from(systemErrorLog).where(gte25(systemErrorLog.createdAt, sevenDaysAgo)).orderBy(desc41(systemErrorLog.createdAt)).limit(30).catch(() => [])
   ]);
   const flaggedInteractions = [];
   const sortedInteractions = [...rawInteractions].sort(
@@ -78224,7 +78528,7 @@ __export(primeIdentityAudit_exports, {
 });
 import * as fs24 from "fs/promises";
 import * as path30 from "path";
-import { eq as eq120, and as and92, desc as desc41, inArray as inArray9, gte as gte26 } from "drizzle-orm";
+import { eq as eq120, and as and92, desc as desc42, inArray as inArray9, gte as gte26 } from "drizzle-orm";
 function currentMonthKey() {
   const now = /* @__PURE__ */ new Date();
   const y = now.getUTCFullYear();
@@ -78269,7 +78573,7 @@ async function runPrimeIdentityAudit(userId) {
         inArray9(interactionLog.channel, ["telegram", "app_chat"]),
         gte26(interactionLog.createdAt, cutoff)
       )
-    ).orderBy(desc41(interactionLog.createdAt)).limit(40);
+    ).orderBy(desc42(interactionLog.createdAt)).limit(40);
     if (rows.length === 0) {
       console.log(`[PrimeAudit] No conversation sample for user ${userId} \u2014 sending low-data message`);
       try {
@@ -78500,7 +78804,7 @@ init_diagnosticsService();
 init_routedChatCompletion();
 import * as fs22 from "fs";
 import * as path28 from "path";
-import { eq as eq116, and as and88, sql as sql43, desc as desc39, gte as gte23 } from "drizzle-orm";
+import { eq as eq116, and as and88, sql as sql43, desc as desc40, gte as gte23 } from "drizzle-orm";
 var openai19 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 var CHECKLIST_PATH = path28.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
@@ -79124,7 +79428,7 @@ async function runHeartbeatTick() {
     }
     let memories = [];
     try {
-      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq116(userMemories.userId, link.userId)).orderBy(desc39(userMemories.extractedAt)).limit(30);
+      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq116(userMemories.userId, link.userId)).orderBy(desc40(userMemories.extractedAt)).limit(30);
     } catch {
     }
     let actionsFired = 0;
@@ -79217,7 +79521,7 @@ async function runHeartbeatMemoryPass(userId, googleToken, now) {
   lastHeartbeatExtractAt[userId] = now.getTime();
   const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
   try {
-    const recentMessages = await db.select().from(telegramGroupMessages).where(and88(eq116(telegramGroupMessages.userId, userId), gte23(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc39(telegramGroupMessages.messageDate)).limit(20);
+    const recentMessages = await db.select().from(telegramGroupMessages).where(and88(eq116(telegramGroupMessages.userId, userId), gte23(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc40(telegramGroupMessages.messageDate)).limit(20);
     if (recentMessages.length > 0) {
       const text2 = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4e3);
       const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
@@ -79857,9 +80161,9 @@ function computeNextRun(recurrence, from) {
     if (dayIndex !== void 0) {
       const d = new Date(from);
       const currentDay = d.getDay();
-      let daysUntil = (dayIndex - currentDay + 7) % 7;
-      if (daysUntil === 0) daysUntil = 7;
-      d.setDate(d.getDate() + daysUntil);
+      let daysUntil2 = (dayIndex - currentDay + 7) % 7;
+      if (daysUntil2 === 0) daysUntil2 = 7;
+      d.setDate(d.getDate() + daysUntil2);
       const t = namedM[2] ? extractTimeFromRecurrence(`at ${namedM[2]}`) : null;
       return applyTime(d, t);
     }
@@ -80325,7 +80629,7 @@ async function runMorningPlanBuild() {
       }
       let injected = [];
       try {
-        injected = await getInjectableGoalTasks(user.id, today);
+        injected = await getInjectableGoalTasks(user.id, today, getPlanPacingContextFromTasks(newTasks));
       } catch (e) {
         console.error(`[Scheduler] goal injection lookup failed for ${user.id}:`, e);
       }
@@ -81587,13 +81891,13 @@ init_bridge();
 import fs25 from "fs";
 import path31 from "path";
 import { WebSocket as WebSocket3, WebSocketServer as WebSocketServer3 } from "ws";
-import { and as and99, desc as desc45, eq as eq128 } from "drizzle-orm";
+import { and as and99, desc as desc46, eq as eq128 } from "drizzle-orm";
 
 // server/gateway/devicePairing.ts
 init_db();
 init_schema();
 import { createHash as createHash8, randomBytes as randomBytes4 } from "crypto";
-import { and as and97, desc as desc42, eq as eq125, isNull as isNull6 } from "drizzle-orm";
+import { and as and97, desc as desc43, eq as eq125, isNull as isNull6 } from "drizzle-orm";
 var JWT_GATEWAY_SCOPES = [
   "operator.admin",
   "operator.read",
@@ -81665,7 +81969,7 @@ async function createGatewayPairingRequest({
   return row;
 }
 async function listGatewayPairingRequests(userId, limit = 25) {
-  return db.select().from(gatewayDevicePairingRequests).where(eq125(gatewayDevicePairingRequests.userId, userId)).orderBy(desc42(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
+  return db.select().from(gatewayDevicePairingRequests).where(eq125(gatewayDevicePairingRequests.userId, userId)).orderBy(desc43(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
 }
 async function approveGatewayPairingRequest({
   userId,
@@ -81709,7 +82013,7 @@ async function rejectGatewayPairingRequest(userId, requestId) {
   return { ok: true };
 }
 async function listGatewayDevices(userId, includeRevoked = false, limit = 50) {
-  const rows = await db.select().from(gatewayDevices).where(eq125(gatewayDevices.userId, userId)).orderBy(desc42(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
+  const rows = await db.select().from(gatewayDevices).where(eq125(gatewayDevices.userId, userId)).orderBy(desc43(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
   return rows.filter((device) => includeRevoked || !device.revokedAt).map((device) => ({ ...device, tokenHash: void 0 }));
 }
 async function revokeGatewayDevice(userId, deviceId) {
@@ -81723,7 +82027,7 @@ async function revokeGatewayDevice(userId, deviceId) {
 init_db();
 init_schema();
 import { EventEmitter as EventEmitter2 } from "events";
-import { desc as desc43, eq as eq126 } from "drizzle-orm";
+import { desc as desc44, eq as eq126 } from "drizzle-orm";
 var emitter = new EventEmitter2();
 emitter.setMaxListeners(100);
 function onGatewayEvent(listener) {
@@ -81753,9 +82057,9 @@ async function recordGatewayEvent(input2) {
   }
 }
 async function listGatewayEvents(userId, limit) {
-  const query = db.select().from(gatewayEvents).orderBy(desc43(gatewayEvents.createdAt)).limit(limit);
+  const query = db.select().from(gatewayEvents).orderBy(desc44(gatewayEvents.createdAt)).limit(limit);
   if (!userId) return query.catch(() => []);
-  return db.select().from(gatewayEvents).where(eq126(gatewayEvents.userId, userId)).orderBy(desc43(gatewayEvents.createdAt)).limit(limit).catch(() => []);
+  return db.select().from(gatewayEvents).where(eq126(gatewayEvents.userId, userId)).orderBy(desc44(gatewayEvents.createdAt)).limit(limit).catch(() => []);
 }
 
 // server/gateway/nodeRegistry.ts
@@ -81763,7 +82067,7 @@ init_db();
 init_registry();
 init_bridge();
 init_schema();
-import { and as and98, desc as desc44, eq as eq127, inArray as inArray11 } from "drizzle-orm";
+import { and as and98, desc as desc45, eq as eq127, inArray as inArray11 } from "drizzle-orm";
 var SERVER_CAPABILITIES = [
   "gateway.health",
   "gateway.status",
@@ -81840,8 +82144,8 @@ async function listGatewayNodes(userId, limit = 50) {
   }
   if (!userId) return nodes;
   const [gatewayDevices2, activeJobs] = await Promise.all([
-    db.select().from(gatewayDevices).where(eq127(gatewayDevices.userId, userId)).orderBy(desc44(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
-    db.select().from(agentJobs).where(and98(eq127(agentJobs.userId, userId), inArray11(agentJobs.status, ["queued", "running"]))).orderBy(desc44(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
+    db.select().from(gatewayDevices).where(eq127(gatewayDevices.userId, userId)).orderBy(desc45(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
+    db.select().from(agentJobs).where(and98(eq127(agentJobs.userId, userId), inArray11(agentJobs.status, ["queued", "running"]))).orderBy(desc45(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
   ]);
   for (const device of gatewayDevices2) {
     const scopes = device.scopes || [];
@@ -81987,7 +82291,7 @@ async function gatewayStatus(userId) {
     severity: diagnosticEvents.severity,
     message: diagnosticEvents.message,
     createdAt: diagnosticEvents.createdAt
-  }).from(diagnosticEvents).orderBy(desc45(diagnosticEvents.createdAt)).limit(10).catch(() => []);
+  }).from(diagnosticEvents).orderBy(desc46(diagnosticEvents.createdAt)).limit(10).catch(() => []);
   return {
     ok: true,
     service: "jarvis-gateway",
@@ -82016,7 +82320,7 @@ async function sessionState(userId, limit) {
       createdAt: agentChatSessions.createdAt,
       updatedAt: agentChatSessions.updatedAt,
       expiresAt: agentChatSessions.expiresAt
-    }).from(agentChatSessions).where(eq128(agentChatSessions.userId, userId)).orderBy(desc45(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
+    }).from(agentChatSessions).where(eq128(agentChatSessions.userId, userId)).orderBy(desc46(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
   ]);
   return { coachSessions, agentSessions };
 }
@@ -82042,9 +82346,9 @@ async function agentState(userId, limit) {
 }
 async function cronState(userId, limit) {
   const [scheduledTasks, workflows, jobs] = await Promise.all([
-    db.select().from(jarvisScheduledTasks).where(eq128(jarvisScheduledTasks.userId, userId)).orderBy(desc45(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentWorkflows).where(eq128(agentWorkflows.userId, userId)).orderBy(desc45(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
-    db.select().from(agentJobs).where(eq128(agentJobs.userId, userId)).orderBy(desc45(agentJobs.createdAt)).limit(limit).catch(() => [])
+    db.select().from(jarvisScheduledTasks).where(eq128(jarvisScheduledTasks.userId, userId)).orderBy(desc46(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentWorkflows).where(eq128(agentWorkflows.userId, userId)).orderBy(desc46(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
+    db.select().from(agentJobs).where(eq128(agentJobs.userId, userId)).orderBy(desc46(agentJobs.createdAt)).limit(limit).catch(() => [])
   ]);
   return { scheduledTasks, workflows, jobs };
 }
@@ -82187,7 +82491,7 @@ async function daemonTest(userId, params) {
 }
 async function approvalState(userId, limit) {
   const [gates, policies] = await Promise.all([
-    db.select().from(agentApprovalGates).where(eq128(agentApprovalGates.userId, userId)).orderBy(desc45(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentApprovalGates).where(eq128(agentApprovalGates.userId, userId)).orderBy(desc46(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
     db.select().from(agentApprovalPolicies).where(eq128(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { gates, policies };
@@ -82224,8 +82528,8 @@ async function skillState(userId, limit) {
 }
 async function logState(userId, limit) {
   const [diagnostics, selfHeal] = await Promise.all([
-    db.select().from(diagnosticEvents).orderBy(desc45(diagnosticEvents.createdAt)).limit(limit).catch(() => []),
-    db.select().from(selfHealAuditLog).orderBy(desc45(selfHealAuditLog.id)).limit(Math.min(limit, 25)).catch(() => [])
+    db.select().from(diagnosticEvents).orderBy(desc46(diagnosticEvents.createdAt)).limit(limit).catch(() => []),
+    db.select().from(selfHealAuditLog).orderBy(desc46(selfHealAuditLog.id)).limit(Math.min(limit, 25)).catch(() => [])
   ]);
   return { userScoped: Boolean(userId), diagnostics, selfHeal };
 }

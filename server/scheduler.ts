@@ -6,7 +6,12 @@ import { notifyUser, getActiveChannelsFor } from './channels/registry';
 import { logInteraction } from './interactionLog';
 import { isActionSuppressed } from './intelligence/actionLog';
 import { buildPlanForUser } from './routes';
-import { getInjectableGoalTasks, markTasksInjected, type InjectableGoalTask } from './goalScheduler';
+import {
+  getInjectableGoalTasks,
+  getPlanPacingContextFromTasks,
+  markTasksInjected,
+  type InjectableGoalTask,
+} from './goalScheduler';
 import { enqueueWeeklyPatternJobs } from './memory/weeklyJob';
 import { matchesCron, runSchedule } from './discord/schedules';
 import { buildDailyDigest } from './discord/digest';
@@ -962,11 +967,11 @@ export async function runMorningPlanBuild() {
         console.log(`[Scheduler] AI plan/task suggestions suppressed for user ${user.id} (self-correction) — using goal-tree injection only`);
       }
 
-      const newTasks: Array<{
+      const newTasks: {
         id: string; title: string; category: string; priority: string;
         duration: number; time: string | undefined; description: string | undefined;
         completed: boolean; createdAt: number; fromJarvis: boolean;
-      }> = [];
+      }[] = [];
 
       let planReasoning = "";
       // aiGeneratedTaskIds tracks only tasks from buildPlanForUser for Ego logging,
@@ -1001,13 +1006,13 @@ export async function runMorningPlanBuild() {
       // Pacing is enforced inside getInjectableGoalTasks.
       let injected: InjectableGoalTask[] = [];
       try {
-        injected = await getInjectableGoalTasks(user.id, today);
+        injected = await getInjectableGoalTasks(user.id, today, getPlanPacingContextFromTasks(newTasks));
       } catch (e) {
         console.error(`[Scheduler] goal injection lookup failed for ${user.id}:`, e);
       }
       for (const pick of injected) {
         const minutes = Math.max(15, Math.round((pick.estimateHours || 1) * 60));
-        (newTasks as Array<typeof newTasks[number] & { goalTreeId?: string; goalTaskId?: string }>).push({
+        (newTasks as (typeof newTasks[number] & { goalTreeId?: string; goalTaskId?: string })[]).push({
           id: `goal_${pick.taskId}_${today}`,
           title: pick.title,
           category: 'goal',
