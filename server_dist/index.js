@@ -82266,6 +82266,87 @@ function registerGatewayControlPlane(app2, server) {
 
 // server/index.ts
 init_voiceRelayRoutes();
+
+// server/telegramCodexProxy.ts
+var DEFAULT_PROXY_PATH = "/telegram-codex";
+var DEFAULT_TARGET = "http://127.0.0.1:8787";
+var LOCAL_TARGET_HOSTS = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "::1"]);
+function registerTelegramCodexProxy(app2) {
+  const enabled = process.env.TELEGRAM_CODEX_PROXY_ENABLED === "true" || Boolean(process.env.TELEGRAM_CODEX_PROXY_TARGET);
+  if (!enabled) return;
+  const proxyPath = normalizeProxyPath(
+    process.env.TELEGRAM_CODEX_PROXY_PATH || DEFAULT_PROXY_PATH
+  );
+  const target = new URL(process.env.TELEGRAM_CODEX_PROXY_TARGET || DEFAULT_TARGET);
+  if (!LOCAL_TARGET_HOSTS.has(target.hostname) && process.env.TELEGRAM_CODEX_PROXY_ALLOW_REMOTE !== "true") {
+    throw new Error(
+      `Refusing non-local TELEGRAM_CODEX_PROXY_TARGET host: ${target.hostname}`
+    );
+  }
+  app2.use(proxyPath, async (req, res, next) => {
+    try {
+      await proxyTelegramCodexRequest(req, res, target);
+    } catch (error) {
+      next(error);
+    }
+  });
+  console.log(`[TelegramCodeX] Proxy mounted at ${proxyPath} -> ${target.origin}`);
+}
+async function proxyTelegramCodexRequest(req, res, target) {
+  const upstreamUrl = new URL(req.originalUrl, target);
+  const headers = proxiedRequestHeaders(req);
+  const body = proxiedRequestBody(req);
+  if (req.headers.host) headers.set("x-forwarded-host", String(req.headers.host));
+  headers.set("x-forwarded-proto", req.protocol || "http");
+  if (body) headers.set("content-length", String(body.length));
+  const init = {
+    method: req.method,
+    headers,
+    redirect: "manual"
+  };
+  if (body) {
+    init.body = body;
+  }
+  const upstream = await fetch(upstreamUrl, init);
+  res.status(upstream.status);
+  upstream.headers.forEach((value, key) => {
+    const lower = key.toLowerCase();
+    if (lower === "transfer-encoding" || lower === "content-encoding") return;
+    res.setHeader(key, value);
+  });
+  res.end(Buffer.from(await upstream.arrayBuffer()));
+}
+function proxiedRequestHeaders(req) {
+  const headers = new Headers();
+  for (const [key, value] of Object.entries(req.headers)) {
+    if (!value) continue;
+    const lower = key.toLowerCase();
+    if (lower === "host" || lower === "content-length" || lower === "connection" || lower === "transfer-encoding" || lower === "accept-encoding") {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(key, item);
+    } else {
+      headers.set(key, String(value));
+    }
+  }
+  return headers;
+}
+function proxiedRequestBody(req) {
+  if (req.method === "GET" || req.method === "HEAD") return void 0;
+  const rawBody = req.rawBody;
+  if (Buffer.isBuffer(rawBody)) return rawBody;
+  if (req.body && Object.keys(req.body).length > 0) {
+    return Buffer.from(JSON.stringify(req.body));
+  }
+  return void 0;
+}
+function normalizeProxyPath(value) {
+  const trimmed = value.trim().replace(/^\/+|\/+$/g, "");
+  return trimmed ? `/${trimmed}` : DEFAULT_PROXY_PATH;
+}
+
+// server/index.ts
 init_manager();
 init_applyCodeChangeTool();
 init_schema();
@@ -82583,6 +82664,7 @@ function setupErrorHandler(app2) {
   setupCors(app);
   setupBodyParsing(app);
   setupRequestLogging(app);
+  registerTelegramCodexProxy(app);
   configureExpoAndLanding(app);
   registerTelegramWebhook(app);
   registerWhatsAppWebhook(app);
