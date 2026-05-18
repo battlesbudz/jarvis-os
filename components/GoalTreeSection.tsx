@@ -16,6 +16,12 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { apiRequest } from '@/lib/query-client';
 import { goalTaskIsInPlan } from '@/lib/goalPlanStatus';
+import {
+  analyzeGoalTreeUi,
+  getTaskDueLabel,
+  getTaskUiState,
+  type GoalTreeUiTaskState,
+} from '@/lib/goalTreeUi';
 
 type TaskStatus = 'ready' | 'in_progress' | 'blocked' | 'complete';
 type TreeStatus = 'ready' | 'in_progress' | 'complete';
@@ -27,6 +33,7 @@ interface TreeTask {
   estimateHours?: number;
   status: TaskStatus;
   dueDate?: string;
+  injectedOnDates?: string[];
 }
 
 interface TreeMilestone {
@@ -100,35 +107,28 @@ function statusLabel(status: string): string {
   return status.replace('_', ' ');
 }
 
-function summarize(phases: TreePhase[]) {
-  let total = 0;
-  let done = 0;
-  let active = 0;
-  let blocked = 0;
-  let nextTask: TreeTask | null = null;
+function formatGeneratedAt(value: string | undefined): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
 
-  for (const phase of phases) {
-    for (const milestone of phase.milestones) {
-      for (const task of milestone.tasks) {
-        total += 1;
-        if (task.status === 'complete') done += 1;
-        if (task.status === 'in_progress') active += 1;
-        if (task.status === 'blocked') blocked += 1;
-        if (!nextTask && (task.status === 'in_progress' || task.status === 'ready')) {
-          nextTask = task;
-        }
-      }
-    }
-  }
+function taskStateLabel(state: GoalTreeUiTaskState): string | null {
+  if (state === 'overdue') return 'Overdue';
+  if (state === 'due_today') return 'Due today';
+  if (state === 'current') return 'Current';
+  if (state === 'next') return 'Next';
+  return null;
+}
 
-  return {
-    total,
-    done,
-    active,
-    blocked,
-    percent: total === 0 ? 0 : Math.round((done / total) * 100),
-    nextTask,
-  };
+function taskStateColor(state: GoalTreeUiTaskState): string {
+  if (state === 'overdue') return Colors.error;
+  if (state === 'due_today') return Colors.warning;
+  if (state === 'current') return Colors.primary;
+  if (state === 'next') return Colors.cyan;
+  if (state === 'complete') return Colors.success;
+  return Colors.textSecondary;
 }
 
 export default function GoalTreeSection({ goalId, goalTitle }: Props) {
@@ -136,6 +136,8 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [handoffTaskId, setHandoffTaskId] = useState<string | null>(null);
+  const [collapsedPhaseIds, setCollapsedPhaseIds] = useState<Set<string>>(() => new Set());
+  const [reviewVisible, setReviewVisible] = useState(false);
 
   const jobsQuery = useQuery<JobRow[]>({
     queryKey: ['/api/agent-jobs'],
@@ -217,8 +219,23 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
     Haptics.selectionAsync();
   }, []);
 
+  const togglePhase = useCallback((phaseId: string) => {
+    setCollapsedPhaseIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(phaseId)) {
+        next.delete(phaseId);
+      } else {
+        next.add(phaseId);
+      }
+      return next;
+    });
+    Haptics.selectionAsync();
+  }, []);
+
   const phases = tree?.tree.phases || [];
-  const summary = summarize(phases);
+  const analysis = analyzeGoalTreeUi(phases, todayKey);
+  const summary = analysis.summary;
+  const generatedAtLabel = formatGeneratedAt(tree?.tree.generatedAt);
   const canAddToToday = (task: TreeTask): boolean => task.status === 'ready' || task.status === 'in_progress';
   const isTaskInToday = (task: TreeTask): boolean => {
     if (!tree) return false;
@@ -227,6 +244,15 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
   const addTaskToToday = (task: TreeTask) => {
     if (!canAddToToday(task) || isTaskInToday(task) || addToTodayMutation.isPending) return;
     addToTodayMutation.mutate(task.id);
+  };
+  const movePhase = (phaseId: string, direction: 'up' | 'down') => {
+    editMutation.mutate({ type: 'move_phase', phaseId, direction });
+  };
+  const moveMilestone = (phaseId: string, milestoneId: string, direction: 'up' | 'down') => {
+    editMutation.mutate({ type: 'move_milestone', phaseId, milestoneId, direction });
+  };
+  const moveTask = (phaseId: string, milestoneId: string, taskId: string, direction: 'up' | 'down') => {
+    editMutation.mutate({ type: 'move_task', phaseId, milestoneId, taskId, direction });
   };
 
   const openAddPhase = () => {
@@ -443,6 +469,7 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
           </Text>
           <Text style={styles.headerSubtext} numberOfLines={1}>
             {phases.length} phase{phases.length === 1 ? '' : 's'} / {summary.done}/{summary.total} tasks done
+            {summary.overdue > 0 ? ` / ${summary.overdue} overdue` : ''}
           </Text>
         </View>
         <Ionicons
@@ -457,26 +484,49 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${summary.percent}%` }]} />
           </View>
-          {summary.nextTask && (
+          <View style={styles.reviewStrip}>
+            <View style={styles.reviewStat}>
+              <Text style={styles.reviewValue}>{summary.active + summary.ready}</Text>
+              <Text style={styles.reviewLabel}>open</Text>
+            </View>
+            <View style={styles.reviewStat}>
+              <Text style={[styles.reviewValue, summary.overdue > 0 && styles.reviewValueWarning]}>
+                {summary.overdue}
+              </Text>
+              <Text style={styles.reviewLabel}>overdue</Text>
+            </View>
+            <View style={styles.reviewStat}>
+              <Text style={styles.reviewValue}>{analysis.handoffHistory.length}</Text>
+              <Text style={styles.reviewLabel}>handed off</Text>
+            </View>
+            {!!generatedAtLabel && (
+              <View style={styles.reviewStat}>
+                <Text style={styles.reviewValueSmall}>{generatedAtLabel}</Text>
+                <Text style={styles.reviewLabel}>generated</Text>
+              </View>
+            )}
+          </View>
+
+          {analysis.nextTask && (
             <View style={styles.nextTaskBox}>
               <Ionicons name="navigate-circle-outline" size={16} color={Colors.primary} />
               <Text style={styles.nextTaskText} numberOfLines={2}>
-                Next: {summary.nextTask.title}
+                Next: {analysis.nextTask.title}
               </Text>
               <Pressable
-                onPress={() => addTaskToToday(summary.nextTask!)}
-                disabled={isTaskInToday(summary.nextTask) || addToTodayMutation.isPending}
+                onPress={() => addTaskToToday(analysis.nextTask!)}
+                disabled={isTaskInToday(analysis.nextTask) || addToTodayMutation.isPending}
                 style={({ pressed }) => [
                   styles.todayBtn,
-                  isTaskInToday(summary.nextTask!) && styles.todayBtnActive,
+                  isTaskInToday(analysis.nextTask!) && styles.todayBtnActive,
                   pressed && { opacity: 0.75 },
                   addToTodayMutation.isPending && styles.disabledBtn,
                 ]}
                 testID={`add-next-task-today-${goalId}`}
               >
-                {handoffTaskId === summary.nextTask.id ? (
+                {handoffTaskId === analysis.nextTask.id ? (
                   <ActivityIndicator size="small" color={Colors.primary} />
-                ) : isTaskInToday(summary.nextTask) ? (
+                ) : isTaskInToday(analysis.nextTask) ? (
                   <>
                     <Ionicons name="checkmark-circle-outline" size={13} color={Colors.success} />
                     <Text style={[styles.todayBtnText, styles.todayBtnTextActive]}>In today</Text>
@@ -493,114 +543,274 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
           {addToTodayMutation.isError && (
             <Text style={styles.errorText}>Could not add that task to today.</Text>
           )}
-          {tree!.tree.rationale && <Text style={styles.rationale}>{tree!.tree.rationale}</Text>}
-
-          {phases.map((phase, pi) => (
-            <View key={phase.id} style={styles.phase}>
-              <Pressable
-                onPress={() => openEditPhase(phase)}
-                style={({ pressed }) => [styles.phaseHeader, pressed && styles.pressedRow]}
-                testID={`edit-phase-${phase.id}`}
-              >
-                <View style={[styles.statusPill, { borderColor: STATUS_COLOR[phase.status] }]}>
-                  <Text style={[styles.statusPillText, { color: STATUS_COLOR[phase.status] }]}>
-                    {statusLabel(phase.status)}
+          {analysis.handoffHistory.length > 0 && (
+            <View style={styles.handoffHistory}>
+              <Text style={styles.handoffHistoryTitle}>Recent daily handoffs</Text>
+              {analysis.handoffHistory.slice(0, 3).map((item) => (
+                <View key={`${item.taskId}-${item.date}`} style={styles.handoffHistoryRow}>
+                  <Ionicons name="calendar-outline" size={13} color={Colors.textSecondary} />
+                  <Text style={styles.handoffHistoryText} numberOfLines={1}>
+                    {item.date}: {item.taskTitle}
                   </Text>
                 </View>
-                <Text style={styles.phaseTitle} numberOfLines={2}>
-                  {pi + 1}. {phase.title}
-                </Text>
-                <Ionicons name="create-outline" size={15} color={Colors.textSecondary} />
-              </Pressable>
-
-              {phase.milestones.map((milestone) => (
-                <View key={milestone.id} style={styles.milestone}>
-                  <Pressable
-                    onPress={() => openEditMilestone(phase.id, milestone)}
-                    style={({ pressed }) => [styles.milestoneHeader, pressed && styles.pressedRow]}
-                    testID={`edit-milestone-${milestone.id}`}
-                  >
-                    <View style={[styles.dot, { backgroundColor: STATUS_COLOR[milestone.status] || Colors.textTertiary }]} />
-                    <Text style={styles.milestoneTitle} numberOfLines={2}>
-                      {milestone.title}
-                    </Text>
-                    <Ionicons name="create-outline" size={14} color={Colors.textSecondary} />
-                  </Pressable>
-
-                  {milestone.tasks.map((task) => (
-                    <Pressable
-                      key={task.id}
-                      onPress={() => openEditTask(phase.id, milestone.id, task)}
-                      style={({ pressed }) => [styles.task, pressed && styles.pressedRow]}
-                      testID={`edit-task-${task.id}`}
-                    >
-                      <View style={[styles.dot, { backgroundColor: STATUS_COLOR[task.status] || Colors.textTertiary }]} />
-                      <Text
-                        style={[styles.taskText, task.status === 'complete' && styles.taskDone]}
-                        numberOfLines={2}
-                      >
-                        {task.title}
-                        {task.estimateHours ? `  /  ~${task.estimateHours}h` : ''}
-                      </Text>
-                      {canAddToToday(task) && (
-                        <Pressable
-                          onPress={(event) => {
-                            event.stopPropagation();
-                            addTaskToToday(task);
-                          }}
-                          disabled={isTaskInToday(task) || addToTodayMutation.isPending}
-                          style={({ pressed }) => [
-                            styles.taskTodayChip,
-                            isTaskInToday(task) && styles.taskTodayChipActive,
-                            pressed && { opacity: 0.75 },
-                            addToTodayMutation.isPending && styles.disabledBtn,
-                          ]}
-                          testID={`add-task-today-${task.id}`}
-                        >
-                          {handoffTaskId === task.id ? (
-                            <ActivityIndicator size="small" color={Colors.primary} />
-                          ) : isTaskInToday(task) ? (
-                            <>
-                              <Ionicons name="checkmark-circle-outline" size={13} color={Colors.success} />
-                              <Text style={[styles.taskTodayChipText, styles.taskTodayChipTextActive]}>
-                                In today
-                              </Text>
-                            </>
-                          ) : (
-                            <>
-                              <Ionicons name="calendar-outline" size={13} color={Colors.primary} />
-                              <Text style={styles.taskTodayChipText}>Today</Text>
-                            </>
-                          )}
-                        </Pressable>
-                      )}
-                      <Ionicons name="create-outline" size={13} color={Colors.textTertiary} />
-                    </Pressable>
-                  ))}
-
-                  <Pressable
-                    onPress={() => openAddTask(phase.id, milestone.id)}
-                    style={({ pressed }) => [styles.inlineAddBtn, pressed && { opacity: 0.75 }]}
-                    testID={`add-task-${milestone.id}`}
-                  >
-                    <Ionicons name="add" size={14} color={Colors.primary} />
-                    <Text style={styles.inlineAddText}>Task</Text>
-                  </Pressable>
-                </View>
               ))}
-
-              <Pressable
-                onPress={() => openAddMilestone(phase.id)}
-                style={({ pressed }) => [styles.inlineAddBtn, pressed && { opacity: 0.75 }]}
-                testID={`add-milestone-${phase.id}`}
-              >
-                <Ionicons name="add-circle-outline" size={14} color={Colors.primary} />
-                <Text style={styles.inlineAddText}>Milestone</Text>
-              </Pressable>
             </View>
-          ))}
+          )}
+          {tree!.tree.rationale && <Text style={styles.rationale}>{tree!.tree.rationale}</Text>}
+
+          {phases.map((phase, pi) => {
+            const phaseCollapsed = collapsedPhaseIds.has(phase.id);
+            const phaseIsCurrent = analysis.currentPhaseId === phase.id;
+            const phaseOpenTasks = phase.milestones.reduce(
+              (count, milestone) => count + milestone.tasks.filter((task) => task.status !== 'complete').length,
+              0,
+            );
+            return (
+              <View key={phase.id} style={[styles.phase, phaseIsCurrent && styles.phaseCurrent]}>
+                <View style={styles.phaseHeader}>
+                  <Pressable
+                    onPress={() => togglePhase(phase.id)}
+                    style={({ pressed }) => [styles.phaseToggle, pressed && styles.pressedRow]}
+                    testID={`toggle-phase-${phase.id}`}
+                  >
+                    <Ionicons
+                      name={phaseCollapsed ? 'chevron-forward' : 'chevron-down'}
+                      size={14}
+                      color={Colors.textSecondary}
+                    />
+                    <View style={[styles.statusPill, { borderColor: STATUS_COLOR[phase.status] }]}>
+                      <Text style={[styles.statusPillText, { color: STATUS_COLOR[phase.status] }]}>
+                        {phaseIsCurrent ? 'current' : statusLabel(phase.status)}
+                      </Text>
+                    </View>
+                    <View style={styles.phaseTitleWrap}>
+                      <Text style={styles.phaseTitle} numberOfLines={2}>
+                        {pi + 1}. {phase.title}
+                      </Text>
+                      <Text style={styles.phaseMeta} numberOfLines={1}>
+                        {phaseOpenTasks} open task{phaseOpenTasks === 1 ? '' : 's'}
+                      </Text>
+                    </View>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => openEditPhase(phase)}
+                    style={({ pressed }) => [styles.rowIconBtn, pressed && { opacity: 0.75 }]}
+                    testID={`edit-phase-${phase.id}`}
+                  >
+                    <Ionicons name="create-outline" size={15} color={Colors.textSecondary} />
+                  </Pressable>
+                  <View style={styles.reorderButtons}>
+                    <Pressable
+                      onPress={() => movePhase(phase.id, 'up')}
+                      disabled={pi === 0 || editMutation.isPending}
+                      style={({ pressed }) => [
+                        styles.reorderBtn,
+                        (pi === 0 || editMutation.isPending) && styles.disabledBtn,
+                        pressed && { opacity: 0.75 },
+                      ]}
+                      testID={`move-phase-up-${phase.id}`}
+                    >
+                      <Ionicons name="arrow-up" size={12} color={Colors.textSecondary} />
+                    </Pressable>
+                    <Pressable
+                      onPress={() => movePhase(phase.id, 'down')}
+                      disabled={pi === phases.length - 1 || editMutation.isPending}
+                      style={({ pressed }) => [
+                        styles.reorderBtn,
+                        (pi === phases.length - 1 || editMutation.isPending) && styles.disabledBtn,
+                        pressed && { opacity: 0.75 },
+                      ]}
+                      testID={`move-phase-down-${phase.id}`}
+                    >
+                      <Ionicons name="arrow-down" size={12} color={Colors.textSecondary} />
+                    </Pressable>
+                  </View>
+                </View>
+
+                {!phaseCollapsed && (
+                  <>
+                    {phase.milestones.map((milestone, mi) => (
+                      <View key={milestone.id} style={styles.milestone}>
+                        <View style={styles.milestoneHeader}>
+                          <Pressable
+                            onPress={() => openEditMilestone(phase.id, milestone)}
+                            style={({ pressed }) => [styles.milestoneTitleBtn, pressed && styles.pressedRow]}
+                            testID={`edit-milestone-${milestone.id}`}
+                          >
+                            <View style={[styles.dot, { backgroundColor: STATUS_COLOR[milestone.status] || Colors.textTertiary }]} />
+                            <Text style={styles.milestoneTitle} numberOfLines={2}>
+                              {milestone.title}
+                            </Text>
+                            {analysis.currentMilestoneId === milestone.id && (
+                              <View style={styles.miniStateChip}>
+                                <Text style={styles.miniStateChipText}>Current</Text>
+                              </View>
+                            )}
+                          </Pressable>
+                          <Pressable
+                            onPress={() => openEditMilestone(phase.id, milestone)}
+                            style={({ pressed }) => [styles.rowIconBtn, pressed && { opacity: 0.75 }]}
+                            testID={`edit-milestone-icon-${milestone.id}`}
+                          >
+                            <Ionicons name="create-outline" size={14} color={Colors.textSecondary} />
+                          </Pressable>
+                          <View style={styles.reorderButtons}>
+                            <Pressable
+                              onPress={() => moveMilestone(phase.id, milestone.id, 'up')}
+                              disabled={mi === 0 || editMutation.isPending}
+                              style={({ pressed }) => [
+                                styles.reorderBtn,
+                                (mi === 0 || editMutation.isPending) && styles.disabledBtn,
+                                pressed && { opacity: 0.75 },
+                              ]}
+                              testID={`move-milestone-up-${milestone.id}`}
+                            >
+                              <Ionicons name="arrow-up" size={12} color={Colors.textSecondary} />
+                            </Pressable>
+                            <Pressable
+                              onPress={() => moveMilestone(phase.id, milestone.id, 'down')}
+                              disabled={mi === phase.milestones.length - 1 || editMutation.isPending}
+                              style={({ pressed }) => [
+                                styles.reorderBtn,
+                                (mi === phase.milestones.length - 1 || editMutation.isPending) && styles.disabledBtn,
+                                pressed && { opacity: 0.75 },
+                              ]}
+                              testID={`move-milestone-down-${milestone.id}`}
+                            >
+                              <Ionicons name="arrow-down" size={12} color={Colors.textSecondary} />
+                            </Pressable>
+                          </View>
+                        </View>
+
+                        {milestone.tasks.map((task, ti) => {
+                          const taskState = getTaskUiState(task, todayKey, analysis.nextTask?.id === task.id);
+                          const taskChipLabel = taskStateLabel(taskState) || getTaskDueLabel(task.dueDate, todayKey);
+                          const chipColor = taskStateColor(taskState);
+                          return (
+                            <Pressable
+                              key={task.id}
+                              onPress={() => openEditTask(phase.id, milestone.id, task)}
+                              style={({ pressed }) => [styles.task, pressed && styles.pressedRow]}
+                              testID={`edit-task-${task.id}`}
+                            >
+                              <View style={[styles.dot, { backgroundColor: STATUS_COLOR[task.status] || Colors.textTertiary }]} />
+                              <Text
+                                style={[styles.taskText, task.status === 'complete' && styles.taskDone]}
+                                numberOfLines={2}
+                              >
+                                {task.title}
+                                {task.estimateHours ? `  /  ~${task.estimateHours}h` : ''}
+                              </Text>
+                              {!!taskChipLabel && (
+                                <View style={[styles.taskStateChip, { borderColor: chipColor + '66', backgroundColor: chipColor + '12' }]}>
+                                  <Text style={[styles.taskStateChipText, { color: chipColor }]}>
+                                    {taskChipLabel}
+                                  </Text>
+                                </View>
+                              )}
+                              <View style={styles.reorderButtons}>
+                                <Pressable
+                                  onPress={(event) => {
+                                    event.stopPropagation();
+                                    moveTask(phase.id, milestone.id, task.id, 'up');
+                                  }}
+                                  disabled={ti === 0 || editMutation.isPending}
+                                  style={({ pressed }) => [
+                                    styles.reorderBtn,
+                                    (ti === 0 || editMutation.isPending) && styles.disabledBtn,
+                                    pressed && { opacity: 0.75 },
+                                  ]}
+                                  testID={`move-task-up-${task.id}`}
+                                >
+                                  <Ionicons name="arrow-up" size={12} color={Colors.textSecondary} />
+                                </Pressable>
+                                <Pressable
+                                  onPress={(event) => {
+                                    event.stopPropagation();
+                                    moveTask(phase.id, milestone.id, task.id, 'down');
+                                  }}
+                                  disabled={ti === milestone.tasks.length - 1 || editMutation.isPending}
+                                  style={({ pressed }) => [
+                                    styles.reorderBtn,
+                                    (ti === milestone.tasks.length - 1 || editMutation.isPending) && styles.disabledBtn,
+                                    pressed && { opacity: 0.75 },
+                                  ]}
+                                  testID={`move-task-down-${task.id}`}
+                                >
+                                  <Ionicons name="arrow-down" size={12} color={Colors.textSecondary} />
+                                </Pressable>
+                              </View>
+                              {canAddToToday(task) && (
+                                <Pressable
+                                  onPress={(event) => {
+                                    event.stopPropagation();
+                                    addTaskToToday(task);
+                                  }}
+                                  disabled={isTaskInToday(task) || addToTodayMutation.isPending}
+                                  style={({ pressed }) => [
+                                    styles.taskTodayChip,
+                                    isTaskInToday(task) && styles.taskTodayChipActive,
+                                    pressed && { opacity: 0.75 },
+                                    addToTodayMutation.isPending && styles.disabledBtn,
+                                  ]}
+                                  testID={`add-task-today-${task.id}`}
+                                >
+                                  {handoffTaskId === task.id ? (
+                                    <ActivityIndicator size="small" color={Colors.primary} />
+                                  ) : isTaskInToday(task) ? (
+                                    <>
+                                      <Ionicons name="checkmark-circle-outline" size={13} color={Colors.success} />
+                                      <Text style={[styles.taskTodayChipText, styles.taskTodayChipTextActive]}>
+                                        In today
+                                      </Text>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Ionicons name="calendar-outline" size={13} color={Colors.primary} />
+                                      <Text style={styles.taskTodayChipText}>Today</Text>
+                                    </>
+                                  )}
+                                </Pressable>
+                              )}
+                              <Ionicons name="create-outline" size={13} color={Colors.textTertiary} />
+                            </Pressable>
+                          );
+                        })}
+
+                        <Pressable
+                          onPress={() => openAddTask(phase.id, milestone.id)}
+                          style={({ pressed }) => [styles.inlineAddBtn, pressed && { opacity: 0.75 }]}
+                          testID={`add-task-${milestone.id}`}
+                        >
+                          <Ionicons name="add" size={14} color={Colors.primary} />
+                          <Text style={styles.inlineAddText}>Task</Text>
+                        </Pressable>
+                      </View>
+                    ))}
+
+                    <Pressable
+                      onPress={() => openAddMilestone(phase.id)}
+                      style={({ pressed }) => [styles.inlineAddBtn, pressed && { opacity: 0.75 }]}
+                      testID={`add-milestone-${phase.id}`}
+                    >
+                      <Ionicons name="add-circle-outline" size={14} color={Colors.primary} />
+                      <Text style={styles.inlineAddText}>Milestone</Text>
+                    </Pressable>
+                  </>
+                )}
+              </View>
+            );
+          })}
 
           <View style={styles.footerActions}>
+            <Pressable
+              onPress={() => setReviewVisible(true)}
+              style={({ pressed }) => [styles.footerBtn, pressed && { opacity: 0.85 }]}
+              testID={`review-tree-${goalId}`}
+            >
+              <Ionicons name="reader-outline" size={14} color={Colors.primary} />
+              <Text style={styles.footerBtnText}>Review plan</Text>
+            </Pressable>
             <Pressable
               onPress={openAddPhase}
               style={({ pressed }) => [styles.footerBtn, pressed && { opacity: 0.85 }]}
@@ -621,6 +831,85 @@ export default function GoalTreeSection({ goalId, goalTitle }: Props) {
           </View>
         </View>
       )}
+
+      <Modal
+        visible={reviewVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setReviewVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <View>
+                <Text style={styles.modalEyebrow}>{goalTitle}</Text>
+                <Text style={styles.modalTitle}>Review generated plan</Text>
+              </View>
+              <Pressable
+                onPress={() => setReviewVisible(false)}
+                style={({ pressed }) => [styles.iconBtn, pressed && { opacity: 0.7 }]}
+              >
+                <Ionicons name="close" size={20} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            <ScrollView style={styles.modalBody}>
+              <View style={styles.reviewModalGrid}>
+                <View style={styles.reviewModalStat}>
+                  <Text style={styles.reviewValue}>{summary.percent}%</Text>
+                  <Text style={styles.reviewLabel}>complete</Text>
+                </View>
+                <View style={styles.reviewModalStat}>
+                  <Text style={styles.reviewValue}>{summary.active + summary.ready}</Text>
+                  <Text style={styles.reviewLabel}>open</Text>
+                </View>
+                <View style={styles.reviewModalStat}>
+                  <Text style={[styles.reviewValue, summary.overdue > 0 && styles.reviewValueWarning]}>
+                    {summary.overdue}
+                  </Text>
+                  <Text style={styles.reviewLabel}>overdue</Text>
+                </View>
+              </View>
+
+              {!!analysis.nextTask && (
+                <View style={styles.reviewModalSection}>
+                  <Text style={styles.reviewModalTitle}>Next useful action</Text>
+                  <Text style={styles.reviewModalText}>{analysis.nextTask.title}</Text>
+                </View>
+              )}
+
+              {!!tree!.tree.rationale && (
+                <View style={styles.reviewModalSection}>
+                  <Text style={styles.reviewModalTitle}>Plan rationale</Text>
+                  <Text style={styles.reviewModalText}>{tree!.tree.rationale}</Text>
+                </View>
+              )}
+
+              <View style={styles.reviewModalSection}>
+                <Text style={styles.reviewModalTitle}>Recent handoffs</Text>
+                {analysis.handoffHistory.length > 0 ? (
+                  analysis.handoffHistory.slice(0, 5).map((item) => (
+                    <Text key={`${item.taskId}-${item.date}`} style={styles.reviewModalText}>
+                      {item.date}: {item.taskTitle}
+                    </Text>
+                  ))
+                ) : (
+                  <Text style={styles.reviewModalText}>No goal tasks have been handed off yet.</Text>
+                )}
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => setReviewVisible(false)}
+                style={({ pressed }) => [styles.saveBtn, pressed && { opacity: 0.9 }]}
+              >
+                <Text style={styles.saveBtnText}>Done</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={!!editor}
@@ -811,6 +1100,73 @@ const styles = StyleSheet.create({
     borderRadius: 3,
     backgroundColor: Colors.primary,
   },
+  reviewStrip: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  reviewStat: {
+    minWidth: 70,
+    flexGrow: 1,
+    borderRadius: 9,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceAlt,
+    paddingVertical: 8,
+    paddingHorizontal: 9,
+  },
+  reviewValue: {
+    fontSize: 16,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  reviewValueWarning: {
+    color: Colors.error,
+  },
+  reviewValueSmall: {
+    fontSize: 13,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  reviewLabel: {
+    marginTop: 2,
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+  },
+  reviewModalGrid: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  reviewModalStat: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceAlt,
+    padding: 10,
+  },
+  reviewModalSection: {
+    gap: 6,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: 12,
+    marginTop: 12,
+  },
+  reviewModalTitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    textTransform: 'uppercase',
+  },
+  reviewModalText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 18,
+  },
   nextTaskBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -860,11 +1216,39 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontStyle: 'italic',
   },
+  handoffHistory: {
+    gap: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surfaceAlt,
+    padding: 10,
+  },
+  handoffHistoryTitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    textTransform: 'uppercase',
+  },
+  handoffHistoryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  handoffHistoryText: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
   phase: {
     gap: 6,
     borderLeftWidth: 1,
     borderLeftColor: Colors.border,
     paddingLeft: 10,
+  },
+  phaseCurrent: {
+    borderLeftColor: Colors.primary,
   },
   phaseHeader: {
     flexDirection: 'row',
@@ -872,12 +1256,51 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 4,
   },
+  phaseToggle: {
+    flex: 1,
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 8,
+  },
+  phaseTitleWrap: {
+    flex: 1,
+  },
   phaseTitle: {
     flex: 1,
     fontSize: 14,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
     lineHeight: 19,
+  },
+  phaseMeta: {
+    marginTop: 1,
+    fontSize: 10,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+  },
+  rowIconBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surfaceAlt,
+  },
+  reorderButtons: {
+    flexDirection: 'row',
+    gap: 3,
+  },
+  reorderBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: Colors.border,
   },
   statusPill: {
     borderWidth: 1,
@@ -901,12 +1324,32 @@ const styles = StyleSheet.create({
     gap: 8,
     paddingVertical: 3,
   },
+  milestoneTitleBtn: {
+    flex: 1,
+    minHeight: 28,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    borderRadius: 8,
+  },
   milestoneTitle: {
     flex: 1,
     fontSize: 13,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.textSecondary,
     lineHeight: 18,
+  },
+  miniStateChip: {
+    borderRadius: 999,
+    backgroundColor: Colors.primary + '12',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+  },
+  miniStateChipText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.primary,
+    textTransform: 'uppercase',
   },
   task: {
     flexDirection: 'row',
@@ -931,6 +1374,18 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.text,
     lineHeight: 17,
+  },
+  taskStateChip: {
+    minHeight: 24,
+    justifyContent: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 7,
+  },
+  taskStateChipText: {
+    fontSize: 9,
+    fontFamily: 'Inter_700Bold',
+    textTransform: 'uppercase',
   },
   taskDone: {
     textDecorationLine: 'line-through',

@@ -180,7 +180,8 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Goal pacing now falls back to recent energy patterns when today's energy check-in is missing
 - [x] Goal pacing now reduces task pressure on already-heavy plan days and weak same-weekday completion patterns
 - [x] Goal pacing now reacts to near-term goal/commitment deadlines and timed/calendar-heavy daily plans
-- [ ] Finish advanced project-tree UX polish: reorder controls, generated-plan review, and richer handoff history
+- [x] Project trees now show phase collapse controls, current/overdue/next task states, a generated-plan review strip, and recent daily handoff history
+- [x] Finish advanced project-tree UX polish: reorder controls and deeper generated-plan review controls
 - [ ] Replace timed-task calendar-load proxy with first-class persisted calendar-event density once calendar workload is stored consistently
 
 ### 3.2 - Background Job Runner
