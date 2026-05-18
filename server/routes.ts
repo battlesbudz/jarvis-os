@@ -3445,6 +3445,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
         : "";
       const isDiagnosticsRequest = toolAwareRoute.intents.includes("diagnostics");
+      const isResearchRequest = toolAwareRoute.intents.includes("research");
+      const useToolFocusedLoop = isResearchRequest || isDiagnosticsRequest;
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
         { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
@@ -3457,6 +3459,32 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           return { role: m.role as 'user' | 'assistant', content };
         }),
       ];
+      const toolFocusedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = useToolFocusedLoop
+        ? [
+            {
+              role: "system",
+              content: [
+                "You are GamePlan Coach, Jarvis's chat persona.",
+                `Current date: ${new Date().toISOString().slice(0, 10)}.`,
+                "This turn has a concrete tool route. Call the matching tool before answering, then summarize the tool result plainly.",
+                toolAwareRoute.guidance,
+                isResearchRequest
+                  ? "For current news, recent events, source-finding, or live facts, call search_web first. If search is unavailable, say exactly that instead of inventing a news answer."
+                  : "",
+                isDiagnosticsRequest
+                  ? "For health or failure questions, call jarvis_self_diagnose first and base the answer on that result."
+                  : "",
+              ].filter(Boolean).join("\n\n"),
+            },
+            ...messages.slice(-6).map((m: { role: string; content: string }, idx: number, recent: Array<{ role: string; content: string }>) => {
+              const isLast = idx === recent.length - 1;
+              const content = (isLast && m.role === 'user' && youtubeCtxBlock)
+                ? m.content + youtubeCtxBlock
+                : m.content;
+              return { role: m.role as 'user' | 'assistant', content };
+            }),
+          ]
+        : chatMessages;
 
       const actionResults: { tool: string; result: 'success' | 'error'; label: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
       // Accumulates MCP rich attachments across all tool calls in this request.
@@ -3567,6 +3595,27 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         } catch (err) {
           console.warn("[Coach/MCP] failed to load MCP tools:", (err as Error).message);
         }
+        const focusedToolNames = new Set<string>();
+        if (isResearchRequest) {
+          [
+            "search_web",
+            "research_topic",
+            "web_fetch",
+            "web_search",
+            "browser_navigate",
+            "browser_extract",
+            "browser_snapshot",
+          ].forEach((name) => focusedToolNames.add(name));
+          toolAwareRoute.priorityToolNames.forEach((name) => focusedToolNames.add(name));
+        }
+        if (isDiagnosticsRequest) {
+          focusedToolNames.add("jarvis_self_diagnose");
+          toolAwareRoute.priorityToolNames.forEach((name) => focusedToolNames.add(name));
+        }
+        const modelRequestTools =
+          focusedToolNames.size > 0
+            ? requestTools.filter((tool) => focusedToolNames.has(tool.function.name))
+            : requestTools;
 
         // Shared MCP tool context (pendingAttachments accumulate across turns)
         const mcpToolCtx: import("./agent/types").ToolContext = {
@@ -3586,23 +3635,24 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               try { res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: msg })}\n\n`); } catch {}
             },
           },
-          allowedToolNames: new Set(requestTools.map((tool) => tool.function.name)),
+          allowedToolNames: new Set(modelRequestTools.map((tool) => tool.function.name)),
         };
 
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
           if (signal.aborted) break;
+          const baseMessages = useToolFocusedLoop ? toolFocusedMessages : chatMessages;
           const currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-            ...chatMessages,
+            ...baseMessages,
             ...toolMessages,
           ];
           const phase1StartedAt = Date.now();
           const phase1 = await runCoachModelTurn({
             messages: currentMessages,
-            tools: requestTools,
+            tools: modelRequestTools,
             // Force a tool call on turn 0 for requests where a plain-text guess
             // is especially likely to repeat stale chat history.
             // Subsequent turns use "auto" so the model can stop and respond.
-            toolChoice: (turn === 0 && (isDeviceControlRequest || isDiagnosticsRequest)) ? "required" : "auto",
+            toolChoice: (turn === 0 && (isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest)) ? "required" : "auto",
             maxCompletionTokens: 2048,
             signal,
             logPrefix: "[CoachChat]",
@@ -3621,7 +3671,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           );
           const phase1Usage = estimateModelUsage({
             messages: currentMessages,
-            tools: requestTools,
+            tools: modelRequestTools,
             textContent: choice.message.content ?? "",
             toolCallList: phase1ToolCalls,
           });
@@ -3744,7 +3794,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           // Model returned tool calls — execute them all, then loop for next turn
           toolMessages.push(choice.message);
 
-          const hasWebSearch = choice.message.tool_calls.some(tc => tc.type === 'function' && tc.function.name === 'web_search');
+          const hasWebSearch = choice.message.tool_calls.some(tc => tc.type === 'function' && (tc.function.name === 'web_search' || tc.function.name === 'search_web'));
           if (hasWebSearch && !res.headersSent) {
             res.setHeader('Content-Type', 'text/event-stream');
             res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -4090,7 +4140,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             res.flushHeaders();
           }
           if (actionResults.length > 0 || allMcpAttachments.length > 0) {
-            const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search');
+            const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search' && a.tool !== 'search_web');
             if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
               const actionsPayload: Record<string, unknown> = { type: 'actions', actions: nonSearchActions };
               if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
@@ -4126,7 +4176,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
 
       if (actionResults.length > 0 || allMcpAttachments.length > 0) {
-        const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search');
+        const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search' && a.tool !== 'search_web');
         if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
           const actionsPayload: Record<string, unknown> = { type: 'actions', actions: nonSearchActions };
           if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;

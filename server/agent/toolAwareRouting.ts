@@ -5,6 +5,7 @@ export type ToolAwareIntent =
   | "calendar"
   | "email"
   | "memory"
+  | "research"
   | "browser"
   | "github"
   | "railway"
@@ -75,6 +76,17 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     toolGroups: ["memory"],
     priorityToolNames: ["memory_search", "memory_get", "living_context_update"],
     guidance: "For memory or preference questions, search memory/living context before claiming not to know.",
+  },
+  {
+    intent: "research",
+    patterns: [
+      /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i,
+      /\b(latest|current|recent|today'?s?|news|sources?|articles?|updates?)\b/i,
+    ],
+    capabilityIds: ["research", "browser"],
+    toolGroups: ["research", "browser"],
+    priorityToolNames: ["search_web", "research_topic", "web_fetch", "browser_navigate", "browser_extract"],
+    guidance: "For research, news, source-finding, or current-info requests, call search_web or research_topic before answering. If search is not configured, use browser_navigate and browser_extract as the fallback. Cite useful source URLs from the tool results.",
   },
   {
     intent: "browser",
