@@ -33,6 +33,27 @@ export type { SubmitJobInput };
 export const submitAgentJob = _submitAgentJob;
 export const getModelForJobType = _getModelForJobType;
 
+function getRevisionDeliverableMeta(jobInput: Record<string, unknown>): Record<string, unknown> {
+  const revisionOfDeliverableId = typeof jobInput.revisionOfDeliverableId === "string"
+    ? jobInput.revisionOfDeliverableId
+    : undefined;
+  const revisionOfJobId = typeof jobInput.revisionOfJobId === "string"
+    ? jobInput.revisionOfJobId
+    : undefined;
+  const revisionInstructions = typeof jobInput.revisionInstructions === "string"
+    ? jobInput.revisionInstructions
+    : undefined;
+
+  if (!revisionOfDeliverableId && !revisionOfJobId && !revisionInstructions) return {};
+
+  return {
+    revision: true,
+    ...(revisionOfDeliverableId ? { revisionOfDeliverableId } : {}),
+    ...(revisionOfJobId ? { revisionOfJobId } : {}),
+    ...(revisionInstructions ? { revisionInstructions } : {}),
+  };
+}
+
 async function notifyJobComplete(
   userId: string,
   agentType: AgentJobType,
@@ -975,7 +996,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
           title: `[${agentDef.name}] ${sub.title}`,
           summary: sub.summary,
           body: sub.body,
-          meta: { ...sub.meta, customAgentId, customAgentName: agentDef.name },
+          meta: { ...sub.meta, ...getRevisionDeliverableMeta(input), customAgentId, customAgentName: agentDef.name },
         })
         .returning({ id: _deliverables.id });
 
@@ -2197,6 +2218,8 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // generates ONE consolidated PDF from all sibling deliverables.
     // ─────────────────────────────────────────────────────────────────────────
 
+    const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(input) };
+
     const inserted = await db
       .insert(schema.deliverables)
       .values({
@@ -2207,7 +2230,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         title: sub.title,
         summary: sub.summary,
         body: sub.body,
-        meta: sub.meta,
+        meta: deliverableMeta,
         driveLink: (sub.meta?.pdfDriveLink as string | undefined) ?? null,
       })
       .returning({ id: schema.deliverables.id });

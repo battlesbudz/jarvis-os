@@ -5225,7 +5225,7 @@ async function extractFromImage(buffer, mimeType) {
 async function summarizeText(name, text2, userId) {
   const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
   const model = await getModel2(userId, "research");
-  const input = text2.slice(0, MAX_SUMMARY_INPUT_CHARS);
+  const input2 = text2.slice(0, MAX_SUMMARY_INPUT_CHARS);
   const response = await createRoutedChatCompletion({
     model,
     messages: [
@@ -5238,7 +5238,7 @@ async function summarizeText(name, text2, userId) {
         content: `Document name: "${name}"
 
 Content:
-${input}`
+${input2}`
       }
     ],
     temperature: 0.2,
@@ -5994,8 +5994,8 @@ var init_errorLogger = __esm({
 });
 
 // server/agent/responseQuality.ts
-function checkResponseQuality(input) {
-  const { userMessage, agentReply, toolsUsed, androidToolsAvailable } = input;
+function checkResponseQuality(input2) {
+  const { userMessage, agentReply, toolsUsed, androidToolsAvailable } = input2;
   const lowerMsg = userMessage.toLowerCase();
   const lowerReply = agentReply.toLowerCase().trim();
   const replyWords = agentReply.trim().split(/\s+/).filter(Boolean).length;
@@ -6131,8 +6131,8 @@ function estimateModelUsage(params) {
     estimated: true
   };
 }
-async function recordModelUsage(input) {
-  if (!input.userId || !input.model || !input.provider) return;
+async function recordModelUsage(input2) {
+  if (!input2.userId || !input2.model || !input2.provider) return;
   try {
     await pool.query(
       `
@@ -6152,17 +6152,17 @@ async function recordModelUsage(input) {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
       `,
       [
-        input.userId,
-        input.provider,
-        input.model,
-        input.source || "unknown",
-        Math.max(0, Math.round(input.promptTokens || 0)),
-        Math.max(0, Math.round(input.completionTokens || 0)),
-        Math.max(0, Math.round(input.totalTokens || 0)),
-        Math.max(0, Math.round(input.durationMs || 0)),
-        input.success ?? true,
-        input.estimated ?? true,
-        JSON.stringify(input.metadata ?? {})
+        input2.userId,
+        input2.provider,
+        input2.model,
+        input2.source || "unknown",
+        Math.max(0, Math.round(input2.promptTokens || 0)),
+        Math.max(0, Math.round(input2.completionTokens || 0)),
+        Math.max(0, Math.round(input2.totalTokens || 0)),
+        Math.max(0, Math.round(input2.durationMs || 0)),
+        input2.success ?? true,
+        input2.estimated ?? true,
+        JSON.stringify(input2.metadata ?? {})
       ]
     );
   } catch (err2) {
@@ -8428,7 +8428,7 @@ function formatLearning(args, now) {
   if (notes) lines.push(`- Notes: ${notes}`);
   return { block: lines.join("\n"), learned, status: finalStatus, confidence, sourceType };
 }
-async function persistLivingContextUpdate(input) {
+async function persistLivingContextUpdate(input2) {
   await withDb(async (db2, sql47) => {
     await db2.execute(sql47`
       INSERT INTO living_context_updates (
@@ -8448,33 +8448,33 @@ async function persistLivingContextUpdate(input) {
         block
       )
       VALUES (
-        ${input.userId},
-        ${input.target},
-        ${input.path},
-        ${cleanSingleLine(input.args.topic, "Context update").slice(0, 120)},
-        ${input.learned},
-        ${factKey(input.learned)},
-        ${input.sourceType},
-        ${cleanSingleLine(input.args.sourceRef, "").slice(0, 200) || null},
-        ${input.confidence},
-        ${input.status},
-        ${cleanSingleLine(input.args.fillsQuestion, "").slice(0, 240) || null},
-        ${Boolean(input.args.approvalSensitive)},
-        ${String(input.args.notes ?? "").trim() || null},
-        ${input.block}
+        ${input2.userId},
+        ${input2.target},
+        ${input2.path},
+        ${cleanSingleLine(input2.args.topic, "Context update").slice(0, 120)},
+        ${input2.learned},
+        ${factKey(input2.learned)},
+        ${input2.sourceType},
+        ${cleanSingleLine(input2.args.sourceRef, "").slice(0, 200) || null},
+        ${input2.confidence},
+        ${input2.status},
+        ${cleanSingleLine(input2.args.fillsQuestion, "").slice(0, 240) || null},
+        ${Boolean(input2.args.approvalSensitive)},
+        ${String(input2.args.notes ?? "").trim() || null},
+        ${input2.block}
       )
       ON CONFLICT DO NOTHING
     `);
   });
 }
-async function syncPersistedUpdatesToFile(input) {
-  const existing = await fs3.readFile(input.abs, "utf-8").catch(() => "");
+async function syncPersistedUpdatesToFile(input2) {
+  const existing = await fs3.readFile(input2.abs, "utf-8").catch(() => "");
   const rows = await withDb(async (db2, sql47) => {
     const result = await db2.execute(sql47`
       SELECT block
       FROM living_context_updates
-      WHERE user_id = ${input.userId}
-        AND target = ${input.target}
+      WHERE user_id = ${input2.userId}
+        AND target = ${input2.target}
         AND status <> 'discarded'
       ORDER BY created_at ASC
     `);
@@ -8492,8 +8492,8 @@ ${row.block}
     changed = true;
   }
   if (changed) {
-    await fs3.mkdir(path3.dirname(input.abs), { recursive: true });
-    await fs3.writeFile(input.abs, updated, "utf-8");
+    await fs3.mkdir(path3.dirname(input2.abs), { recursive: true });
+    await fs3.writeFile(input2.abs, updated, "utf-8");
   }
   return updated;
 }
@@ -8700,10 +8700,10 @@ function isDeclarativeFact(sentence, sourceType) {
   }
   return true;
 }
-function detectLivingContextUpdate(input) {
-  const sentences = splitCandidateSentences(input.text);
+function detectLivingContextUpdate(input2) {
+  const sentences = splitCandidateSentences(input2.text);
   for (const sentence of sentences) {
-    if (!isDeclarativeFact(sentence, input.sourceType)) continue;
+    if (!isDeclarativeFact(sentence, input2.sourceType)) continue;
     for (const route of ROUTES) {
       if (!route.keywords.some((keyword) => keyword.test(sentence))) continue;
       return {
@@ -8711,20 +8711,20 @@ function detectLivingContextUpdate(input) {
         topic: route.topic,
         learned: sentence,
         fillsQuestion: route.fillsQuestion,
-        confidence: input.sourceType === "conversation" ? 92 : 75
+        confidence: input2.sourceType === "conversation" ? 92 : 75
       };
     }
   }
   return null;
 }
-async function processLivingContextUpdate(input) {
-  const match = detectLivingContextUpdate(input);
+async function processLivingContextUpdate(input2) {
+  const match = detectLivingContextUpdate(input2);
   if (!match) return { updated: false };
   const tool = createLivingContextUpdateTool({
-    requireOwner: input.requireOwner ?? true
+    requireOwner: input2.requireOwner ?? true
   });
   const ctx = {
-    userId: input.userId,
+    userId: input2.userId,
     state: {},
     channel: "living-context-router"
   };
@@ -8733,8 +8733,8 @@ async function processLivingContextUpdate(input) {
     target: match.target,
     topic: match.topic,
     learned: match.learned,
-    sourceType: input.sourceType,
-    sourceRef: input.sourceRef ?? input.sourceType,
+    sourceType: input2.sourceType,
+    sourceRef: input2.sourceRef ?? input2.sourceType,
     confidence: match.confidence,
     status: "confirmed",
     fillsQuestion: match.fillsQuestion,
@@ -13913,8 +13913,8 @@ function noDrive() {
     label: "Drive not connected"
   };
 }
-function parseDriveFileId(input) {
-  const s = input.trim();
+function parseDriveFileId(input2) {
+  const s = input2.trim();
   if (!s) return null;
   if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
   const dMatch = s.match(/\/d\/([A-Za-z0-9_-]{20,})/);
@@ -21970,14 +21970,14 @@ function isRecord(value) {
 function isIsoDateLike(value) {
   return !Number.isNaN(Date.parse(value));
 }
-function createApprovalReceipt(input) {
-  const expiresAt = input.expiresAt instanceof Date ? input.expiresAt.toISOString() : typeof input.expiresAt === "string" ? input.expiresAt : void 0;
+function createApprovalReceipt(input2) {
+  const expiresAt = input2.expiresAt instanceof Date ? input2.expiresAt.toISOString() : typeof input2.expiresAt === "string" ? input2.expiresAt : void 0;
   return {
-    gateId: input.gateId,
-    userId: input.userId,
-    toolName: input.toolName,
+    gateId: input2.gateId,
+    userId: input2.userId,
+    toolName: input2.toolName,
     scope: "top_level_action",
-    originalUserText: input.originalUserText,
+    originalUserText: input2.originalUserText,
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     ...expiresAt ? { expiresAt } : {}
   };
@@ -23101,7 +23101,7 @@ var init_contextRegistry = __esm({
         this.providers.push({ provider, priority: opts?.priority ?? 0 });
         this.providers.sort((a, b) => b.priority - a.priority);
       }
-      async build(input) {
+      async build(input2) {
         const parts = {
           systemContext: [],
           prependContext: [],
@@ -23113,7 +23113,7 @@ var init_contextRegistry = __esm({
               (_, reject) => setTimeout(() => reject(new Error("context provider timeout")), PROVIDER_TIMEOUT_MS)
             );
             const result = await Promise.race([
-              Promise.resolve(provider(input)),
+              Promise.resolve(provider(input2)),
               timeout
             ]);
             if (!result) continue;
@@ -23413,14 +23413,14 @@ var init_topicContext = __esm({
     init_schema();
     init_workspace();
     contextRegistry.register(
-      async (input) => {
-        if (input.platform !== "discord" || !input.channelId) return;
+      async (input2) => {
+        if (input2.platform !== "discord" || !input2.channelId) return;
         try {
-          const [link] = await db.select().from(channelLinks).where(and22(eq29(channelLinks.userId, input.userId), eq29(channelLinks.channel, "discord"))).limit(1);
+          const [link] = await db.select().from(channelLinks).where(and22(eq29(channelLinks.userId, input2.userId), eq29(channelLinks.channel, "discord"))).limit(1);
           if (!link?.metadata) return;
           const workspace = link.metadata.workspace;
           if (!workspace) return;
-          const topic = getTopicForChannel(workspace, input.channelId);
+          const topic = getTopicForChannel(workspace, input2.channelId);
           if (!topic) return;
           const topicName = topic.name.charAt(0).toUpperCase() + topic.name.slice(1);
           return {
@@ -24488,8 +24488,8 @@ function topologicalSort(tasks) {
 function isRunnersUpRequest(text2) {
   return RUNNERS_UP_PATTERNS.some((r) => r.test(text2));
 }
-async function runOrchestrator(input) {
-  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage } = input;
+async function runOrchestrator(input2) {
+  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage } = input2;
   const MAX_RETRIES = resolveMaxRetries(maxRetriesOverride);
   const traceId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = /* @__PURE__ */ new Date();
@@ -24788,34 +24788,34 @@ async function realInsertJob(values) {
   }).returning({ id: agentJobs.id });
   return inserted[0]?.id ?? "";
 }
-async function submitAgentJob2(input, deps = {}) {
+async function submitAgentJob2(input2, deps = {}) {
   const guardFn = deps.findDuplicate ?? findDuplicateJob;
   const insertFn = deps.insertJob ?? realInsertJob;
   try {
-    const existing = await guardFn(input.userId, input.agentType, input.title);
+    const existing = await guardFn(input2.userId, input2.agentType, input2.title);
     if (existing) {
       console.log(
-        `[JobQueue] duplicate suppressed \u2014 returning existing job=${existing.id} type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`
+        `[JobQueue] duplicate suppressed \u2014 returning existing job=${existing.id} type=${input2.agentType} user=${input2.userId} title="${input2.title.slice(0, 60)}"`
       );
       return { id: existing.id, isDuplicate: true };
     }
   } catch (dupErr) {
     console.warn("[JobQueue] duplicate-check failed (proceeding with insert):", dupErr);
   }
-  const callerInput = input.input || {};
-  const routedModel = getModelForJobType2(input.agentType);
+  const callerInput = input2.input || {};
+  const routedModel = getModelForJobType2(input2.agentType);
   const mergedInput = callerInput.model !== void 0 || routedModel === void 0 ? callerInput : { ...callerInput, model: routedModel };
   const id = await insertFn({
-    userId: input.userId,
-    agentType: input.agentType,
-    title: input.title.slice(0, 200),
-    prompt: input.prompt,
+    userId: input2.userId,
+    agentType: input2.agentType,
+    title: input2.title.slice(0, 200),
+    prompt: input2.prompt,
     input: mergedInput,
     status: "queued"
   });
   const model = mergedInput.model ?? "agent-default";
   console.log(
-    `[JobQueue] queued job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`
+    `[JobQueue] queued job ${id} type=${input2.agentType} model=${model} user=${input2.userId} title="${input2.title.slice(0, 60)}"`
   );
   return { id, isDuplicate: false };
 }
@@ -27361,15 +27361,15 @@ async function sendAppProjectQuestion(userId, originChannel, message) {
   await sendAppProjectMessage(userId, originChannel, message);
   return {};
 }
-async function startAppProject(input) {
+async function startAppProject(input2) {
   const [project] = await db.insert(jarvisProjects).values({
-    userId: input.userId,
-    title: input.title,
-    description: input.description,
-    goal: input.goal,
+    userId: input2.userId,
+    title: input2.title,
+    description: input2.description,
+    goal: input2.goal,
     status: "planning",
-    originChannel: input.originChannel,
-    appFramework: input.framework,
+    originChannel: input2.originChannel,
+    appFramework: input2.framework,
     autonomousMode: true,
     updatedAt: /* @__PURE__ */ new Date()
   }).returning({ id: jarvisProjects.id });
@@ -27377,13 +27377,13 @@ async function startAppProject(input) {
   const realWorkspaceDir = getProjectWorkspaceDir(projectId);
   fs9.mkdirSync(realWorkspaceDir, { recursive: true });
   await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
-  console.log(`[AppProjectRunner] startAppProject: created project ${projectId} for user ${input.userId} framework=${input.framework}`);
+  console.log(`[AppProjectRunner] startAppProject: created project ${projectId} for user ${input2.userId} framework=${input2.framework}`);
   await submitAgentJob2({
-    userId: input.userId,
+    userId: input2.userId,
     agentType: "app_project",
-    title: `Plan app: ${input.title}`,
+    title: `Plan app: ${input2.title}`,
     prompt: `Run planning phase for app project ${projectId}`,
-    input: { projectId, phase: "planning", originChannel: input.originChannel }
+    input: { projectId, phase: "planning", originChannel: input2.originChannel }
   });
   return { projectId };
 }
@@ -29119,15 +29119,15 @@ import { and as and29, eq as eq40, isNull as isNull2, sql as sql13 } from "drizz
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
-async function createJarvisScheduledTask(input) {
-  const title = normalizeText(input.title);
-  const description = normalizeText(input.description) || null;
-  const recurrence = normalizeText(input.recurrence) || null;
+async function createJarvisScheduledTask(input2) {
+  const title = normalizeText(input2.title);
+  const description = normalizeText(input2.description) || null;
+  const recurrence = normalizeText(input2.recurrence) || null;
   const recurrencePredicate = recurrence ? eq40(jarvisScheduledTasks.recurrence, recurrence) : isNull2(jarvisScheduledTasks.recurrence);
   const [existing] = await db.select().from(jarvisScheduledTasks).where(and29(
-    eq40(jarvisScheduledTasks.userId, input.userId),
+    eq40(jarvisScheduledTasks.userId, input2.userId),
     sql13`LOWER(TRIM(${jarvisScheduledTasks.title})) = ${title.toLowerCase()}`,
-    eq40(jarvisScheduledTasks.scheduledAt, input.scheduledAt),
+    eq40(jarvisScheduledTasks.scheduledAt, input2.scheduledAt),
     recurrencePredicate,
     isNull2(jarvisScheduledTasks.completedAt),
     eq40(jarvisScheduledTasks.active, true)
@@ -29136,10 +29136,10 @@ async function createJarvisScheduledTask(input) {
     return { task: existing, deduped: true };
   }
   const [task] = await db.insert(jarvisScheduledTasks).values({
-    userId: input.userId,
+    userId: input2.userId,
     title,
     description,
-    scheduledAt: input.scheduledAt,
+    scheduledAt: input2.scheduledAt,
     recurrence
   }).returning();
   return { task, deduped: false };
@@ -29233,8 +29233,8 @@ var init_scheduleJarvisTask = __esm({
 
 // server/discord/schedules.ts
 import { eq as eq41, and as and30 } from "drizzle-orm";
-function detectTemplate(input) {
-  const lower = input.toLowerCase();
+function detectTemplate(input2) {
+  const lower = input2.toLowerCase();
   for (const tpl of Object.values(SCHEDULE_TEMPLATES)) {
     if (tpl.triggerPhrases.some((p) => lower.includes(p))) {
       return tpl;
@@ -31078,16 +31078,16 @@ async function ensureYtdlpUpgraded() {
   })();
   return ytdlpUpgradePromise;
 }
-function extractVideoId(input) {
-  const bare = input.trim();
+function extractVideoId(input2) {
+  const bare = input2.trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(bare)) return bare;
   const pat = /(?:youtube\.com\/(?:watch\?(?:[^\s#&]*&)*v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i;
   const m = pat.exec(bare);
   return m ? m[1] : null;
 }
-function isPlaylistUrl(input) {
+function isPlaylistUrl(input2) {
   try {
-    const url = new URL(input.trim());
+    const url = new URL(input2.trim());
     const list = url.searchParams.get("list");
     const videoId = url.searchParams.get("v");
     if (list && !videoId) return true;
@@ -31584,9 +31584,9 @@ async function fetchTimedTextTranscript(videoId) {
   }
   return [];
 }
-async function fetchTranscriptCached(input, options = {}) {
+async function fetchTranscriptCached(input2, options = {}) {
   const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart, userId, signal } = options;
-  const videoId = extractVideoId(input);
+  const videoId = extractVideoId(input2);
   if (videoId && !bypassCache && !audioOnly) {
     evictExpired();
     const hit = cache3.get(videoId);
@@ -31616,7 +31616,7 @@ async function fetchTranscriptCached(input, options = {}) {
     console.log(`[transcriptCache] BYPASS ${videoId} \u2014 fetching live and overwriting cache`);
   }
   onFetchStart?.();
-  const resolvedId = videoId ?? input.trim();
+  const resolvedId = videoId ?? input2.trim();
   let segments = [];
   let source = "unknown";
   const phaseErrors = {};
@@ -31730,7 +31730,7 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
     console.log(`[transcriptCache] audioOnly=true for ${resolvedId} \u2014 going straight to audio transcription`);
     audioAttemptCount++;
     try {
-      const audioSegs = await fetchAudioTranscript(resolvedId, input);
+      const audioSegs = await fetchAudioTranscript(resolvedId, input2);
       if (audioSegs.length > 0) {
         segments = audioSegs;
         source = "audio-transcription";
@@ -31840,7 +31840,7 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
     if (segments.length === 0) {
       try {
         const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
-        segments = await YoutubeTranscript.fetchTranscript(input, config);
+        segments = await YoutubeTranscript.fetchTranscript(input2, config);
         if (segments.length > 0) {
           source = "youtube-transcript";
           console.log(`[transcriptCache] youtube-transcript OK ${resolvedId} \u2014 ${segments.length} segs`);
@@ -31856,7 +31856,7 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
     console.log(`[transcriptCache] ${reason} for ${resolvedId}`);
     audioAttemptCount++;
     try {
-      const audioSegs = await fetchAudioTranscript(resolvedId, input);
+      const audioSegs = await fetchAudioTranscript(resolvedId, input2);
       if (audioSegs.length > 0) {
         segments = audioSegs;
         source = "audio-transcription";
@@ -31909,8 +31909,8 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
     ...supadataTimedOut ? { supadataTimedOut: true } : {}
   };
 }
-function invalidateTranscript(input) {
-  const videoId = extractVideoId(input);
+function invalidateTranscript(input2) {
+  const videoId = extractVideoId(input2);
   if (!videoId) return false;
   const deleted = cache3.delete(videoId);
   if (deleted) console.log(`[transcriptCache] INVALIDATED ${videoId}`);
@@ -32410,9 +32410,9 @@ function formatTimestamp(ms) {
   }
   return `${m}:${String(s).padStart(2, "0")}`;
 }
-async function fetchTranscriptViaBrowser(input, userId) {
+async function fetchTranscriptViaBrowser(input2, userId) {
   const extractText = (result) => (result.content || []).map((c) => c.text || "").join("");
-  const videoId = extractVideoId(input) ?? input.trim();
+  const videoId = extractVideoId(input2) ?? input2.trim();
   try {
     await callBrowserTool(userId, "browser_navigate", {
       url: `https://www.youtube.com/watch?v=${videoId}`
@@ -32443,15 +32443,15 @@ async function fetchTranscriptViaBrowser(input, userId) {
     return [];
   }
 }
-async function fetchViaTavily(input) {
+async function fetchViaTavily(input2) {
   if (!process.env.TAVILY_API_KEY) return null;
   const { tavilySearch: tavilySearch2 } = await Promise.resolve().then(() => (init_search(), search_exports));
-  const videoId = extractVideoId(input);
-  const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : input;
+  const videoId = extractVideoId(input2);
+  const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : input2;
   try {
     const [urlRes, transcriptRes] = await Promise.allSettled([
       tavilySearch2(videoUrl, 5),
-      tavilySearch2(`${videoId ?? input} youtube transcript`, 5)
+      tavilySearch2(`${videoId ?? input2} youtube transcript`, 5)
     ]);
     const parts = [];
     if (urlRes.status === "fulfilled" && urlRes.value.answer) {
@@ -32532,11 +32532,11 @@ var init_youtubeTranscript = __esm({
         required: ["url"]
       },
       async execute(args, ctx) {
-        const input = String(args.url || "").trim();
-        if (!input) {
+        const input2 = String(args.url || "").trim();
+        if (!input2) {
           return { ok: false, content: "Please provide a YouTube URL or video ID.", label: "get_youtube_transcript: missing input" };
         }
-        if (isPlaylistUrl(input)) {
+        if (isPlaylistUrl(input2)) {
           return {
             ok: false,
             content: "That looks like a YouTube playlist URL. I can only fetch transcripts for individual videos. Please share a single video URL (e.g. https://youtube.com/watch?v=VIDEO_ID).",
@@ -32546,9 +32546,9 @@ var init_youtubeTranscript = __esm({
         const bypassCache = args.refresh === true;
         const includeVisuals = args.includeVisuals !== false;
         const forceAudio = args.force_audio === true;
-        const videoId = extractVideoId(input);
+        const videoId = extractVideoId(input2);
         console.log(
-          `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals}, forceAudio=${forceAudio})`
+          `[get_youtube_transcript] fetching transcript for "${input2}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals}, forceAudio=${forceAudio})`
         );
         const visualPromise = includeVisuals && videoId ? buildVisualSummary(videoId, void 0, bypassCache).catch(() => null) : Promise.resolve(null);
         const FILE_THRESHOLD2 = 4e4;
@@ -32568,7 +32568,7 @@ ${"\u2500".repeat(60)}
               const pending = ctx.state.pendingAttachments ||= [];
               pending.push({
                 kind: "document",
-                filename: `transcript-${extractVideoId(input) ?? "video"}.txt`,
+                filename: `transcript-${extractVideoId(input2) ?? "video"}.txt`,
                 content: fullText2,
                 caption: isGeminiTranscript ? `Full transcript via Gemini (no official captions needed).` : `AI-generated transcript (no official captions were available).`,
                 mimeType: "text/plain"
@@ -32625,7 +32625,7 @@ ${"\u2500".repeat(60)}
             const pending = ctx.state.pendingAttachments ||= [];
             pending.push({
               kind: "document",
-              filename: `transcript-${extractVideoId(input) ?? "video"}.txt`,
+              filename: `transcript-${extractVideoId(input2) ?? "video"}.txt`,
               content: fullText,
               caption: `Full transcript (~${totalDuration}) \u2014 ${rawSegments.length} segments.`,
               mimeType: "text/plain"
@@ -32678,7 +32678,7 @@ ${"\u2500".repeat(60)}
           }
         }
         try {
-          const { segments: rawSegments, noCaptionsDetected, source: fetchedSource, asyncJobPending, jobId } = await fetchTranscriptCached(input, {
+          const { segments: rawSegments, noCaptionsDetected, source: fetchedSource, asyncJobPending, jobId } = await fetchTranscriptCached(input2, {
             bypassCache,
             audioOnly: forceAudio,
             userId: ctx.userId,
@@ -32698,12 +32698,12 @@ ${"\u2500".repeat(60)}
           let segments = rawSegments;
           if (!segments || segments.length === 0) {
             console.log(`[get_youtube_transcript] server strategies returned 0 segs \u2014 trying browser fallback`);
-            const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
+            const browserSegs = await fetchTranscriptViaBrowser(input2, ctx.userId);
             if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
             if (isWorkerOnline(ctx.userId)) {
               console.log(`[get_youtube_transcript] browser fallback empty \u2014 forwarding to local worker`);
               try {
-                const localSegs = await queueTranscriptJob(ctx.userId, input);
+                const localSegs = await queueTranscriptJob(ctx.userId, input2);
                 if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
               } catch (lwErr) {
                 console.warn(`[get_youtube_transcript] local worker failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
@@ -32716,7 +32716,7 @@ ${"\u2500".repeat(60)}
               } else {
                 console.log(`[get_youtube_transcript] noCaptionsDetected \u2014 auto-retrying with audioOnly=true`);
                 try {
-                  const { segments: audioSegs, source: audioRetrySource } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
+                  const { segments: audioSegs, source: audioRetrySource } = await fetchTranscriptCached(input2, { bypassCache: true, audioOnly: true });
                   if (audioSegs.length > 0) {
                     return withVisuals(buildResult(audioSegs, audioRetrySource));
                   }
@@ -32733,7 +32733,7 @@ ${"\u2500".repeat(60)}
             const { available: ytdlpOkForHint } = getYtdlpStatus();
             const audioHint = noCaptionsDetected && !forceAudio ? ytdlpOkForHint ? "\n\n\u{1F4A1} **This video has no official captions and the automatic audio transcription also failed.** To retry via direct audio transcription, call `get_youtube_transcript` again with `force_audio=true` \u2014 this downloads and transcribes the audio using Whisper and bypasses caption lookups entirely." : "\n\n\u26A0\uFE0F **This video has no official captions, and audio transcription is currently unavailable** because the yt-dlp dependency is not installed on this server. Please try again later." : "";
             console.log(`[get_youtube_transcript] all strategies empty \u2014 trying Tavily web search`);
-            const tavilyResult = await fetchViaTavily(input);
+            const tavilyResult = await fetchViaTavily(input2);
             if (tavilyResult) {
               return {
                 ...tavilyResult,
@@ -32789,7 +32789,7 @@ ${"\u2500".repeat(60)}
             };
           }
           if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
-            console.warn(`[get_youtube_transcript] audio-download-failed for ${videoId ?? input}: ${msg}`);
+            console.warn(`[get_youtube_transcript] audio-download-failed for ${videoId ?? input2}: ${msg}`);
             return {
               ok: false,
               content: "The audio download failed \u2014 YouTube may be blocking this request from the server. You can try again in a moment, or start the local worker on your PC for better results.",
@@ -32797,19 +32797,19 @@ ${"\u2500".repeat(60)}
             };
           }
           console.log(`[get_youtube_transcript] non-terminal error (${msg}) \u2014 trying browser fallback`);
-          const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
+          const browserSegs = await fetchTranscriptViaBrowser(input2, ctx.userId);
           if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
           if (isWorkerOnline(ctx.userId)) {
             console.log(`[get_youtube_transcript] browser also failed \u2014 forwarding to local worker`);
             try {
-              const localSegs = await queueTranscriptJob(ctx.userId, input);
+              const localSegs = await queueTranscriptJob(ctx.userId, input2);
               if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
             } catch (lwErr) {
               console.warn(`[get_youtube_transcript] local worker also failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
             }
           }
           console.log(`[get_youtube_transcript] all strategies failed \u2014 trying Tavily web search`);
-          const tavilyFallback = await fetchViaTavily(input);
+          const tavilyFallback = await fetchViaTavily(input2);
           if (tavilyFallback) return tavilyFallback;
           console.error(`[get_youtube_transcript] all strategies exhausted: ${msg}`);
           return {
@@ -40601,8 +40601,8 @@ function abortError() {
   err2.name = "AbortError";
   return err2;
 }
-function buildCodexDelegationPrompt(input) {
-  const sideEffectBoundary = input.allowExternalSideEffects ? [
+function buildCodexDelegationPrompt(input2) {
+  const sideEffectBoundary = input2.allowExternalSideEffects ? [
     "External side effects are allowed only where the user explicitly requested them in this task.",
     "For repo changes the user asked to make permanent, verify the work, commit the scoped changes, and push the target branch when that push was explicitly requested.",
     "Before any irreversible action, use Codex's normal approval and safety behavior."
@@ -40619,10 +40619,10 @@ function buildCodexDelegationPrompt(input) {
     sideEffectBoundary,
     "",
     "Task:",
-    input.task.trim(),
+    input2.task.trim(),
     "",
     "Context:",
-    input.context?.trim() || "No extra context provided."
+    input2.context?.trim() || "No extra context provided."
   ].join("\n");
 }
 function resolveCodexDelegationCwd(requestedCwd) {
@@ -41369,8 +41369,8 @@ var init_qualityLoop = __esm({
 });
 
 // server/agent/buildIntentRouter.ts
-async function routeBuildIntent(input, deps = { submit: submitAgentJob2 }) {
-  const { userId, userText, channelName, chatMessages, discordChannelId } = input;
+async function routeBuildIntent(input2, deps = { submit: submitAgentJob2 }) {
+  const { userId, userText, channelName, chatMessages, discordChannelId } = input2;
   const { submit } = deps;
   const buildTitle = `Build: ${userText.slice(0, 80)}${userText.length > 80 ? "\u2026" : ""}`;
   const buildPrompt2 = userText;
@@ -41416,15 +41416,15 @@ function inferAgentType(text2) {
   }
   return "research";
 }
-function decideAutonomyMode(input) {
-  const text2 = input.userText.trim();
-  if (input.readiness === "blocked") {
+function decideAutonomyMode(input2) {
+  const text2 = input2.userText.trim();
+  if (input2.readiness === "blocked") {
     return {
       mode: "blocked_by_setup",
       reason: "Jarvis core setup is blocked, so autonomous work should not start until doctor blockers are fixed."
     };
   }
-  if (!input.hasApproval && EXTERNAL_ACTION_PATTERNS.some((pattern) => pattern.test(text2))) {
+  if (!input2.hasApproval && EXTERNAL_ACTION_PATTERNS.some((pattern) => pattern.test(text2))) {
     return {
       mode: "requires_approval",
       reason: "The request appears to involve an external action or irreversible side effect."
@@ -41638,9 +41638,9 @@ async function defaultReadiness(userId) {
     return "limited";
   }
 }
-async function defaultSubmitJob(input) {
+async function defaultSubmitJob(input2) {
   const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobClient(), jobClient_exports));
-  return submitAgentJob3(input);
+  return submitAgentJob3(input2);
 }
 async function defaultRequestApproval(request) {
   const { requestApproval: requestApproval2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
@@ -41696,9 +41696,9 @@ function queuedReply(agentType, job) {
   }
   return `I've queued that as a ${agentType} background job. Job ID: ${job.id}. You'll get the result in the reviewable inbox/deliverable flow when it finishes.`;
 }
-async function routeAutonomyRequest(input, deps = {}) {
-  const userText = input.userText.trim();
-  const hasApproval = input.hasApproval ?? inferExplicitApproval(userText);
+async function routeAutonomyRequest(input2, deps = {}) {
+  const userText = input2.userText.trim();
+  const hasApproval = input2.hasApproval ?? inferExplicitApproval(userText);
   const preliminary = decideAutonomyMode({
     userText,
     readiness: "ready",
@@ -41707,14 +41707,14 @@ async function routeAutonomyRequest(input, deps = {}) {
   if (!userText || preliminary.mode === "answer_inline") {
     await observeAutonomyDecision(deps, {
       mode: preliminary.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: "not_checked",
       readinessReady: false
     });
     return { handled: false, decision: preliminary };
   }
-  const readiness = input.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input.userId);
+  const readiness = input2.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input2.userId);
   const decision = decideAutonomyMode({
     userText,
     readiness,
@@ -41723,8 +41723,8 @@ async function routeAutonomyRequest(input, deps = {}) {
   if (decision.mode === "answer_inline") {
     await observeAutonomyDecision(deps, {
       mode: decision.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: readiness,
       readinessReady: readiness === "ready"
     });
@@ -41733,8 +41733,8 @@ async function routeAutonomyRequest(input, deps = {}) {
   if (decision.mode === "blocked_by_setup") {
     await observeAutonomyDecision(deps, {
       mode: decision.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: readiness,
       readinessReady: readiness === "ready"
     });
@@ -41746,19 +41746,19 @@ async function routeAutonomyRequest(input, deps = {}) {
   }
   if (decision.mode === "requires_approval") {
     const toolName = inferApprovalToolName(userText);
-    const description = approvalDescription(userText, input.channelName);
+    const description = approvalDescription(userText, input2.channelName);
     const requestApproval2 = deps.requestApproval ?? defaultRequestApproval;
     const notifyApproval = deps.notifyApproval ?? defaultNotifyApproval;
     let gate;
     try {
       gate = await requestApproval2({
         agentId: "coach",
-        userId: input.userId,
+        userId: input2.userId,
         toolName,
         toolArgs: {
           topLevelAutonomy: true,
           userText,
-          channelName: input.channelName
+          channelName: input2.channelName
         },
         description,
         initiatedBy: "user"
@@ -41768,12 +41768,12 @@ async function routeAutonomyRequest(input, deps = {}) {
 ${description}
 
 Gate ID: ${gate.id}`;
-      await notifyApproval(input.userId, notificationText, gate.id);
+      await notifyApproval(input2.userId, notificationText, gate.id);
     } catch (err2) {
       await observeAutonomyDecision(deps, {
         mode: decision.mode,
-        userId: input.userId,
-        originChannel: input.channelName,
+        userId: input2.userId,
+        originChannel: input2.channelName,
         readinessStatus: readiness,
         readinessReady: readiness === "ready",
         approvalBoundary: "top_level_external_action",
@@ -41785,8 +41785,8 @@ Gate ID: ${gate.id}`;
     }
     await observeAutonomyDecision(deps, {
       mode: decision.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: readiness,
       readinessReady: readiness === "ready",
       approvalBoundary: "top_level_external_action",
@@ -41806,20 +41806,20 @@ Gate ID: ${gate.id}`;
   let job;
   try {
     job = await submitJob({
-      userId: input.userId,
+      userId: input2.userId,
       agentType,
       title,
       prompt: userText,
       input: {
-        originChannel: input.channelName,
+        originChannel: input2.channelName,
         autonomyPolicy: true
       }
     });
   } catch (err2) {
     await observeAutonomyDecision(deps, {
       mode: decision.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: readiness,
       readinessReady: readiness === "ready",
       agentType,
@@ -41829,8 +41829,8 @@ Gate ID: ${gate.id}`;
   }
   await observeAutonomyDecision(deps, {
     mode: decision.mode,
-    userId: input.userId,
-    originChannel: input.channelName,
+    userId: input2.userId,
+    originChannel: input2.channelName,
     readinessStatus: readiness,
     readinessReady: readiness === "ready",
     agentType,
@@ -43011,25 +43011,25 @@ function getMaxTokensForChannel(channelName) {
   if (channelName === "Telegram") return 8e3;
   return 2e3;
 }
-async function runCoachAgent(input) {
-  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, discordGuildId, discordChannelId } = input;
+async function runCoachAgent(input2) {
+  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, discordGuildId, discordChannelId } = input2;
   const channelLower = channelName.toLowerCase();
-  let activeSessionId = input.sdkSessionId;
+  let activeSessionId = input2.sdkSessionId;
   let sessionResumed = false;
   let cachedSessionMessages = [];
-  if (input.sdkSessionId) {
+  if (input2.sdkSessionId) {
     try {
       const { resumeSession: resumeSession2 } = await Promise.resolve().then(() => (init_claude(), claude_exports));
-      const resumed = await resumeSession2(input.sdkSessionId, COACH_AGENT_ID, userId);
+      const resumed = await resumeSession2(input2.sdkSessionId, COACH_AGENT_ID, userId);
       if (resumed) {
         cachedSessionMessages = resumed.messages;
         sessionResumed = true;
         console.log(
-          `[coach] session resumed: sdkSessionId=${input.sdkSessionId} messages=${cachedSessionMessages.length}`
+          `[coach] session resumed: sdkSessionId=${input2.sdkSessionId} messages=${cachedSessionMessages.length}`
         );
       } else {
         console.warn(
-          `[coach] session not found, falling back to full history: sdkSessionId=${input.sdkSessionId}`
+          `[coach] session not found, falling back to full history: sdkSessionId=${input2.sdkSessionId}`
         );
         activeSessionId = void 0;
       }
@@ -43381,9 +43381,9 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
     }
   };
   let scopedTools = await resolveChannelTools(channelName, !!googleAccessToken);
-  if (input.extraTools && input.extraTools.length > 0) {
-    const extraNames = new Set(input.extraTools.map((t) => t.name));
-    scopedTools = [...scopedTools.filter((t) => !extraNames.has(t.name)), ...input.extraTools];
+  if (input2.extraTools && input2.extraTools.length > 0) {
+    const extraNames = new Set(input2.extraTools.map((t) => t.name));
+    scopedTools = [...scopedTools.filter((t) => !extraNames.has(t.name)), ...input2.extraTools];
   }
   if (toolAwareRoute.toolGroups.length > 0) {
     const existingNames = new Set(scopedTools.map((tool) => tool.name));
@@ -48609,8 +48609,8 @@ function shouldSkipLowSignalExtraction(source) {
   if (normalized.length > 240) return false;
   return false;
 }
-async function extractAndStore(input) {
-  const { userId, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
+async function extractAndStore(input2) {
+  const { userId, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input2;
   if (!source.trim()) return [];
   if (shouldSkipLowSignalExtraction(source)) return [];
   if (Date.now() < memoryExtractionCooldownUntil) {
@@ -52153,12 +52153,12 @@ var init_reviewAgentTask = __esm({
             label: "Job not ready"
           };
         }
-        const input = job.input ?? {};
-        const namedAgentId = String(input.namedAgentId ?? "");
-        const agentName = String(input.agentName ?? "Agent");
-        const iterationCount = typeof input.iterationCount === "number" ? input.iterationCount : 0;
+        const input2 = job.input ?? {};
+        const namedAgentId = String(input2.namedAgentId ?? "");
+        const agentName = String(input2.agentName ?? "Agent");
+        const iterationCount = typeof input2.iterationCount === "number" ? input2.iterationCount : 0;
         const previousOutput = String(job.result?.output ?? "");
-        const modelOverride = typeof input.model === "string" ? input.model : void 0;
+        const modelOverride = typeof input2.model === "string" ? input2.model : void 0;
         if (verdict === "approved") {
           await db.update(agentJobs).set({ status: "delivered" }).where(eq74(agentJobs.id, jobId));
           return {
@@ -55685,6 +55685,18 @@ __export(jobQueue_exports, {
   submitAgentJob: () => submitAgentJob
 });
 import { eq as eq80, and as and57, sql as sql25, gte as gte13, asc as asc5 } from "drizzle-orm";
+function getRevisionDeliverableMeta(jobInput) {
+  const revisionOfDeliverableId = typeof jobInput.revisionOfDeliverableId === "string" ? jobInput.revisionOfDeliverableId : void 0;
+  const revisionOfJobId = typeof jobInput.revisionOfJobId === "string" ? jobInput.revisionOfJobId : void 0;
+  const revisionInstructions = typeof jobInput.revisionInstructions === "string" ? jobInput.revisionInstructions : void 0;
+  if (!revisionOfDeliverableId && !revisionOfJobId && !revisionInstructions) return {};
+  return {
+    revision: true,
+    ...revisionOfDeliverableId ? { revisionOfDeliverableId } : {},
+    ...revisionOfJobId ? { revisionOfJobId } : {},
+    ...revisionInstructions ? { revisionInstructions } : {}
+  };
+}
 async function notifyJobComplete(userId, agentType, title, body, originChannel, originDiscordChannelId, opts = {}) {
   const text2 = `Jarvis (${agentType}): ${title}
 
@@ -56188,11 +56200,11 @@ ${result.summary}${pendingLine}`;
       return;
     }
     if (job.agentType === "named_agent_task") {
-      const input = job.input ?? {};
-      const namedAgentId = String(input.namedAgentId ?? "");
-      const agentName = String(input.agentName ?? "Agent");
-      const iterationCount = typeof input.iterationCount === "number" ? input.iterationCount : 0;
-      const namedAgentModel = typeof input.model === "string" ? input.model : void 0;
+      const input2 = job.input ?? {};
+      const namedAgentId = String(input2.namedAgentId ?? "");
+      const agentName = String(input2.agentName ?? "Agent");
+      const iterationCount = typeof input2.iterationCount === "number" ? input2.iterationCount : 0;
+      const namedAgentModel = typeof input2.model === "string" ? input2.model : void 0;
       if (!namedAgentId) throw new Error("named_agent_task job missing namedAgentId");
       console.log(
         `[JobQueue] named_agent_task agent=${agentName}(${namedAgentId}) iteration=${iterationCount + 1}`
@@ -56238,8 +56250,8 @@ ${snippet}${result.reply.length > 280 ? "\u2026" : ""}`,
       return;
     }
     if (job.agentType === "custom_agent") {
-      const input = job.input ?? {};
-      const customAgentId = String(input.customAgentId ?? "");
+      const input2 = job.input ?? {};
+      const customAgentId = String(input2.customAgentId ?? "");
       if (!customAgentId) throw new Error("custom_agent job missing customAgentId");
       const { db: _db } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { customAgents: customAgents2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
@@ -56254,7 +56266,7 @@ ${snippet}${result.reply.length > 280 ? "\u2026" : ""}`,
         channel: `JobQueue/custom_agent`,
         state: { pendingAttachments: [] }
       };
-      const modelOverride = typeof input.model === "string" ? input.model : agentDef.model ?? void 0;
+      const modelOverride = typeof input2.model === "string" ? input2.model : agentDef.model ?? void 0;
       let customSub = await runSubAgent({
         agentType: agentDef.baseType,
         prompt: job.prompt,
@@ -56329,7 +56341,7 @@ ${snippet}${result.reply.length > 280 ? "\u2026" : ""}`,
         title: `[${agentDef.name}] ${sub2.title}`,
         summary: sub2.summary,
         body: sub2.body,
-        meta: { ...sub2.meta, customAgentId, customAgentName: agentDef.name }
+        meta: { ...sub2.meta, ...getRevisionDeliverableMeta(input2), customAgentId, customAgentName: agentDef.name }
       }).returning({ id: _deliverables.id });
       const deliverableId2 = inserted2[0]?.id || "";
       await completeJob2(job.id, {
@@ -56387,10 +56399,10 @@ ${sub2.body?.slice(0, 1200) || ""}`.trim();
       return;
     }
     if (job.agentType === "project_session") {
-      const input = job.input ?? {};
-      const projectId = String(input.projectId ?? "");
+      const input2 = job.input ?? {};
+      const projectId = String(input2.projectId ?? "");
       if (!projectId) throw new Error("project_session job missing projectId");
-      const userAnswer = typeof input.userAnswer === "string" ? input.userAnswer : void 0;
+      const userAnswer = typeof input2.userAnswer === "string" ? input2.userAnswer : void 0;
       console.log(`[JobQueue] project_session start: project=${projectId}${userAnswer ? " (with user answer)" : ""}`);
       const { runProjectSession: runProjectSession2 } = await Promise.resolve().then(() => (init_projectRunner(), projectRunner_exports));
       const sessionResult = await runProjectSession2(projectId, userAnswer);
@@ -56410,11 +56422,11 @@ ${sub2.body?.slice(0, 1200) || ""}`.trim();
       return;
     }
     if (job.agentType === "app_project") {
-      const input = job.input ?? {};
-      const projectId = String(input.projectId ?? "");
+      const input2 = job.input ?? {};
+      const projectId = String(input2.projectId ?? "");
       if (!projectId) throw new Error("app_project job missing projectId");
-      const userAnswer = typeof input.userAnswer === "string" ? input.userAnswer : void 0;
-      const originChannel2 = typeof input.originChannel === "string" ? input.originChannel : void 0;
+      const userAnswer = typeof input2.userAnswer === "string" ? input2.userAnswer : void 0;
+      const originChannel2 = typeof input2.originChannel === "string" ? input2.originChannel : void 0;
       console.log(`[JobQueue] app_project start: project=${projectId}${userAnswer ? " (with user answer)" : ""}`);
       const { runAppProjectSession: runAppProjectSession2 } = await Promise.resolve().then(() => (init_appProjectRunner(), appProjectRunner_exports));
       const sessionResult = await runAppProjectSession2(projectId, 1, userAnswer);
@@ -57307,6 +57319,7 @@ Use the above as background. Do not re-research topics already covered there \u2
         sub.meta.pdfError = pdfMsg;
       }
     }
+    const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(input) };
     const inserted = await db.insert(deliverables).values({
       userId: job.userId,
       jobId: job.id,
@@ -57315,7 +57328,7 @@ Use the above as background. Do not re-research topics already covered there \u2
       title: sub.title,
       summary: sub.summary,
       body: sub.body,
-      meta: sub.meta,
+      meta: deliverableMeta,
       driveLink: sub.meta?.pdfDriveLink ?? null
     }).returning({ id: deliverables.id });
     const deliverableId = inserted[0]?.id || "";
@@ -61498,9 +61511,9 @@ var topLevelApprovalContinuation_exports = {};
 __export(topLevelApprovalContinuation_exports, {
   continueTopLevelApproval: () => continueTopLevelApproval
 });
-async function defaultSubmitJob2(input) {
+async function defaultSubmitJob2(input2) {
   const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobClient(), jobClient_exports));
-  return submitAgentJob3(input);
+  return submitAgentJob3(input2);
 }
 function getToolArgs(gate) {
   return gate.toolArgs && typeof gate.toolArgs === "object" ? gate.toolArgs : {};
@@ -63041,15 +63054,15 @@ function normalizeProjectKind2(value, frameworkRaw) {
   return "general";
 }
 function normalizeCreateProjectRequest(body) {
-  const input = body && typeof body === "object" ? body : {};
-  const title = cleanString2(input.title);
-  const description = cleanString2(input.description);
-  const goal = cleanString2(input.goal);
-  const frameworkRaw = cleanString2(input.framework);
-  const projectKind = normalizeProjectKind2(input.projectKind ?? input.project_kind, frameworkRaw);
-  const framework = normalizeFramework2(input.framework);
-  const autonomousMode = typeof input.autonomousMode === "boolean" ? input.autonomousMode : typeof input.autonomous_mode === "boolean" ? input.autonomous_mode : projectKind === "app";
-  const originChannel = cleanString2(input.originChannel) || "app";
+  const input2 = body && typeof body === "object" ? body : {};
+  const title = cleanString2(input2.title);
+  const description = cleanString2(input2.description);
+  const goal = cleanString2(input2.goal);
+  const frameworkRaw = cleanString2(input2.framework);
+  const projectKind = normalizeProjectKind2(input2.projectKind ?? input2.project_kind, frameworkRaw);
+  const framework = normalizeFramework2(input2.framework);
+  const autonomousMode = typeof input2.autonomousMode === "boolean" ? input2.autonomousMode : typeof input2.autonomous_mode === "boolean" ? input2.autonomous_mode : projectKind === "app";
+  const originChannel = cleanString2(input2.originChannel) || "app";
   const errors = [];
   if (!title) errors.push("title is required");
   if (!goal) errors.push("goal is required");
@@ -64243,10 +64256,10 @@ async function bestEffort(label, task) {
     console.warn(`[appCoachChatAutonomy] ${label} failed:`, err2);
   }
 }
-async function routeAppCoachChatAutonomy(input, deps = {}) {
-  const userId = input.userId?.trim();
-  const userText = latestUserText(input.messages);
-  const channelName = appChannelName(input.originChannel);
+async function routeAppCoachChatAutonomy(input2, deps = {}) {
+  const userId = input2.userId?.trim();
+  const userText = latestUserText(input2.messages);
+  const channelName = appChannelName(input2.originChannel);
   if (!userId || !userText) {
     return {
       handled: false,
@@ -64279,7 +64292,7 @@ async function routeAppCoachChatAutonomy(input, deps = {}) {
   const timestamp2 = deps.now?.() ?? Date.now();
   const userMsgEntry = { id: timestamp2.toString(), role: "user", content: userText };
   const asstMsgEntry = { id: (timestamp2 + 1).toString(), role: "assistant", content: result.reply };
-  const updatedChat = [asstMsgEntry, userMsgEntry, ...input.messages].slice(0, 100);
+  const updatedChat = [asstMsgEntry, userMsgEntry, ...input2.messages].slice(0, 100);
   if (deps.saveChatHistory) {
     await bestEffort(
       "chat history persist",
@@ -66913,9 +66926,9 @@ function previewText(...candidates) {
   return "";
 }
 function buildJobReviewState(job) {
-  const input = asRecord(job.input);
-  const originChannel = typeof input.originChannel === "string" ? input.originChannel : void 0;
-  const autonomyPolicy = input.autonomyPolicy === true;
+  const input2 = asRecord(job.input);
+  const originChannel = typeof input2.originChannel === "string" ? input2.originChannel : void 0;
+  const autonomyPolicy = input2.autonomyPolicy === true;
   const preview = previewText(job.error, job.prompt, job.title);
   if (job.status === "queued") {
     return {
@@ -67130,8 +67143,33 @@ __export(deliverableReviewHttpRoutes_exports, {
   registerDeliverableReviewRoutes: () => registerDeliverableReviewRoutes
 });
 import { and as and82, eq as eq107 } from "drizzle-orm";
+async function defaultApproveGate(gateId, userId) {
+  const { approveGate: approveGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
+  await approveGate2(gateId, userId);
+}
+async function defaultRejectGate(gateId, userId) {
+  const { rejectGate: rejectGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
+  await rejectGate2(gateId, userId);
+}
+async function defaultGetGate(gateId) {
+  const { getGate: getGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
+  return getGate2(gateId);
+}
+async function defaultContinueTopLevelApproval(gate) {
+  const { continueTopLevelApproval: continueTopLevelApproval2 } = await Promise.resolve().then(() => (init_topLevelApprovalContinuation(), topLevelApprovalContinuation_exports));
+  return continueTopLevelApproval2(gate);
+}
+async function defaultSubmitAgentJob(input2) {
+  const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
+  return submitAgentJob3(input2);
+}
 function registerDeliverableReviewRoutes(app2, deps) {
   const { db: db2 } = deps;
+  const approveGate2 = deps.approveGate ?? defaultApproveGate;
+  const rejectGate2 = deps.rejectGate ?? defaultRejectGate;
+  const getGate2 = deps.getGate ?? defaultGetGate;
+  const continueTopLevelApproval2 = deps.continueTopLevelApproval ?? defaultContinueTopLevelApproval;
+  const submitAgentJob3 = deps.submitAgentJob ?? defaultSubmitAgentJob;
   app2.post("/api/deliverables/:id/approve", async (req, res) => {
     try {
       const userId = req.userId;
@@ -67142,8 +67180,6 @@ function registerDeliverableReviewRoutes(app2, deps) {
       const d = reviewAction.deliverable;
       let resultExtra = {};
       if (d.type === "approval_gate") {
-        const { approveGate: approveGate2, getGate: getGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
-        const { continueTopLevelApproval: continueTopLevelApproval2 } = await Promise.resolve().then(() => (init_topLevelApprovalContinuation(), topLevelApprovalContinuation_exports));
         const meta = d.meta || {};
         const gate = meta.gateId ? await getGate2(meta.gateId) : void 0;
         if (meta.gateId) await approveGate2(meta.gateId, userId);
@@ -67197,7 +67233,6 @@ function registerDeliverableReviewRoutes(app2, deps) {
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
       if (d.type === "approval_gate") {
-        const { rejectGate: rejectGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
         const meta = d.meta || {};
         if (meta.gateId) await rejectGate2(meta.gateId, userId);
       }
@@ -67245,7 +67280,6 @@ function registerDeliverableReviewRoutes(app2, deps) {
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
       const [job] = d.jobId ? await db2.select().from(agentJobs).where(and82(eq107(agentJobs.id, d.jobId), eq107(agentJobs.userId, userId))).limit(1) : [];
-      const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
       const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
       delete baseInput.retryCount;
       const revisionPrompt = [
@@ -74707,7 +74741,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { agentType, title, prompt, input } = req.body;
+      const { agentType, title, prompt, input: input2 } = req.body;
       const allowed = ["research", "writing", "planning", "email", "goal_decompose"];
       if (!agentType || !allowed.includes(agentType)) {
         return res.status(400).json({ error: `agentType must be one of ${allowed.join(", ")}` });
@@ -74721,7 +74755,7 @@ Reply directly to this message with your answer and I'll take it from there.
         agentType,
         title,
         prompt,
-        input: input || {}
+        input: input2 || {}
       });
       res.json({ ok: true, jobId, status: "queued" });
     } catch (err2) {
@@ -74793,15 +74827,15 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.status(400).json({ error: "Only failed or cancelled jobs can be retried" });
       }
       const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
-      const input = job.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
-      delete input.retryCount;
+      const input2 = job.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
+      delete input2.retryCount;
       const retry = await submitAgentJob3({
         userId,
         agentType: job.agentType,
         title: job.title,
         prompt: job.prompt,
         input: {
-          ...input,
+          ...input2,
           retryOfJobId: job.id,
           retriedAt: (/* @__PURE__ */ new Date()).toISOString()
         }
@@ -81150,20 +81184,20 @@ function onGatewayEvent(listener) {
   emitter.on("event", listener);
   return () => emitter.off("event", listener);
 }
-async function recordGatewayEvent(input) {
+async function recordGatewayEvent(input2) {
   try {
     const [event] = await db.insert(gatewayEvents).values({
-      userId: input.userId ?? null,
-      type: input.type,
-      area: input.area ?? "gateway",
-      severity: input.severity ?? "info",
-      title: input.title,
-      message: input.message ?? null,
-      subjectType: input.subjectType ?? null,
-      subjectId: input.subjectId ?? null,
-      actorKind: input.actorKind ?? null,
-      actorId: input.actorId ?? null,
-      metadata: input.metadata ?? {}
+      userId: input2.userId ?? null,
+      type: input2.type,
+      area: input2.area ?? "gateway",
+      severity: input2.severity ?? "info",
+      title: input2.title,
+      message: input2.message ?? null,
+      subjectType: input2.subjectType ?? null,
+      subjectId: input2.subjectId ?? null,
+      actorKind: input2.actorKind ?? null,
+      actorId: input2.actorId ?? null,
+      metadata: input2.metadata ?? {}
     }).returning();
     if (event) emitter.emit("event", event);
     return event ?? null;
@@ -81510,13 +81544,13 @@ async function jobCreate(userId, params) {
   if (!title) throw new Error("title is required");
   if (!prompt) throw new Error("prompt is required");
   const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobClient(), jobClient_exports));
-  const input = typeof params.input === "object" && params.input ? params.input : {};
+  const input2 = typeof params.input === "object" && params.input ? params.input : {};
   const result = await submitAgentJob3({
     userId,
     agentType,
     title,
     prompt,
-    input: { ...input, source: "gateway" }
+    input: { ...input2, source: "gateway" }
   });
   recordGatewayEvent({
     userId,
@@ -81695,14 +81729,14 @@ function daemonActionForCapability(capability) {
   };
   return aliases[capability] ?? aliases[direct] ?? direct;
 }
-async function daemonCapabilityInvoke(userId, capability, input) {
+async function daemonCapabilityInvoke(userId, capability, input2) {
   const action = daemonActionForCapability(capability);
   if (!action) throw new Error(`No daemon action registered for ${capability}`);
-  if (action === "notify") return daemonNotify(userId, input);
-  if (action === "ping") return daemonPing(userId, input);
+  if (action === "notify") return daemonNotify(userId, input2);
+  if (action === "ping") return daemonPing(userId, input2);
   const { sendDaemonOp: sendDaemonOp2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
   if (action === "file_read" || action === "file_list" || action === "android_file_read" || action === "android_file_list") {
-    const path33 = typeof input.path === "string" ? input.path.trim() : "";
+    const path33 = typeof input2.path === "string" ? input2.path.trim() : "";
     if (!path33) throw new Error("path is required");
     return sendDaemonOp2(userId, { type: action, path: path33 }, action.endsWith("read") ? 1e4 : 8e3);
   }
@@ -81710,12 +81744,12 @@ async function daemonCapabilityInvoke(userId, capability, input) {
   if (action === "desktop_read_screen") return sendDaemonOp2(userId, { type: "desktop_read_screen" }, 4e4);
   if (action === "android_screenshot") return sendDaemonOp2(userId, { type: "android_screenshot" }, 2e4);
   if (action === "android_read_screen") return sendDaemonOp2(userId, { type: "android_read_screen" }, 2e4);
-  return daemonTest(userId, { ...input, action });
+  return daemonTest(userId, { ...input2, action });
 }
 async function actionInvoke(userId, params, events, limit) {
   const capability = typeof params.capability === "string" ? params.capability.trim() : "";
   if (!capability) throw new Error("capability is required");
-  const input = inputFrom(params);
+  const input2 = inputFrom(params);
   await recordGatewayEvent({
     userId,
     type: "action.requested",
@@ -81747,35 +81781,35 @@ async function actionInvoke(userId, params, events, limit) {
     let result;
     switch (capability) {
       case "chat.send":
-        result = await chatSend(userId, input, events);
+        result = await chatSend(userId, input2, events);
         break;
       case "daemon.ping":
-        result = await daemonPing(userId, input);
+        result = await daemonPing(userId, input2);
         break;
       case "daemon.notify":
-        result = await daemonNotify(userId, input);
+        result = await daemonNotify(userId, input2);
         break;
       case "daemon.test":
-        result = await daemonTest(userId, input);
+        result = await daemonTest(userId, input2);
         break;
       case "jobs.create":
-        result = await jobCreate(userId, input);
+        result = await jobCreate(userId, input2);
         break;
       case "jobs.cancel":
-        result = await jobCancel(userId, input);
+        result = await jobCancel(userId, input2);
         break;
       case "cron.create":
-        result = await cronCreate(userId, input);
+        result = await cronCreate(userId, input2);
         break;
       case "approvals.approve":
-        result = await resolveApprovalGate(userId, input, "approve");
+        result = await resolveApprovalGate(userId, input2, "approve");
         break;
       case "approvals.reject":
-        result = await resolveApprovalGate(userId, input, "reject");
+        result = await resolveApprovalGate(userId, input2, "reject");
         break;
       default:
         if (capability.startsWith("desktop.") || capability.startsWith("android.")) {
-          result = await daemonCapabilityInvoke(userId, capability, input);
+          result = await daemonCapabilityInvoke(userId, capability, input2);
         } else {
           throw new Error(`No invoker registered for ${capability}`);
         }
