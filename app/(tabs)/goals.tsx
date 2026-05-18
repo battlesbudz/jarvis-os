@@ -132,7 +132,7 @@ export default function GoalsScreen() {
                 {deletingGoalId === goal.id ? (
                   <View style={styles.deleteConfirm} testID={`delete-confirm-${goal.id}`}>
                     <Text style={styles.deleteConfirmText} numberOfLines={1}>
-                      Remove "{goal.title}"?
+                      Remove {goal.title}?
                     </Text>
                     <View style={styles.deleteConfirmButtons}>
                       <Pressable

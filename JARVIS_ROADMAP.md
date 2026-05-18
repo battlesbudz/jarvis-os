@@ -1,7 +1,7 @@
 # Jarvis Autonomous Agent Roadmap
 
 > Living document - updated as features are built and shipped.
-> Last updated: May 16, 2026
+> Last updated: May 18, 2026
 
 ---
 
@@ -172,8 +172,11 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Goal decomposition module exists in `server/agent/goalDecomposer.ts`
 - [x] `goal_decompose` jobs are supported by the job queue
 - [x] Goal card and goal tree UI components exist
-- [ ] Finish the full Goals tab project-tree workflow with phase/milestone/task editing
-- [ ] Automatically insert decomposed tasks into daily plans over time
+- [x] Goals tab project trees now support phase, milestone, and task editing with add/delete controls, persisted API updates, progress rollups, and next-task visibility
+- [x] Goal-tree tasks can now be intentionally handed off into today's plan from the project tree without duplicating existing daily-plan tasks
+- [x] Goal-tree handoff controls now show when a task is already in today's plan
+- [x] Morning-plan generation can automatically insert next-ready decomposed goal tasks into daily plans over time
+- [ ] Finish advanced project-tree UX polish: reorder controls, generated-plan review, and richer handoff history
 - [ ] Adjust pacing based on completion rate and energy patterns
 
 ### 3.2 - Background Job Runner

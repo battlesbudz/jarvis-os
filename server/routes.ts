@@ -46,6 +46,9 @@ import { registerProjectRoutes } from "./projectRoutes";
 import { registerDoctorRoutes } from "./doctor/doctorRoutes";
 import { registerDownloadRoutes } from "./downloadRoutes";
 import { registerVaultRoutes } from "./vaultRoutes";
+import { applyGoalTreeEdit, summarizeGoalTree, type GoalTreeEditAction } from "./goalTreeEditor";
+import { mergeGoalTaskIntoPlan } from "./goalPlanHandoff";
+import { markTasksInjected, type InjectableGoalTask } from "./goalScheduler";
 import { createJarvisScheduledTask } from "./jarvisScheduledTasks";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
@@ -7188,6 +7191,120 @@ Return ONLY the JSON object.`;
     } catch (err) {
       console.error("Error fetching goal tree:", err);
       res.status(500).json({ error: "Failed to fetch tree" });
+    }
+  });
+
+  app.patch("/api/goals/:id/tree", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const goalId = _p(req.params.id);
+      const action = req.body?.action as GoalTreeEditAction | undefined;
+      if (!action || typeof action !== "object" || !("type" in action)) {
+        return res.status(400).json({ error: "action is required" });
+      }
+
+      const [treeRow] = await db
+        .select()
+        .from(schema.goalTrees)
+        .where(and(eq(schema.goalTrees.userId, userId), eq(schema.goalTrees.goalId, goalId)))
+        .limit(1);
+      if (!treeRow) return res.status(404).json({ error: "Goal tree not found" });
+
+      const tree = applyGoalTreeEdit(treeRow.tree, action);
+      const [updated] = await db
+        .update(schema.goalTrees)
+        .set({ tree, updatedAt: new Date() })
+        .where(and(eq(schema.goalTrees.id, treeRow.id), eq(schema.goalTrees.userId, userId)))
+        .returning();
+
+      res.json({
+        ok: true,
+        hasTree: true,
+        ...updated,
+        summary: summarizeGoalTree(tree),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update goal tree";
+      const status = /not found/i.test(message) ? 404 : /required|invalid/i.test(message) ? 400 : 500;
+      if (status === 500) console.error("Error updating goal tree:", err);
+      res.status(status).json({ error: message });
+    }
+  });
+
+  app.post("/api/goals/:id/tree/tasks/:taskId/add-to-today", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const goalId = _p(req.params.id);
+      const taskId = _p(req.params.taskId);
+      const todayKey = new Date().toISOString().slice(0, 10);
+
+      const [treeRow] = await db
+        .select()
+        .from(schema.goalTrees)
+        .where(and(eq(schema.goalTrees.userId, userId), eq(schema.goalTrees.goalId, goalId)))
+        .limit(1);
+      if (!treeRow) return res.status(404).json({ error: "Goal tree not found" });
+
+      const tree = treeRow.tree || { phases: [] };
+      let pick: InjectableGoalTask | null = null;
+      for (const phase of tree.phases || []) {
+        for (const milestone of phase.milestones || []) {
+          const task = (milestone.tasks || []).find((t) => t.id === taskId);
+          if (!task) continue;
+          if (task.status === "complete") {
+            return res.status(409).json({ error: "Goal task is already complete" });
+          }
+          if (task.status === "blocked") {
+            return res.status(400).json({ error: "Goal task is blocked" });
+          }
+          pick = {
+            goalTreeId: treeRow.id,
+            goalTitle: treeRow.title,
+            phaseId: phase.id,
+            milestoneId: milestone.id,
+            taskId: task.id,
+            title: task.title,
+            description: task.description,
+            estimateHours: task.estimateHours,
+          };
+          break;
+        }
+        if (pick) break;
+      }
+      if (!pick) return res.status(404).json({ error: "Goal task not found" });
+
+      const [planRow] = await db
+        .select({ data: schema.plans.data })
+        .from(schema.plans)
+        .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, todayKey)))
+        .limit(1);
+      const currentPlan = (planRow?.data as { date?: string; tasks?: Record<string, unknown>[] } | undefined) || {
+        date: todayKey,
+        tasks: [],
+        greeting: "",
+        insight: "",
+      };
+      const merged = mergeGoalTaskIntoPlan(currentPlan, pick, todayKey);
+
+      await db.insert(schema.plans)
+        .values({ userId, date: todayKey, data: merged.plan, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: [schema.plans.userId, schema.plans.date],
+          set: { data: merged.plan, updatedAt: new Date() },
+        });
+      await markTasksInjected(userId, [pick], todayKey);
+
+      res.json({
+        ok: true,
+        inserted: merged.inserted,
+        date: todayKey,
+        task: merged.task,
+      });
+    } catch (err) {
+      console.error("Error adding goal task to today:", err);
+      res.status(500).json({ error: "Failed to add goal task to today" });
     }
   });
 
