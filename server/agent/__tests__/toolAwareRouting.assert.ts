@@ -62,6 +62,12 @@ assertRoute(
   ["browser_navigate"],
 );
 assertRoute(
+  "Can you search up Cannabis News 2026?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "show me my GitHub pull requests",
   "github",
   ["github"],

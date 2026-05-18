@@ -34,6 +34,35 @@ function isSafeSearchUrl(url: string): boolean {
   } catch { return false; }
 }
 
+function mcpText(content: { type: string; text?: string }[] | undefined): string {
+  return (content ?? [])
+    .filter((c) => c.type === "text" && c.text)
+    .map((c) => c.text!)
+    .join("\n")
+    .trim();
+}
+
+async function browserSearchFallback(query: string, userId: string): Promise<string> {
+  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
+  const navResult = await callBrowserTool(userId, "browser_navigate", { url: searchUrl });
+  if (navResult.isError) {
+    throw new Error(mcpText(navResult.content) || "browser navigation failed");
+  }
+
+  const snapResult = await callBrowserTool(userId, "browser_snapshot", {});
+  if (snapResult.isError) {
+    throw new Error(mcpText(snapResult.content) || "browser snapshot failed");
+  }
+
+  const visibleText = mcpText(snapResult.content);
+  return [
+    `Browser search results for: ${query}`,
+    `Search URL: ${searchUrl}`,
+    "",
+    visibleText.slice(0, 6000) || "(No visible result text found.)",
+  ].join("\n");
+}
+
 /**
  * For search results with very short content (likely JS-rendered pages where
  * Tavily's crawler got little text), attempt to retrieve richer content via
@@ -83,7 +112,28 @@ export const webSearchTool: AgentTool = {
   },
   async execute(args, ctx) {
     if (!process.env.TAVILY_API_KEY) {
-      return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
+      if (!ctx.userId) {
+        return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
+      }
+      const query = String(args.query || "");
+      try {
+        const browserResults = await browserSearchFallback(query, ctx.userId);
+        console.log(`[${ctx.channel || "Agent"}] search_web browser fallback "${query}"`);
+        return {
+          ok: true,
+          content: browserResults,
+          label: `Browser search: ${query}`,
+          detail: "Search API not configured; used browser fallback.",
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          content: `Web search is not configured, and browser search fallback failed: ${msg}`,
+          label: "Search unavailable",
+          detail: msg,
+        };
+      }
     }
     const query = String(args.query || "");
 
