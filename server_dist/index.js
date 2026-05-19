@@ -55455,6 +55455,121 @@ var init_researchUtils = __esm({
   }
 });
 
+// server/agent/jobObservability.ts
+var jobObservability_exports = {};
+__export(jobObservability_exports, {
+  buildJobRunnerObservability: () => buildJobRunnerObservability,
+  decideJobFailureRecovery: () => decideJobFailureRecovery,
+  decorateJobForObservability: () => decorateJobForObservability
+});
+function toDate(value) {
+  if (!value) return null;
+  const date2 = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date2.getTime()) ? date2 : null;
+}
+function ageSince(value, now) {
+  const date2 = toDate(value);
+  if (!date2) return null;
+  return Math.max(0, now.getTime() - date2.getTime());
+}
+function previewResult(result) {
+  if (result == null) return null;
+  const raw = typeof result === "string" ? result : JSON.stringify(result);
+  if (!raw) return null;
+  return raw.length > PREVIEW_LIMIT ? `${raw.slice(0, PREVIEW_LIMIT)}...` : raw;
+}
+function retryCountFromInput(input2) {
+  const retryCount = input2?.retryCount;
+  return typeof retryCount === "number" && Number.isFinite(retryCount) && retryCount > 0 ? Math.floor(retryCount) : 0;
+}
+function decorateJobForObservability(job, now = /* @__PURE__ */ new Date()) {
+  const createdAt = toDate(job.createdAt) ?? now;
+  const startedAt = toDate(job.startedAt);
+  const completedAt = toDate(job.completedAt);
+  const runtimeEnd = completedAt ?? (job.status === "running" || job.status === "cancelling" ? now : null);
+  const runtimeMs = startedAt && runtimeEnd ? Math.max(0, runtimeEnd.getTime() - startedAt.getTime()) : null;
+  return {
+    id: job.id,
+    agentType: job.agentType,
+    title: job.title,
+    status: job.status,
+    createdAt: createdAt.toISOString(),
+    startedAt: startedAt ? startedAt.toISOString() : null,
+    completedAt: completedAt ? completedAt.toISOString() : null,
+    ageMs: ageSince(createdAt, now) ?? 0,
+    runtimeMs,
+    retryCount: retryCountFromInput(job.input),
+    lastError: job.error ?? null,
+    resultPreview: previewResult(job.result),
+    turns: job.turns ?? 0,
+    toolCallsCount: job.toolCallsCount ?? 0
+  };
+}
+function buildJobRunnerObservability(opts) {
+  const now = opts.now ?? /* @__PURE__ */ new Date();
+  const byStatus = {};
+  let oldestQueuedAgeMs = null;
+  const decorated = opts.jobs.map((job) => {
+    byStatus[job.status] = (byStatus[job.status] ?? 0) + 1;
+    if (job.status === "queued") {
+      const ageMs = ageSince(job.createdAt, now);
+      if (ageMs != null && (oldestQueuedAgeMs == null || ageMs > oldestQueuedAgeMs)) {
+        oldestQueuedAgeMs = ageMs;
+      }
+    }
+    return decorateJobForObservability(job, now);
+  });
+  const activeLimit = opts.activeLimit ?? 20;
+  const recentLimit = opts.recentLimit ?? 20;
+  return {
+    generatedAt: now.toISOString(),
+    summary: {
+      total: opts.jobs.length,
+      byStatus,
+      activeCount: decorated.filter((job) => ACTIVE_STATUSES.has(job.status)).length,
+      recentFailureCount: decorated.filter((job) => job.status === "failed").length,
+      oldestQueuedAgeMs
+    },
+    activeJobs: decorated.filter((job) => ACTIVE_STATUSES.has(job.status)).sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(0, activeLimit),
+    recentJobs: decorated.filter((job) => RECENT_STATUSES.has(job.status)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, recentLimit),
+    diagnosticEvents: opts.diagnosticEvents.map((event) => ({
+      id: event.id,
+      subsystem: event.subsystem,
+      severity: event.severity,
+      message: event.message,
+      metadata: event.metadata ?? {},
+      createdAt: (toDate(event.createdAt) ?? now).toISOString()
+    }))
+  };
+}
+function decideJobFailureRecovery(opts) {
+  const maxRetries = opts.maxRetries ?? 2;
+  const retryCount = retryCountFromInput(opts.input);
+  if (retryCount < maxRetries) {
+    const nextRetryCount = retryCount + 1;
+    return {
+      action: "requeue",
+      nextRetryCount,
+      nextInput: { ...opts.input, retryCount: nextRetryCount },
+      persistedError: `Retry ${nextRetryCount}/${maxRetries}: ${opts.errorMessage}`.slice(0, 2e3)
+    };
+  }
+  return {
+    action: "fail",
+    nextRetryCount: retryCount,
+    persistedError: opts.errorMessage
+  };
+}
+var ACTIVE_STATUSES, RECENT_STATUSES, PREVIEW_LIMIT;
+var init_jobObservability = __esm({
+  "server/agent/jobObservability.ts"() {
+    "use strict";
+    ACTIVE_STATUSES = /* @__PURE__ */ new Set(["queued", "running", "cancelling"]);
+    RECENT_STATUSES = /* @__PURE__ */ new Set(["complete", "failed", "cancelled", "delivered"]);
+    PREVIEW_LIMIT = 240;
+  }
+});
+
 // server/agent/appDelivery.ts
 var appDelivery_exports = {};
 __export(appDelivery_exports, {
@@ -57545,26 +57660,29 @@ ${sub.body?.slice(0, 1200) || ""}`.trim();
     const msg = err2 instanceof Error ? err2.message : String(err2);
     console.error(`[JobQueue] job ${job.id} failed:`, err2);
     const jobInput = job.input ?? {};
-    const retryCount = typeof jobInput.retryCount === "number" ? jobInput.retryCount : 0;
     const MAX_RETRIES = 2;
+    const recovery = decideJobFailureRecovery({
+      input: jobInput,
+      errorMessage: msg,
+      maxRetries: MAX_RETRIES
+    });
     logSystemError({
       source: `jobQueue/${job.agentType}`,
       message: msg,
       error: err2,
       level: "error",
-      context: { jobId: job.id, agentType: job.agentType, retryCount },
+      context: { jobId: job.id, agentType: job.agentType, retryCount: recovery.nextRetryCount },
       userId: job.userId
     }).catch(() => {
     });
-    if (retryCount < MAX_RETRIES) {
-      const nextRetry = retryCount + 1;
-      console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${nextRetry}/${MAX_RETRIES}) after error: ${msg}`);
+    if (recovery.action === "requeue") {
+      console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${recovery.nextRetryCount}/${MAX_RETRIES}) after error: ${msg}`);
       try {
         await db.update(agentJobs).set({
           status: "queued",
           startedAt: null,
-          error: `Retry ${nextRetry}/${MAX_RETRIES}: ${msg}`.slice(0, 2e3),
-          input: { ...jobInput, retryCount: nextRetry }
+          error: recovery.persistedError,
+          input: recovery.nextInput ?? jobInput
         }).where(eq80(agentJobs.id, job.id));
       } catch (retryErr) {
         console.error(`[JobQueue] failed to re-queue job ${job.id}:`, retryErr);
@@ -57662,6 +57780,7 @@ var init_jobQueue = __esm({
     init_exportPdf();
     init_googleDrive();
     init_approvalReceipt();
+    init_jobObservability();
     submitAgentJob = submitAgentJob2;
     getModelForJobType = getModelForJobType2;
     researchNotificationBatches = /* @__PURE__ */ new Map();
@@ -75660,6 +75779,26 @@ Reply directly to this message with your answer and I'll take it from there.
     } catch (err2) {
       console.error("Error listing active agent jobs:", err2);
       res.status(500).json({ error: "Failed to list active jobs" });
+    }
+  });
+  app2.get("/api/agent-jobs/observability", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const jobs = await db.select().from(agentJobs).where(eq112(agentJobs.userId, userId)).orderBy(desc39(agentJobs.createdAt)).limit(80);
+      const { getRecentEvents: getRecentEvents2 } = await Promise.resolve().then(() => (init_diagnosticsService(), diagnosticsService_exports));
+      const { buildJobRunnerObservability: buildJobRunnerObservability2 } = await Promise.resolve().then(() => (init_jobObservability(), jobObservability_exports));
+      const diagnosticEvents2 = await getRecentEvents2({
+        userId,
+        subsystem: "job_queue",
+        limit: 20,
+        sinceMinutes: 60,
+        excludePatternDetected: true
+      });
+      res.json(buildJobRunnerObservability2({ jobs, diagnosticEvents: diagnosticEvents2 }));
+    } catch (err2) {
+      console.error("Error building agent job observability report:", err2);
+      res.status(500).json({ error: "Failed to build job observability report" });
     }
   });
   app2.post("/api/agent-jobs/:id/cancel", async (req, res) => {

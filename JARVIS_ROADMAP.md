@@ -191,8 +191,9 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Jobs support research, deep research, writing, planning, email, weekly pattern, goal decomposition, named-agent tasks, and build-feature work
 - [x] Job status is visible in the Inbox tab
 - [x] Retry and cancel flows exist for jobs
-- [ ] Add richer job observability and admin/debug screens
-- [ ] Add stronger production recovery tests for worker restarts and partial failures
+- [x] Add richer job observability and admin/debug screens with `/api/agent-jobs/observability` and a compact Settings health panel
+- [x] Add stronger recovery/partial-failure coverage for retry decoration and permanent-failure classification
+- [ ] Expand DB-backed worker restart recovery tests when a test database is available
 
 ### 3.3 - Sub-Agent Spawning
 

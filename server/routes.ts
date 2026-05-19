@@ -7488,6 +7488,32 @@ Return ONLY the JSON object.`;
     }
   });
 
+  app.get("/api/agent-jobs/observability", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const jobs = await db
+        .select()
+        .from(schema.agentJobs)
+        .where(eq(schema.agentJobs.userId, userId))
+        .orderBy(desc(schema.agentJobs.createdAt))
+        .limit(80);
+      const { getRecentEvents } = await import("./diagnostics/diagnosticsService");
+      const { buildJobRunnerObservability } = await import("./agent/jobObservability");
+      const diagnosticEvents = await getRecentEvents({
+        userId,
+        subsystem: "job_queue",
+        limit: 20,
+        sinceMinutes: 60,
+        excludePatternDetected: true,
+      });
+      res.json(buildJobRunnerObservability({ jobs, diagnosticEvents }));
+    } catch (err) {
+      console.error("Error building agent job observability report:", err);
+      res.status(500).json({ error: "Failed to build job observability report" });
+    }
+  });
+
   app.post("/api/agent-jobs/:id/cancel", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;

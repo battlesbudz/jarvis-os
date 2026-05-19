@@ -21,6 +21,7 @@ const tests = [
   { file: "server/agent/__tests__/goalPacing.test.ts" },
   { file: "server/agent/__tests__/deliverableReviewActions.test.ts" },
   { file: "server/agent/__tests__/deliverableReviewHttpRoutes.test.ts" },
+  { file: "server/agent/__tests__/jobObservability.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },
   { file: "server/agent/__tests__/manifestFilter.assert.ts" },
   { file: "server/agent/__tests__/toolAwareRouting.assert.ts" },
