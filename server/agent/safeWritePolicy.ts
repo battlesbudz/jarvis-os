@@ -62,8 +62,12 @@ const DANGEROUS_PATTERNS: Array<{ re: RegExp; reason: string }> = [
 // ── Path validation helpers ───────────────────────────────────────────────────
 
 /** Return true if `filePath` is in the hard-protected set (normalised). */
+function normalisePolicyPath(filePath: string): string {
+  return path.normalize(filePath).replace(/\\/g, "/");
+}
+
 export function isProtectedFile(filePath: string): boolean {
-  return PROTECTED_FILES.has(path.normalize(filePath));
+  return PROTECTED_FILES.has(normalisePolicyPath(filePath));
 }
 
 /**
@@ -71,7 +75,7 @@ export function isProtectedFile(filePath: string): boolean {
  * rule or is in the protected set; otherwise { dangerous: false }.
  */
 export function isDangerousPath(filePath: string): { dangerous: boolean; reason?: string } {
-  const normalised = path.normalize(filePath);
+  const normalised = normalisePolicyPath(filePath);
   if (PROTECTED_FILES.has(normalised)) {
     return { dangerous: true, reason: `'${filePath}' is a hard-protected file that requires user approval` };
   }
@@ -91,11 +95,11 @@ export function isDangerousPath(filePath: string): { dangerous: boolean; reason?
  * - First path segment must be in ALLOWED_SOURCE_DIRS
  */
 export function isPathAllowed(filePath: string): boolean {
-  const normalised = path.normalize(filePath);
+  const normalised = normalisePolicyPath(filePath);
   if (path.isAbsolute(normalised)) return false;
   if (normalised.startsWith("..")) return false;
   if (PROTECTED_FILES.has(normalised)) return false;
-  const firstSegment = normalised.split(path.sep)[0];
+  const firstSegment = normalised.split("/")[0];
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 
@@ -112,10 +116,10 @@ export function isPathAllowed(filePath: string): boolean {
  * (PROTECTED_FILES are intentionally NOT blocked here)
  */
 export function isPathAllowedForProposal(filePath: string): boolean {
-  const normalised = path.normalize(filePath);
+  const normalised = normalisePolicyPath(filePath);
   if (path.isAbsolute(normalised)) return false;
   if (normalised.startsWith("..")) return false;
-  const firstSegment = normalised.split(path.sep)[0];
+  const firstSegment = normalised.split("/")[0];
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 
@@ -264,6 +268,7 @@ export async function recordAutonomousWrite(filePath?: string): Promise<void> {
  * dispatched in this window.
  */
 async function _claimWarningSlot(): Promise<boolean> {
+  await _ensureWarningRow();
   const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
   // UPDATE the singleton row only when no warning has been sent in this window.
   // The row-level lock makes this race-condition-safe under concurrent writes.
@@ -326,6 +331,14 @@ async function _sendBudgetWarning(count: number): Promise<void> {
  * Safe to call multiple times — ADD COLUMN IF NOT EXISTS is idempotent.
  */
 let _tripColumnEnsured = false;
+async function _ensureWarningRow(): Promise<void> {
+  await db.execute(sql`
+    INSERT INTO write_budget_warnings (id, warned_at)
+    VALUES (1, '1970-01-01')
+    ON CONFLICT DO NOTHING
+  `);
+}
+
 async function _ensureTripColumn(): Promise<void> {
   if (_tripColumnEnsured) return;
   await db.execute(sql`
@@ -348,6 +361,7 @@ async function _ensureTripColumn(): Promise<void> {
  */
 async function _claimTripSlot(): Promise<boolean> {
   await _ensureTripColumn();
+  await _ensureWarningRow();
   const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
   const result = await db.execute(sql`
     UPDATE write_budget_warnings
@@ -432,6 +446,7 @@ export async function resetCircuitBreaker(): Promise<void> {
     // notifications can be sent if autonomous writes ramp up again after this
     // manual reset.
     await _ensureTripColumn();
+    await _ensureWarningRow();
     await db.execute(sql`
       UPDATE write_budget_warnings
       SET warned_at = '1970-01-01', tripped_at = '1970-01-01'

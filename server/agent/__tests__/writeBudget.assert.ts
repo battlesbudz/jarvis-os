@@ -53,8 +53,8 @@ import { checkCircuitBreaker } from ${JSON.stringify(policyPath)};
 `.trimStart(),
   );
 
-  const tsxBin = path.join(PROJECT_ROOT, "node_modules/.bin/tsx");
-  const result = spawnSync(tsxBin, [tmpScript], {
+  const tsxCli = path.join(PROJECT_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+  const result = spawnSync(process.execPath, [tsxCli, tmpScript], {
     cwd: PROJECT_ROOT,
     env: { ...process.env },
     encoding: "utf8",
