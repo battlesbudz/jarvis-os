@@ -681,8 +681,34 @@ export default function SettingsScreen() {
     memoryWriteErrors15m: number;
     memoryReadErrors15m: number;
   }
+  interface JobRunnerJob {
+    id: string;
+    agentType: string;
+    title: string;
+    status: string;
+    ageMs: number;
+    runtimeMs: number | null;
+    retryCount: number;
+    lastError: string | null;
+    resultPreview: string | null;
+  }
+  interface JobRunnerObservability {
+    generatedAt: string;
+    summary: {
+      total: number;
+      byStatus: Record<string, number>;
+      activeCount: number;
+      recentFailureCount: number;
+      oldestQueuedAgeMs: number | null;
+    };
+    activeJobs: JobRunnerJob[];
+    recentJobs: JobRunnerJob[];
+    diagnosticEvents: MemoryDiagEvent[];
+  }
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
+  const [jobRunnerReport, setJobRunnerReport] = useState<JobRunnerObservability | null>(null);
+  const [jobRunnerLoading, setJobRunnerLoading] = useState(false);
   const [diagnosisText, setDiagnosisText] = useState<string | null>(null);
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
   const [gapScanRunning, setGapScanRunning] = useState(false);
@@ -837,6 +863,31 @@ export default function SettingsScreen() {
       setHealthError(true);
     }
     setHealthLoading(false);
+  }, []);
+
+  const loadJobRunnerReport = useCallback(async () => {
+    setJobRunnerLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/agent-jobs/observability');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data === 'object' && data.summary) {
+          setJobRunnerReport({
+            ...data,
+            activeJobs: Array.isArray(data.activeJobs) ? data.activeJobs : [],
+            recentJobs: Array.isArray(data.recentJobs) ? data.recentJobs : [],
+            diagnosticEvents: Array.isArray(data.diagnosticEvents) ? data.diagnosticEvents : [],
+          });
+        } else {
+          setJobRunnerReport(null);
+        }
+      } else {
+        setJobRunnerReport(null);
+      }
+    } catch {
+      setJobRunnerReport(null);
+    }
+    setJobRunnerLoading(false);
   }, []);
 
   const runDiagnosis = useCallback(async () => {
@@ -1275,6 +1326,7 @@ export default function SettingsScreen() {
     loadThreatLog();
     loadBuildHistory();
     loadHealth();
+    loadJobRunnerReport();
     loadMcpServers();
     loadMcpServerKey();
     loadWorkspaceFiles();
@@ -1290,7 +1342,7 @@ export default function SettingsScreen() {
         githubPollRef.current = null;
       }
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadMcpServers, loadMcpServerKey, loadWorkspaceFiles]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadJobRunnerReport, loadMcpServers, loadMcpServerKey, loadWorkspaceFiles]));
 
   useEffect(() => {
     return () => {
@@ -1929,9 +1981,9 @@ export default function SettingsScreen() {
                           github.com/settings/developers
                         </Text>
                         {'\n'}
-                        {'2. '}Click "New OAuth App" and fill in any name and homepage URL.{'\n'}
+                        {'2. Click "New OAuth App" and fill in any name and homepage URL.\n'}
                         {'3. '}Set Authorization callback URL to any valid URL (Device Flow does not use it).{'\n'}
-                        {'4. '}Enable "Device Flow" in the app settings.{'\n'}
+                        {'4. Enable "Device Flow" in the app settings.\n'}
                         {'5. '}Copy the Client ID and add it as the{' '}
                         <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>GITHUB_CLIENT_ID</Text>
                         {' '}variable in Railway.{'\n'}
@@ -2019,7 +2071,7 @@ export default function SettingsScreen() {
               </View>
               {githubConnected && (
                 <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 8 }}>
-                  Ask Jarvis "what are my open PRs?" or use /pr on Telegram.
+                  {'Ask Jarvis "what are my open PRs?" or use /pr on Telegram.'}
                 </Text>
               )}
             </View>
@@ -2369,7 +2421,7 @@ export default function SettingsScreen() {
                 Copy your key now
               </Text>
               <Text style={{ fontSize: 11, color: Colors.textSecondary, fontFamily: 'Inter_400Regular', lineHeight: 15 }}>
-                This is shown once. Store it somewhere safe — you won't be able to see it again.
+                {'This is shown once. Store it somewhere safe - you won\'t be able to see it again.'}
               </Text>
             </View>
           )}
@@ -2604,7 +2656,7 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
             <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 6 }}>
-              You can also ask Jarvis to "read that out" or "say it as a voice message" at any time
+              {'You can also ask Jarvis to "read that out" or "say it as a voice message" at any time'}
             </Text>
           </View>}
         </View>
@@ -3001,7 +3053,7 @@ export default function SettingsScreen() {
           <View style={tlStyles.header}>
             <Ionicons name="eye-outline" size={16} color="#F59E0B" />
             <Text style={tlStyles.headerText}>ANOMALY DETECTION</Text>
-            <Text style={tlStyles.headerSub}>Patterns flagged by Jarvis's reflexive gut layer</Text>
+            <Text style={tlStyles.headerSub}>{"Patterns flagged by Jarvis's reflexive gut layer"}</Text>
           </View>
           {threatLogLoading ? (
             <View style={tlStyles.loadingRow}>
@@ -3195,7 +3247,7 @@ export default function SettingsScreen() {
                 <Ionicons name="code-slash-outline" size={16} color={Colors.cyan} />
                 <View>
                   <Text style={styles.prefTitle}>Code Proposals</Text>
-                  <Text style={styles.prefSub}>Review and approve Jarvis's self-improvements</Text>
+                  <Text style={styles.prefSub}>{"Review and approve Jarvis's self-improvements"}</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
@@ -3219,7 +3271,7 @@ export default function SettingsScreen() {
                 <Ionicons name="alert-circle-outline" size={16} color={Colors.warning} />
                 <View>
                   <Text style={styles.prefTitle}>Capability Gaps</Text>
-                  <Text style={styles.prefSub}>What Jarvis couldn't do this week</Text>
+                  <Text style={styles.prefSub}>{"What Jarvis couldn't do this week"}</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
@@ -3320,7 +3372,13 @@ export default function SettingsScreen() {
                 );
               })()}
             </View>
-            <Pressable onPress={loadHealth} style={healthStyles.refreshBtn}>
+            <Pressable
+              onPress={() => {
+                loadHealth();
+                loadJobRunnerReport();
+              }}
+              style={healthStyles.refreshBtn}
+            >
               <Ionicons name="refresh-outline" size={16} color="#10B981" />
             </Pressable>
           </View>
@@ -3400,6 +3458,64 @@ export default function SettingsScreen() {
               </View>
             );
           })()}
+
+          {/* Job runner observability */}
+          <View style={healthStyles.jobRunnerSection}>
+            <View style={healthStyles.jobRunnerHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={healthStyles.timelineHeader}>Job Runner</Text>
+                {jobRunnerReport && (() => {
+                  const q = jobRunnerReport.summary.byStatus.queued ?? 0;
+                  const r = jobRunnerReport.summary.byStatus.running ?? 0;
+                  const f = jobRunnerReport.summary.recentFailureCount ?? 0;
+                  const oldest = jobRunnerReport.summary.oldestQueuedAgeMs;
+                  const oldestText = oldest == null
+                    ? 'no queued wait'
+                    : oldest < 60000
+                      ? '<1m oldest queued'
+                      : `${Math.floor(oldest / 60000)}m oldest queued`;
+                  return (
+                    <Text style={healthStyles.overallSub}>
+                      {`${q} queued - ${r} running - ${f} failed recently - ${oldestText}`}
+                    </Text>
+                  );
+                })()}
+              </View>
+              {jobRunnerLoading ? (
+                <ActivityIndicator size="small" color="#10B981" />
+              ) : (
+                <Pressable onPress={loadJobRunnerReport} style={healthStyles.refreshBtn}>
+                  <Ionicons name="refresh-outline" size={15} color="#10B981" />
+                </Pressable>
+              )}
+            </View>
+            {jobRunnerReport && jobRunnerReport.activeJobs.slice(0, 3).map((job) => {
+              const runtime = job.runtimeMs == null ? null : Math.max(0, Math.floor(job.runtimeMs / 1000));
+              const ageMin = Math.max(0, Math.floor(job.ageMs / 60000));
+              const meta = `${job.agentType} - ${job.status}${job.retryCount > 0 ? ` - retry ${job.retryCount}` : ''}${runtime != null ? ` - ${runtime}s runtime` : ` - ${ageMin}m old`}`;
+              return (
+                <View key={job.id} style={healthStyles.jobRunnerRow}>
+                  <View style={[healthStyles.timelineDot, { backgroundColor: job.status === 'running' ? '#10B981' : '#F59E0B' }]} />
+                  <View style={healthStyles.timelineContent}>
+                    <Text style={healthStyles.timelineMsg} numberOfLines={1}>{job.title}</Text>
+                    <Text style={healthStyles.timelineSub} numberOfLines={1}>{meta}</Text>
+                    {job.lastError && <Text style={healthStyles.timelineTime} numberOfLines={1}>{job.lastError}</Text>}
+                  </View>
+                </View>
+              );
+            })}
+            {jobRunnerReport && jobRunnerReport.activeJobs.length === 0 && (
+              <Text style={healthStyles.overallSub}>No active jobs.</Text>
+            )}
+            {jobRunnerReport && jobRunnerReport.diagnosticEvents.length > 0 && (
+              <Text style={healthStyles.jobRunnerEvent} numberOfLines={2}>
+                {jobRunnerReport.diagnosticEvents[0]?.message}
+              </Text>
+            )}
+            {!jobRunnerReport && !jobRunnerLoading && (
+              <Text style={healthStyles.overallSub}>Job runner details unavailable.</Text>
+            )}
+          </View>
 
           {/* Recent error timeline */}
           {healthReport && healthReport.recentErrors && healthReport.recentErrors.length > 0 && (
@@ -4766,6 +4882,34 @@ const healthStyles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_500Medium',
     lineHeight: 17,
+  },
+  jobRunnerSection: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  jobRunnerHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  jobRunnerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  jobRunnerEvent: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    lineHeight: 16,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   diagSection: {
     padding: 12,

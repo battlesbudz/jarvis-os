@@ -12,8 +12,6 @@ import { notifyUser, getChannel } from "../channels/registry";
 import { postToDiscordChannelById, sendToDiscordUser, sendFileToDiscordChannel, sendFileToDiscordUser } from "../discord/manager";
 import type { ChannelSendOpts } from "../channels/types";
 import { _notifyJobCompleteCore } from "./notifyJobCompleteCore";
-export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
-export { _notifyJobCompleteCore };
 import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "./errorLogger";
@@ -26,8 +24,11 @@ import { researchHasSourceUrls } from "./researchUtils";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
 import { createDriveBinaryFile } from "../integrations/googleDrive";
 import { normalizeApprovalReceipt } from "./approvalReceipt";
+import { decideJobFailureRecovery } from "./jobObservability";
 
 // Re-export from the shared client so existing callers don't break.
+export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
+export { _notifyJobCompleteCore };
 export type AgentJobType = _AgentJobType;
 export type { SubmitJobInput };
 export const submitAgentJob = _submitAgentJob;
@@ -2272,8 +2273,12 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     console.error(`[JobQueue] job ${job.id} failed:`, err);
 
     const jobInput = (job.input as Record<string, unknown>) ?? {};
-    const retryCount = typeof jobInput.retryCount === "number" ? jobInput.retryCount : 0;
     const MAX_RETRIES = 2;
+    const recovery = decideJobFailureRecovery({
+      input: jobInput,
+      errorMessage: msg,
+      maxRetries: MAX_RETRIES,
+    });
 
     // Log persistent errors to system_error_log for Jarvis self-debugging
     logSystemError({
@@ -2281,21 +2286,20 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       message: msg,
       error: err,
       level: "error",
-      context: { jobId: job.id, agentType: job.agentType, retryCount },
+      context: { jobId: job.id, agentType: job.agentType, retryCount: recovery.nextRetryCount },
       userId: job.userId,
     }).catch(() => {});
 
-    if (retryCount < MAX_RETRIES) {
-      const nextRetry = retryCount + 1;
-      console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${nextRetry}/${MAX_RETRIES}) after error: ${msg}`);
+    if (recovery.action === "requeue") {
+      console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${recovery.nextRetryCount}/${MAX_RETRIES}) after error: ${msg}`);
       try {
         await db
           .update(schema.agentJobs)
           .set({
             status: "queued",
             startedAt: null,
-            error: `Retry ${nextRetry}/${MAX_RETRIES}: ${msg}`.slice(0, 2000),
-            input: { ...jobInput, retryCount: nextRetry },
+            error: recovery.persistedError,
+            input: recovery.nextInput ?? jobInput,
           })
           .where(eq(schema.agentJobs.id, job.id));
       } catch (retryErr) {
