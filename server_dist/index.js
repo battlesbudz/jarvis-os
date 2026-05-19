@@ -36584,11 +36584,14 @@ __export(safeWritePolicy_exports, {
 import path14 from "path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { sql as sql15 } from "drizzle-orm";
+function normalisePolicyPath(filePath) {
+  return path14.normalize(filePath).replace(/\\/g, "/");
+}
 function isProtectedFile(filePath) {
-  return PROTECTED_FILES.has(path14.normalize(filePath));
+  return PROTECTED_FILES.has(normalisePolicyPath(filePath));
 }
 function isDangerousPath(filePath) {
-  const normalised = path14.normalize(filePath);
+  const normalised = normalisePolicyPath(filePath);
   if (PROTECTED_FILES.has(normalised)) {
     return { dangerous: true, reason: `'${filePath}' is a hard-protected file that requires user approval` };
   }
@@ -36600,18 +36603,18 @@ function isDangerousPath(filePath) {
   return { dangerous: false };
 }
 function isPathAllowed(filePath) {
-  const normalised = path14.normalize(filePath);
+  const normalised = normalisePolicyPath(filePath);
   if (path14.isAbsolute(normalised)) return false;
   if (normalised.startsWith("..")) return false;
   if (PROTECTED_FILES.has(normalised)) return false;
-  const firstSegment = normalised.split(path14.sep)[0];
+  const firstSegment = normalised.split("/")[0];
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 function isPathAllowedForProposal(filePath) {
-  const normalised = path14.normalize(filePath);
+  const normalised = normalisePolicyPath(filePath);
   if (path14.isAbsolute(normalised)) return false;
   if (normalised.startsWith("..")) return false;
-  const firstSegment = normalised.split(path14.sep)[0];
+  const firstSegment = normalised.split("/")[0];
   return ALLOWED_SOURCE_DIRS.includes(firstSegment);
 }
 function _statusFromTimestamps(timestamps) {
@@ -36678,6 +36681,7 @@ async function recordAutonomousWrite(filePath) {
   }
 }
 async function _claimWarningSlot() {
+  await _ensureWarningRow();
   const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
   const result = await db.execute(sql15`
     UPDATE write_budget_warnings
@@ -36707,6 +36711,13 @@ async function _sendBudgetWarning(count2) {
   const msg = `\u26A0\uFE0F *Write budget warning* \u2014 Jarvis has used ${count2}/${CIRCUIT_MAX_WRITES} autonomous writes in the last hour. Only ${remaining} write${remaining === 1 ? "" : "s"} left before the circuit breaker trips. Review the audit log or reset the counter if needed.`;
   await notifyUser2(ownerId, "general", msg);
 }
+async function _ensureWarningRow() {
+  await db.execute(sql15`
+    INSERT INTO write_budget_warnings (id, warned_at)
+    VALUES (1, '1970-01-01')
+    ON CONFLICT DO NOTHING
+  `);
+}
 async function _ensureTripColumn() {
   if (_tripColumnEnsured) return;
   await db.execute(sql15`
@@ -36717,6 +36728,7 @@ async function _ensureTripColumn() {
 }
 async function _claimTripSlot() {
   await _ensureTripColumn();
+  await _ensureWarningRow();
   const windowStart = new Date(Date.now() - CIRCUIT_WINDOW_MS);
   const result = await db.execute(sql15`
     UPDATE write_budget_warnings
@@ -36757,6 +36769,7 @@ async function resetCircuitBreaker() {
   try {
     await db.execute(sql15`DELETE FROM write_budget_log`);
     await _ensureTripColumn();
+    await _ensureWarningRow();
     await db.execute(sql15`
       UPDATE write_budget_warnings
       SET warned_at = '1970-01-01', tripped_at = '1970-01-01'

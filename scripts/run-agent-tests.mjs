@@ -1,12 +1,16 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { configureDatabaseEnvForTests, loadEnvFiles } from "./test-env.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const tsxCli = path.join(projectRoot, "node_modules", "tsx", "dist", "cli.mjs");
 
+loadEnvFiles(projectRoot);
+
 const tests = [
+  { file: "scripts/__tests__/testEnv.test.mjs" },
   { file: "server/diagnostics/__tests__/osReadiness.test.ts" },
   { file: "server/agent/__tests__/autonomyPolicy.test.ts" },
   { file: "server/agent/__tests__/autonomyRuntime.test.ts" },
@@ -51,7 +55,7 @@ const tests = [
   { file: "server/agent/__tests__/weatherLookup.test.ts" },
 ];
 
-const hasDatabase = Boolean(process.env.DATABASE_URL);
+const hasDatabase = configureDatabaseEnvForTests();
 let skipped = 0;
 
 for (const test of tests) {
