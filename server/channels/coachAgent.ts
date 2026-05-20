@@ -102,7 +102,7 @@ function getMaxTokensForChannel(channelName: string): number {
 // Channel-agnostic coach pipeline shared by Telegram / WhatsApp / Slack /
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
-/** Agent ID used as the namespace key in the claude session store for main coach turns. */
+/** Agent ID used as the namespace key in the persisted session store for main coach turns. */
 const COACH_AGENT_ID = "coach";
 
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
@@ -121,7 +121,7 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
 
   if (input.sdkSessionId) {
     try {
-      const { resumeSession } = await import("../agent/providers/claude");
+      const { resumeSession } = await import("../agent/providers/sessionStore");
       const resumed = await resumeSession(input.sdkSessionId, COACH_AGENT_ID, userId);
       if (resumed) {
         cachedSessionMessages = resumed.messages;
@@ -953,7 +953,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
 
   let finalSessionId: string | undefined = activeSessionId;
   try {
-    const { initSession, appendToSession } = await import("../agent/providers/claude");
+    const { initSession, appendToSession } = await import("../agent/providers/sessionStore");
     if (sessionResumed && activeSessionId) {
       appendToSession(activeSessionId, COACH_AGENT_ID, userId, [newUserMsg, newAssistMsg]).catch(() => {});
     } else {

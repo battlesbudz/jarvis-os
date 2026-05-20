@@ -13,7 +13,7 @@ import {
   getDaemonLastSeen,
   waitForTrainingTap,
 } from "../../daemon/bridge";
-import { anthropic, ORCHESTRATOR_MODEL } from "../../lib/anthropicClient";
+import { routeModelTurn } from "../modelRouter";
 import { screenshotDiff } from "../../lib/screenshotDiff";
 import { db } from "../../db";
 import { buttonLocations, searchBarLocations } from "@shared/schema";
@@ -316,7 +316,7 @@ export const daemonStatusTool: AgentTool = {
 };
 
 //        ScreenMap cache                                                                                                                                                                                     
-// 500 ms per-user cache so back-to-back calls don't hit Claude Vision twice.
+// 500 ms per-user cache so back-to-back calls don't hit Codex OAuth twice.
 interface ScreenMapEntry {
   ts: number;
   result: string;
@@ -450,7 +450,7 @@ export interface ScreenElement {
 // ── buildScreenMapElements ─────────────────────────────────────────────────────
 // Shared ScreenMap acquisition logic used by both android_screen_understand and
 // android_tap_element. Captures screenshot + view hierarchy in parallel, calls
-// Claude Vision, normalizes the output, updates the cache, and returns elements.
+// Codex OAuth, normalizes the output, updates the cache, and returns elements.
 // Callers must check permissions before invoking this.
 type BuildScreenMapResult =
   | { ok: true; elements: ScreenElement[] }
@@ -502,25 +502,25 @@ async function buildScreenMapElements(userId: string, ctx?: object): Promise<Bui
 
   let screenElements: ScreenElement[] = [];
   try {
-    const claudeResponse = await anthropic.messages.create({
-      model: ORCHESTRATOR_MODEL,
-      max_tokens: 2048,
+    const codexResponse = await routeModelTurn({
+      tier: "smart",
+      maxCompletionTokens: 2048,
+      stream: false,
+      toolChoice: "none",
+      logPrefix: "[ScreenMap]",
       messages: [
         {
+          role: "system",
+          content: "You are analyzing Android UI Automator data for UI automation. Return only valid JSON.",
+        },
+        {
           role: "user",
-          content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type: "image/jpeg", data: base64Image },
-            },
-            {
-              type: "text",
-              text: `You are analyzing an Android screen for UI automation.
+          content: `You are analyzing an Android screen for UI automation.
 
 Here is the UI Automator element tree (JSON):
 ${elementsJson}
 
-Look at the screenshot and the element tree above. Return a JSON array of the most important interactive elements visible on screen. For each element include:
+The screenshot was captured (${base64Image.length} base64 characters), but this Codex OAuth route receives text prompts only. Infer the visible interactive elements from the element tree. Return a JSON array of the most important interactive elements visible on screen. For each element include:
 - "label": short human-readable name (e.g. "Search bar", "Post button", "Back")
 - "description": what this element does or contains
 - "center_x": horizontal center pixel coordinate for tapping
@@ -533,22 +533,17 @@ Look at the screenshot and the element tree above. Return a JSON array of the mo
 IMPORTANT: For icon-only buttons (ImageButton, ImageView, etc.) that have no text label, class_name is essential — always include it. Never leave class_name empty or omit it for these elements.
 
 Prioritize: search bars, input fields, buttons, navigation items, interactive content.
-Include elements that have no accessibility label but are visually identifiable as interactive.
 Return ONLY a valid JSON array, no explanation, no markdown fences.`,
-            },
-          ],
         },
       ],
     });
 
-    const responseText = claudeResponse.content[0]?.type === "text"
-      ? claudeResponse.content[0].text.trim()
-      : "[]";
+    const responseText = (codexResponse.textContent ?? "[]").trim();
     const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
     const raw = JSON.parse(cleaned);
     screenElements = normalizeScreenElements(Array.isArray(raw) ? raw : []);
   } catch (err) {
-    console.error("[buildScreenMapElements] Claude Vision error:", err);
+    console.error("[buildScreenMapElements] Codex OAuth screen-map error:", err);
     return {
       ok: false,
       content: `Vision analysis failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -1577,7 +1572,7 @@ export const androidSearchInAppTool: AgentTool = {
 
       // ── Vision fallback for iconOnly apps and unknown apps ──────────────────
       // When resource-ID matching fails for an icon-only search entry point, use
-      // Claude Vision (android_screen_understand internally) to locate the magnifying-
+      // Codex screen map (android_screen_understand internally) to locate the magnifying-
       // glass icon visually. This avoids asking the user to intervene manually.
       // For unknown apps (not in APP_SEARCH_HINTS) we also attempt the vision path
       // automatically — many apps use an icon-only search entry point that the
@@ -2625,7 +2620,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Compare a fresh screenshot against the pre-scroll one. If the pixel
         // diff is below 2% the page has not moved — we are at the bottom.
         // We check this BEFORE calling buildScreenMapElements (the expensive
-        // Vision/Claude call) so we can skip it when the list is exhausted.
+        // screen-map call) so we can skip it when the list is exhausted.
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
           const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -3484,7 +3479,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Compare a fresh screenshot against the pre-scroll one. If the pixel
         // diff is below 2 % the page has not moved — we are at the bottom.
         // We check this BEFORE calling buildScreenMapElements (the expensive
-        // Vision/Claude call) so we can skip it when the list is exhausted.
+        // screen-map call) so we can skip it when the list is exhausted.
         // Track whether we got a conclusive screenshot-based answer so that we
         // can fall through to the hierarchy fallback when capture fails.
         let screenshotCheckConclusive = false;
@@ -6572,7 +6567,7 @@ export const androidFillFormTool: AgentTool = {
 Accepts a list of fields (label + text pairs) and fills them in order, using the same ScreenMap + scoreElement matching as android_type_into_element. Replaces multiple sequential android_type_into_element calls for login forms, registration pages, and filter dialogs.
 
 Steps performed internally:
-1. Capture a fresh ScreenMap once at the start (screenshot + view hierarchy → Claude Vision)
+1. Capture a fresh ScreenMap once at the start (screenshot + view hierarchy → Codex screen map)
 2. For each field: fuzzy-match label, tap to focus, optionally clear, type via three-level fallback (android_type → android_paste_text → retry), verify
 3. If a field label is not found in the current ScreenMap, refresh the ScreenMap once (handles page transitions between fields)
 4. If still not found, scroll down and re-capture the ScreenMap up to 3 times to find fields that are off-screen

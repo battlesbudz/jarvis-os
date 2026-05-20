@@ -14,11 +14,10 @@ import * as path from "path";
 import { db } from "../db";
 import { eq, and, desc, inArray, gte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { anthropic } from "../lib/anthropicClient";
 import { notifyUser } from "../channels/registry";
+import { routeModelTurn } from "./modelRouter";
 
 const PRIME_MD_PATH = path.resolve("agents/PRIME.md");
-const AUDIT_MODEL = "claude-3-5-sonnet-20241022";
 
 interface DriftEntry {
   section: string;
@@ -197,19 +196,19 @@ Output JSON only.`;
 
     let auditResult: AuditResult;
     try {
-      const response = await anthropic.messages.create({
-        model: AUDIT_MODEL,
-        max_tokens: 2048,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
+      const response = await routeModelTurn({
+        tier: "smart",
+        maxCompletionTokens: 2048,
+        stream: false,
+        toolChoice: "none",
+        logPrefix: "[PrimeAudit]",
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
       });
 
-      const block = response.content[0];
-      if (block.type !== "text") {
-        throw new Error("Unexpected response type from LLM");
-      }
-
-      const raw = block.text.trim();
+      const raw = (response.textContent ?? "").trim();
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         throw new Error("No JSON object found in LLM response");

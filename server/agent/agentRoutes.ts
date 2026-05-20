@@ -65,7 +65,7 @@ import {
   importConfigToCreateArgs,
 } from "./agentConfigSchema";
 import type { AgentConfigFile } from "./agentConfigSchema";
-import { resumeSession, persistChatMessages, getChatHistory } from "./providers/claude";
+import { resumeSession, persistChatMessages, getChatHistory } from "./providers/sessionStore";
 import {
   getAgentPolicy,
   setAgentPolicyScope,

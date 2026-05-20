@@ -28,6 +28,9 @@
 // The harness creates the OpenAI client at module level, so the baseURL must
 // be set before the first import of harness.ts.
 process.env.AI_INTEGRATIONS_OPENAI_API_KEY ??= "test-harness-key";
+process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+process.env.JARVIS_MODEL_PROVIDER = "openai";
 
 import assert from "node:assert/strict";
 import http from "node:http";
@@ -137,6 +140,7 @@ function enqueueToolCallThenText(toolName: string, toolArgs: object = {}) {
     const context: ToolContext = { channel: "test" } as ToolContext; // no userId
 
     await runAgent({
+      model: "gpt-4o-mini",
       messages: [{ role: "user", content: "do something" }],
       tools: [tool],
       context,
@@ -169,6 +173,7 @@ function enqueueToolCallThenText(toolName: string, toolArgs: object = {}) {
     const context: ToolContext = { channel: "test" } as ToolContext;
 
     await runAgent({
+      model: "gpt-4o-mini",
       messages: [{ role: "user", content: "do something" }],
       tools: [tool],
       context,

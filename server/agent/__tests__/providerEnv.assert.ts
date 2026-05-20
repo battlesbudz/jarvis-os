@@ -12,6 +12,11 @@ import {
 import { getModelRouteChain } from "../modelRouter";
 import { resolveRuntimeAgentModel } from "../runtimeModel";
 
+const CODEX_ROUTE = {
+  providerName: "chatgpt-codex-oauth",
+  model: "chatgpt-codex-oauth/auto",
+} as const;
+
 const ENV_KEYS = [
   "AI_INTEGRATIONS_OPENAI_API_KEY",
   "AI_INTEGRATIONS_OPENAI_BASE_URL",
@@ -21,11 +26,11 @@ const ENV_KEYS = [
   "JARVIS_AI_PROVIDER",
   "JARVIS_CODEX_OAUTH_ENABLED",
   "CHATGPT_CODEX_OAUTH_ENABLED",
+  "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
   "JARVIS_CODEX_COMMAND",
   "CODEX_COMMAND",
   "JARVIS_CODEX_OAUTH_MODEL",
   "CHATGPT_CODEX_OAUTH_MODEL",
-  "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
   "ANTHROPIC_API_KEY",
   "AI_INTEGRATIONS_OPENROUTER_API_KEY",
   "AI_INTEGRATIONS_OPENROUTER_BASE_URL",
@@ -68,8 +73,8 @@ withCleanEnv({ OPENAI_API_KEY: "sk-openai" }, () => {
   assert.equal(hasDirectOpenAIProvider(), true);
   assert.equal(getOpenAIClientConfig().apiKey, "sk-openai");
   const chain = getModelRouteChain("balanced");
-  assert.deepEqual(chain[0], { providerName: "openai", model: "gpt-4.1-mini" });
-  console.log("OK: standard OPENAI_API_KEY config is accepted by direct OpenAI and the router");
+  assert.deepEqual(chain[0], CODEX_ROUTE);
+  console.log("OK: standard OPENAI_API_KEY config does not override Codex OAuth routing");
 });
 
 withCleanEnv({ AI_INTEGRATIONS_OPENROUTER_API_KEY: "or-key" }, () => {
@@ -81,12 +86,9 @@ withCleanEnv({ AI_INTEGRATIONS_OPENROUTER_API_KEY: "or-key" }, () => {
   assert.equal(hasNonOpenAIRoutableProvider(), true);
   assert.equal(getOpenAIClientConfig().apiKey, ROUTER_PLACEHOLDER_OPENAI_API_KEY);
   const chain = getModelRouteChain("balanced");
-  assert.deepEqual(chain[0], {
-    providerName: "openai-compatible",
-    model: "openrouter/openrouter/auto",
-  });
-  assert.equal(chain.some((entry) => entry.providerName === "openai"), false);
-  console.log("OK: Railway OpenRouter alias routes through openai-compatible without fake OpenAI fallback");
+  assert.deepEqual(chain[0], CODEX_ROUTE);
+  assert.equal(chain.some((entry) => entry.providerName !== "chatgpt-codex-oauth"), false);
+  console.log("OK: Railway OpenRouter alias does not override Codex OAuth routing");
 });
 
 withCleanEnv({
@@ -99,34 +101,32 @@ withCleanEnv({
   assert.equal(hasNonOpenAIRoutableProvider(), true);
   assert.equal(getCodexOAuthCommand(), "codex-test");
   const chain = getModelRouteChain("cheap");
-  assert.deepEqual(chain, [{
-    providerName: "chatgpt-codex-oauth",
-    model: "chatgpt-codex-oauth/auto",
-  }]);
+  assert.deepEqual(chain, [CODEX_ROUTE]);
   assert.equal(resolveRuntimeAgentModel("gpt-4o-mini"), "chatgpt-codex-oauth/auto");
   console.log("OK: explicit ChatGPT/Codex OAuth provider is the only model route even when other keys exist");
 });
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
   const chain = getModelRouteChain("balanced");
-  assert.deepEqual(chain[0], {
-    providerName: "chatgpt-codex-oauth",
-    model: "chatgpt-codex-oauth/auto",
-  });
+  assert.deepEqual(chain[0], CODEX_ROUTE);
   console.log("OK: ChatGPT/Codex OAuth model specs resolve to the Codex OAuth provider");
 });
 
-withCleanEnv({ OPENAI_API_KEY: "sk-openai", AI_INTEGRATIONS_OPENROUTER_API_KEY: "or-key" }, () => {
+withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "false", OPENAI_API_KEY: "sk-openai" }, () => {
+  assert.equal(hasCodexOAuthProvider(), true);
+  const chain = getModelRouteChain("balanced");
+  assert.deepEqual(chain, [CODEX_ROUTE]);
+  console.log("OK: production disable flags do not turn off Codex OAuth routing");
+});
+
+withCleanEnv({ JARVIS_MODEL_PROVIDER: "openai", OPENAI_API_KEY: "sk-openai", AI_INTEGRATIONS_OPENROUTER_API_KEY: "or-key" }, () => {
   applyProviderEnvAliases();
   assert.equal(hasDirectOpenAIProvider(), true);
   assert.equal(hasNonOpenAIRoutableProvider(), true);
   const chain = getModelRouteChain("balanced");
-  assert.deepEqual(chain[0], {
-    providerName: "openai-compatible",
-    model: "openrouter/openrouter/auto",
-  });
-  assert.equal(chain.some((entry) => entry.providerName === "openai"), true);
-  console.log("OK: alternate provider is preferred when direct OpenAI is also configured");
+  assert.deepEqual(chain[0], CODEX_ROUTE);
+  assert.equal(chain.some((entry) => entry.providerName === "openai"), false);
+  console.log("OK: alternate providers and provider overrides are ignored while Codex OAuth is enabled");
 });
 
 withCleanEnv({ OPENAI_API_KEY: "sk-openai", GROQ_API_KEY: "groq-key", JARVIS_DISABLE_DIRECT_OPENAI: "true" }, () => {
@@ -134,23 +134,17 @@ withCleanEnv({ OPENAI_API_KEY: "sk-openai", GROQ_API_KEY: "groq-key", JARVIS_DIS
   assert.equal(hasDirectOpenAIProvider(), false);
   const chain = getModelRouteChain("balanced");
   assert.equal(chain.some((entry) => entry.providerName === "openai"), false);
-  assert.deepEqual(chain[0], {
-    providerName: "openai-compatible",
-    model: "groq/llama-3.1-8b-instant",
-  });
-  console.log("OK: direct OpenAI fallback can be disabled when the API quota is exhausted");
+  assert.deepEqual(chain[0], CODEX_ROUTE);
+  console.log("OK: direct OpenAI fallback is disabled and Codex OAuth remains selected");
 });
 
 withCleanEnv({ ANTHROPIC_API_KEY: "sk-anthropic" }, () => {
   applyProviderEnvAliases();
-  assert.equal(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY, "sk-anthropic");
   assert.equal(hasNonOpenAIRoutableProvider(), true);
   const chain = getModelRouteChain("smart");
-  assert.deepEqual(chain[0], {
-    providerName: "claude",
-    model: "claude-3-5-sonnet-latest",
-  });
-  console.log("OK: standard ANTHROPIC_API_KEY config is accepted by Claude routing");
+  assert.deepEqual(chain[0], CODEX_ROUTE);
+  assert.equal(chain.some((entry) => String(entry.providerName) === "claude"), false);
+  console.log("OK: legacy ANTHROPIC_API_KEY is ignored for routing");
 });
 
 console.log("\nAll provider environment assertions passed.");

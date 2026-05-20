@@ -10,7 +10,7 @@
  *   1. Atomic claim — INSERT INTO proactive_schedule_log ON CONFLICT DO NOTHING
  *                     at the very start; if conflict, skip immediately (idempotency)
  *   2. Evidence     — audit entries, quality-flagged interactions, server errors
- *   3. Assess       — claude-3-5-haiku structured JSON: cycleAssessment + improvements
+ *   3. Assess       — Codex OAuth structured JSON: cycleAssessment + improvements
  *   4. Act          — auto-apply low-risk (allowlist + blocklist); queue medium/high
  *   5. Notify       — one Telegram summary if Telegram is active for the user
  *   6. Done         — log result (claim already logged in Step 1)
@@ -31,17 +31,16 @@ import * as schema from '@shared/schema';
 import { readAuditEntries } from './selfHealAudit';
 import { getRecentInteractions } from '../interactionLog';
 import { checkResponseQuality } from './responseQuality';
-import { anthropic } from '../lib/anthropicClient';
 import { getChannel } from '../channels/registry';
 import { isIntegrationOwner } from '../integrationOwner';
 import { claimAndMark } from '../lib/proactiveDedup';
 import { runCapabilityGapAnalysis } from './capabilityGapAnalyzer';
+import { routeModelTurn } from './modelRouter';
 import fs from 'fs/promises';
 import path from 'path';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const INNER_LLM_MODEL = 'claude-3-5-haiku-20241022';
 const CYCLE_TIMEOUT_MS = 10 * 60 * 1000; // 10-minute hard deadline
 const LLM_CALL_TIMEOUT_MS = 8 * 60 * 1000; // LLM call must not exceed 8 min of the 10
 const MAX_IMPROVEMENTS = 5;
@@ -337,9 +336,7 @@ async function _runCycleInner(
     errorSummary,
   ].join('\n').slice(0, 6000);
 
-  // Read full PRIME.md — passed in its entirety; no truncation so the LLM has
-  // complete policy context. claude-3-5-haiku supports a 200k-token context
-  // which comfortably fits even large PRIME.md files.
+  // Read full PRIME.md so the Codex OAuth assessment has complete policy context.
   let primeContent = '';
   try {
     primeContent = await fs.readFile(path.join(process.cwd(), 'agents/PRIME.md'), 'utf-8');
@@ -368,10 +365,17 @@ async function _runCycleInner(
       ),
     );
     const response = await Promise.race([
-      anthropic.messages.create({
-        model: INNER_LLM_MODEL,
-        max_tokens: 2048,
-        system: `You are Jarvis's self-assessment engine. Identify concrete, specific improvements Jarvis should make to its own code or behavioral rules. Do not invent problems that aren't evidenced. Do not propose changes to core infrastructure (job queue, scheduler, database schema).
+      routeModelTurn({
+        tier: 'smart',
+        maxCompletionTokens: 2048,
+        stream: false,
+        toolChoice: 'none',
+        signal,
+        logPrefix: '[SelfImprovement]',
+        messages: [
+          {
+            role: 'system',
+            content: `You are Jarvis's self-assessment engine. Identify concrete, specific improvements Jarvis should make to its own code or behavioral rules. Do not invent problems that aren't evidenced. Do not propose changes to core infrastructure (job queue, scheduler, database schema).
 
 Respond with ONLY valid JSON matching this schema:
 {
@@ -393,7 +397,7 @@ Risk level rules:
 - "high": Auth, routing, DB, multi-system integrations. Always requires user review.
 
 Cap at ${MAX_IMPROVEMENTS} improvements. Output JSON only — no markdown wrapper, no explanation.`,
-        messages: [
+          },
           {
             role: 'user',
             content: `## PRIME.md (Jarvis behavioral rules)\n${primeContent}\n\n## Last 10 Audit Entries\n${last10AuditText}\n\n## Evidence Summary\n${evidenceSummary}\n\nAssess and output JSON.`,
@@ -403,7 +407,7 @@ Cap at ${MAX_IMPROVEMENTS} improvements. Output JSON only — no markdown wrappe
       llmDeadline,
     ]);
 
-    const raw = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
+    const raw = (response.textContent ?? '').trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON object in LLM response');
     assessment = JSON.parse(jsonMatch[0]) as AssessmentResult;

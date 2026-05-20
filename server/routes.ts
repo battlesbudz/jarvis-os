@@ -96,7 +96,6 @@ function providerLabelForModel(model: string): string {
   if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
     return "chatgpt-codex-oauth";
   }
-  if (normalized.startsWith("claude")) return "claude";
   if (
     normalized.startsWith("modelrelay/") ||
     normalized.startsWith("openai-compatible/") ||
@@ -1045,7 +1044,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   /**
    * GET /api/admin/provider-health
-   * Smoke-tests ClaudeProvider and OpenAIProvider and returns a health report.
+   * Smoke-tests Codex OAuth/OpenAI provider health and returns a health report.
    * Useful for verifying API key configuration and SDK compatibility without
    * waiting for a real user turn to fail.
    */
@@ -3752,7 +3751,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               // Session management — save/extend session and emit sdkSessionId.
               if (userId) {
                 try {
-                  const { initSession, appendToSession } = await import("./agent/providers/claude");
+                  const { initSession, appendToSession } = await import("./agent/providers/sessionStore");
                   const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
                   let appSessionId: string | undefined;
                   if (incomingAppSessionId) {
@@ -4254,7 +4253,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       // Session management — save/extend session and emit sdkSessionId.
       if (userId && fullStreamedReply && !clientDisconnected) {
         try {
-          const { initSession, appendToSession } = await import("./agent/providers/claude");
+          const { initSession, appendToSession } = await import("./agent/providers/sessionStore");
           const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
           const lastUserMsgForSession = [...messages].reverse().find((m: any) => m.role === 'user');
           let appSessionId: string | undefined;

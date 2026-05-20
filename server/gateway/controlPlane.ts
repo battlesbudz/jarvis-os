@@ -107,7 +107,7 @@ function publicConfigSnapshot() {
     uptimeSeconds: Math.floor(process.uptime()),
     providers: {
       openai: Boolean(process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY),
-      anthropic: Boolean(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY),
+      codexOAuth: process.env.JARVIS_CODEX_OAUTH_ENABLED !== "false" && process.env.JARVIS_CODEX_OAUTH_ENABLED !== "0",
       google: Boolean(process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID),
       microsoft: Boolean(process.env.MICROSOFT_CLIENT_ID),
       supadata: Boolean(process.env.SUPADATA_API_KEY),

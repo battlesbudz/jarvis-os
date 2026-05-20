@@ -19,10 +19,9 @@
 import { db } from '../db';
 import { eq, and, gte, or, sql } from 'drizzle-orm';
 import * as schema from '@shared/schema';
-import { anthropic } from '../lib/anthropicClient';
 import { submitAgentJob } from './jobClient';
+import { routeModelTurn } from './modelRouter';
 
-const ANALYZER_LLM_MODEL = 'claude-haiku-4-5';
 const MAX_GAP_CLUSTERS = 5;
 const MAX_AUTO_BUILDS = 2;
 
@@ -223,10 +222,16 @@ async function _runAnalysisInner(userId: string): Promise<{ submitted: number; q
   let clustering: ClusteringResult;
 
   try {
-    const response = await anthropic.messages.create({
-      model: ANALYZER_LLM_MODEL,
-      max_tokens: 2048,
-      system: `You are Jarvis's capability expansion engine. You receive a numbered list of capability gaps from this week. Gaps may come from two sources:
+    const response = await routeModelTurn({
+      tier: 'smart',
+      maxCompletionTokens: 2048,
+      stream: false,
+      toolChoice: 'none',
+      logPrefix: '[CapabilityGap]',
+      messages: [
+        {
+          role: 'system',
+          content: `You are Jarvis's capability expansion engine. You receive a numbered list of capability gaps from this week. Gaps may come from two sources:
 - Chat interactions where Jarvis deflected or apologised (labelled deflection, apology_only, no_tool_for_request)
 - Background job failures where a scheduled or queued job crashed with a logic/format error (labelled job_failure)
 
@@ -262,7 +267,7 @@ Output ONLY valid JSON matching this schema exactly:
 }
 
 memberIndices are required for every cluster. toolProposal is only required when buildable is true. riskLevel must be "low", "medium", or "high".`,
-      messages: [
+        },
         {
           role: 'user',
           content: `Here are the numbered capability gaps Jarvis encountered this week:\n\n${gapSummary}\n\nCluster and decide. Output JSON only.`,
@@ -270,7 +275,7 @@ memberIndices are required for every cluster. toolProposal is only required when
       ],
     });
 
-    const raw = response.content[0].type === 'text' ? response.content[0].text.trim() : '';
+    const raw = (response.textContent ?? '').trim();
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON object in LLM response');
     clustering = JSON.parse(jsonMatch[0]) as ClusteringResult;

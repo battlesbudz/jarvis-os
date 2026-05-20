@@ -11,13 +11,10 @@ import { estimateModelUsage, recordModelUsage } from "./modelUsage";
 
 /**
  * Resolve the provider name from a model string.
- * Claude models (claude-*) route to ClaudeProvider; everything else to OpenAIProvider.
- * Switching an agent to a different provider is done by changing its model string
- * (via modelPrefs) — no harness edits required.
+ * Runtime execution is forced through Codex OAuth when enabled.
  */
 function resolveProviderName(model: string): ProviderName {
   const normalized = model.toLowerCase();
-  if (normalized.startsWith("claude")) return "claude";
   if (
     normalized.startsWith("modelrelay/") ||
     normalized.startsWith("chatgpt-codex-oauth/") ||
@@ -87,13 +84,14 @@ export interface RunAgentOptions {
    * Ordered list of fallback providers to try when the primary provider
    * returns a retriable error (5xx, 429, timeout).
    *
-   * The primary provider is automatically derived from the `model` name
-   * (claude-* → claude, everything else → openai) and is always tried first.
+   * The primary provider is automatically derived from the runtime model and
+   * Codex OAuth is primary when enabled.
    * Names listed here are appended as backups — duplicates of the primary
    * are silently de-duplicated.
    *
-   * Example: `providerFallbackChain: ["claude"]` on an OpenAI model will
-   * retry on ClaudeProvider whenever OpenAI returns a 5xx or rate-limit.
+   * Example: `providerFallbackChain: ["openai-compatible"]` can retry on a
+   * configured compatible endpoint whenever the primary provider returns a 5xx
+   * or rate-limit.
    * The fallback provider uses a sensible default model (see
    * DEFAULT_PROVIDER_MODELS in providers/fallback.ts) unless overridden via
    * `providerFallbackModels`.
@@ -101,7 +99,7 @@ export interface RunAgentOptions {
    * Opt-in and off by default. A global default can be set via the
    * PROVIDER_FALLBACK_CHAIN environment variable (comma-separated provider
    * names, with optional explicit models via "name:model" syntax, e.g.
-   * "openai:gpt-4o,claude:claude-3-5-sonnet-20241022") which applies to every
+   * "chatgpt-codex-oauth:chatgpt-codex-oauth/auto,openai:gpt-4o") which applies to every
    * runAgent call that does not provide its own chain.
    */
   providerFallbackChain?: ProviderName[];
@@ -110,8 +108,8 @@ export interface RunAgentOptions {
    * When a fallback provider is selected, its model string is resolved from
    * this map first, then falls back to DEFAULT_PROVIDER_MODELS.
    *
-   * Example: `providerFallbackModels: { claude: "claude-3-haiku-20240307" }`
-   * will use claude-3-haiku on the backup turn rather than the default.
+   * Example: `providerFallbackModels: { "openai-compatible": "modelrelay/auto-fastest" }`
+   * will use that model on the backup turn rather than the default.
    */
   providerFallbackModels?: Partial<Record<ProviderName, string>>;
   /**
@@ -893,9 +891,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // can verify they are not being used to escape per-surface restrictions.
   context.allowedToolNames = new Set(tools.map((t) => t.name));
 
-  // Resolve the provider once per run based on the model name.
-  // claude-* models → ClaudeProvider, everything else → OpenAIProvider.
-  // To switch an agent's provider, change its model string in modelPrefs.
+  // Resolve the provider once per run based on the runtime model.
   const primaryProviderName = resolveProviderName(model);
   const provider = getProvider(primaryProviderName);
 
@@ -903,9 +899,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   //   Priority: per-run option > global env var > single-provider (no fallback).
   // The primary provider is always first; duplicates from the tail are removed.
   // Each entry carries its own model string so cross-provider fallback always
-  // sends a model ID the receiving provider understands (OpenAI models use
-  // "gpt-*", Anthropic models use "claude-*" — they are not interchangeable).
+  // sends a model ID the receiving provider understands.
   const effectiveFallbackChain: FallbackChainEntry[] | null = (() => {
+    if (primaryProviderName === "chatgpt-codex-oauth") return null;
+
     // Resolve the tail: per-run option takes priority over the global env chain.
     // opts.providerFallbackChain is ProviderName[]; env chain is already
     // FallbackChainEntry[] (supports "provider:model" syntax).

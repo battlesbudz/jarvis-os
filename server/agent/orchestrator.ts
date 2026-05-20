@@ -2,11 +2,10 @@
  * Orchestrator Engine
  *
  * Accepts a user request, decomposes it into discrete sub-tasks through the
- * configured Jarvis model router, delegates each sub-task to the agent harness,
+ * Codex OAuth model router, delegates each sub-task to the agent harness,
  * evaluates results, and assembles a final answer.
  */
 
-import { ORCHESTRATOR_MAX_TOKENS } from "../lib/anthropicClient";
 import { getModel } from "../lib/modelPrefs";
 import { runAgent } from "./harness";
 import { runNamedAgent } from "./runNamedAgent";
@@ -17,6 +16,9 @@ import type { ToolContext } from "./types";
 import type { AgentTool } from "./types";
 import { detectTournamentSignals } from "./tournamentRunner";
 import { routeModelTurn } from "./modelRouter";
+import { DEFAULT_CODEX_OAUTH_MODEL } from "./runtimeModel";
+
+const ORCHESTRATOR_MAX_TOKENS = 8192;
 
 /** Default maximum retries per sub-task when not overridden by caller or env. */
 const DEFAULT_MAX_RETRIES = 3;
@@ -147,7 +149,6 @@ function parseSubTasks(text: string): SubTask[] {
 async function decomposeRequest(
   userRequest: string,
   systemContext: string,
-  orchestratorModel: string,
   userId: string,
 ): Promise<SubTask[]> {
   // Load crew manifest from DB (falls back to static if DB unavailable)
@@ -209,7 +210,6 @@ Keep sub-tasks minimal — only decompose when there are genuinely independent p
 async function verifyResult(
   task: SubTask,
   result: string,
-  orchestratorModel: string,
   correctionContext?: string,
 ): Promise<{ passed: boolean; reason: string }> {
   try {
@@ -252,7 +252,6 @@ async function synthesizeFinalAnswer(
   userRequest: string,
   systemContext: string,
   results: SubTaskResult[],
-  orchestratorModel: string,
 ): Promise<string> {
   const resultsSummary = results
     .map((r) => `### ${r.label}\n${r.result}`)
@@ -318,7 +317,7 @@ async function executeSubTask(
 
   // ── Fallback: bare GPT harness ─────────────────────────────────────────
   const result = await runAgent({
-    model: "gpt-4o-mini",
+    model: DEFAULT_CODEX_OAUTH_MODEL,
     messages: [
       { role: "user", content: instruction },
     ],
@@ -436,7 +435,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   // Step 1: Decompose (crew manifest injected into prompt for specialist routing)
   let rawSubTasks: SubTask[];
   try {
-    rawSubTasks = await decomposeRequest(userRequest, systemContext, orchestratorModel, userId);
+    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId);
   } catch (err) {
     console.error("[orchestrator] decomposition failed:", err);
     // Fall back to single task
@@ -484,7 +483,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       }
 
       // Strict verification — fail-safe on errors
-      const verification = await verifyResult(task, taskResult, orchestratorModel, correctionContext);
+      const verification = await verifyResult(task, taskResult, correctionContext);
       verificationReason = verification.reason;
 
       if (verification.passed) {
@@ -549,7 +548,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   // Step 3: Synthesize final answer via Claude (always — no single-task bypass)
   let finalAnswer: string;
   try {
-    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, orchestratorModel);
+    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults);
   } catch (err) {
     console.error("[orchestrator] synthesis failed:", err);
     finalAnswer = allResults.map((r) => r.result).join("\n\n");
@@ -613,15 +612,15 @@ const JOB_QUALITY_CRITERIA: Record<string, string> = {
 };
 
 /**
- * Verify a background job's output quality using Claude Opus.
+ * Verify a background job's output quality using Codex OAuth.
  *
  * Exported so jobQueue.ts and selfHealTool.ts can call it without reimplementing
- * the Anthropic call.
+ * the model-router call.
  *
  * Return contract:
- *   passed: true  — Opus judged the output acceptable
- *   passed: false — Opus rejected the output (retry or flag for review)
- *   passed: null  — Verifier could not be reached (timeout / Anthropic error) —
+ *   passed: true  — Codex judged the output acceptable
+ *   passed: false — Codex rejected the output (retry or flag for review)
+ *   passed: null  — Verifier could not be reached (timeout / model error) —
  *                   FAIL-OPEN: caller must not retry and must treat the result as
  *                   unknown, delivering the output with verificationPassed = null.
  */
@@ -677,7 +676,7 @@ export async function verifyJobOutput(opts: {
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Timeout or Anthropic error: fail-open — caller delivers as-is with null status
+    // Timeout or model error: fail-open — caller delivers as-is with null status
     return { passed: null, reason: msg === "verify_timeout" ? "verify_timeout" : `verify_error: ${msg}` };
   }
 }

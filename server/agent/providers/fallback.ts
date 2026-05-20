@@ -5,7 +5,7 @@
  * Usage (harness):
  *   const result = await queryWithFallback(
  *     [
- *       { providerName: "claude", model: "claude-opus-4-7" },   // primary (orchestrator)
+ *       { providerName: "chatgpt-codex-oauth", model: "chatgpt-codex-oauth/auto" }, // primary
  *       { providerName: "openai", model: "gpt-4.1-mini" }, // backup (subagent tier)
  *     ],
  *     queryParams,
@@ -16,7 +16,8 @@
  *   - Per-run: pass `providerFallbackChain` + optional `providerFallbackModels`
  *              in RunAgentOptions.
  *   - Global:  set PROVIDER_FALLBACK_CHAIN env var (comma-separated, e.g.
- *              "openai,claude" or with explicit models "openai:gpt-4o,claude:claude-3-5-sonnet-20241022")
+ *              "chatgpt-codex-oauth,openai" or with explicit models
+ *              "chatgpt-codex-oauth:chatgpt-codex-oauth/auto,openai:gpt-4o")
  *              When set, every runAgent call implicitly uses this chain unless
  *              the caller provides its own.
  *
@@ -35,7 +36,6 @@ import type { ProviderName } from "./index";
  * cross-provider fallback scenarios.
  */
 export const DEFAULT_PROVIDER_MODELS: Record<ProviderName, string> = {
-  claude: "claude-opus-4-7",
   openai: "gpt-4.1-mini",
   "openai-compatible": "modelrelay/auto-fastest",
   "chatgpt-codex-oauth": "chatgpt-codex-oauth/auto",
@@ -44,8 +44,7 @@ export const DEFAULT_PROVIDER_MODELS: Record<ProviderName, string> = {
 /**
  * A single entry in the provider fallback chain.
  * Each entry carries both the provider name and the model string to use
- * with that provider, since model namespaces are provider-specific
- * (e.g. "gpt-4o" is only valid for OpenAI, "claude-*" only for Anthropic).
+ * with that provider, since model namespaces are provider-specific.
  */
 export interface FallbackChainEntry {
   providerName: ProviderName;
@@ -103,7 +102,7 @@ function collectErrorSignals(err: unknown): string {
 export function isRetriableProviderError(err: unknown): boolean {
   if (err instanceof Error && err.name === "AbortError") return false;
 
-  // Check numeric `.status` property emitted by OpenAI / Anthropic SDKs
+  // Check numeric `.status` property emitted by provider SDKs.
   const anyErr = err as Record<string, unknown>;
   if (typeof anyErr.status === "number") {
     const s = anyErr.status as number;
@@ -156,7 +155,7 @@ export function isRetriableProviderError(err: unknown): boolean {
   return false;
 }
 
-const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude", "openai-compatible", "chatgpt-codex-oauth"];
+const KNOWN_PROVIDERS: ProviderName[] = ["openai", "openai-compatible", "chatgpt-codex-oauth"];
 
 /**
  * Reads PROVIDER_FALLBACK_CHAIN from the environment and returns an ordered
@@ -164,11 +163,11 @@ const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude", "openai-compatible"
  * results in fewer than 2 valid entries.
  *
  * Formats accepted:
- *   "openai,claude"
+ *   "chatgpt-codex-oauth,openai"
  *      -> uses DEFAULT_PROVIDER_MODELS for model strings
- *   "claude:claude-opus-4-7,openai:gpt-4.1-mini"
+ *   "chatgpt-codex-oauth:chatgpt-codex-oauth/auto,openai:gpt-4.1-mini"
  *      -> uses explicit model strings
- *   Mixed: "claude,openai:gpt-4o-mini"
+ *   Mixed: "chatgpt-codex-oauth,openai:gpt-4o-mini"
  *      -> first entry uses the default, second uses the explicit model
  *
  * Unknown provider names are silently dropped so a misconfigured env var
@@ -197,9 +196,7 @@ export function getGlobalFallbackChain(): FallbackChainEntry[] | null {
  * logs the event for observability.
  *
  * Each chain entry carries its own model string so cross-provider fallback
- * always sends a model ID that the receiving provider understands
- * (e.g. the OpenAI primary uses "gpt-4o"; the Claude backup uses
- * "claude-3-5-sonnet-20241022", not "gpt-4o").
+ * always sends a model ID that the receiving provider understands.
  *
  * Non-retriable errors (client 4xx, AbortError, etc.) propagate immediately
  * without trying further providers - they would fail on any provider.
@@ -238,8 +235,7 @@ export async function queryWithFallback(
     try {
       const provider = getProvider(entry.providerName);
       // Override `params.model` with the model string for this specific provider.
-      // Model namespaces are provider-specific: OpenAI accepts "gpt-*",
-      // Anthropic accepts "claude-*". Cross-provider fallback MUST remap the model.
+      // Model namespaces are provider-specific, so fallback must remap the model.
       const result = await accumulateTurn(provider.query({ ...params, model: entry.model }));
       result.providerName = entry.providerName;
       result.model = entry.model;

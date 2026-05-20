@@ -12,6 +12,8 @@ function userMessage(content: string) {
   return [{ role: "user" as const, content }];
 }
 
+const CODEX_MODEL = "chatgpt-codex-oauth/auto";
+
 {
   assert.equal(classifyTaskComplexity("Title this note"), "trivial");
   assert.equal(classifyTaskComplexity("Rewrite this paragraph to be shorter and clearer."), "easy");
@@ -35,10 +37,10 @@ function userMessage(content: string) {
     toolCount: 0,
     routing: { enabled: true, cheapModel: "groq/llama-3.1-8b-instant" },
   });
-  assert.equal(decision.model, "groq/llama-3.1-8b-instant");
+  assert.equal(decision.model, CODEX_MODEL);
   assert.equal(decision.tier, "free");
   assert.equal(decision.delegated, true);
-  console.log("OK: easy no-tool task routes to native cheap/free provider when enabled");
+  console.log("OK: easy no-tool task stays on Codex OAuth even when a cheap provider is supplied");
 }
 
 {
@@ -49,10 +51,10 @@ function userMessage(content: string) {
     toolCount: 0,
     routing: { enabled: true, privacyLevel: "sensitive" },
   });
-  assert.equal(decision.model, "claude-opus-4-6");
+  assert.equal(decision.model, CODEX_MODEL);
   assert.equal(decision.tier, "prime");
-  assert.equal(decision.delegated, false);
-  console.log("OK: sensitive task stays on prime tier");
+  assert.equal(decision.delegated, true);
+  console.log("OK: sensitive task stays on Codex OAuth prime tier");
 }
 
 {
@@ -63,10 +65,10 @@ function userMessage(content: string) {
     toolCount: 1,
     routing: { enabled: true },
   });
-  assert.equal(decision.model, "claude-opus-4-6");
-  assert.equal(decision.delegated, false);
+  assert.equal(decision.model, CODEX_MODEL);
+  assert.equal(decision.delegated, true);
   assert.match(decision.reason, /tools/);
-  console.log("OK: free-tier delegation is blocked when tools are available");
+  console.log("OK: free-tier delegation is blocked when tools are available and Codex remains selected");
 }
 
 {
@@ -77,9 +79,10 @@ function userMessage(content: string) {
     toolCount: 0,
     routing: { enabled: true },
   });
-  assert.equal(decision.model, "gpt-4.1-mini");
-  assert.equal(decision.delegated, false);
-  console.log("OK: explicit model choices are preserved by default");
+  assert.equal(decision.model, CODEX_MODEL);
+  assert.equal(decision.delegated, true);
+  assert.match(decision.reason, /Codex OAuth/);
+  console.log("OK: explicit direct model choices are replaced by Codex OAuth");
 }
 
 async function runLeanContextToolBudgetAssertion(): Promise<void> {

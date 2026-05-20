@@ -1,17 +1,17 @@
 /**
  * Quality Loop — pre-think and post-check bookends for every chat turn.
  *
- * preThink  : asks Claude Opus for a 1-2 sentence approach note before the
- *             OpenAI agent runs, so the system prompt carries a clear directive.
- * postCheck : asks Claude Opus whether the agent reply addressed the request;
+ * preThink  : asks Codex OAuth for a 1-2 sentence approach note before the
+ *             agent runs, so the system prompt carries a clear directive.
+ * postCheck : asks Codex OAuth whether the agent reply addressed the request;
  *             returns { passed, feedback }.  Errors are fail-open (passed=true)
- *             so a broken Anthropic call never silently drops a user reply.
+ *             so a provider hiccup never silently drops a user reply.
  *
  * Both calls are capped at 80 output tokens and enforced with a 4-second hard
  * timeout so they never become a bottleneck on the hot path.
  */
 
-import { anthropic } from "../lib/anthropicClient";
+import { routeModelTurn } from "./modelRouter";
 
 const MAX_TOKENS = 80;
 const TIMEOUT_MS = 4000;
@@ -37,9 +37,12 @@ export async function preThink(
   orchestratorModel: string,
 ): Promise<string> {
   const run = async (): Promise<string> => {
-    const msg = await anthropic.messages.create({
-      model: orchestratorModel,
-      max_tokens: MAX_TOKENS,
+    const response = await routeModelTurn({
+      tier: "smart",
+      maxCompletionTokens: MAX_TOKENS,
+      stream: false,
+      toolChoice: "none",
+      logPrefix: "[QualityLoop/preThink]",
       messages: [
         {
           role: "user",
@@ -50,8 +53,7 @@ export async function preThink(
         },
       ],
     });
-    const block = msg.content[0];
-    return block.type === "text" ? block.text.trim() : "";
+    return (response.textContent ?? "").trim();
   };
 
   try {
@@ -69,7 +71,7 @@ export interface PostCheckResult {
 /**
  * Ask the orchestrator model whether the agent reply fully addressed the user's
  * request.  Returns { passed: true, feedback: "" } on timeout or any error so
- * a broken Anthropic call never blocks or drops a reply.
+ * a provider failure never blocks or drops a reply.
  */
 export async function postCheck(
   userMessage: string,
@@ -77,9 +79,12 @@ export async function postCheck(
   orchestratorModel: string,
 ): Promise<PostCheckResult> {
   const run = async (): Promise<PostCheckResult> => {
-    const msg = await anthropic.messages.create({
-      model: orchestratorModel,
-      max_tokens: MAX_TOKENS,
+    const response = await routeModelTurn({
+      tier: "smart",
+      maxCompletionTokens: MAX_TOKENS,
+      stream: false,
+      toolChoice: "none",
+      logPrefix: "[QualityLoop/postCheck]",
       messages: [
         {
           role: "user",
@@ -90,9 +95,8 @@ export async function postCheck(
         },
       ],
     });
-    const block = msg.content[0];
-    if (block.type !== "text") return { passed: true, feedback: "" };
-    const text = block.text.trim();
+    const text = (response.textContent ?? "").trim();
+    if (!text) return { passed: true, feedback: "" };
     if (text.toUpperCase().startsWith("PASS")) {
       return { passed: true, feedback: "" };
     }

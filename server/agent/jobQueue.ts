@@ -18,6 +18,7 @@ import { logSystemError } from "./errorLogger";
 import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJobType, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
 import { runAgent } from "./harness";
 import { verifyJobOutput } from "./orchestrator";
+import { routeModelTurn } from "./modelRouter";
 import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./tools/selfEditTools";
 import { fetchCalendarTool } from "./tools/calendar";
 import { researchHasSourceUrls } from "./researchUtils";
@@ -919,7 +920,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         approvalReceipt,
       });
 
-      // ── Claude Opus verification loop (custom_agent) ──────────────────────
+      // ── Codex OAuth verification loop (custom_agent) ──────────────────────
       const MAX_CUSTOM_VERIFY_RETRIES = 2;
       let customVerificationPassed: boolean | null = null;
       let customVerificationRetries = 0;
@@ -1248,7 +1249,6 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const { applyCodeChangeTool } = await import("./tools/applyCodeChangeTool");
       const { runShellTool: buildShellTool } = await import("./tools/runShellTool");
       const { cleanupJobWorkspace, execInWorkspaceTool } = await import("./tools/codeExecution");
-      const { anthropic, ORCHESTRATOR_MAX_TOKENS } = await import("../lib/anthropicClient");
       const { getModel } = await import("../lib/modelPrefs");
 
       const orchModel = await getModel(job.userId, "orchestrator");
@@ -1332,7 +1332,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
         }
       }
 
-      // ── Phase 2: Plan with Claude Opus ──────────────────────────────────────
+      // ── Phase 2: Plan with Codex OAuth ──────────────────────────────────────
       interface BuildStep {
         step_id: string;
         label: string;
@@ -1349,10 +1349,16 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
           researchBody ? `\n\nResearch findings:\n${researchBody}` : "",
         ].join("");
 
-        const planResp = await anthropic.messages.create({
-          model: orchModel,
-          max_tokens: ORCHESTRATOR_MAX_TOKENS,
-          system: `You are an expert TypeScript/Node.js engineer planning how to build a new Jarvis tool or feature.
+        const planResp = await routeModelTurn({
+          tier: "smart",
+          maxCompletionTokens: 8192,
+          stream: false,
+          toolChoice: "none",
+          logPrefix: "[BuildFeaturePlan]",
+          messages: [
+            {
+              role: "system",
+              content: `You are an expert TypeScript/Node.js engineer planning how to build a new Jarvis tool or feature.
 Decompose the feature into discrete, independently verifiable implementation steps.
 Output a JSON array inside a \`\`\`json block. Each element:
 {
@@ -1370,10 +1376,12 @@ Jarvis tool patterns:
 - Shared DB schema lives in shared/schema.ts (Drizzle ORM + drizzle-kit)
 
 Keep the plan minimal: 2-5 steps for most features. Each step is one focused code change.`,
-          messages: [{ role: "user", content: `Feature to build:\n${planCtx}` }],
+            },
+            { role: "user", content: `Feature to build:\n${planCtx}` },
+          ],
         });
 
-        const planText = planResp.content[0].type === "text" ? planResp.content[0].text : "";
+        const planText = planResp.textContent ?? "";
         const jsonMatch = planText.match(/```json\s*([\s\S]*?)\s*```/);
         const raw = jsonMatch ? jsonMatch[1] : planText.trim();
 
@@ -1489,9 +1497,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             break;  // stepPassed remains false
           }
 
-          // c. AI verify: Claude Opus checks whether the step meets acceptance criteria
+          // c. AI verify: Codex OAuth checks whether the step meets acceptance criteria
           //    Only reached if type_check passed above.
-          //    Enrich input with actual file excerpts so Opus has code evidence.
+          //    Enrich input with actual file excerpts so the verifier has code evidence.
           const fileSnippets: string[] = [];
           for (const filePath of step.files_affected.slice(0, 3)) {
             if (!filePath || filePath.includes("TBD")) continue;
@@ -1605,7 +1613,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         );
       }
 
-      // ── Phase 4: Final type-check + smoke tests + Claude Opus synthesis ────────
+      // ── Phase 4: Final type-check + smoke tests + Codex OAuth synthesis ────────
       const finalTypeCheck = await buildShellTool.execute({ command: "type_check" }, buildCtx);
 
       // Run the test suite as a smoke test (non-fatal — used only to enrich the summary)
@@ -1625,30 +1633,36 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
 
       let synthesis = stepSummaryLines.join("\n");
       try {
-        const synthResp = await anthropic.messages.create({
-          model: orchModel,
-          max_tokens: 600,
-          system: `You are Jarvis summarizing a completed multi-step feature build. Be concise and specific.`,
-          messages: [{
-            role: "user",
-            content: [
-              `Feature built: ${featureDescription}`,
-              ``,
-              `Steps completed:`,
-              stepSummaryLines.join("\n"),
-              ``,
-              `Final TypeScript type-check: ${finalTypeCheck.ok ? "✅ passed" : `⚠️ ${finalTypeCheck.content.slice(0, 200)}`}`,
-              finalTestResult
-                ? `Smoke tests (npm test): ${finalTestResult.ok ? "✅ passed" : `⚠️ ${finalTestResult.content.slice(0, 300)}`}`
-                : "",
-              ``,
-              `Write a clear 3-5 sentence summary of what was built, what files changed, and any caveats.`,
-            ].filter(Boolean).join("\n"),
-          }],
+        const synthResp = await routeModelTurn({
+          tier: "smart",
+          maxCompletionTokens: 600,
+          stream: false,
+          toolChoice: "none",
+          logPrefix: "[BuildFeatureSynthesis]",
+          messages: [
+            {
+              role: "system",
+              content: `You are Jarvis summarizing a completed multi-step feature build. Be concise and specific.`,
+            },
+            {
+              role: "user",
+              content: [
+                `Feature built: ${featureDescription}`,
+                ``,
+                `Steps completed:`,
+                stepSummaryLines.join("\n"),
+                ``,
+                `Final TypeScript type-check: ${finalTypeCheck.ok ? "✅ passed" : `⚠️ ${finalTypeCheck.content.slice(0, 200)}`}`,
+                finalTestResult
+                  ? `Smoke tests (npm test): ${finalTestResult.ok ? "✅ passed" : `⚠️ ${finalTestResult.content.slice(0, 300)}`}`
+                  : "",
+                ``,
+                `Write a clear 3-5 sentence summary of what was built, what files changed, and any caveats.`,
+              ].filter(Boolean).join("\n"),
+            },
+          ],
         });
-        if (synthResp.content[0].type === "text") {
-          synthesis = synthResp.content[0].text;
-        }
+        synthesis = synthResp.textContent?.trim() || synthesis;
       } catch (synthErr) {
         console.error(`[JobQueue] build_feature synthesis failed (non-fatal):`, synthErr);
       }
@@ -2079,7 +2093,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       approvalReceipt,
     });
 
-    // ── Claude Opus verification loop ─────────────────────────────────────────
+    // ── Codex OAuth verification loop ─────────────────────────────────────────
     // Applies to user-facing deliverable types only. Skipped for system jobs
     // (weekly_pattern, named_agent_task, morning_brief, goal_decompose) which
     // are handled separately above with their own structured validation.
@@ -2219,7 +2233,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // generates ONE consolidated PDF from all sibling deliverables.
     // ─────────────────────────────────────────────────────────────────────────
 
-    const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(input) };
+    const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(jobInput) };
 
     const inserted = await db
       .insert(schema.deliverables)

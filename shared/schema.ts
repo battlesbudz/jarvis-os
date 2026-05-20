@@ -799,7 +799,7 @@ export const discordAgents = pgTable("discord_agents", {
   /**
    * Preferred model for this agent. When set, used instead of the global user
    * model preference. Can be overridden per-call via runNamedAgent opts.model.
-   * Examples: "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"
+   * Example: "chatgpt-codex-oauth/auto"
    */
   preferredModel: text("preferred_model"),
   /**

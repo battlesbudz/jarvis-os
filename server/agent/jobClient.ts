@@ -45,7 +45,7 @@ export interface SubmitJobDeps {
  *   - research / planning  → gpt-4.1-mini — stronger reasoning for complex tasks
  *   - writing / email      → gpt-4o-mini  — fast, efficient for prose + drafts
  *
- * Claude Opus 4.6 is reserved exclusively for the top-level orchestrator brain.
+ * Codex OAuth is reserved as the top-level orchestrator brain.
  * All sub-agents (background jobs, named agents, workflow steps) use GPT minis.
  *
  * `submitAgentJob` automatically injects the routed model into `input.model`

@@ -111,9 +111,7 @@ async function checkLlmKeyValidity(): Promise<DoctorResult> {
       ? "OpenRouter"
       : getProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY")
         ? "Groq"
-        : getProviderEnvValue("AI_INTEGRATIONS_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY")
-          ? "Anthropic"
-          : "non-OpenAI";
+        : "non-OpenAI";
     return pass(id, label, `${providerLabel} model provider is configured.`);
   }
 
@@ -136,45 +134,16 @@ async function checkLlmKeyValidity(): Promise<DoctorResult> {
   }
 }
 
-async function checkAnthropicKeyPresence(): Promise<DoctorResult> {
-  const id = "anthropic_key_presence";
-  const label = "Anthropic API Key";
-  const key = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
-  const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
+async function checkCodexOAuthPresence(): Promise<DoctorResult> {
+  const id = "codex_oauth_presence";
+  const label = "Codex OAuth Provider";
   const settingsPath = "/(tabs)/settings";
 
-  if (!key) {
-    return warn(id, label, "Anthropic API key is not set — orchestrator mode will be unavailable.", settingsPath);
+  if (hasCodexOAuthProvider()) {
+    return pass(id, label, "Codex OAuth is enabled and will be used for Jarvis orchestration.");
   }
 
-  // When Replit AI Integrations is active it injects both env vars:
-  //   AI_INTEGRATIONS_ANTHROPIC_API_KEY  — a dummy key for SDK compatibility
-  //   AI_INTEGRATIONS_ANTHROPIC_BASE_URL — the proxy URL that authenticates calls
-  // The dummy key is intentionally invalid against api.anthropic.com; direct HTTP
-  // checks against that endpoint always return 401 even when the integration works.
-  // Presence of both vars is the correct indicator that the integration is wired.
-  // Runtime validation (actual API call) is handled by the ProviderHealth startup
-  // check which smoke-tests ClaudeProvider at every boot.
-  if (baseUrl) {
-    return pass(id, label, "Anthropic integration is active — API key and proxy URL are both configured.");
-  }
-
-  // Direct (non-proxy) API key path: validate against api.anthropic.com.
-  try {
-    const result = await httpsGet(
-      "https://api.anthropic.com/v1/models",
-      8000,
-      { "x-api-key": key, "anthropic-version": "2023-06-01" }
-    );
-    if (result.networkError) return warn(id, label, "Could not reach Anthropic API — network issue or CA drift.", settingsPath);
-    if (result.statusCode === 200) return pass(id, label, "Anthropic API key is valid and responding.");
-    if (result.statusCode === 401) return fail(id, label, "Anthropic API key is invalid or revoked.", settingsPath);
-    if (result.statusCode === 429) return warn(id, label, "Anthropic API key is valid but rate-limited.");
-    return warn(id, label, `Anthropic API responded with HTTP ${result.statusCode}.`, settingsPath);
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
-    return warn(id, label, `Could not validate Anthropic key: ${msg}`, settingsPath);
-  }
+  return fail(id, label, "Codex OAuth is disabled. Jarvis requires Codex OAuth as the orchestrator.", settingsPath);
 }
 
 async function checkOutboundHttps(): Promise<DoctorResult> {
@@ -206,7 +175,6 @@ async function checkEnvVarsPresence(): Promise<DoctorResult> {
 
   // Tier-2: absence = warning (specific channels/features degrade)
   const important = [
-    "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
     "DISCORD_BOT_TOKEN",
     "TELEGRAM_BOT_TOKEN",
     "TWILIO_ACCOUNT_SID",
@@ -490,7 +458,7 @@ async function checkUserOAuthTokenExpiry(userId: string): Promise<DoctorResult> 
 const SYSTEM_CHECKS: Array<() => Promise<DoctorResult>> = [
   checkDatabaseConnectivity,
   checkLlmKeyValidity,
-  checkAnthropicKeyPresence,
+  checkCodexOAuthPresence,
   checkOutboundHttps,
   checkEnvVarsPresence,
   checkTelegramWebhook,

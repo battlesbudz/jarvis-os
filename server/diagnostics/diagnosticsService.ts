@@ -11,7 +11,7 @@
  * Degradation clears only when a caller explicitly emits with
  * `metadata.recovery = true`, preventing false clearance from incidental info events.
  *
- * runHealthCheck() actively probes: OpenAI, DB, job queue, channel registry,
+ * runHealthCheck() actively probes: AI provider, DB, job queue, channel registry,
  * workflow engine (stuck count), and integration statuses.
  *
  * Auto-recovery handles: stale queued jobs and stuck workflows.
@@ -22,11 +22,7 @@ import { eq, and, desc, gte, sql as sqlExpr } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { DiagnosticSubsystem, DiagnosticSeverity } from "@shared/schema";
-import { getAnthropicClientConfig } from "../agent/providers/env";
-import Anthropic from "@anthropic-ai/sdk";
 import { routeModelTurn } from "../agent/modelRouter";
-
-const anthropic = new Anthropic(getAnthropicClientConfig());
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -738,25 +734,11 @@ Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not
     });
     const diagnosis = resp.textContent?.trim();
     if (diagnosis) return { diagnosis, report };
-  } catch (openAiErr) {
-    console.debug("[Diagnostics] routed diagnosis failed, trying Anthropic fallback:", openAiErr instanceof Error ? openAiErr.message : openAiErr);
+  } catch (modelErr) {
+    console.debug("[Diagnostics] routed Codex OAuth diagnosis failed:", modelErr instanceof Error ? modelErr.message : modelErr);
   }
 
-  // Fallback: try Anthropic.
-  try {
-    const msg = await anthropic.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 400,
-      messages: [{ role: "user", content: prompt }],
-    });
-    const block = msg.content.find((b) => b.type === "text");
-    const diagnosis = block && block.type === "text" ? block.text.trim() : null;
-    if (diagnosis) return { diagnosis, report };
-  } catch (anthropicErr) {
-    console.debug("[Diagnostics] Anthropic diagnosis fallback also failed:", anthropicErr instanceof Error ? anthropicErr.message : anthropicErr);
-  }
-
-  // Both AI providers unavailable — return a clear plain-text summary.
+  // AI provider unavailable — return a clear plain-text summary.
   const issueLines: string[] = [];
   if (!report.openAiReachable) issueLines.push("AI provider is unreachable — AI features are temporarily unavailable.");
   if (!report.dbReachable) issueLines.push("Database is unreachable — all data operations are failing.");

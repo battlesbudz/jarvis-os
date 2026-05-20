@@ -670,7 +670,7 @@ Return JSON:
  *
  * All pending tasks are concatenated into one batched request string so PRIME
  * decomposes them together and routes sub-tasks to the correct specialists.
- * This avoids one Anthropic call per task and ensures PRIME has the full
+ * This avoids one extra model call per task and ensures PRIME has the full
  * picture when deciding specialist assignments.
  */
 /**

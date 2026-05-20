@@ -4,7 +4,6 @@ function cleanEnvValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
-
 export function getProviderEnvValue(...names: string[]): string | undefined {
   for (const name of names) {
     const value = cleanEnvValue(process.env[name]);
@@ -38,19 +37,9 @@ export function hasDirectOpenAIProvider(): boolean {
   return !!key && !isRouterPlaceholderOpenAIKey(key);
 }
 
-export function hasAnthropicProvider(): boolean {
-  return hasProviderEnvValue(
-    "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "AI_INTEGRATIONS_ANTHROPIC_BASE_URL",
-    "ANTHROPIC_BASE_URL",
-  );
-}
-
 export function hasNonOpenAIRoutableProvider(): boolean {
   return (
     hasCodexOAuthProvider() ||
-    hasAnthropicProvider() ||
     hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL") ||
     hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") ||
     hasProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") ||
@@ -68,9 +57,10 @@ export function hasAnyRoutableProvider(): boolean {
 }
 
 export function isCodexOAuthProviderEnabled(): boolean {
-  const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
   const enabled = getProviderEnvValue("JARVIS_CODEX_OAUTH_ENABLED", "CHATGPT_CODEX_OAUTH_ENABLED");
-  return explicitProvider === "chatgpt-codex-oauth" || enabled === "true" || enabled === "1";
+  const testOverrideAllowed = getProviderEnvValue("JARVIS_TEST_ALLOW_DIRECT_PROVIDER") === "true";
+  if (testOverrideAllowed && (enabled === "false" || enabled === "0")) return false;
+  return true;
 }
 
 export function hasCodexOAuthProvider(): boolean {
@@ -84,8 +74,6 @@ export function getCodexOAuthCommand(): string {
 export function applyProviderEnvAliases(): void {
   setAlias("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY");
   setAlias("AI_INTEGRATIONS_OPENAI_BASE_URL", "OPENAI_BASE_URL");
-  setAlias("AI_INTEGRATIONS_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY");
-  setAlias("AI_INTEGRATIONS_ANTHROPIC_BASE_URL", "ANTHROPIC_BASE_URL");
 
   setAlias("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY");
   setAlias("OPENROUTER_BASE_URL", "AI_INTEGRATIONS_OPENROUTER_BASE_URL");
@@ -122,7 +110,6 @@ export function applyProviderEnvAliases(): void {
   setAlias("OPENAI_COMPATIBLE_API_KEY", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_API_KEY");
   setAlias("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL");
   setAlias("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL");
-
 }
 
 export function getOpenAIClientConfig(): { apiKey: string; baseURL?: string } {
@@ -132,15 +119,5 @@ export function getOpenAIClientConfig(): { apiKey: string; baseURL?: string } {
       getProviderEnvValue("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY") ??
       ROUTER_PLACEHOLDER_OPENAI_API_KEY,
     baseURL: getProviderEnvValue("AI_INTEGRATIONS_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
-  };
-}
-
-export function getAnthropicClientConfig(): { apiKey: string; baseURL?: string } {
-  applyProviderEnvAliases();
-  return {
-    apiKey:
-      getProviderEnvValue("AI_INTEGRATIONS_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY") ??
-      ROUTER_PLACEHOLDER_OPENAI_API_KEY,
-    baseURL: getProviderEnvValue("AI_INTEGRATIONS_ANTHROPIC_BASE_URL", "ANTHROPIC_BASE_URL"),
   };
 }

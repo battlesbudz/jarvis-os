@@ -289,7 +289,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
     if (opts.sdkSessionId) {
       try {
-        const { resumeSession } = await import("./providers/claude");
+        const { resumeSession } = await import("./providers/sessionStore");
         const resumed = await resumeSession(opts.sdkSessionId, agentId, userId);
         if (resumed) {
           // Session found — append the new user message and skip full rebuild.
@@ -517,7 +517,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
     //     can resume without re-injecting history.
     let finalSessionId: string | undefined = activeSessionId;
     try {
-      const { initSession, appendToSession } = await import("./providers/claude");
+      const { initSession, appendToSession } = await import("./providers/sessionStore");
       if (sessionResumed && activeSessionId) {
         // Append only the new exchange: the messages the harness added after the
         // resumption point (user message + assistant reply + any tool messages).

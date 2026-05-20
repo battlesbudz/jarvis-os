@@ -3,6 +3,7 @@ import type { ProviderName } from "./providers";
 import { getGlobalFallbackChain, queryWithFallback, type FallbackChainEntry } from "./providers/fallback";
 import type { ProviderTurnResult } from "./providers/base";
 import { getProviderEnvValue, hasCodexOAuthProvider, hasDirectOpenAIProvider, hasProviderEnvValue } from "./providers/env";
+import { DEFAULT_CODEX_OAUTH_MODEL, getCodexOAuthModel } from "./runtimeModel";
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
 export type TaskComplexity = "trivial" | "easy" | "medium" | "hard";
@@ -64,10 +65,10 @@ export interface RoutedModelTurnParams {
 }
 
 export const DEFAULT_TIER_MODELS: Record<ModelTier, string> = {
-  prime: process.env.JARVIS_PRIME_MODEL ?? "claude-opus-4-6",
-  smart: process.env.JARVIS_SMART_MODEL ?? "gpt-4.1-mini",
-  cheap: process.env.JARVIS_CHEAP_MODEL ?? "gpt-4o-mini",
-  free: process.env.JARVIS_FREE_MODEL ?? "openrouter/openrouter/auto",
+  prime: DEFAULT_CODEX_OAUTH_MODEL,
+  smart: DEFAULT_CODEX_OAUTH_MODEL,
+  cheap: DEFAULT_CODEX_OAUTH_MODEL,
+  free: DEFAULT_CODEX_OAUTH_MODEL,
 };
 
 function pushUnique(chain: FallbackChainEntry[], entry: FallbackChainEntry): void {
@@ -78,11 +79,10 @@ function pushUnique(chain: FallbackChainEntry[], entry: FallbackChainEntry): voi
 }
 
 function strictCodexOAuthEntry(): FallbackChainEntry | null {
-  const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
-  if (explicitProvider !== "chatgpt-codex-oauth" || !hasCodexOAuthProvider()) return null;
+  if (!hasCodexOAuthProvider()) return null;
   return {
     providerName: "chatgpt-codex-oauth",
-    model: getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") || "chatgpt-codex-oauth/auto",
+    model: getCodexOAuthModel(),
   };
 }
 
@@ -106,16 +106,13 @@ function parseModelSpec(spec: string | undefined): FallbackChainEntry | null {
   if (colonIdx > 0) {
     const provider = raw.slice(0, colonIdx).trim() as ProviderName;
     const model = raw.slice(colonIdx + 1).trim();
-    if ((provider === "openai" || provider === "claude" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth") && model) {
+    if ((provider === "openai" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth") && model) {
       return { providerName: provider, model };
     }
   }
 
   if (raw.startsWith("openai/")) {
     return { providerName: "openai", model: raw.slice("openai/".length) };
-  }
-  if (raw.startsWith("claude/")) {
-    return { providerName: "claude", model: raw.slice("claude/".length) };
   }
   if (
     raw.startsWith("chatgpt-codex-oauth/") ||
@@ -322,36 +319,37 @@ export function routeModelForTask(input: ModelRoutingInput): ModelRoutingDecisio
   const text = getLastUserText(input.messages);
   const complexity = classifyTaskComplexity(text);
   const privacyLevel = input.routing?.privacyLevel ?? classifyTaskPrivacy(text);
+  const requestedModel = hasCodexOAuthProvider() ? getCodexOAuthModel() : input.requestedModel;
 
   if (!isRoutingEnabled(input.routing)) {
     return {
-      model: input.requestedModel,
+      model: requestedModel,
       tier: "prime",
       complexity,
       privacyLevel,
-      delegated: false,
+      delegated: requestedModel !== input.requestedModel,
       reason: "model routing disabled",
     };
   }
 
   if (input.explicitModel && !input.routing?.allowOverrideExplicitModel) {
     return {
-      model: input.requestedModel,
+      model: requestedModel,
       tier: "prime",
       complexity,
       privacyLevel,
-      delegated: false,
-      reason: "explicit model preserved",
+      delegated: requestedModel !== input.requestedModel,
+      reason: requestedModel === input.requestedModel ? "explicit model preserved" : "explicit model replaced by Codex OAuth runtime",
     };
   }
 
   if (input.hasAndroidTools) {
     return {
-      model: input.requestedModel,
+      model: requestedModel,
       tier: "prime",
       complexity,
       privacyLevel,
-      delegated: false,
+      delegated: requestedModel !== input.requestedModel,
       reason: "android/tool-control tasks stay on prime model",
     };
   }
@@ -360,11 +358,11 @@ export function routeModelForTask(input: ModelRoutingInput): ModelRoutingDecisio
   const inputChars = messageTextSize(input.messages);
   if (inputChars > maxInputChars) {
     return {
-      model: input.requestedModel,
+      model: requestedModel,
       tier: "prime",
       complexity,
       privacyLevel,
-      delegated: false,
+      delegated: requestedModel !== input.requestedModel,
       reason: `input too large (${inputChars} chars)`,
     };
   }
@@ -374,26 +372,26 @@ export function routeModelForTask(input: ModelRoutingInput): ModelRoutingDecisio
     const maxToolCount = input.routing?.maxToolCountForFree ?? 0;
     if (input.toolCount > maxToolCount && !input.routing?.allowWithTools) {
       return {
-        model: input.requestedModel,
+        model: requestedModel,
         tier: "prime",
         complexity,
         privacyLevel,
-        delegated: false,
+        delegated: requestedModel !== input.requestedModel,
         reason: "free model blocked because tools are available",
       };
     }
   }
 
   const freeEntry = tier === "free"
-    ? parseModelSpec(input.routing?.cheapModel) ?? getModelRouteChain("cheap")[0]
+    ? getModelRouteChain("cheap")[0] ?? parseModelSpec(input.routing?.cheapModel)
     : null;
   if (tier === "free" && !freeEntry) {
     return {
-      model: input.requestedModel,
+      model: requestedModel,
       tier: "prime",
       complexity,
       privacyLevel,
-      delegated: false,
+      delegated: requestedModel !== input.requestedModel,
       reason: "no free/cheap provider configured",
     };
   }
@@ -426,12 +424,6 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
   const hasCerebras = hasProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY");
   const hasNvidia = hasProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY");
   const hasDeepSeek = hasProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY");
-  const hasClaude = hasProviderEnvValue(
-    "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "AI_INTEGRATIONS_ANTHROPIC_BASE_URL",
-    "ANTHROPIC_BASE_URL",
-  );
   const hasOpenAI = hasDirectOpenAIProvider();
   const hasCodexOAuth = hasCodexOAuthProvider();
 
@@ -454,11 +446,7 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
     tier === "smart"
       ? process.env.JARVIS_OPENAI_SMART_MODEL || "gpt-4.1"
       : process.env.JARVIS_OPENAI_BALANCED_MODEL || "gpt-4.1-mini";
-  const claudeModel =
-    tier === "smart"
-      ? process.env.JARVIS_CLAUDE_SMART_MODEL || "claude-3-5-sonnet-latest"
-      : process.env.JARVIS_CLAUDE_CHEAP_MODEL || "claude-3-5-haiku-latest";
-  const codexOAuthModel = getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") || "chatgpt-codex-oauth/auto";
+  const codexOAuthModel = getCodexOAuthModel();
 
   if (tier === "cheap") {
     if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
@@ -470,14 +458,12 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
     if (hasNvidia) pushUnique(chain, { providerName: "openai-compatible", model: `nvidia/${getProviderEnvValue("NVIDIA_MODEL", "AI_INTEGRATIONS_NVIDIA_MODEL") || "meta/llama-3.1-8b-instruct"}` });
     if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
     if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
-    if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });
     if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: "gpt-4.1-mini" });
     return chain;
   }
 
   if (tier === "smart") {
     if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
-    if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });
     if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
     if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
     if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
@@ -492,7 +478,6 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
   if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
   if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
   if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
-  if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });
   return chain;
 }
 
@@ -512,7 +497,7 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
   const chain = getModelRouteChain(params.tier);
   if (chain.length === 0) {
     throw new Error(
-      "No model providers configured. Add OpenRouter, Groq, Anthropic, OpenAI, ChatGPT/Codex OAuth, or another OpenAI-compatible provider variable.",
+      "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable.",
     );
   }
 
