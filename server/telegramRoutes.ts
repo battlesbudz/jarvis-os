@@ -28,7 +28,7 @@ import { completePairing as completeDiscordPairing } from "./discord/manager";
 import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
 import { getTelegramNeedsAttentionDecision } from "./channels/telegramNeedsAttention";
 import OpenAI from "openai";
-import { getOpenAIClientConfig } from "./agent/providers/env";
+import { getOpenAIClientConfig, isDirectOpenAIDisabled } from "./agent/providers/env";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { resolveScheduledTaskAttention } from "./lib/taskResolver";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
@@ -670,9 +670,42 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
           return;
         }
-        const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const { detectAudioFormat } = await import('./replit_integrations/audio/client');
         const format = detectAudioFormat(file.buffer);
-        const transcript = await speechToText(file.buffer, format);
+        let transcript = "";
+
+        if (chatType !== 'group' && chatType !== 'supergroup') {
+          const [link] = await db
+            .select({ userId: schema.telegramLinks.userId })
+            .from(schema.telegramLinks)
+            .where(eq(schema.telegramLinks.chatId, chatId))
+            .limit(1);
+
+          if (!link?.userId) {
+            await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
+            return;
+          }
+
+          const { isWorkerOnline, queueAudioTranscriptionJob } = await import("./lib/localWorkerQueue");
+          if (isWorkerOnline(link.userId, "audio-transcription")) {
+            await sendChatAction(chatId, "upload_voice").catch(() => {});
+            const segments = await queueAudioTranscriptionJob(
+              link.userId,
+              file.buffer.toString("base64"),
+              format === 'unknown' ? 'ogg' : format,
+            );
+            transcript = segments.map((segment) => segment.text).join(" ").trim();
+          }
+        }
+
+        if (!transcript) {
+          if (isDirectOpenAIDisabled()) {
+            await sendMessage(chatId, "Voice transcription needs your Jarvis local worker running with local Whisper installed. Start the worker, then send the voice message again.");
+            return;
+          }
+          const { speechToText } = await import('./replit_integrations/audio/client');
+          transcript = await speechToText(file.buffer, format);
+        }
         if (!transcript || !transcript.trim()) {
           await sendMessage(chatId, "Sorry, I couldn't make out what you said. Could you try again or type it out?");
           return;

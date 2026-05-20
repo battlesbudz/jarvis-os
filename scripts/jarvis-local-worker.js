@@ -9,12 +9,14 @@
  *
  * Two strategies are tried in order:
  *   1. yt-dlp subtitle extraction (fast, preferred)
- *   2. Audio download + server-side AI transcription (Whisper)
+ *   2. Audio download + local faster-whisper transcription when available
  *      — used when no official captions exist
  *
  * Requirements:
  *   - Node.js 18+
  *   - yt-dlp installed and on your PATH  (https://github.com/yt-dlp/yt-dlp)
+ *   - Python package faster-whisper for Telegram voice transcription:
+ *       python -m pip install --user faster-whisper
  *   - ffmpeg (optional — needed only for splitting very long audio files)
  *
  * Setup:
@@ -34,7 +36,7 @@ const SERVER = (process.env.SERVER || "").replace(/\/$/, "");
 // ────────────────────────────────────────────────────────────────────────────
 
 const { execSync, spawnSync } = require("child_process");
-const { mkdtempSync, rmSync, readdirSync, readFileSync, statSync } = require("fs");
+const { existsSync, mkdtempSync, rmSync, readdirSync, readFileSync, statSync, writeFileSync } = require("fs");
 const path = require("path");
 const os = require("os");
 
@@ -124,7 +126,8 @@ function fetchSubtitles(url) {
 // ── Audio download + server-side Whisper transcription ───────────────────────
 // Used as a fallback when no official captions exist.
 // - Your PC downloads the audio (no IP blocks)
-// - The server transcribes via OpenAI Whisper (API key stays on server)
+// - The worker transcribes locally with faster-whisper when installed
+// - The older server Whisper endpoint remains available only as a fallback
 
 const WHISPER_MAX_BYTES = 23 * 1024 * 1024; // 23 MB — leave headroom under 25 MB limit
 const CHUNK_SECS = 600;                       // 10 minutes per chunk
@@ -143,6 +146,99 @@ function getAudioDuration(filePath) {
     );
     return parseFloat(out.trim()) || 0;
   } catch { return 0; }
+}
+
+function pythonCandidates() {
+  const configured = (process.env.LOCAL_WHISPER_PYTHON || "").trim();
+  if (configured) return [{ cmd: configured, args: [] }];
+  const candidates = [
+    { cmd: "python", args: [] },
+    { cmd: "py", args: ["-3"] },
+    { cmd: "python3", args: [] },
+  ];
+  const localAppData = process.env.LOCALAPPDATA;
+  if (localAppData) {
+    for (const version of ["Python312", "Python313", "Python311", "Python310"]) {
+      const exe = path.join(localAppData, "Programs", "Python", version, "python.exe");
+      if (existsSync(exe)) candidates.push({ cmd: exe, args: [] });
+    }
+  }
+  return candidates;
+}
+
+function runPython(script, args, timeoutMs) {
+  let lastError = "";
+  for (const candidate of pythonCandidates()) {
+    const result = spawnSync(
+      candidate.cmd,
+      [...candidate.args, "-c", script, ...args],
+      { encoding: "utf-8", timeout: timeoutMs }
+    );
+
+    if (result.error) {
+      lastError = result.error.message;
+      continue;
+    }
+    if (result.status === 0) {
+      return { stdout: result.stdout || "", stderr: result.stderr || "" };
+    }
+    lastError = (result.stderr || result.stdout || `Python exited ${result.status}`).trim();
+  }
+  throw new Error(lastError || "No usable Python executable found");
+}
+
+function hasFasterWhisper() {
+  try {
+    runPython("import faster_whisper\nprint('ok')", [], 30_000);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const LOCAL_WHISPER_AVAILABLE = process.env.LOCAL_WHISPER_ENABLED !== "0" && hasFasterWhisper();
+const WORKER_CAPABILITIES = ["url-transcript", ...(LOCAL_WHISPER_AVAILABLE ? ["audio-transcription"] : [])];
+
+function transcribeAudioFileLocally(audioPath) {
+  const timeoutMs = Number(process.env.LOCAL_WHISPER_TIMEOUT_MS || 15 * 60 * 1000) || 15 * 60 * 1000;
+  const script = `
+import json
+import os
+import sys
+from faster_whisper import WhisperModel
+
+audio_path = sys.argv[1]
+model_name = os.environ.get("LOCAL_WHISPER_MODEL", "base")
+device = os.environ.get("LOCAL_WHISPER_DEVICE", "cpu")
+compute_type = os.environ.get("LOCAL_WHISPER_COMPUTE_TYPE", "int8")
+language = os.environ.get("LOCAL_WHISPER_LANGUAGE", "en").strip() or None
+
+model = WhisperModel(model_name, device=device, compute_type=compute_type)
+segments, _info = model.transcribe(audio_path, language=language, vad_filter=True)
+text = " ".join(segment.text.strip() for segment in segments if segment.text and segment.text.strip())
+print(json.dumps({"text": text}))
+`;
+  const result = runPython(script, [audioPath], timeoutMs);
+  const line = result.stdout.trim().split(/\r?\n/).filter(Boolean).pop();
+  if (!line) throw new Error("Local Whisper returned no output");
+  const parsed = JSON.parse(line);
+  return String(parsed.text || "").trim();
+}
+
+function transcribeUploadedAudio(audioB64, format, jobId) {
+  if (!LOCAL_WHISPER_AVAILABLE) throw new Error("Local faster-whisper is not installed");
+  const safeFormat = String(format || "ogg").replace(/[^a-z0-9]/gi, "").toLowerCase() || "ogg";
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "telegram-audio-lw-"));
+  try {
+    const audioPath = path.join(tmpDir, `${jobId}.${safeFormat}`);
+    writeFileSync(audioPath, Buffer.from(audioB64, "base64"));
+    log("  Transcribing Telegram audio locally with faster-whisper...");
+    const transcript = transcribeAudioFileLocally(audioPath);
+    if (!transcript.trim()) throw new Error("Local Whisper returned empty transcript");
+    return transcript.trim();
+  } finally {
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+  }
 }
 
 /** POST base64-encoded audio to the server for Whisper transcription. */
@@ -197,6 +293,13 @@ async function fetchAudioTranscript(url) {
     log(`  Audio downloaded: ${files[0]} (${(audioSize / 1024 / 1024).toFixed(1)} MB)`);
 
     // ── Single chunk (fits within Whisper limit) ─────────────────────────────
+    if (LOCAL_WHISPER_AVAILABLE) {
+      log("  Transcribing audio locally with faster-whisper...");
+      const transcript = transcribeAudioFileLocally(audioPath);
+      if (!transcript.trim()) throw new Error("Local Whisper returned empty transcript");
+      return transcript.trim();
+    }
+
     if (audioSize <= WHISPER_MAX_BYTES) {
       log("  Sending to Whisper for transcription…");
       const audioB64 = readFileSync(audioPath).toString("base64");
@@ -284,7 +387,7 @@ let consecutive404 = 0;
 
 async function tick() {
   // Heartbeat
-  await apiFetch("POST", `${SERVER}/api/local-worker/heartbeat?token=${TOKEN}`, {}).catch(() => {});
+  await apiFetch("POST", `${SERVER}/api/local-worker/heartbeat?token=${TOKEN}`, { capabilities: WORKER_CAPABILITIES }).catch(() => {});
 
   // Poll for next job
   const resp = await apiFetch("GET", `${SERVER}/api/local-worker/jobs/next?token=${TOKEN}`).catch(
@@ -305,7 +408,25 @@ async function tick() {
   consecutive404 = 0;
 
   const job = resp.body;
-  if (!job?.id || !job?.url) return;
+  if (!job?.id) return;
+
+  const jobType = job.type || "url-transcript";
+  if (jobType === "audio-transcription") {
+    try {
+      const transcript = transcribeUploadedAudio(job.audio, job.format, job.id);
+      await apiFetch("POST", `${SERVER}/api/local-worker/jobs/${job.id}/complete?token=${TOKEN}`, {
+        segments: [{ text: transcript, offset: 0, duration: 0 }],
+      });
+      log(`Job ${job.id} completed via local Telegram audio transcription - ${transcript.length} chars`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Job ${job.id} failed: ${msg}`);
+      await apiFetch("POST", `${SERVER}/api/local-worker/jobs/${job.id}/fail?token=${TOKEN}`, { error: msg }).catch(() => {});
+    }
+    return;
+  }
+
+  if (!job.url) return;
 
   log(`Claimed job ${job.id} — url: ${job.url}`);
 
@@ -342,7 +463,11 @@ async function tick() {
 }
 
 log(`Jarvis local worker started — server: ${SERVER}`);
-log("Strategies: subtitles → audio transcription (via Whisper)");
+log("Strategies: subtitles -> local faster-whisper audio when available");
+log(`Capabilities: ${WORKER_CAPABILITIES.join(", ")}`);
+if (!LOCAL_WHISPER_AVAILABLE) {
+  log("Local audio transcription disabled: install faster-whisper in Python or set LOCAL_WHISPER_ENABLED=0.");
+}
 log("Polling for jobs every 5 seconds. Press Ctrl+C to stop.\n");
 
 tick();

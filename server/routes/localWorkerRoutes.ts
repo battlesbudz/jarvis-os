@@ -16,6 +16,7 @@ export function registerLocalWorkerRoutes(app: Express): void {
         complete: `POST ${baseUrl}/api/local-worker/jobs/:id/complete?token=${token}`,
         fail: `POST ${baseUrl}/api/local-worker/jobs/:id/fail?token=${token}`,
         heartbeat: `POST ${baseUrl}/api/local-worker/heartbeat?token=${token}`,
+        capabilities: ["url-transcript", "audio-transcription"],
       },
     });
   });
@@ -24,7 +25,7 @@ export function registerLocalWorkerRoutes(app: Express): void {
     const token = String(req.query.token || req.body?.token || "");
     if (!token) return res.status(400).json({ error: "token required" });
     const { heartbeat } = await import("../lib/localWorkerQueue");
-    if (!heartbeat(token)) return res.status(401).json({ error: "invalid token" });
+    if (!heartbeat(token, req.body?.capabilities)) return res.status(401).json({ error: "invalid token" });
     res.json({ ok: true });
   });
 

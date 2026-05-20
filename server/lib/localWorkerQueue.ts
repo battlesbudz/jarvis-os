@@ -23,16 +23,26 @@ export interface LocalJobSegment {
   duration: number;
 }
 
+export type LocalWorkerCapability = "url-transcript" | "audio-transcription";
+export type LocalWorkerClaimedJob =
+  | { id: string; type: "url-transcript"; url: string }
+  | { id: string; type: "audio-transcription"; audio: string; format: string; source: "telegram" };
+
 interface WorkerRegistration {
   userId: string;
   token: string;
   lastSeen: number;
+  capabilities: Set<LocalWorkerCapability>;
 }
 
 interface LocalJob {
   id: string;
   userId: string;
-  url: string;
+  type: LocalWorkerCapability;
+  url?: string;
+  audio?: string;
+  format?: string;
+  source?: "telegram";
   status: "pending" | "claimed" | "done" | "failed";
   createdAt: number;
   resolve: (segs: LocalJobSegment[]) => void;
@@ -50,7 +60,7 @@ export function getOrCreateWorkerToken(userId: string): string {
   const existing = userTokenMap.get(userId);
   if (existing && tokenRegistry.has(existing)) return existing;
   const token = `lw_${userId.slice(0, 8)}_${crypto.randomBytes(16).toString("hex")}`;
-  tokenRegistry.set(token, { userId, token, lastSeen: 0 });
+  tokenRegistry.set(token, { userId, token, lastSeen: 0, capabilities: new Set(["url-transcript"]) });
   userTokenMap.set(userId, token);
   return token;
 }
@@ -59,18 +69,27 @@ export function getUserIdByToken(token: string): string | null {
   return tokenRegistry.get(token)?.userId ?? null;
 }
 
-export function heartbeat(token: string): boolean {
+function normalizeCapabilities(value: unknown): LocalWorkerCapability[] | null {
+  if (!Array.isArray(value)) return null;
+  const allowed = new Set<LocalWorkerCapability>(["url-transcript", "audio-transcription"]);
+  return value.filter((item): item is LocalWorkerCapability => allowed.has(item));
+}
+
+export function heartbeat(token: string, capabilities?: unknown): boolean {
   const reg = tokenRegistry.get(token);
   if (!reg) return false;
   reg.lastSeen = Date.now();
+  const normalized = normalizeCapabilities(capabilities);
+  if (normalized) reg.capabilities = new Set(normalized.length > 0 ? normalized : ["url-transcript"]);
   return true;
 }
 
-export function isWorkerOnline(userId: string): boolean {
+export function isWorkerOnline(userId: string, capability: LocalWorkerCapability = "url-transcript"): boolean {
   const token = userTokenMap.get(userId);
   if (!token) return false;
   const reg = tokenRegistry.get(token);
   if (!reg) return false;
+  if (!reg.capabilities.has(capability)) return false;
   return Date.now() - reg.lastSeen < WORKER_ONLINE_WINDOW_MS;
 }
 
@@ -81,7 +100,7 @@ export function queueTranscriptJob(
 ): Promise<LocalJobSegment[]> {
   return new Promise((resolve, reject) => {
     const id = `lwj_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-    const job: LocalJob = { id, userId, url, status: "pending", createdAt: Date.now(), resolve, reject };
+    const job: LocalJob = { id, userId, type: "url-transcript", url, status: "pending", createdAt: Date.now(), resolve, reject };
     jobStore.set(id, job);
 
     setTimeout(() => {
@@ -89,18 +108,52 @@ export function queueTranscriptJob(
         jobStore.delete(id);
         reject(new Error("LOCAL_WORKER_TIMEOUT: Local worker did not respond within 30 seconds."));
       }
-    }, timeoutMs);
+    }, timeoutMs).unref?.();
   });
 }
 
-export function claimNextJob(token: string): { id: string; url: string } | null {
+export function queueAudioTranscriptionJob(
+  userId: string,
+  audio: string,
+  format: string,
+  timeoutMs = 90_000,
+): Promise<LocalJobSegment[]> {
+  return new Promise((resolve, reject) => {
+    const id = `lwa_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+    const job: LocalJob = {
+      id,
+      userId,
+      type: "audio-transcription",
+      audio,
+      format,
+      source: "telegram",
+      status: "pending",
+      createdAt: Date.now(),
+      resolve,
+      reject,
+    };
+    jobStore.set(id, job);
+
+    setTimeout(() => {
+      if (jobStore.has(id)) {
+        jobStore.delete(id);
+        reject(new Error("LOCAL_WORKER_TIMEOUT: Local worker did not transcribe the audio in time."));
+      }
+    }, timeoutMs).unref?.();
+  });
+}
+
+export function claimNextJob(token: string): LocalWorkerClaimedJob | null {
   const reg = tokenRegistry.get(token);
   if (!reg) return null;
   reg.lastSeen = Date.now();
   for (const [id, job] of jobStore) {
-    if (job.userId === reg.userId && job.status === "pending") {
+    if (job.userId === reg.userId && job.status === "pending" && reg.capabilities.has(job.type)) {
       job.status = "claimed";
-      return { id, url: job.url };
+      if (job.type === "url-transcript" && job.url) return { id, type: job.type, url: job.url };
+      if (job.type === "audio-transcription" && job.audio && job.format) {
+        return { id, type: job.type, audio: job.audio, format: job.format, source: job.source ?? "telegram" };
+      }
     }
   }
   return null;
@@ -136,4 +189,10 @@ setInterval(() => {
       try { job.reject(new Error("LOCAL_WORKER_TIMEOUT: Job expired.")); } catch {}
     }
   }
-}, 2 * 60 * 1000);
+}, 2 * 60 * 1000).unref?.();
+
+export function _resetForTests(): void {
+  tokenRegistry.clear();
+  userTokenMap.clear();
+  jobStore.clear();
+}
