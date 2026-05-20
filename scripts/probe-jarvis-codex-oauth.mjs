@@ -4,9 +4,21 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const command = process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND || "codex";
 
+function buildCommand(rawCommand, args) {
+  const trimmed = rawCommand.trim();
+  if (process.platform !== "win32") return { command: trimmed, args };
+  const lower = trimmed.toLowerCase();
+  if (!lower.endsWith(".cmd") && !lower.endsWith(".bat")) return { command: trimmed, args };
+  return {
+    command: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", trimmed, ...args],
+  };
+}
+
 async function run(args) {
   try {
-    const result = await execFileAsync(command, args, { timeout: 30_000 });
+    const built = buildCommand(command, args);
+    const result = await execFileAsync(built.command, built.args, { timeout: 30_000 });
     return { ok: true, stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
     return {

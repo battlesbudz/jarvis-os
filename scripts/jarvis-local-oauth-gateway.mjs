@@ -34,6 +34,9 @@ function findInstalledCodexCommand() {
 
   const candidates = [];
   if (isWindows) {
+    if (process.env.APPDATA) {
+      candidates.push(join(process.env.APPDATA, "npm", "codex.cmd"));
+    }
     if (process.env.LOCALAPPDATA) {
       candidates.push(join(process.env.LOCALAPPDATA, "OpenAI", "Codex", "bin", "codex.exe"));
       candidates.push(join(process.env.LOCALAPPDATA, "Microsoft", "WindowsApps", "codex.exe"));
@@ -58,9 +61,21 @@ function findInstalledCodexCommand() {
   return configured || "codex";
 }
 
+function buildCommand(rawCommand, args) {
+  const trimmed = rawCommand.trim();
+  if (!isWindows) return { command: trimmed, args };
+  const lower = trimmed.toLowerCase();
+  if (!lower.endsWith(".cmd") && !lower.endsWith(".bat")) return { command: trimmed, args };
+  return {
+    command: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", trimmed, ...args],
+  };
+}
+
 async function assertCodexOAuthReady() {
   try {
-    const result = await execFileAsync(process.env.JARVIS_CODEX_COMMAND, ["login", "status"], { timeout: 30_000 });
+    const built = buildCommand(process.env.JARVIS_CODEX_COMMAND, ["login", "status"]);
+    const result = await execFileAsync(built.command, built.args, { timeout: 30_000 });
     const output = `${result.stdout}\n${result.stderr}`;
     if (/ChatGPT OAuth|Authenticated:\s*Yes|Logged in using ChatGPT/i.test(output)) return;
     throw new Error("Codex is installed but not logged in with ChatGPT.");

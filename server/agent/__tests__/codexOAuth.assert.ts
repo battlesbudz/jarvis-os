@@ -1,5 +1,30 @@
 import assert from "node:assert/strict";
+import { buildCodexSpawnCommand } from "../providers/codexCommand";
 import { buildCodexOAuthProviderPrompt, parseCodexOAuthOrchestratorOutput } from "../providers/codexOAuth";
+
+{
+  const previousComSpec = process.env.ComSpec;
+  process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
+  const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    const command = buildCodexSpawnCommand("C:\\Users\\justi\\AppData\\Roaming\\npm\\codex.cmd", ["login", "status"]);
+    assert.equal(command.command, "C:\\Windows\\System32\\cmd.exe");
+    assert.deepEqual(command.args, [
+      "/d",
+      "/s",
+      "/c",
+      "C:\\Users\\justi\\AppData\\Roaming\\npm\\codex.cmd",
+      "login",
+      "status",
+    ]);
+  } finally {
+    if (originalPlatform) Object.defineProperty(process, "platform", originalPlatform);
+    if (previousComSpec == null) delete process.env.ComSpec;
+    else process.env.ComSpec = previousComSpec;
+  }
+  console.log("OK: Codex OAuth uses cmd.exe for Windows .cmd launchers");
+}
 
 {
   const parsed = parseCodexOAuthOrchestratorOutput(`{"type":"final","content":"Done."}`);

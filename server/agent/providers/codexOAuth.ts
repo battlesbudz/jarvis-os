@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type OpenAI from "openai";
 import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
+import { buildCodexSpawnCommand } from "./codexCommand";
 import { getCodexOAuthCommand } from "./env";
 
 const CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 300_000);
@@ -202,9 +203,18 @@ export async function runCodexOAuthPrompt(command: string, prompt: string, signa
 
   try {
     await new Promise<void>((resolve, reject) => {
+      const codex = buildCodexSpawnCommand(command, [
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "--output-last-message",
+        outputPath,
+        "-",
+      ]);
       const child = spawn(
-        command,
-        ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", outputPath, "-"],
+        codex.command,
+        codex.args,
         { stdio: ["pipe", "pipe", "pipe"] },
       );
       let stderr = "";

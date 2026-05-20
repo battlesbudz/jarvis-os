@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { buildCodexSpawnCommand } from "./providers/codexCommand";
 import { getCodexOAuthCommand } from "./providers/env";
 
 export type CodexDelegationSandbox = "read-only" | "workspace-write";
@@ -178,19 +179,20 @@ export async function runLocalCodexDelegation(request: CodexDelegationRequest): 
 
   try {
     const stdout = await new Promise<string>((resolve, reject) => {
+      const codex = buildCodexSpawnCommand(getCodexOAuthCommand(), [
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        request.sandbox,
+        "--cd",
+        request.cwd,
+        "--output-last-message",
+        outputPath,
+        "-",
+      ]);
       const child = spawn(
-        getCodexOAuthCommand(),
-        [
-          "exec",
-          "--skip-git-repo-check",
-          "--sandbox",
-          request.sandbox,
-          "--cd",
-          request.cwd,
-          "--output-last-message",
-          outputPath,
-          "-",
-        ],
+        codex.command,
+        codex.args,
         {
           cwd: request.cwd,
           env: process.env,

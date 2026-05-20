@@ -4110,6 +4110,27 @@ ${target.apiKey}`;
   }
 });
 
+// server/agent/providers/codexCommand.ts
+function buildCodexSpawnCommand(command, args) {
+  const trimmed = command.trim();
+  if (process.platform !== "win32") {
+    return { command: trimmed, args };
+  }
+  const lower = trimmed.toLowerCase();
+  if (!lower.endsWith(".cmd") && !lower.endsWith(".bat")) {
+    return { command: trimmed, args };
+  }
+  return {
+    command: process.env.ComSpec || "cmd.exe",
+    args: ["/d", "/s", "/c", trimmed, ...args]
+  };
+}
+var init_codexCommand = __esm({
+  "server/agent/providers/codexCommand.ts"() {
+    "use strict";
+  }
+});
+
 // server/agent/providers/codexOAuth.ts
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -4262,9 +4283,18 @@ async function runCodexOAuthPrompt(command, prompt, signal) {
   const outputPath = join(dir, "answer.txt");
   try {
     await new Promise((resolve11, reject) => {
+      const codex = buildCodexSpawnCommand(command, [
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "--output-last-message",
+        outputPath,
+        "-"
+      ]);
       const child = spawn(
-        command,
-        ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", outputPath, "-"],
+        codex.command,
+        codex.args,
         { stdio: ["pipe", "pipe", "pipe"] }
       );
       let stderr = "";
@@ -4348,6 +4378,7 @@ var init_codexOAuth = __esm({
   "server/agent/providers/codexOAuth.ts"() {
     "use strict";
     init_base();
+    init_codexCommand();
     init_env();
     CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 3e5);
     CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 12e4);
@@ -40886,19 +40917,20 @@ async function runLocalCodexDelegation(request) {
   const prompt = buildCodexDelegationPrompt(request);
   try {
     const stdout = await new Promise((resolve11, reject) => {
+      const codex = buildCodexSpawnCommand(getCodexOAuthCommand(), [
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        request.sandbox,
+        "--cd",
+        request.cwd,
+        "--output-last-message",
+        outputPath,
+        "-"
+      ]);
       const child = spawn7(
-        getCodexOAuthCommand(),
-        [
-          "exec",
-          "--skip-git-repo-check",
-          "--sandbox",
-          request.sandbox,
-          "--cd",
-          request.cwd,
-          "--output-last-message",
-          outputPath,
-          "-"
-        ],
+        codex.command,
+        codex.args,
         {
           cwd: request.cwd,
           env: process.env,
@@ -40968,6 +41000,7 @@ var MAX_OUTPUT_CHARS2, runnerOverride;
 var init_codexDelegation = __esm({
   "server/agent/codexDelegation.ts"() {
     "use strict";
+    init_codexCommand();
     init_env();
     MAX_OUTPUT_CHARS2 = 2e4;
     runnerOverride = null;
