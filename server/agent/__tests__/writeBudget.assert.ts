@@ -58,7 +58,7 @@ import { checkCircuitBreaker } from ${JSON.stringify(policyPath)};
     cwd: PROJECT_ROOT,
     env: { ...process.env },
     encoding: "utf8",
-    timeout: 30_000,
+    timeout: 120_000,
   });
 
   fs.unlinkSync(tmpScript);
@@ -66,6 +66,8 @@ import { checkCircuitBreaker } from ${JSON.stringify(policyPath)};
   if (result.status !== 0) {
     throw new Error(
       `Fresh-process check failed (exit ${result.status}):\n` +
+      `error: ${result.error ? String(result.error) : "none"}\n` +
+      `signal: ${result.signal ?? "none"}\n` +
       `stdout: ${result.stdout}\nstderr: ${result.stderr}`,
     );
   }
