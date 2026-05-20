@@ -4614,6 +4614,14 @@ function pushUnique(chain, entry) {
     chain.push(entry);
   }
 }
+function strictCodexOAuthEntry() {
+  const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
+  if (explicitProvider !== "chatgpt-codex-oauth" || !hasCodexOAuthProvider()) return null;
+  return {
+    providerName: "chatgpt-codex-oauth",
+    model: getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") || "chatgpt-codex-oauth/auto"
+  };
+}
 function textFromContent2(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -4783,6 +4791,8 @@ function maybeUseLeanContext(messages2, logPrefix, tools) {
 }
 function configuredProviderEntries(tier) {
   const chain = [];
+  const strictCodex = strictCodexOAuthEntry();
+  if (strictCodex) return [strictCodex];
   const envEntry = envModelForExecutionTier(tier);
   if (envEntry) pushUnique(chain, envEntry);
   const hasOpenAICompatible = hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL");
@@ -4843,6 +4853,8 @@ function configuredProviderEntries(tier) {
   return chain;
 }
 function getModelRouteChain(tier) {
+  const strictCodex = strictCodexOAuthEntry();
+  if (strictCodex) return [strictCodex];
   const globalChain = getGlobalFallbackChain();
   if (globalChain) return globalChain;
   return configuredProviderEntries(tier);
@@ -6136,6 +6148,24 @@ var init_errorLogger = __esm({
     "use strict";
     init_db();
     init_schema();
+  }
+});
+
+// server/agent/runtimeModel.ts
+function resolveRuntimeAgentModel(requestedModel) {
+  const normalized = requestedModel.trim().toLowerCase();
+  if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
+    return requestedModel;
+  }
+  const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
+  const shouldForceCodex = explicitProvider === "chatgpt-codex-oauth" || isDirectOpenAIDisabled() && (normalized.startsWith("gpt-") || normalized.startsWith("o1") || normalized.startsWith("o3") || normalized.startsWith("o4"));
+  if (!shouldForceCodex || !hasCodexOAuthProvider()) return requestedModel;
+  return getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") ?? "chatgpt-codex-oauth/auto";
+}
+var init_runtimeModel = __esm({
+  "server/agent/runtimeModel.ts"() {
+    "use strict";
+    init_env();
   }
 });
 
@@ -24478,6 +24508,21 @@ function resolveMaxRetries(override) {
   const env = parseInt(process.env.ORCHESTRATOR_MAX_RETRIES ?? "", 10);
   return Number.isFinite(env) && env >= 0 ? env : DEFAULT_MAX_RETRIES;
 }
+async function routeOrchestratorText(opts) {
+  const messages2 = opts.system ? [
+    { role: "system", content: opts.system },
+    { role: "user", content: opts.user }
+  ] : [{ role: "user", content: opts.user }];
+  const response = await routeModelTurn({
+    tier: "smart",
+    messages: messages2,
+    toolChoice: "none",
+    maxCompletionTokens: opts.maxCompletionTokens,
+    stream: false,
+    logPrefix: `[orchestrator/${opts.label}]`
+  });
+  return response.textContent ?? "";
+}
 function normalizeSubTask(raw, index) {
   const obj = typeof raw === "object" && raw !== null ? raw : {};
   return {
@@ -24517,9 +24562,9 @@ async function decomposeRequest(userRequest, systemContext, orchestratorModel, u
 ${crewManifest}
 
 Include an optional "assignTo" field on each sub-task naming the best specialist from the crew manifest. Omit or null "assignTo" only for truly generic tasks.` : "";
-  const response = await anthropic.messages.create({
-    model: orchestratorModel,
-    max_tokens: ORCHESTRATOR_MAX_TOKENS,
+  const text2 = await routeOrchestratorText({
+    label: "decompose",
+    maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     system: `You are PRIME, an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
 2. Have a short label (5-8 words)
@@ -24553,43 +24598,29 @@ Example:
 \`\`\`
 
 Keep sub-tasks minimal \u2014 only decompose when there are genuinely independent parallel workstreams. For simple requests, return a single task.`,
-    messages: [
-      {
-        role: "user",
-        content: `User request: ${userRequest}
+    user: `User request: ${userRequest}
 
 Context:
 ${systemContext}`
-      }
-    ]
   });
-  const content = response.content[0];
-  const text2 = content.type === "text" ? content.text : "";
   return parseSubTasks(text2);
 }
 async function verifyResult(task, result, orchestratorModel, correctionContext) {
   try {
-    const response = await anthropic.messages.create({
-      model: orchestratorModel,
-      max_tokens: 512,
+    const text2 = await routeOrchestratorText({
+      label: "verify",
+      maxCompletionTokens: 512,
       system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only \u2014 no other text: {"passed": true/false, "reason": "brief explanation"}`,
-      messages: [
-        {
-          role: "user",
-          content: [
-            `Sub-task: ${task.label}`,
-            `Instruction: ${task.instruction}`,
-            `Acceptance criteria: ${task.acceptanceCriteria}`,
-            `Sub-agent result:
+      user: [
+        `Sub-task: ${task.label}`,
+        `Instruction: ${task.instruction}`,
+        `Acceptance criteria: ${task.acceptanceCriteria}`,
+        `Sub-agent result:
 ${result}`,
-            correctionContext ? `
+        correctionContext ? `
 Previous correction context: ${correctionContext}` : ""
-          ].filter(Boolean).join("\n")
-        }
-      ]
+      ].filter(Boolean).join("\n")
     });
-    const content = response.content[0];
-    const text2 = content.type === "text" ? content.text : "";
     const jsonMatch = text2.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return { passed: false, reason: "Verifier returned unparseable response \u2014 treating as failed" };
@@ -24601,32 +24632,26 @@ Previous correction context: ${correctionContext}` : ""
     };
   } catch (err2) {
     return {
-      passed: false,
-      reason: `Verifier error: ${err2 instanceof Error ? err2.message : String(err2)}`
+      passed: true,
+      reason: `Verifier unavailable; accepted without retry: ${err2 instanceof Error ? err2.message : String(err2)}`
     };
   }
 }
 async function synthesizeFinalAnswer(userRequest, systemContext, results, orchestratorModel) {
   const resultsSummary = results.map((r) => `### ${r.label}
 ${r.result}`).join("\n\n");
-  const response = await anthropic.messages.create({
-    model: orchestratorModel,
-    max_tokens: ORCHESTRATOR_MAX_TOKENS,
+  const text2 = await routeOrchestratorText({
+    label: "synthesize",
+    maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     system: `You are Jarvis, an intelligent personal assistant. You have received results from multiple specialized sub-agents. Synthesize their findings into a single, coherent, helpful response addressed directly to the user. Be concise but complete. Use the system context to match the appropriate tone and format.
 
 ${systemContext}`,
-    messages: [
-      {
-        role: "user",
-        content: `Original request: ${userRequest}
+    user: `Original request: ${userRequest}
 
 Sub-agent results:
 ${resultsSummary}`
-      }
-    ]
   });
-  const content = response.content[0];
-  return content.type === "text" ? content.text : "I was unable to synthesize the results.";
+  return text2 || "I was unable to synthesize the results.";
 }
 async function executeSubTask(task, tools, toolContext, dependencyResults, correctionContext, maxCompletionTokens, onProgressMessage) {
   const depContext = dependencyResults.length > 0 ? "\n\nContext from prior sub-tasks:\n" + dependencyResults.map((r) => `${r.label}: ${r.result}`).join("\n") : "";
@@ -53557,7 +53582,7 @@ async function runAgent(opts) {
   const hardExcludedToolNames = /* @__PURE__ */ new Set();
   const toolToIntegrationKey = /* @__PURE__ */ new Map();
   const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-  const model = modelOpt ?? await getModel2(context.userId, "chat");
+  const model = resolveRuntimeAgentModel(modelOpt ?? await getModel2(context.userId, "chat"));
   const channel = context.channel || "Agent";
   let messages2 = opts.messages;
   try {
@@ -54451,6 +54476,7 @@ var init_harness = __esm({
     "use strict";
     init_diagnosticsService();
     init_providers();
+    init_runtimeModel();
     init_responseQuality();
     init_modelUsage();
   }

@@ -77,6 +77,15 @@ function pushUnique(chain: FallbackChainEntry[], entry: FallbackChainEntry): voi
   }
 }
 
+function strictCodexOAuthEntry(): FallbackChainEntry | null {
+  const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
+  if (explicitProvider !== "chatgpt-codex-oauth" || !hasCodexOAuthProvider()) return null;
+  return {
+    providerName: "chatgpt-codex-oauth",
+    model: getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") || "chatgpt-codex-oauth/auto",
+  };
+}
+
 function textFromContent(content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"]): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -403,6 +412,8 @@ export function routeModelForTask(input: ModelRoutingInput): ModelRoutingDecisio
 
 function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry[] {
   const chain: FallbackChainEntry[] = [];
+  const strictCodex = strictCodexOAuthEntry();
+  if (strictCodex) return [strictCodex];
 
   const envEntry = envModelForExecutionTier(tier);
   if (envEntry) pushUnique(chain, envEntry);
@@ -486,6 +497,9 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
 }
 
 export function getModelRouteChain(tier: ModelExecutionTier): FallbackChainEntry[] {
+  const strictCodex = strictCodexOAuthEntry();
+  if (strictCodex) return [strictCodex];
+
   const globalChain = getGlobalFallbackChain();
   if (globalChain) return globalChain;
   return configuredProviderEntries(tier);

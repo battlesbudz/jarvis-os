@@ -5,6 +5,7 @@ import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
 import type { ProviderName, FallbackChainEntry } from "./providers";
+import { resolveRuntimeAgentModel } from "./runtimeModel";
 import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
 import { estimateModelUsage, recordModelUsage } from "./modelUsage";
 
@@ -273,7 +274,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const toolToIntegrationKey = new Map<string, string[]>();
 
   const { getModel } = await import("../lib/modelPrefs");
-  const model = modelOpt ?? (await getModel(context.userId, "chat"));
+  const model = resolveRuntimeAgentModel(modelOpt ?? (await getModel(context.userId, "chat")));
 
   const channel = context.channel || "Agent";
 
