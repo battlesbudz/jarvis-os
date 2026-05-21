@@ -486,6 +486,26 @@ async function run() {
     );
   }
 
+  // ── T16: originChannel = "heartbeat/crew" (diagnostics-owned) ─────────────
+  console.log("\nT16: originChannel=heartbeat/crew");
+  {
+    const deps = makeDeps();
+    await _notifyJobCompleteCore(USER, "planning", TITLE, BODY, "heartbeat/crew", undefined, deps);
+
+    assert(
+      deps._calls.notifyUser.length === 0,
+      "T16-a: notifyUser is NOT called for heartbeat/crew origin",
+    );
+    assert(
+      deps._channels.get("telegram")!.calls.length === 0,
+      "T16-b: telegram channel NOT called for heartbeat/crew origin",
+    );
+    assert(
+      deps._channels.get("in_app")!.calls.length === 0,
+      "T16-c: in_app channel NOT called for heartbeat/crew origin",
+    );
+  }
+
   // ── TGUARD: every SIMPLE_ORIGIN_CHANNELS value has an explicit test case ──
   //
   // This test enumerates the canonical origin list from @shared/schema and

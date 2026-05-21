@@ -184,6 +184,26 @@ async function notifyJobComplete(
       return;
     }
 
+    if (origin === "heartbeat/crew") {
+      // Internal heartbeat crew diagnostics belong in diagnostic_events, not
+      // user notification channels. Sending these through notifyUser can leak
+      // backend triage/planning output into Telegram or create inbox loops.
+      await diagEmit({
+        userId,
+        subsystem: "heartbeat",
+        severity: "info",
+        message: `Heartbeat crew job completed: ${agentType} - ${title}`.slice(0, 500),
+        metadata: {
+          originChannel,
+          agentType,
+          title,
+          bodyPreview: body.slice(0, 2000),
+        },
+      }).catch(() => {});
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} -> [diagnostics]`);
+      return;
+    }
+
     if (origin === "telegram") {
       // Telegram-originated jobs go to Telegram + in_app only.
       // We call the channels directly rather than notifyUser to avoid the

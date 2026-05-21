@@ -95,6 +95,11 @@ export async function _notifyJobCompleteCore(
       return;
     }
 
+    if (origin === "heartbeat/crew") {
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} -> [diagnostics]`);
+      return;
+    }
+
     // All remaining recognised origins are in SIMPLE_ORIGIN_CHANNELS.
     // The switch is exhaustive over SimpleOriginChannel: TypeScript will
     // error on the `never` assertion below if a new value is added to
