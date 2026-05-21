@@ -6389,16 +6389,46 @@ Extract up to 8 memories per batch.`;
   // ── Voice Realtime API ────────────────────────────────────────────────────
 
   /**
+   * POST /api/voice/codex-turn
+   * Turn-based voice path: local audio transcription, Codex OAuth coach turn,
+   * then device/browser speech output. This avoids direct OpenAI Realtime usage.
+   */
+  app.post("/api/voice/codex-turn", authMiddleware, async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string;
+    try {
+      const { runCodexVoiceTurn, CodexVoiceTurnError } = await import("./voiceCodexTurn");
+      const body = (req.body || {}) as Record<string, unknown>;
+      const result = await runCodexVoiceTurn({
+        userId,
+        text: body.text,
+        audioBase64: body.audioBase64,
+        mimeType: body.mimeType,
+        sdkSessionId: body.sdkSessionId,
+      });
+      res.json(result);
+    } catch (err) {
+      const { CodexVoiceTurnError } = await import("./voiceCodexTurn");
+      if (err instanceof CodexVoiceTurnError) {
+        return res.status(err.status).json({ error: err.message, code: err.code });
+      }
+      console.error("[voice/codex-turn] Error:", err);
+      res.status(500).json({ error: "Failed to complete Codex voice turn" });
+    }
+  });
+
+  /**
    * GET /api/voice/realtime-session
    * Returns relay availability status. Lets the mobile client check whether the
    * server-side WebSocket relay is configured before attempting a connection.
    */
   app.get("/api/voice/realtime-session", authMiddleware, (_req: Request, res: Response) => {
-    const relayAvailable = !!(process.env.AI_INTEGRATIONS_OPENAI_API_KEY);
     res.json({
-      relay_available: relayAvailable,
-      relay_url: "/api/voice/ws",
-      model: "gpt-4o-realtime-preview-2024-12-17",
+      mode: "codex-turn",
+      realtime_available: false,
+      relay_available: false,
+      turn_endpoint: "/api/voice/codex-turn",
+      model: "chatgpt-codex-oauth/auto",
+      audio_output: "device",
     });
   });
 
@@ -6408,13 +6438,10 @@ Extract up to 8 memories per batch.`;
    * The native client uses this ticket to open the relay WebSocket without embedding
    * the long-lived JWT in the WebSocket URL (which would appear in server logs/proxies).
    */
-  app.post("/api/voice/relay-ticket", authMiddleware, (req: Request, res: Response) => {
-    const userId = (req as any).userId as string;
-    import("./voiceRelayRoutes").then(({ createRelayTicket }) => {
-      const ticket = createRelayTicket(userId);
-      res.json({ ticket, ttl_seconds: 30 });
-    }).catch(() => {
-      res.status(503).json({ error: "Voice relay not available" });
+  app.post("/api/voice/relay-ticket", authMiddleware, (_req: Request, res: Response) => {
+    res.status(410).json({
+      error: "OpenAI Realtime voice relay is disabled. Use /api/voice/codex-turn.",
+      code: "CODEX_VOICE_TURN_REQUIRED",
     });
   });
 
@@ -6423,66 +6450,11 @@ Extract up to 8 memories per batch.`;
    * Mints a short-lived OpenAI Realtime API ephemeral client secret for WebRTC/WebSocket.
    * The secret expires in ~60 seconds and is scoped to a single session.
    */
-  app.post("/api/voice/realtime-session", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string;
-    try {
-      const { buildJarvisInstructions } = await import('./voiceRelayRoutes');
-      const instructions = await buildJarvisInstructions(userId);
-      const openaiBase = (process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/v1\/?$/, '');
-      const sessionRes = await fetch(`${openaiBase}/v1/realtime/sessions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.AI_INTEGRATIONS_OPENAI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-realtime-preview-2024-12-17',
-          voice: 'verse',
-          instructions,
-          tools: [
-            {
-              type: 'function',
-              name: 'get_today_summary',
-              description: "Get the user's tasks and upcoming scheduled items for today",
-              parameters: { type: 'object', properties: {} },
-            },
-            {
-              type: 'function',
-              name: 'search_memories',
-              description: "Search the user's personal memories and knowledge base",
-              parameters: {
-                type: 'object',
-                properties: { query: { type: 'string', description: 'The search query' } },
-                required: ['query'],
-              },
-            },
-          ],
-          tool_choice: 'auto',
-          input_audio_format: 'pcm16',
-          output_audio_format: 'pcm16',
-          input_audio_transcription: { model: 'whisper-1' },
-          turn_detection: {
-            type: 'server_vad',
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 600,
-          },
-        }),
-      });
-
-      if (!sessionRes.ok) {
-        const errText = await sessionRes.text().catch(() => sessionRes.statusText);
-        console.error(`[voice/realtime-session] OpenAI error ${sessionRes.status}:`, errText);
-        return res.status(502).json({ error: 'Failed to create realtime session' });
-      }
-
-      const session = await sessionRes.json() as Record<string, unknown>;
-      console.log(`[voice/realtime-session] Session ${session.id} created for user ${userId}`);
-      res.json({ client_secret: session.client_secret, session_id: session.id });
-    } catch (err) {
-      console.error('[voice/realtime-session] Error:', err);
-      res.status(500).json({ error: 'Failed to create realtime session' });
-    }
+  app.post("/api/voice/realtime-session", authMiddleware, async (_req: Request, res: Response) => {
+    res.status(410).json({
+      error: "OpenAI Realtime sessions are disabled. Use /api/voice/codex-turn.",
+      code: "CODEX_VOICE_TURN_REQUIRED",
+    });
   });
 
   /**

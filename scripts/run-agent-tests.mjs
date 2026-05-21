@@ -60,6 +60,7 @@ const tests = [
   { file: "server/agent/__tests__/queryClassifier.test.ts" },
   { file: "server/agent/__tests__/telegramMiniAppUrl.test.ts" },
   { file: "server/agent/__tests__/telegramVoiceCallUrl.assert.ts" },
+  { file: "server/agent/__tests__/codexVoiceTurn.assert.ts" },
   { file: "server/agent/__tests__/telegramNeedsAttention.test.ts" },
   { file: "server/agent/__tests__/weatherLookup.test.ts" },
   { file: "server/agent/tests/sessionCompaction.test.ts" },
