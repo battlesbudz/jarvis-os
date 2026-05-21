@@ -32,7 +32,7 @@ import { getOpenAIClientConfig, isDirectOpenAIDisabled } from "./agent/providers
 import { claimAndMark } from "./lib/proactiveDedup";
 import { resolveScheduledTaskAttention } from "./lib/taskResolver";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
-import { getActiveRunForUser, activeCoachRuns } from "./runRegistry";
+import { activeCoachRuns } from "./runRegistry";
 import {
   createTelegramRunGuard,
   isTelegramRunAbortedError,
@@ -891,11 +891,14 @@ async function processUpdate(update: any): Promise<void> {
       // immediately instead of queuing the message as a normal chat turn.
       if (text && /^(stop|cancel|abort|enough|quit|nevermind|stop it|please stop)\.?$/i.test(text.trim())) {
         const linkedUserId = link[0].userId;
-        const activeRun = getActiveRunForUser(linkedUserId);
-        if (activeRun) {
-          activeRun.controller.abort();
-          activeCoachRuns.delete(activeRun.runId);
-          await sendMessage(chatId, "Stopping — cancelled the current task.");
+        const activeRuns = Array.from(activeCoachRuns.entries())
+          .filter(([, run]) => run.userId === linkedUserId);
+        if (activeRuns.length > 0) {
+          for (const [runId, run] of activeRuns) {
+            run.controller.abort();
+            activeCoachRuns.delete(runId);
+          }
+          await sendMessage(chatId, `Stopping — cancelled ${activeRuns.length === 1 ? "the current task" : `${activeRuns.length} current tasks`}.`);
         } else {
           await sendMessage(chatId, "Nothing is currently running.");
         }

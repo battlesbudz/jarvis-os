@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { activeCoachRuns, getActiveRunForUser } from "./runRegistry";
+import { activeCoachRuns } from "./runRegistry";
 
 export const TELEGRAM_REPLY_TIMEOUT_MS = Number(process.env.TELEGRAM_REPLY_TIMEOUT_MS || 180_000);
 
@@ -26,12 +26,6 @@ export function isTelegramRunTimeoutError(error: unknown): error is TelegramRunT
 }
 
 export function createTelegramRunGuard(userId: string) {
-  const existing = getActiveRunForUser(userId);
-  if (existing) {
-    existing.controller.abort(new TelegramRunAbortedError("Telegram turn superseded by a newer message."));
-    activeCoachRuns.delete(existing.runId);
-  }
-
   const runId = `telegram_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
   const controller = new AbortController();
   activeCoachRuns.set(runId, { controller, userId });
