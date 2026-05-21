@@ -113,8 +113,9 @@ function useDeepLinkNavigation() {
   const handleNavUrl = useCallback((url: string) => {
     try {
       const parsed = Linking.parse(url);
-      const screen = parsed.hostname ?? '';
-      if (screen === 'voice-realtime') {
+      const host = parsed.hostname ?? '';
+      const path = typeof parsed.path === 'string' ? parsed.path.replace(/^\/+/, '') : '';
+      if (host === 'voice-realtime' || path === 'voice-realtime') {
         router.push('/voice-realtime');
       }
     } catch {

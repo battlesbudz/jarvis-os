@@ -219,7 +219,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * and opens the app directly. If the app is not installed (or on desktop) the page
    * falls back to the HTTPS web version of the voice-realtime screen after 1.5 s.
    */
-  app.get("/go/voice-call", (_req: Request, res: Response) => {
+  app.get("/go/voice-call", (req: Request, res: Response) => {
+    const baseUrl = getPublicBaseUrl(req);
+    const webVoiceUrl = `${baseUrl}/voice-realtime`;
+    const appVoiceUrl = "jarvis://voice-realtime";
+    const androidIntentUrl =
+      `intent://voice-realtime#Intent;scheme=jarvis;package=com.gameplan;` +
+      `S.browser_fallback_url=${encodeURIComponent(webVoiceUrl)};end`;
+
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache");
     res.send(`<!DOCTYPE html>
@@ -232,18 +239,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
     body { margin: 0; display: flex; flex-direction: column; align-items: center;
            justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif;
            background: #0F0F0F; color: #e5e5e5; text-align: center; padding: 1rem; }
-    a { color: #6366F1; }
+    .actions { display: grid; gap: 0.75rem; width: min(100%, 320px); margin-top: 1rem; }
+    a { color: inherit; }
+    .button { display: block; padding: 0.85rem 1rem; border-radius: 10px; text-decoration: none;
+              background: #6366F1; color: white; font-weight: 700; }
+    .secondary { background: #1f2937; }
+    .note { color: #a3a3a3; font-size: 0.92rem; max-width: 380px; line-height: 1.4; }
   </style>
 </head>
 <body>
-  <p>Opening Jarvis voice call…</p>
-  <p><a href="/voice-realtime">Tap here</a> if the app doesn't open automatically.</p>
+  <h1>Jarvis voice call</h1>
+  <p class="note">Open the Jarvis app for the best voice session, or continue in the browser.</p>
+  <div class="actions">
+    <a id="open-app" class="button" href="${appVoiceUrl}">Open Jarvis app</a>
+    <a class="button secondary" href="${webVoiceUrl}">Continue in browser</a>
+  </div>
   <script>
-    // Attempt to open the native app via custom URL scheme.
-    // If the app is installed, the OS will launch it; the page stays open but unfocused.
-    // After 1.5 s we redirect to the web version as a fallback.
-    try { window.location.href = 'jarvis://voice-realtime'; } catch (e) { /* ignore */ }
-    setTimeout(function () { window.location.replace('/voice-realtime'); }, 1500);
+    const appLink = document.getElementById('open-app');
+    const androidIntentUrl = ${JSON.stringify(androidIntentUrl)};
+    if (/Android/i.test(navigator.userAgent)) {
+      appLink.setAttribute('href', androidIntentUrl);
+    }
   </script>
 </body>
 </html>`);

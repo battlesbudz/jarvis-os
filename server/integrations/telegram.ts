@@ -102,7 +102,7 @@ export interface InlineKeyboardMarkup {
  * open the native app via jarvis://voice-realtime and falls back to the HTTPS
  * web version of the voice screen after 1.5 s if the app is not installed.
  */
-function getVoiceCallUrl(): string | null {
+export function getExpectedVoiceCallUrl(): string {
   return `${getPublicBaseUrl()}/go/voice-call`;
 }
 
@@ -116,7 +116,7 @@ function getVoiceCallUrl(): string | null {
 export function buildVoiceCallKeyboard(opts?: {
   includeTextReplyButton?: boolean;
 }): InlineKeyboardMarkup | null {
-  const url = getVoiceCallUrl();
+  const url = getExpectedVoiceCallUrl();
   if (!url) return null;
   const row: InlineKeyboardButton[] = [
     { text: '🎙 Open voice call', url },
