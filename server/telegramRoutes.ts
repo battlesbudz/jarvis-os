@@ -33,6 +33,11 @@ import { claimAndMark } from "./lib/proactiveDedup";
 import { resolveScheduledTaskAttention } from "./lib/taskResolver";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
 import { getActiveRunForUser, activeCoachRuns } from "./runRegistry";
+import {
+  createTelegramRunGuard,
+  isTelegramRunAbortedError,
+  isTelegramRunTimeoutError,
+} from "./telegramRunGuard";
 
 const openai = new OpenAI(getOpenAIClientConfig());
 
@@ -174,6 +179,8 @@ async function deliverCoachText(
 }
 
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
+  const runGuard = createTelegramRunGuard(userId);
+
   // Pre-fetch TTS prefs — used to decide between streaming (text) and voice paths.
   const ttsPrefs = await getUserTtsPrefs(userId).catch(() => ({ enabled: false, voice: "" as string }));
 
@@ -261,7 +268,9 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
     // Pass onToken so named-agent replies also stream into the placeholder.
-    const namedResult = await routeToNamedAgent(userId, "telegram", chatId, userText, undefined, onToken).catch(() => null);
+    const namedResult = await runGuard.race(
+      routeToNamedAgent(userId, "telegram", chatId, userText, undefined, onToken).catch(() => null),
+    );
     if (namedResult !== null) {
       streamClosed = true;
       clearTimers();
@@ -280,15 +289,17 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     };
 
     const storedSessionId = await getCoachSession(userId, "Telegram");
-    const { reply, attachments, sdkSessionId } = await runCoachAgent({
-      userId,
-      userText,
-      channelName: "Telegram",
-      imageUrl,
-      sdkSessionId: storedSessionId,
-      onToken,
-      onProgressMessage,
-    });
+    const { reply, attachments, sdkSessionId } = await runGuard.race(
+      runCoachAgent({
+        userId,
+        userText,
+        channelName: "Telegram",
+        imageUrl,
+        sdkSessionId: storedSessionId,
+        onToken,
+        onProgressMessage,
+      }),
+    );
 
     if (sdkSessionId) {
       setCoachSession(userId, "Telegram", sdkSessionId);
@@ -390,6 +401,23 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
   } catch (error) {
     streamClosed = true;
     clearTimers();
+    if (isTelegramRunAbortedError(error)) {
+      if (placeholderMsgId) {
+        await editMessage(chatId, placeholderMsgId, "Stopped this Telegram turn.").catch(() => {});
+      }
+      return;
+    }
+    if (isTelegramRunTimeoutError(error)) {
+      const timeoutMessage = "I got stuck processing that message, so I stopped the turn. Please send it again.";
+      if (placeholderMsgId) {
+        await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
+          sendMessage(chatId, timeoutMessage).catch(() => {});
+        });
+      } else {
+        await sendMessage(chatId, timeoutMessage);
+      }
+      return;
+    }
     console.error("Error handling Telegram coach reply:", error);
     // If we have a placeholder, update it with the error message instead of sending
     // a separate message (avoids leaving an orphaned "Working on it…" bubble).
@@ -401,6 +429,8 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
     }
     return;
+  } finally {
+    runGuard.finish();
   }
 }
 
