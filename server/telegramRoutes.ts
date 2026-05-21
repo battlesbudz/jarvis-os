@@ -38,6 +38,10 @@ import {
   isTelegramRunAbortedError,
   isTelegramRunTimeoutError,
 } from "./telegramRunGuard";
+import {
+  cancelTelegramCoachMessageBatches,
+  enqueueTelegramCoachMessageBatch,
+} from "./telegramMessageBatcher";
 
 const openai = new OpenAI(getOpenAIClientConfig());
 
@@ -891,14 +895,16 @@ async function processUpdate(update: any): Promise<void> {
       // immediately instead of queuing the message as a normal chat turn.
       if (text && /^(stop|cancel|abort|enough|quit|nevermind|stop it|please stop)\.?$/i.test(text.trim())) {
         const linkedUserId = link[0].userId;
+        const pendingBatchCount = cancelTelegramCoachMessageBatches(linkedUserId, chatId);
         const activeRuns = Array.from(activeCoachRuns.entries())
           .filter(([, run]) => run.userId === linkedUserId);
-        if (activeRuns.length > 0) {
+        if (activeRuns.length > 0 || pendingBatchCount > 0) {
           for (const [runId, run] of activeRuns) {
             run.controller.abort();
             activeCoachRuns.delete(runId);
           }
-          await sendMessage(chatId, `Stopping — cancelled ${activeRuns.length === 1 ? "the current task" : `${activeRuns.length} current tasks`}.`);
+          const totalCancelled = activeRuns.length + pendingBatchCount;
+          await sendMessage(chatId, `Stopping — cancelled ${totalCancelled === 1 ? "the current task" : `${totalCancelled} current tasks`}.`);
         } else {
           await sendMessage(chatId, "Nothing is currently running.");
         }
@@ -1578,7 +1584,10 @@ async function processUpdate(update: any): Promise<void> {
         }
       }
 
-      await handleCoachReply(userId, chatId, text, imageUrl);
+      enqueueTelegramCoachMessageBatch(
+        { userId, chatId, text, imageUrl },
+        (batch) => handleCoachReply(batch.userId, batch.chatId, batch.text, batch.imageUrl),
+      );
     } catch (err) {
       console.error("Error handling Telegram message:", err);
       await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
