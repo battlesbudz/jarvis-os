@@ -259,11 +259,15 @@ async function checkWhatsAppReachability(): Promise<DoctorResult> {
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const phoneNumber = process.env.TWILIO_PHONE_NUMBER;
 
+  if (!accountSid && !authToken && !phoneNumber) {
+    return pass(id, label, "WhatsApp channel is not configured; optional Twilio channel is disabled.");
+  }
+
   if (!accountSid || !authToken || !phoneNumber) {
     return warn(
       id,
       label,
-      "Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER) are not set — WhatsApp channel is not configured.",
+      "Twilio credentials are partially configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and TWILIO_PHONE_NUMBER together.",
       settingsPath
     );
   }
