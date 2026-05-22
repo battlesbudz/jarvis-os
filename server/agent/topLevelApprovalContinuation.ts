@@ -1,5 +1,6 @@
 import type { ApprovalGate } from "./agentApproval";
 import { createApprovalReceipt } from "./approvalReceipt";
+import { getCoachAppAgentId } from "./coreAgentIds";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
 
 export interface ContinueTopLevelApprovalDeps {
@@ -25,7 +26,8 @@ function getToolArgs(gate: ApprovalGate): Record<string, unknown> {
 
 function isTopLevelAutonomyGate(gate: ApprovalGate): boolean {
   const args = getToolArgs(gate);
-  return gate.agentId === "coach" && args.topLevelAutonomy === true && typeof args.userText === "string";
+  const isCoachGate = gate.agentId === getCoachAppAgentId(gate.userId) || gate.agentId === "coach";
+  return isCoachGate && args.topLevelAutonomy === true && typeof args.userText === "string";
 }
 
 function inferContinuationAgentType(gate: ApprovalGate, userText: string): AgentJobType {

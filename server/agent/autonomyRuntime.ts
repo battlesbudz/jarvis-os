@@ -4,6 +4,7 @@ import {
   type AutonomyPolicyDecision,
   type AutonomyReadiness,
 } from "./autonomyPolicy";
+import { getCoachAppAgentId } from "./coreAgentIds";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
 
 export interface AutonomyRuntimeInput {
@@ -228,7 +229,7 @@ export async function routeAutonomyRequest(
     let gate: { id: string; status: string } | undefined;
     try {
       gate = await requestApproval({
-        agentId: "coach",
+        agentId: getCoachAppAgentId(input.userId),
         userId: input.userId,
         toolName,
         toolArgs: {
