@@ -1000,13 +1000,17 @@ async function warmupRateLimitCache(): Promise<void> {
       WHERE status = 'broken'
     `);
     const rows: BrokenRow[] = (raw as BrokenResult).rows ?? (Array.isArray(raw) ? (raw as BrokenRow[]) : []);
+    const activeRows = rows.filter((row) => {
+      if (row.integration === "discord" && !process.env.DISCORD_BOT_TOKEN) return false;
+      return true;
+    });
     const now = Date.now();
-    for (const row of rows) {
+    for (const row of activeRows) {
       const key = `${row.integration}:${row.user_id}`;
       lastDebugTriggerAt.set(key, now);
     }
-    if (rows.length > 0) {
-      console.log(`[IntegrationValidator] warmed rate-limit cache: ${rows.length} already-broken integration(s) — cooldown active, no repeat alert until ${new Date(now + DEBUG_TRIGGER_COOLDOWN_MS).toISOString()}`);
+    if (activeRows.length > 0) {
+      console.log(`[IntegrationValidator] warmed rate-limit cache: ${activeRows.length} already-broken integration(s) — cooldown active, no repeat alert until ${new Date(now + DEBUG_TRIGGER_COOLDOWN_MS).toISOString()}`);
     }
   } catch (err) {
     // Non-fatal: if the DB is unavailable at startup, the cache starts cold.
