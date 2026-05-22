@@ -1208,8 +1208,7 @@ export async function runAgentHealthCheck(): Promise<void> {
           // Discord: check if bot token is set and the configured channel is accessible
           const discordToken = process.env.DISCORD_BOT_TOKEN;
           if (!discordToken) {
-            live = false;
-            reason = "DISCORD_BOT_TOKEN not configured";
+            live = true; // Discord is optional; an unset token means the channel is disabled, not dead.
           } else if (agent.channelId) {
             try {
               const resp = await fetch(`https://discord.com/api/v10/channels/${agent.channelId}`, {

@@ -166,15 +166,15 @@ async function checkOutboundHttps(): Promise<DoctorResult> {
 
 async function checkEnvVarsPresence(): Promise<DoctorResult> {
   const id = "env_vars_presence";
-  const label = "Required Environment Variables";
+  const label = "Core Environment Variables";
   const settingsPath = "/(tabs)/settings";
 
   // Tier-1: absence = hard failure (system cannot operate without these)
   const missingCritical = ["DATABASE_URL"].filter((k) => !process.env[k]);
   if (!hasAnyRoutableProvider()) missingCritical.push("AI model provider");
 
-  // Tier-2: absence = warning (specific channels/features degrade)
-  const important = [
+  // Tier-2: absence = optional disabled integrations, not app health failures.
+  const optionalIntegrations = [
     "DISCORD_BOT_TOKEN",
     "TELEGRAM_BOT_TOKEN",
     "TWILIO_ACCOUNT_SID",
@@ -187,18 +187,19 @@ async function checkEnvVarsPresence(): Promise<DoctorResult> {
     "SUPADATA_API_KEY",
   ];
 
-  const missingImportant = important.filter((k) => !process.env[k]);
+  const missingOptional = optionalIntegrations.filter((k) => !process.env[k]);
 
   if (missingCritical.length > 0) {
     return fail(id, label, `Critical env vars missing: ${missingCritical.join(", ")}.`, settingsPath);
   }
-  if (missingImportant.length === important.length) {
-    return warn(id, label, `No optional channel/integration env vars are set — all channels will be unconfigured.`, settingsPath);
+  if (missingOptional.length > 0) {
+    return pass(
+      id,
+      label,
+      `Core environment is configured. Optional integrations not configured: ${missingOptional.join(", ")}.`,
+    );
   }
-  if (missingImportant.length > 0) {
-    return warn(id, label, `Some integration env vars are not set: ${missingImportant.join(", ")}.`, settingsPath);
-  }
-  return pass(id, label, "All required and integration environment variables are present.");
+  return pass(id, label, "Core environment and optional integration variables are present.");
 }
 
 async function checkTelegramWebhook(): Promise<DoctorResult> {
@@ -230,7 +231,7 @@ async function checkDiscordBotToken(): Promise<DoctorResult> {
   const settingsPath = "/(tabs)/settings?scrollTo=discord";
 
   if (!token) {
-    return warn(id, label, "DISCORD_BOT_TOKEN is not set — shared Discord bot is not configured.", settingsPath);
+    return pass(id, label, "Discord bot is not configured; optional Discord channel is disabled.");
   }
 
   try {

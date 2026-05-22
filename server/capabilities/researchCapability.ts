@@ -16,7 +16,10 @@ export const researchCapability: Capability = {
   ],
   async healthCheck() {
     if (!process.env.TAVILY_API_KEY) {
-      return { healthy: false, reason: "TAVILY_API_KEY not configured — web search unavailable" };
+      return {
+        healthy: true,
+        reason: "Tavily search API is not configured; research tools will use built-in fallbacks where available.",
+      };
     }
     return { healthy: true };
   },
