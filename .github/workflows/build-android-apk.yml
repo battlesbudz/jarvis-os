@@ -43,31 +43,20 @@ jobs:
           unzip -q /tmp/gradle.zip -d /opt
           echo "/opt/gradle-8.4/bin" >> $GITHUB_PATH
 
-      # Generate the keystore ONCE on the first run and commit it back.
-      # Every subsequent run finds it in the repo and skips generation.
-      # Same key → same signature → Android accepts updates without uninstall.
+      # Decode the daemon signing keystore from GitHub Secrets. Same key means Android accepts updates without uninstall.
       - name: Setup signing keystore
+        env:
+          ANDROID_DAEMON_KEYSTORE_BASE64: ${{ secrets.ANDROID_DAEMON_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DAEMON_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_DAEMON_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_DAEMON_KEY_PASSWORD }}
         run: |
-          if [ -f android-daemon/jarvis-daemon.keystore ]; then
-            echo "Keystore already exists — using committed version"
-          else
-            echo "No keystore found — generating and committing for the first time"
-            keytool -genkey -v \
-              -keystore android-daemon/jarvis-daemon.keystore \
-              -alias your-android-daemon-key-alias \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 36500 \
-              -storepass your-android-signing-password \
-              -keypass your-android-signing-password \
-              -dname "CN=Jarvis Daemon,O=Jarvis,C=US"
-            git config user.email "actions@github.com"
-            git config user.name "GitHub Actions"
-            git add android-daemon/jarvis-daemon.keystore
-            git commit -m "chore: add signing keystore for consistent APK updates [skip ci]"
-            git push
-            echo "Keystore committed — all future builds will use this same key"
+          if [ -z "$ANDROID_DAEMON_KEYSTORE_BASE64" ]; then
+            echo "ANDROID_DAEMON_KEYSTORE_BASE64 GitHub Secret is required" >&2
+            exit 1
           fi
+          printf '%s' "$ANDROID_DAEMON_KEYSTORE_BASE64" | base64 --decode > android-daemon/jarvis-daemon.keystore
+          test -s android-daemon/jarvis-daemon.keystore
 
       - name: Build release APK
         working-directory: android-daemon
@@ -75,9 +64,9 @@ jobs:
           VERSION_CODE: ${{ github.run_number }}
           VERSION_NAME: "1.0.${{ github.run_number }}"
           KEYSTORE_PATH: ${{ github.workspace }}/android-daemon/jarvis-daemon.keystore
-          KEYSTORE_PASSWORD: your-android-signing-password
-          KEY_ALIAS: your-android-daemon-key-alias
-          KEY_PASSWORD: your-android-signing-password
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_DAEMON_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_DAEMON_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_DAEMON_KEY_PASSWORD }}
         run: gradle assembleDebug --no-daemon
 
       - name: Locate, rename APK and write version.json

@@ -76,35 +76,27 @@ jobs:
           key: gradle-caches-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: gradle-caches-
 
-      # Generate the keystore ONCE on the first run and commit it back.
-      # Every subsequent run finds it in the repo and skips generation.
-      # Same key → same signature → Android accepts updates without uninstall.
+      # Decode the app signing keystore from GitHub Secrets. Same key means Android accepts updates without uninstall.
       - name: Setup signing keystore
+        env:
+          JARVIS_APP_KEYSTORE_BASE64: ${{ secrets.JARVIS_APP_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.JARVIS_APP_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.JARVIS_APP_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.JARVIS_APP_KEY_PASSWORD }}
         run: |
-          if [ -f jarvis-app.keystore ]; then
-            echo "Keystore already exists — using committed version"
-          else
-            echo "No keystore found — generating and committing for the first time"
-            keytool -genkey -v \
-              -keystore jarvis-app.keystore \
-              -alias your-jarvis-app-key-alias \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 36500 \
-              -storepass your-android-signing-password \
-              -keypass your-android-signing-password \
-              -dname "CN=Jarvis App,O=Jarvis,C=US"
-            git config user.email "actions@github.com"
-            git config user.name "GitHub Actions"
-            git add jarvis-app.keystore
-            git commit -m "chore: add signing keystore for Jarvis app APK updates [skip ci]"
-            git push
-            echo "Keystore committed — all future builds will use this same key"
+          if [ -z "$JARVIS_APP_KEYSTORE_BASE64" ]; then
+            echo "JARVIS_APP_KEYSTORE_BASE64 GitHub Secret is required" >&2
+            exit 1
           fi
+          printf '%s' "$JARVIS_APP_KEYSTORE_BASE64" | base64 --decode > jarvis-app.keystore
+          test -s jarvis-app.keystore
 
       - name: Inject signing config and versionCode into build.gradle
         env:
           KEYSTORE_ABS: ${{ github.workspace }}/jarvis-app.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.JARVIS_APP_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.JARVIS_APP_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.JARVIS_APP_KEY_PASSWORD }}
           GRADLE_FILE: android/app/build.gradle
           RUN_NUMBER: ${{ github.run_number }}
         run: python3 scripts/patch_gradle.py
@@ -125,6 +117,9 @@ jobs:
         env:
           EXPO_PUBLIC_DOMAIN: gameplanjarvisai.up.railway.app
           EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
+          KEYSTORE_PASSWORD: ${{ secrets.JARVIS_APP_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.JARVIS_APP_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.JARVIS_APP_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon

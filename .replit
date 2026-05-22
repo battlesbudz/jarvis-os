@@ -121,9 +121,9 @@ outputType = "console"
 [userenv.shared]
 EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
 GOOGLE_WEB_CLIENT_ID = "464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com"
-GOOGLE_CLIENT_SECRET = "your-google-client-secret"
+GOOGLE_CLIENT_SECRET = "set-in-replit-secrets"
 ANDROID_APK_URL = "https://github.com/battlesbudz/JarvisAi/releases/download/android-daemon-latest/jarvis-daemon.apk"
-DASHBOARD_SECRET = "your-dashboard-secret"
+DASHBOARD_SECRET = "set-in-replit-secrets"
 JARVIS_API = "http://localhost:5000"
 
 [userenv.production]

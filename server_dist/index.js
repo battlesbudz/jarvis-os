@@ -51,17 +51,24 @@ function hasDirectOpenAIProvider() {
   const key = getProviderEnvValue("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY");
   return !!key && !isRouterPlaceholderOpenAIKey(key);
 }
+function hasAnthropicProvider() {
+  return hasProviderEnvValue(
+    "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AI_INTEGRATIONS_ANTHROPIC_BASE_URL",
+    "ANTHROPIC_BASE_URL"
+  );
+}
 function hasNonOpenAIRoutableProvider() {
-  return hasCodexOAuthProvider() || hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL") || hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") || hasProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") || hasProviderEnvValue("TOGETHER_API_KEY", "AI_INTEGRATIONS_TOGETHER_API_KEY") || hasProviderEnvValue("FIREWORKS_API_KEY", "AI_INTEGRATIONS_FIREWORKS_API_KEY") || hasProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY") || hasProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY") || hasProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY") || hasProviderEnvValue("MODEL_RELAY_BASE_URL", "MODELRELAY_BASE_URL");
+  return hasCodexOAuthProvider() || hasAnthropicProvider() || hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL") || hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") || hasProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") || hasProviderEnvValue("TOGETHER_API_KEY", "AI_INTEGRATIONS_TOGETHER_API_KEY") || hasProviderEnvValue("FIREWORKS_API_KEY", "AI_INTEGRATIONS_FIREWORKS_API_KEY") || hasProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY") || hasProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY") || hasProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY") || hasProviderEnvValue("MODEL_RELAY_BASE_URL", "MODELRELAY_BASE_URL");
 }
 function hasAnyRoutableProvider() {
   return hasDirectOpenAIProvider() || hasNonOpenAIRoutableProvider();
 }
 function isCodexOAuthProviderEnabled() {
+  const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
   const enabled = getProviderEnvValue("JARVIS_CODEX_OAUTH_ENABLED", "CHATGPT_CODEX_OAUTH_ENABLED");
-  const testOverrideAllowed = getProviderEnvValue("JARVIS_TEST_ALLOW_DIRECT_PROVIDER") === "true";
-  if (testOverrideAllowed && (enabled === "false" || enabled === "0")) return false;
-  return true;
+  return explicitProvider === "chatgpt-codex-oauth" || enabled === "true" || enabled === "1";
 }
 function hasCodexOAuthProvider() {
   return isCodexOAuthProviderEnabled();
@@ -72,6 +79,8 @@ function getCodexOAuthCommand() {
 function applyProviderEnvAliases() {
   setAlias("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY");
   setAlias("AI_INTEGRATIONS_OPENAI_BASE_URL", "OPENAI_BASE_URL");
+  setAlias("AI_INTEGRATIONS_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY");
+  setAlias("AI_INTEGRATIONS_ANTHROPIC_BASE_URL", "ANTHROPIC_BASE_URL");
   setAlias("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY");
   setAlias("OPENROUTER_BASE_URL", "AI_INTEGRATIONS_OPENROUTER_BASE_URL");
   setAlias("OPENROUTER_MODEL", "AI_INTEGRATIONS_OPENROUTER_MODEL");
@@ -106,6 +115,13 @@ function getOpenAIClientConfig() {
   return {
     apiKey: getProviderEnvValue("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY") ?? ROUTER_PLACEHOLDER_OPENAI_API_KEY,
     baseURL: getProviderEnvValue("AI_INTEGRATIONS_OPENAI_BASE_URL", "OPENAI_BASE_URL")
+  };
+}
+function getAnthropicClientConfig() {
+  applyProviderEnvAliases();
+  return {
+    apiKey: getProviderEnvValue("AI_INTEGRATIONS_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY") ?? ROUTER_PLACEHOLDER_OPENAI_API_KEY,
+    baseURL: getProviderEnvValue("AI_INTEGRATIONS_ANTHROPIC_BASE_URL", "ANTHROPIC_BASE_URL")
   };
 }
 var ROUTER_PLACEHOLDER_OPENAI_API_KEY;
@@ -280,1214 +296,6 @@ var init_openai = __esm({
         yield { type: "finish", reason: finishReason };
       }
     };
-  }
-});
-
-// server/agent/providers/openaiCompatible.ts
-import OpenAI2 from "openai";
-function trimTrailingSlash(value) {
-  return value.replace(/\/+$/, "");
-}
-function normalizeBaseURL(value, fallback) {
-  const raw = value?.trim() || fallback;
-  return trimTrailingSlash(raw);
-}
-function stripKnownPrefix(model) {
-  for (const { prefix, marker } of PROVIDER_PREFIXES) {
-    if (model.startsWith(marker)) {
-      return { prefix, model: model.slice(marker.length) };
-    }
-  }
-  return { prefix: "openai-compatible", model };
-}
-function resolveRelayTarget(model) {
-  const parsed = stripKnownPrefix(model);
-  switch (parsed.prefix) {
-    case "openrouter":
-      return {
-        baseURL: normalizeBaseURL(
-          getProviderEnvValue("OPENROUTER_BASE_URL", "AI_INTEGRATIONS_OPENROUTER_BASE_URL"),
-          "https://openrouter.ai/api/v1"
-        ),
-        apiKey: getProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") ?? "no-key",
-        model: parsed.model || getProviderEnvValue("OPENROUTER_MODEL", "AI_INTEGRATIONS_OPENROUTER_MODEL") || "openrouter/auto"
-      };
-    case "groq":
-      return {
-        baseURL: normalizeBaseURL(
-          getProviderEnvValue("GROQ_BASE_URL", "AI_INTEGRATIONS_GROQ_BASE_URL"),
-          "https://api.groq.com/openai/v1"
-        ),
-        apiKey: getProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") ?? "no-key",
-        model: parsed.model || getProviderEnvValue("GROQ_MODEL", "AI_INTEGRATIONS_GROQ_MODEL") || "llama-3.1-8b-instant"
-      };
-    case "together":
-      return {
-        baseURL: normalizeBaseURL(
-          getProviderEnvValue("TOGETHER_BASE_URL", "AI_INTEGRATIONS_TOGETHER_BASE_URL"),
-          "https://api.together.xyz/v1"
-        ),
-        apiKey: getProviderEnvValue("TOGETHER_API_KEY", "AI_INTEGRATIONS_TOGETHER_API_KEY") ?? "no-key",
-        model: parsed.model || getProviderEnvValue("TOGETHER_MODEL", "AI_INTEGRATIONS_TOGETHER_MODEL") || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
-      };
-    case "fireworks":
-      return {
-        baseURL: normalizeBaseURL(
-          getProviderEnvValue("FIREWORKS_BASE_URL", "AI_INTEGRATIONS_FIREWORKS_BASE_URL"),
-          "https://api.fireworks.ai/inference/v1"
-        ),
-        apiKey: getProviderEnvValue("FIREWORKS_API_KEY", "AI_INTEGRATIONS_FIREWORKS_API_KEY") ?? "no-key",
-        model: parsed.model || getProviderEnvValue("FIREWORKS_MODEL", "AI_INTEGRATIONS_FIREWORKS_MODEL") || "accounts/fireworks/models/llama-v3p1-8b-instruct"
-      };
-    case "cerebras":
-      return {
-        baseURL: normalizeBaseURL(
-          getProviderEnvValue("CEREBRAS_BASE_URL", "AI_INTEGRATIONS_CEREBRAS_BASE_URL"),
-          "https://api.cerebras.ai/v1"
-        ),
-        apiKey: getProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY") ?? "no-key",
-        model: parsed.model || getProviderEnvValue("CEREBRAS_MODEL", "AI_INTEGRATIONS_CEREBRAS_MODEL") || "llama3.1-8b"
-      };
-    case "nvidia":
-      return {
-        baseURL: normalizeBaseURL(
-          getProviderEnvValue("NVIDIA_BASE_URL", "AI_INTEGRATIONS_NVIDIA_BASE_URL"),
-          "https://integrate.api.nvidia.com/v1"
-        ),
-        apiKey: getProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY") ?? "no-key",
-        model: parsed.model || getProviderEnvValue("NVIDIA_MODEL", "AI_INTEGRATIONS_NVIDIA_MODEL") || "meta/llama-3.1-8b-instruct"
-      };
-    case "deepseek":
-      return {
-        baseURL: normalizeBaseURL(
-          getProviderEnvValue("DEEPSEEK_BASE_URL", "AI_INTEGRATIONS_DEEPSEEK_BASE_URL"),
-          "https://api.deepseek.com"
-        ),
-        apiKey: getProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY") ?? "no-key",
-        model: parsed.model || getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"
-      };
-    case "modelrelay":
-      return {
-        baseURL: normalizeBaseURL(
-          process.env.MODEL_RELAY_BASE_URL ?? process.env.MODELRELAY_BASE_URL,
-          "http://127.0.0.1:7352/v1"
-        ),
-        apiKey: process.env.MODEL_RELAY_API_KEY ?? process.env.MODELRELAY_API_KEY ?? "no-key",
-        model: parsed.model || "auto-fastest"
-      };
-    case "openai-compatible":
-      return {
-        baseURL: normalizeBaseURL(
-          getProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL"),
-          "http://127.0.0.1:7352/v1"
-        ),
-        apiKey: getProviderEnvValue("OPENAI_COMPATIBLE_API_KEY", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_API_KEY") ?? "no-key",
-        model: parsed.model || getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL") || "auto-fastest"
-      };
-  }
-}
-var MODELRELAY_PREFIX, OPENAI_COMPATIBLE_PREFIX, PROVIDER_PREFIXES, OpenAICompatibleProvider;
-var init_openaiCompatible = __esm({
-  "server/agent/providers/openaiCompatible.ts"() {
-    "use strict";
-    init_base();
-    init_env();
-    MODELRELAY_PREFIX = "modelrelay/";
-    OPENAI_COMPATIBLE_PREFIX = "openai-compatible/";
-    PROVIDER_PREFIXES = [
-      { prefix: "modelrelay", marker: MODELRELAY_PREFIX },
-      { prefix: "openai-compatible", marker: OPENAI_COMPATIBLE_PREFIX },
-      { prefix: "openrouter", marker: "openrouter/" },
-      { prefix: "groq", marker: "groq/" },
-      { prefix: "together", marker: "together/" },
-      { prefix: "fireworks", marker: "fireworks/" },
-      { prefix: "cerebras", marker: "cerebras/" },
-      { prefix: "nvidia", marker: "nvidia/" },
-      { prefix: "deepseek", marker: "deepseek/" }
-    ];
-    OpenAICompatibleProvider = class extends BaseProvider {
-      clients = /* @__PURE__ */ new Map();
-      async initialize() {
-      }
-      async cleanup() {
-        this.clients.clear();
-      }
-      async *query(params) {
-        if (params.stream) {
-          yield* this._streamTurn(params);
-        } else {
-          yield* this._completeTurn(params);
-        }
-      }
-      getClient(target) {
-        const key = `${target.baseURL}
-${target.apiKey}`;
-        const cached = this.clients.get(key);
-        if (cached) return cached;
-        const client = new OpenAI2({ baseURL: target.baseURL, apiKey: target.apiKey });
-        this.clients.set(key, client);
-        return client;
-      }
-      async *_completeTurn(params) {
-        const target = resolveRelayTarget(params.model);
-        const client = this.getClient(target);
-        const completion = await client.chat.completions.create(
-          {
-            model: target.model,
-            messages: params.messages,
-            tools: params.tools,
-            tool_choice: params.tools ? params.toolChoice : void 0,
-            max_completion_tokens: params.maxCompletionTokens
-          },
-          { signal: params.signal }
-        );
-        const choice = completion.choices[0];
-        const msg = choice?.message;
-        if (msg?.content) {
-          yield { type: "text", delta: msg.content };
-        }
-        const toolCalls = msg?.tool_calls ?? [];
-        for (let i = 0; i < toolCalls.length; i++) {
-          const tc = toolCalls[i];
-          if (tc.type !== "function") continue;
-          yield { type: "tool_call_start", index: i, id: tc.id, name: tc.function.name };
-          if (tc.function.arguments) {
-            yield { type: "tool_call_args", index: i, args: tc.function.arguments };
-          }
-        }
-        yield { type: "finish", reason: choice?.finish_reason ?? null };
-      }
-      async *_streamTurn(params) {
-        const target = resolveRelayTarget(params.model);
-        const client = this.getClient(target);
-        const stream = await client.chat.completions.create(
-          {
-            model: target.model,
-            messages: params.messages,
-            tools: params.tools,
-            tool_choice: params.tools ? params.toolChoice : void 0,
-            max_completion_tokens: params.maxCompletionTokens,
-            stream: true
-          },
-          { signal: params.signal }
-        );
-        const toolCallAccum = /* @__PURE__ */ new Map();
-        const toolCallOrder = [];
-        let finishReason = null;
-        for await (const chunk of stream) {
-          const delta = chunk.choices[0]?.delta;
-          const fr = chunk.choices[0]?.finish_reason;
-          if (fr) finishReason = fr;
-          if (delta?.content) {
-            yield { type: "text", delta: delta.content };
-          }
-          if (delta?.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const idx = tc.index;
-              if (!toolCallAccum.has(idx)) {
-                toolCallAccum.set(idx, { id: "", name: "", args: "" });
-                toolCallOrder.push(idx);
-              }
-              const acc = toolCallAccum.get(idx);
-              if (tc.id) acc.id += tc.id;
-              if (tc.function?.name) acc.name += tc.function.name;
-              if (tc.function?.arguments) acc.args += tc.function.arguments;
-            }
-          }
-        }
-        for (const idx of toolCallOrder) {
-          const acc = toolCallAccum.get(idx);
-          yield { type: "tool_call_start", index: idx, id: acc.id, name: acc.name };
-          if (acc.args) {
-            yield { type: "tool_call_args", index: idx, args: acc.args };
-          }
-        }
-        yield { type: "finish", reason: finishReason };
-      }
-    };
-  }
-});
-
-// server/agent/providers/codexCommand.ts
-function buildCodexSpawnCommand(command, args) {
-  const trimmed = command.trim();
-  if (process.platform !== "win32") {
-    return { command: trimmed, args };
-  }
-  const lower = trimmed.toLowerCase();
-  if (!lower.endsWith(".cmd") && !lower.endsWith(".bat")) {
-    return { command: trimmed, args };
-  }
-  return {
-    command: process.env.ComSpec || "cmd.exe",
-    args: ["/d", "/s", "/c", trimmed, ...args]
-  };
-}
-var init_codexCommand = __esm({
-  "server/agent/providers/codexCommand.ts"() {
-    "use strict";
-  }
-});
-
-// server/agent/providers/codexOAuth.ts
-import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-function textFromContent(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.map((part) => {
-    if (typeof part === "string") return part;
-    if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
-    return "";
-  }).filter(Boolean).join("\n");
-}
-function extractJsonObject(raw) {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  const candidate = fenced?.[1]?.trim() || trimmed;
-  try {
-    return JSON.parse(candidate);
-  } catch {
-    const start = candidate.indexOf("{");
-    const end = candidate.lastIndexOf("}");
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(candidate.slice(start, end + 1));
-    } catch {
-      return null;
-    }
-  }
-}
-function normalizeToolArguments(value) {
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return "{}";
-    try {
-      return JSON.stringify(JSON.parse(trimmed));
-    } catch {
-      return trimmed;
-    }
-  }
-  if (value && typeof value === "object") return JSON.stringify(value);
-  return "{}";
-}
-function generatedToolCallId(index) {
-  return `codex_call_${Date.now().toString(36)}_${index}`;
-}
-function parseCodexOAuthOrchestratorOutput(raw) {
-  const parsed = extractJsonObject(raw);
-  if (!parsed || typeof parsed !== "object") {
-    return { type: "final", content: raw.trim() };
-  }
-  const data = parsed;
-  const type = typeof data.type === "string" ? data.type : "";
-  if (type === "final") {
-    return { type: "final", content: String(data.content ?? data.text ?? "").trim() };
-  }
-  const rawToolCalls = Array.isArray(data.tool_calls) ? data.tool_calls : Array.isArray(data.toolCalls) ? data.toolCalls : [];
-  if (type === "tool_calls" || rawToolCalls.length > 0) {
-    const toolCalls = rawToolCalls.map((toolCall, index) => {
-      if (!toolCall || typeof toolCall !== "object") return null;
-      const item = toolCall;
-      const functionData = item.function && typeof item.function === "object" ? item.function : item;
-      const name = typeof functionData.name === "string" ? functionData.name.trim() : "";
-      if (!name) return null;
-      return {
-        id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : generatedToolCallId(index),
-        type: "function",
-        function: {
-          name,
-          arguments: normalizeToolArguments(functionData.arguments)
-        }
-      };
-    }).filter((toolCall) => !!toolCall);
-    return { type: "tool_calls", toolCalls };
-  }
-  return { type: "final", content: raw.trim() };
-}
-function getCodexGatewayUrl() {
-  const raw = process.env.JARVIS_CODEX_GATEWAY_URL?.trim();
-  if (!raw) return null;
-  return raw.replace(/\/+$/, "");
-}
-function getCodexGatewayToken() {
-  return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
-}
-function createLinkedAbortController(signal) {
-  const controller = new AbortController();
-  let didTimeout = false;
-  const abortFromCaller = () => {
-    controller.abort(new DOMException("Codex OAuth provider aborted", "AbortError"));
-  };
-  const timer = Number.isFinite(CODEX_GATEWAY_TIMEOUT_MS) && CODEX_GATEWAY_TIMEOUT_MS > 0 ? setTimeout(() => {
-    didTimeout = true;
-    controller.abort(new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`));
-  }, CODEX_GATEWAY_TIMEOUT_MS) : null;
-  if (signal?.aborted) abortFromCaller();
-  else signal?.addEventListener("abort", abortFromCaller, { once: true });
-  return {
-    controller,
-    cleanup: () => {
-      if (timer) clearTimeout(timer);
-      signal?.removeEventListener("abort", abortFromCaller);
-    },
-    timedOut: () => didTimeout
-  };
-}
-function buildCodexOAuthProviderPrompt(params) {
-  const sections = params.messages.map((message, index) => {
-    const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
-    return `Message ${index + 1} [${message.role}${name}]
-${textFromContent(message.content)}`;
-  });
-  const hasTools = !!params.tools?.length && params.toolChoice !== "none";
-  const toolProtocol = hasTools ? [
-    "You are Jarvis's main brain orchestrator using ChatGPT/Codex OAuth.",
-    "You may either answer directly or request Jarvis tool calls.",
-    "You do not execute tools yourself. Jarvis executes tool calls after you request them.",
-    "Tool result messages in the conversation are authoritative observations from Jarvis. Use them directly, and do not contradict a successful tool result.",
-    "When a tool is needed, return ONLY JSON in this exact shape:",
-    `{"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
-    "When no tool is needed, return ONLY JSON in this exact shape:",
-    `{"type":"final","content":"your reply to the user"}`,
-    params.toolChoice === "required" ? "A tool call is required for this turn. Do not return a final answer." : "Use tools only when they are necessary to satisfy the user's request.",
-    "Available tools:",
-    JSON.stringify(
-      params.tools?.map((tool) => ({
-        name: tool.function.name,
-        description: tool.function.description,
-        parameters: tool.function.parameters
-      })) ?? [],
-      null,
-      2
-    )
-  ].join("\n") : [
-    "You are Jarvis's ChatGPT/Codex OAuth provider bridge.",
-    "Answer the latest user request using the conversation below."
-  ].join("\n");
-  return [
-    toolProtocol,
-    `Requested model hint: ${params.model}`,
-    `Maximum completion tokens hint: ${params.maxCompletionTokens}`,
-    "",
-    sections.join("\n\n---\n\n")
-  ].join("\n");
-}
-async function runCodexOAuthPrompt(command, prompt, signal) {
-  const dir = await mkdtemp(join(tmpdir(), "jarvis-codex-oauth-"));
-  const outputPath = join(dir, "answer.txt");
-  try {
-    await new Promise((resolve11, reject) => {
-      const codex = buildCodexSpawnCommand(command, [
-        "exec",
-        "--skip-git-repo-check",
-        "--sandbox",
-        "read-only",
-        "--output-last-message",
-        outputPath,
-        "-"
-      ]);
-      const child = spawn(
-        codex.command,
-        codex.args,
-        { stdio: ["pipe", "pipe", "pipe"] }
-      );
-      let stderr = "";
-      let settled = false;
-      const finish = (fn) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
-        fn();
-      };
-      const abort = () => {
-        child.kill();
-        finish(() => reject(new DOMException("Codex OAuth provider aborted", "AbortError")));
-      };
-      const timer = setTimeout(() => {
-        child.kill();
-        finish(() => reject(new Error("Codex OAuth provider timed out.")));
-      }, CODEX_EXEC_TIMEOUT_MS);
-      signal?.addEventListener("abort", abort, { once: true });
-      child.stderr.on("data", (chunk) => {
-        stderr += String(chunk);
-      });
-      child.on("error", (error) => {
-        finish(() => reject(error));
-      });
-      child.on("close", (code) => {
-        finish(() => {
-          if (code === 0) resolve11();
-          else reject(new Error(stderr || `Codex OAuth provider exited with ${code}.`));
-        });
-      });
-      child.stdin.end(prompt);
-    });
-    return (await readFile(outputPath, "utf8")).trim();
-  } finally {
-    await rm(dir, { force: true, recursive: true });
-  }
-}
-async function runRemoteCodexOAuthPrompt(gatewayUrl, prompt, signal) {
-  const token = getCodexGatewayToken();
-  if (!token) throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
-  const linkedAbort = createLinkedAbortController(signal);
-  let response;
-  let raw;
-  try {
-    response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ prompt }),
-      signal: linkedAbort.controller.signal
-    });
-    raw = await response.text();
-  } catch (error) {
-    if (signal?.aborted) {
-      throw new DOMException("Codex OAuth provider aborted", "AbortError");
-    }
-    if (linkedAbort.timedOut()) {
-      throw new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`, { cause: error });
-    }
-    throw error;
-  } finally {
-    linkedAbort.cleanup();
-  }
-  let payload = {};
-  try {
-    payload = raw ? JSON.parse(raw) : {};
-  } catch {
-    payload = { error: raw };
-  }
-  if (!response.ok) {
-    throw new Error(String(payload.error || payload.message || `Codex gateway returned ${response.status}`));
-  }
-  return String(payload.content || "").trim();
-}
-var CODEX_EXEC_TIMEOUT_MS, CODEX_GATEWAY_TIMEOUT_MS, CodexOAuthProvider;
-var init_codexOAuth = __esm({
-  "server/agent/providers/codexOAuth.ts"() {
-    "use strict";
-    init_base();
-    init_codexCommand();
-    init_env();
-    CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 3e5);
-    CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 12e4);
-    CodexOAuthProvider = class extends BaseProvider {
-      async initialize() {
-      }
-      async cleanup() {
-      }
-      async *query(params) {
-        const prompt = buildCodexOAuthProviderPrompt(params);
-        const gatewayUrl = getCodexGatewayUrl();
-        const answer = gatewayUrl ? await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal) : await runCodexOAuthPrompt(getCodexOAuthCommand(), prompt, params.signal);
-        const parsed = parseCodexOAuthOrchestratorOutput(answer);
-        if (parsed.type === "tool_calls") {
-          if (parsed.toolCalls.length === 0) {
-            throw new Error("Codex OAuth provider returned a tool_calls response without valid tool calls.");
-          }
-          for (const [index, toolCall] of parsed.toolCalls.entries()) {
-            yield {
-              type: "tool_call_start",
-              index,
-              id: toolCall.id,
-              name: toolCall.function.name
-            };
-            yield {
-              type: "tool_call_args",
-              index,
-              args: toolCall.function.arguments
-            };
-          }
-          yield { type: "finish", reason: "tool_calls" };
-          return;
-        }
-        if (params.toolChoice === "required" && params.tools?.length) {
-          throw new Error("Codex OAuth provider returned a final answer when a tool call was required.");
-        }
-        if (parsed.content) yield { type: "text", delta: parsed.content };
-        yield { type: "finish", reason: "stop" };
-      }
-    };
-  }
-});
-
-// server/agent/providers/index.ts
-function getProvider(name) {
-  if (instanceCache.has(name)) {
-    return instanceCache.get(name);
-  }
-  const factory = PROVIDER_FACTORIES[name];
-  if (!factory) {
-    throw new Error(
-      `Unknown provider: "${name}". Available: ${Object.keys(PROVIDER_FACTORIES).join(", ")}`
-    );
-  }
-  const instance = factory();
-  instanceCache.set(name, instance);
-  return instance;
-}
-var PROVIDER_FACTORIES, instanceCache;
-var init_providers = __esm({
-  "server/agent/providers/index.ts"() {
-    "use strict";
-    init_base();
-    init_openai();
-    init_openaiCompatible();
-    init_codexOAuth();
-    init_fallback();
-    PROVIDER_FACTORIES = {
-      openai: () => new OpenAIProvider(),
-      "openai-compatible": () => new OpenAICompatibleProvider(),
-      "chatgpt-codex-oauth": () => new CodexOAuthProvider()
-    };
-    instanceCache = /* @__PURE__ */ new Map();
-  }
-});
-
-// server/agent/providers/fallback.ts
-function collectErrorSignals(err2) {
-  const parts = [];
-  const seen = /* @__PURE__ */ new Set();
-  let current = err2;
-  for (let depth = 0; current != null && depth < 8 && !seen.has(current); depth++) {
-    seen.add(current);
-    if (current instanceof Error) {
-      parts.push(current.name, current.message);
-      const anyErr = current;
-      for (const key of ["code", "type", "status", "statusCode"]) {
-        const value = anyErr[key];
-        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
-      }
-      current = anyErr.cause;
-      continue;
-    }
-    if (typeof current === "object") {
-      const anyErr = current;
-      for (const key of ["name", "message", "code", "type", "status", "statusCode"]) {
-        const value = anyErr[key];
-        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
-      }
-      current = anyErr.cause;
-      continue;
-    }
-    parts.push(String(current));
-    break;
-  }
-  return parts.join(" ");
-}
-function isRetriableProviderError(err2) {
-  if (err2 instanceof Error && err2.name === "AbortError") return false;
-  const anyErr = err2;
-  if (typeof anyErr.status === "number") {
-    const s = anyErr.status;
-    if (s === 413 || s === 429 || s >= 500 && s < 600) return true;
-  }
-  const msg = collectErrorSignals(err2);
-  const lower = msg.toLowerCase();
-  if (/\b(413|429|500|502|503|504|529)\b/.test(msg)) return true;
-  const retriableTerms = [
-    "rate limit",
-    "rate_limit",
-    "ratelimit",
-    "rate_limit_exceeded",
-    "quota exceeded",
-    "exceeded your current quota",
-    "insufficient_quota",
-    "too many requests",
-    "request too large",
-    "tokens per minute",
-    "tpm",
-    "please reduce your message size",
-    "context length",
-    "maximum context",
-    "fetch failed",
-    "timeout",
-    "timed out",
-    "headers timeout",
-    "headerstimeouterror",
-    "und_err_headers_timeout",
-    "body timeout",
-    "und_err_body_timeout",
-    "econnrefused",
-    "econnreset",
-    "econnaborted",
-    "socket hang up",
-    "network error",
-    "service unavailable",
-    "overloaded",
-    "bad gateway",
-    "internal server error",
-    "upstream error"
-  ];
-  if (retriableTerms.some((t) => lower.includes(t))) return true;
-  return false;
-}
-function getGlobalFallbackChain() {
-  const raw = process.env.PROVIDER_FALLBACK_CHAIN;
-  if (!raw || raw.trim() === "") return null;
-  const entries = [];
-  for (const segment of raw.split(",")) {
-    const [providerRaw, modelRaw] = segment.trim().split(":");
-    const providerName = providerRaw?.trim().toLowerCase();
-    if (!KNOWN_PROVIDERS.includes(providerName)) continue;
-    const model = modelRaw?.trim() || DEFAULT_PROVIDER_MODELS[providerName];
-    entries.push({ providerName, model });
-  }
-  return entries.length >= 2 ? entries : null;
-}
-async function queryWithFallback(chain, params, logPrefix) {
-  if (chain.length === 0) {
-    throw new Error(`${logPrefix} provider fallback chain is empty`);
-  }
-  let lastError;
-  for (let i = 0; i < chain.length; i++) {
-    const entry = chain[i];
-    const isFallback = i > 0;
-    if (isFallback) {
-      const prev = chain[i - 1];
-      const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
-      console.warn(
-        `${logPrefix} provider_fallback: primary=${prev.providerName}(${prev.model}) failed with retriable error - retrying on fallback=${entry.providerName}(${entry.model}). Error: ${errMsg.slice(0, 200)}`
-      );
-    } else {
-      console.log(`${logPrefix} provider=${entry.providerName} model=${entry.model}`);
-    }
-    try {
-      const provider = getProvider(entry.providerName);
-      const result = await accumulateTurn(provider.query({ ...params, model: entry.model }));
-      result.providerName = entry.providerName;
-      result.model = entry.model;
-      result.fallbackUsed = isFallback;
-      if (isFallback) {
-        console.log(
-          `${logPrefix} provider_fallback: fallback=${entry.providerName}(${entry.model}) succeeded`
-        );
-      }
-      return result;
-    } catch (err2) {
-      lastError = err2;
-      if (err2 instanceof Error && err2.name === "AbortError") {
-        throw err2;
-      }
-      const hasMore = i < chain.length - 1;
-      if (hasMore && isRetriableProviderError(err2)) {
-        continue;
-      }
-      throw err2;
-    }
-  }
-  throw lastError;
-}
-var DEFAULT_PROVIDER_MODELS, KNOWN_PROVIDERS;
-var init_fallback = __esm({
-  "server/agent/providers/fallback.ts"() {
-    "use strict";
-    init_base();
-    init_providers();
-    DEFAULT_PROVIDER_MODELS = {
-      openai: "gpt-4.1-mini",
-      "openai-compatible": "modelrelay/auto-fastest",
-      "chatgpt-codex-oauth": "chatgpt-codex-oauth/auto"
-    };
-    KNOWN_PROVIDERS = ["openai", "openai-compatible", "chatgpt-codex-oauth"];
-  }
-});
-
-// server/agent/runtimeModel.ts
-function getCodexOAuthModel() {
-  return getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") ?? DEFAULT_CODEX_OAUTH_MODEL;
-}
-function resolveRuntimeAgentModel(requestedModel) {
-  const normalized = requestedModel.trim().toLowerCase();
-  if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
-    return requestedModel;
-  }
-  const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
-  const shouldForceCodex = explicitProvider === "chatgpt-codex-oauth" || hasCodexOAuthProvider() || isDirectOpenAIDisabled() && (normalized.startsWith("gpt-") || normalized.startsWith("o1") || normalized.startsWith("o3") || normalized.startsWith("o4"));
-  if (!shouldForceCodex || !hasCodexOAuthProvider()) return requestedModel;
-  return getCodexOAuthModel();
-}
-var DEFAULT_CODEX_OAUTH_MODEL;
-var init_runtimeModel = __esm({
-  "server/agent/runtimeModel.ts"() {
-    "use strict";
-    init_env();
-    DEFAULT_CODEX_OAUTH_MODEL = "chatgpt-codex-oauth/auto";
-  }
-});
-
-// server/agent/modelRouter.ts
-function pushUnique(chain, entry) {
-  const key = `${entry.providerName}:${entry.model}`;
-  if (!chain.some((item) => `${item.providerName}:${item.model}` === key)) {
-    chain.push(entry);
-  }
-}
-function strictCodexOAuthEntry() {
-  if (!hasCodexOAuthProvider()) return null;
-  return {
-    providerName: "chatgpt-codex-oauth",
-    model: getCodexOAuthModel()
-  };
-}
-function textFromContent2(content) {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content.map((part) => {
-    if (typeof part === "string") return part;
-    if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
-    return "";
-  }).join("\n");
-}
-function parseModelSpec(spec) {
-  const raw = spec?.trim();
-  if (!raw) return null;
-  const colonIdx = raw.indexOf(":");
-  if (colonIdx > 0) {
-    const provider = raw.slice(0, colonIdx).trim();
-    const model = raw.slice(colonIdx + 1).trim();
-    if ((provider === "openai" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth") && model) {
-      return { providerName: provider, model };
-    }
-  }
-  if (raw.startsWith("openai/")) {
-    return { providerName: "openai", model: raw.slice("openai/".length) };
-  }
-  if (raw.startsWith("chatgpt-codex-oauth/") || raw.startsWith("codex-oauth/")) {
-    return { providerName: "chatgpt-codex-oauth", model: raw };
-  }
-  if (raw.startsWith("modelrelay/") || raw.startsWith("openai-compatible/") || raw.startsWith("openrouter/") || raw.startsWith("groq/") || raw.startsWith("together/") || raw.startsWith("fireworks/") || raw.startsWith("cerebras/") || raw.startsWith("nvidia/") || raw.startsWith("deepseek/")) {
-    return { providerName: "openai-compatible", model: raw };
-  }
-  return { providerName: "openai-compatible", model: `openai-compatible/${raw}` };
-}
-function envModelForExecutionTier(tier) {
-  const specific = tier === "cheap" ? process.env.JARVIS_CHEAP_MODEL : tier === "smart" ? process.env.JARVIS_SMART_MODEL : process.env.JARVIS_BALANCED_MODEL;
-  return parseModelSpec(specific ?? process.env.JARVIS_DEFAULT_MODEL);
-}
-function getLastUserText(messages2) {
-  for (let i = messages2.length - 1; i >= 0; i--) {
-    const msg = messages2[i];
-    if (msg.role === "user") return textFromContent2(msg.content).trim();
-  }
-  return "";
-}
-function classifyTaskComplexity(text2) {
-  const trimmed = text2.trim();
-  if (!trimmed) return "easy";
-  const lower = trimmed.toLowerCase();
-  const words = trimmed.split(/\s+/).filter(Boolean).length;
-  if (/\b(strategy|architecture|debug|root cause|diagnose|implement|refactor|design|research deeply|compare options)\b/.test(lower)) {
-    return "hard";
-  }
-  if (/\b(plan|analyze|synthesize|prioritize|draft an email|write a proposal|summarize this article|research)\b/.test(lower)) {
-    return words > 80 ? "hard" : "medium";
-  }
-  if (/^(title|tag|label)\b/.test(lower) && words <= 8) return "trivial";
-  if (/\b(rewrite|summarize|classify|tag|title|extract|format|clean up|spellcheck|grammar|make this shorter)\b/.test(lower)) {
-    return words > 250 ? "medium" : "easy";
-  }
-  if (words <= 30) return "trivial";
-  if (words <= 120) return "easy";
-  if (words <= 300) return "medium";
-  return "hard";
-}
-function messageTextSize(messages2) {
-  return messages2.reduce((sum, message) => sum + textFromContent2(message.content).length, 0);
-}
-function hasToolMessages(messages2) {
-  return messages2.some((message) => message.role === "tool");
-}
-function toolSchemaTextSize(tools) {
-  if (!tools?.length) return 0;
-  try {
-    return JSON.stringify(tools).length;
-  } catch {
-    return tools.length * 1e3;
-  }
-}
-function needsPersonalJarvisContext(text2) {
-  const lower = text2.toLowerCase();
-  const personalSignals = [
-    "my task",
-    "my tasks",
-    "my plan",
-    "my plans",
-    "my goal",
-    "my goals",
-    "my memory",
-    "my memories",
-    "remember",
-    "about me",
-    "who am i",
-    "what do you know about me",
-    "commitment",
-    "commitments",
-    "calendar",
-    "schedule",
-    "meeting",
-    "email",
-    "gmail",
-    "inbox",
-    "telegram",
-    "discord",
-    "slack",
-    "profile",
-    "dashboard",
-    "stats",
-    "xp",
-    "habit",
-    "habits",
-    "document",
-    "documents",
-    "file",
-    "files",
-    "code",
-    "repo",
-    "repository",
-    "screen",
-    "phone",
-    "daemon"
-  ];
-  return personalSignals.some((signal) => lower.includes(signal));
-}
-function likelyNeedsToolAccess(text2) {
-  const actionObjectSignals = [
-    /\b(create|make|draft|write|generate|add|schedule)\b.{0,40}\b(task|todo|reminder|calendar|event|meeting|email|gmail|message|notification|document|file|app|site|website|page|feature|code|repo|repository|image|photo|video)\b/i,
-    /\b(build|edit|fix|implement|code|deploy|commit|push|open|tap|screenshot|send|notify)\b/i
-  ];
-  if (actionObjectSignals.some((pattern) => pattern.test(text2))) return true;
-  return /\b(weather|forecast|temperature|rain|search|look up|current|today|tomorrow|news|stock|sports|calendar|meeting|email|gmail|phone|daemon)\b/i.test(text2);
-}
-function buildLeanSystemPrompt() {
-  return [
-    "You are GamePlan Coach, Jarvis's chat persona.",
-    "Answer the user's latest message directly and keep it concise.",
-    "Use only the context included in this request. Do not invent memories, files, user data, live research, or tool results.",
-    "If the user asks for current information or an action and a relevant tool is available, use it. If the needed tool or API is unavailable, say that plainly."
-  ].join("\n");
-}
-function maybeUseLeanContext(messages2, logPrefix, tools) {
-  if (process.env.JARVIS_LEAN_CONTEXT === "0") return messages2;
-  const inputChars = messageTextSize(messages2);
-  const toolChars = toolSchemaTextSize(tools);
-  const totalChars = inputChars + toolChars;
-  const maxChars = Number(process.env.JARVIS_LEAN_CONTEXT_CHAR_LIMIT || 12e3);
-  if (totalChars <= maxChars) return messages2;
-  if (hasToolMessages(messages2)) return messages2;
-  const lastUserText = getLastUserText(messages2);
-  const complexity = classifyTaskComplexity(lastUserText);
-  const lastUserWordCount = lastUserText.split(/\s+/).filter(Boolean).length;
-  const isShortPlanningAnswer = complexity === "medium" && lastUserWordCount <= 40 && /\b(plan|outline|checklist|bullet|bullets|steps)\b/i.test(lastUserText);
-  if (complexity !== "trivial" && complexity !== "easy" && !isShortPlanningAnswer) return messages2;
-  if (needsPersonalJarvisContext(lastUserText)) return messages2;
-  if (tools?.length && likelyNeedsToolAccess(lastUserText)) return messages2;
-  const historyLimit = Math.max(1, Number(process.env.JARVIS_LEAN_CONTEXT_HISTORY_MESSAGES || 4));
-  const nonSystemMessages = messages2.filter((message) => message.role !== "system");
-  const leanMessages = [
-    { role: "system", content: buildLeanSystemPrompt() },
-    ...nonSystemMessages.slice(-historyLimit)
-  ];
-  const leanChars = messageTextSize(leanMessages);
-  console.log(
-    `${logPrefix} lean_context: ${inputChars} chars + ${toolChars} tool chars -> ${leanChars} chars for ${complexity} non-tool request`
-  );
-  return leanMessages;
-}
-function configuredProviderEntries(tier) {
-  const chain = [];
-  const strictCodex = strictCodexOAuthEntry();
-  if (strictCodex) return [strictCodex];
-  const envEntry = envModelForExecutionTier(tier);
-  if (envEntry) pushUnique(chain, envEntry);
-  const hasOpenAICompatible = hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL");
-  const hasOpenRouter = hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY");
-  const hasGroq = hasProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY");
-  const hasTogether = hasProviderEnvValue("TOGETHER_API_KEY", "AI_INTEGRATIONS_TOGETHER_API_KEY");
-  const hasFireworks = hasProviderEnvValue("FIREWORKS_API_KEY", "AI_INTEGRATIONS_FIREWORKS_API_KEY");
-  const hasCerebras = hasProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY");
-  const hasNvidia = hasProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY");
-  const hasDeepSeek = hasProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY");
-  const hasOpenAI = hasDirectOpenAIProvider();
-  const hasCodexOAuth = hasCodexOAuthProvider();
-  const compatibleModel = getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL") ? `openai-compatible/${getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL")}` : "openai-compatible/auto-fastest";
-  const openRouterDefaultModel = getProviderEnvValue("OPENROUTER_MODEL", "AI_INTEGRATIONS_OPENROUTER_MODEL") || "openrouter/auto";
-  const openRouterModel = tier === "smart" ? getProviderEnvValue("OPENROUTER_SMART_MODEL", "AI_INTEGRATIONS_OPENROUTER_SMART_MODEL") || openRouterDefaultModel : getProviderEnvValue("OPENROUTER_CHEAP_MODEL", "AI_INTEGRATIONS_OPENROUTER_CHEAP_MODEL") || openRouterDefaultModel;
-  const groqDefaultModel = getProviderEnvValue("GROQ_MODEL", "AI_INTEGRATIONS_GROQ_MODEL");
-  const groqModel = tier === "smart" ? getProviderEnvValue("GROQ_SMART_MODEL", "AI_INTEGRATIONS_GROQ_SMART_MODEL") || groqDefaultModel || "llama-3.3-70b-versatile" : getProviderEnvValue("GROQ_CHEAP_MODEL", "AI_INTEGRATIONS_GROQ_CHEAP_MODEL") || groqDefaultModel || "llama-3.1-8b-instant";
-  const openaiModel = tier === "smart" ? process.env.JARVIS_OPENAI_SMART_MODEL || "gpt-4.1" : process.env.JARVIS_OPENAI_BALANCED_MODEL || "gpt-4.1-mini";
-  const codexOAuthModel = getCodexOAuthModel();
-  if (tier === "cheap") {
-    if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
-    if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
-    if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
-    if (hasTogether) pushUnique(chain, { providerName: "openai-compatible", model: `together/${getProviderEnvValue("TOGETHER_MODEL", "AI_INTEGRATIONS_TOGETHER_MODEL") || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"}` });
-    if (hasFireworks) pushUnique(chain, { providerName: "openai-compatible", model: `fireworks/${getProviderEnvValue("FIREWORKS_MODEL", "AI_INTEGRATIONS_FIREWORKS_MODEL") || "accounts/fireworks/models/llama-v3p1-8b-instruct"}` });
-    if (hasCerebras) pushUnique(chain, { providerName: "openai-compatible", model: `cerebras/${getProviderEnvValue("CEREBRAS_MODEL", "AI_INTEGRATIONS_CEREBRAS_MODEL") || "llama3.1-8b"}` });
-    if (hasNvidia) pushUnique(chain, { providerName: "openai-compatible", model: `nvidia/${getProviderEnvValue("NVIDIA_MODEL", "AI_INTEGRATIONS_NVIDIA_MODEL") || "meta/llama-3.1-8b-instruct"}` });
-    if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
-    if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
-    if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: "gpt-4.1-mini" });
-    return chain;
-  }
-  if (tier === "smart") {
-    if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
-    if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
-    if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
-    if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
-    if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
-    if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
-    return chain;
-  }
-  if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
-  if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
-  if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
-  if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
-  if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
-  if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
-  return chain;
-}
-function getModelRouteChain(tier) {
-  const strictCodex = strictCodexOAuthEntry();
-  if (strictCodex) return [strictCodex];
-  const globalChain = getGlobalFallbackChain();
-  if (globalChain) return globalChain;
-  return configuredProviderEntries(tier);
-}
-async function routeModelTurn(params) {
-  const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
-  const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
-  const leanContextApplied = routedMessages !== params.messages;
-  const chain = getModelRouteChain(params.tier);
-  if (chain.length === 0) {
-    throw new Error(
-      "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable."
-    );
-  }
-  console.log(
-    `${logPrefix} route tier=${params.tier} candidates=${chain.map((entry) => `${entry.providerName}(${entry.model})`).join(" -> ")}`
-  );
-  if (leanContextApplied && params.tools?.length) {
-    console.log(`${logPrefix} lean_context: omitted ${params.tools.length} tool schema(s)`);
-  }
-  return queryWithFallback(
-    chain,
-    {
-      model: chain[0].model,
-      messages: routedMessages,
-      tools: routedMessages !== params.messages ? void 0 : params.tools,
-      toolChoice: routedMessages !== params.messages ? "none" : params.toolChoice ?? "none",
-      maxCompletionTokens: params.maxCompletionTokens,
-      stream: params.stream ?? false,
-      signal: params.signal
-    },
-    logPrefix
-  );
-}
-var init_modelRouter = __esm({
-  "server/agent/modelRouter.ts"() {
-    "use strict";
-    init_fallback();
-    init_env();
-    init_runtimeModel();
-  }
-});
-
-// server/agent/openaiChatRouterPatch.ts
-import { createRequire } from "node:module";
-import { Completions } from "openai/resources/chat/completions";
-import OpenAI3 from "openai";
-function routingEnabled() {
-  const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
-  if (raw === "0" || raw === "false" || raw === "disabled" || raw === "no") return false;
-  if (raw === "1" || raw === "true" || raw === "enabled" || raw === "yes") return true;
-  return hasNonOpenAIRoutableProvider();
-}
-function shouldRoute(body) {
-  if (!routingEnabled()) return false;
-  if (routingDepth > 0) return false;
-  if (!body || typeof body !== "object") return false;
-  const model = body.model;
-  return typeof model === "string" && model.startsWith("gpt-");
-}
-function tierForBody(body) {
-  if (body.tools?.length) return "balanced";
-  const tokens = Number(body.max_completion_tokens ?? 0);
-  if (tokens > 2e3) return "balanced";
-  return "cheap";
-}
-function toCompletion(body, text2, toolCalls, finishReason, routedModel) {
-  return {
-    id: `jarvis-routed-${Date.now()}`,
-    object: "chat.completion",
-    created: Math.floor(Date.now() / 1e3),
-    model: routedModel || String(body.model),
-    choices: [
-      {
-        index: 0,
-        finish_reason: finishReason ?? "stop",
-        logprobs: null,
-        message: {
-          role: "assistant",
-          content: text2 || null,
-          refusal: null,
-          tool_calls: toolCalls.length ? toolCalls : void 0
-        }
-      }
-    ]
-  };
-}
-async function* toStream(text2, routedModel) {
-  yield {
-    id: `jarvis-routed-${Date.now()}`,
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1e3),
-    model: routedModel,
-    choices: [
-      {
-        index: 0,
-        delta: { role: "assistant", content: text2 },
-        finish_reason: null,
-        logprobs: null
-      }
-    ]
-  };
-  yield {
-    id: `jarvis-routed-${Date.now()}`,
-    object: "chat.completion.chunk",
-    created: Math.floor(Date.now() / 1e3),
-    model: routedModel,
-    choices: [
-      {
-        index: 0,
-        delta: {},
-        finish_reason: "stop",
-        logprobs: null
-      }
-    ]
-  };
-}
-function routeBody(body, signal, logPrefix) {
-  routingDepth++;
-  return routeModelTurn({
-    tier: tierForBody(body),
-    messages: body.messages,
-    tools: body.tools,
-    toolChoice: body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto",
-    maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
-    stream: false,
-    signal,
-    logPrefix
-  }).then((result) => {
-    const routedModel = result.model ?? String(body.model);
-    if (body.stream) return toStream(result.textContent, routedModel);
-    return toCompletion(body, result.textContent, result.toolCallList, result.finishReason, routedModel);
-  }).finally(() => {
-    routingDepth--;
-  });
-}
-function patchCompletions(ctor, logPrefix) {
-  const proto = ctor?.prototype;
-  if (!proto || proto[ROUTER_PATCHED] || typeof proto.create !== "function") return false;
-  const originalCreate = proto.create;
-  proto.create = function patchedCreate(body, options) {
-    if (!shouldRoute(body)) {
-      return originalCreate.call(this, body, options);
-    }
-    return routeBody(body, options?.signal, logPrefix);
-  };
-  proto[ROUTER_PATCHED] = true;
-  return true;
-}
-function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
-  const clientProto = ctor?.prototype;
-  if (!clientProto) return false;
-  let patched = false;
-  if (!clientProto[CLIENT_POST_PATCHED] && typeof clientProto.post === "function") {
-    const originalPost = clientProto.post;
-    clientProto.post = function patchedPost(path33, opts) {
-      const body = opts?.body;
-      if (path33 !== "/chat/completions" || !shouldRoute(body)) {
-        return originalPost.call(this, path33, opts);
-      }
-      return routeBody(body, opts?.signal, postLogPrefix);
-    };
-    clientProto[CLIENT_POST_PATCHED] = true;
-    patched = true;
-  }
-  if (!clientProto[CLIENT_METHOD_PATCHED] && typeof clientProto.methodRequest === "function") {
-    const originalMethodRequest = clientProto.methodRequest;
-    clientProto.methodRequest = function patchedMethodRequest(method, path33, opts) {
-      const body = opts?.body;
-      if (method !== "post" || path33 !== "/chat/completions" || !shouldRoute(body)) {
-        return originalMethodRequest.call(this, method, path33, opts);
-      }
-      return routeBody(body, opts?.signal, methodLogPrefix);
-    };
-    clientProto[CLIENT_METHOD_PATCHED] = true;
-    patched = true;
-  }
-  return patched;
-}
-function optionalRequire(path33) {
-  try {
-    return require2(path33);
-  } catch {
-    return null;
-  }
-}
-function installOpenAIChatRouterPatch() {
-  const cjsOpenAI = optionalRequire("openai");
-  const cjsCompletions = optionalRequire("openai/resources/chat/completions");
-  const patched = [
-    patchCompletions(Completions, "[OpenAIChatRouterPatch]"),
-    patchCompletions(cjsCompletions?.Completions, "[OpenAIChatRouterPatch:cjs]"),
-    patchOpenAIClient(OpenAI3, "[OpenAIClientPostRouterPatch]", "[OpenAIClientMethodRouterPatch]"),
-    patchOpenAIClient(cjsOpenAI?.default, "[OpenAIClientPostRouterPatch:cjs]", "[OpenAIClientMethodRouterPatch:cjs]"),
-    patchOpenAIClient(cjsOpenAI?.OpenAI, "[OpenAIClientPostRouterPatch:cjs-named]", "[OpenAIClientMethodRouterPatch:cjs-named]")
-  ].some(Boolean);
-  if (patched) console.log("[OpenAIChatRouterPatch] installed");
-}
-var ROUTER_PATCHED, CLIENT_POST_PATCHED, CLIENT_METHOD_PATCHED, routingDepth, require2;
-var init_openaiChatRouterPatch = __esm({
-  "server/agent/openaiChatRouterPatch.ts"() {
-    "use strict";
-    init_modelRouter();
-    init_envAliases();
-    init_env();
-    ROUTER_PATCHED = Symbol.for("jarvis.openaiChatRouterPatched");
-    CLIENT_POST_PATCHED = Symbol.for("jarvis.openaiClientPostRouterPatched");
-    CLIENT_METHOD_PATCHED = Symbol.for("jarvis.openaiClientMethodRouterPatched");
-    routingDepth = 0;
-    require2 = createRequire(import.meta.url);
-    installOpenAIChatRouterPatch();
-  }
-});
-
-// server/runRegistry.ts
-function getActiveRunForUser(userId) {
-  for (const [runId, entry] of activeCoachRuns.entries()) {
-    if (entry.userId === userId) {
-      return { runId, controller: entry.controller };
-    }
-  }
-  return null;
-}
-var activeCoachRuns;
-var init_runRegistry = __esm({
-  "server/runRegistry.ts"() {
-    "use strict";
-    init_openaiChatRouterPatch();
-    activeCoachRuns = /* @__PURE__ */ new Map();
   }
 });
 
@@ -2195,7 +1003,7 @@ var init_schema = __esm({
       /**
        * Preferred model for this agent. When set, used instead of the global user
        * model preference. Can be overridden per-call via runNamedAgent opts.model.
-       * Example: "chatgpt-codex-oauth/auto"
+       * Examples: "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"
        */
       preferredModel: text("preferred_model"),
       /**
@@ -4635,9 +3443,1616 @@ var init_db = __esm({
   }
 });
 
+// server/agent/providers/claude.ts
+var claude_exports = {};
+__export(claude_exports, {
+  ClaudeProvider: () => ClaudeProvider,
+  appendToSession: () => appendToSession,
+  expireSession: () => expireSession,
+  getChatHistory: () => getChatHistory,
+  initSession: () => initSession,
+  persistChatMessages: () => persistChatMessages,
+  resumeSession: () => resumeSession
+});
+import Anthropic from "@anthropic-ai/sdk";
+import { randomUUID } from "crypto";
+import { eq, and, gt, asc, desc } from "drizzle-orm";
+async function getDb() {
+  const mod = await Promise.resolve().then(() => (init_db(), db_exports));
+  return mod.db;
+}
+function toAgentMessage(m) {
+  return {
+    role: m.role,
+    content: typeof m.content === "string" ? m.content : null,
+    tool_calls: "tool_calls" in m ? m.tool_calls : void 0,
+    tool_call_id: "tool_call_id" in m ? m.tool_call_id : void 0
+  };
+}
+function fromAgentMessage(m) {
+  const base = { role: m.role, content: m.content ?? null };
+  if (m.tool_calls) base.tool_calls = m.tool_calls;
+  if (m.tool_call_id) base.tool_call_id = m.tool_call_id;
+  return base;
+}
+function cacheSet(sessionId, messages2, expiresAt) {
+  if (processCache.size >= MAX_CACHE_ENTRIES) {
+    const firstKey = processCache.keys().next().value;
+    if (firstKey !== void 0) processCache.delete(firstKey);
+  }
+  processCache.set(sessionId, { messages: messages2, expiresAt });
+}
+function cacheGet(sessionId) {
+  const entry = processCache.get(sessionId);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    processCache.delete(sessionId);
+    return null;
+  }
+  return entry.messages;
+}
+async function resumeSession(sdkSessionId, agentId, userId) {
+  const cached = cacheGet(sdkSessionId);
+  if (cached) {
+    return {
+      messages: cached.map(fromAgentMessage),
+      sdkSessionId,
+      resumed: true
+    };
+  }
+  try {
+    const db2 = await getDb();
+    const now = /* @__PURE__ */ new Date();
+    const rows = await db2.select().from(agentChatSessions).where(
+      and(
+        eq(agentChatSessions.sdkSessionId, sdkSessionId),
+        eq(agentChatSessions.agentId, agentId),
+        eq(agentChatSessions.userId, userId),
+        gt(agentChatSessions.expiresAt, now)
+      )
+    ).limit(1);
+    if (rows.length === 0) {
+      console.warn(
+        `[ClaudeProvider] session not found or expired: sdkSessionId=${sdkSessionId}`
+      );
+      return null;
+    }
+    const row = rows[0];
+    const messages2 = row.messages ?? [];
+    cacheSet(sdkSessionId, messages2, row.expiresAt.getTime());
+    return {
+      messages: messages2.map(fromAgentMessage),
+      sdkSessionId,
+      resumed: true
+    };
+  } catch (err2) {
+    console.error("[ClaudeProvider] resumeSession DB error:", err2);
+    return null;
+  }
+}
+async function initSession(agentId, userId, messages2) {
+  const sdkSessionId = randomUUID();
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  const stored = messages2.map(toAgentMessage);
+  try {
+    const db2 = await getDb();
+    await db2.insert(agentChatSessions).values({
+      sdkSessionId,
+      agentId,
+      userId,
+      messages: stored,
+      expiresAt
+    });
+    cacheSet(sdkSessionId, stored, expiresAt.getTime());
+    console.log(
+      `[ClaudeProvider] session initialised: sdkSessionId=${sdkSessionId} agentId=${agentId} messages=${stored.length}`
+    );
+  } catch (err2) {
+    console.error("[ClaudeProvider] initSession DB error:", err2);
+  }
+  return sdkSessionId;
+}
+async function appendToSession(sdkSessionId, agentId, userId, newMessages) {
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  try {
+    const db2 = await getDb();
+    const existing = await resumeSession(sdkSessionId, agentId, userId);
+    const base = existing?.messages ?? [];
+    const merged = [...base, ...newMessages].map(toAgentMessage);
+    await db2.update(agentChatSessions).set({
+      messages: merged,
+      updatedAt: /* @__PURE__ */ new Date(),
+      expiresAt
+    }).where(
+      and(
+        eq(agentChatSessions.sdkSessionId, sdkSessionId),
+        eq(agentChatSessions.agentId, agentId),
+        eq(agentChatSessions.userId, userId)
+      )
+    );
+    cacheSet(sdkSessionId, merged, expiresAt.getTime());
+  } catch (err2) {
+    console.error("[ClaudeProvider] appendToSession DB error:", err2);
+  }
+}
+async function persistChatMessages(agentId, userId, messages2) {
+  if (messages2.length === 0) return;
+  const db2 = await getDb();
+  for (const m of messages2) {
+    try {
+      await db2.insert(agentChatMessages).values({
+        agentId,
+        userId,
+        role: m.role,
+        content: m.content
+      });
+    } catch (err2) {
+      console.error("[ClaudeProvider] persistChatMessages DB error:", err2);
+    }
+  }
+}
+async function getChatHistory(agentId, userId, limit = 0) {
+  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
+  try {
+    const db2 = await getDb();
+    const where = and(
+      eq(agentChatMessages.agentId, agentId),
+      eq(agentChatMessages.userId, userId)
+    );
+    let rows;
+    if (safeLimit > 0) {
+      const newest = await db2.select().from(agentChatMessages).where(where).orderBy(desc(agentChatMessages.createdAt)).limit(safeLimit);
+      rows = newest.reverse();
+    } else {
+      rows = await db2.select().from(agentChatMessages).where(where).orderBy(asc(agentChatMessages.createdAt));
+    }
+    return rows.map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      createdAt: r.createdAt.toISOString()
+    }));
+  } catch (err2) {
+    console.error("[ClaudeProvider] getChatHistory DB error:", err2);
+    return [];
+  }
+}
+async function expireSession(sdkSessionId) {
+  processCache.delete(sdkSessionId);
+  try {
+    const db2 = await getDb();
+    await db2.delete(agentChatSessions).where(eq(agentChatSessions.sdkSessionId, sdkSessionId));
+  } catch {
+  }
+}
+var SESSION_TTL_HOURS, SESSION_TTL_MS, MAX_CACHE_ENTRIES, processCache, ClaudeProvider;
+var init_claude = __esm({
+  "server/agent/providers/claude.ts"() {
+    "use strict";
+    init_schema();
+    init_base();
+    init_env();
+    SESSION_TTL_HOURS = parseInt(process.env.AGENT_SESSION_TTL_HOURS ?? "24", 10);
+    SESSION_TTL_MS = (isNaN(SESSION_TTL_HOURS) || SESSION_TTL_HOURS <= 0 ? 24 : SESSION_TTL_HOURS) * 60 * 60 * 1e3;
+    MAX_CACHE_ENTRIES = 500;
+    processCache = /* @__PURE__ */ new Map();
+    ClaudeProvider = class extends BaseProvider {
+      client;
+      constructor() {
+        super();
+        this.client = new Anthropic(getAnthropicClientConfig());
+      }
+      async initialize() {
+      }
+      async cleanup() {
+      }
+      async *query(params) {
+        if (params.stream) {
+          yield* this._streamTurn(params);
+        } else {
+          yield* this._completeTurn(params);
+        }
+      }
+      // ── Format conversions ────────────────────────────────────────────────────
+      /**
+       * Extract the system prompt from the OpenAI messages array.
+       * All system messages are concatenated with a newline separator.
+       */
+      _extractSystem(messages2) {
+        return messages2.filter((m) => m.role === "system").map((m) => typeof m.content === "string" ? m.content : "").join("\n\n");
+      }
+      /**
+       * Convert OpenAI messages to Anthropic MessageParam[].
+       *
+       * Handles three tricky cases:
+       *   1. system messages — skipped here (extracted separately via _extractSystem)
+       *   2. assistant messages with tool_calls — converted to tool_use content blocks
+       *   3. tool result messages — grouped into a single user turn per Anthropic's
+       *      requirement that all tool_result blocks for a given assistant turn are
+       *      in one user message.
+       */
+      _convertMessages(messages2) {
+        const result = [];
+        let i = 0;
+        while (i < messages2.length) {
+          const msg = messages2[i];
+          if (msg.role === "system") {
+            i++;
+            continue;
+          }
+          if (msg.role === "tool") {
+            const toolResults = [];
+            while (i < messages2.length && messages2[i].role === "tool") {
+              const tm = messages2[i];
+              toolResults.push({
+                type: "tool_result",
+                tool_use_id: tm.tool_call_id,
+                content: typeof tm.content === "string" ? tm.content : JSON.stringify(tm.content)
+              });
+              i++;
+            }
+            result.push({ role: "user", content: toolResults });
+            continue;
+          }
+          if (msg.role === "assistant") {
+            const am = msg;
+            const functionToolCalls = (am.tool_calls ?? []).filter(
+              (tc) => tc.type === "function"
+            );
+            if (functionToolCalls.length > 0) {
+              const content = [];
+              if (am.content) {
+                content.push({
+                  type: "text",
+                  text: typeof am.content === "string" ? am.content : ""
+                });
+              }
+              for (const tc of functionToolCalls) {
+                let parsedInput = {};
+                try {
+                  const raw = JSON.parse(tc.function.arguments || "{}");
+                  if (raw && typeof raw === "object")
+                    parsedInput = raw;
+                } catch {
+                }
+                content.push({
+                  type: "tool_use",
+                  id: tc.id,
+                  name: tc.function.name,
+                  input: parsedInput
+                });
+              }
+              result.push({ role: "assistant", content });
+              i++;
+              continue;
+            }
+            result.push({
+              role: "assistant",
+              content: typeof am.content === "string" ? am.content : ""
+            });
+            i++;
+            continue;
+          }
+          if (msg.role === "user") {
+            const um = msg;
+            result.push({
+              role: "user",
+              content: typeof um.content === "string" ? um.content : JSON.stringify(um.content)
+            });
+            i++;
+            continue;
+          }
+          i++;
+        }
+        return result;
+      }
+      /**
+       * Convert OpenAI tool definitions to Anthropic tool format.
+       * Only "function" type tools are supported; custom tools are skipped.
+       */
+      _convertTools(tools) {
+        const result = [];
+        for (const t of tools) {
+          if (t.type !== "function") continue;
+          result.push({
+            name: t.function.name,
+            description: t.function.description ?? "",
+            input_schema: t.function.parameters
+          });
+        }
+        return result;
+      }
+      /**
+       * Build Anthropic request params for tools and tool_choice.
+       *
+       * toolChoice "none" is handled by omitting tools entirely — Anthropic has
+       * no equivalent "none" mode, but without any tools in the payload the model
+       * cannot call any tool. This matches the OpenAI "none" semantic.
+       */
+      _resolveToolParams(tools, toolChoice) {
+        if (!tools || tools.length === 0 || toolChoice === "none") {
+          return { tools: void 0, toolChoice: void 0 };
+        }
+        const converted = this._convertTools(tools);
+        const choice = toolChoice === "required" ? { type: "any" } : { type: "auto" };
+        return { tools: converted, toolChoice: choice };
+      }
+      // ── Non-streaming path ────────────────────────────────────────────────────
+      /**
+       * Convert a completed Anthropic Messages API response into the canonical
+       * ProviderChunk stream.  Extracted from _completeTurn so this conversion
+       * boundary can be tested independently of request construction.
+       */
+      *_convertResponse(response) {
+        for (const block of response.content) {
+          if (block.type === "text") {
+            yield { type: "text", delta: block.text };
+          } else if (block.type === "tool_use") {
+            const idx = response.content.indexOf(block);
+            yield { type: "tool_call_start", index: idx, id: block.id, name: block.name };
+            yield {
+              type: "tool_call_args",
+              index: idx,
+              args: JSON.stringify(block.input)
+            };
+          }
+        }
+        const finishReason = response.stop_reason === "tool_use" ? "tool_calls" : response.stop_reason ?? null;
+        yield { type: "finish", reason: finishReason };
+      }
+      async *_completeTurn(params) {
+        const system = this._extractSystem(params.messages);
+        const messages2 = this._convertMessages(params.messages);
+        const { tools, toolChoice } = this._resolveToolParams(
+          params.tools,
+          params.toolChoice
+        );
+        const response = await this.client.messages.create(
+          {
+            model: params.model,
+            system: system || void 0,
+            messages: messages2,
+            tools,
+            tool_choice: toolChoice,
+            max_tokens: params.maxCompletionTokens
+          },
+          { signal: params.signal ?? void 0 }
+        );
+        yield* this._convertResponse(response);
+      }
+      // ── Streaming path ────────────────────────────────────────────────────────
+      async *_streamTurn(params) {
+        const system = this._extractSystem(params.messages);
+        const messages2 = this._convertMessages(params.messages);
+        const { tools, toolChoice } = this._resolveToolParams(
+          params.tools,
+          params.toolChoice
+        );
+        const stream = await this.client.messages.create(
+          {
+            model: params.model,
+            system: system || void 0,
+            messages: messages2,
+            tools,
+            tool_choice: toolChoice,
+            max_tokens: params.maxCompletionTokens,
+            stream: true
+          },
+          { signal: params.signal ?? void 0 }
+        );
+        const blockIndexById = /* @__PURE__ */ new Map();
+        let nextBlockIndex = 0;
+        let currentBlockId = null;
+        let finishReason = null;
+        for await (const event of stream) {
+          if (event.type === "content_block_start") {
+            const block = event.content_block;
+            if (block.type === "tool_use") {
+              const idx = nextBlockIndex++;
+              blockIndexById.set(block.id, idx);
+              currentBlockId = block.id;
+              yield {
+                type: "tool_call_start",
+                index: idx,
+                id: block.id,
+                name: block.name
+              };
+            } else if (block.type === "text") {
+              currentBlockId = null;
+            }
+          } else if (event.type === "content_block_delta") {
+            const delta = event.delta;
+            if (delta.type === "text_delta") {
+              yield { type: "text", delta: delta.text };
+            } else if (delta.type === "input_json_delta") {
+              const id = currentBlockId;
+              if (id !== null) {
+                const idx = blockIndexById.get(id);
+                if (idx !== void 0) {
+                  yield { type: "tool_call_args", index: idx, args: delta.partial_json };
+                }
+              }
+            }
+          } else if (event.type === "message_delta") {
+            if (event.delta.stop_reason) {
+              finishReason = event.delta.stop_reason === "tool_use" ? "tool_calls" : event.delta.stop_reason;
+            }
+          }
+        }
+        yield { type: "finish", reason: finishReason };
+      }
+    };
+  }
+});
+
+// server/agent/providers/openaiCompatible.ts
+import OpenAI2 from "openai";
+function trimTrailingSlash(value) {
+  return value.replace(/\/+$/, "");
+}
+function normalizeBaseURL(value, fallback) {
+  const raw = value?.trim() || fallback;
+  return trimTrailingSlash(raw);
+}
+function stripKnownPrefix(model) {
+  for (const { prefix, marker } of PROVIDER_PREFIXES) {
+    if (model.startsWith(marker)) {
+      return { prefix, model: model.slice(marker.length) };
+    }
+  }
+  return { prefix: "openai-compatible", model };
+}
+function resolveRelayTarget(model) {
+  const parsed = stripKnownPrefix(model);
+  switch (parsed.prefix) {
+    case "openrouter":
+      return {
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("OPENROUTER_BASE_URL", "AI_INTEGRATIONS_OPENROUTER_BASE_URL"),
+          "https://openrouter.ai/api/v1"
+        ),
+        apiKey: getProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("OPENROUTER_MODEL", "AI_INTEGRATIONS_OPENROUTER_MODEL") || "openrouter/auto"
+      };
+    case "groq":
+      return {
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("GROQ_BASE_URL", "AI_INTEGRATIONS_GROQ_BASE_URL"),
+          "https://api.groq.com/openai/v1"
+        ),
+        apiKey: getProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("GROQ_MODEL", "AI_INTEGRATIONS_GROQ_MODEL") || "llama-3.1-8b-instant"
+      };
+    case "together":
+      return {
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("TOGETHER_BASE_URL", "AI_INTEGRATIONS_TOGETHER_BASE_URL"),
+          "https://api.together.xyz/v1"
+        ),
+        apiKey: getProviderEnvValue("TOGETHER_API_KEY", "AI_INTEGRATIONS_TOGETHER_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("TOGETHER_MODEL", "AI_INTEGRATIONS_TOGETHER_MODEL") || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"
+      };
+    case "fireworks":
+      return {
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("FIREWORKS_BASE_URL", "AI_INTEGRATIONS_FIREWORKS_BASE_URL"),
+          "https://api.fireworks.ai/inference/v1"
+        ),
+        apiKey: getProviderEnvValue("FIREWORKS_API_KEY", "AI_INTEGRATIONS_FIREWORKS_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("FIREWORKS_MODEL", "AI_INTEGRATIONS_FIREWORKS_MODEL") || "accounts/fireworks/models/llama-v3p1-8b-instruct"
+      };
+    case "cerebras":
+      return {
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("CEREBRAS_BASE_URL", "AI_INTEGRATIONS_CEREBRAS_BASE_URL"),
+          "https://api.cerebras.ai/v1"
+        ),
+        apiKey: getProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("CEREBRAS_MODEL", "AI_INTEGRATIONS_CEREBRAS_MODEL") || "llama3.1-8b"
+      };
+    case "nvidia":
+      return {
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("NVIDIA_BASE_URL", "AI_INTEGRATIONS_NVIDIA_BASE_URL"),
+          "https://integrate.api.nvidia.com/v1"
+        ),
+        apiKey: getProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("NVIDIA_MODEL", "AI_INTEGRATIONS_NVIDIA_MODEL") || "meta/llama-3.1-8b-instruct"
+      };
+    case "deepseek":
+      return {
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("DEEPSEEK_BASE_URL", "AI_INTEGRATIONS_DEEPSEEK_BASE_URL"),
+          "https://api.deepseek.com"
+        ),
+        apiKey: getProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"
+      };
+    case "modelrelay":
+      return {
+        baseURL: normalizeBaseURL(
+          process.env.MODEL_RELAY_BASE_URL ?? process.env.MODELRELAY_BASE_URL,
+          "http://127.0.0.1:7352/v1"
+        ),
+        apiKey: process.env.MODEL_RELAY_API_KEY ?? process.env.MODELRELAY_API_KEY ?? "no-key",
+        model: parsed.model || "auto-fastest"
+      };
+    case "openai-compatible":
+      return {
+        baseURL: normalizeBaseURL(
+          getProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL"),
+          "http://127.0.0.1:7352/v1"
+        ),
+        apiKey: getProviderEnvValue("OPENAI_COMPATIBLE_API_KEY", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_API_KEY") ?? "no-key",
+        model: parsed.model || getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL") || "auto-fastest"
+      };
+  }
+}
+var MODELRELAY_PREFIX, OPENAI_COMPATIBLE_PREFIX, PROVIDER_PREFIXES, OpenAICompatibleProvider;
+var init_openaiCompatible = __esm({
+  "server/agent/providers/openaiCompatible.ts"() {
+    "use strict";
+    init_base();
+    init_env();
+    MODELRELAY_PREFIX = "modelrelay/";
+    OPENAI_COMPATIBLE_PREFIX = "openai-compatible/";
+    PROVIDER_PREFIXES = [
+      { prefix: "modelrelay", marker: MODELRELAY_PREFIX },
+      { prefix: "openai-compatible", marker: OPENAI_COMPATIBLE_PREFIX },
+      { prefix: "openrouter", marker: "openrouter/" },
+      { prefix: "groq", marker: "groq/" },
+      { prefix: "together", marker: "together/" },
+      { prefix: "fireworks", marker: "fireworks/" },
+      { prefix: "cerebras", marker: "cerebras/" },
+      { prefix: "nvidia", marker: "nvidia/" },
+      { prefix: "deepseek", marker: "deepseek/" }
+    ];
+    OpenAICompatibleProvider = class extends BaseProvider {
+      clients = /* @__PURE__ */ new Map();
+      async initialize() {
+      }
+      async cleanup() {
+        this.clients.clear();
+      }
+      async *query(params) {
+        if (params.stream) {
+          yield* this._streamTurn(params);
+        } else {
+          yield* this._completeTurn(params);
+        }
+      }
+      getClient(target) {
+        const key = `${target.baseURL}
+${target.apiKey}`;
+        const cached = this.clients.get(key);
+        if (cached) return cached;
+        const client = new OpenAI2({ baseURL: target.baseURL, apiKey: target.apiKey });
+        this.clients.set(key, client);
+        return client;
+      }
+      async *_completeTurn(params) {
+        const target = resolveRelayTarget(params.model);
+        const client = this.getClient(target);
+        const completion = await client.chat.completions.create(
+          {
+            model: target.model,
+            messages: params.messages,
+            tools: params.tools,
+            tool_choice: params.tools ? params.toolChoice : void 0,
+            max_completion_tokens: params.maxCompletionTokens
+          },
+          { signal: params.signal }
+        );
+        const choice = completion.choices[0];
+        const msg = choice?.message;
+        if (msg?.content) {
+          yield { type: "text", delta: msg.content };
+        }
+        const toolCalls = msg?.tool_calls ?? [];
+        for (let i = 0; i < toolCalls.length; i++) {
+          const tc = toolCalls[i];
+          if (tc.type !== "function") continue;
+          yield { type: "tool_call_start", index: i, id: tc.id, name: tc.function.name };
+          if (tc.function.arguments) {
+            yield { type: "tool_call_args", index: i, args: tc.function.arguments };
+          }
+        }
+        yield { type: "finish", reason: choice?.finish_reason ?? null };
+      }
+      async *_streamTurn(params) {
+        const target = resolveRelayTarget(params.model);
+        const client = this.getClient(target);
+        const stream = await client.chat.completions.create(
+          {
+            model: target.model,
+            messages: params.messages,
+            tools: params.tools,
+            tool_choice: params.tools ? params.toolChoice : void 0,
+            max_completion_tokens: params.maxCompletionTokens,
+            stream: true
+          },
+          { signal: params.signal }
+        );
+        const toolCallAccum = /* @__PURE__ */ new Map();
+        const toolCallOrder = [];
+        let finishReason = null;
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta;
+          const fr = chunk.choices[0]?.finish_reason;
+          if (fr) finishReason = fr;
+          if (delta?.content) {
+            yield { type: "text", delta: delta.content };
+          }
+          if (delta?.tool_calls) {
+            for (const tc of delta.tool_calls) {
+              const idx = tc.index;
+              if (!toolCallAccum.has(idx)) {
+                toolCallAccum.set(idx, { id: "", name: "", args: "" });
+                toolCallOrder.push(idx);
+              }
+              const acc = toolCallAccum.get(idx);
+              if (tc.id) acc.id += tc.id;
+              if (tc.function?.name) acc.name += tc.function.name;
+              if (tc.function?.arguments) acc.args += tc.function.arguments;
+            }
+          }
+        }
+        for (const idx of toolCallOrder) {
+          const acc = toolCallAccum.get(idx);
+          yield { type: "tool_call_start", index: idx, id: acc.id, name: acc.name };
+          if (acc.args) {
+            yield { type: "tool_call_args", index: idx, args: acc.args };
+          }
+        }
+        yield { type: "finish", reason: finishReason };
+      }
+    };
+  }
+});
+
+// server/agent/providers/codexOAuth.ts
+import { spawn } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+function textFromContent(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => {
+    if (typeof part === "string") return part;
+    if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+    return "";
+  }).filter(Boolean).join("\n");
+}
+function extractJsonObject(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const candidate = fenced?.[1]?.trim() || trimmed;
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+function normalizeToolArguments(value) {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "{}";
+    try {
+      return JSON.stringify(JSON.parse(trimmed));
+    } catch {
+      return trimmed;
+    }
+  }
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return "{}";
+}
+function generatedToolCallId(index) {
+  return `codex_call_${Date.now().toString(36)}_${index}`;
+}
+function parseCodexOAuthOrchestratorOutput(raw) {
+  const parsed = extractJsonObject(raw);
+  if (!parsed || typeof parsed !== "object") {
+    return { type: "final", content: raw.trim() };
+  }
+  const data = parsed;
+  const type = typeof data.type === "string" ? data.type : "";
+  if (type === "final") {
+    return { type: "final", content: String(data.content ?? data.text ?? "").trim() };
+  }
+  const rawToolCalls = Array.isArray(data.tool_calls) ? data.tool_calls : Array.isArray(data.toolCalls) ? data.toolCalls : [];
+  if (type === "tool_calls" || rawToolCalls.length > 0) {
+    const toolCalls = rawToolCalls.map((toolCall, index) => {
+      if (!toolCall || typeof toolCall !== "object") return null;
+      const item = toolCall;
+      const functionData = item.function && typeof item.function === "object" ? item.function : item;
+      const name = typeof functionData.name === "string" ? functionData.name.trim() : "";
+      if (!name) return null;
+      return {
+        id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : generatedToolCallId(index),
+        type: "function",
+        function: {
+          name,
+          arguments: normalizeToolArguments(functionData.arguments)
+        }
+      };
+    }).filter((toolCall) => !!toolCall);
+    return { type: "tool_calls", toolCalls };
+  }
+  return { type: "final", content: raw.trim() };
+}
+function getCodexGatewayUrl() {
+  const raw = process.env.JARVIS_CODEX_GATEWAY_URL?.trim();
+  if (!raw) return null;
+  return raw.replace(/\/+$/, "");
+}
+function getCodexGatewayToken() {
+  return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
+}
+function createLinkedAbortController(signal) {
+  const controller = new AbortController();
+  let didTimeout = false;
+  const abortFromCaller = () => {
+    controller.abort(new DOMException("Codex OAuth provider aborted", "AbortError"));
+  };
+  const timer = Number.isFinite(CODEX_GATEWAY_TIMEOUT_MS) && CODEX_GATEWAY_TIMEOUT_MS > 0 ? setTimeout(() => {
+    didTimeout = true;
+    controller.abort(new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`));
+  }, CODEX_GATEWAY_TIMEOUT_MS) : null;
+  if (signal?.aborted) abortFromCaller();
+  else signal?.addEventListener("abort", abortFromCaller, { once: true });
+  return {
+    controller,
+    cleanup: () => {
+      if (timer) clearTimeout(timer);
+      signal?.removeEventListener("abort", abortFromCaller);
+    },
+    timedOut: () => didTimeout
+  };
+}
+function buildCodexOAuthProviderPrompt(params) {
+  const sections = params.messages.map((message, index) => {
+    const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
+    return `Message ${index + 1} [${message.role}${name}]
+${textFromContent(message.content)}`;
+  });
+  const hasTools = !!params.tools?.length && params.toolChoice !== "none";
+  const toolProtocol = hasTools ? [
+    "You are Jarvis's main brain orchestrator using ChatGPT/Codex OAuth.",
+    "You may either answer directly or request Jarvis tool calls.",
+    "You do not execute tools yourself. Jarvis executes tool calls after you request them.",
+    "Tool result messages in the conversation are authoritative observations from Jarvis. Use them directly, and do not contradict a successful tool result.",
+    "When a tool is needed, return ONLY JSON in this exact shape:",
+    `{"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
+    "When no tool is needed, return ONLY JSON in this exact shape:",
+    `{"type":"final","content":"your reply to the user"}`,
+    params.toolChoice === "required" ? "A tool call is required for this turn. Do not return a final answer." : "Use tools only when they are necessary to satisfy the user's request.",
+    "Available tools:",
+    JSON.stringify(
+      params.tools?.map((tool) => ({
+        name: tool.function.name,
+        description: tool.function.description,
+        parameters: tool.function.parameters
+      })) ?? [],
+      null,
+      2
+    )
+  ].join("\n") : [
+    "You are Jarvis's ChatGPT/Codex OAuth provider bridge.",
+    "Answer the latest user request using the conversation below."
+  ].join("\n");
+  return [
+    toolProtocol,
+    `Requested model hint: ${params.model}`,
+    `Maximum completion tokens hint: ${params.maxCompletionTokens}`,
+    "",
+    sections.join("\n\n---\n\n")
+  ].join("\n");
+}
+async function runCodexOAuthPrompt(command, prompt, signal) {
+  const dir = await mkdtemp(join(tmpdir(), "jarvis-codex-oauth-"));
+  const outputPath = join(dir, "answer.txt");
+  try {
+    await new Promise((resolve11, reject) => {
+      const child = spawn(
+        command,
+        ["exec", "--skip-git-repo-check", "--sandbox", "read-only", "--output-last-message", outputPath, "-"],
+        { stdio: ["pipe", "pipe", "pipe"] }
+      );
+      let stderr = "";
+      let settled = false;
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+        fn();
+      };
+      const abort = () => {
+        child.kill();
+        finish(() => reject(new DOMException("Codex OAuth provider aborted", "AbortError")));
+      };
+      const timer = setTimeout(() => {
+        child.kill();
+        finish(() => reject(new Error("Codex OAuth provider timed out.")));
+      }, CODEX_EXEC_TIMEOUT_MS);
+      signal?.addEventListener("abort", abort, { once: true });
+      child.stderr.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      child.on("error", (error) => {
+        finish(() => reject(error));
+      });
+      child.on("close", (code) => {
+        finish(() => {
+          if (code === 0) resolve11();
+          else reject(new Error(stderr || `Codex OAuth provider exited with ${code}.`));
+        });
+      });
+      child.stdin.end(prompt);
+    });
+    return (await readFile(outputPath, "utf8")).trim();
+  } finally {
+    await rm(dir, { force: true, recursive: true });
+  }
+}
+async function runRemoteCodexOAuthPrompt(gatewayUrl, prompt, signal) {
+  const token = getCodexGatewayToken();
+  if (!token) throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
+  const linkedAbort = createLinkedAbortController(signal);
+  let response;
+  let raw;
+  try {
+    response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ prompt }),
+      signal: linkedAbort.controller.signal
+    });
+    raw = await response.text();
+  } catch (error) {
+    if (signal?.aborted) {
+      throw new DOMException("Codex OAuth provider aborted", "AbortError");
+    }
+    if (linkedAbort.timedOut()) {
+      throw new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`, { cause: error });
+    }
+    throw error;
+  } finally {
+    linkedAbort.cleanup();
+  }
+  let payload = {};
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {
+    payload = { error: raw };
+  }
+  if (!response.ok) {
+    throw new Error(String(payload.error || payload.message || `Codex gateway returned ${response.status}`));
+  }
+  return String(payload.content || "").trim();
+}
+var CODEX_EXEC_TIMEOUT_MS, CODEX_GATEWAY_TIMEOUT_MS, CodexOAuthProvider;
+var init_codexOAuth = __esm({
+  "server/agent/providers/codexOAuth.ts"() {
+    "use strict";
+    init_base();
+    init_env();
+    CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 3e5);
+    CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 12e4);
+    CodexOAuthProvider = class extends BaseProvider {
+      async initialize() {
+      }
+      async cleanup() {
+      }
+      async *query(params) {
+        const prompt = buildCodexOAuthProviderPrompt(params);
+        const gatewayUrl = getCodexGatewayUrl();
+        const answer = gatewayUrl ? await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal) : await runCodexOAuthPrompt(getCodexOAuthCommand(), prompt, params.signal);
+        const parsed = parseCodexOAuthOrchestratorOutput(answer);
+        if (parsed.type === "tool_calls") {
+          if (parsed.toolCalls.length === 0) {
+            throw new Error("Codex OAuth provider returned a tool_calls response without valid tool calls.");
+          }
+          for (const [index, toolCall] of parsed.toolCalls.entries()) {
+            yield {
+              type: "tool_call_start",
+              index,
+              id: toolCall.id,
+              name: toolCall.function.name
+            };
+            yield {
+              type: "tool_call_args",
+              index,
+              args: toolCall.function.arguments
+            };
+          }
+          yield { type: "finish", reason: "tool_calls" };
+          return;
+        }
+        if (params.toolChoice === "required" && params.tools?.length) {
+          throw new Error("Codex OAuth provider returned a final answer when a tool call was required.");
+        }
+        if (parsed.content) yield { type: "text", delta: parsed.content };
+        yield { type: "finish", reason: "stop" };
+      }
+    };
+  }
+});
+
+// server/agent/providers/index.ts
+function getProvider(name) {
+  if (instanceCache.has(name)) {
+    return instanceCache.get(name);
+  }
+  const factory = PROVIDER_FACTORIES[name];
+  if (!factory) {
+    throw new Error(
+      `Unknown provider: "${name}". Available: ${Object.keys(PROVIDER_FACTORIES).join(", ")}`
+    );
+  }
+  const instance = factory();
+  instanceCache.set(name, instance);
+  return instance;
+}
+var PROVIDER_FACTORIES, instanceCache;
+var init_providers = __esm({
+  "server/agent/providers/index.ts"() {
+    "use strict";
+    init_base();
+    init_openai();
+    init_claude();
+    init_openaiCompatible();
+    init_codexOAuth();
+    init_fallback();
+    PROVIDER_FACTORIES = {
+      openai: () => new OpenAIProvider(),
+      claude: () => new ClaudeProvider(),
+      "openai-compatible": () => new OpenAICompatibleProvider(),
+      "chatgpt-codex-oauth": () => new CodexOAuthProvider()
+    };
+    instanceCache = /* @__PURE__ */ new Map();
+  }
+});
+
+// server/agent/providers/fallback.ts
+function collectErrorSignals(err2) {
+  const parts = [];
+  const seen = /* @__PURE__ */ new Set();
+  let current = err2;
+  for (let depth = 0; current != null && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current);
+    if (current instanceof Error) {
+      parts.push(current.name, current.message);
+      const anyErr = current;
+      for (const key of ["code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+    if (typeof current === "object") {
+      const anyErr = current;
+      for (const key of ["name", "message", "code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+    parts.push(String(current));
+    break;
+  }
+  return parts.join(" ");
+}
+function isRetriableProviderError(err2) {
+  if (err2 instanceof Error && err2.name === "AbortError") return false;
+  const anyErr = err2;
+  if (typeof anyErr.status === "number") {
+    const s = anyErr.status;
+    if (s === 413 || s === 429 || s >= 500 && s < 600) return true;
+  }
+  const msg = collectErrorSignals(err2);
+  const lower = msg.toLowerCase();
+  if (/\b(413|429|500|502|503|504|529)\b/.test(msg)) return true;
+  const retriableTerms = [
+    "rate limit",
+    "rate_limit",
+    "ratelimit",
+    "rate_limit_exceeded",
+    "quota exceeded",
+    "exceeded your current quota",
+    "insufficient_quota",
+    "too many requests",
+    "request too large",
+    "tokens per minute",
+    "tpm",
+    "please reduce your message size",
+    "context length",
+    "maximum context",
+    "fetch failed",
+    "timeout",
+    "timed out",
+    "headers timeout",
+    "headerstimeouterror",
+    "und_err_headers_timeout",
+    "body timeout",
+    "und_err_body_timeout",
+    "econnrefused",
+    "econnreset",
+    "econnaborted",
+    "socket hang up",
+    "network error",
+    "service unavailable",
+    "overloaded",
+    "bad gateway",
+    "internal server error",
+    "upstream error"
+  ];
+  if (retriableTerms.some((t) => lower.includes(t))) return true;
+  return false;
+}
+function getGlobalFallbackChain() {
+  const raw = process.env.PROVIDER_FALLBACK_CHAIN;
+  if (!raw || raw.trim() === "") return null;
+  const entries = [];
+  for (const segment of raw.split(",")) {
+    const [providerRaw, modelRaw] = segment.trim().split(":");
+    const providerName = providerRaw?.trim().toLowerCase();
+    if (!KNOWN_PROVIDERS.includes(providerName)) continue;
+    const model = modelRaw?.trim() || DEFAULT_PROVIDER_MODELS[providerName];
+    entries.push({ providerName, model });
+  }
+  return entries.length >= 2 ? entries : null;
+}
+async function queryWithFallback(chain, params, logPrefix) {
+  if (chain.length === 0) {
+    throw new Error(`${logPrefix} provider fallback chain is empty`);
+  }
+  let lastError;
+  for (let i = 0; i < chain.length; i++) {
+    const entry = chain[i];
+    const isFallback = i > 0;
+    if (isFallback) {
+      const prev = chain[i - 1];
+      const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
+      console.warn(
+        `${logPrefix} provider_fallback: primary=${prev.providerName}(${prev.model}) failed with retriable error - retrying on fallback=${entry.providerName}(${entry.model}). Error: ${errMsg.slice(0, 200)}`
+      );
+    } else {
+      console.log(`${logPrefix} provider=${entry.providerName} model=${entry.model}`);
+    }
+    try {
+      const provider = getProvider(entry.providerName);
+      const result = await accumulateTurn(provider.query({ ...params, model: entry.model }));
+      result.providerName = entry.providerName;
+      result.model = entry.model;
+      result.fallbackUsed = isFallback;
+      if (isFallback) {
+        console.log(
+          `${logPrefix} provider_fallback: fallback=${entry.providerName}(${entry.model}) succeeded`
+        );
+      }
+      return result;
+    } catch (err2) {
+      lastError = err2;
+      if (err2 instanceof Error && err2.name === "AbortError") {
+        throw err2;
+      }
+      const hasMore = i < chain.length - 1;
+      if (hasMore && isRetriableProviderError(err2)) {
+        continue;
+      }
+      throw err2;
+    }
+  }
+  throw lastError;
+}
+var DEFAULT_PROVIDER_MODELS, KNOWN_PROVIDERS;
+var init_fallback = __esm({
+  "server/agent/providers/fallback.ts"() {
+    "use strict";
+    init_base();
+    init_providers();
+    DEFAULT_PROVIDER_MODELS = {
+      claude: "claude-opus-4-7",
+      openai: "gpt-4.1-mini",
+      "openai-compatible": "modelrelay/auto-fastest",
+      "chatgpt-codex-oauth": "chatgpt-codex-oauth/auto"
+    };
+    KNOWN_PROVIDERS = ["openai", "claude", "openai-compatible", "chatgpt-codex-oauth"];
+  }
+});
+
+// server/agent/modelRouter.ts
+function pushUnique(chain, entry) {
+  const key = `${entry.providerName}:${entry.model}`;
+  if (!chain.some((item) => `${item.providerName}:${item.model}` === key)) {
+    chain.push(entry);
+  }
+}
+function textFromContent2(content) {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((part) => {
+    if (typeof part === "string") return part;
+    if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+    return "";
+  }).join("\n");
+}
+function parseModelSpec(spec) {
+  const raw = spec?.trim();
+  if (!raw) return null;
+  const colonIdx = raw.indexOf(":");
+  if (colonIdx > 0) {
+    const provider = raw.slice(0, colonIdx).trim();
+    const model = raw.slice(colonIdx + 1).trim();
+    if ((provider === "openai" || provider === "claude" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth") && model) {
+      return { providerName: provider, model };
+    }
+  }
+  if (raw.startsWith("openai/")) {
+    return { providerName: "openai", model: raw.slice("openai/".length) };
+  }
+  if (raw.startsWith("claude/")) {
+    return { providerName: "claude", model: raw.slice("claude/".length) };
+  }
+  if (raw.startsWith("chatgpt-codex-oauth/") || raw.startsWith("codex-oauth/")) {
+    return { providerName: "chatgpt-codex-oauth", model: raw };
+  }
+  if (raw.startsWith("modelrelay/") || raw.startsWith("openai-compatible/") || raw.startsWith("openrouter/") || raw.startsWith("groq/") || raw.startsWith("together/") || raw.startsWith("fireworks/") || raw.startsWith("cerebras/") || raw.startsWith("nvidia/") || raw.startsWith("deepseek/")) {
+    return { providerName: "openai-compatible", model: raw };
+  }
+  return { providerName: "openai-compatible", model: `openai-compatible/${raw}` };
+}
+function envModelForExecutionTier(tier) {
+  const specific = tier === "cheap" ? process.env.JARVIS_CHEAP_MODEL : tier === "smart" ? process.env.JARVIS_SMART_MODEL : process.env.JARVIS_BALANCED_MODEL;
+  return parseModelSpec(specific ?? process.env.JARVIS_DEFAULT_MODEL);
+}
+function getLastUserText(messages2) {
+  for (let i = messages2.length - 1; i >= 0; i--) {
+    const msg = messages2[i];
+    if (msg.role === "user") return textFromContent2(msg.content).trim();
+  }
+  return "";
+}
+function classifyTaskComplexity(text2) {
+  const trimmed = text2.trim();
+  if (!trimmed) return "easy";
+  const lower = trimmed.toLowerCase();
+  const words = trimmed.split(/\s+/).filter(Boolean).length;
+  if (/\b(strategy|architecture|debug|root cause|diagnose|implement|refactor|design|research deeply|compare options)\b/.test(lower)) {
+    return "hard";
+  }
+  if (/\b(plan|analyze|synthesize|prioritize|draft an email|write a proposal|summarize this article|research)\b/.test(lower)) {
+    return words > 80 ? "hard" : "medium";
+  }
+  if (/^(title|tag|label)\b/.test(lower) && words <= 8) return "trivial";
+  if (/\b(rewrite|summarize|classify|tag|title|extract|format|clean up|spellcheck|grammar|make this shorter)\b/.test(lower)) {
+    return words > 250 ? "medium" : "easy";
+  }
+  if (words <= 30) return "trivial";
+  if (words <= 120) return "easy";
+  if (words <= 300) return "medium";
+  return "hard";
+}
+function messageTextSize(messages2) {
+  return messages2.reduce((sum, message) => sum + textFromContent2(message.content).length, 0);
+}
+function hasToolMessages(messages2) {
+  return messages2.some((message) => message.role === "tool");
+}
+function toolSchemaTextSize(tools) {
+  if (!tools?.length) return 0;
+  try {
+    return JSON.stringify(tools).length;
+  } catch {
+    return tools.length * 1e3;
+  }
+}
+function needsPersonalJarvisContext(text2) {
+  const lower = text2.toLowerCase();
+  const personalSignals = [
+    "my task",
+    "my tasks",
+    "my plan",
+    "my plans",
+    "my goal",
+    "my goals",
+    "my memory",
+    "my memories",
+    "remember",
+    "about me",
+    "who am i",
+    "what do you know about me",
+    "commitment",
+    "commitments",
+    "calendar",
+    "schedule",
+    "meeting",
+    "email",
+    "gmail",
+    "inbox",
+    "telegram",
+    "discord",
+    "slack",
+    "profile",
+    "dashboard",
+    "stats",
+    "xp",
+    "habit",
+    "habits",
+    "document",
+    "documents",
+    "file",
+    "files",
+    "code",
+    "repo",
+    "repository",
+    "screen",
+    "phone",
+    "daemon"
+  ];
+  return personalSignals.some((signal) => lower.includes(signal));
+}
+function likelyNeedsToolAccess(text2) {
+  const actionObjectSignals = [
+    /\b(create|make|draft|write|generate|add|schedule)\b.{0,40}\b(task|todo|reminder|calendar|event|meeting|email|gmail|message|notification|document|file|app|site|website|page|feature|code|repo|repository|image|photo|video)\b/i,
+    /\b(build|edit|fix|implement|code|deploy|commit|push|open|tap|screenshot|send|notify)\b/i
+  ];
+  if (actionObjectSignals.some((pattern) => pattern.test(text2))) return true;
+  return /\b(weather|forecast|temperature|rain|search|look up|current|today|tomorrow|news|stock|sports|calendar|meeting|email|gmail|phone|daemon)\b/i.test(text2);
+}
+function buildLeanSystemPrompt() {
+  return [
+    "You are GamePlan Coach, Jarvis's chat persona.",
+    "Answer the user's latest message directly and keep it concise.",
+    "Use only the context included in this request. Do not invent memories, files, user data, live research, or tool results.",
+    "If the user asks for current information or an action and a relevant tool is available, use it. If the needed tool or API is unavailable, say that plainly."
+  ].join("\n");
+}
+function maybeUseLeanContext(messages2, logPrefix, tools) {
+  if (process.env.JARVIS_LEAN_CONTEXT === "0") return messages2;
+  const inputChars = messageTextSize(messages2);
+  const toolChars = toolSchemaTextSize(tools);
+  const totalChars = inputChars + toolChars;
+  const maxChars = Number(process.env.JARVIS_LEAN_CONTEXT_CHAR_LIMIT || 12e3);
+  if (totalChars <= maxChars) return messages2;
+  if (hasToolMessages(messages2)) return messages2;
+  const lastUserText = getLastUserText(messages2);
+  const complexity = classifyTaskComplexity(lastUserText);
+  const lastUserWordCount = lastUserText.split(/\s+/).filter(Boolean).length;
+  const isShortPlanningAnswer = complexity === "medium" && lastUserWordCount <= 40 && /\b(plan|outline|checklist|bullet|bullets|steps)\b/i.test(lastUserText);
+  if (complexity !== "trivial" && complexity !== "easy" && !isShortPlanningAnswer) return messages2;
+  if (needsPersonalJarvisContext(lastUserText)) return messages2;
+  if (tools?.length && likelyNeedsToolAccess(lastUserText)) return messages2;
+  const historyLimit = Math.max(1, Number(process.env.JARVIS_LEAN_CONTEXT_HISTORY_MESSAGES || 4));
+  const nonSystemMessages = messages2.filter((message) => message.role !== "system");
+  const leanMessages = [
+    { role: "system", content: buildLeanSystemPrompt() },
+    ...nonSystemMessages.slice(-historyLimit)
+  ];
+  const leanChars = messageTextSize(leanMessages);
+  console.log(
+    `${logPrefix} lean_context: ${inputChars} chars + ${toolChars} tool chars -> ${leanChars} chars for ${complexity} non-tool request`
+  );
+  return leanMessages;
+}
+function configuredProviderEntries(tier) {
+  const chain = [];
+  const envEntry = envModelForExecutionTier(tier);
+  if (envEntry) pushUnique(chain, envEntry);
+  const hasOpenAICompatible = hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL");
+  const hasOpenRouter = hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY");
+  const hasGroq = hasProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY");
+  const hasTogether = hasProviderEnvValue("TOGETHER_API_KEY", "AI_INTEGRATIONS_TOGETHER_API_KEY");
+  const hasFireworks = hasProviderEnvValue("FIREWORKS_API_KEY", "AI_INTEGRATIONS_FIREWORKS_API_KEY");
+  const hasCerebras = hasProviderEnvValue("CEREBRAS_API_KEY", "AI_INTEGRATIONS_CEREBRAS_API_KEY");
+  const hasNvidia = hasProviderEnvValue("NVIDIA_API_KEY", "AI_INTEGRATIONS_NVIDIA_API_KEY");
+  const hasDeepSeek = hasProviderEnvValue("DEEPSEEK_API_KEY", "AI_INTEGRATIONS_DEEPSEEK_API_KEY");
+  const hasClaude = hasProviderEnvValue(
+    "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AI_INTEGRATIONS_ANTHROPIC_BASE_URL",
+    "ANTHROPIC_BASE_URL"
+  );
+  const hasOpenAI = hasDirectOpenAIProvider();
+  const hasCodexOAuth = hasCodexOAuthProvider();
+  const compatibleModel = getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL") ? `openai-compatible/${getProviderEnvValue("OPENAI_COMPATIBLE_MODEL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL")}` : "openai-compatible/auto-fastest";
+  const openRouterDefaultModel = getProviderEnvValue("OPENROUTER_MODEL", "AI_INTEGRATIONS_OPENROUTER_MODEL") || "openrouter/auto";
+  const openRouterModel = tier === "smart" ? getProviderEnvValue("OPENROUTER_SMART_MODEL", "AI_INTEGRATIONS_OPENROUTER_SMART_MODEL") || openRouterDefaultModel : getProviderEnvValue("OPENROUTER_CHEAP_MODEL", "AI_INTEGRATIONS_OPENROUTER_CHEAP_MODEL") || openRouterDefaultModel;
+  const groqDefaultModel = getProviderEnvValue("GROQ_MODEL", "AI_INTEGRATIONS_GROQ_MODEL");
+  const groqModel = tier === "smart" ? getProviderEnvValue("GROQ_SMART_MODEL", "AI_INTEGRATIONS_GROQ_SMART_MODEL") || groqDefaultModel || "llama-3.3-70b-versatile" : getProviderEnvValue("GROQ_CHEAP_MODEL", "AI_INTEGRATIONS_GROQ_CHEAP_MODEL") || groqDefaultModel || "llama-3.1-8b-instant";
+  const openaiModel = tier === "smart" ? process.env.JARVIS_OPENAI_SMART_MODEL || "gpt-4.1" : process.env.JARVIS_OPENAI_BALANCED_MODEL || "gpt-4.1-mini";
+  const claudeModel = tier === "smart" ? process.env.JARVIS_CLAUDE_SMART_MODEL || "claude-3-5-sonnet-latest" : process.env.JARVIS_CLAUDE_CHEAP_MODEL || "claude-3-5-haiku-latest";
+  const codexOAuthModel = getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") || "chatgpt-codex-oauth/auto";
+  if (tier === "cheap") {
+    if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
+    if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
+    if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
+    if (hasTogether) pushUnique(chain, { providerName: "openai-compatible", model: `together/${getProviderEnvValue("TOGETHER_MODEL", "AI_INTEGRATIONS_TOGETHER_MODEL") || "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo"}` });
+    if (hasFireworks) pushUnique(chain, { providerName: "openai-compatible", model: `fireworks/${getProviderEnvValue("FIREWORKS_MODEL", "AI_INTEGRATIONS_FIREWORKS_MODEL") || "accounts/fireworks/models/llama-v3p1-8b-instruct"}` });
+    if (hasCerebras) pushUnique(chain, { providerName: "openai-compatible", model: `cerebras/${getProviderEnvValue("CEREBRAS_MODEL", "AI_INTEGRATIONS_CEREBRAS_MODEL") || "llama3.1-8b"}` });
+    if (hasNvidia) pushUnique(chain, { providerName: "openai-compatible", model: `nvidia/${getProviderEnvValue("NVIDIA_MODEL", "AI_INTEGRATIONS_NVIDIA_MODEL") || "meta/llama-3.1-8b-instruct"}` });
+    if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
+    if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
+    if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });
+    if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: "gpt-4.1-mini" });
+    return chain;
+  }
+  if (tier === "smart") {
+    if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
+    if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });
+    if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
+    if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
+    if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
+    if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
+    if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
+    return chain;
+  }
+  if (hasCodexOAuth) pushUnique(chain, { providerName: "chatgpt-codex-oauth", model: codexOAuthModel });
+  if (hasOpenRouter) pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${openRouterModel}` });
+  if (hasGroq) pushUnique(chain, { providerName: "openai-compatible", model: `groq/${groqModel}` });
+  if (hasDeepSeek) pushUnique(chain, { providerName: "openai-compatible", model: `deepseek/${getProviderEnvValue("DEEPSEEK_MODEL", "AI_INTEGRATIONS_DEEPSEEK_MODEL") || "deepseek-chat"}` });
+  if (hasOpenAICompatible) pushUnique(chain, { providerName: "openai-compatible", model: compatibleModel });
+  if (hasOpenAI) pushUnique(chain, { providerName: "openai", model: openaiModel });
+  if (hasClaude) pushUnique(chain, { providerName: "claude", model: claudeModel });
+  return chain;
+}
+function getModelRouteChain(tier) {
+  const globalChain = getGlobalFallbackChain();
+  if (globalChain) return globalChain;
+  return configuredProviderEntries(tier);
+}
+async function routeModelTurn(params) {
+  const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
+  const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
+  const leanContextApplied = routedMessages !== params.messages;
+  const chain = getModelRouteChain(params.tier);
+  if (chain.length === 0) {
+    throw new Error(
+      "No model providers configured. Add OpenRouter, Groq, Anthropic, OpenAI, ChatGPT/Codex OAuth, or another OpenAI-compatible provider variable."
+    );
+  }
+  console.log(
+    `${logPrefix} route tier=${params.tier} candidates=${chain.map((entry) => `${entry.providerName}(${entry.model})`).join(" -> ")}`
+  );
+  if (leanContextApplied && params.tools?.length) {
+    console.log(`${logPrefix} lean_context: omitted ${params.tools.length} tool schema(s)`);
+  }
+  return queryWithFallback(
+    chain,
+    {
+      model: chain[0].model,
+      messages: routedMessages,
+      tools: routedMessages !== params.messages ? void 0 : params.tools,
+      toolChoice: routedMessages !== params.messages ? "none" : params.toolChoice ?? "none",
+      maxCompletionTokens: params.maxCompletionTokens,
+      stream: params.stream ?? false,
+      signal: params.signal
+    },
+    logPrefix
+  );
+}
+var DEFAULT_TIER_MODELS;
+var init_modelRouter = __esm({
+  "server/agent/modelRouter.ts"() {
+    "use strict";
+    init_fallback();
+    init_env();
+    DEFAULT_TIER_MODELS = {
+      prime: process.env.JARVIS_PRIME_MODEL ?? "claude-opus-4-6",
+      smart: process.env.JARVIS_SMART_MODEL ?? "gpt-4.1-mini",
+      cheap: process.env.JARVIS_CHEAP_MODEL ?? "gpt-4o-mini",
+      free: process.env.JARVIS_FREE_MODEL ?? "openrouter/openrouter/auto"
+    };
+  }
+});
+
+// server/agent/openaiChatRouterPatch.ts
+import { createRequire } from "node:module";
+import { Completions } from "openai/resources/chat/completions";
+import OpenAI3 from "openai";
+function routingEnabled() {
+  const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
+  if (raw === "0" || raw === "false" || raw === "disabled" || raw === "no") return false;
+  if (raw === "1" || raw === "true" || raw === "enabled" || raw === "yes") return true;
+  return hasNonOpenAIRoutableProvider();
+}
+function shouldRoute(body) {
+  if (!routingEnabled()) return false;
+  if (routingDepth > 0) return false;
+  if (!body || typeof body !== "object") return false;
+  const model = body.model;
+  return typeof model === "string" && model.startsWith("gpt-");
+}
+function tierForBody(body) {
+  if (body.tools?.length) return "balanced";
+  const tokens = Number(body.max_completion_tokens ?? 0);
+  if (tokens > 2e3) return "balanced";
+  return "cheap";
+}
+function toCompletion(body, text2, toolCalls, finishReason, routedModel) {
+  return {
+    id: `jarvis-routed-${Date.now()}`,
+    object: "chat.completion",
+    created: Math.floor(Date.now() / 1e3),
+    model: routedModel || String(body.model),
+    choices: [
+      {
+        index: 0,
+        finish_reason: finishReason ?? "stop",
+        logprobs: null,
+        message: {
+          role: "assistant",
+          content: text2 || null,
+          refusal: null,
+          tool_calls: toolCalls.length ? toolCalls : void 0
+        }
+      }
+    ]
+  };
+}
+async function* toStream(text2, routedModel) {
+  yield {
+    id: `jarvis-routed-${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1e3),
+    model: routedModel,
+    choices: [
+      {
+        index: 0,
+        delta: { role: "assistant", content: text2 },
+        finish_reason: null,
+        logprobs: null
+      }
+    ]
+  };
+  yield {
+    id: `jarvis-routed-${Date.now()}`,
+    object: "chat.completion.chunk",
+    created: Math.floor(Date.now() / 1e3),
+    model: routedModel,
+    choices: [
+      {
+        index: 0,
+        delta: {},
+        finish_reason: "stop",
+        logprobs: null
+      }
+    ]
+  };
+}
+function routeBody(body, signal, logPrefix) {
+  routingDepth++;
+  return routeModelTurn({
+    tier: tierForBody(body),
+    messages: body.messages,
+    tools: body.tools,
+    toolChoice: body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto",
+    maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
+    stream: false,
+    signal,
+    logPrefix
+  }).then((result) => {
+    const routedModel = result.model ?? String(body.model);
+    if (body.stream) return toStream(result.textContent, routedModel);
+    return toCompletion(body, result.textContent, result.toolCallList, result.finishReason, routedModel);
+  }).finally(() => {
+    routingDepth--;
+  });
+}
+function patchCompletions(ctor, logPrefix) {
+  const proto = ctor?.prototype;
+  if (!proto || proto[ROUTER_PATCHED] || typeof proto.create !== "function") return false;
+  const originalCreate = proto.create;
+  proto.create = function patchedCreate(body, options) {
+    if (!shouldRoute(body)) {
+      return originalCreate.call(this, body, options);
+    }
+    return routeBody(body, options?.signal, logPrefix);
+  };
+  proto[ROUTER_PATCHED] = true;
+  return true;
+}
+function patchOpenAIClient(ctor, postLogPrefix, methodLogPrefix) {
+  const clientProto = ctor?.prototype;
+  if (!clientProto) return false;
+  let patched = false;
+  if (!clientProto[CLIENT_POST_PATCHED] && typeof clientProto.post === "function") {
+    const originalPost = clientProto.post;
+    clientProto.post = function patchedPost(path33, opts) {
+      const body = opts?.body;
+      if (path33 !== "/chat/completions" || !shouldRoute(body)) {
+        return originalPost.call(this, path33, opts);
+      }
+      return routeBody(body, opts?.signal, postLogPrefix);
+    };
+    clientProto[CLIENT_POST_PATCHED] = true;
+    patched = true;
+  }
+  if (!clientProto[CLIENT_METHOD_PATCHED] && typeof clientProto.methodRequest === "function") {
+    const originalMethodRequest = clientProto.methodRequest;
+    clientProto.methodRequest = function patchedMethodRequest(method, path33, opts) {
+      const body = opts?.body;
+      if (method !== "post" || path33 !== "/chat/completions" || !shouldRoute(body)) {
+        return originalMethodRequest.call(this, method, path33, opts);
+      }
+      return routeBody(body, opts?.signal, methodLogPrefix);
+    };
+    clientProto[CLIENT_METHOD_PATCHED] = true;
+    patched = true;
+  }
+  return patched;
+}
+function optionalRequire(path33) {
+  try {
+    return require2(path33);
+  } catch {
+    return null;
+  }
+}
+function installOpenAIChatRouterPatch() {
+  const cjsOpenAI = optionalRequire("openai");
+  const cjsCompletions = optionalRequire("openai/resources/chat/completions");
+  const patched = [
+    patchCompletions(Completions, "[OpenAIChatRouterPatch]"),
+    patchCompletions(cjsCompletions?.Completions, "[OpenAIChatRouterPatch:cjs]"),
+    patchOpenAIClient(OpenAI3, "[OpenAIClientPostRouterPatch]", "[OpenAIClientMethodRouterPatch]"),
+    patchOpenAIClient(cjsOpenAI?.default, "[OpenAIClientPostRouterPatch:cjs]", "[OpenAIClientMethodRouterPatch:cjs]"),
+    patchOpenAIClient(cjsOpenAI?.OpenAI, "[OpenAIClientPostRouterPatch:cjs-named]", "[OpenAIClientMethodRouterPatch:cjs-named]")
+  ].some(Boolean);
+  if (patched) console.log("[OpenAIChatRouterPatch] installed");
+}
+var ROUTER_PATCHED, CLIENT_POST_PATCHED, CLIENT_METHOD_PATCHED, routingDepth, require2;
+var init_openaiChatRouterPatch = __esm({
+  "server/agent/openaiChatRouterPatch.ts"() {
+    "use strict";
+    init_modelRouter();
+    init_envAliases();
+    init_env();
+    ROUTER_PATCHED = Symbol.for("jarvis.openaiChatRouterPatched");
+    CLIENT_POST_PATCHED = Symbol.for("jarvis.openaiClientPostRouterPatched");
+    CLIENT_METHOD_PATCHED = Symbol.for("jarvis.openaiClientMethodRouterPatched");
+    routingDepth = 0;
+    require2 = createRequire(import.meta.url);
+    installOpenAIChatRouterPatch();
+  }
+});
+
+// server/runRegistry.ts
+function getActiveRunForUser(userId) {
+  for (const [runId, entry] of activeCoachRuns.entries()) {
+    if (entry.userId === userId) {
+      return { runId, controller: entry.controller };
+    }
+  }
+  return null;
+}
+var activeCoachRuns;
+var init_runRegistry = __esm({
+  "server/runRegistry.ts"() {
+    "use strict";
+    init_openaiChatRouterPatch();
+    activeCoachRuns = /* @__PURE__ */ new Map();
+  }
+});
+
 // server/utils/gmailSourceId.ts
 import { createHash } from "crypto";
-import { and, eq, or, like } from "drizzle-orm";
+import { and as and2, eq as eq2, or, like } from "drizzle-orm";
 function buildGmailSourceId(accountEmail, messageId, fallbackData) {
   const acct = accountEmail ? `${accountEmail}:` : "";
   if (messageId) {
@@ -4661,11 +5076,11 @@ function parseGmailMessageId(sourceId) {
 }
 async function gmailMessageIdExistsForUser(userId, messageId) {
   const rows = await db.select({ id: inboxItems.id }).from(inboxItems).where(
-    and(
-      eq(inboxItems.userId, userId),
-      eq(inboxItems.sourceType, "email"),
+    and2(
+      eq2(inboxItems.userId, userId),
+      eq2(inboxItems.sourceType, "email"),
       or(
-        eq(inboxItems.sourceId, `gmail:${messageId}`),
+        eq2(inboxItems.sourceId, `gmail:${messageId}`),
         like(inboxItems.sourceId, `gmail:%:${messageId}`)
       )
     )
@@ -4746,7 +5161,6 @@ var init_routedChatCompletion = __esm({
 var modelPrefs_exports = {};
 __export(modelPrefs_exports, {
   AVAILABLE_MODELS: () => AVAILABLE_MODELS,
-  CODEX_OAUTH_MODEL: () => CODEX_OAUTH_MODEL,
   MODEL_DEFAULTS: () => MODEL_DEFAULTS,
   ORCHESTRATOR_MODELS: () => ORCHESTRATOR_MODELS,
   getModel: () => getModel,
@@ -4754,7 +5168,7 @@ __export(modelPrefs_exports, {
   isValidModelForCategory: () => isValidModelForCategory,
   isValidOrchestratorModel: () => isValidOrchestratorModel
 });
-import { eq as eq2 } from "drizzle-orm";
+import { eq as eq3 } from "drizzle-orm";
 function isValidModel(value) {
   return typeof value === "string" && VALID_OPENAI_MODEL_VALUES.has(value);
 }
@@ -4769,7 +5183,7 @@ async function getModel(userId, category) {
   if (!userId) return MODEL_DEFAULTS[category];
   try {
     const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-    const rows = await db2.select({ data: userPreferences.data }).from(userPreferences).where(eq2(userPreferences.userId, userId)).limit(1);
+    const rows = await db2.select({ data: userPreferences.data }).from(userPreferences).where(eq3(userPreferences.userId, userId)).limit(1);
     const prefs = rows[0]?.data;
     const modelPrefs = prefs?.modelPreferences;
     const pref = modelPrefs?.[category];
@@ -4778,24 +5192,30 @@ async function getModel(userId, category) {
   }
   return MODEL_DEFAULTS[category];
 }
-var CODEX_OAUTH_MODEL, MODEL_DEFAULTS, AVAILABLE_MODELS, ORCHESTRATOR_MODELS, VALID_OPENAI_MODEL_VALUES, VALID_ORCHESTRATOR_MODEL_VALUES;
+var MODEL_DEFAULTS, AVAILABLE_MODELS, ORCHESTRATOR_MODELS, VALID_OPENAI_MODEL_VALUES, VALID_ORCHESTRATOR_MODEL_VALUES;
 var init_modelPrefs = __esm({
   "server/lib/modelPrefs.ts"() {
     "use strict";
     init_schema();
-    CODEX_OAUTH_MODEL = "chatgpt-codex-oauth/auto";
     MODEL_DEFAULTS = {
-      chat: CODEX_OAUTH_MODEL,
-      planning: CODEX_OAUTH_MODEL,
-      memory: CODEX_OAUTH_MODEL,
-      research: CODEX_OAUTH_MODEL,
-      orchestrator: CODEX_OAUTH_MODEL
+      chat: "gpt-4o-mini",
+      planning: "gpt-4o-mini",
+      memory: "gpt-4o-mini",
+      research: "gpt-4.1-mini",
+      orchestrator: "claude-opus-4-6"
     };
     AVAILABLE_MODELS = [
-      { value: CODEX_OAUTH_MODEL, label: "Codex OAuth", description: "Jarvis primary model through the local ChatGPT/Codex OAuth login" }
+      { value: "gpt-5-mini", label: "Fast", description: "Quick responses, great for most tasks" },
+      { value: "gpt-5.1", label: "Smart", description: "Better reasoning with balanced speed" },
+      { value: "gpt-4.1-mini", label: "Capable", description: "Strong reasoning in a compact model" },
+      { value: "gpt-4o", label: "Powerful", description: "Highest quality for complex tasks" },
+      { value: "gpt-4o-mini", label: "Lightweight", description: "Efficient for high-volume tasks" }
     ];
     ORCHESTRATOR_MODELS = [
-      { value: CODEX_OAUTH_MODEL, label: "Codex OAuth", description: "Primary Jarvis orchestrator through the ChatGPT/Codex OAuth login" }
+      { value: "claude-opus-4-6", label: "Claude Opus 4.6", description: "Primary mainframe AI - orchestrates every task" },
+      { value: "claude-opus-4-7", label: "Claude Opus 4.7", description: "Newer flagship - alternative orchestrator" },
+      { value: "claude-sonnet-4-6", label: "Claude Sonnet", description: "Balanced speed & quality" },
+      { value: "claude-haiku-4-5", label: "Claude Haiku", description: "Fast, lightweight orchestration" }
     ];
     VALID_OPENAI_MODEL_VALUES = new Set(AVAILABLE_MODELS.map((m) => m.value));
     VALID_ORCHESTRATOR_MODEL_VALUES = new Set(ORCHESTRATOR_MODELS.map((m) => m.value));
@@ -4804,7 +5224,7 @@ var init_modelPrefs = __esm({
 
 // server/documentProcessor.ts
 import OpenAI4 from "openai";
-import { eq as eq3, desc } from "drizzle-orm";
+import { eq as eq4, desc as desc2 } from "drizzle-orm";
 async function extractFromPdfWithPdfjs(buffer) {
   const { pathToFileURL } = await import("url");
   const { resolve: resolve11 } = await import("path");
@@ -4881,7 +5301,7 @@ async function extractFromImage(buffer, mimeType) {
 async function summarizeText(name, text2, userId) {
   const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
   const model = await getModel2(userId, "research");
-  const input = text2.slice(0, MAX_SUMMARY_INPUT_CHARS);
+  const input2 = text2.slice(0, MAX_SUMMARY_INPUT_CHARS);
   const response = await createRoutedChatCompletion({
     model,
     messages: [
@@ -4894,7 +5314,7 @@ async function summarizeText(name, text2, userId) {
         content: `Document name: "${name}"
 
 Content:
-${input}`
+${input2}`
       }
     ],
     temperature: 0.2,
@@ -4919,18 +5339,18 @@ async function processDocument(userId, documentId, name, mimeType, buffer) {
     extractedText = extractedText.replace(/\r\n/g, "\n").replace(/\n{4,}/g, "\n\n\n").trim().slice(0, MAX_EXTRACTED_CHARS);
     const needsSummary = extractedText.length > 6e3;
     const summary = needsSummary ? await summarizeText(name, extractedText, userId) : null;
-    await db.update(userDocuments).set({ status: "ready", extractedText, summary }).where(eq3(userDocuments.id, documentId));
+    await db.update(userDocuments).set({ status: "ready", extractedText, summary }).where(eq4(userDocuments.id, documentId));
     console.log(`[Docs] Processed "${name}" \u2014 ${extractedText.length} chars${needsSummary ? ", summarized" : ""}`);
   } catch (err2) {
     console.error(`[Docs] Error processing "${name}":`, err2);
     await db.update(userDocuments).set({
       status: "error",
       summary: `Failed to extract text: ${err2 instanceof Error ? err2.message : "Unknown error"}`
-    }).where(eq3(userDocuments.id, documentId));
+    }).where(eq4(userDocuments.id, documentId));
   }
 }
 async function getUserDocumentContext(userId) {
-  const docs = await db.select().from(userDocuments).where(eq3(userDocuments.userId, userId)).orderBy(desc(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
+  const docs = await db.select().from(userDocuments).where(eq4(userDocuments.userId, userId)).orderBy(desc2(userDocuments.uploadedAt)).limit(MAX_DOCS_PER_USER);
   const readyDocs = docs.filter((d) => d.status === "ready" && (d.extractedText || d.summary));
   if (readyDocs.length === 0) return "";
   const sections = readyDocs.map((doc) => {
@@ -5034,7 +5454,7 @@ __export(soul_exports, {
   setSoulContent: () => setSoulContent,
   touchReferencedMemories: () => touchReferencedMemories
 });
-import { eq as eq4, desc as desc2, and as and2, inArray, gte, gt, sql as sql3 } from "drizzle-orm";
+import { eq as eq5, desc as desc3, and as and3, inArray, gte, gt as gt2, sql as sql3 } from "drizzle-orm";
 function readLifeContextData(value) {
   if (!value || typeof value !== "object") return null;
   const obj = value;
@@ -5048,8 +5468,8 @@ function readLifeContextData(value) {
 async function countNewMemoriesSince(userId, since) {
   try {
     const result = await db.select({ count: sql3`count(*)` }).from(userMemories).where(
-      and2(
-        eq4(userMemories.userId, userId),
+      and3(
+        eq5(userMemories.userId, userId),
         gte(userMemories.extractedAt, since),
         sql3`(${userMemories.tier} = 'short_term' OR ${userMemories.memoryType} = 'episodic')`
       )
@@ -5086,68 +5506,68 @@ async function buildSoulMarkdown(userId) {
       category: userMemories.category,
       sourceType: userMemories.sourceType
     }).from(userMemories).where(
-      and2(
-        eq4(userMemories.userId, userId),
-        eq4(userMemories.tier, "long_term"),
+      and3(
+        eq5(userMemories.userId, userId),
+        eq5(userMemories.tier, "long_term"),
         sql3`${userMemories.memoryType} IN ('semantic','procedural')`,
         sql3`${userMemories.category} IN ('values','communication_style','preferences','fact')`,
-        eq4(userMemories.pendingReview, false)
+        eq5(userMemories.pendingReview, false)
       )
-    ).orderBy(desc2(userMemories.relevanceScore), desc2(userMemories.confidence)).limit(16),
+    ).orderBy(desc3(userMemories.relevanceScore), desc3(userMemories.confidence)).limit(16),
     // 2. Current State — short_term contextual
     db.select({ content: userMemories.content, sourceType: userMemories.sourceType }).from(userMemories).where(
-      and2(
-        eq4(userMemories.userId, userId),
-        eq4(userMemories.tier, "short_term"),
-        eq4(userMemories.memoryType, "contextual"),
-        eq4(userMemories.pendingReview, false)
+      and3(
+        eq5(userMemories.userId, userId),
+        eq5(userMemories.tier, "short_term"),
+        eq5(userMemories.memoryType, "contextual"),
+        eq5(userMemories.pendingReview, false)
       )
-    ).orderBy(desc2(userMemories.extractedAt)).limit(12),
+    ).orderBy(desc3(userMemories.extractedAt)).limit(12),
     // 3. Episodic Highlights — episodic memories in last 7 days
     db.select({
       content: userMemories.content,
       extractedAt: userMemories.extractedAt,
       sourceType: userMemories.sourceType
     }).from(userMemories).where(
-      and2(
-        eq4(userMemories.userId, userId),
-        eq4(userMemories.memoryType, "episodic"),
+      and3(
+        eq5(userMemories.userId, userId),
+        eq5(userMemories.memoryType, "episodic"),
         gte(userMemories.extractedAt, sevenDaysAgo),
-        eq4(userMemories.pendingReview, false)
+        eq5(userMemories.pendingReview, false)
       )
-    ).orderBy(desc2(userMemories.extractedAt)).limit(8),
+    ).orderBy(desc3(userMemories.extractedAt)).limit(8),
     // 4. Long-Term Patterns — high-relevance long_term in work/energy/accomplishments
     db.select({
       content: userMemories.content,
       category: userMemories.category,
       sourceType: userMemories.sourceType
     }).from(userMemories).where(
-      and2(
-        eq4(userMemories.userId, userId),
-        eq4(userMemories.tier, "long_term"),
+      and3(
+        eq5(userMemories.userId, userId),
+        eq5(userMemories.tier, "long_term"),
         sql3`${userMemories.category} IN ('work_patterns','energy_rhythms','accomplishments','blockers')`,
-        gt(userMemories.relevanceScore, 55),
-        eq4(userMemories.pendingReview, false)
+        gt2(userMemories.relevanceScore, 55),
+        eq5(userMemories.pendingReview, false)
       )
-    ).orderBy(desc2(userMemories.relevanceScore), desc2(userMemories.extractedAt)).limit(24),
+    ).orderBy(desc3(userMemories.relevanceScore), desc3(userMemories.extractedAt)).limit(24),
     // 7. Aspirations — goals_history category memories
     db.select({ content: userMemories.content, sourceType: userMemories.sourceType }).from(userMemories).where(
-      and2(
-        eq4(userMemories.userId, userId),
-        eq4(userMemories.category, "goals_history"),
-        eq4(userMemories.pendingReview, false)
+      and3(
+        eq5(userMemories.userId, userId),
+        eq5(userMemories.category, "goals_history"),
+        eq5(userMemories.pendingReview, false)
       )
-    ).orderBy(desc2(userMemories.relevanceScore), desc2(userMemories.extractedAt)).limit(8),
+    ).orderBy(desc3(userMemories.relevanceScore), desc3(userMemories.extractedAt)).limit(8),
     // 5. Dream Insights — top 3 by confidence
     db.select({
       insightText: dreamInsights.insightText,
       confidenceScore: dreamInsights.confidenceScore,
       dreamDate: dreamInsights.dreamDate
-    }).from(dreamInsights).where(eq4(dreamInsights.userId, userId)).orderBy(desc2(dreamInsights.confidenceScore), desc2(dreamInsights.createdAt)).limit(3),
+    }).from(dreamInsights).where(eq5(dreamInsights.userId, userId)).orderBy(desc3(dreamInsights.confidenceScore), desc3(dreamInsights.createdAt)).limit(3),
     // Life context for Current State + Aspirations
-    db.select().from(lifeContext).where(eq4(lifeContext.userId, userId)).limit(1),
+    db.select().from(lifeContext).where(eq5(lifeContext.userId, userId)).limit(1),
     // 6. Relationships — people table
-    db.select().from(people).where(eq4(people.userId, userId)).orderBy(desc2(people.lastInteractionAt)).limit(15),
+    db.select().from(people).where(eq5(people.userId, userId)).orderBy(desc3(people.lastInteractionAt)).limit(15),
     // 2b. Emotional state — current inferred state
     db.select({
       label: userEmotionalState.label,
@@ -5155,13 +5575,13 @@ async function buildSoulMarkdown(userId) {
       flowScore: userEmotionalState.flowScore,
       explanation: userEmotionalState.explanation,
       manualOverride: userEmotionalState.manualOverride
-    }).from(userEmotionalState).where(eq4(userEmotionalState.userId, userId)).limit(1),
+    }).from(userEmotionalState).where(eq5(userEmotionalState.userId, userId)).limit(1),
     // 2c. Most recent morning note mood signal + intention
     db.select({
       moodSignal: morningVoiceNotes.moodSignal,
       intention: morningVoiceNotes.intention,
       recordedAt: morningVoiceNotes.recordedAt
-    }).from(morningVoiceNotes).where(eq4(morningVoiceNotes.userId, userId)).orderBy(desc2(morningVoiceNotes.recordedAt)).limit(1)
+    }).from(morningVoiceNotes).where(eq5(morningVoiceNotes.userId, userId)).orderBy(desc3(morningVoiceNotes.recordedAt)).limit(1)
   ]);
   const lc = lifeRows[0] ? readLifeContextData(lifeRows[0].data) : null;
   const sections = [];
@@ -5342,7 +5762,7 @@ async function regenerateSoul(userId) {
   };
 }
 async function getSoul(userId, opts) {
-  const [existing] = await db.select().from(jarvisSouls).where(eq4(jarvisSouls.userId, userId)).limit(1);
+  const [existing] = await db.select().from(jarvisSouls).where(eq5(jarvisSouls.userId, userId)).limit(1);
   const stale = await isStale(userId, existing?.generatedAt ?? null);
   if (!existing || opts?.forceFresh || stale || !existing.content.trim()) {
     const fresh = await regenerateSoul(userId);
@@ -5377,12 +5797,12 @@ async function setManualOverride(userId, override) {
   });
 }
 async function markSoulStale(userId) {
-  const [existing] = await db.select({ generatedAt: jarvisSouls.generatedAt }).from(jarvisSouls).where(eq4(jarvisSouls.userId, userId)).limit(1);
+  const [existing] = await db.select({ generatedAt: jarvisSouls.generatedAt }).from(jarvisSouls).where(eq5(jarvisSouls.userId, userId)).limit(1);
   if (!existing) return;
   if (existing.generatedAt === null) return;
   const shouldInvalidate = await isStale(userId, existing.generatedAt);
   if (!shouldInvalidate) return;
-  await db.update(jarvisSouls).set({ generatedAt: null }).where(eq4(jarvisSouls.userId, userId));
+  await db.update(jarvisSouls).set({ generatedAt: null }).where(eq5(jarvisSouls.userId, userId));
 }
 async function getSoulPromptBlock(userId) {
   try {
@@ -5410,7 +5830,7 @@ ${compacted}
 async function touchReferencedMemories(userId, ids) {
   if (ids.length === 0) return;
   try {
-    await db.update(userMemories).set({ lastReferencedAt: /* @__PURE__ */ new Date() }).where(and2(eq4(userMemories.userId, userId), inArray(userMemories.id, ids)));
+    await db.update(userMemories).set({ lastReferencedAt: /* @__PURE__ */ new Date() }).where(and3(eq5(userMemories.userId, userId), inArray(userMemories.id, ids)));
   } catch (err2) {
     console.error("[Soul] touchReferencedMemories failed:", err2);
   }
@@ -5430,7 +5850,7 @@ var init_soul = __esm({
 });
 
 // server/interactionLog.ts
-import { eq as eq5, desc as desc3, gte as gte2, and as and3 } from "drizzle-orm";
+import { eq as eq6, desc as desc4, gte as gte2, and as and4 } from "drizzle-orm";
 async function logInteraction(userId, channel, direction, content, label) {
   try {
     await db.insert(interactionLog).values({
@@ -5448,11 +5868,11 @@ async function getRecentInteractions(userId, limit = 20, withinHours = 48) {
   try {
     const since = new Date(Date.now() - withinHours * 60 * 60 * 1e3);
     return await db.select().from(interactionLog).where(
-      and3(
-        eq5(interactionLog.userId, userId),
+      and4(
+        eq6(interactionLog.userId, userId),
         gte2(interactionLog.createdAt, since)
       )
-    ).orderBy(desc3(interactionLog.createdAt)).limit(limit);
+    ).orderBy(desc4(interactionLog.createdAt)).limit(limit);
   } catch (err2) {
     console.error("[InteractionLog] Failed to fetch interactions:", err2);
     return [];
@@ -5513,7 +5933,7 @@ __export(registry_exports, {
   registerChannel: () => registerChannel,
   setPreference: () => setPreference
 });
-import { eq as eq6, and as and4 } from "drizzle-orm";
+import { eq as eq7, and as and5 } from "drizzle-orm";
 function registerChannel(channel) {
   channels.set(channel.name, channel);
 }
@@ -5525,9 +5945,9 @@ function listChannels() {
 }
 async function getActiveChannelsFor(userId, notificationType) {
   try {
-    const rows = await db.select().from(channelPreferences).where(and4(
-      eq6(channelPreferences.userId, userId),
-      eq6(channelPreferences.notificationType, notificationType)
+    const rows = await db.select().from(channelPreferences).where(and5(
+      eq7(channelPreferences.userId, userId),
+      eq7(channelPreferences.notificationType, notificationType)
     )).limit(1);
     const row = rows[0];
     if (row) {
@@ -5543,7 +5963,7 @@ async function getActiveChannelsFor(userId, notificationType) {
 async function getAllPreferences(userId) {
   const out = {};
   try {
-    const rows = await db.select().from(channelPreferences).where(eq6(channelPreferences.userId, userId));
+    const rows = await db.select().from(channelPreferences).where(eq7(channelPreferences.userId, userId));
     for (const r of rows) {
       out[r.notificationType] = r.channels || [];
     }
@@ -5689,8 +6109,8 @@ var init_errorLogger = __esm({
 });
 
 // server/agent/responseQuality.ts
-function checkResponseQuality(input) {
-  const { userMessage, agentReply, toolsUsed, androidToolsAvailable } = input;
+function checkResponseQuality(input2) {
+  const { userMessage, agentReply, toolsUsed, androidToolsAvailable } = input2;
   const lowerMsg = userMessage.toLowerCase();
   const lowerReply = agentReply.toLowerCase().trim();
   const replyWords = agentReply.trim().split(/\s+/).filter(Boolean).length;
@@ -5826,8 +6246,8 @@ function estimateModelUsage(params) {
     estimated: true
   };
 }
-async function recordModelUsage(input) {
-  if (!input.userId || !input.model || !input.provider) return;
+async function recordModelUsage(input2) {
+  if (!input2.userId || !input2.model || !input2.provider) return;
   try {
     await pool.query(
       `
@@ -5847,17 +6267,17 @@ async function recordModelUsage(input) {
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
       `,
       [
-        input.userId,
-        input.provider,
-        input.model,
-        input.source || "unknown",
-        Math.max(0, Math.round(input.promptTokens || 0)),
-        Math.max(0, Math.round(input.completionTokens || 0)),
-        Math.max(0, Math.round(input.totalTokens || 0)),
-        Math.max(0, Math.round(input.durationMs || 0)),
-        input.success ?? true,
-        input.estimated ?? true,
-        JSON.stringify(input.metadata ?? {})
+        input2.userId,
+        input2.provider,
+        input2.model,
+        input2.source || "unknown",
+        Math.max(0, Math.round(input2.promptTokens || 0)),
+        Math.max(0, Math.round(input2.completionTokens || 0)),
+        Math.max(0, Math.round(input2.totalTokens || 0)),
+        Math.max(0, Math.round(input2.durationMs || 0)),
+        input2.success ?? true,
+        input2.estimated ?? true,
+        JSON.stringify(input2.metadata ?? {})
       ]
     );
   } catch (err2) {
@@ -6208,7 +6628,7 @@ __export(skillWriter_exports, {
   refreshUserSkillCache: () => refreshUserSkillCache,
   startSkillWatcher: () => startSkillWatcher
 });
-import { eq as eq7 } from "drizzle-orm";
+import { eq as eq8 } from "drizzle-orm";
 import fs2 from "fs/promises";
 import { watch as watch2 } from "fs";
 import path2 from "path";
@@ -6272,7 +6692,7 @@ async function deleteSkill(userId, skillId) {
 async function recordSkillSignal(userId, patternId, example) {
   if (!userId || !patternId) return;
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq7(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq8(userPreferences.userId, userId)).limit(1);
     const data = rows[0]?.data ?? {};
     const signals = data.skillSignals ?? {};
     const sig = signals[patternId] ?? {
@@ -6347,7 +6767,7 @@ Reply with ONLY valid JSON.`;
   await fs2.mkdir(dir, { recursive: true });
   await fs2.writeFile(path2.join(dir, `${id}.skill.json`), JSON.stringify(skill, null, 2), "utf-8");
   try {
-    const rows2 = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq7(userPreferences.userId, userId)).limit(1);
+    const rows2 = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq8(userPreferences.userId, userId)).limit(1);
     const data2 = rows2[0]?.data ?? {};
     const signals2 = data2.skillSignals ?? {};
     signals2[patternId] = { ...signals2[patternId] ?? { count: CRYSTALLIZE_THRESHOLD, lastSeen: (/* @__PURE__ */ new Date()).toISOString(), example }, crystallized: true };
@@ -6401,7 +6821,7 @@ function startSkillWatcher() {
 }
 async function getUserSkillSignals(userId) {
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq7(userPreferences.userId, userId)).limit(1);
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq8(userPreferences.userId, userId)).limit(1);
     const data = rows[0]?.data ?? {};
     return data.skillSignals ?? {};
   } catch {
@@ -6439,11 +6859,11 @@ __export(behaviorStore_exports, {
   setUserPackActive: () => setUserPackActive,
   writeEgoOverrides: () => writeEgoOverrides
 });
-import { eq as eq8, and as and5, sql as sql4 } from "drizzle-orm";
+import { eq as eq9, and as and6, sql as sql4 } from "drizzle-orm";
 async function publishSkillPack(payload) {
   const now = /* @__PURE__ */ new Date();
   if (payload.packId) {
-    const existing = await db.select().from(skillPacks).where(eq8(skillPacks.id, payload.packId)).limit(1);
+    const existing = await db.select().from(skillPacks).where(eq9(skillPacks.id, payload.packId)).limit(1);
     if (existing.length > 0) {
       const old = existing[0];
       const newVersion = old.version + 1;
@@ -6465,7 +6885,7 @@ async function publishSkillPack(payload) {
         version: newVersion,
         publishedAt: now,
         changelog: newChangelog
-      }).where(eq8(skillPacks.id, payload.packId)).returning();
+      }).where(eq9(skillPacks.id, payload.packId)).returning();
       console.log(`[BehaviorStore] published pack "${updated.name}" v${updated.version}`);
       return updated;
     }
@@ -6511,8 +6931,8 @@ async function getAdminPackViews() {
   }));
 }
 async function writeEgoOverrides(userId, packId, overrides) {
-  const existing = await db.select({ instructionOverrides: userSkillPacks.instructionOverrides, appliedVersion: userSkillPacks.appliedVersion }).from(userSkillPacks).where(and5(eq8(userSkillPacks.userId, userId), eq8(userSkillPacks.packId, packId))).limit(1);
-  const pack = await db.select({ version: skillPacks.version }).from(skillPacks).where(eq8(skillPacks.id, packId)).limit(1);
+  const existing = await db.select({ instructionOverrides: userSkillPacks.instructionOverrides, appliedVersion: userSkillPacks.appliedVersion }).from(userSkillPacks).where(and6(eq9(userSkillPacks.userId, userId), eq9(userSkillPacks.packId, packId))).limit(1);
+  const pack = await db.select({ version: skillPacks.version }).from(skillPacks).where(eq9(skillPacks.id, packId)).limit(1);
   const packVersion = pack[0]?.version ?? 1;
   const prev = existing[0]?.instructionOverrides ?? {};
   const merged = {
@@ -6538,7 +6958,7 @@ async function writeEgoOverrides(userId, packId, overrides) {
 }
 async function loadPackInstructionsForUser(userId) {
   if (!userId) return [];
-  const userRows = await db.select().from(userSkillPacks).where(eq8(userSkillPacks.userId, userId));
+  const userRows = await db.select().from(userSkillPacks).where(eq9(userSkillPacks.userId, userId));
   const activePackIds = new Set(
     userRows.filter((r) => r.isActive).map((r) => r.packId)
   );
@@ -6584,23 +7004,23 @@ async function loadPackInstructionsForUser(userId) {
   return result;
 }
 async function listStorePacksForUser(userId) {
-  const packs = await db.select().from(skillPacks).where(eq8(skillPacks.isStoreVisible, true)).orderBy(skillPacks.createdAt);
+  const packs = await db.select().from(skillPacks).where(eq9(skillPacks.isStoreVisible, true)).orderBy(skillPacks.createdAt);
   if (packs.length === 0) return [];
-  const userRows = await db.select({ packId: userSkillPacks.packId, isActive: userSkillPacks.isActive }).from(userSkillPacks).where(eq8(userSkillPacks.userId, userId));
+  const userRows = await db.select({ packId: userSkillPacks.packId, isActive: userSkillPacks.isActive }).from(userSkillPacks).where(eq9(userSkillPacks.userId, userId));
   const activeSet = new Set(
     userRows.filter((r) => r.isActive).map((r) => r.packId)
   );
   return packs.map((p) => ({ ...p, isActive: activeSet.has(p.id) }));
 }
 async function getStorePackById(packId, userId) {
-  const rows = await db.select().from(skillPacks).where(and5(eq8(skillPacks.id, packId), eq8(skillPacks.isStoreVisible, true))).limit(1);
+  const rows = await db.select().from(skillPacks).where(and6(eq9(skillPacks.id, packId), eq9(skillPacks.isStoreVisible, true))).limit(1);
   if (rows.length === 0) return null;
   const pack = rows[0];
-  const userRow = await db.select({ isActive: userSkillPacks.isActive }).from(userSkillPacks).where(and5(eq8(userSkillPacks.userId, userId), eq8(userSkillPacks.packId, packId))).limit(1);
+  const userRow = await db.select({ isActive: userSkillPacks.isActive }).from(userSkillPacks).where(and6(eq9(userSkillPacks.userId, userId), eq9(userSkillPacks.packId, packId))).limit(1);
   return { ...pack, isActive: userRow[0]?.isActive ?? false };
 }
 async function setUserPackActive(userId, packId, isActive) {
-  const pack = await db.select({ version: skillPacks.version, isStoreVisible: skillPacks.isStoreVisible }).from(skillPacks).where(eq8(skillPacks.id, packId)).limit(1);
+  const pack = await db.select({ version: skillPacks.version, isStoreVisible: skillPacks.isStoreVisible }).from(skillPacks).where(eq9(skillPacks.id, packId)).limit(1);
   if (pack.length === 0) throw new Error(`Pack ${packId} not found`);
   if (!pack[0].isStoreVisible) throw new Error(`Pack ${packId} is not a store-visible pack`);
   await db.insert(userSkillPacks).values({
@@ -6622,7 +7042,7 @@ async function seedDefaultPacks() {
   const now = /* @__PURE__ */ new Date();
   for (const def of SEED_PACKS) {
     try {
-      const existing = await db.select({ id: skillPacks.id }).from(skillPacks).where(eq8(skillPacks.name, def.name)).limit(1);
+      const existing = await db.select({ id: skillPacks.id }).from(skillPacks).where(eq9(skillPacks.name, def.name)).limit(1);
       if (existing.length > 0) continue;
       await db.insert(skillPacks).values({
         name: def.name,
@@ -6648,7 +7068,7 @@ async function seedDefaultPacks() {
   }
 }
 async function getOrCreateSystemPackId() {
-  const existing = await db.select({ id: skillPacks.id }).from(skillPacks).where(eq8(skillPacks.name, SYSTEM_PACK_NAME)).limit(1);
+  const existing = await db.select({ id: skillPacks.id }).from(skillPacks).where(eq9(skillPacks.name, SYSTEM_PACK_NAME)).limit(1);
   if (existing.length > 0) return existing[0].id;
   const [created] = await db.insert(skillPacks).values({
     name: "Jarvis Core Behaviour",
@@ -8123,7 +8543,7 @@ function formatLearning(args, now) {
   if (notes) lines.push(`- Notes: ${notes}`);
   return { block: lines.join("\n"), learned, status: finalStatus, confidence, sourceType };
 }
-async function persistLivingContextUpdate(input) {
+async function persistLivingContextUpdate(input2) {
   await withDb(async (db2, sql47) => {
     await db2.execute(sql47`
       INSERT INTO living_context_updates (
@@ -8143,33 +8563,33 @@ async function persistLivingContextUpdate(input) {
         block
       )
       VALUES (
-        ${input.userId},
-        ${input.target},
-        ${input.path},
-        ${cleanSingleLine(input.args.topic, "Context update").slice(0, 120)},
-        ${input.learned},
-        ${factKey(input.learned)},
-        ${input.sourceType},
-        ${cleanSingleLine(input.args.sourceRef, "").slice(0, 200) || null},
-        ${input.confidence},
-        ${input.status},
-        ${cleanSingleLine(input.args.fillsQuestion, "").slice(0, 240) || null},
-        ${Boolean(input.args.approvalSensitive)},
-        ${String(input.args.notes ?? "").trim() || null},
-        ${input.block}
+        ${input2.userId},
+        ${input2.target},
+        ${input2.path},
+        ${cleanSingleLine(input2.args.topic, "Context update").slice(0, 120)},
+        ${input2.learned},
+        ${factKey(input2.learned)},
+        ${input2.sourceType},
+        ${cleanSingleLine(input2.args.sourceRef, "").slice(0, 200) || null},
+        ${input2.confidence},
+        ${input2.status},
+        ${cleanSingleLine(input2.args.fillsQuestion, "").slice(0, 240) || null},
+        ${Boolean(input2.args.approvalSensitive)},
+        ${String(input2.args.notes ?? "").trim() || null},
+        ${input2.block}
       )
       ON CONFLICT DO NOTHING
     `);
   });
 }
-async function syncPersistedUpdatesToFile(input) {
-  const existing = await fs3.readFile(input.abs, "utf-8").catch(() => "");
+async function syncPersistedUpdatesToFile(input2) {
+  const existing = await fs3.readFile(input2.abs, "utf-8").catch(() => "");
   const rows = await withDb(async (db2, sql47) => {
     const result = await db2.execute(sql47`
       SELECT block
       FROM living_context_updates
-      WHERE user_id = ${input.userId}
-        AND target = ${input.target}
+      WHERE user_id = ${input2.userId}
+        AND target = ${input2.target}
         AND status <> 'discarded'
       ORDER BY created_at ASC
     `);
@@ -8187,8 +8607,8 @@ ${row.block}
     changed = true;
   }
   if (changed) {
-    await fs3.mkdir(path3.dirname(input.abs), { recursive: true });
-    await fs3.writeFile(input.abs, updated, "utf-8");
+    await fs3.mkdir(path3.dirname(input2.abs), { recursive: true });
+    await fs3.writeFile(input2.abs, updated, "utf-8");
   }
   return updated;
 }
@@ -8395,10 +8815,10 @@ function isDeclarativeFact(sentence, sourceType) {
   }
   return true;
 }
-function detectLivingContextUpdate(input) {
-  const sentences = splitCandidateSentences(input.text);
+function detectLivingContextUpdate(input2) {
+  const sentences = splitCandidateSentences(input2.text);
   for (const sentence of sentences) {
-    if (!isDeclarativeFact(sentence, input.sourceType)) continue;
+    if (!isDeclarativeFact(sentence, input2.sourceType)) continue;
     for (const route of ROUTES) {
       if (!route.keywords.some((keyword) => keyword.test(sentence))) continue;
       return {
@@ -8406,20 +8826,20 @@ function detectLivingContextUpdate(input) {
         topic: route.topic,
         learned: sentence,
         fillsQuestion: route.fillsQuestion,
-        confidence: input.sourceType === "conversation" ? 92 : 75
+        confidence: input2.sourceType === "conversation" ? 92 : 75
       };
     }
   }
   return null;
 }
-async function processLivingContextUpdate(input) {
-  const match = detectLivingContextUpdate(input);
+async function processLivingContextUpdate(input2) {
+  const match = detectLivingContextUpdate(input2);
   if (!match) return { updated: false };
   const tool = createLivingContextUpdateTool({
-    requireOwner: input.requireOwner ?? true
+    requireOwner: input2.requireOwner ?? true
   });
   const ctx = {
-    userId: input.userId,
+    userId: input2.userId,
     state: {},
     channel: "living-context-router"
   };
@@ -8428,8 +8848,8 @@ async function processLivingContextUpdate(input) {
     target: match.target,
     topic: match.topic,
     learned: match.learned,
-    sourceType: input.sourceType,
-    sourceRef: input.sourceRef ?? input.sourceType,
+    sourceType: input2.sourceType,
+    sourceRef: input2.sourceRef ?? input2.sourceType,
     confidence: match.confidence,
     status: "confirmed",
     fillsQuestion: match.fillsQuestion,
@@ -9667,7 +10087,7 @@ import OpenAI6, { toFile } from "openai";
 import { Buffer as Buffer3 } from "node:buffer";
 import { spawn as spawn2 } from "child_process";
 import { writeFile, unlink, readFile as readFile2 } from "fs/promises";
-import { randomUUID } from "crypto";
+import { randomUUID as randomUUID2 } from "crypto";
 import { tmpdir as tmpdir2 } from "os";
 import { join as join2 } from "path";
 function detectAudioFormat(buffer) {
@@ -9690,8 +10110,8 @@ function detectAudioFormat(buffer) {
   return "unknown";
 }
 async function convertToWav(audioBuffer) {
-  const inputPath = join2(tmpdir2(), `input-${randomUUID()}`);
-  const outputPath = join2(tmpdir2(), `output-${randomUUID()}.wav`);
+  const inputPath = join2(tmpdir2(), `input-${randomUUID2()}`);
+  const outputPath = join2(tmpdir2(), `output-${randomUUID2()}.wav`);
   try {
     await writeFile(inputPath, audioBuffer);
     await new Promise((resolve11, reject) => {
@@ -9935,7 +10355,7 @@ __export(predictor_exports, {
   getWeekPredictions: () => getWeekPredictions,
   validateExpiredPredictions: () => validateExpiredPredictions
 });
-import { eq as eq9, and as and6, desc as desc4, gte as gte3, isNull, sql as sql7 } from "drizzle-orm";
+import { eq as eq10, and as and7, desc as desc5, gte as gte3, isNull, sql as sql7 } from "drizzle-orm";
 function formatHour(hour) {
   if (hour === 0) return "midnight";
   if (hour < 12) return `${hour}am`;
@@ -10067,9 +10487,9 @@ async function generateAndStorePredictions(userId, targetDate, analysis) {
   let newPredictions = rawPredictions;
   try {
     const existing = await db.select({ predictionType: jarvisPredictions.predictionType }).from(jarvisPredictions).where(
-      and6(
-        eq9(jarvisPredictions.userId, userId),
-        eq9(jarvisPredictions.targetDate, targetDate)
+      and7(
+        eq10(jarvisPredictions.userId, userId),
+        eq10(jarvisPredictions.targetDate, targetDate)
       )
     );
     if (existing.length > 0) {
@@ -10109,12 +10529,12 @@ async function generateAndStorePredictions(userId, targetDate, analysis) {
 async function getTodayPredictions(userId, targetDate, minConfidence = CONFIDENCE_THRESHOLD) {
   try {
     const rows = await db.select().from(jarvisPredictions).where(
-      and6(
-        eq9(jarvisPredictions.userId, userId),
-        eq9(jarvisPredictions.targetDate, targetDate),
+      and7(
+        eq10(jarvisPredictions.userId, userId),
+        eq10(jarvisPredictions.targetDate, targetDate),
         gte3(jarvisPredictions.confidenceScore, minConfidence)
       )
-    ).orderBy(desc4(jarvisPredictions.confidenceScore)).limit(10);
+    ).orderBy(desc5(jarvisPredictions.confidenceScore)).limit(10);
     return rows;
   } catch (err2) {
     console.error("[Predictor] getTodayPredictions failed:", err2);
@@ -10127,13 +10547,13 @@ async function getWeekPredictions(userId, startDate, minConfidence = CONFIDENCE_
   const endDate = end.toISOString().slice(0, 10);
   try {
     const rows = await db.select().from(jarvisPredictions).where(
-      and6(
-        eq9(jarvisPredictions.userId, userId),
+      and7(
+        eq10(jarvisPredictions.userId, userId),
         gte3(jarvisPredictions.targetDate, startDate),
         sql7`${jarvisPredictions.targetDate} <= ${endDate}`,
         minConfidence > 0 ? gte3(jarvisPredictions.confidenceScore, minConfidence) : void 0
       )
-    ).orderBy(jarvisPredictions.targetDate, desc4(jarvisPredictions.confidenceScore)).limit(30);
+    ).orderBy(jarvisPredictions.targetDate, desc5(jarvisPredictions.confidenceScore)).limit(30);
     return rows;
   } catch (err2) {
     console.error("[Predictor] getWeekPredictions failed:", err2);
@@ -10154,14 +10574,14 @@ ${lines.join("\n")}`;
 async function getPredictionAccuracy(userId) {
   try {
     const rows = await db.select().from(jarvisPredictions).where(
-      and6(
-        eq9(jarvisPredictions.userId, userId),
+      and7(
+        eq10(jarvisPredictions.userId, userId),
         sql7`${jarvisPredictions.validated} IS NOT NULL`
       )
     ).limit(200);
     const skippedRows = await db.select({ id: jarvisPredictions.id }).from(jarvisPredictions).where(
-      and6(
-        eq9(jarvisPredictions.userId, userId),
+      and7(
+        eq10(jarvisPredictions.userId, userId),
         isNull(jarvisPredictions.validated),
         sql7`${jarvisPredictions.validationNote} LIKE 'auto_skipped%'`
       )
@@ -10196,8 +10616,8 @@ async function validateExpiredPredictions(userId, now) {
   const oneWeekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1e3).toISOString().slice(0, 10);
   try {
     const expired = await db.select().from(jarvisPredictions).where(
-      and6(
-        eq9(jarvisPredictions.userId, userId),
+      and7(
+        eq10(jarvisPredictions.userId, userId),
         isNull(jarvisPredictions.validated),
         isNull(jarvisPredictions.validationNote),
         gte3(jarvisPredictions.targetDate, oneWeekAgo)
@@ -10210,7 +10630,7 @@ async function validateExpiredPredictions(userId, now) {
       if (pred.predictionType === "energy_dip") {
         const dateKey = pred.targetDate;
         try {
-          const checkinRows = await db.select().from(energyCheckins).where(and6(eq9(energyCheckins.userId, userId), eq9(energyCheckins.date, dateKey))).limit(1);
+          const checkinRows = await db.select().from(energyCheckins).where(and7(eq10(energyCheckins.userId, userId), eq10(energyCheckins.date, dateKey))).limit(1);
           if (checkinRows.length > 0) {
             const data = checkinRows[0].data;
             const level = data.level ?? data.energy ?? null;
@@ -10229,7 +10649,7 @@ async function validateExpiredPredictions(userId, now) {
       } else if (pred.predictionType === "procrastination_risk") {
         const dateKey = pred.targetDate;
         try {
-          const planRows = await db.select().from(plans).where(and6(eq9(plans.userId, userId), eq9(plans.date, dateKey))).limit(1);
+          const planRows = await db.select().from(plans).where(and7(eq10(plans.userId, userId), eq10(plans.date, dateKey))).limit(1);
           if (planRows.length > 0) {
             const data = planRows[0].data;
             const tasks = data.tasks || [];
@@ -10253,7 +10673,7 @@ async function validateExpiredPredictions(userId, now) {
       }
       if (validated !== null || validationNote !== null) {
         try {
-          await db.update(jarvisPredictions).set({ validated, validationNote, validatedAt: validated !== null ? now : null }).where(eq9(jarvisPredictions.id, pred.id));
+          await db.update(jarvisPredictions).set({ validated, validationNote, validatedAt: validated !== null ? now : null }).where(eq10(jarvisPredictions.id, pred.id));
         } catch (err2) {
           console.error("[Predictor] validation update failed:", err2);
         }
@@ -10680,7 +11100,7 @@ var init_queryClassifier = __esm({
 });
 
 // server/agent/activationPlanner.ts
-import { eq as eq10, and as and7 } from "drizzle-orm";
+import { eq as eq11, and as and8 } from "drizzle-orm";
 function localHour(now, tz) {
   return new Date(now.toLocaleString("en-US", { timeZone: tz })).getHours();
 }
@@ -10753,7 +11173,7 @@ var init_activationPlanner = __esm({
       // ── Signal fetchers ───────────────────────────────────────────────────────
       async resolveTimezone(userId) {
         try {
-          const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq10(userPreferences.userId, userId)).limit(1);
+          const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq11(userPreferences.userId, userId)).limit(1);
           const prefs = rows[0]?.data || {};
           return prefs.timezone || "America/New_York";
         } catch {
@@ -10762,7 +11182,7 @@ var init_activationPlanner = __esm({
       }
       async fetchEmotionalState(userId) {
         try {
-          const rows = await db.select().from(userEmotionalState).where(eq10(userEmotionalState.userId, userId)).limit(1);
+          const rows = await db.select().from(userEmotionalState).where(eq11(userEmotionalState.userId, userId)).limit(1);
           return rows[0] ?? null;
         } catch {
           return null;
@@ -10792,7 +11212,7 @@ var init_activationPlanner = __esm({
        */
       async fetchFocusBlock(userId, dateKey) {
         try {
-          const rows = await db.select({ data: plans.data }).from(plans).where(and7(eq10(plans.userId, userId), eq10(plans.date, dateKey))).limit(1);
+          const rows = await db.select({ data: plans.data }).from(plans).where(and8(eq11(plans.userId, userId), eq11(plans.date, dateKey))).limit(1);
           const data = rows[0]?.data;
           if (!data?.tasks || !Array.isArray(data.tasks)) return false;
           return data.tasks.some((task) => {
@@ -11430,7 +11850,7 @@ __export(sessionStore_exports, {
   seedAllSessions: () => seedAllSessions,
   setSession: () => setSession
 });
-import { and as and8, eq as eq11, sql as sql8 } from "drizzle-orm";
+import { and as and9, eq as eq12, sql as sql8 } from "drizzle-orm";
 function cacheKey(userId, channel) {
   return `${userId}:${channel}`;
 }
@@ -11439,9 +11859,9 @@ async function getSession(userId, channel) {
   if (cache2.has(key)) return cache2.get(key);
   try {
     const rows = await db.select({ sdkSessionId: coachChannelSessions.sdkSessionId }).from(coachChannelSessions).where(
-      and8(
-        eq11(coachChannelSessions.userId, userId),
-        eq11(coachChannelSessions.channel, channel)
+      and9(
+        eq12(coachChannelSessions.userId, userId),
+        eq12(coachChannelSessions.channel, channel)
       )
     ).limit(1);
     if (rows[0]) {
@@ -11526,7 +11946,7 @@ __export(bridge_exports, {
   waitForTrainingTap: () => waitForTrainingTap
 });
 import { WebSocketServer, WebSocket } from "ws";
-import { eq as eq12, and as and9, sql as sql9 } from "drizzle-orm";
+import { eq as eq13, and as and10, sql as sql9 } from "drizzle-orm";
 import { randomBytes, createHash as createHash3 } from "crypto";
 function getRecentPhoneNotifications(userId, limit = 20) {
   const arr = userNotifications.get(userId) || [];
@@ -11579,7 +11999,7 @@ async function processDaemonUtterance(userId, utterance) {
 }
 async function syncWakeSettingsToDaemon(userId) {
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq12(userPreferences.userId, userId));
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq13(userPreferences.userId, userId));
     const prefs = rows[0]?.data ?? {};
     const wakeWordEnabled = prefs.wakeWordEnabled ?? false;
     const talkModeEnabled = prefs.talkModeEnabled ?? false;
@@ -11649,7 +12069,7 @@ function closeUserDaemon(userId, platform) {
   return closed;
 }
 async function findUserDaemonRow(userId, platform) {
-  const rows = await db.select().from(channelLinks).where(and9(eq12(channelLinks.userId, userId), eq12(channelLinks.channel, "daemon")));
+  const rows = await db.select().from(channelLinks).where(and10(eq13(channelLinks.userId, userId), eq13(channelLinks.channel, "daemon")));
   if (rows.length === 0) return null;
   let candidates = rows;
   if (platform) {
@@ -11705,7 +12125,7 @@ async function setDaemonPermissions(userId, perms) {
     const meta = row?.metadata || {};
     meta.permissions = merged;
     if (row) {
-      await db.update(channelLinks).set({ metadata: meta }).where(eq12(channelLinks.id, row.id));
+      await db.update(channelLinks).set({ metadata: meta }).where(eq13(channelLinks.id, row.id));
     } else {
       await db.insert(channelLinks).values({
         userId,
@@ -11744,7 +12164,7 @@ async function setAndroidDaemonPermissions(userId, perms) {
     const meta = row?.metadata || {};
     meta.android_permissions = merged;
     if (row) {
-      await db.update(channelLinks).set({ metadata: meta }).where(eq12(channelLinks.id, row.id));
+      await db.update(channelLinks).set({ metadata: meta }).where(eq13(channelLinks.id, row.id));
     } else {
       await db.insert(channelLinks).values({
         userId,
@@ -11892,14 +12312,14 @@ async function createDaemonPairingCode(userId) {
 }
 async function consumePairingCode(code) {
   try {
-    const rows = await db.select().from(channelLinkCodes).where(and9(eq12(channelLinkCodes.code, code), eq12(channelLinkCodes.channel, "daemon"))).limit(1);
+    const rows = await db.select().from(channelLinkCodes).where(and10(eq13(channelLinkCodes.code, code), eq13(channelLinkCodes.channel, "daemon"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-      await db.delete(channelLinkCodes).where(eq12(channelLinkCodes.code, code));
+      await db.delete(channelLinkCodes).where(eq13(channelLinkCodes.code, code));
       return null;
     }
-    await db.delete(channelLinkCodes).where(eq12(channelLinkCodes.code, code));
+    await db.delete(channelLinkCodes).where(eq13(channelLinkCodes.code, code));
     return row.userId;
   } catch (err2) {
     console.error("[daemon] consumePairingCode failed:", err2);
@@ -11909,7 +12329,7 @@ async function consumePairingCode(code) {
 async function recordDaemonLink(userId, daemonId, meta) {
   try {
     const platform = meta.platform || "desktop";
-    const existing = await db.select().from(channelLinks).where(and9(eq12(channelLinks.userId, userId), eq12(channelLinks.channel, "daemon")));
+    const existing = await db.select().from(channelLinks).where(and10(eq13(channelLinks.userId, userId), eq13(channelLinks.channel, "daemon")));
     const mergedMeta = { ...meta };
     for (const row of existing) {
       const prior = row.metadata || {};
@@ -11927,7 +12347,7 @@ async function recordDaemonLink(userId, daemonId, meta) {
       const priorMeta = row.metadata || {};
       const priorPlatform = priorMeta.platform || "desktop";
       if (priorPlatform === platform) {
-        await db.delete(channelLinks).where(eq12(channelLinks.id, row.id));
+        await db.delete(channelLinks).where(eq13(channelLinks.id, row.id));
       }
     }
     await db.insert(channelLinks).values({
@@ -11985,7 +12405,7 @@ function startDaemonBridge(server) {
           return;
         }
         try {
-          const rows = await db.select().from(channelLinks).where(and9(eq12(channelLinks.address, rm5.daemonId), eq12(channelLinks.channel, "daemon"))).limit(1);
+          const rows = await db.select().from(channelLinks).where(and10(eq13(channelLinks.address, rm5.daemonId), eq13(channelLinks.channel, "daemon"))).limit(1);
           const row = rows[0];
           if (!row) {
             try {
@@ -12021,7 +12441,7 @@ function startDaemonBridge(server) {
           }
           if (rm5.hostname) storedMeta.hostname = rm5.hostname;
           if (rm5.platform) storedMeta.platform = rm5.platform;
-          await db.update(channelLinks).set({ metadata: storedMeta, lastSeenAt: /* @__PURE__ */ new Date() }).where(eq12(channelLinks.id, row.id));
+          await db.update(channelLinks).set({ metadata: storedMeta, lastSeenAt: /* @__PURE__ */ new Date() }).where(eq13(channelLinks.id, row.id));
           const reconnPlatform = storedMeta.platform || "desktop";
           pairedPlatform = reconnPlatform;
           const reconnKey = socketKey(pairedUserId, reconnPlatform);
@@ -12160,7 +12580,7 @@ function startDaemonBridge(server) {
           const resolvedData = data !== void 0 ? data : Object.keys(rest).length > 0 ? rest : void 0;
           pending.resolve({ ok: ok3, data: resolvedData, error });
         }
-        db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and9(eq12(channelLinks.userId, pairedUserId), eq12(channelLinks.channel, "daemon"))).catch((err2) => console.error("[daemon] last_seen update failed:", err2));
+        db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and10(eq13(channelLinks.userId, pairedUserId), eq13(channelLinks.channel, "daemon"))).catch((err2) => console.error("[daemon] last_seen update failed:", err2));
       }
     });
     const keepalive = setInterval(() => {
@@ -12201,7 +12621,7 @@ function startDaemonBridge(server) {
   });
   console.log("[daemon] WebSocket bridge mounted at /api/daemon/ws");
   const cleanup = setInterval(() => {
-    db.delete(channelLinkCodes).where(and9(eq12(channelLinkCodes.channel, "daemon"), sql9`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[daemon] code cleanup failed:", err2));
+    db.delete(channelLinkCodes).where(and10(eq13(channelLinkCodes.channel, "daemon"), sql9`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[daemon] code cleanup failed:", err2));
   }, 5 * 60 * 1e3);
   cleanup.unref();
 }
@@ -12417,7 +12837,7 @@ var init_playwrightMcpClient = __esm({
 });
 
 // server/memory/protectedEntities.ts
-import { eq as eq13 } from "drizzle-orm";
+import { eq as eq14 } from "drizzle-orm";
 function extractTokensFromGoalTitle(title) {
   const tokens = /* @__PURE__ */ new Set();
   const parts = title.split(/[\s,;:/()\[\]{}"'`|]+/);
@@ -12436,7 +12856,7 @@ async function getProtectedEntityNames(userId) {
   }
   const names = /* @__PURE__ */ new Set();
   try {
-    const trees = await db.select({ title: goalTrees.title }).from(goalTrees).where(eq13(goalTrees.userId, userId)).limit(30);
+    const trees = await db.select({ title: goalTrees.title }).from(goalTrees).where(eq14(goalTrees.userId, userId)).limit(30);
     for (const t of trees) {
       if (t.title && t.title.trim().length >= 3) {
         for (const token of extractTokensFromGoalTitle(t.title)) {
@@ -12448,7 +12868,7 @@ async function getProtectedEntityNames(userId) {
     console.warn("[protectedEntities] goal_trees query failed:", err2);
   }
   try {
-    const [lc] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq13(lifeContext.userId, userId)).limit(1);
+    const [lc] = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq14(lifeContext.userId, userId)).limit(1);
     if (lc?.data) {
       const d = lc.data;
       if (d.priorityGoal && typeof d.priorityGoal === "string") {
@@ -12863,7 +13283,7 @@ ${formatted || "(no results)"}`;
 });
 
 // server/agent/tools/documents.ts
-import { eq as eq14, and as and10, desc as desc6 } from "drizzle-orm";
+import { eq as eq15, and as and11, desc as desc7 } from "drizzle-orm";
 var createDocumentTool, listDocumentsTool, readDocumentTool;
 var init_documents = __esm({
   "server/agent/tools/documents.ts"() {
@@ -12942,7 +13362,7 @@ var init_documents = __esm({
             uploadedAt: userDocuments.uploadedAt,
             status: userDocuments.status,
             sizeBytes: userDocuments.sizeBytes
-          }).from(userDocuments).where(eq14(userDocuments.userId, ctx.userId)).orderBy(desc6(userDocuments.uploadedAt)).limit(limit);
+          }).from(userDocuments).where(eq15(userDocuments.userId, ctx.userId)).orderBy(desc7(userDocuments.uploadedAt)).limit(limit);
           if (rows.length === 0) {
             return { ok: true, content: "The user has no documents yet.", label: "No documents" };
           }
@@ -12975,7 +13395,7 @@ ${formatted}`,
           return { ok: false, content: "document_id is required.", label: "Missing id" };
         }
         try {
-          const rows = await db.select().from(userDocuments).where(and10(eq14(userDocuments.userId, ctx.userId), eq14(userDocuments.id, documentId))).limit(1);
+          const rows = await db.select().from(userDocuments).where(and11(eq15(userDocuments.userId, ctx.userId), eq15(userDocuments.id, documentId))).limit(1);
           if (rows.length === 0) {
             return { ok: false, content: `No document found with id "${documentId}".`, label: "Document not found" };
           }
@@ -13163,7 +13583,7 @@ var init_googleDrive = __esm({
 });
 
 // server/agent/tools/exportPdf.ts
-import { eq as eq15, and as and11 } from "drizzle-orm";
+import { eq as eq16, and as and12 } from "drizzle-orm";
 async function markdownToPdfBuffer(title, markdown) {
   const PDFDocument = (await import("pdfkit")).default;
   return new Promise((resolve11, reject) => {
@@ -13312,7 +13732,7 @@ var init_exportPdf = __esm({
         let docTitle = a.title || "Document";
         if (a.document_id) {
           try {
-            const rows = await db.select().from(userDocuments).where(and11(eq15(userDocuments.userId, ctx.userId), eq15(userDocuments.id, a.document_id))).limit(1);
+            const rows = await db.select().from(userDocuments).where(and12(eq16(userDocuments.userId, ctx.userId), eq16(userDocuments.id, a.document_id))).limit(1);
             if (rows.length === 0) {
               return { ok: false, content: `No document found with id "${a.document_id}".`, label: "Document not found" };
             }
@@ -13672,8 +14092,8 @@ function noDrive() {
     label: "Drive not connected"
   };
 }
-function parseDriveFileId(input) {
-  const s = input.trim();
+function parseDriveFileId(input2) {
+  const s = input2.trim();
   if (!s) return null;
   if (/^[A-Za-z0-9_-]{20,}$/.test(s)) return s;
   const dMatch = s.match(/\/d\/([A-Za-z0-9_-]{20,})/);
@@ -13891,6 +14311,25 @@ var init_spawnSubagent = __esm({
   }
 });
 
+// server/lib/anthropicClient.ts
+var anthropicClient_exports = {};
+__export(anthropicClient_exports, {
+  ORCHESTRATOR_MAX_TOKENS: () => ORCHESTRATOR_MAX_TOKENS,
+  ORCHESTRATOR_MODEL: () => ORCHESTRATOR_MODEL,
+  anthropic: () => anthropic
+});
+import Anthropic2 from "@anthropic-ai/sdk";
+var anthropic, ORCHESTRATOR_MODEL, ORCHESTRATOR_MAX_TOKENS;
+var init_anthropicClient = __esm({
+  "server/lib/anthropicClient.ts"() {
+    "use strict";
+    init_env();
+    anthropic = new Anthropic2(getAnthropicClientConfig());
+    ORCHESTRATOR_MODEL = "claude-opus-4-7";
+    ORCHESTRATOR_MAX_TOKENS = 8192;
+  }
+});
+
 // server/lib/screenshotDiff.ts
 async function screenshotDiff(base64a, base64b) {
   try {
@@ -13972,7 +14411,7 @@ __export(daemonShellTool_exports, {
 });
 import path5 from "path";
 import { createHash as createHash4 } from "crypto";
-import { eq as eq16, and as and12, desc as desc7, sql as drizzleSql } from "drizzle-orm";
+import { eq as eq17, and as and13, desc as desc8, sql as drizzleSql } from "drizzle-orm";
 function isCmdBin(p) {
   const norm = path5.normalize(p);
   return CMD_BIN_PREFIXES.some((prefix) => norm.startsWith(prefix));
@@ -14061,25 +14500,25 @@ async function buildScreenMapElements(userId, ctx) {
   const elementsJson = typeof rawElements === "string" ? rawElements : JSON.stringify(rawElements);
   let screenElements = [];
   try {
-    const codexResponse = await routeModelTurn({
-      tier: "smart",
-      maxCompletionTokens: 2048,
-      stream: false,
-      toolChoice: "none",
-      logPrefix: "[ScreenMap]",
+    const claudeResponse = await anthropic.messages.create({
+      model: ORCHESTRATOR_MODEL,
+      max_tokens: 2048,
       messages: [
         {
-          role: "system",
-          content: "You are analyzing Android UI Automator data for UI automation. Return only valid JSON."
-        },
-        {
           role: "user",
-          content: `You are analyzing an Android screen for UI automation.
+          content: [
+            {
+              type: "image",
+              source: { type: "base64", media_type: "image/jpeg", data: base64Image }
+            },
+            {
+              type: "text",
+              text: `You are analyzing an Android screen for UI automation.
 
 Here is the UI Automator element tree (JSON):
 ${elementsJson}
 
-The screenshot was captured (${base64Image.length} base64 characters), but this Codex OAuth route receives text prompts only. Infer the visible interactive elements from the element tree. Return a JSON array of the most important interactive elements visible on screen. For each element include:
+Look at the screenshot and the element tree above. Return a JSON array of the most important interactive elements visible on screen. For each element include:
 - "label": short human-readable name (e.g. "Search bar", "Post button", "Back")
 - "description": what this element does or contains
 - "center_x": horizontal center pixel coordinate for tapping
@@ -14092,16 +14531,19 @@ The screenshot was captured (${base64Image.length} base64 characters), but this 
 IMPORTANT: For icon-only buttons (ImageButton, ImageView, etc.) that have no text label, class_name is essential \u2014 always include it. Never leave class_name empty or omit it for these elements.
 
 Prioritize: search bars, input fields, buttons, navigation items, interactive content.
+Include elements that have no accessibility label but are visually identifiable as interactive.
 Return ONLY a valid JSON array, no explanation, no markdown fences.`
+            }
+          ]
         }
       ]
     });
-    const responseText = (codexResponse.textContent ?? "[]").trim();
+    const responseText = claudeResponse.content[0]?.type === "text" ? claudeResponse.content[0].text.trim() : "[]";
     const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
     const raw = JSON.parse(cleaned);
     screenElements = normalizeScreenElements(Array.isArray(raw) ? raw : []);
   } catch (err2) {
-    console.error("[buildScreenMapElements] Codex OAuth screen-map error:", err2);
+    console.error("[buildScreenMapElements] Claude Vision error:", err2);
     return {
       ok: false,
       content: `Vision analysis failed: ${err2 instanceof Error ? err2.message : String(err2)}`,
@@ -14471,7 +14913,7 @@ var init_daemonShellTool = __esm({
   "server/agent/tools/daemonShellTool.ts"() {
     "use strict";
     init_bridge();
-    init_modelRouter();
+    init_anthropicClient();
     init_screenshotDiff();
     init_db();
     init_schema();
@@ -15290,7 +15732,7 @@ Results are cached for 500 ms, so two rapid calls will not double-count API usag
             const hadEntry = searchBarCoordCache.delete(coordCacheKey);
             if (hadEntry) {
               console.log(`[${label}] step 2 \u2014 stale cache cleared for ${appPackage} (retry path)`);
-              db.update(searchBarLocations).set({ coordinatesValid: false, updatedAt: drizzleSql`NOW()` }).where(and12(eq16(searchBarLocations.userId, ctx.userId), eq16(searchBarLocations.appPackage, appPackage))).catch((err2) => console.warn(`[searchBarCache] DB soft-invalidate failed for ${appPackage}:`, err2));
+              db.update(searchBarLocations).set({ coordinatesValid: false, updatedAt: drizzleSql`NOW()` }).where(and13(eq17(searchBarLocations.userId, ctx.userId), eq17(searchBarLocations.appPackage, appPackage))).catch((err2) => console.warn(`[searchBarCache] DB soft-invalidate failed for ${appPackage}:`, err2));
             }
           }
           let autoDiscoveredResourceId = void 0;
@@ -18491,11 +18933,11 @@ Use this when:
           }
         }
         const existing = await db.select().from(buttonLocations).where(
-          and12(
-            eq16(buttonLocations.userId, ctx.userId),
-            eq16(buttonLocations.appPackage, tapEvent.appPackage),
-            eq16(buttonLocations.screenContext, tapEvent.screenContext),
-            eq16(buttonLocations.elementLabel, label)
+          and13(
+            eq17(buttonLocations.userId, ctx.userId),
+            eq17(buttonLocations.appPackage, tapEvent.appPackage),
+            eq17(buttonLocations.screenContext, tapEvent.screenContext),
+            eq17(buttonLocations.elementLabel, label)
           )
         ).limit(1);
         if (existing.length > 0) {
@@ -18508,7 +18950,7 @@ Use this when:
             confidence: 0.5,
             stale: false,
             updatedAt: /* @__PURE__ */ new Date()
-          }).where(eq16(buttonLocations.id, existing[0].id));
+          }).where(eq17(buttonLocations.id, existing[0].id));
         } else {
           await db.insert(buttonLocations).values({
             userId: ctx.userId,
@@ -18588,7 +19030,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
         const entryId = typeof args.entry_id === "number" ? args.entry_id : void 0;
         if (outcome && entryId !== void 0) {
           const existing = await db.select().from(buttonLocations).where(
-            and12(eq16(buttonLocations.id, entryId), eq16(buttonLocations.userId, ctx.userId))
+            and13(eq17(buttonLocations.id, entryId), eq17(buttonLocations.userId, ctx.userId))
           ).limit(1);
           if (existing.length === 0) {
             return { ok: false, content: `No button_locations entry found with id ${entryId}.`, label: "android_find_trained_button: entry not found" };
@@ -18602,7 +19044,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
               failCount: 0,
               lastConfirmedAt: /* @__PURE__ */ new Date(),
               updatedAt: /* @__PURE__ */ new Date()
-            }).where(eq16(buttonLocations.id, entryId));
+            }).where(eq17(buttonLocations.id, entryId));
             return {
               ok: true,
               content: JSON.stringify({ updated: true, outcome: "confirm", entry_id: entryId, label: row.elementLabel, confidence: newConf }),
@@ -18617,7 +19059,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
               stale: nowStale,
               failCount: newFailCount,
               updatedAt: /* @__PURE__ */ new Date()
-            }).where(eq16(buttonLocations.id, entryId));
+            }).where(eq17(buttonLocations.id, entryId));
             const retrainMsg = newFailCount >= 3 ? `"${row.elementLabel}" has missed ${newFailCount} taps in a row \u2014 it has been marked stale. Call android_train_button to re-train this button so Jarvis can find it reliably.` : void 0;
             return {
               ok: true,
@@ -18652,12 +19094,12 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
         }
         const screenContextArg = String(args.screen_context || "").trim();
         const rows = await db.select().from(buttonLocations).where(
-          and12(
-            eq16(buttonLocations.userId, ctx.userId),
-            ...appPackage ? [eq16(buttonLocations.appPackage, appPackage)] : [],
-            eq16(buttonLocations.elementLabel, label)
+          and13(
+            eq17(buttonLocations.userId, ctx.userId),
+            ...appPackage ? [eq17(buttonLocations.appPackage, appPackage)] : [],
+            eq17(buttonLocations.elementLabel, label)
           )
-        ).orderBy(desc7(buttonLocations.confidence)).limit(10);
+        ).orderBy(desc8(buttonLocations.confidence)).limit(10);
         if (rows.length === 0) {
           const skipFallbackEarly = args.skip_fallback === true;
           if (!skipFallbackEarly) {
@@ -18745,7 +19187,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
               const currentHash = await computeScreenshotHash(currentScreenshot);
               const dist = hammingDistance(best.screenshotHash, currentHash);
               if (dist > 20) {
-                await db.update(buttonLocations).set({ stale: true, updatedAt: /* @__PURE__ */ new Date() }).where(eq16(buttonLocations.id, best.id));
+                await db.update(buttonLocations).set({ stale: true, updatedAt: /* @__PURE__ */ new Date() }).where(eq17(buttonLocations.id, best.id));
                 return {
                   ok: false,
                   content: JSON.stringify({
@@ -18782,7 +19224,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
         if (preTapNear.length === 0) {
           const newFailCount = (best.failCount ?? 0) + 1;
           const nowStale = newFailCount >= 3;
-          await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: /* @__PURE__ */ new Date() }).where(eq16(buttonLocations.id, best.id));
+          await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: /* @__PURE__ */ new Date() }).where(eq17(buttonLocations.id, best.id));
           const retrainPrompt = nowStale ? ` Jarvis has missed this button ${newFailCount} times in a row \u2014 please call android_train_button to re-train it.` : ` (Miss ${newFailCount}/3 \u2014 Jarvis will suggest re-training after 3 misses.)`;
           return {
             ok: false,
@@ -18800,7 +19242,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
         if (!tapResult.ok) {
           const newFailCount = (best.failCount ?? 0) + 1;
           const nowStale = newFailCount >= 3;
-          await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: /* @__PURE__ */ new Date() }).where(eq16(buttonLocations.id, best.id));
+          await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: /* @__PURE__ */ new Date() }).where(eq17(buttonLocations.id, best.id));
           const retrainHint = nowStale ? ` Jarvis has missed this button ${newFailCount} times in a row \u2014 please call android_train_button to re-train it.` : ` (Miss ${newFailCount}/3.)`;
           return {
             ok: false,
@@ -18840,7 +19282,7 @@ CONFIRM/DENY flow: after the user confirms ("yes") or denies ("no"), call this t
         if (!verified) {
           const newFailCount = (best.failCount ?? 0) + 1;
           const nowStale = newFailCount >= 3;
-          await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: /* @__PURE__ */ new Date() }).where(eq16(buttonLocations.id, best.id));
+          await db.update(buttonLocations).set({ stale: nowStale, failCount: newFailCount, updatedAt: /* @__PURE__ */ new Date() }).where(eq17(buttonLocations.id, best.id));
           const retrainMsg = nowStale ? `Jarvis has missed the "${label}" button ${newFailCount} times in a row \u2014 please call android_train_button to re-train it so Jarvis can find it reliably.` : `Tapped the stored location for "${label}" but the screen did not change as expected (miss ${newFailCount}/3).`;
           return {
             ok: false,
@@ -19196,7 +19638,7 @@ ${elementList || "  (none)"}`,
 Accepts a list of fields (label + text pairs) and fills them in order, using the same ScreenMap + scoreElement matching as android_type_into_element. Replaces multiple sequential android_type_into_element calls for login forms, registration pages, and filter dialogs.
 
 Steps performed internally:
-1. Capture a fresh ScreenMap once at the start (screenshot + view hierarchy \u2192 Codex screen map)
+1. Capture a fresh ScreenMap once at the start (screenshot + view hierarchy \u2192 Claude Vision)
 2. For each field: fuzzy-match label, tap to focus, optionally clear, type via three-level fallback (android_type \u2192 android_paste_text \u2192 retry), verify
 3. If a field label is not found in the current ScreenMap, refresh the ScreenMap once (handles page transitions between fields)
 4. If still not found, scroll down and re-capture the ScreenMap up to 3 times to find fields that are off-screen
@@ -19964,7 +20406,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
 });
 
 // server/agent/tools/connections.ts
-import { eq as eq17 } from "drizzle-orm";
+import { eq as eq18 } from "drizzle-orm";
 var checkConnectionsTool, generateReconnectLinkTool;
 var init_connections = __esm({
   "server/agent/tools/connections.ts"() {
@@ -19987,8 +20429,8 @@ var init_connections = __esm({
             getValidGoogleToken(ctx.userId).catch(() => null),
             getValidMicrosoftToken(ctx.userId).catch(() => null),
             getUserOAuthStatus(ctx.userId).catch(() => ({})),
-            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq17(telegramLinks.userId, ctx.userId)).limit(1),
-            db.select().from(channelLinks).where(eq17(channelLinks.userId, ctx.userId))
+            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq18(telegramLinks.userId, ctx.userId)).limit(1),
+            db.select().from(channelLinks).where(eq18(channelLinks.userId, ctx.userId))
           ]);
           const daemonConnected = isUserPaired(ctx.userId);
           const androidActive = isAndroidDaemonActive(ctx.userId);
@@ -20102,7 +20544,7 @@ ${summary}`,
 import { Router } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
-import { eq as eq18 } from "drizzle-orm";
+import { eq as eq19 } from "drizzle-orm";
 import crypto2 from "crypto";
 function getJwtSecret() {
   if (process.env.JWT_SECRET) {
@@ -20222,7 +20664,7 @@ var init_auth = __esm({
         if (password.length < 6) {
           return res.status(400).json({ error: "Password must be at least 6 characters" });
         }
-        const existing = await db.select().from(users).where(eq18(users.username, username)).limit(1);
+        const existing = await db.select().from(users).where(eq19(users.username, username)).limit(1);
         if (existing.length > 0) {
           return res.status(409).json({ error: "Username already taken" });
         }
@@ -20248,7 +20690,7 @@ var init_auth = __esm({
         if (!username || !password) {
           return res.status(400).json({ error: "Username and password are required" });
         }
-        const [user] = await db.select().from(users).where(eq18(users.username, username)).limit(1);
+        const [user] = await db.select().from(users).where(eq19(users.username, username)).limit(1);
         if (!user) {
           return res.status(401).json({ error: "Invalid username or password" });
         }
@@ -20317,7 +20759,7 @@ var init_auth = __esm({
         if (!googleUser.id) {
           return res.status(401).json({ error: "Could not retrieve Google user info" });
         }
-        const existing = await db.select().from(users).where(eq18(users.googleId, googleUser.id)).limit(1);
+        const existing = await db.select().from(users).where(eq19(users.googleId, googleUser.id)).limit(1);
         let user;
         if (existing.length > 0) {
           user = existing[0];
@@ -20325,13 +20767,13 @@ var init_auth = __esm({
           if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
           if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
           if (Object.keys(updates).length > 0) {
-            await db.update(users).set(updates).where(eq18(users.id, user.id));
+            await db.update(users).set(updates).where(eq19(users.id, user.id));
             user = { ...user, ...updates };
           }
         } else {
           const username = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
           let uniqueUsername = username;
-          const existingUsername = await db.select().from(users).where(eq18(users.username, username)).limit(1);
+          const existingUsername = await db.select().from(users).where(eq19(users.username, username)).limit(1);
           if (existingUsername.length > 0) {
             uniqueUsername = `${username}_${Date.now().toString(36)}`;
           }
@@ -20372,7 +20814,7 @@ var init_auth = __esm({
           displayName: users.displayName,
           email: users.email,
           createdAt: users.createdAt
-        }).from(users).where(eq18(users.id, payload.userId)).limit(1);
+        }).from(users).where(eq19(users.id, payload.userId)).limit(1);
         if (!user) {
           return res.status(401).json({ error: "User not found" });
         }
@@ -20391,7 +20833,7 @@ var init_auth = __esm({
 // server/mobileAuthRoutes.ts
 import { Router as Router2 } from "express";
 import * as crypto3 from "crypto";
-import { eq as eq19, lt } from "drizzle-orm";
+import { eq as eq20, lt } from "drizzle-orm";
 function sha256(value) {
   return crypto3.createHash("sha256").update(value).digest("hex");
 }
@@ -20593,7 +21035,7 @@ async function handleMobileAuthCallback(req, res) {
       if (!info.id) return res.send(errorHtml("Could not retrieve Google user info."));
       googleUser = { id: info.id, name: info.name, email: info.email };
     }
-    const existing = await db.select().from(users).where(eq19(users.googleId, googleUser.id)).limit(1);
+    const existing = await db.select().from(users).where(eq20(users.googleId, googleUser.id)).limit(1);
     let user;
     if (existing.length > 0) {
       user = existing[0];
@@ -20601,13 +21043,13 @@ async function handleMobileAuthCallback(req, res) {
       if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
       if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
       if (Object.keys(updates).length > 0) {
-        await db.update(users).set(updates).where(eq19(users.id, user.id));
+        await db.update(users).set(updates).where(eq20(users.id, user.id));
         user = { ...user, ...updates };
       }
     } else {
       const base = googleUser.email ? googleUser.email.split("@")[0] : `google_${googleUser.id.slice(0, 8)}`;
       let uniqueUsername = base;
-      const existingUsername = await db.select().from(users).where(eq19(users.username, base)).limit(1);
+      const existingUsername = await db.select().from(users).where(eq20(users.username, base)).limit(1);
       if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
       const [newUser] = await db.insert(users).values({
         username: uniqueUsername,
@@ -20619,10 +21061,10 @@ async function handleMobileAuthCallback(req, res) {
     }
     const token = generateToken(user.id);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1e3);
-    const pendingRows = await db.select().from(mobileAuthSessions).where(eq19(mobileAuthSessions.sessionId, sessionId)).limit(1);
+    const pendingRows = await db.select().from(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, sessionId)).limit(1);
     const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
     if (pending && timingSafeEqual2(pending.stateHash, sha256(state))) {
-      await db.update(mobileAuthSessions).set({ token: completeTokenValue(pending.pollHash, NATIVE_BIND_HASH, token), expiresAt }).where(eq19(mobileAuthSessions.sessionId, sessionId));
+      await db.update(mobileAuthSessions).set({ token: completeTokenValue(pending.pollHash, NATIVE_BIND_HASH, token), expiresAt }).where(eq20(mobileAuthSessions.sessionId, sessionId));
     }
     return res.send(successHtml(token));
   } catch (err2) {
@@ -20696,7 +21138,7 @@ var init_mobileAuthRoutes = __esm({
       }
       try {
         await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, /* @__PURE__ */ new Date()));
-        const rows = await db.select().from(mobileAuthSessions).where(eq19(mobileAuthSessions.sessionId, session_id)).limit(1);
+        const rows = await db.select().from(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, session_id)).limit(1);
         if (rows.length === 0) {
           return res.status(404).json({ ready: false });
         }
@@ -20711,7 +21153,7 @@ var init_mobileAuthRoutes = __esm({
         if (!completed || !timingSafeEqual2(completed.pollHash, sha256(poll_secret)) || !bindMatches && !nativeMobileSession) {
           return res.status(404).json({ ready: false });
         }
-        await db.delete(mobileAuthSessions).where(eq19(mobileAuthSessions.sessionId, session_id));
+        await db.delete(mobileAuthSessions).where(eq20(mobileAuthSessions.sessionId, session_id));
         return res.json({ ready: true, token: completed.token });
       } catch (err2) {
         console.error("Mobile auth poll error:", err2);
@@ -20722,7 +21164,7 @@ var init_mobileAuthRoutes = __esm({
 });
 
 // server/channels/slackChannel.ts
-import { eq as eq20, and as and13 } from "drizzle-orm";
+import { eq as eq21, and as and14 } from "drizzle-orm";
 async function postSlackMessage(botToken, channel, text2) {
   try {
     const res = await fetch("https://slack.com/api/chat.postMessage", {
@@ -20763,7 +21205,7 @@ async function openSlackDm(botToken, slackUserId) {
 }
 async function lookupLink(userId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and13(eq20(channelLinks.userId, userId), eq20(channelLinks.channel, "slack"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and14(eq21(channelLinks.userId, userId), eq21(channelLinks.channel, "slack"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     return { address: row.address, meta: row.metadata || {} };
@@ -20804,7 +21246,7 @@ var init_slackChannel = __esm({
         if (!target && link.meta.slackUserId) {
           target = await openSlackDm(botToken, link.meta.slackUserId) || void 0;
           if (target) {
-            await db.update(channelLinks).set({ metadata: { ...link.meta, imChannelId: target } }).where(and13(eq20(channelLinks.userId, userId), eq20(channelLinks.channel, "slack")));
+            await db.update(channelLinks).set({ metadata: { ...link.meta, imChannelId: target } }).where(and14(eq21(channelLinks.userId, userId), eq21(channelLinks.channel, "slack")));
           }
         }
         if (!target) target = link.address;
@@ -20829,7 +21271,7 @@ __export(slackWebhook_exports, {
 });
 import express from "express";
 import * as crypto4 from "crypto";
-import { eq as eq21, and as and14 } from "drizzle-orm";
+import { eq as eq22, and as and15 } from "drizzle-orm";
 function verifySlackSignature(req) {
   if (!SLACK_SIGNING_SECRET) {
     console.error("[slack] rejecting request: SLACK_SIGNING_SECRET is not configured");
@@ -20850,7 +21292,7 @@ function verifySlackSignature(req) {
 }
 async function findUserBySlackId(teamId, slackUserId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and14(eq21(channelLinks.channel, "slack"), eq21(channelLinks.address, `${teamId}:${slackUserId}`))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and15(eq22(channelLinks.channel, "slack"), eq22(channelLinks.address, `${teamId}:${slackUserId}`))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err2) {
     console.error("[slack] user lookup failed:", err2);
@@ -20895,7 +21337,7 @@ function registerSlackWebhook(app2) {
       const userId = await findUserBySlackId(teamId, slackUserId);
       const text2 = String(ev.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
       if (!userId) {
-        const tok = await db.select().from(channelLinks).where(and14(eq21(channelLinks.channel, "slack"))).limit(1);
+        const tok = await db.select().from(channelLinks).where(and15(eq22(channelLinks.channel, "slack"))).limit(1);
         const replyToken = tok[0] ? await getSlackBotToken(tok[0].userId) : null;
         if (replyToken) {
           await postSlackMessage(replyToken, ev.channel, "I don't recognize this Slack account. Open the GamePlan app and reconnect Slack from Profile \u2192 Connected Apps.");
@@ -21363,7 +21805,7 @@ var init_oauthRoutes = __esm({
 });
 
 // server/agent/tools/connectChannel.ts
-import { eq as eq22, and as and15 } from "drizzle-orm";
+import { eq as eq23, and as and16 } from "drizzle-orm";
 function generateCode(length) {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = "";
@@ -21444,7 +21886,7 @@ var init_connectChannel = __esm({
             const phone = twilioRaw.replace(/^whatsapp:/i, "").replace(/\s+/g, "");
             const code = generateCode(6);
             const expiresAt = new Date(Date.now() + 15 * 60 * 1e3);
-            await db.delete(channelLinkCodes).where(and15(eq22(channelLinkCodes.userId, userId), eq22(channelLinkCodes.channel, "whatsapp")));
+            await db.delete(channelLinkCodes).where(and16(eq23(channelLinkCodes.userId, userId), eq23(channelLinkCodes.channel, "whatsapp")));
             await db.insert(channelLinkCodes).values({ code, userId, channel: "whatsapp", expiresAt });
             const body = encodeURIComponent(`CONNECT ${code}`);
             const url = `https://wa.me/${phone.replace("+", "")}?text=${body}`;
@@ -21543,7 +21985,7 @@ __export(agentManager_exports, {
   removeChannel: () => removeChannel,
   updateAgent: () => updateAgent
 });
-import { eq as eq23, and as and16 } from "drizzle-orm";
+import { eq as eq24, and as and17 } from "drizzle-orm";
 function mergePermissions(partial) {
   if (!partial) return { ...DEFAULT_AGENT_PERMISSIONS };
   return { ...DEFAULT_AGENT_PERMISSIONS, ...partial };
@@ -21551,7 +21993,7 @@ function mergePermissions(partial) {
 async function createAgent(userId, config) {
   const name = config.name.trim();
   if (!name) throw new Error("Agent name is required");
-  const allActive = await db.select().from(discordAgents).where(and16(eq23(discordAgents.userId, userId), eq23(discordAgents.isActive, 1)));
+  const allActive = await db.select().from(discordAgents).where(and17(eq24(discordAgents.userId, userId), eq24(discordAgents.isActive, 1)));
   const nameLower = name.toLowerCase();
   const conflict = allActive.find((a) => a.name.toLowerCase() === nameLower);
   if (conflict) {
@@ -21592,15 +22034,15 @@ async function createAgent(userId, config) {
   return agentId;
 }
 async function getAgent(agentId) {
-  const [row] = await db.select().from(discordAgents).where(eq23(discordAgents.id, agentId)).limit(1);
+  const [row] = await db.select().from(discordAgents).where(eq24(discordAgents.id, agentId)).limit(1);
   return row ?? null;
 }
 async function listAgents(userId, includeDisabled = false) {
   if (includeDisabled) {
-    return db.select().from(discordAgents).where(eq23(discordAgents.userId, userId));
+    return db.select().from(discordAgents).where(eq24(discordAgents.userId, userId));
   }
   return db.select().from(discordAgents).where(
-    and16(eq23(discordAgents.userId, userId), eq23(discordAgents.isActive, 1))
+    and17(eq24(discordAgents.userId, userId), eq24(discordAgents.isActive, 1))
   );
 }
 async function updateAgent(agentId, patch) {
@@ -21626,20 +22068,20 @@ async function updateAgent(agentId, patch) {
   if (patch.isActive !== void 0) updates.isActive = patch.isActive ? 1 : 0;
   if (patch.mentionPatterns !== void 0) updates.mentionPatterns = patch.mentionPatterns;
   if (Object.keys(updates).length === 0) return;
-  await db.update(discordAgents).set(updates).where(eq23(discordAgents.id, agentId));
+  await db.update(discordAgents).set(updates).where(eq24(discordAgents.id, agentId));
   console.log(`[AgentManager] updated agent ${agentId}`);
 }
 async function disableAgent(agentId) {
-  await db.update(discordAgents).set({ isActive: 0 }).where(eq23(discordAgents.id, agentId));
+  await db.update(discordAgents).set({ isActive: 0 }).where(eq24(discordAgents.id, agentId));
   logAgentEvent({ event: "agent_disabled_stuck", agentId, detail: "manually disabled" });
   console.log(`[AgentManager] disabled agent ${agentId}`);
 }
 async function enableAgent(agentId) {
-  await db.update(discordAgents).set({ isActive: 1, stuckSince: null, heartbeatFailCount: 0 }).where(eq23(discordAgents.id, agentId));
+  await db.update(discordAgents).set({ isActive: 1, stuckSince: null, heartbeatFailCount: 0 }).where(eq24(discordAgents.id, agentId));
   console.log(`[AgentManager] enabled agent ${agentId}`);
 }
 async function deleteAgent(agentId) {
-  await db.delete(discordAgents).where(eq23(discordAgents.id, agentId));
+  await db.delete(discordAgents).where(eq24(discordAgents.id, agentId));
   console.log(`[AgentManager] deleted agent ${agentId}`);
 }
 async function assignChannel(agentId, platform, channelId) {
@@ -21654,7 +22096,7 @@ async function assignChannel(agentId, platform, channelId) {
   if (platform === "discord" && !agent.channelId) {
     updates.channelId = channelId;
   }
-  await db.update(discordAgents).set(updates).where(eq23(discordAgents.id, agentId));
+  await db.update(discordAgents).set(updates).where(eq24(discordAgents.id, agentId));
   console.log(`[AgentManager] assigned ${platform}:${channelId} to agent ${agentId}`);
 }
 async function removeChannel(agentId, platform, channelId) {
@@ -21662,11 +22104,11 @@ async function removeChannel(agentId, platform, channelId) {
   if (!agent) throw new Error(`Agent ${agentId} not found`);
   const channels2 = agent.platformChannels ?? {};
   channels2[platform] = (channels2[platform] ?? []).filter((id) => id !== channelId);
-  await db.update(discordAgents).set({ platformChannels: channels2 }).where(eq23(discordAgents.id, agentId));
+  await db.update(discordAgents).set({ platformChannels: channels2 }).where(eq24(discordAgents.id, agentId));
   console.log(`[AgentManager] removed ${platform}:${channelId} from agent ${agentId}`);
 }
 async function getActiveAgentsForUser(userId) {
-  return db.select().from(discordAgents).where(and16(eq23(discordAgents.userId, userId), eq23(discordAgents.isActive, 1)));
+  return db.select().from(discordAgents).where(and17(eq24(discordAgents.userId, userId), eq24(discordAgents.isActive, 1)));
 }
 async function getAgentForChannel(userId, platform, channelId) {
   const agents = await getActiveAgentsForUser(userId);
@@ -21707,14 +22149,14 @@ function isRecord(value) {
 function isIsoDateLike(value) {
   return !Number.isNaN(Date.parse(value));
 }
-function createApprovalReceipt(input) {
-  const expiresAt = input.expiresAt instanceof Date ? input.expiresAt.toISOString() : typeof input.expiresAt === "string" ? input.expiresAt : void 0;
+function createApprovalReceipt(input2) {
+  const expiresAt = input2.expiresAt instanceof Date ? input2.expiresAt.toISOString() : typeof input2.expiresAt === "string" ? input2.expiresAt : void 0;
   return {
-    gateId: input.gateId,
-    userId: input.userId,
-    toolName: input.toolName,
+    gateId: input2.gateId,
+    userId: input2.userId,
+    toolName: input2.toolName,
     scope: "top_level_action",
-    originalUserText: input.originalUserText,
+    originalUserText: input2.originalUserText,
     createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     ...expiresAt ? { expiresAt } : {}
   };
@@ -21758,10 +22200,10 @@ var init_approvalReceipt = __esm({
 });
 
 // server/agent/agentPolicyManager.ts
-import { eq as eq24, and as and17, sql as sql11 } from "drizzle-orm";
+import { eq as eq25, and as and18, sql as sql11 } from "drizzle-orm";
 async function getAgentPolicy(agentId) {
-  const [policyRow] = await db.select().from(agentApprovalPolicies).where(eq24(agentApprovalPolicies.agentId, agentId)).limit(1);
-  const allowlist = await db.select().from(agentApprovalAllowlist).where(eq24(agentApprovalAllowlist.agentId, agentId)).orderBy(agentApprovalAllowlist.createdAt);
+  const [policyRow] = await db.select().from(agentApprovalPolicies).where(eq25(agentApprovalPolicies.agentId, agentId)).limit(1);
+  const allowlist = await db.select().from(agentApprovalAllowlist).where(eq25(agentApprovalAllowlist.agentId, agentId)).orderBy(agentApprovalAllowlist.createdAt);
   if (!policyRow) {
     return allowlist.length > 0 ? { agentId, scope: "global", allowlist } : null;
   }
@@ -21783,9 +22225,9 @@ async function addAllowlistPattern(agentId, userId, pattern) {
 }
 async function removeAllowlistPattern(patternId, agentId) {
   const result = await db.delete(agentApprovalAllowlist).where(
-    and17(
-      eq24(agentApprovalAllowlist.id, patternId),
-      eq24(agentApprovalAllowlist.agentId, agentId)
+    and18(
+      eq25(agentApprovalAllowlist.id, patternId),
+      eq25(agentApprovalAllowlist.agentId, agentId)
     )
   );
   return (result.rowCount ?? 0) > 0;
@@ -21801,7 +22243,7 @@ function recordAllowlistHit(patternId) {
   db.update(agentApprovalAllowlist).set({
     useCount: sql11`use_count + 1`,
     lastUsedAt: /* @__PURE__ */ new Date()
-  }).where(eq24(agentApprovalAllowlist.id, patternId)).catch(() => {
+  }).where(eq25(agentApprovalAllowlist.id, patternId)).catch(() => {
   });
 }
 async function evaluatePolicyForTool(agentId, toolName, isStrictlyIrreversible) {
@@ -21861,7 +22303,7 @@ __export(agentApproval_exports, {
   requestApproval: () => requestApproval,
   requiresApproval: () => requiresApproval
 });
-import { eq as eq25, and as and18, lt as lt2 } from "drizzle-orm";
+import { eq as eq26, and as and19, lt as lt2 } from "drizzle-orm";
 import { EventEmitter } from "events";
 function requiresApproval(toolName) {
   return HIGH_RISK_TOOLS.has(toolName);
@@ -21996,10 +22438,10 @@ async function approveGate(gateId, resolvedBy) {
   const now = /* @__PURE__ */ new Date();
   try {
     const result = await db.update(agentApprovalGates).set({ status: "approved", resolvedAt: now, resolvedBy }).where(
-      and18(
-        eq25(agentApprovalGates.id, gateId),
-        eq25(agentApprovalGates.userId, resolvedBy),
-        eq25(agentApprovalGates.status, "pending")
+      and19(
+        eq26(agentApprovalGates.id, gateId),
+        eq26(agentApprovalGates.userId, resolvedBy),
+        eq26(agentApprovalGates.status, "pending")
       )
     );
     const rows = result.rowCount ?? 0;
@@ -22018,10 +22460,10 @@ async function rejectGate(gateId, resolvedBy) {
   const now = /* @__PURE__ */ new Date();
   try {
     const result = await db.update(agentApprovalGates).set({ status: "rejected", resolvedAt: now, resolvedBy }).where(
-      and18(
-        eq25(agentApprovalGates.id, gateId),
-        eq25(agentApprovalGates.userId, resolvedBy),
-        eq25(agentApprovalGates.status, "pending")
+      and19(
+        eq26(agentApprovalGates.id, gateId),
+        eq26(agentApprovalGates.userId, resolvedBy),
+        eq26(agentApprovalGates.status, "pending")
       )
     );
     const rows = result.rowCount ?? 0;
@@ -22037,16 +22479,16 @@ async function rejectGate(gateId, resolvedBy) {
   }
 }
 async function getGate(gateId) {
-  const rows = await db.select().from(agentApprovalGates).where(eq25(agentApprovalGates.id, gateId)).limit(1);
+  const rows = await db.select().from(agentApprovalGates).where(eq26(agentApprovalGates.id, gateId)).limit(1);
   return rows[0] ? rowToGate(rows[0]) : void 0;
 }
 async function listPendingGates(userId) {
-  const rows = await db.select().from(agentApprovalGates).where(and18(eq25(agentApprovalGates.userId, userId), eq25(agentApprovalGates.status, "pending")));
+  const rows = await db.select().from(agentApprovalGates).where(and19(eq26(agentApprovalGates.userId, userId), eq26(agentApprovalGates.status, "pending")));
   return rows.map(rowToGate);
 }
 async function listAllGates(userId) {
   const { desc: desc47 } = await import("drizzle-orm");
-  const rows = await db.select().from(agentApprovalGates).where(eq25(agentApprovalGates.userId, userId)).orderBy(desc47(agentApprovalGates.createdAt)).limit(50);
+  const rows = await db.select().from(agentApprovalGates).where(eq26(agentApprovalGates.userId, userId)).orderBy(desc47(agentApprovalGates.createdAt)).limit(50);
   return rows.map(rowToGate);
 }
 var HIGH_RISK_TOOLS, STRICTLY_IRREVERSIBLE_TOOLS, gateEmitter, DEFAULT_TTL_MS, _cleanupTimer;
@@ -22102,7 +22544,7 @@ var init_agentApproval = __esm({
     _cleanupTimer = setInterval(async () => {
       try {
         const now = /* @__PURE__ */ new Date();
-        const expired = await db.update(agentApprovalGates).set({ status: "expired", resolvedAt: now }).where(and18(eq25(agentApprovalGates.status, "pending"), lt2(agentApprovalGates.expiresAt, now))).returning({ id: agentApprovalGates.id });
+        const expired = await db.update(agentApprovalGates).set({ status: "expired", resolvedAt: now }).where(and19(eq26(agentApprovalGates.status, "pending"), lt2(agentApprovalGates.expiresAt, now))).returning({ id: agentApprovalGates.id });
         for (const row of expired) {
           gateEmitter.emit(row.id, { approved: false, reason: "expired" });
         }
@@ -22664,7 +23106,7 @@ __export(agentMemory_exports, {
   summarizeAgentMemory: () => summarizeAgentMemory,
   writeAgentMemory: () => writeAgentMemory
 });
-import { eq as eq26, and as and19, desc as desc8 } from "drizzle-orm";
+import { eq as eq27, and as and20, desc as desc9 } from "drizzle-orm";
 import { sql as sql12 } from "drizzle-orm";
 async function writeAgentMemory(agentId, userId, content, category = "fact") {
   const [row] = await db.insert(agentMemories).values({ agentId, userId, content, category }).returning({ id: agentMemories.id });
@@ -22677,7 +23119,7 @@ async function readAgentMemories(agentId, userId, query, limit = 10) {
   const safeLimit = Math.min(limit, 25);
   const trimmedQuery = (query || "").trim();
   if (!trimmedQuery) {
-    return db.select().from(agentMemories).where(and19(eq26(agentMemories.agentId, agentId), eq26(agentMemories.userId, userId))).orderBy(desc8(agentMemories.createdAt)).limit(safeLimit);
+    return db.select().from(agentMemories).where(and20(eq27(agentMemories.agentId, agentId), eq27(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
   }
   try {
     const rows = await db.execute(sql12`
@@ -22694,7 +23136,7 @@ async function readAgentMemories(agentId, userId, query, limit = 10) {
     `);
     return rows.rows;
   } catch {
-    return db.select().from(agentMemories).where(and19(eq26(agentMemories.agentId, agentId), eq26(agentMemories.userId, userId))).orderBy(desc8(agentMemories.createdAt)).limit(safeLimit);
+    return db.select().from(agentMemories).where(and20(eq27(agentMemories.agentId, agentId), eq27(agentMemories.userId, userId))).orderBy(desc9(agentMemories.createdAt)).limit(safeLimit);
   }
 }
 async function summarizeAgentMemory(agentId, userId) {
@@ -22703,7 +23145,7 @@ async function summarizeAgentMemory(agentId, userId) {
   `);
   const total = parseInt(count2.rows[0]?.count ?? "0", 10);
   if (total < SUMMARIZATION_THRESHOLD) return;
-  const toSummarize = await db.select().from(agentMemories).where(and19(eq26(agentMemories.agentId, agentId), eq26(agentMemories.userId, userId))).orderBy(agentMemories.createdAt).limit(200);
+  const toSummarize = await db.select().from(agentMemories).where(and20(eq27(agentMemories.agentId, agentId), eq27(agentMemories.userId, userId))).orderBy(agentMemories.createdAt).limit(200);
   if (toSummarize.length < 10) return;
   const memoryText = toSummarize.map((m) => `[${m.category}] ${m.content}`).join("\n");
   let summary = "";
@@ -22838,7 +23280,7 @@ var init_contextRegistry = __esm({
         this.providers.push({ provider, priority: opts?.priority ?? 0 });
         this.providers.sort((a, b) => b.priority - a.priority);
       }
-      async build(input) {
+      async build(input2) {
         const parts = {
           systemContext: [],
           prependContext: [],
@@ -22850,7 +23292,7 @@ var init_contextRegistry = __esm({
               (_, reject) => setTimeout(() => reject(new Error("context provider timeout")), PROVIDER_TIMEOUT_MS)
             );
             const result = await Promise.race([
-              Promise.resolve(provider(input)),
+              Promise.resolve(provider(input2)),
               timeout
             ]);
             if (!result) continue;
@@ -22925,7 +23367,7 @@ ${workspace}` : ""
 import {
   ChannelType
 } from "discord.js";
-import { eq as eq27, and as and20 } from "drizzle-orm";
+import { eq as eq28, and as and21 } from "drizzle-orm";
 function classifyTopic(text2) {
   const lower = text2.toLowerCase();
   let best = { key: "thinking", score: 0 };
@@ -23014,7 +23456,7 @@ _Jarvis will post your daily summary here every evening at 9pm._`
       categoryId: category.id,
       channels: channelIds
     };
-    const rows = await db.select().from(channelLinks).where(and20(eq27(channelLinks.userId, userId), eq27(channelLinks.channel, "discord"))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and21(eq28(channelLinks.userId, userId), eq28(channelLinks.channel, "discord"))).limit(1);
     if (rows.length > 0) {
       const existing = rows[0].metadata || {};
       const existingAllowlist = existing.allowlistedGuilds || [];
@@ -23030,7 +23472,7 @@ _Jarvis will post your daily summary here every evening at 9pm._`
         (g) => !(g.guildId === guildId && workspaceChannelIds.has(g.channelId))
       );
       const mergedAllowlist = [...keptExisting, ...workspaceEntries];
-      await db.update(channelLinks).set({ metadata: { ...existing, workspace, allowlistedGuilds: mergedAllowlist } }).where(and20(eq27(channelLinks.userId, userId), eq27(channelLinks.channel, "discord")));
+      await db.update(channelLinks).set({ metadata: { ...existing, workspace, allowlistedGuilds: mergedAllowlist } }).where(and21(eq28(channelLinks.userId, userId), eq28(channelLinks.channel, "discord")));
     }
     return { ok: true, workspace };
   } catch (err2) {
@@ -23141,7 +23583,7 @@ var init_workspace = __esm({
 });
 
 // server/agent/providers/topicContext.ts
-import { eq as eq28, and as and21 } from "drizzle-orm";
+import { eq as eq29, and as and22 } from "drizzle-orm";
 var init_topicContext = __esm({
   "server/agent/providers/topicContext.ts"() {
     "use strict";
@@ -23150,14 +23592,14 @@ var init_topicContext = __esm({
     init_schema();
     init_workspace();
     contextRegistry.register(
-      async (input) => {
-        if (input.platform !== "discord" || !input.channelId) return;
+      async (input2) => {
+        if (input2.platform !== "discord" || !input2.channelId) return;
         try {
-          const [link] = await db.select().from(channelLinks).where(and21(eq28(channelLinks.userId, input.userId), eq28(channelLinks.channel, "discord"))).limit(1);
+          const [link] = await db.select().from(channelLinks).where(and22(eq29(channelLinks.userId, input2.userId), eq29(channelLinks.channel, "discord"))).limit(1);
           if (!link?.metadata) return;
           const workspace = link.metadata.workspace;
           if (!workspace) return;
-          const topic = getTopicForChannel(workspace, input.channelId);
+          const topic = getTopicForChannel(workspace, input2.channelId);
           if (!topic) return;
           const topicName = topic.name.charAt(0).toUpperCase() + topic.name.slice(1);
           return {
@@ -23169,174 +23611,6 @@ var init_topicContext = __esm({
       },
       { priority: 100 }
     );
-  }
-});
-
-// server/agent/providers/sessionStore.ts
-var sessionStore_exports2 = {};
-__export(sessionStore_exports2, {
-  appendToSession: () => appendToSession,
-  expireSession: () => expireSession,
-  getChatHistory: () => getChatHistory,
-  initSession: () => initSession,
-  persistChatMessages: () => persistChatMessages,
-  resumeSession: () => resumeSession
-});
-import { randomUUID as randomUUID2 } from "crypto";
-import { eq as eq29, and as and22, gt as gt2, asc, desc as desc9 } from "drizzle-orm";
-async function getDb() {
-  const mod = await Promise.resolve().then(() => (init_db(), db_exports));
-  return mod.db;
-}
-function toAgentMessage(m) {
-  return {
-    role: m.role,
-    content: typeof m.content === "string" ? m.content : null,
-    tool_calls: "tool_calls" in m ? m.tool_calls : void 0,
-    tool_call_id: "tool_call_id" in m ? m.tool_call_id : void 0
-  };
-}
-function fromAgentMessage(m) {
-  const base = { role: m.role, content: m.content ?? null };
-  if (m.tool_calls) base.tool_calls = m.tool_calls;
-  if (m.tool_call_id) base.tool_call_id = m.tool_call_id;
-  return base;
-}
-function cacheSet(sessionId, messages2, expiresAt) {
-  if (processCache.size >= MAX_CACHE_ENTRIES) {
-    const firstKey = processCache.keys().next().value;
-    if (firstKey !== void 0) processCache.delete(firstKey);
-  }
-  processCache.set(sessionId, { messages: messages2, expiresAt });
-}
-function cacheGet(sessionId) {
-  const entry = processCache.get(sessionId);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    processCache.delete(sessionId);
-    return null;
-  }
-  return entry.messages;
-}
-async function resumeSession(sdkSessionId, agentId, userId) {
-  const cached = cacheGet(sdkSessionId);
-  if (cached) {
-    return { messages: cached.map(fromAgentMessage), sdkSessionId, resumed: true };
-  }
-  try {
-    const db2 = await getDb();
-    const rows = await db2.select().from(agentChatSessions).where(
-      and22(
-        eq29(agentChatSessions.sdkSessionId, sdkSessionId),
-        eq29(agentChatSessions.agentId, agentId),
-        eq29(agentChatSessions.userId, userId),
-        gt2(agentChatSessions.expiresAt, /* @__PURE__ */ new Date())
-      )
-    ).limit(1);
-    if (rows.length === 0) {
-      console.warn(`[SessionStore] session not found or expired: sdkSessionId=${sdkSessionId}`);
-      return null;
-    }
-    const row = rows[0];
-    const messages2 = row.messages ?? [];
-    cacheSet(sdkSessionId, messages2, row.expiresAt.getTime());
-    return { messages: messages2.map(fromAgentMessage), sdkSessionId, resumed: true };
-  } catch (err2) {
-    console.error("[SessionStore] resumeSession DB error:", err2);
-    return null;
-  }
-}
-async function initSession(agentId, userId, messages2) {
-  const sdkSessionId = randomUUID2();
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  const stored = messages2.map(toAgentMessage);
-  try {
-    const db2 = await getDb();
-    await db2.insert(agentChatSessions).values({
-      sdkSessionId,
-      agentId,
-      userId,
-      messages: stored,
-      expiresAt
-    });
-    cacheSet(sdkSessionId, stored, expiresAt.getTime());
-    console.log(`[SessionStore] session initialised: sdkSessionId=${sdkSessionId} agentId=${agentId} messages=${stored.length}`);
-  } catch (err2) {
-    console.error("[SessionStore] initSession DB error:", err2);
-  }
-  return sdkSessionId;
-}
-async function appendToSession(sdkSessionId, agentId, userId, newMessages) {
-  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  try {
-    const db2 = await getDb();
-    const existing = await resumeSession(sdkSessionId, agentId, userId);
-    const merged = [...existing?.messages ?? [], ...newMessages].map(toAgentMessage);
-    await db2.update(agentChatSessions).set({ messages: merged, updatedAt: /* @__PURE__ */ new Date(), expiresAt }).where(
-      and22(
-        eq29(agentChatSessions.sdkSessionId, sdkSessionId),
-        eq29(agentChatSessions.agentId, agentId),
-        eq29(agentChatSessions.userId, userId)
-      )
-    );
-    cacheSet(sdkSessionId, merged, expiresAt.getTime());
-  } catch (err2) {
-    console.error("[SessionStore] appendToSession DB error:", err2);
-  }
-}
-async function persistChatMessages(agentId, userId, messages2) {
-  if (messages2.length === 0) return;
-  const db2 = await getDb();
-  for (const m of messages2) {
-    try {
-      await db2.insert(agentChatMessages).values({
-        agentId,
-        userId,
-        role: m.role,
-        content: m.content
-      });
-    } catch (err2) {
-      console.error("[SessionStore] persistChatMessages DB error:", err2);
-    }
-  }
-}
-async function getChatHistory(agentId, userId, limit = 0) {
-  const safeLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 0;
-  try {
-    const db2 = await getDb();
-    const where = and22(
-      eq29(agentChatMessages.agentId, agentId),
-      eq29(agentChatMessages.userId, userId)
-    );
-    const rows = safeLimit > 0 ? (await db2.select().from(agentChatMessages).where(where).orderBy(desc9(agentChatMessages.createdAt)).limit(safeLimit)).reverse() : await db2.select().from(agentChatMessages).where(where).orderBy(asc(agentChatMessages.createdAt));
-    return rows.map((r) => ({
-      id: r.id,
-      role: r.role,
-      content: r.content,
-      createdAt: r.createdAt.toISOString()
-    }));
-  } catch (err2) {
-    console.error("[SessionStore] getChatHistory DB error:", err2);
-    return [];
-  }
-}
-async function expireSession(sdkSessionId) {
-  processCache.delete(sdkSessionId);
-  try {
-    const db2 = await getDb();
-    await db2.delete(agentChatSessions).where(eq29(agentChatSessions.sdkSessionId, sdkSessionId));
-  } catch {
-  }
-}
-var SESSION_TTL_HOURS, SESSION_TTL_MS, MAX_CACHE_ENTRIES, processCache;
-var init_sessionStore2 = __esm({
-  "server/agent/providers/sessionStore.ts"() {
-    "use strict";
-    init_schema();
-    SESSION_TTL_HOURS = parseInt(process.env.AGENT_SESSION_TTL_HOURS ?? "24", 10);
-    SESSION_TTL_MS = (isNaN(SESSION_TTL_HOURS) || SESSION_TTL_HOURS <= 0 ? 24 : SESSION_TTL_HOURS) * 60 * 60 * 1e3;
-    MAX_CACHE_ENTRIES = 500;
-    processCache = /* @__PURE__ */ new Map();
   }
 });
 
@@ -23442,7 +23716,7 @@ async function runNamedAgent(opts) {
     let sessionResumed = false;
     if (opts.sdkSessionId) {
       try {
-        const { resumeSession: resumeSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
+        const { resumeSession: resumeSession2 } = await Promise.resolve().then(() => (init_claude(), claude_exports));
         const resumed = await resumeSession2(opts.sdkSessionId, agentId, userId);
         if (resumed) {
           messages2 = [...resumed.messages, { role: "user", content: userMessage }];
@@ -23602,7 +23876,7 @@ ${registryCtx.systemContext}` : systemPromptBase;
     });
     let finalSessionId = activeSessionId;
     try {
-      const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
+      const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_claude(), claude_exports));
       if (sessionResumed && activeSessionId) {
         const resumedBase = messages2.slice(0, messages2.length - 1);
         const newMessages = result.messages.slice(resumedBase.length);
@@ -23942,16 +24216,10 @@ async function judgeOutputs(opts) {
 ${o.body.slice(0, 3e3)}${o.body.length > 3e3 ? "\n[truncated]" : ""}`
   ).join("\n\n");
   const agentIndices = opts.outputs.map((o) => o.agentIndex);
-  const response = await routeModelTurn({
-    tier: "smart",
-    maxCompletionTokens: 1024,
-    stream: false,
-    toolChoice: "none",
-    logPrefix: "[TournamentJudge]",
-    messages: [
-      {
-        role: "system",
-        content: `You are an expert quality judge evaluating multiple outputs from independent AI agents on the same task. Score each output against the provided criteria and pick the best one. Respond with valid JSON only \u2014 no markdown, no commentary outside JSON.
+  const response = await anthropic.messages.create({
+    model: ORCHESTRATOR_MODEL,
+    max_tokens: 1024,
+    system: `You are an expert quality judge evaluating multiple outputs from independent AI agents on the same task. Score each output against the provided criteria and pick the best one. Respond with valid JSON only \u2014 no markdown, no commentary outside JSON.
 
 Agent indices available: ${agentIndices.join(", ")}
 
@@ -23969,8 +24237,8 @@ Rules:
 - Score 0-100 against the criteria (accuracy, completeness, appropriateness, quality).
 - Failed agents (showing an error message) should receive score \u2264 10.
 - winnerIndex must be one of the listed agent indices, pointing to the highest-scoring agent.
-- Keep each reasoning to 1-2 sentences.`
-      },
+- Keep each reasoning to 1-2 sentences.`,
+    messages: [
       {
         role: "user",
         content: `Task: ${opts.task}
@@ -23981,7 +24249,8 @@ ${outputBlock}`
       }
     ]
   });
-  const text2 = response.textContent ?? "";
+  const content = response.content[0];
+  const text2 = content.type === "text" ? content.text : "";
   try {
     const jsonMatch = text2.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON found in judge response");
@@ -24103,7 +24372,7 @@ var init_tournamentRunner = __esm({
   "server/agent/tournamentRunner.ts"() {
     "use strict";
     init_subagents();
-    init_modelRouter();
+    init_anthropicClient();
     init_db();
     init_schema();
     EMAIL_SIGNALS = [
@@ -24178,21 +24447,6 @@ function resolveMaxRetries(override) {
   const env = parseInt(process.env.ORCHESTRATOR_MAX_RETRIES ?? "", 10);
   return Number.isFinite(env) && env >= 0 ? env : DEFAULT_MAX_RETRIES;
 }
-async function routeOrchestratorText(opts) {
-  const messages2 = opts.system ? [
-    { role: "system", content: opts.system },
-    { role: "user", content: opts.user }
-  ] : [{ role: "user", content: opts.user }];
-  const response = await routeModelTurn({
-    tier: "smart",
-    messages: messages2,
-    toolChoice: "none",
-    maxCompletionTokens: opts.maxCompletionTokens,
-    stream: false,
-    logPrefix: `[orchestrator/${opts.label}]`
-  });
-  return response.textContent ?? "";
-}
 function normalizeSubTask(raw, index) {
   const obj = typeof raw === "object" && raw !== null ? raw : {};
   return {
@@ -24221,7 +24475,7 @@ function parseSubTasks(text2) {
     }];
   }
 }
-async function decomposeRequest(userRequest, systemContext, userId) {
+async function decomposeRequest(userRequest, systemContext, orchestratorModel, userId) {
   let crewManifest = "";
   try {
     crewManifest = await getCrewManifest(userId);
@@ -24232,9 +24486,9 @@ async function decomposeRequest(userRequest, systemContext, userId) {
 ${crewManifest}
 
 Include an optional "assignTo" field on each sub-task naming the best specialist from the crew manifest. Omit or null "assignTo" only for truly generic tasks.` : "";
-  const text2 = await routeOrchestratorText({
-    label: "decompose",
-    maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
+  const response = await anthropic.messages.create({
+    model: orchestratorModel,
+    max_tokens: ORCHESTRATOR_MAX_TOKENS,
     system: `You are PRIME, an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
 2. Have a short label (5-8 words)
@@ -24268,29 +24522,43 @@ Example:
 \`\`\`
 
 Keep sub-tasks minimal \u2014 only decompose when there are genuinely independent parallel workstreams. For simple requests, return a single task.`,
-    user: `User request: ${userRequest}
+    messages: [
+      {
+        role: "user",
+        content: `User request: ${userRequest}
 
 Context:
 ${systemContext}`
+      }
+    ]
   });
+  const content = response.content[0];
+  const text2 = content.type === "text" ? content.text : "";
   return parseSubTasks(text2);
 }
-async function verifyResult(task, result, correctionContext) {
+async function verifyResult(task, result, orchestratorModel, correctionContext) {
   try {
-    const text2 = await routeOrchestratorText({
-      label: "verify",
-      maxCompletionTokens: 512,
+    const response = await anthropic.messages.create({
+      model: orchestratorModel,
+      max_tokens: 512,
       system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only \u2014 no other text: {"passed": true/false, "reason": "brief explanation"}`,
-      user: [
-        `Sub-task: ${task.label}`,
-        `Instruction: ${task.instruction}`,
-        `Acceptance criteria: ${task.acceptanceCriteria}`,
-        `Sub-agent result:
+      messages: [
+        {
+          role: "user",
+          content: [
+            `Sub-task: ${task.label}`,
+            `Instruction: ${task.instruction}`,
+            `Acceptance criteria: ${task.acceptanceCriteria}`,
+            `Sub-agent result:
 ${result}`,
-        correctionContext ? `
+            correctionContext ? `
 Previous correction context: ${correctionContext}` : ""
-      ].filter(Boolean).join("\n")
+          ].filter(Boolean).join("\n")
+        }
+      ]
     });
+    const content = response.content[0];
+    const text2 = content.type === "text" ? content.text : "";
     const jsonMatch = text2.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       return { passed: false, reason: "Verifier returned unparseable response \u2014 treating as failed" };
@@ -24302,26 +24570,32 @@ Previous correction context: ${correctionContext}` : ""
     };
   } catch (err2) {
     return {
-      passed: true,
-      reason: `Verifier unavailable; accepted without retry: ${err2 instanceof Error ? err2.message : String(err2)}`
+      passed: false,
+      reason: `Verifier error: ${err2 instanceof Error ? err2.message : String(err2)}`
     };
   }
 }
-async function synthesizeFinalAnswer(userRequest, systemContext, results) {
+async function synthesizeFinalAnswer(userRequest, systemContext, results, orchestratorModel) {
   const resultsSummary = results.map((r) => `### ${r.label}
 ${r.result}`).join("\n\n");
-  const text2 = await routeOrchestratorText({
-    label: "synthesize",
-    maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
+  const response = await anthropic.messages.create({
+    model: orchestratorModel,
+    max_tokens: ORCHESTRATOR_MAX_TOKENS,
     system: `You are Jarvis, an intelligent personal assistant. You have received results from multiple specialized sub-agents. Synthesize their findings into a single, coherent, helpful response addressed directly to the user. Be concise but complete. Use the system context to match the appropriate tone and format.
 
 ${systemContext}`,
-    user: `Original request: ${userRequest}
+    messages: [
+      {
+        role: "user",
+        content: `Original request: ${userRequest}
 
 Sub-agent results:
 ${resultsSummary}`
+      }
+    ]
   });
-  return text2 || "I was unable to synthesize the results.";
+  const content = response.content[0];
+  return content.type === "text" ? content.text : "I was unable to synthesize the results.";
 }
 async function executeSubTask(task, tools, toolContext, dependencyResults, correctionContext, maxCompletionTokens, onProgressMessage) {
   const depContext = dependencyResults.length > 0 ? "\n\nContext from prior sub-tasks:\n" + dependencyResults.map((r) => `${r.label}: ${r.result}`).join("\n") : "";
@@ -24350,7 +24624,7 @@ Please try again with this feedback.${depContext}` : `${task.instruction}${depCo
     }
   }
   const result = await runAgent({
-    model: DEFAULT_CODEX_OAUTH_MODEL,
+    model: "gpt-4o-mini",
     messages: [
       { role: "user", content: instruction }
     ],
@@ -24393,8 +24667,8 @@ function topologicalSort(tasks) {
 function isRunnersUpRequest(text2) {
   return RUNNERS_UP_PATTERNS.some((r) => r.test(text2));
 }
-async function runOrchestrator(input) {
-  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage } = input;
+async function runOrchestrator(input2) {
+  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage } = input2;
   const MAX_RETRIES = resolveMaxRetries(maxRetriesOverride);
   const traceId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = /* @__PURE__ */ new Date();
@@ -24430,7 +24704,7 @@ async function runOrchestrator(input) {
   console.log(`[orchestrator] ${traceId} \u2014 model=${orchestratorModel}`);
   let rawSubTasks;
   try {
-    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId);
+    rawSubTasks = await decomposeRequest(userRequest, systemContext, orchestratorModel, userId);
   } catch (err2) {
     console.error("[orchestrator] decomposition failed:", err2);
     rawSubTasks = [{
@@ -24462,7 +24736,7 @@ async function runOrchestrator(input) {
       } catch (err2) {
         taskResult = `Execution error: ${err2 instanceof Error ? err2.message : String(err2)}`;
       }
-      const verification = await verifyResult(task, taskResult, correctionContext);
+      const verification = await verifyResult(task, taskResult, orchestratorModel, correctionContext);
       verificationReason = verification.reason;
       if (verification.passed) {
         finalPassed = true;
@@ -24513,7 +24787,7 @@ async function runOrchestrator(input) {
   }
   let finalAnswer;
   try {
-    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults);
+    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, orchestratorModel);
   } catch (err2) {
     console.error("[orchestrator] synthesis failed:", err2);
     finalAnswer = allResults.map((r) => r.result).join("\n\n");
@@ -24589,10 +24863,11 @@ ${opts.result}`
     return { passed: null, reason: msg === "verify_timeout" ? "verify_timeout" : `verify_error: ${msg}` };
   }
 }
-var ORCHESTRATOR_MAX_TOKENS, DEFAULT_MAX_RETRIES, RUNNERS_UP_PATTERNS, JOB_QUALITY_CRITERIA;
+var DEFAULT_MAX_RETRIES, RUNNERS_UP_PATTERNS, JOB_QUALITY_CRITERIA;
 var init_orchestrator = __esm({
   "server/agent/orchestrator.ts"() {
     "use strict";
+    init_anthropicClient();
     init_modelPrefs();
     init_harness();
     init_runNamedAgent();
@@ -24601,8 +24876,6 @@ var init_orchestrator = __esm({
     init_schema();
     init_tournamentRunner();
     init_modelRouter();
-    init_runtimeModel();
-    ORCHESTRATOR_MAX_TOKENS = 8192;
     DEFAULT_MAX_RETRIES = 3;
     RUNNERS_UP_PATTERNS = [
       /show.*others/i,
@@ -24694,34 +24967,34 @@ async function realInsertJob(values) {
   }).returning({ id: agentJobs.id });
   return inserted[0]?.id ?? "";
 }
-async function submitAgentJob2(input, deps = {}) {
+async function submitAgentJob2(input2, deps = {}) {
   const guardFn = deps.findDuplicate ?? findDuplicateJob;
   const insertFn = deps.insertJob ?? realInsertJob;
   try {
-    const existing = await guardFn(input.userId, input.agentType, input.title);
+    const existing = await guardFn(input2.userId, input2.agentType, input2.title);
     if (existing) {
       console.log(
-        `[JobQueue] duplicate suppressed \u2014 returning existing job=${existing.id} type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`
+        `[JobQueue] duplicate suppressed \u2014 returning existing job=${existing.id} type=${input2.agentType} user=${input2.userId} title="${input2.title.slice(0, 60)}"`
       );
       return { id: existing.id, isDuplicate: true };
     }
   } catch (dupErr) {
     console.warn("[JobQueue] duplicate-check failed (proceeding with insert):", dupErr);
   }
-  const callerInput = input.input || {};
-  const routedModel = getModelForJobType2(input.agentType);
+  const callerInput = input2.input || {};
+  const routedModel = getModelForJobType2(input2.agentType);
   const mergedInput = callerInput.model !== void 0 || routedModel === void 0 ? callerInput : { ...callerInput, model: routedModel };
   const id = await insertFn({
-    userId: input.userId,
-    agentType: input.agentType,
-    title: input.title.slice(0, 200),
-    prompt: input.prompt,
+    userId: input2.userId,
+    agentType: input2.agentType,
+    title: input2.title.slice(0, 200),
+    prompt: input2.prompt,
     input: mergedInput,
     status: "queued"
   });
   const model = mergedInput.model ?? "agent-default";
   console.log(
-    `[JobQueue] queued job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`
+    `[JobQueue] queued job ${id} type=${input2.agentType} model=${model} user=${input2.userId} title="${input2.title.slice(0, 60)}"`
   );
   return { id, isDuplicate: false };
 }
@@ -27267,15 +27540,15 @@ async function sendAppProjectQuestion(userId, originChannel, message) {
   await sendAppProjectMessage(userId, originChannel, message);
   return {};
 }
-async function startAppProject(input) {
+async function startAppProject(input2) {
   const [project] = await db.insert(jarvisProjects).values({
-    userId: input.userId,
-    title: input.title,
-    description: input.description,
-    goal: input.goal,
+    userId: input2.userId,
+    title: input2.title,
+    description: input2.description,
+    goal: input2.goal,
     status: "planning",
-    originChannel: input.originChannel,
-    appFramework: input.framework,
+    originChannel: input2.originChannel,
+    appFramework: input2.framework,
     autonomousMode: true,
     updatedAt: /* @__PURE__ */ new Date()
   }).returning({ id: jarvisProjects.id });
@@ -27283,13 +27556,13 @@ async function startAppProject(input) {
   const realWorkspaceDir = getProjectWorkspaceDir(projectId);
   fs9.mkdirSync(realWorkspaceDir, { recursive: true });
   await db.update(jarvisProjects).set({ workspaceDir: realWorkspaceDir, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
-  console.log(`[AppProjectRunner] startAppProject: created project ${projectId} for user ${input.userId} framework=${input.framework}`);
+  console.log(`[AppProjectRunner] startAppProject: created project ${projectId} for user ${input2.userId} framework=${input2.framework}`);
   await submitAgentJob2({
-    userId: input.userId,
+    userId: input2.userId,
     agentType: "app_project",
-    title: `Plan app: ${input.title}`,
+    title: `Plan app: ${input2.title}`,
     prompt: `Run planning phase for app project ${projectId}`,
-    input: { projectId, phase: "planning", originChannel: input.originChannel }
+    input: { projectId, phase: "planning", originChannel: input2.originChannel }
   });
   return { projectId };
 }
@@ -29025,15 +29298,15 @@ import { and as and29, eq as eq40, isNull as isNull2, sql as sql13 } from "drizz
 function normalizeText(value) {
   return String(value ?? "").trim();
 }
-async function createJarvisScheduledTask(input) {
-  const title = normalizeText(input.title);
-  const description = normalizeText(input.description) || null;
-  const recurrence = normalizeText(input.recurrence) || null;
+async function createJarvisScheduledTask(input2) {
+  const title = normalizeText(input2.title);
+  const description = normalizeText(input2.description) || null;
+  const recurrence = normalizeText(input2.recurrence) || null;
   const recurrencePredicate = recurrence ? eq40(jarvisScheduledTasks.recurrence, recurrence) : isNull2(jarvisScheduledTasks.recurrence);
   const [existing] = await db.select().from(jarvisScheduledTasks).where(and29(
-    eq40(jarvisScheduledTasks.userId, input.userId),
+    eq40(jarvisScheduledTasks.userId, input2.userId),
     sql13`LOWER(TRIM(${jarvisScheduledTasks.title})) = ${title.toLowerCase()}`,
-    eq40(jarvisScheduledTasks.scheduledAt, input.scheduledAt),
+    eq40(jarvisScheduledTasks.scheduledAt, input2.scheduledAt),
     recurrencePredicate,
     isNull2(jarvisScheduledTasks.completedAt),
     eq40(jarvisScheduledTasks.active, true)
@@ -29042,10 +29315,10 @@ async function createJarvisScheduledTask(input) {
     return { task: existing, deduped: true };
   }
   const [task] = await db.insert(jarvisScheduledTasks).values({
-    userId: input.userId,
+    userId: input2.userId,
     title,
     description,
-    scheduledAt: input.scheduledAt,
+    scheduledAt: input2.scheduledAt,
     recurrence
   }).returning();
   return { task, deduped: false };
@@ -29139,8 +29412,8 @@ var init_scheduleJarvisTask = __esm({
 
 // server/discord/schedules.ts
 import { eq as eq41, and as and30 } from "drizzle-orm";
-function detectTemplate(input) {
-  const lower = input.toLowerCase();
+function detectTemplate(input2) {
+  const lower = input2.toLowerCase();
   for (const tpl of Object.values(SCHEDULE_TEMPLATES)) {
     if (tpl.triggerPhrases.some((p) => lower.includes(p))) {
       return tpl;
@@ -30984,16 +31257,16 @@ async function ensureYtdlpUpgraded() {
   })();
   return ytdlpUpgradePromise;
 }
-function extractVideoId(input) {
-  const bare = input.trim();
+function extractVideoId(input2) {
+  const bare = input2.trim();
   if (/^[a-zA-Z0-9_-]{11}$/.test(bare)) return bare;
   const pat = /(?:youtube\.com\/(?:watch\?(?:[^\s#&]*&)*v=|shorts\/|embed\/|v\/|live\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i;
   const m = pat.exec(bare);
   return m ? m[1] : null;
 }
-function isPlaylistUrl(input) {
+function isPlaylistUrl(input2) {
   try {
-    const url = new URL(input.trim());
+    const url = new URL(input2.trim());
     const list = url.searchParams.get("list");
     const videoId = url.searchParams.get("v");
     if (list && !videoId) return true;
@@ -31490,9 +31763,9 @@ async function fetchTimedTextTranscript(videoId) {
   }
   return [];
 }
-async function fetchTranscriptCached(input, options = {}) {
+async function fetchTranscriptCached(input2, options = {}) {
   const { bypassCache = false, config, audioOnly = false, captionsOnly = false, onFetchStart, userId, signal } = options;
-  const videoId = extractVideoId(input);
+  const videoId = extractVideoId(input2);
   if (videoId && !bypassCache && !audioOnly) {
     evictExpired();
     const hit = cache3.get(videoId);
@@ -31522,7 +31795,7 @@ async function fetchTranscriptCached(input, options = {}) {
     console.log(`[transcriptCache] BYPASS ${videoId} \u2014 fetching live and overwriting cache`);
   }
   onFetchStart?.();
-  const resolvedId = videoId ?? input.trim();
+  const resolvedId = videoId ?? input2.trim();
   let segments = [];
   let source = "unknown";
   const phaseErrors = {};
@@ -31636,7 +31909,7 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
     console.log(`[transcriptCache] audioOnly=true for ${resolvedId} \u2014 going straight to audio transcription`);
     audioAttemptCount++;
     try {
-      const audioSegs = await fetchAudioTranscript(resolvedId, input);
+      const audioSegs = await fetchAudioTranscript(resolvedId, input2);
       if (audioSegs.length > 0) {
         segments = audioSegs;
         source = "audio-transcription";
@@ -31746,7 +32019,7 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
     if (segments.length === 0) {
       try {
         const { YoutubeTranscript } = await import("youtube-transcript/dist/youtube-transcript.esm.js");
-        segments = await YoutubeTranscript.fetchTranscript(input, config);
+        segments = await YoutubeTranscript.fetchTranscript(input2, config);
         if (segments.length > 0) {
           source = "youtube-transcript";
           console.log(`[transcriptCache] youtube-transcript OK ${resolvedId} \u2014 ${segments.length} segs`);
@@ -31762,7 +32035,7 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
     console.log(`[transcriptCache] ${reason} for ${resolvedId}`);
     audioAttemptCount++;
     try {
-      const audioSegs = await fetchAudioTranscript(resolvedId, input);
+      const audioSegs = await fetchAudioTranscript(resolvedId, input2);
       if (audioSegs.length > 0) {
         segments = audioSegs;
         source = "audio-transcription";
@@ -31815,8 +32088,8 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
     ...supadataTimedOut ? { supadataTimedOut: true } : {}
   };
 }
-function invalidateTranscript(input) {
-  const videoId = extractVideoId(input);
+function invalidateTranscript(input2) {
+  const videoId = extractVideoId(input2);
   if (!videoId) return false;
   const deleted = cache3.delete(videoId);
   if (deleted) console.log(`[transcriptCache] INVALIDATED ${videoId}`);
@@ -31870,7 +32143,7 @@ var init_transcriptCache = __esm({
       "non-terminal-error": 0
     };
     audioAttemptCount = 0;
-    INNERTUBE_KEY = "your-youtube-innertube-api-key";
+    INNERTUBE_KEY = process.env.YOUTUBE_INNERTUBE_API_KEY ?? "";
     INNERTUBE_CLIENTS = [
       {
         name: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
@@ -32316,9 +32589,9 @@ function formatTimestamp(ms) {
   }
   return `${m}:${String(s).padStart(2, "0")}`;
 }
-async function fetchTranscriptViaBrowser(input, userId) {
+async function fetchTranscriptViaBrowser(input2, userId) {
   const extractText = (result) => (result.content || []).map((c) => c.text || "").join("");
-  const videoId = extractVideoId(input) ?? input.trim();
+  const videoId = extractVideoId(input2) ?? input2.trim();
   try {
     await callBrowserTool(userId, "browser_navigate", {
       url: `https://www.youtube.com/watch?v=${videoId}`
@@ -32349,15 +32622,15 @@ async function fetchTranscriptViaBrowser(input, userId) {
     return [];
   }
 }
-async function fetchViaTavily(input) {
+async function fetchViaTavily(input2) {
   if (!process.env.TAVILY_API_KEY) return null;
   const { tavilySearch: tavilySearch2 } = await Promise.resolve().then(() => (init_search(), search_exports));
-  const videoId = extractVideoId(input);
-  const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : input;
+  const videoId = extractVideoId(input2);
+  const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : input2;
   try {
     const [urlRes, transcriptRes] = await Promise.allSettled([
       tavilySearch2(videoUrl, 5),
-      tavilySearch2(`${videoId ?? input} youtube transcript`, 5)
+      tavilySearch2(`${videoId ?? input2} youtube transcript`, 5)
     ]);
     const parts = [];
     if (urlRes.status === "fulfilled" && urlRes.value.answer) {
@@ -32438,11 +32711,11 @@ var init_youtubeTranscript = __esm({
         required: ["url"]
       },
       async execute(args, ctx) {
-        const input = String(args.url || "").trim();
-        if (!input) {
+        const input2 = String(args.url || "").trim();
+        if (!input2) {
           return { ok: false, content: "Please provide a YouTube URL or video ID.", label: "get_youtube_transcript: missing input" };
         }
-        if (isPlaylistUrl(input)) {
+        if (isPlaylistUrl(input2)) {
           return {
             ok: false,
             content: "That looks like a YouTube playlist URL. I can only fetch transcripts for individual videos. Please share a single video URL (e.g. https://youtube.com/watch?v=VIDEO_ID).",
@@ -32452,9 +32725,9 @@ var init_youtubeTranscript = __esm({
         const bypassCache = args.refresh === true;
         const includeVisuals = args.includeVisuals !== false;
         const forceAudio = args.force_audio === true;
-        const videoId = extractVideoId(input);
+        const videoId = extractVideoId(input2);
         console.log(
-          `[get_youtube_transcript] fetching transcript for "${input}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals}, forceAudio=${forceAudio})`
+          `[get_youtube_transcript] fetching transcript for "${input2}" (user=${ctx.userId}, bypassCache=${bypassCache}, includeVisuals=${includeVisuals}, forceAudio=${forceAudio})`
         );
         const visualPromise = includeVisuals && videoId ? buildVisualSummary(videoId, void 0, bypassCache).catch(() => null) : Promise.resolve(null);
         const FILE_THRESHOLD2 = 4e4;
@@ -32474,7 +32747,7 @@ ${"\u2500".repeat(60)}
               const pending = ctx.state.pendingAttachments ||= [];
               pending.push({
                 kind: "document",
-                filename: `transcript-${extractVideoId(input) ?? "video"}.txt`,
+                filename: `transcript-${extractVideoId(input2) ?? "video"}.txt`,
                 content: fullText2,
                 caption: isGeminiTranscript ? `Full transcript via Gemini (no official captions needed).` : `AI-generated transcript (no official captions were available).`,
                 mimeType: "text/plain"
@@ -32531,7 +32804,7 @@ ${"\u2500".repeat(60)}
             const pending = ctx.state.pendingAttachments ||= [];
             pending.push({
               kind: "document",
-              filename: `transcript-${extractVideoId(input) ?? "video"}.txt`,
+              filename: `transcript-${extractVideoId(input2) ?? "video"}.txt`,
               content: fullText,
               caption: `Full transcript (~${totalDuration}) \u2014 ${rawSegments.length} segments.`,
               mimeType: "text/plain"
@@ -32584,7 +32857,7 @@ ${"\u2500".repeat(60)}
           }
         }
         try {
-          const { segments: rawSegments, noCaptionsDetected, source: fetchedSource, asyncJobPending, jobId } = await fetchTranscriptCached(input, {
+          const { segments: rawSegments, noCaptionsDetected, source: fetchedSource, asyncJobPending, jobId } = await fetchTranscriptCached(input2, {
             bypassCache,
             audioOnly: forceAudio,
             userId: ctx.userId,
@@ -32604,12 +32877,12 @@ ${"\u2500".repeat(60)}
           let segments = rawSegments;
           if (!segments || segments.length === 0) {
             console.log(`[get_youtube_transcript] server strategies returned 0 segs \u2014 trying browser fallback`);
-            const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
+            const browserSegs = await fetchTranscriptViaBrowser(input2, ctx.userId);
             if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
             if (isWorkerOnline(ctx.userId)) {
               console.log(`[get_youtube_transcript] browser fallback empty \u2014 forwarding to local worker`);
               try {
-                const localSegs = await queueTranscriptJob(ctx.userId, input);
+                const localSegs = await queueTranscriptJob(ctx.userId, input2);
                 if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
               } catch (lwErr) {
                 console.warn(`[get_youtube_transcript] local worker failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
@@ -32622,7 +32895,7 @@ ${"\u2500".repeat(60)}
               } else {
                 console.log(`[get_youtube_transcript] noCaptionsDetected \u2014 auto-retrying with audioOnly=true`);
                 try {
-                  const { segments: audioSegs, source: audioRetrySource } = await fetchTranscriptCached(input, { bypassCache: true, audioOnly: true });
+                  const { segments: audioSegs, source: audioRetrySource } = await fetchTranscriptCached(input2, { bypassCache: true, audioOnly: true });
                   if (audioSegs.length > 0) {
                     return withVisuals(buildResult(audioSegs, audioRetrySource));
                   }
@@ -32639,7 +32912,7 @@ ${"\u2500".repeat(60)}
             const { available: ytdlpOkForHint } = getYtdlpStatus();
             const audioHint = noCaptionsDetected && !forceAudio ? ytdlpOkForHint ? "\n\n\u{1F4A1} **This video has no official captions and the automatic audio transcription also failed.** To retry via direct audio transcription, call `get_youtube_transcript` again with `force_audio=true` \u2014 this downloads and transcribes the audio using Whisper and bypasses caption lookups entirely." : "\n\n\u26A0\uFE0F **This video has no official captions, and audio transcription is currently unavailable** because the yt-dlp dependency is not installed on this server. Please try again later." : "";
             console.log(`[get_youtube_transcript] all strategies empty \u2014 trying Tavily web search`);
-            const tavilyResult = await fetchViaTavily(input);
+            const tavilyResult = await fetchViaTavily(input2);
             if (tavilyResult) {
               return {
                 ...tavilyResult,
@@ -32695,7 +32968,7 @@ ${"\u2500".repeat(60)}
             };
           }
           if (msg.startsWith("AUDIO_DOWNLOAD_FAILED:")) {
-            console.warn(`[get_youtube_transcript] audio-download-failed for ${videoId ?? input}: ${msg}`);
+            console.warn(`[get_youtube_transcript] audio-download-failed for ${videoId ?? input2}: ${msg}`);
             return {
               ok: false,
               content: "The audio download failed \u2014 YouTube may be blocking this request from the server. You can try again in a moment, or start the local worker on your PC for better results.",
@@ -32703,19 +32976,19 @@ ${"\u2500".repeat(60)}
             };
           }
           console.log(`[get_youtube_transcript] non-terminal error (${msg}) \u2014 trying browser fallback`);
-          const browserSegs = await fetchTranscriptViaBrowser(input, ctx.userId);
+          const browserSegs = await fetchTranscriptViaBrowser(input2, ctx.userId);
           if (browserSegs.length > 0) return withVisuals(buildResult(browserSegs, "browser"));
           if (isWorkerOnline(ctx.userId)) {
             console.log(`[get_youtube_transcript] browser also failed \u2014 forwarding to local worker`);
             try {
-              const localSegs = await queueTranscriptJob(ctx.userId, input);
+              const localSegs = await queueTranscriptJob(ctx.userId, input2);
               if (localSegs.length > 0) return withVisuals(buildResult(localSegs, "local-worker"));
             } catch (lwErr) {
               console.warn(`[get_youtube_transcript] local worker also failed: ${lwErr instanceof Error ? lwErr.message : String(lwErr)}`);
             }
           }
           console.log(`[get_youtube_transcript] all strategies failed \u2014 trying Tavily web search`);
-          const tavilyFallback = await fetchViaTavily(input);
+          const tavilyFallback = await fetchViaTavily(input2);
           if (tavilyFallback) return tavilyFallback;
           console.error(`[get_youtube_transcript] all strategies exhausted: ${msg}`);
           return {
@@ -37268,16 +37541,10 @@ async function _runAnalysisInner(userId) {
   }).join("\n\n");
   let clustering;
   try {
-    const response = await routeModelTurn({
-      tier: "smart",
-      maxCompletionTokens: 2048,
-      stream: false,
-      toolChoice: "none",
-      logPrefix: "[CapabilityGap]",
-      messages: [
-        {
-          role: "system",
-          content: `You are Jarvis's capability expansion engine. You receive a numbered list of capability gaps from this week. Gaps may come from two sources:
+    const response = await anthropic.messages.create({
+      model: ANALYZER_LLM_MODEL,
+      max_tokens: 2048,
+      system: `You are Jarvis's capability expansion engine. You receive a numbered list of capability gaps from this week. Gaps may come from two sources:
 - Chat interactions where Jarvis deflected or apologised (labelled deflection, apology_only, no_tool_for_request)
 - Background job failures where a scheduled or queued job crashed with a logic/format error (labelled job_failure)
 
@@ -37312,8 +37579,8 @@ Output ONLY valid JSON matching this schema exactly:
   ]
 }
 
-memberIndices are required for every cluster. toolProposal is only required when buildable is true. riskLevel must be "low", "medium", or "high".`
-        },
+memberIndices are required for every cluster. toolProposal is only required when buildable is true. riskLevel must be "low", "medium", or "high".`,
+      messages: [
         {
           role: "user",
           content: `Here are the numbered capability gaps Jarvis encountered this week:
@@ -37324,7 +37591,7 @@ Cluster and decide. Output JSON only.`
         }
       ]
     });
-    const raw = (response.textContent ?? "").trim();
+    const raw = response.content[0].type === "text" ? response.content[0].text.trim() : "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON object in LLM response");
     clustering = JSON.parse(jsonMatch[0]);
@@ -37395,14 +37662,15 @@ Cluster and decide. Output JSON only.`
   console.log(`[CapabilityGap] Analysis done for user=${userId} \u2014 submitted=${submitted} queued=${queued}`);
   return { submitted, queued };
 }
-var MAX_GAP_CLUSTERS, MAX_AUTO_BUILDS;
+var ANALYZER_LLM_MODEL, MAX_GAP_CLUSTERS, MAX_AUTO_BUILDS;
 var init_capabilityGapAnalyzer = __esm({
   "server/agent/capabilityGapAnalyzer.ts"() {
     "use strict";
     init_db();
     init_schema();
+    init_anthropicClient();
     init_jobClient();
-    init_modelRouter();
+    ANALYZER_LLM_MODEL = "claude-haiku-4-5";
     MAX_GAP_CLUSTERS = 5;
     MAX_AUTO_BUILDS = 2;
   }
@@ -38493,23 +38761,35 @@ ${filesSection}`
 ${previousTypeCheckOutput}`);
   }
   const userMessage = parts.join("\n\n---\n\n");
-  const response = await routeModelTurn({
-    tier: "smart",
-    maxCompletionTokens: INNER_MAX_TOKENS,
-    stream: false,
-    toolChoice: "none",
-    logPrefix: "[SelfHealInner]",
-    messages: [
-      { role: "system", content: INNER_SYSTEM_PROMPT },
-      { role: "user", content: userMessage }
-    ]
-  });
-  if (response.finishReason === "max_tokens" || response.finishReason === "length") {
+  let model = INNER_LLM_MODEL;
+  let response;
+  try {
+    response = await anthropic.messages.create({
+      model,
+      max_tokens: INNER_MAX_TOKENS,
+      system: INNER_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: userMessage }]
+    });
+  } catch (err2) {
+    const msg = err2 instanceof Error ? err2.message : String(err2);
+    if (msg.includes("model") || msg.includes("not found") || msg.includes("404")) {
+      model = ORCHESTRATOR_MODEL;
+      response = await anthropic.messages.create({
+        model,
+        max_tokens: INNER_MAX_TOKENS,
+        system: INNER_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userMessage }]
+      });
+    } else {
+      throw err2;
+    }
+  }
+  if (response.stop_reason === "max_tokens") {
     throw new Error(
       "Inner LLM response was cut off by the token limit. Try with fewer or smaller files using the affected_paths parameter."
     );
   }
-  const text2 = response.textContent ?? "";
+  const text2 = response.content.filter((b) => b.type === "text").map((b) => b.text).join("");
   const cleaned = text2.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
   let parsed;
   try {
@@ -38541,12 +38821,12 @@ ${previousTypeCheckOutput}`);
     affected_tools
   };
 }
-var PROJECT_ROOT4, MAX_FILE_LINES2, MAX_FILES, INNER_MAX_TOKENS, PROTECTED_FILE_LIST, INNER_SYSTEM_PROMPT, selfHealTool;
+var PROJECT_ROOT4, MAX_FILE_LINES2, MAX_FILES, INNER_MAX_TOKENS, INNER_LLM_MODEL, PROTECTED_FILE_LIST, INNER_SYSTEM_PROMPT, selfHealTool;
 var init_selfHealTool = __esm({
   "server/agent/tools/selfHealTool.ts"() {
     "use strict";
     init_integrationOwner();
-    init_modelRouter();
+    init_anthropicClient();
     init_safeWritePolicy();
     init_selfEditTools();
     init_applyCodeChangeTool();
@@ -38558,6 +38838,7 @@ var init_selfHealTool = __esm({
     MAX_FILE_LINES2 = 800;
     MAX_FILES = 8;
     INNER_MAX_TOKENS = 8192;
+    INNER_LLM_MODEL = "claude-3-5-haiku-20241022";
     PROTECTED_FILE_LIST = [...PROTECTED_FILES].join(", ");
     INNER_SYSTEM_PROMPT = `You are a precise code-repair specialist embedded inside an autonomous self-healing agent.
 Your job is to analyse a bug description, error logs, and source files, then produce the
@@ -40512,8 +40793,8 @@ function abortError() {
   err2.name = "AbortError";
   return err2;
 }
-function buildCodexDelegationPrompt(input) {
-  const sideEffectBoundary = input.allowExternalSideEffects ? [
+function buildCodexDelegationPrompt(input2) {
+  const sideEffectBoundary = input2.allowExternalSideEffects ? [
     "External side effects are allowed only where the user explicitly requested them in this task.",
     "For repo changes the user asked to make permanent, verify the work, commit the scoped changes, and push the target branch when that push was explicitly requested.",
     "Before any irreversible action, use Codex's normal approval and safety behavior."
@@ -40530,10 +40811,10 @@ function buildCodexDelegationPrompt(input) {
     sideEffectBoundary,
     "",
     "Task:",
-    input.task.trim(),
+    input2.task.trim(),
     "",
     "Context:",
-    input.context?.trim() || "No extra context provided."
+    input2.context?.trim() || "No extra context provided."
   ].join("\n");
 }
 function resolveCodexDelegationCwd(requestedCwd) {
@@ -40605,20 +40886,19 @@ async function runLocalCodexDelegation(request) {
   const prompt = buildCodexDelegationPrompt(request);
   try {
     const stdout = await new Promise((resolve11, reject) => {
-      const codex = buildCodexSpawnCommand(getCodexOAuthCommand(), [
-        "exec",
-        "--skip-git-repo-check",
-        "--sandbox",
-        request.sandbox,
-        "--cd",
-        request.cwd,
-        "--output-last-message",
-        outputPath,
-        "-"
-      ]);
       const child = spawn7(
-        codex.command,
-        codex.args,
+        getCodexOAuthCommand(),
+        [
+          "exec",
+          "--skip-git-repo-check",
+          "--sandbox",
+          request.sandbox,
+          "--cd",
+          request.cwd,
+          "--output-last-message",
+          outputPath,
+          "-"
+        ],
         {
           cwd: request.cwd,
           env: process.env,
@@ -40688,7 +40968,6 @@ var MAX_OUTPUT_CHARS2, runnerOverride;
 var init_codexDelegation = __esm({
   "server/agent/codexDelegation.ts"() {
     "use strict";
-    init_codexCommand();
     init_env();
     MAX_OUTPUT_CHARS2 = 2e4;
     runnerOverride = null;
@@ -41216,12 +41495,9 @@ function withTimeout(promise, ms, fallback) {
 }
 async function preThink(userMessage, briefContext, orchestratorModel) {
   const run = async () => {
-    const response = await routeModelTurn({
-      tier: "smart",
-      maxCompletionTokens: MAX_TOKENS,
-      stream: false,
-      toolChoice: "none",
-      logPrefix: "[QualityLoop/preThink]",
+    const msg = await anthropic.messages.create({
+      model: orchestratorModel,
+      max_tokens: MAX_TOKENS,
       messages: [
         {
           role: "user",
@@ -41233,7 +41509,8 @@ In 1-2 sentences, describe the best approach to answering this message. Be conci
         }
       ]
     });
-    return (response.textContent ?? "").trim();
+    const block = msg.content[0];
+    return block.type === "text" ? block.text.trim() : "";
   };
   try {
     return await withTimeout(run(), TIMEOUT_MS, "");
@@ -41243,12 +41520,9 @@ In 1-2 sentences, describe the best approach to answering this message. Be conci
 }
 async function postCheck(userMessage, agentReply, orchestratorModel) {
   const run = async () => {
-    const response = await routeModelTurn({
-      tier: "smart",
-      maxCompletionTokens: MAX_TOKENS,
-      stream: false,
-      toolChoice: "none",
-      logPrefix: "[QualityLoop/postCheck]",
+    const msg = await anthropic.messages.create({
+      model: orchestratorModel,
+      max_tokens: MAX_TOKENS,
       messages: [
         {
           role: "user",
@@ -41260,8 +41534,9 @@ Did the agent fully address the user's request? Reply with exactly one line: PAS
         }
       ]
     });
-    const text2 = (response.textContent ?? "").trim();
-    if (!text2) return { passed: true, feedback: "" };
+    const block = msg.content[0];
+    if (block.type !== "text") return { passed: true, feedback: "" };
+    const text2 = block.text.trim();
     if (text2.toUpperCase().startsWith("PASS")) {
       return { passed: true, feedback: "" };
     }
@@ -41279,15 +41554,15 @@ var MAX_TOKENS, TIMEOUT_MS;
 var init_qualityLoop = __esm({
   "server/agent/qualityLoop.ts"() {
     "use strict";
-    init_modelRouter();
+    init_anthropicClient();
     MAX_TOKENS = 80;
     TIMEOUT_MS = 4e3;
   }
 });
 
 // server/agent/buildIntentRouter.ts
-async function routeBuildIntent(input, deps = { submit: submitAgentJob2 }) {
-  const { userId, userText, channelName, chatMessages, discordChannelId } = input;
+async function routeBuildIntent(input2, deps = { submit: submitAgentJob2 }) {
+  const { userId, userText, channelName, chatMessages, discordChannelId } = input2;
   const { submit } = deps;
   const buildTitle = `Build: ${userText.slice(0, 80)}${userText.length > 80 ? "\u2026" : ""}`;
   const buildPrompt2 = userText;
@@ -41333,15 +41608,15 @@ function inferAgentType(text2) {
   }
   return "research";
 }
-function decideAutonomyMode(input) {
-  const text2 = input.userText.trim();
-  if (input.readiness === "blocked") {
+function decideAutonomyMode(input2) {
+  const text2 = input2.userText.trim();
+  if (input2.readiness === "blocked") {
     return {
       mode: "blocked_by_setup",
       reason: "Jarvis core setup is blocked, so autonomous work should not start until doctor blockers are fixed."
     };
   }
-  if (!input.hasApproval && EXTERNAL_ACTION_PATTERNS.some((pattern) => pattern.test(text2))) {
+  if (!input2.hasApproval && EXTERNAL_ACTION_PATTERNS.some((pattern) => pattern.test(text2))) {
     return {
       mode: "requires_approval",
       reason: "The request appears to involve an external action or irreversible side effect."
@@ -41555,9 +41830,9 @@ async function defaultReadiness(userId) {
     return "limited";
   }
 }
-async function defaultSubmitJob(input) {
+async function defaultSubmitJob(input2) {
   const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobClient(), jobClient_exports));
-  return submitAgentJob3(input);
+  return submitAgentJob3(input2);
 }
 async function defaultRequestApproval(request) {
   const { requestApproval: requestApproval2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
@@ -41613,9 +41888,9 @@ function queuedReply(agentType, job) {
   }
   return `I've queued that as a ${agentType} background job. Job ID: ${job.id}. You'll get the result in the reviewable inbox/deliverable flow when it finishes.`;
 }
-async function routeAutonomyRequest(input, deps = {}) {
-  const userText = input.userText.trim();
-  const hasApproval = input.hasApproval ?? inferExplicitApproval(userText);
+async function routeAutonomyRequest(input2, deps = {}) {
+  const userText = input2.userText.trim();
+  const hasApproval = input2.hasApproval ?? inferExplicitApproval(userText);
   const preliminary = decideAutonomyMode({
     userText,
     readiness: "ready",
@@ -41624,14 +41899,14 @@ async function routeAutonomyRequest(input, deps = {}) {
   if (!userText || preliminary.mode === "answer_inline") {
     await observeAutonomyDecision(deps, {
       mode: preliminary.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: "not_checked",
       readinessReady: false
     });
     return { handled: false, decision: preliminary };
   }
-  const readiness = input.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input.userId);
+  const readiness = input2.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input2.userId);
   const decision = decideAutonomyMode({
     userText,
     readiness,
@@ -41640,8 +41915,8 @@ async function routeAutonomyRequest(input, deps = {}) {
   if (decision.mode === "answer_inline") {
     await observeAutonomyDecision(deps, {
       mode: decision.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: readiness,
       readinessReady: readiness === "ready"
     });
@@ -41650,8 +41925,8 @@ async function routeAutonomyRequest(input, deps = {}) {
   if (decision.mode === "blocked_by_setup") {
     await observeAutonomyDecision(deps, {
       mode: decision.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: readiness,
       readinessReady: readiness === "ready"
     });
@@ -41663,19 +41938,19 @@ async function routeAutonomyRequest(input, deps = {}) {
   }
   if (decision.mode === "requires_approval") {
     const toolName = inferApprovalToolName(userText);
-    const description = approvalDescription(userText, input.channelName);
+    const description = approvalDescription(userText, input2.channelName);
     const requestApproval2 = deps.requestApproval ?? defaultRequestApproval;
     const notifyApproval = deps.notifyApproval ?? defaultNotifyApproval;
     let gate;
     try {
       gate = await requestApproval2({
         agentId: "coach",
-        userId: input.userId,
+        userId: input2.userId,
         toolName,
         toolArgs: {
           topLevelAutonomy: true,
           userText,
-          channelName: input.channelName
+          channelName: input2.channelName
         },
         description,
         initiatedBy: "user"
@@ -41685,12 +41960,12 @@ async function routeAutonomyRequest(input, deps = {}) {
 ${description}
 
 Gate ID: ${gate.id}`;
-      await notifyApproval(input.userId, notificationText, gate.id);
+      await notifyApproval(input2.userId, notificationText, gate.id);
     } catch (err2) {
       await observeAutonomyDecision(deps, {
         mode: decision.mode,
-        userId: input.userId,
-        originChannel: input.channelName,
+        userId: input2.userId,
+        originChannel: input2.channelName,
         readinessStatus: readiness,
         readinessReady: readiness === "ready",
         approvalBoundary: "top_level_external_action",
@@ -41702,8 +41977,8 @@ Gate ID: ${gate.id}`;
     }
     await observeAutonomyDecision(deps, {
       mode: decision.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: readiness,
       readinessReady: readiness === "ready",
       approvalBoundary: "top_level_external_action",
@@ -41723,20 +41998,20 @@ Gate ID: ${gate.id}`;
   let job;
   try {
     job = await submitJob({
-      userId: input.userId,
+      userId: input2.userId,
       agentType,
       title,
       prompt: userText,
       input: {
-        originChannel: input.channelName,
+        originChannel: input2.channelName,
         autonomyPolicy: true
       }
     });
   } catch (err2) {
     await observeAutonomyDecision(deps, {
       mode: decision.mode,
-      userId: input.userId,
-      originChannel: input.channelName,
+      userId: input2.userId,
+      originChannel: input2.channelName,
       readinessStatus: readiness,
       readinessReady: readiness === "ready",
       agentType,
@@ -41746,8 +42021,8 @@ Gate ID: ${gate.id}`;
   }
   await observeAutonomyDecision(deps, {
     mode: decision.mode,
-    userId: input.userId,
-    originChannel: input.channelName,
+    userId: input2.userId,
+    originChannel: input2.channelName,
     readinessStatus: readiness,
     readinessReady: readiness === "ready",
     agentType,
@@ -42928,25 +43203,25 @@ function getMaxTokensForChannel(channelName) {
   if (channelName === "Telegram") return 8e3;
   return 2e3;
 }
-async function runCoachAgent(input) {
-  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, discordGuildId, discordChannelId } = input;
+async function runCoachAgent(input2) {
+  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, discordGuildId, discordChannelId } = input2;
   const channelLower = channelName.toLowerCase();
-  let activeSessionId = input.sdkSessionId;
+  let activeSessionId = input2.sdkSessionId;
   let sessionResumed = false;
   let cachedSessionMessages = [];
-  if (input.sdkSessionId) {
+  if (input2.sdkSessionId) {
     try {
-      const { resumeSession: resumeSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
-      const resumed = await resumeSession2(input.sdkSessionId, COACH_AGENT_ID, userId);
+      const { resumeSession: resumeSession2 } = await Promise.resolve().then(() => (init_claude(), claude_exports));
+      const resumed = await resumeSession2(input2.sdkSessionId, COACH_AGENT_ID, userId);
       if (resumed) {
         cachedSessionMessages = resumed.messages;
         sessionResumed = true;
         console.log(
-          `[coach] session resumed: sdkSessionId=${input.sdkSessionId} messages=${cachedSessionMessages.length}`
+          `[coach] session resumed: sdkSessionId=${input2.sdkSessionId} messages=${cachedSessionMessages.length}`
         );
       } else {
         console.warn(
-          `[coach] session not found, falling back to full history: sdkSessionId=${input.sdkSessionId}`
+          `[coach] session not found, falling back to full history: sdkSessionId=${input2.sdkSessionId}`
         );
         activeSessionId = void 0;
       }
@@ -43298,9 +43573,9 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
     }
   };
   let scopedTools = await resolveChannelTools(channelName, !!googleAccessToken);
-  if (input.extraTools && input.extraTools.length > 0) {
-    const extraNames = new Set(input.extraTools.map((t) => t.name));
-    scopedTools = [...scopedTools.filter((t) => !extraNames.has(t.name)), ...input.extraTools];
+  if (input2.extraTools && input2.extraTools.length > 0) {
+    const extraNames = new Set(input2.extraTools.map((t) => t.name));
+    scopedTools = [...scopedTools.filter((t) => !extraNames.has(t.name)), ...input2.extraTools];
   }
   if (toolAwareRoute.toolGroups.length > 0) {
     const existingNames = new Set(scopedTools.map((tool) => tool.name));
@@ -43569,7 +43844,7 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
   const newAssistMsg = { role: "assistant", content: reply };
   let finalSessionId = activeSessionId;
   try {
-    const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
+    const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_claude(), claude_exports));
     if (sessionResumed && activeSessionId) {
       appendToSession2(activeSessionId, COACH_AGENT_ID, userId, [newUserMsg, newAssistMsg]).catch(() => {
       });
@@ -48526,8 +48801,8 @@ function shouldSkipLowSignalExtraction(source) {
   if (normalized.length > 240) return false;
   return false;
 }
-async function extractAndStore(input) {
-  const { userId, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
+async function extractAndStore(input2) {
+  const { userId, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input2;
   if (!source.trim()) return [];
   if (shouldSkipLowSignalExtraction(source)) return [];
   if (Date.now() < memoryExtractionCooldownUntil) {
@@ -52070,12 +52345,12 @@ var init_reviewAgentTask = __esm({
             label: "Job not ready"
           };
         }
-        const input = job.input ?? {};
-        const namedAgentId = String(input.namedAgentId ?? "");
-        const agentName = String(input.agentName ?? "Agent");
-        const iterationCount = typeof input.iterationCount === "number" ? input.iterationCount : 0;
+        const input2 = job.input ?? {};
+        const namedAgentId = String(input2.namedAgentId ?? "");
+        const agentName = String(input2.agentName ?? "Agent");
+        const iterationCount = typeof input2.iterationCount === "number" ? input2.iterationCount : 0;
         const previousOutput = String(job.result?.output ?? "");
-        const modelOverride = typeof input.model === "string" ? input.model : void 0;
+        const modelOverride = typeof input2.model === "string" ? input2.model : void 0;
         if (verdict === "approved") {
           await db.update(agentJobs).set({ status: "delivered" }).where(eq74(agentJobs.id, jobId));
           return {
@@ -53184,6 +53459,7 @@ var init_capabilities = __esm({
 // server/agent/harness.ts
 function resolveProviderName(model) {
   const normalized = model.toLowerCase();
+  if (normalized.startsWith("claude")) return "claude";
   if (normalized.startsWith("modelrelay/") || normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/") || normalized.startsWith("openai-compatible/") || normalized.startsWith("openrouter/") || normalized.startsWith("groq/") || normalized.startsWith("together/") || normalized.startsWith("fireworks/") || normalized.startsWith("cerebras/") || normalized.startsWith("nvidia/") || normalized.startsWith("deepseek/")) {
     if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
       return "chatgpt-codex-oauth";
@@ -53248,7 +53524,7 @@ async function runAgent(opts) {
   const hardExcludedToolNames = /* @__PURE__ */ new Set();
   const toolToIntegrationKey = /* @__PURE__ */ new Map();
   const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
-  const model = resolveRuntimeAgentModel(modelOpt ?? await getModel2(context.userId, "chat"));
+  const model = modelOpt ?? await getModel2(context.userId, "chat");
   const channel = context.channel || "Agent";
   let messages2 = opts.messages;
   try {
@@ -53671,7 +53947,6 @@ Tell the user these channels need to be reconnected in Settings \u2192 Connectio
   const primaryProviderName = resolveProviderName(model);
   const provider = getProvider(primaryProviderName);
   const effectiveFallbackChain = (() => {
-    if (primaryProviderName === "chatgpt-codex-oauth") return null;
     const globalChain = getGlobalFallbackChain();
     if (opts.providerFallbackChain) {
       const tail = opts.providerFallbackChain.filter((n) => n !== primaryProviderName).map((n) => ({
@@ -54143,7 +54418,6 @@ var init_harness = __esm({
     "use strict";
     init_diagnosticsService();
     init_providers();
-    init_runtimeModel();
     init_responseQuality();
     init_modelUsage();
   }
@@ -55217,8 +55491,8 @@ function previewResult(result) {
   if (!raw) return null;
   return raw.length > PREVIEW_LIMIT ? `${raw.slice(0, PREVIEW_LIMIT)}...` : raw;
 }
-function retryCountFromInput(input) {
-  const retryCount = input?.retryCount;
+function retryCountFromInput(input2) {
+  const retryCount = input2?.retryCount;
   return typeof retryCount === "number" && Number.isFinite(retryCount) && retryCount > 0 ? Math.floor(retryCount) : 0;
 }
 function decorateJobForObservability(job, now = /* @__PURE__ */ new Date()) {
@@ -55649,26 +55923,22 @@ var deepResearchPlanner_exports = {};
 __export(deepResearchPlanner_exports, {
   planResearch: () => planResearch
 });
+import Anthropic3 from "@anthropic-ai/sdk";
 async function planResearch(prompt, userId) {
   try {
-    const response = await routeModelTurn({
-      tier: "smart",
-      maxCompletionTokens: 512,
-      stream: false,
-      toolChoice: "none",
-      logPrefix: "[DeepResearchPlanner]",
+    const client = new Anthropic3(getAnthropicClientConfig());
+    const response = await client.messages.create({
+      model: "claude-3-5-haiku-20241022",
+      max_tokens: 512,
+      system: PLANNER_SYSTEM_PROMPT,
       messages: [
-        {
-          role: "system",
-          content: PLANNER_SYSTEM_PROMPT
-        },
         {
           role: "user",
           content: `Research request: ${prompt}`
         }
       ]
     });
-    const raw = (response.textContent ?? "").trim();
+    const raw = response.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
     const parsed = JSON.parse(raw);
     const plan = {
       prerequisiteTopics: Array.isArray(parsed.prerequisiteTopics) ? parsed.prerequisiteTopics.slice(0, 4).map(String) : [],
@@ -55689,7 +55959,7 @@ var PLANNER_SYSTEM_PROMPT, FALLBACK_PLAN;
 var init_deepResearchPlanner = __esm({
   "server/agent/deepResearchPlanner.ts"() {
     "use strict";
-    init_modelRouter();
+    init_env();
     PLANNER_SYSTEM_PROMPT = `You are a research planning assistant. Given a user's research request, output a JSON object (no markdown, no code fence) that splits the work into phases:
 
 {
@@ -56237,11 +56507,11 @@ ${result.summary}${pendingLine}`;
       return;
     }
     if (job.agentType === "named_agent_task") {
-      const input = job.input ?? {};
-      const namedAgentId = String(input.namedAgentId ?? "");
-      const agentName = String(input.agentName ?? "Agent");
-      const iterationCount = typeof input.iterationCount === "number" ? input.iterationCount : 0;
-      const namedAgentModel = typeof input.model === "string" ? input.model : void 0;
+      const input2 = job.input ?? {};
+      const namedAgentId = String(input2.namedAgentId ?? "");
+      const agentName = String(input2.agentName ?? "Agent");
+      const iterationCount = typeof input2.iterationCount === "number" ? input2.iterationCount : 0;
+      const namedAgentModel = typeof input2.model === "string" ? input2.model : void 0;
       if (!namedAgentId) throw new Error("named_agent_task job missing namedAgentId");
       console.log(
         `[JobQueue] named_agent_task agent=${agentName}(${namedAgentId}) iteration=${iterationCount + 1}`
@@ -56287,8 +56557,8 @@ ${snippet}${result.reply.length > 280 ? "\u2026" : ""}`,
       return;
     }
     if (job.agentType === "custom_agent") {
-      const input = job.input ?? {};
-      const customAgentId = String(input.customAgentId ?? "");
+      const input2 = job.input ?? {};
+      const customAgentId = String(input2.customAgentId ?? "");
       if (!customAgentId) throw new Error("custom_agent job missing customAgentId");
       const { db: _db } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { customAgents: customAgents2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
@@ -56303,7 +56573,7 @@ ${snippet}${result.reply.length > 280 ? "\u2026" : ""}`,
         channel: `JobQueue/custom_agent`,
         state: { pendingAttachments: [] }
       };
-      const modelOverride = typeof input.model === "string" ? input.model : agentDef.model ?? void 0;
+      const modelOverride = typeof input2.model === "string" ? input2.model : agentDef.model ?? void 0;
       let customSub = await runSubAgent({
         agentType: agentDef.baseType,
         prompt: job.prompt,
@@ -56378,7 +56648,7 @@ ${snippet}${result.reply.length > 280 ? "\u2026" : ""}`,
         title: `[${agentDef.name}] ${sub2.title}`,
         summary: sub2.summary,
         body: sub2.body,
-        meta: { ...sub2.meta, ...getRevisionDeliverableMeta(input), customAgentId, customAgentName: agentDef.name }
+        meta: { ...sub2.meta, ...getRevisionDeliverableMeta(input2), customAgentId, customAgentName: agentDef.name }
       }).returning({ id: _deliverables.id });
       const deliverableId2 = inserted2[0]?.id || "";
       await completeJob2(job.id, {
@@ -56436,10 +56706,10 @@ ${sub2.body?.slice(0, 1200) || ""}`.trim();
       return;
     }
     if (job.agentType === "project_session") {
-      const input = job.input ?? {};
-      const projectId = String(input.projectId ?? "");
+      const input2 = job.input ?? {};
+      const projectId = String(input2.projectId ?? "");
       if (!projectId) throw new Error("project_session job missing projectId");
-      const userAnswer = typeof input.userAnswer === "string" ? input.userAnswer : void 0;
+      const userAnswer = typeof input2.userAnswer === "string" ? input2.userAnswer : void 0;
       console.log(`[JobQueue] project_session start: project=${projectId}${userAnswer ? " (with user answer)" : ""}`);
       const { runProjectSession: runProjectSession2 } = await Promise.resolve().then(() => (init_projectRunner(), projectRunner_exports));
       const sessionResult = await runProjectSession2(projectId, userAnswer);
@@ -56459,11 +56729,11 @@ ${sub2.body?.slice(0, 1200) || ""}`.trim();
       return;
     }
     if (job.agentType === "app_project") {
-      const input = job.input ?? {};
-      const projectId = String(input.projectId ?? "");
+      const input2 = job.input ?? {};
+      const projectId = String(input2.projectId ?? "");
       if (!projectId) throw new Error("app_project job missing projectId");
-      const userAnswer = typeof input.userAnswer === "string" ? input.userAnswer : void 0;
-      const originChannel2 = typeof input.originChannel === "string" ? input.originChannel : void 0;
+      const userAnswer = typeof input2.userAnswer === "string" ? input2.userAnswer : void 0;
+      const originChannel2 = typeof input2.originChannel === "string" ? input2.originChannel : void 0;
       console.log(`[JobQueue] app_project start: project=${projectId}${userAnswer ? " (with user answer)" : ""}`);
       const { runAppProjectSession: runAppProjectSession2 } = await Promise.resolve().then(() => (init_appProjectRunner(), appProjectRunner_exports));
       const sessionResult = await runAppProjectSession2(projectId, 1, userAnswer);
@@ -56594,6 +56864,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const { applyCodeChangeTool: applyCodeChangeTool2 } = await Promise.resolve().then(() => (init_applyCodeChangeTool(), applyCodeChangeTool_exports));
       const { runShellTool: buildShellTool } = await Promise.resolve().then(() => (init_runShellTool(), runShellTool_exports));
       const { cleanupJobWorkspace: cleanupJobWorkspace2, execInWorkspaceTool: execInWorkspaceTool2 } = await Promise.resolve().then(() => (init_codeExecution(), codeExecution_exports));
+      const { anthropic: anthropic3, ORCHESTRATOR_MAX_TOKENS: ORCHESTRATOR_MAX_TOKENS2 } = await Promise.resolve().then(() => (init_anthropicClient(), anthropicClient_exports));
       const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
       const orchModel = await getModel2(job.userId, "orchestrator");
       const buildCtx = {
@@ -56658,16 +56929,10 @@ Latest request: ${baseFeatureDescription}` : baseFeatureDescription;
 Research findings:
 ${researchBody}` : ""
         ].join("");
-        const planResp = await routeModelTurn({
-          tier: "smart",
-          maxCompletionTokens: 8192,
-          stream: false,
-          toolChoice: "none",
-          logPrefix: "[BuildFeaturePlan]",
-          messages: [
-            {
-              role: "system",
-              content: `You are an expert TypeScript/Node.js engineer planning how to build a new Jarvis tool or feature.
+        const planResp = await anthropic3.messages.create({
+          model: orchModel,
+          max_tokens: ORCHESTRATOR_MAX_TOKENS2,
+          system: `You are an expert TypeScript/Node.js engineer planning how to build a new Jarvis tool or feature.
 Decompose the feature into discrete, independently verifiable implementation steps.
 Output a JSON array inside a \`\`\`json block. Each element:
 {
@@ -56684,13 +56949,11 @@ Jarvis tool patterns:
 - Express routes go in server/<name>Routes.ts, mounted in server/index.ts
 - Shared DB schema lives in shared/schema.ts (Drizzle ORM + drizzle-kit)
 
-Keep the plan minimal: 2-5 steps for most features. Each step is one focused code change.`
-            },
-            { role: "user", content: `Feature to build:
-${planCtx}` }
-          ]
+Keep the plan minimal: 2-5 steps for most features. Each step is one focused code change.`,
+          messages: [{ role: "user", content: `Feature to build:
+${planCtx}` }]
         });
-        const planText = planResp.textContent ?? "";
+        const planText = planResp.content[0].type === "text" ? planResp.content[0].text : "";
         const jsonMatch = planText.match(/```json\s*([\s\S]*?)\s*```/);
         const raw = jsonMatch ? jsonMatch[1] : planText.trim();
         try {
@@ -56897,34 +57160,28 @@ Acceptance criteria: ${step.acceptance_criteria}`,
       );
       let synthesis = stepSummaryLines.join("\n");
       try {
-        const synthResp = await routeModelTurn({
-          tier: "smart",
-          maxCompletionTokens: 600,
-          stream: false,
-          toolChoice: "none",
-          logPrefix: "[BuildFeatureSynthesis]",
-          messages: [
-            {
-              role: "system",
-              content: `You are Jarvis summarizing a completed multi-step feature build. Be concise and specific.`
-            },
-            {
-              role: "user",
-              content: [
-                `Feature built: ${featureDescription}`,
-                ``,
-                `Steps completed:`,
-                stepSummaryLines.join("\n"),
-                ``,
-                `Final TypeScript type-check: ${finalTypeCheck.ok ? "\u2705 passed" : `\u26A0\uFE0F ${finalTypeCheck.content.slice(0, 200)}`}`,
-                finalTestResult ? `Smoke tests (npm test): ${finalTestResult.ok ? "\u2705 passed" : `\u26A0\uFE0F ${finalTestResult.content.slice(0, 300)}`}` : "",
-                ``,
-                `Write a clear 3-5 sentence summary of what was built, what files changed, and any caveats.`
-              ].filter(Boolean).join("\n")
-            }
-          ]
+        const synthResp = await anthropic3.messages.create({
+          model: orchModel,
+          max_tokens: 600,
+          system: `You are Jarvis summarizing a completed multi-step feature build. Be concise and specific.`,
+          messages: [{
+            role: "user",
+            content: [
+              `Feature built: ${featureDescription}`,
+              ``,
+              `Steps completed:`,
+              stepSummaryLines.join("\n"),
+              ``,
+              `Final TypeScript type-check: ${finalTypeCheck.ok ? "\u2705 passed" : `\u26A0\uFE0F ${finalTypeCheck.content.slice(0, 200)}`}`,
+              finalTestResult ? `Smoke tests (npm test): ${finalTestResult.ok ? "\u2705 passed" : `\u26A0\uFE0F ${finalTestResult.content.slice(0, 300)}`}` : "",
+              ``,
+              `Write a clear 3-5 sentence summary of what was built, what files changed, and any caveats.`
+            ].filter(Boolean).join("\n")
+          }]
         });
-        synthesis = synthResp.textContent?.trim() || synthesis;
+        if (synthResp.content[0].type === "text") {
+          synthesis = synthResp.content[0].text;
+        }
       } catch (synthErr) {
         console.error(`[JobQueue] build_feature synthesis failed (non-fatal):`, synthErr);
       }
@@ -57369,7 +57626,7 @@ Use the above as background. Do not re-research topics already covered there \u2
         sub.meta.pdfError = pdfMsg;
       }
     }
-    const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(jobInput) };
+    const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(input) };
     const inserted = await db.insert(deliverables).values({
       userId: job.userId,
       jobId: job.id,
@@ -57530,7 +57787,6 @@ var init_jobQueue = __esm({
     init_jobClient();
     init_harness();
     init_orchestrator();
-    init_modelRouter();
     init_selfEditTools();
     init_calendar();
     init_researchUtils();
@@ -58337,6 +58593,7 @@ __export(diagnosticsService_exports, {
   runHealthCheck: () => runHealthCheck
 });
 import { eq as eq82, and as and59, desc as desc25, gte as gte14, sql as sqlExpr } from "drizzle-orm";
+import Anthropic4 from "@anthropic-ai/sdk";
 async function emit(opts) {
   try {
     await db.insert(diagnosticEvents).values({
@@ -58843,8 +59100,20 @@ Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not
     });
     const diagnosis = resp.textContent?.trim();
     if (diagnosis) return { diagnosis, report };
-  } catch (modelErr) {
-    console.debug("[Diagnostics] routed Codex OAuth diagnosis failed:", modelErr instanceof Error ? modelErr.message : modelErr);
+  } catch (openAiErr) {
+    console.debug("[Diagnostics] routed diagnosis failed, trying Anthropic fallback:", openAiErr instanceof Error ? openAiErr.message : openAiErr);
+  }
+  try {
+    const msg = await anthropic2.messages.create({
+      model: "claude-haiku-4-5",
+      max_tokens: 400,
+      messages: [{ role: "user", content: prompt }]
+    });
+    const block = msg.content.find((b) => b.type === "text");
+    const diagnosis = block && block.type === "text" ? block.text.trim() : null;
+    if (diagnosis) return { diagnosis, report };
+  } catch (anthropicErr) {
+    console.debug("[Diagnostics] Anthropic diagnosis fallback also failed:", anthropicErr instanceof Error ? anthropicErr.message : anthropicErr);
   }
   const issueLines = [];
   if (!report.openAiReachable) issueLines.push("AI provider is unreachable \u2014 AI features are temporarily unavailable.");
@@ -58862,13 +59131,15 @@ Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not
   const bodyLines = issueLines.length > 0 ? issueLines : ["No major subsystem issues detected."];
   return { diagnosis: [overallLine, aiNote, ...bodyLines].join(" "), report };
 }
-var SUBSYSTEM_LABELS, notifiedDegradedAt, NOTIFY_COOLDOWN_MS;
+var anthropic2, SUBSYSTEM_LABELS, notifiedDegradedAt, NOTIFY_COOLDOWN_MS;
 var init_diagnosticsService = __esm({
   "server/diagnostics/diagnosticsService.ts"() {
     "use strict";
     init_db();
     init_schema();
+    init_env();
     init_modelRouter();
+    anthropic2 = new Anthropic4(getAnthropicClientConfig());
     SUBSYSTEM_LABELS = {
       job_queue: "Job Queue",
       workflow_engine: "Workflow Engine",
@@ -59964,15 +60235,15 @@ function averageEnergy(values) {
   const average = normalized.reduce((sum, value) => sum + value, 0) / normalized.length;
   return Math.round(average * 100) / 100;
 }
-function calculateGoalPacing(input) {
-  const mode = normalizeGoalPacingMode(input.mode);
-  const completionRate = clampRate(input.completionRate);
-  const energyLevel = normalizeEnergy(input.energyLevel);
-  const historicalEnergyAverage = averageEnergy(input.recentEnergyLevels);
-  const workloadTaskCount = normalizeCount(input.existingPlanTaskCount);
-  const weekdayCompletionRate2 = typeof input.weekdayCompletionRate === "number" && Number.isFinite(input.weekdayCompletionRate) ? clampRate(input.weekdayCompletionRate) : null;
-  const calendarBusyMinutes = normalizeMinutes(input.calendarBusyMinutes);
-  const nearestDeadlineDays = normalizeDeadlineDays(input.nearestDeadlineDays);
+function calculateGoalPacing(input2) {
+  const mode = normalizeGoalPacingMode(input2.mode);
+  const completionRate = clampRate(input2.completionRate);
+  const energyLevel = normalizeEnergy(input2.energyLevel);
+  const historicalEnergyAverage = averageEnergy(input2.recentEnergyLevels);
+  const workloadTaskCount = normalizeCount(input2.existingPlanTaskCount);
+  const weekdayCompletionRate2 = typeof input2.weekdayCompletionRate === "number" && Number.isFinite(input2.weekdayCompletionRate) ? clampRate(input2.weekdayCompletionRate) : null;
+  const calendarBusyMinutes = normalizeMinutes(input2.calendarBusyMinutes);
+  const nearestDeadlineDays = normalizeDeadlineDays(input2.nearestDeadlineDays);
   const reasons = [];
   let dailyCap = MODE_CAP[mode];
   if (mode === "light") {
@@ -61818,9 +62089,9 @@ var topLevelApprovalContinuation_exports = {};
 __export(topLevelApprovalContinuation_exports, {
   continueTopLevelApproval: () => continueTopLevelApproval
 });
-async function defaultSubmitJob2(input) {
+async function defaultSubmitJob2(input2) {
   const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobClient(), jobClient_exports));
-  return submitAgentJob3(input);
+  return submitAgentJob3(input2);
 }
 function getToolArgs(gate) {
   return gate.toolArgs && typeof gate.toolArgs === "object" ? gate.toolArgs : {};
@@ -62992,7 +63263,7 @@ var init_agentRoutes = __esm({
     init_agentApproval();
     init_topLevelApprovalContinuation();
     init_agentConfigSchema();
-    init_sessionStore2();
+    init_claude();
     init_agentPolicyManager();
     init_schema();
     init_selfHealAudit();
@@ -63361,15 +63632,15 @@ function normalizeProjectKind2(value, frameworkRaw) {
   return "general";
 }
 function normalizeCreateProjectRequest(body) {
-  const input = body && typeof body === "object" ? body : {};
-  const title = cleanString2(input.title);
-  const description = cleanString2(input.description);
-  const goal = cleanString2(input.goal);
-  const frameworkRaw = cleanString2(input.framework);
-  const projectKind = normalizeProjectKind2(input.projectKind ?? input.project_kind, frameworkRaw);
-  const framework = normalizeFramework2(input.framework);
-  const autonomousMode = typeof input.autonomousMode === "boolean" ? input.autonomousMode : typeof input.autonomous_mode === "boolean" ? input.autonomous_mode : projectKind === "app";
-  const originChannel = cleanString2(input.originChannel) || "app";
+  const input2 = body && typeof body === "object" ? body : {};
+  const title = cleanString2(input2.title);
+  const description = cleanString2(input2.description);
+  const goal = cleanString2(input2.goal);
+  const frameworkRaw = cleanString2(input2.framework);
+  const projectKind = normalizeProjectKind2(input2.projectKind ?? input2.project_kind, frameworkRaw);
+  const framework = normalizeFramework2(input2.framework);
+  const autonomousMode = typeof input2.autonomousMode === "boolean" ? input2.autonomousMode : typeof input2.autonomous_mode === "boolean" ? input2.autonomous_mode : projectKind === "app";
+  const originChannel = cleanString2(input2.originChannel) || "app";
   const errors = [];
   if (!title) errors.push("title is required");
   if (!goal) errors.push("goal is required");
@@ -63778,7 +64049,7 @@ async function checkLlmKeyValidity() {
     return pass(id, label, "ChatGPT/Codex OAuth provider is configured for local gateway model calls.");
   }
   if (!hasDirectOpenAIProvider() && hasNonOpenAIRoutableProvider()) {
-    const providerLabel = getProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") ? "OpenRouter" : getProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") ? "Groq" : "non-OpenAI";
+    const providerLabel = getProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") ? "OpenRouter" : getProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") ? "Groq" : getProviderEnvValue("AI_INTEGRATIONS_ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY") ? "Anthropic" : "non-OpenAI";
     return pass(id, label, `${providerLabel} model provider is configured.`);
   }
   if (!apiKey) {
@@ -63797,14 +64068,33 @@ async function checkLlmKeyValidity() {
     return warn(id, label, `Could not validate OpenAI key: ${msg}`);
   }
 }
-async function checkCodexOAuthPresence() {
-  const id = "codex_oauth_presence";
-  const label = "Codex OAuth Provider";
+async function checkAnthropicKeyPresence() {
+  const id = "anthropic_key_presence";
+  const label = "Anthropic API Key";
+  const key = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
+  const baseUrl = process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL;
   const settingsPath = "/(tabs)/settings";
-  if (hasCodexOAuthProvider()) {
-    return pass(id, label, "Codex OAuth is enabled and will be used for Jarvis orchestration.");
+  if (!key) {
+    return warn(id, label, "Anthropic API key is not set \u2014 orchestrator mode will be unavailable.", settingsPath);
   }
-  return fail2(id, label, "Codex OAuth is disabled. Jarvis requires Codex OAuth as the orchestrator.", settingsPath);
+  if (baseUrl) {
+    return pass(id, label, "Anthropic integration is active \u2014 API key and proxy URL are both configured.");
+  }
+  try {
+    const result = await httpsGet(
+      "https://api.anthropic.com/v1/models",
+      8e3,
+      { "x-api-key": key, "anthropic-version": "2023-06-01" }
+    );
+    if (result.networkError) return warn(id, label, "Could not reach Anthropic API \u2014 network issue or CA drift.", settingsPath);
+    if (result.statusCode === 200) return pass(id, label, "Anthropic API key is valid and responding.");
+    if (result.statusCode === 401) return fail2(id, label, "Anthropic API key is invalid or revoked.", settingsPath);
+    if (result.statusCode === 429) return warn(id, label, "Anthropic API key is valid but rate-limited.");
+    return warn(id, label, `Anthropic API responded with HTTP ${result.statusCode}.`, settingsPath);
+  } catch (err2) {
+    const msg = err2 instanceof Error ? err2.message : String(err2);
+    return warn(id, label, `Could not validate Anthropic key: ${msg}`, settingsPath);
+  }
 }
 async function checkOutboundHttps() {
   const id = "outbound_https";
@@ -63830,6 +64120,7 @@ async function checkEnvVarsPresence() {
   const missingCritical = ["DATABASE_URL"].filter((k) => !process.env[k]);
   if (!hasAnyRoutableProvider()) missingCritical.push("AI model provider");
   const important = [
+    "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
     "DISCORD_BOT_TOKEN",
     "TELEGRAM_BOT_TOKEN",
     "TWILIO_ACCOUNT_SID",
@@ -64119,7 +64410,7 @@ var init_doctorScan = __esm({
     SYSTEM_CHECKS = [
       checkDatabaseConnectivity,
       checkLlmKeyValidity,
-      checkCodexOAuthPresence,
+      checkAnthropicKeyPresence,
       checkOutboundHttps,
       checkEnvVarsPresence,
       checkTelegramWebhook,
@@ -64241,7 +64532,7 @@ var init_doctorRoutes = __esm({
     CHECK_SUBSYSTEM = {
       database_connectivity: "database",
       llm_key_validity: "integration",
-      codex_oauth_presence: "integration",
+      anthropic_key_presence: "integration",
       outbound_https: "channel_registry",
       env_vars_presence: "integration",
       telegram_webhook: "channel_registry",
@@ -64801,10 +65092,10 @@ async function bestEffort(label, task) {
     console.warn(`[appCoachChatAutonomy] ${label} failed:`, err2);
   }
 }
-async function routeAppCoachChatAutonomy(input, deps = {}) {
-  const userId = input.userId?.trim();
-  const userText = latestUserText(input.messages);
-  const channelName = appChannelName(input.originChannel);
+async function routeAppCoachChatAutonomy(input2, deps = {}) {
+  const userId = input2.userId?.trim();
+  const userText = latestUserText(input2.messages);
+  const channelName = appChannelName(input2.originChannel);
   if (!userId || !userText) {
     return {
       handled: false,
@@ -64837,7 +65128,7 @@ async function routeAppCoachChatAutonomy(input, deps = {}) {
   const timestamp2 = deps.now?.() ?? Date.now();
   const userMsgEntry = { id: timestamp2.toString(), role: "user", content: userText };
   const asstMsgEntry = { id: (timestamp2 + 1).toString(), role: "assistant", content: result.reply };
-  const updatedChat = [asstMsgEntry, userMsgEntry, ...input.messages].slice(0, 100);
+  const updatedChat = [asstMsgEntry, userMsgEntry, ...input2.messages].slice(0, 100);
   if (deps.saveChatHistory) {
     await bestEffort(
       "chat history persist",
@@ -65248,23 +65539,42 @@ var healthCheck_exports = {};
 __export(healthCheck_exports, {
   runProviderHealthChecks: () => runProviderHealthChecks
 });
-async function checkCodexOAuth() {
-  const providerName = "CodexOAuthProvider";
+async function checkClaude() {
+  const providerName = "ClaudeProvider";
   const t0 = Date.now();
-  if (hasCodexOAuthProvider()) {
+  try {
+    const provider = new ClaudeProvider();
+    provider.client = {
+      messages: {
+        create: async () => ({
+          content: [{ type: "text", text: "pong" }],
+          stop_reason: "end_turn"
+        })
+      }
+    };
+    const result = await accumulateTurn(provider._completeTurn(SMOKE_PARAMS));
+    if (!result.textContent && result.toolCallList.length === 0) {
+      return {
+        provider: providerName,
+        ok: false,
+        durationMs: Date.now() - t0,
+        error: "Smoke test returned an empty ProviderTurnResult (no text, no tool calls)"
+      };
+    }
     return {
       provider: providerName,
       ok: true,
       durationMs: Date.now() - t0,
-      result: { textContent: "configured", finishReason: "config_check" }
+      result: { textContent: result.textContent, finishReason: result.finishReason }
+    };
+  } catch (err2) {
+    return {
+      provider: providerName,
+      ok: false,
+      durationMs: Date.now() - t0,
+      error: err2 instanceof Error ? `${err2.name}: ${err2.message}` : String(err2)
     };
   }
-  return {
-    provider: providerName,
-    ok: false,
-    durationMs: Date.now() - t0,
-    error: "Codex OAuth provider is disabled"
-  };
 }
 async function checkOpenAI() {
   const providerName = "OpenAIProvider";
@@ -65310,11 +65620,11 @@ async function checkOpenAI() {
   }
 }
 async function runProviderHealthChecks() {
-  const [codexResult, openaiResult] = await Promise.all([
-    checkCodexOAuth(),
+  const [claudeResult, openaiResult] = await Promise.all([
+    checkClaude(),
     checkOpenAI()
   ]);
-  const results = [codexResult, openaiResult];
+  const results = [claudeResult, openaiResult];
   const allOk = results.every((r) => r.ok);
   const report = {
     checkedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -65345,9 +65655,9 @@ var SMOKE_PARAMS;
 var init_healthCheck = __esm({
   "server/agent/providers/healthCheck.ts"() {
     "use strict";
+    init_claude();
     init_openai();
     init_base();
-    init_env();
     SMOKE_PARAMS = {
       model: "smoke-test",
       messages: [{ role: "user", content: "ping" }],
@@ -67452,9 +67762,9 @@ function previewText(...candidates) {
   return "";
 }
 function buildJobReviewState(job) {
-  const input = asRecord(job.input);
-  const originChannel = typeof input.originChannel === "string" ? input.originChannel : void 0;
-  const autonomyPolicy = input.autonomyPolicy === true;
+  const input2 = asRecord(job.input);
+  const originChannel = typeof input2.originChannel === "string" ? input2.originChannel : void 0;
+  const autonomyPolicy = input2.autonomyPolicy === true;
   const preview = previewText(job.error, job.prompt, job.title);
   if (job.status === "queued") {
     return {
@@ -67685,9 +67995,9 @@ async function defaultContinueTopLevelApproval(gate) {
   const { continueTopLevelApproval: continueTopLevelApproval2 } = await Promise.resolve().then(() => (init_topLevelApprovalContinuation(), topLevelApprovalContinuation_exports));
   return continueTopLevelApproval2(gate);
 }
-async function defaultSubmitAgentJob(input) {
+async function defaultSubmitAgentJob(input2) {
   const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
-  return submitAgentJob3(input);
+  return submitAgentJob3(input2);
 }
 function registerDeliverableReviewRoutes(app2, deps) {
   const { db: db2 } = deps;
@@ -69207,6 +69517,7 @@ function providerLabelForModel(model) {
   if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
     return "chatgpt-codex-oauth";
   }
+  if (normalized.startsWith("claude")) return "claude";
   if (normalized.startsWith("modelrelay/") || normalized.startsWith("openai-compatible/") || normalized.startsWith("openrouter/") || normalized.startsWith("groq/") || normalized.startsWith("together/") || normalized.startsWith("fireworks/") || normalized.startsWith("cerebras/") || normalized.startsWith("nvidia/") || normalized.startsWith("deepseek/")) {
     return "openai-compatible";
   }
@@ -72359,7 +72670,7 @@ Do not give a capability disclaimer until you have tried the matching tool path 
               const lastUserMsg0 = [...messages2].reverse().find((m) => m.role === "user");
               if (userId) {
                 try {
-                  const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
+                  const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_claude(), claude_exports));
                   const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
                   let appSessionId;
                   if (incomingAppSessionId) {
@@ -72866,7 +73177,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       }
       if (userId && fullStreamedReply && !clientDisconnected) {
         try {
-          const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
+          const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_claude(), claude_exports));
           const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
           const lastUserMsgForSession = [...messages2].reverse().find((m) => m.role === "user");
           let appSessionId;
@@ -75429,7 +75740,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { agentType, title, prompt, input } = req.body;
+      const { agentType, title, prompt, input: input2 } = req.body;
       const allowed = ["research", "writing", "planning", "email", "goal_decompose"];
       if (!agentType || !allowed.includes(agentType)) {
         return res.status(400).json({ error: `agentType must be one of ${allowed.join(", ")}` });
@@ -75443,7 +75754,7 @@ Reply directly to this message with your answer and I'll take it from there.
         agentType,
         title,
         prompt,
-        input: input || {}
+        input: input2 || {}
       });
       res.json({ ok: true, jobId, status: "queued" });
     } catch (err2) {
@@ -75535,15 +75846,15 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.status(400).json({ error: "Only failed or cancelled jobs can be retried" });
       }
       const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobQueue(), jobQueue_exports));
-      const input = job.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
-      delete input.retryCount;
+      const input2 = job.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
+      delete input2.retryCount;
       const retry = await submitAgentJob3({
         userId,
         agentType: job.agentType,
         title: job.title,
         prompt: job.prompt,
         input: {
-          ...input,
+          ...input2,
           retryOfJobId: job.id,
           retriedAt: (/* @__PURE__ */ new Date()).toISOString()
         }
@@ -78165,17 +78476,10 @@ ${e.diff.slice(0, 300)}`
       )
     );
     const response = await Promise.race([
-      routeModelTurn({
-        tier: "smart",
-        maxCompletionTokens: 2048,
-        stream: false,
-        toolChoice: "none",
-        signal,
-        logPrefix: "[SelfImprovement]",
-        messages: [
-          {
-            role: "system",
-            content: `You are Jarvis's self-assessment engine. Identify concrete, specific improvements Jarvis should make to its own code or behavioral rules. Do not invent problems that aren't evidenced. Do not propose changes to core infrastructure (job queue, scheduler, database schema).
+      anthropic.messages.create({
+        model: INNER_LLM_MODEL2,
+        max_tokens: 2048,
+        system: `You are Jarvis's self-assessment engine. Identify concrete, specific improvements Jarvis should make to its own code or behavioral rules. Do not invent problems that aren't evidenced. Do not propose changes to core infrastructure (job queue, scheduler, database schema).
 
 Respond with ONLY valid JSON matching this schema:
 {
@@ -78196,8 +78500,8 @@ Risk level rules:
 - "medium": Structural agent logic, prompt changes affecting multiple flows. Requires user review.
 - "high": Auth, routing, DB, multi-system integrations. Always requires user review.
 
-Cap at ${MAX_IMPROVEMENTS} improvements. Output JSON only \u2014 no markdown wrapper, no explanation.`
-          },
+Cap at ${MAX_IMPROVEMENTS} improvements. Output JSON only \u2014 no markdown wrapper, no explanation.`,
+        messages: [
           {
             role: "user",
             content: `## PRIME.md (Jarvis behavioral rules)
@@ -78215,7 +78519,7 @@ Assess and output JSON.`
       }),
       llmDeadline
     ]);
-    const raw = (response.textContent ?? "").trim();
+    const raw = response.content[0].type === "text" ? response.content[0].text.trim() : "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON object in LLM response");
     assessment = JSON.parse(jsonMatch[0]);
@@ -78359,7 +78663,7 @@ async function runSelfImprovementForAllUsers(now) {
     }
   }
 }
-var CYCLE_TIMEOUT_MS, LLM_CALL_TIMEOUT_MS, MAX_IMPROVEMENTS, MAX_AUTO_APPLY, SELF_IMPROVE_BLOCKED_FILES;
+var INNER_LLM_MODEL2, CYCLE_TIMEOUT_MS, LLM_CALL_TIMEOUT_MS, MAX_IMPROVEMENTS, MAX_AUTO_APPLY, SELF_IMPROVE_BLOCKED_FILES;
 var init_selfImprovementLoop = __esm({
   "server/agent/selfImprovementLoop.ts"() {
     "use strict";
@@ -78368,11 +78672,12 @@ var init_selfImprovementLoop = __esm({
     init_selfHealAudit();
     init_interactionLog();
     init_responseQuality();
+    init_anthropicClient();
     init_registry();
     init_integrationOwner();
     init_proactiveDedup();
     init_capabilityGapAnalyzer();
-    init_modelRouter();
+    INNER_LLM_MODEL2 = "claude-3-5-haiku-20241022";
     CYCLE_TIMEOUT_MS = 10 * 60 * 1e3;
     LLM_CALL_TIMEOUT_MS = 8 * 60 * 1e3;
     MAX_IMPROVEMENTS = 5;
@@ -78511,18 +78816,17 @@ ${sampleText}`,
     ].join("\n");
     let auditResult;
     try {
-      const response = await routeModelTurn({
-        tier: "smart",
-        maxCompletionTokens: 2048,
-        stream: false,
-        toolChoice: "none",
-        logPrefix: "[PrimeAudit]",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ]
+      const response = await anthropic.messages.create({
+        model: AUDIT_MODEL,
+        max_tokens: 2048,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }]
       });
-      const raw = (response.textContent ?? "").trim();
+      const block = response.content[0];
+      if (block.type !== "text") {
+        throw new Error("Unexpected response type from LLM");
+      }
+      const raw = block.text.trim();
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
         throw new Error("No JSON object found in LLM response");
@@ -78611,15 +78915,16 @@ ${sampleText}`,
     return { driftsFound: 0, proposalsQueued: 0 };
   }
 }
-var PRIME_MD_PATH;
+var PRIME_MD_PATH, AUDIT_MODEL;
 var init_primeIdentityAudit = __esm({
   "server/agent/primeIdentityAudit.ts"() {
     "use strict";
     init_db();
     init_schema();
+    init_anthropicClient();
     init_registry();
-    init_modelRouter();
     PRIME_MD_PATH = path30.resolve("agents/PRIME.md");
+    AUDIT_MODEL = "claude-3-5-sonnet-20241022";
   }
 });
 
@@ -81902,20 +82207,20 @@ function onGatewayEvent(listener) {
   emitter.on("event", listener);
   return () => emitter.off("event", listener);
 }
-async function recordGatewayEvent(input) {
+async function recordGatewayEvent(input2) {
   try {
     const [event] = await db.insert(gatewayEvents).values({
-      userId: input.userId ?? null,
-      type: input.type,
-      area: input.area ?? "gateway",
-      severity: input.severity ?? "info",
-      title: input.title,
-      message: input.message ?? null,
-      subjectType: input.subjectType ?? null,
-      subjectId: input.subjectId ?? null,
-      actorKind: input.actorKind ?? null,
-      actorId: input.actorId ?? null,
-      metadata: input.metadata ?? {}
+      userId: input2.userId ?? null,
+      type: input2.type,
+      area: input2.area ?? "gateway",
+      severity: input2.severity ?? "info",
+      title: input2.title,
+      message: input2.message ?? null,
+      subjectType: input2.subjectType ?? null,
+      subjectId: input2.subjectId ?? null,
+      actorKind: input2.actorKind ?? null,
+      actorId: input2.actorId ?? null,
+      metadata: input2.metadata ?? {}
     }).returning();
     if (event) emitter.emit("event", event);
     return event ?? null;
@@ -82135,7 +82440,7 @@ function publicConfigSnapshot() {
     uptimeSeconds: Math.floor(process.uptime()),
     providers: {
       openai: Boolean(process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY),
-      codexOAuth: process.env.JARVIS_CODEX_OAUTH_ENABLED !== "false" && process.env.JARVIS_CODEX_OAUTH_ENABLED !== "0",
+      anthropic: Boolean(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY),
       google: Boolean(process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID),
       microsoft: Boolean(process.env.MICROSOFT_CLIENT_ID),
       supadata: Boolean(process.env.SUPADATA_API_KEY)
@@ -82262,13 +82567,13 @@ async function jobCreate(userId, params) {
   if (!title) throw new Error("title is required");
   if (!prompt) throw new Error("prompt is required");
   const { submitAgentJob: submitAgentJob3 } = await Promise.resolve().then(() => (init_jobClient(), jobClient_exports));
-  const input = typeof params.input === "object" && params.input ? params.input : {};
+  const input2 = typeof params.input === "object" && params.input ? params.input : {};
   const result = await submitAgentJob3({
     userId,
     agentType,
     title,
     prompt,
-    input: { ...input, source: "gateway" }
+    input: { ...input2, source: "gateway" }
   });
   recordGatewayEvent({
     userId,
@@ -82447,14 +82752,14 @@ function daemonActionForCapability(capability) {
   };
   return aliases[capability] ?? aliases[direct] ?? direct;
 }
-async function daemonCapabilityInvoke(userId, capability, input) {
+async function daemonCapabilityInvoke(userId, capability, input2) {
   const action = daemonActionForCapability(capability);
   if (!action) throw new Error(`No daemon action registered for ${capability}`);
-  if (action === "notify") return daemonNotify(userId, input);
-  if (action === "ping") return daemonPing(userId, input);
+  if (action === "notify") return daemonNotify(userId, input2);
+  if (action === "ping") return daemonPing(userId, input2);
   const { sendDaemonOp: sendDaemonOp2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
   if (action === "file_read" || action === "file_list" || action === "android_file_read" || action === "android_file_list") {
-    const path33 = typeof input.path === "string" ? input.path.trim() : "";
+    const path33 = typeof input2.path === "string" ? input2.path.trim() : "";
     if (!path33) throw new Error("path is required");
     return sendDaemonOp2(userId, { type: action, path: path33 }, action.endsWith("read") ? 1e4 : 8e3);
   }
@@ -82462,12 +82767,12 @@ async function daemonCapabilityInvoke(userId, capability, input) {
   if (action === "desktop_read_screen") return sendDaemonOp2(userId, { type: "desktop_read_screen" }, 4e4);
   if (action === "android_screenshot") return sendDaemonOp2(userId, { type: "android_screenshot" }, 2e4);
   if (action === "android_read_screen") return sendDaemonOp2(userId, { type: "android_read_screen" }, 2e4);
-  return daemonTest(userId, { ...input, action });
+  return daemonTest(userId, { ...input2, action });
 }
 async function actionInvoke(userId, params, events, limit) {
   const capability = typeof params.capability === "string" ? params.capability.trim() : "";
   if (!capability) throw new Error("capability is required");
-  const input = inputFrom(params);
+  const input2 = inputFrom(params);
   await recordGatewayEvent({
     userId,
     type: "action.requested",
@@ -82499,35 +82804,35 @@ async function actionInvoke(userId, params, events, limit) {
     let result;
     switch (capability) {
       case "chat.send":
-        result = await chatSend(userId, input, events);
+        result = await chatSend(userId, input2, events);
         break;
       case "daemon.ping":
-        result = await daemonPing(userId, input);
+        result = await daemonPing(userId, input2);
         break;
       case "daemon.notify":
-        result = await daemonNotify(userId, input);
+        result = await daemonNotify(userId, input2);
         break;
       case "daemon.test":
-        result = await daemonTest(userId, input);
+        result = await daemonTest(userId, input2);
         break;
       case "jobs.create":
-        result = await jobCreate(userId, input);
+        result = await jobCreate(userId, input2);
         break;
       case "jobs.cancel":
-        result = await jobCancel(userId, input);
+        result = await jobCancel(userId, input2);
         break;
       case "cron.create":
-        result = await cronCreate(userId, input);
+        result = await cronCreate(userId, input2);
         break;
       case "approvals.approve":
-        result = await resolveApprovalGate(userId, input, "approve");
+        result = await resolveApprovalGate(userId, input2, "approve");
         break;
       case "approvals.reject":
-        result = await resolveApprovalGate(userId, input, "reject");
+        result = await resolveApprovalGate(userId, input2, "reject");
         break;
       default:
         if (capability.startsWith("desktop.") || capability.startsWith("android.")) {
-          result = await daemonCapabilityInvoke(userId, capability, input);
+          result = await daemonCapabilityInvoke(userId, capability, input2);
         } else {
           throw new Error(`No invoker registered for ${capability}`);
         }

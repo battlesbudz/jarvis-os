@@ -906,7 +906,7 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
 // requests. TVHTML5_SIMPLY_EMBEDDED_PLAYER and ANDROID are embedded/app
 // clients that bypass most bot-detection filters applied to the web player.
 
-const INNERTUBE_KEY = "your-youtube-innertube-api-key";
+const INNERTUBE_KEY = process.env.YOUTUBE_INNERTUBE_API_KEY ?? "";
 
 interface InnerTubeClientConfig {
   name: string;

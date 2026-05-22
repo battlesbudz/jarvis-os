@@ -7,6 +7,9 @@ Patch the Expo-generated android/app/build.gradle to:
 
 Environment variables (all required):
   KEYSTORE_ABS   - absolute path to the signing keystore file
+  KEYSTORE_PASSWORD - signing keystore password
+  KEY_ALIAS      - signing key alias
+  KEY_PASSWORD   - signing key password
   GRADLE_FILE    - path to android/app/build.gradle
   RUN_NUMBER     - GitHub Actions run number to use as versionCode
 """
@@ -16,6 +19,9 @@ import os
 import sys
 
 keystore_path = os.environ["KEYSTORE_ABS"]
+os.environ["KEYSTORE_PASSWORD"]
+os.environ["KEY_ALIAS"]
+os.environ["KEY_PASSWORD"]
 run_number = int(os.environ["RUN_NUMBER"])
 gradle_file = os.environ["GRADLE_FILE"]
 
@@ -54,9 +60,9 @@ if signing_configs_start is not None:
         release_lines = [
             "        release {\n",
             f'            storeFile file("{keystore_path}")\n',
-            '            storePassword "your-android-signing-password"\n',
-            '            keyAlias "your-jarvis-app-key-alias"\n',
-            '            keyPassword "your-android-signing-password"\n',
+            '            storePassword System.getenv("KEYSTORE_PASSWORD")\n',
+            '            keyAlias System.getenv("KEY_ALIAS")\n',
+            '            keyPassword System.getenv("KEY_PASSWORD")\n',
             "        }\n",
         ]
         lines[signing_configs_end:signing_configs_end] = release_lines
@@ -72,9 +78,9 @@ else:
         "    signingConfigs {\n",
         "        release {\n",
         f'            storeFile file("{keystore_path}")\n',
-        '            storePassword "your-android-signing-password"\n',
-        '            keyAlias "your-jarvis-app-key-alias"\n',
-        '            keyPassword "your-android-signing-password"\n',
+        '            storePassword System.getenv("KEYSTORE_PASSWORD")\n',
+        '            keyAlias System.getenv("KEY_ALIAS")\n',
+        '            keyPassword System.getenv("KEY_PASSWORD")\n',
         "        }\n",
         "    }\n",
     ]

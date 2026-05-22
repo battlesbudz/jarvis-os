@@ -20,9 +20,9 @@ android {
             def keystorePath = System.getenv("KEYSTORE_PATH") ?:
                 new File(rootProject.projectDir, "jarvis-daemon.keystore").absolutePath
             storeFile file(keystorePath)
-            storePassword (System.getenv("KEYSTORE_PASSWORD") ?: "your-android-signing-password")
-            keyAlias (System.getenv("KEY_ALIAS") ?: "your-android-daemon-key-alias")
-            keyPassword (System.getenv("KEY_PASSWORD") ?: "your-android-signing-password")
+            storePassword System.getenv("KEYSTORE_PASSWORD")
+            keyAlias System.getenv("KEY_ALIAS")
+            keyPassword System.getenv("KEY_PASSWORD")
         }
     }
 
