@@ -10,6 +10,8 @@ import { getCodexOAuthCommand } from "./env";
 
 const CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 300_000);
 const CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 120_000);
+const CODEX_GATEWAY_RETRY_COUNT = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_COUNT ?? 2));
+const CODEX_GATEWAY_RETRY_BASE_DELAY_MS = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_BASE_DELAY_MS ?? 1500));
 
 export type CodexOAuthOrchestratorOutput =
   | { type: "final"; content: string }
@@ -118,6 +120,35 @@ function getCodexGatewayUrl(): string | null {
 
 function getCodexGatewayToken(): string | null {
   return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
+}
+
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeCodexGateway(gatewayUrl: string): string {
+  try {
+    const url = new URL(gatewayUrl);
+    return url.host || gatewayUrl;
+  } catch {
+    return gatewayUrl;
+  }
+}
+
+function isTransientGatewayError(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") return false;
+  const message = error instanceof Error ? error.message : String(error);
+  return /fetch failed|network|econnreset|etimedout|enotfound|eai_again|socket|terminated/i.test(message);
+}
+
+export function codexGatewayFailureMessage(gatewayUrl: string, error: unknown, attempts: number): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    `Codex gateway request failed after ${attempts} attempt${attempts === 1 ? "" : "s"}: ${message}`,
+    `Gateway: ${describeCodexGateway(gatewayUrl)}`,
+    "Check that the gateway host is awake, Tailscale is connected, and the local Jarvis OAuth gateway process is running.",
+  ].join(" | ");
 }
 
 function createLinkedAbortController(signal?: AbortSignal): {
@@ -264,44 +295,66 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl: string, prompt: string, sig
   const token = getCodexGatewayToken();
   if (!token) throw new Error("JARVIS_CODEX_GATEWAY_TOKEN is required when JARVIS_CODEX_GATEWAY_URL is set.");
 
-  const linkedAbort = createLinkedAbortController(signal);
-  let response: Response;
-  let raw: string;
-  try {
-    response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ prompt }),
-      signal: linkedAbort.controller.signal,
-    });
-    raw = await response.text();
-  } catch (error) {
-    if (signal?.aborted) {
-      throw new DOMException("Codex OAuth provider aborted", "AbortError");
+  let lastError: unknown = null;
+  const maxAttempts = CODEX_GATEWAY_RETRY_COUNT + 1;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const linkedAbort = createLinkedAbortController(signal);
+    let response: Response;
+    let raw: string;
+    try {
+      response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prompt }),
+        signal: linkedAbort.controller.signal,
+      });
+      raw = await response.text();
+    } catch (error) {
+      if (signal?.aborted) {
+        throw new DOMException("Codex OAuth provider aborted", "AbortError");
+      }
+      if (linkedAbort.timedOut()) {
+        lastError = new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`, { cause: error });
+      } else {
+        lastError = error;
+      }
+      linkedAbort.cleanup();
+
+      if (attempt < maxAttempts && isTransientGatewayError(lastError)) {
+        const delayMs = CODEX_GATEWAY_RETRY_BASE_DELAY_MS * attempt;
+        console.warn(
+          `[CodexOAuth] gateway request failed on attempt ${attempt}/${maxAttempts}; retrying in ${delayMs}ms: ${
+            lastError instanceof Error ? lastError.message : String(lastError)
+          }`,
+        );
+        await sleep(delayMs);
+        continue;
+      }
+
+      throw new Error(codexGatewayFailureMessage(gatewayUrl, lastError, attempt), { cause: lastError });
+    } finally {
+      linkedAbort.cleanup();
     }
-    if (linkedAbort.timedOut()) {
-      throw new Error(`Codex gateway timed out after ${CODEX_GATEWAY_TIMEOUT_MS}ms.`, { cause: error });
+
+    let payload: any = {};
+    try {
+      payload = raw ? JSON.parse(raw) : {};
+    } catch {
+      payload = { error: raw };
     }
-    throw error;
-  } finally {
-    linkedAbort.cleanup();
+
+    if (!response.ok) {
+      throw new Error(String(payload.error || payload.message || `Codex gateway returned ${response.status}`));
+    }
+
+    return String(payload.content || "").trim();
   }
 
-  let payload: any = {};
-  try {
-    payload = raw ? JSON.parse(raw) : {};
-  } catch {
-    payload = { error: raw };
-  }
-
-  if (!response.ok) {
-    throw new Error(String(payload.error || payload.message || `Codex gateway returned ${response.status}`));
-  }
-
-  return String(payload.content || "").trim();
+  throw new Error(codexGatewayFailureMessage(gatewayUrl, lastError, maxAttempts), { cause: lastError });
 }
 
 export class CodexOAuthProvider extends BaseProvider {

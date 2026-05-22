@@ -77,6 +77,24 @@ const SUBSYSTEM_LABELS: Record<DiagnosticSubsystem, string> = {
 const notifiedDegradedAt = new Map<string, Date>();
 const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
 
+function buildDiagnosticEventConditions(
+  subsystem: DiagnosticSubsystem,
+  userId?: string,
+  unresolvedProblemOnly = false,
+  excludePatternDetected = false,
+): SQL<unknown>[] {
+  const conditions: SQL<unknown>[] = [eq(schema.diagnosticEvents.subsystem, subsystem)];
+  if (userId) conditions.push(eq(schema.diagnosticEvents.userId, userId));
+  if (unresolvedProblemOnly) {
+    conditions.push(eq(schema.diagnosticEvents.resolved, false));
+    conditions.push(sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`);
+  }
+  if (excludePatternDetected) {
+    conditions.push(sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`);
+  }
+  return conditions;
+}
+
 // ─── Core emit ────────────────────────────────────────────────────────────────
 
 export async function emit(opts: EmitOptions): Promise<void> {
@@ -497,16 +515,13 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
         ];
         if (userId) errorConditions.push(eq(schema.diagnosticEvents.userId, userId));
 
-        const lastEventConditions: SQL<unknown>[] = [eq(schema.diagnosticEvents.subsystem, sub)];
-        if (userId) lastEventConditions.push(eq(schema.diagnosticEvents.userId, userId));
-
         const [recentErrorRows, lastEventRows] = await Promise.all([
           db.select({ count: sqlExpr<number>`count(*)::int` })
             .from(schema.diagnosticEvents)
             .where(and(...errorConditions)),
           db.select({ message: schema.diagnosticEvents.message, createdAt: schema.diagnosticEvents.createdAt })
             .from(schema.diagnosticEvents)
-            .where(and(...lastEventConditions))
+            .where(and(...buildDiagnosticEventConditions(sub, userId)))
             .orderBy(desc(schema.diagnosticEvents.createdAt))
             .limit(1),
         ]);
@@ -518,12 +533,29 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
         if (errorCount >= 5 || (sub === "database" && !dbReachable)) status = "down";
         else if (errorCount >= 3 || isDegraded) status = "degraded";
 
+        let displayEventRows = lastEventRows;
+        if (status !== "healthy") {
+          displayEventRows = await db.select({ message: schema.diagnosticEvents.message, createdAt: schema.diagnosticEvents.createdAt })
+            .from(schema.diagnosticEvents)
+            .where(and(...buildDiagnosticEventConditions(sub, userId, true, true)))
+            .orderBy(desc(schema.diagnosticEvents.createdAt))
+            .limit(1);
+          if (displayEventRows.length === 0) {
+            displayEventRows = await db.select({ message: schema.diagnosticEvents.message, createdAt: schema.diagnosticEvents.createdAt })
+              .from(schema.diagnosticEvents)
+              .where(and(...buildDiagnosticEventConditions(sub, userId, true)))
+              .orderBy(desc(schema.diagnosticEvents.createdAt))
+              .limit(1);
+          }
+          if (displayEventRows.length === 0) displayEventRows = lastEventRows;
+        }
+
         return {
           name: sub,
           label: SUBSYSTEM_LABELS[sub],
           status,
-          lastEvent: lastEventRows[0]?.message,
-          lastEventAt: lastEventRows[0]?.createdAt,
+          lastEvent: displayEventRows[0]?.message,
+          lastEventAt: displayEventRows[0]?.createdAt,
           errorCount15m: errorCount,
         };
       } catch {

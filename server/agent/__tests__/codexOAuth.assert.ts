@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { buildCodexSpawnCommand } from "../providers/codexCommand";
-import { buildCodexOAuthProviderPrompt, parseCodexOAuthOrchestratorOutput } from "../providers/codexOAuth";
+import {
+  buildCodexOAuthProviderPrompt,
+  codexGatewayFailureMessage,
+  parseCodexOAuthOrchestratorOutput,
+} from "../providers/codexOAuth";
 
 {
   const previousComSpec = process.env.ComSpec;
@@ -82,6 +86,19 @@ import { buildCodexOAuthProviderPrompt, parseCodexOAuthOrchestratorOutput } from
   assert.match(prompt, /"type":"tool_calls"/);
   assert.match(prompt, /memory_search/);
   console.log("OK: Codex OAuth provider prompt preserves tool-call protocol for remote gateway");
+}
+
+{
+  const message = codexGatewayFailureMessage(
+    "https://battles-pc.tailf68942.ts.net",
+    new TypeError("fetch failed"),
+    3,
+  );
+  assert.match(message, /after 3 attempts/);
+  assert.match(message, /fetch failed/);
+  assert.match(message, /battles-pc\.tailf68942\.ts\.net/);
+  assert.match(message, /Tailscale/);
+  console.log("OK: Codex OAuth gateway failures include actionable host/recovery guidance");
 }
 
 console.log("\nAll Codex OAuth provider assertions passed.");
