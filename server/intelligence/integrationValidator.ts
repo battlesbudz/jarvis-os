@@ -461,7 +461,11 @@ async function checkDiscord(userId: string): Promise<CheckResult> {
       .limit(1);
     if (rows.length === 0) return { status: "unconfigured" };
 
-    // Step 2: user IS linked — now verify system Discord bot token is valid.
+    if (!process.env.DISCORD_BOT_TOKEN) {
+      return { status: "unconfigured" };
+    }
+
+    // Step 2: user IS linked and Discord is enabled; now verify system Discord bot token is valid.
     const botOk = await checkSystemCredential("discord_bot", pingDiscordBot);
     if (!botOk) {
       return { status: "broken", errorMessage: "Discord bot token missing or invalid" };
