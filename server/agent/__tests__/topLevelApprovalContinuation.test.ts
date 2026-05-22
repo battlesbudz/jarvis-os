@@ -6,7 +6,7 @@ function makeGate(overrides: Partial<ApprovalGate> = {}): ApprovalGate {
   const now = new Date();
   return {
     id: "gate_123",
-    agentId: "coach",
+    agentId: "coach_app:user_1",
     userId: "user_1",
     toolName: "send_email",
     toolArgs: {

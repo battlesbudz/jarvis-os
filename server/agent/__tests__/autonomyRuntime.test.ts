@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     assert.match(result.reply || "", /approval request/i);
     assert.equal(submitCalls, 0);
     assert.equal(approvalRequests.length, 1);
-    assert.equal(approvalRequests[0].agentId, "coach");
+    assert.equal(approvalRequests[0].agentId, "coach_app:user_1");
     assert.equal(approvalRequests[0].userId, "user_1");
     assert.equal(approvalRequests[0].toolName, "send_email");
     assert.equal(approvalRequests[0].toolArgs.topLevelAutonomy, true);

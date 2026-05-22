@@ -11,6 +11,7 @@ import { db } from "../db";
 import { and, eq } from "drizzle-orm";
 import { discordAgents, users } from "@shared/schema";
 import { DEFAULT_AGENT_PERMISSIONS } from "@shared/schema";
+import { getCoachAppAgentId } from "./coreAgentIds";
 
 interface CoreAgentDef {
   idForUser?: (userId: string) => string;
@@ -25,10 +26,6 @@ interface CoreAgentDef {
    * model override is supplied to runNamedAgent.
    */
   preferredModel?: string;
-}
-
-export function getCoachAppAgentId(userId: string): string {
-  return `coach_app:${userId}`;
 }
 
 const CORE_AGENTS: CoreAgentDef[] = [

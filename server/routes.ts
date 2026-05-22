@@ -99,7 +99,7 @@ import { runCodexOAuthPrompt } from "./agent/providers/codexOAuth";
 import { getCodexOAuthCommand } from "./agent/providers/env";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
-import { getCoachAppAgentId } from "./agent/coreAgentSeed";
+import { getCoachAppAgentId } from "./agent/coreAgentIds";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import {
   buildCoachSystemPrompt,
