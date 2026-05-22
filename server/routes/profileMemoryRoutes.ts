@@ -29,12 +29,12 @@ async function applyLivingContextReviewToFile(relPath: string | null | undefined
 
   try {
     let content = await fs.promises.readFile(abs, "utf-8");
-    const replacement = newBlock ? ${newBlock}\n : "";
+    const replacement = newBlock ? `${newBlock}\n` : "";
     if (content.includes(oldBlock)) {
       content = content.replace(oldBlock, replacement).replace(/\n{4,}/g, "\n\n\n");
       await fs.promises.writeFile(abs, content, "utf-8");
     } else if (newBlock && !content.includes(newBlock)) {
-      await fs.promises.appendFile(abs, \n\n, "utf-8");
+      await fs.promises.appendFile(abs, `\n\n${newBlock}\n`, "utf-8");
     }
   } catch {
     // The database row is the durable source of truth; runtime file sync is best effort.
