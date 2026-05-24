@@ -49,7 +49,7 @@ export const fetchEmailsTool: AgentTool = {
         if (!token) {
           return {
             ok: false,
-            content: "Gmail is not connected or the token has expired. Call generate_reconnect_link with provider='google' to get a reconnect button.",
+            content: "Gmail is not connected or the token has expired. Tell the user to reconnect Google in Settings > Connections before Jarvis can check Gmail.",
             label: "Gmail not connected",
           };
         }
@@ -74,7 +74,7 @@ export const fetchEmailsTool: AgentTool = {
         if (!token) {
           return {
             ok: false,
-            content: "Outlook is not connected or the token has expired. Call generate_reconnect_link with provider='microsoft' to get a reconnect button.",
+            content: "Outlook is not connected or the token has expired. Tell the user to reconnect Microsoft in Settings > Connections before Jarvis can check Outlook.",
             label: "Outlook not connected",
           };
         }

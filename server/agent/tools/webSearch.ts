@@ -11,6 +11,8 @@ function emptyTavilyResult(answer: string): TavilyLikeResult {
 
 const JS_SPARSE_THRESHOLD = 200;
 const MAX_BROWSER_FALLBACK = 2;
+const BROWSER_SEARCH_TEXT_LIMIT = 1600;
+const BROWSER_RESEARCH_TEXT_LIMIT = 900;
 
 // SSRF guard for the browser fallback — mirrors the one in browserTools.ts
 const BLOCKED_SEARCH_HOSTS = /^(localhost|0\.0\.0\.0|metadata\.google\.internal|169\.254\.169\.254)$/i;
@@ -59,7 +61,7 @@ async function browserSearchFallback(query: string, userId: string): Promise<str
     `Browser search results for: ${query}`,
     `Search URL: ${searchUrl}`,
     "",
-    visibleText.slice(0, 6000) || "(No visible result text found.)",
+    visibleText.slice(0, BROWSER_SEARCH_TEXT_LIMIT) || "(No visible result text found.)",
   ].join("\n");
 }
 
@@ -87,7 +89,7 @@ async function enrichSparseResults(
         .map((c) => c.text!)
         .join("\n")
         .trim()
-        .slice(0, 2000);
+        .slice(0, 1000);
       if (text.length > enriched[i].content.length) {
         enriched[i] = { ...enriched[i], content: text };
       }
@@ -198,7 +200,7 @@ export const researchTopicTool: AgentTool = {
     required: ["topic"],
   },
   async execute(args, ctx) {
-    if (!process.env.TAVILY_API_KEY) {
+    if (false) {
       return { ok: false, content: "Research is not available — web search is not configured.", label: "Research unavailable" };
     }
 
@@ -207,6 +209,33 @@ export const researchTopicTool: AgentTool = {
     const queries: string[] = Array.isArray(subQueriesRaw) && subQueriesRaw.length > 0
       ? subQueriesRaw.slice(0, 4).map((q) => String(q))
       : [topic];
+
+    if (!process.env.TAVILY_API_KEY) {
+      if (!ctx.userId) {
+        return { ok: false, content: "Research is not available because web search is not configured.", label: "Research unavailable" };
+      }
+      try {
+        const sections: string[] = [];
+        for (const query of queries.slice(0, 2)) {
+          const browserResults = await browserSearchFallback(query, ctx.userId);
+          sections.push(`### Query: ${query}\n${browserResults.slice(0, BROWSER_RESEARCH_TEXT_LIMIT)}`);
+        }
+        return {
+          ok: true,
+          content: `Research findings on: ${topic}\n\n${sections.join("\n\n")}`,
+          label: `Browser research: ${topic}`,
+          detail: "Search API not configured; used browser fallback.",
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          content: `Research is not available because web search is not configured, and browser fallback failed: ${msg}`,
+          label: "Research unavailable",
+          detail: msg,
+        };
+      }
+    }
 
     // Entity near-match note — non-blocking advisory for callers to surface.
     let entityNote = "";
