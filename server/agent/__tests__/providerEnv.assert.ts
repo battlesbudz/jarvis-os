@@ -11,6 +11,7 @@ import {
 } from "../providers/env";
 import { getModelRouteChain } from "../modelRouter";
 import { resolveRuntimeAgentModel } from "../runtimeModel";
+import { _clearProviderCacheForTesting } from "../providers";
 
 const CODEX_ROUTE = {
   providerName: "chatgpt-codex-oauth",
@@ -37,12 +38,22 @@ const ENV_KEYS = [
   "OPENROUTER_API_KEY",
   "OPENROUTER_BASE_URL",
   "OPENROUTER_MODEL",
+  "AI_INTEGRATIONS_OPENAI_COMPATIBLE_API_KEY",
+  "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL",
+  "AI_INTEGRATIONS_OPENAI_COMPATIBLE_MODEL",
+  "OPENAI_COMPATIBLE_API_KEY",
+  "OPENAI_COMPATIBLE_BASE_URL",
+  "OPENAI_COMPATIBLE_MODEL",
   "GROQ_API_KEY",
   "PROVIDER_FALLBACK_CHAIN",
   "JARVIS_DISABLE_DIRECT_OPENAI",
   "JARVIS_CHEAP_MODEL",
   "JARVIS_BALANCED_MODEL",
   "JARVIS_DEFAULT_MODEL",
+  "JARVIS_OPENAI_SMART_MODEL",
+  "JARVIS_OPENAI_BALANCED_MODEL",
+  "JARVIS_CLAUDE_SMART_MODEL",
+  "JARVIS_CLAUDE_CHEAP_MODEL",
 ];
 
 function withCleanEnv(overrides: Record<string, string | undefined>, fn: () => void): void {
@@ -51,11 +62,13 @@ function withCleanEnv(overrides: Record<string, string | undefined>, fn: () => v
     previous.set(key, process.env[key]);
     delete process.env[key];
   }
+  process.env.PROVIDER_FALLBACK_CHAIN = "";
 
   for (const [key, value] of Object.entries(overrides)) {
     if (value == null) delete process.env[key];
     else process.env[key] = value;
   }
+  _clearProviderCacheForTesting();
 
   try {
     fn();
@@ -64,6 +77,7 @@ function withCleanEnv(overrides: Record<string, string | undefined>, fn: () => v
       if (value == null) delete process.env[key];
       else process.env[key] = value;
     }
+    _clearProviderCacheForTesting();
   }
 }
 
@@ -138,7 +152,7 @@ withCleanEnv({ OPENAI_API_KEY: "sk-openai", GROQ_API_KEY: "groq-key", JARVIS_DIS
   console.log("OK: direct OpenAI fallback is disabled and Codex OAuth remains selected");
 });
 
-withCleanEnv({ ANTHROPIC_API_KEY: "sk-anthropic" }, () => {
+withCleanEnv({ ANTHROPIC_API_KEY: "sk-anthropic", JARVIS_MODEL_PROVIDER: "claude", JARVIS_DISABLE_DIRECT_OPENAI: "true" }, () => {
   applyProviderEnvAliases();
   assert.equal(hasNonOpenAIRoutableProvider(), true);
   const chain = getModelRouteChain("smart");

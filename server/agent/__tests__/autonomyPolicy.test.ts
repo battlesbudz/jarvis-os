@@ -14,6 +14,17 @@ import { decideAutonomyMode } from "../autonomyPolicy";
 
 {
   const decision = decideAutonomyMode({
+    userText: "Compile a concise markdown document titled AI Review Loop Checklist",
+    readiness: "ready",
+    hasApproval: false,
+  });
+
+  assert.equal(decision.mode, "queue_background_job");
+  assert.equal(decision.agentType, "writing");
+}
+
+{
+  const decision = decideAutonomyMode({
     userText: "Send this email to the regulator",
     readiness: "ready",
     hasApproval: false,

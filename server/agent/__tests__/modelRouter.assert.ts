@@ -91,6 +91,7 @@ async function runLeanContextToolBudgetAssertion(): Promise<void> {
     "JARVIS_MODEL_PROVIDER",
     "JARVIS_LEAN_CONTEXT_CHAR_LIMIT",
     "JARVIS_LEAN_CONTEXT_HISTORY_MESSAGES",
+    "PROVIDER_FALLBACK_CHAIN",
   ]) {
     previousEnv.set(key, process.env[key]);
   }
@@ -108,6 +109,7 @@ async function runLeanContextToolBudgetAssertion(): Promise<void> {
     process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
     process.env.JARVIS_LEAN_CONTEXT_CHAR_LIMIT = "1000";
     process.env.JARVIS_LEAN_CONTEXT_HISTORY_MESSAGES = "2";
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
     _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingProvider());
 
     const hugeToolDescription = "large tool schema ".repeat(500);

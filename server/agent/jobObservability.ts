@@ -96,6 +96,18 @@ function retryCountFromInput(input: Record<string, unknown> | null | undefined):
     : 0;
 }
 
+function throttleCountFromInput(input: Record<string, unknown> | null | undefined): number {
+  const throttleCount = input?.providerThrottleCount;
+  return typeof throttleCount === "number" && Number.isFinite(throttleCount) && throttleCount > 0
+    ? Math.floor(throttleCount)
+    : 0;
+}
+
+function isProviderThrottle(errorMessage: string): boolean {
+  const lower = errorMessage.toLowerCase();
+  return lower.includes("429") || lower.includes("rate limit") || lower.includes("tokens per minute");
+}
+
 export function decorateJobForObservability(job: ObservableJobRow, now = new Date()): DecoratedObservableJob {
   const createdAt = toDate(job.createdAt) ?? now;
   const startedAt = toDate(job.startedAt);
@@ -186,6 +198,17 @@ export function decideJobFailureRecovery(opts: {
 } {
   const maxRetries = opts.maxRetries ?? 2;
   const retryCount = retryCountFromInput(opts.input);
+  const throttleCount = throttleCountFromInput(opts.input);
+  if (isProviderThrottle(opts.errorMessage) && throttleCount < 8) {
+    const nextThrottleCount = throttleCount + 1;
+    return {
+      action: "requeue",
+      nextRetryCount: retryCount,
+      nextInput: { ...opts.input, providerThrottleCount: nextThrottleCount },
+      persistedError: `Provider throttle ${nextThrottleCount}/8: ${opts.errorMessage}`.slice(0, 2000),
+    };
+  }
+
   if (retryCount < maxRetries) {
     const nextRetryCount = retryCount + 1;
     return {

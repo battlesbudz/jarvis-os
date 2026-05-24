@@ -24,6 +24,9 @@ const BACKGROUND_PATTERNS = [
   /\bcompare\b/i,
   /\breport\b/i,
   /\bdeep dive\b/i,
+  /\bcompile\b/i,
+  /\bdocument\b/i,
+  /\bchecklist\b/i,
   /\bwrite (a|an|the)\b/i,
   /\bdraft (a|an|the)?\b/i,
   /\bplan\b/i,
@@ -45,7 +48,7 @@ const EXTERNAL_ACTION_PATTERNS = [
 function inferAgentType(text: string): AutonomyPolicyDecision["agentType"] {
   if (/\bemail\b|\breply\b|\breplies\b/i.test(text)) return "email";
   if (/\bplan\b|\broadmap\b|\bsequence\b/i.test(text)) return "planning";
-  if (/\bwrite\b|\bdraft\b|\bmemo\b|\bdoc\b/i.test(text)) return "writing";
+  if (/\bwrite\b|\bdraft\b|\bmemo\b|\bdoc\b|\bdocument\b|\bcompile\b|\bchecklist\b/i.test(text)) return "writing";
   if (/\bcompare\b|\bdeep dive\b|\bmarket\b|\bstrategy\b|\bcrm\b|\breport\b/i.test(text)) {
     return "deep_research";
   }

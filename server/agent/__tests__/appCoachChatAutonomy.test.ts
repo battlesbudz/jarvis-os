@@ -46,6 +46,8 @@ async function main(): Promise<void> {
   assert.equal(result.handled, true);
   assert.equal(result.jobId, "job_app_research_1");
   assert.match(result.reply ?? "", /queued/i);
+  assert.match(result.reply ?? "", /Open Inbox/i);
+  assert.match(result.reply ?? "", /Needs your review/i);
   assert.doesNotMatch(result.reply ?? "", /can't browse|cannot browse|I can't/i);
 
   assert.equal(submitted.length, 1);

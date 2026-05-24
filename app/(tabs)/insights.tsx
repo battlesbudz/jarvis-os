@@ -407,6 +407,8 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                   onPress={() => {
                     if (ea.url === 'profile://discord') {
                       onDiscordConnect?.();
+                    } else if (ea.url === 'app://inbox') {
+                      router.push('/(tabs)/inbox');
                     } else if (ea.url!.startsWith('profile://')) {
                       router.push('/(tabs)/profile');
                     } else {
@@ -2085,6 +2087,30 @@ export default function InsightsScreen() {
                   setIsWorkingOnPhone(true);
                   setPhoneWorkingMessage(progressMsg);
                 }
+              } else if (parsed.type === 'background_job' && parsed.jobId) {
+                const jobId = String(parsed.jobId);
+                const agentType = String(parsed.agentType || 'background');
+                const jobAction: ExecutedAction = {
+                  tool: 'queue_background_job',
+                  result: 'success',
+                  label: `${agentType} job queued (${jobId.slice(0, 8)})`,
+                  buttonLabel: 'Open Inbox',
+                  url: 'app://inbox',
+                };
+                executedActions = [
+                  ...executedActions.filter((action) => action.tool !== 'queue_background_job' || action.label !== jobAction.label),
+                  jobAction,
+                ];
+                queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) {
+                    updated[idx] = { ...updated[idx], executedActions };
+                    saveChatHistory(updated);
+                  }
+                  return updated;
+                });
               } else if (parsed.type === 'working') {
                 gotPhoneWorking = true;
                 setIsWorkingOnPhone(true);

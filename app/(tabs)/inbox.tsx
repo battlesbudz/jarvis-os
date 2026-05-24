@@ -128,18 +128,26 @@ const DELIVERABLE_LABEL: Record<string, string> = {
 
 const JOB_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   research: 'search',
+  deep_research: 'library',
   writing: 'create',
   planning: 'list',
   email: 'mail',
+  app_project: 'code-slash',
+  custom_agent: 'person-circle',
+  named_agent_task: 'people',
   goal_decompose: 'git-branch',
   weekly_pattern: 'analytics',
 };
 
 const JOB_LABEL: Record<string, string> = {
   research: 'Research',
+  deep_research: 'Deep research',
   writing: 'Writing',
   planning: 'Planning',
   email: 'Email',
+  app_project: 'App project',
+  custom_agent: 'Custom agent',
+  named_agent_task: 'Named agent',
   goal_decompose: 'Goal breakdown',
   weekly_pattern: 'Weekly review',
 };

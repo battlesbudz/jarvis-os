@@ -1018,7 +1018,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
           title: `[${agentDef.name}] ${sub.title}`,
           summary: sub.summary,
           body: sub.body,
-          meta: { ...sub.meta, ...getRevisionDeliverableMeta(input), customAgentId, customAgentName: agentDef.name },
+          meta: { ...sub.meta, ...getRevisionDeliverableMeta(jobInput), customAgentId, customAgentName: agentDef.name },
         })
         .returning({ id: _deliverables.id });
 

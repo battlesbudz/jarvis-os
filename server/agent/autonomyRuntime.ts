@@ -159,10 +159,10 @@ function blockedReply(reason: string): string {
 
 function queuedReply(agentType: AgentJobType, job: SubmitJobResult): string {
   if (job.isDuplicate) {
-    return `I already have that ${agentType} job running, so I did not queue a duplicate. Job ID: ${job.id}.`;
+    return `I already have that ${agentType} job running, so I did not queue a duplicate. Job ID: ${job.id}. Open Inbox to watch it under Running Jobs; when it finishes, the result appears under Needs your review.`;
   }
 
-  return `I've queued that as a ${agentType} background job. Job ID: ${job.id}. You'll get the result in the reviewable inbox/deliverable flow when it finishes.`;
+  return `I've queued that as a ${agentType} background job. Job ID: ${job.id}. Open Inbox to watch it under Running Jobs; when it finishes, the result appears under Needs your review as a Jarvis deliverable. Approving it saves it to Documents, and Save to Drive creates a Drive file when available.`;
 }
 
 export async function routeAutonomyRequest(

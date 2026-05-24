@@ -290,7 +290,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
     tools,
     context: opts.context,
     maxTurns: spec.maxTurns,
-    maxCompletionTokens: 2400,
+    maxCompletionTokens: 1200,
     onBeforeTool: async (toolName, toolArgs) => {
       const result = await toolCallHooks.run({
         toolName,
