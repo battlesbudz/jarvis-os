@@ -68,12 +68,6 @@ interface BuildLogEntry {
   createdAt: string;
 }
 
-interface OAuthStatus {
-  google: OAuthProviderStatus;
-  microsoft: OAuthProviderStatus;
-  slack: OAuthProviderStatus;
-}
-
 interface TelegramStatus {
   connected: boolean;
   username: string | null;
@@ -272,26 +266,15 @@ export default function SettingsScreen() {
   const [highlightedIntegration, setHighlightedIntegration] = useState<string | null>(null);
 
   // ── Auth state ──
-  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>({
-    google: { connected: false },
-    microsoft: { connected: false },
-    slack: { connected: false },
-  });
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>({
     connected: false, username: null, configured: false,
   });
   const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [discordConnected, setDiscordConnected] = useState(false);
-  const [discordUsername, setDiscordUsername] = useState<string | null>(null);
-  const [discordPairExpanded, setDiscordPairExpanded] = useState(false);
-  const [discordPairCode, setDiscordPairCode] = useState('');
-  const [discordLinking, setDiscordLinking] = useState(false);
   const [integrationHealth, setIntegrationHealth] = useState<Record<string, string>>({});
   const [integrationErrors, setIntegrationErrors] = useState<Record<string, string | null>>({});
   const [loadingStatus, setLoadingStatus] = useState(true);
-  const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
 
@@ -376,7 +359,6 @@ export default function SettingsScreen() {
   type TtsVoiceId = typeof TTS_OPENAI_VOICES[number]['id'];
   const [ttsVoice, setTtsVoice] = useState<TtsVoiceId>('nova');
   const [ttsTelegramEnabled, setTtsTelegramEnabled] = useState(false);
-  const [ttsWhatsAppEnabled, setTtsWhatsAppEnabled] = useState(false);
   const [ttsSaving, setTtsSaving] = useState(false);
   const [ttsPreviewing, setTtsPreviewing] = useState(false);
 
@@ -392,17 +374,8 @@ export default function SettingsScreen() {
     setTtsTelegramEnabled(value);
     const channels: string[] = [];
     if (value) channels.push('telegram');
-    if (ttsWhatsAppEnabled) channels.push('whatsapp');
     await saveTtsSettings({ ttsChannels: channels });
-  }, [ttsWhatsAppEnabled, saveTtsSettings]);
-
-  const toggleTtsWhatsApp = useCallback(async (value: boolean) => {
-    setTtsWhatsAppEnabled(value);
-    const channels: string[] = [];
-    if (ttsTelegramEnabled) channels.push('telegram');
-    if (value) channels.push('whatsapp');
-    await saveTtsSettings({ ttsChannels: channels });
-  }, [ttsTelegramEnabled, saveTtsSettings]);
+  }, [saveTtsSettings]);
 
   const changeTtsVoice = useCallback(async (voice: TtsVoiceId) => {
     setTtsVoice(voice);
@@ -1081,38 +1054,27 @@ export default function SettingsScreen() {
     setLoadingStatus(true);
     // Each call is independent — a failure on one doesn't block others.
     // We track per-call results to detect when required data is unavailable.
-    const [oauthResult, telegramResult, discordResult, integrationResult, channelsResult] = await Promise.allSettled([
-      apiRequest('GET', '/api/oauth/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    const [telegramResult, integrationResult, channelsResult] = await Promise.allSettled([
       apiRequest('GET', '/api/telegram/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
-      apiRequest('GET', '/api/discord/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/integrations/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/channels').then(r => r.ok ? r.json() : Promise.reject(r.status)),
     ]);
 
-    const oauthRes = oauthResult.status === 'fulfilled' ? oauthResult.value : null;
     const telegramRes = telegramResult.status === 'fulfilled' ? telegramResult.value : null;
-    const discordRes = discordResult.status === 'fulfilled' ? discordResult.value : null;
     const integrationRes = integrationResult.status === 'fulfilled' ? integrationResult.value : null;
     const channelsRes = channelsResult.status === 'fulfilled' ? channelsResult.value : null;
 
     // Show error row when any connections endpoint fails.
-    const anyConnectionFailed = [oauthResult, telegramResult, discordResult, integrationResult, channelsResult]
+    const anyConnectionFailed = [telegramResult, integrationResult, channelsResult]
       .some(r => r.status === 'rejected');
     setConnectionsError(anyConnectionFailed);
 
-    if (oauthRes) setOAuthStatus({
-      google: oauthRes.google ?? { connected: false },
-      microsoft: oauthRes.microsoft ?? { connected: false },
-      slack: oauthRes.slack ?? { connected: false },
-    });
     if (telegramRes) setTelegramStatus({
       connected: telegramRes.connected ?? false,
       username: telegramRes.username ?? null,
       configured: telegramRes.configured ?? false,
       botUsername: telegramRes.botUsername ?? null,
     });
-    setDiscordConnected(discordRes?.connected ?? false);
-    setDiscordUsername(discordRes?.discordUsername ?? null);
     setAndroidDaemonConnected(
       channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false
     );
@@ -1314,7 +1276,6 @@ export default function SettingsScreen() {
         }
         const channels: string[] = Array.isArray(ttsRes.ttsChannels) ? ttsRes.ttsChannels : [];
         setTtsTelegramEnabled(channels.includes('telegram'));
-        setTtsWhatsAppEnabled(channels.includes('whatsapp'));
       }
     } catch {}
     await loadModels();
@@ -1379,33 +1340,6 @@ export default function SettingsScreen() {
       await apiRequest('POST', '/api/integrations/refresh');
     } catch {}
   }, []);
-
-  // ── OAuth connect ──
-  const handleConnect = useCallback(async (platform: string) => {
-    setConnectingId(platform);
-    try {
-      const url = new URL(`/api/oauth/${platform}/connect`, getApiUrl()).toString();
-      await WebBrowser.openAuthSessionAsync(url, getApiUrl().toString());
-      await refreshIntegrationHealth();
-      await loadAll();
-    } catch {}
-    setConnectingId(null);
-  }, [loadAll, refreshIntegrationHealth]);
-
-  const handleDisconnect = useCallback(async (platform: string) => {
-    Alert.alert('Disconnect', `Disconnect ${platform}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Disconnect', style: 'destructive', onPress: async () => {
-          try {
-            await apiRequest('DELETE', `/api/oauth/disconnect/${platform}`);
-            await refreshIntegrationHealth();
-            await loadAll();
-          } catch {}
-        },
-      },
-    ]);
-  }, [loadAll, refreshIntegrationHealth]);
 
   // ── Telegram link ──
   const handleTelegramLink = useCallback(async () => {
@@ -1542,45 +1476,6 @@ export default function SettingsScreen() {
     await saveWakeSettings({ wakeWords: next });
   }, [wakeWords, saveWakeSettings]);
 
-  const handleDiscordPairSubmit = useCallback(async () => {
-    const code = discordPairCode.trim().toUpperCase();
-    if (code.length !== 6) {
-      Alert.alert('Invalid Code', 'Please enter the 6-character code from Discord.');
-      return;
-    }
-    setDiscordLinking(true);
-    try {
-      const res = await apiRequest('POST', '/api/discord/link', { code });
-      const data = await res.json();
-      if (res.ok && data.ok) {
-        setDiscordConnected(true);
-        setDiscordUsername(data.discordUsername ?? null);
-        setDiscordPairExpanded(false);
-        setDiscordPairCode('');
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // Refresh validator so health badge updates immediately after link
-        await refreshIntegrationHealth();
-        const healthRes = await apiRequest('GET', '/api/integrations/status').then(r => r.json()).catch(() => null);
-        if (healthRes && typeof healthRes === 'object') {
-          const health: Record<string, string> = {};
-          const errors: Record<string, string | null> = {};
-          for (const [k, v] of Object.entries(healthRes)) {
-            const entry = v as { status?: string; errorMessage?: string | null } | null;
-            health[k] = entry?.status ?? 'unconfigured';
-            errors[k] = entry?.errorMessage ?? null;
-          }
-          setIntegrationHealth(health);
-          setIntegrationErrors(errors);
-        }
-      } else {
-        Alert.alert('Pairing Failed', data.error ?? 'Could not link Discord. Please try again.');
-      }
-    } catch {
-      Alert.alert('Error', 'Could not connect. Check your network and try again.');
-    }
-    setDiscordLinking(false);
-  }, [discordPairCode, refreshIntegrationHealth]);
-
   // ── Reward claim ──
   const handleClaimReward = useCallback(async (reward: Reward) => {
     try {
@@ -1601,19 +1496,6 @@ export default function SettingsScreen() {
   const xpProgress = xpInfo.progress;
   const availableRewards = getAvailableRewards(lifetimeXp);
   const earnedBadges = (stats.badges ?? []).map(id => ALL_BADGES.find(b => b.id === id)).filter(Boolean);
-
-  // OAuth platform configs
-  const PLATFORMS = [
-    { id: 'google', name: 'Google', subtitle: 'Calendar + Gmail', icon: 'logo-google' as const, color: '#4285F4' },
-    { id: 'microsoft', name: 'Microsoft', subtitle: 'Outlook Calendar', icon: 'logo-windows' as const, color: '#0078D4' },
-    { id: 'slack', name: 'Slack', subtitle: 'Messages & Channels', icon: 'chatbubbles-outline' as const, color: '#611f69' },
-  ];
-  // Maps OAuth platform id → integration_status table key
-  const PLATFORM_HEALTH_KEY: Record<string, string> = {
-    google: 'google',
-    microsoft: 'outlook',
-    slack: 'slack',
-  };
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -1639,59 +1521,27 @@ export default function SettingsScreen() {
           {connectionsError && (
             <SectionErrorRow message="Couldn't load connections" onRetry={loadConnections} />
           )}
-          {/* OAuth platforms */}
-          {PLATFORMS.map((p, idx) => {
-            const status = oauthStatus[p.id as keyof OAuthStatus];
-            const isConnecting = connectingId === p.id;
-            const healthKey = PLATFORM_HEALTH_KEY[p.id];
-            const health = healthKey ? integrationHealth[healthKey] : undefined;
-            const isBroken = health === 'broken';
-            const isExpiring = health === 'expiring_soon';
-            const isHighlighted = healthKey ? highlightedIntegration === healthKey : false;
-            return (
-              <View key={p.id} style={[styles.connRow, idx > 0 && styles.connRowBorder, isHighlighted && { backgroundColor: '#FEF3C7' }]}>
-                <View style={[styles.connIconWrap, { backgroundColor: p.color + '20' }]}>
-                  <Ionicons name={p.icon} size={18} color={p.color} />
-                </View>
-                <View style={styles.connInfo}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={styles.connName}>{p.name}</Text>
-                    {health && <StatusDot status={health} />}
-                  </View>
-                  <Text style={[styles.connSub, isBroken && { color: Colors.error }]}>
-                    {isBroken
-                      ? 'Connection broken — tap Reconnect'
-                      : isExpiring
-                        ? 'Token expiring soon'
-                        : status.connected
-                          ? (status.accounts?.[0]?.email ?? status.email ?? 'Connected')
-                          : p.subtitle}
-                  </Text>
-                </View>
-                <Pressable
-                  style={[
-                    styles.connBtn,
-                    isBroken
-                      ? { backgroundColor: Colors.error + '20', borderColor: Colors.error }
-                      : status.connected ? styles.connBtnConnected : styles.connBtnDisconnected,
-                  ]}
-                  onPress={() => (isBroken || isExpiring || !status.connected) ? handleConnect(p.id) : handleDisconnect(p.id)}
-                  disabled={isConnecting || loadingStatus}
-                >
-                  {isConnecting ? (
-                    <ActivityIndicator size="small" color={Colors.cyan} />
-                  ) : (
-                    <Text style={[
-                      styles.connBtnText,
-                      isBroken ? { color: Colors.error } : status.connected && styles.connBtnTextConnected,
-                    ]}>
-                      {isBroken ? 'Reconnect' : isExpiring ? 'Renew' : status.connected ? 'Connected' : 'Connect'}
-                    </Text>
-                  )}
-                </Pressable>
-              </View>
-            );
-          })}
+          <View style={styles.connRow}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#6366F120' }]}>
+              <Ionicons name="key-outline" size={18} color="#6366F1" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>OneCLI Connector</Text>
+              <Text style={styles.connSub}>
+                Use OneCLI Agent Vault for Gmail, Outlook, calendars, Slack, WhatsApp, and Discord.
+              </Text>
+              <Text style={styles.connSub}>
+                Install OneCLI, create or sign into your vault, then add each account there. Jarvis keeps Telegram separate.
+              </Text>
+            </View>
+            <Pressable
+              style={[styles.connBtn, styles.connBtnDisconnected, { borderColor: '#6366F1' }]}
+              onPress={() => WebBrowser.openBrowserAsync('https://github.com/onecli/onecli')}
+            >
+              <Text style={[styles.connBtnText, { color: '#6366F1' }]}>Setup</Text>
+            </Pressable>
+          </View>
+
 
           {/* Telegram */}
           {(() => {
@@ -1745,76 +1595,7 @@ export default function SettingsScreen() {
             </View>
           )}
 
-          {/* Discord */}
-          {(() => {
-            const discordBroken = integrationHealth['discord'] === 'broken';
-            const discordErrMsg = integrationErrors['discord'];
-            return (
-              <Pressable
-                style={[styles.connRow, styles.connRowBorder, highlightedIntegration === 'discord' && { backgroundColor: '#FEF3C7' }]}
-                onPress={() => {
-                  if (discordBroken || !discordConnected) setDiscordPairExpanded(v => !v);
-                }}
-              >
-                <View style={[styles.connIconWrap, { backgroundColor: '#5865F220' }]}>
-                  <Ionicons name="logo-discord" size={18} color="#5865F2" />
-                </View>
-                <View style={styles.connInfo}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={styles.connName}>Discord</Text>
-                    <StatusDot status={integrationHealth['discord']} />
-                  </View>
-                  <Text style={[styles.connSub, discordBroken && { color: Colors.error }]}>
-                    {discordBroken
-                      ? (discordErrMsg ?? 'Connection error — tap to reconnect')
-                      : discordConnected
-                        ? (discordUsername ? `@${discordUsername}` : 'Connected')
-                        : 'Tap to link your Discord account'}
-                  </Text>
-                </View>
-                <View style={[styles.connBtn, (discordBroken || !discordConnected) ? styles.connBtnDisconnected : styles.connBtnConnected,
-                  discordBroken && { borderColor: Colors.error }]}>
-                  <Text style={[styles.connBtnText, discordBroken && { color: Colors.error },
-                    !discordBroken && discordConnected && styles.connBtnTextConnected]}>
-                    {discordBroken ? 'Reconnect' : discordConnected ? 'Connected' : 'Connect'}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })()}
-          {discordPairExpanded && (!discordConnected || integrationHealth['discord'] === 'broken') && (
-            <View style={styles.linkCodeBlock}>
-              <Text style={styles.linkCodeLabel}>How to link Discord:</Text>
-              <Text style={[styles.connSub, { marginBottom: 6 }]}>
-                1. Open Discord and DM your Jarvis bot{'\n'}
-                2. The bot replies with a 6-character code{'\n'}
-                3. Enter that code below
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                <TextInput
-                  style={[styles.linkCodeInput]}
-                  placeholder="ABC123"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={discordPairCode}
-                  onChangeText={t => setDiscordPairCode(t.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
-                  autoCapitalize="characters"
-                  maxLength={6}
-                  returnKeyType="done"
-                  onSubmitEditing={handleDiscordPairSubmit}
-                />
-                <Pressable
-                  style={[styles.connBtn, styles.connBtnDisconnected, { paddingHorizontal: 16 }]}
-                  onPress={handleDiscordPairSubmit}
-                  disabled={discordLinking}
-                >
-                  {discordLinking
-                    ? <ActivityIndicator size="small" color={Colors.cyan} />
-                    : <Text style={styles.connBtnText}>Link</Text>
-                  }
-                </Pressable>
-              </View>
-            </View>
-          )}
+
 
           {/* Android Daemon */}
           <View style={[styles.connRow, styles.connRowBorder]}>
@@ -2579,22 +2360,7 @@ export default function SettingsScreen() {
             />
           </View>
 
-          {/* WhatsApp auto-TTS toggle */}
-          <View style={[styles.connRow, styles.connRowBorder, { paddingVertical: 12 }]}>
-            <View style={[styles.connIconWrap, { backgroundColor: '#0f2a1a' }]}>
-              <Ionicons name="logo-whatsapp" size={18} color={Colors.success} />
-            </View>
-            <View style={styles.connInfo}>
-              <Text style={styles.connName}>Auto-speak on WhatsApp</Text>
-              <Text style={styles.connSub}>Jarvis sends a voice note after every WhatsApp reply</Text>
-            </View>
-            <Switch
-              value={ttsWhatsAppEnabled}
-              onValueChange={toggleTtsWhatsApp}
-              disabled={ttsSaving}
-              trackColor={{ false: Colors.border, true: Colors.success }}
-            />
-          </View>
+
 
           {/* Voice picker */}
           <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 }}>

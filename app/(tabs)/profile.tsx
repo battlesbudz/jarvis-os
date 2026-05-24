@@ -22,7 +22,6 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
-import * as Clipboard from 'expo-clipboard';
 import {
   getStats,
   claimReward,
@@ -150,29 +149,6 @@ interface OAuthProviderStatus {
   accounts?: { email: string; scopes?: string }[];
 }
 
-interface OAuthStatus {
-  google: OAuthProviderStatus;
-  microsoft: OAuthProviderStatus;
-  slack: OAuthProviderStatus;
-}
-
-interface TelegramStatus {
-  connected: boolean;
-  username: string | null;
-  configured: boolean;
-  botUsername: string | null;
-  webhookHealthy: boolean | null;
-  webhookLastChecked: string | null;
-}
-
-interface PlatformInfo {
-  id: 'google' | 'microsoft' | 'slack';
-  name: string;
-  subtitle: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  color: string;
-}
-
 const TIMEZONES = [
   { label: 'Eastern (ET)', value: 'America/New_York' },
   { label: 'Central (CT)', value: 'America/Chicago' },
@@ -187,30 +163,6 @@ const TIMEZONES = [
   { label: 'Singapore (SGT)', value: 'Asia/Singapore' },
   { label: 'Tokyo (JST)', value: 'Asia/Tokyo' },
   { label: 'Sydney (AEST)', value: 'Australia/Sydney' },
-];
-
-const PLATFORMS: PlatformInfo[] = [
-  {
-    id: 'google',
-    name: 'Google Account',
-    subtitle: 'Calendar + Gmail',
-    icon: 'logo-google',
-    color: '#4285F4',
-  },
-  {
-    id: 'microsoft',
-    name: 'Microsoft Account',
-    subtitle: 'Outlook Calendar',
-    icon: 'logo-windows',
-    color: '#0078D4',
-  },
-  {
-    id: 'slack',
-    name: 'Slack',
-    subtitle: 'Messages & Channels',
-    icon: 'chatbubbles-outline',
-    color: '#4A154B',
-  },
 ];
 
 const PROFILE_PANEL = Colors.card;
@@ -320,11 +272,6 @@ export default function ProfileScreen() {
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
     dailyXpEarned: { date: '', xp: 0 },
   });
-  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>({
-    google: { connected: false },
-    microsoft: { connected: false },
-    slack: { connected: false },
-  });
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>({
     connected: false, username: null, configured: false, botUsername: null, webhookHealthy: null, webhookLastChecked: null,
   });
@@ -341,7 +288,6 @@ export default function ProfileScreen() {
     desktop_daemon_connected?: boolean;
     android_daemon_connected?: boolean;
   } | null>(null);
-  const [whatsappCode, setWhatsappCode] = useState<{ code: string; twilioNumber: string | null } | null>(null);
   const [daemonCode, setDaemonCode] = useState<string | null>(null);
   const [daemonPerms, setDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [daemonPermsBusy, setDaemonPermsBusy] = useState<string | null>(null);
@@ -403,30 +349,6 @@ export default function ProfileScreen() {
   }>({ imported: false });
   const [chatgptImporting, setChatgptImporting] = useState(false);
   const [chatgptImportResult, setChatgptImportResult] = useState<number | null>(null);
-  const [discordBotToken, setDiscordBotToken] = useState('');
-  const [discordBotTokenVisible, setDiscordBotTokenVisible] = useState(false);
-  const [discordPairCode, setDiscordPairCode] = useState('');
-  const [discordShowOwnBot, setDiscordShowOwnBot] = useState(false);
-  const [discordSaving, setDiscordSaving] = useState(false);
-  const [discordPairing, setDiscordPairing] = useState(false);
-  const [discordShowManage, setDiscordShowManage] = useState(false);
-  const [discordGuilds, setDiscordGuilds] = useState<{id: string; name: string}[]>([]);
-  const [discordGuildChannels, setDiscordGuildChannels] = useState<{id: string; name: string}[]>([]);
-  const [discordSelGuildId, setDiscordSelGuildId] = useState('');
-  const [discordSelChannelId, setDiscordSelChannelId] = useState('');
-  const [discordRequireMention, setDiscordRequireMention] = useState(true);
-  const [discordAllowlistBusy, setDiscordAllowlistBusy] = useState(false);
-  const [discordWorkspaceBusy, setDiscordWorkspaceBusy] = useState(false);
-  const [discordWorkspaceGuilds, setDiscordWorkspaceGuilds] = useState<{id: string; name: string}[]>([]);
-  const [discordWorkspaceSelGuild, setDiscordWorkspaceSelGuild] = useState('');
-  const [discordShowWorkspaceSetup, setDiscordShowWorkspaceSetup] = useState(false);
-  const [discordTtsEnabled, setDiscordTtsEnabled] = useState(false);
-  const [ttsChannels, setTtsChannels] = useState<string[]>([]);
-  const [ttsVoice, setTtsVoice] = useState<string>('nova');
-  const [ttsLatencyTier, setTtsLatencyTier] = useState<0 | 2 | 4>(2);
-  const [discordSlashConfig, setDiscordSlashConfig] = useState<{ interactionsUrl: string; publicKeyConfigured: boolean } | null>(null);
-  const [discordShowSlashSetup, setDiscordShowSlashSetup] = useState(false);
-  const [discordUrlCopied, setDiscordUrlCopied] = useState(false);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
@@ -663,21 +585,7 @@ export default function ProfileScreen() {
     }
   }, []);
 
-  const loadOAuthStatus = useCallback(async () => {
-    try {
-      const res = await apiRequest('GET', '/api/oauth/status');
-      const data = await res.json();
-      setOAuthStatus({
-        google: data.google ?? { connected: false, accounts: [] },
-        microsoft: data.microsoft ?? { connected: false, accounts: [] },
-        slack: data.slack ?? { connected: false, accounts: [] },
-      });
-    } catch {
-      setOAuthStatus({ google: { connected: false, accounts: [] }, microsoft: { connected: false, accounts: [] }, slack: { connected: false, accounts: [] } });
-    } finally {
-      setLoadingStatus(false);
-    }
-  }, []);
+
 
   const loadMemories = useCallback(async () => {
     setMemoriesLoading(true);
@@ -1199,7 +1107,7 @@ export default function ProfileScreen() {
     }
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadPendingLivingContextUpdates(), loadSkills()]);
+    await Promise.all([loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadPendingLivingContextUpdates(), loadSkills()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -1211,22 +1119,13 @@ export default function ProfileScreen() {
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
       if (typeof prefs.dreamEnabled === 'boolean') setDreamEnabled(prefs.dreamEnabled);
-      const channels: string[] = Array.isArray(prefs.ttsChannels)
-        ? prefs.ttsChannels
-        : prefs.ttsEnabled === true ? ['telegram'] : [];
-      setTtsChannels(channels);
-      setDiscordTtsEnabled(channels.includes('discord'));
-      if (prefs.ttsVoice) setTtsVoice(prefs.ttsVoice);
-      if (typeof prefs.ttsLatencyTier === 'number' && [0, 2, 4].includes(prefs.ttsLatencyTier)) {
-        setTtsLatencyTier(prefs.ttsLatencyTier as 0 | 2 | 4);
-      }
     } catch {}
   // loadDaemonPerms, loadAndroidDaemonPerms, loadPendingMemories, and
   // loadPendingLivingContextUpdates are all
   // useCallback([], []) / stable refs declared after loadAll — omit from deps
   // to avoid temporal-dead-zone ReferenceErrors at initialisation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents, loadSkills]);
+  }, [loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents, loadSkills]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -1289,62 +1188,7 @@ export default function ProfileScreen() {
     await applyToggle();
   }, [memoryReviewEnabled, pendingMemories]);
 
-  const handleToggleDiscordTts = useCallback(async () => {
-    const next = !discordTtsEnabled;
-    setDiscordTtsEnabled(next);
-    const newChannels = next
-      ? [...ttsChannels.filter(c => c !== 'discord'), 'discord']
-      : ttsChannels.filter(c => c !== 'discord');
-    setTtsChannels(newChannels);
-    try {
-      await apiRequest('PATCH', '/api/preferences', { ttsChannels: newChannels });
-    } catch {}
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [discordTtsEnabled, ttsChannels]);
 
-  const handleSelectVoice = useCallback(async (voiceId: string) => {
-    setTtsVoice(voiceId);
-    try {
-      await apiRequest('PATCH', '/api/preferences', { ttsVoice: voiceId });
-    } catch {}
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, []);
-
-  const handleSelectLatencyTier = useCallback(async (tier: 0 | 2 | 4) => {
-    setTtsLatencyTier(tier);
-    try {
-      await apiRequest('PATCH', '/api/preferences', { ttsLatencyTier: tier });
-    } catch {}
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, []);
-
-  const handleToggleSlashSetup = useCallback(async () => {
-    setDiscordShowSlashSetup(v => !v);
-    if (!discordSlashConfig) {
-      try {
-        const res = await apiRequest('GET', '/api/channels/discord/interactions-config');
-        const data = await res.json();
-        setDiscordSlashConfig(data);
-      } catch {}
-    }
-  }, [discordSlashConfig]);
-
-  const handleRefreshSlashConfig = useCallback(async () => {
-    try {
-      const res = await apiRequest('GET', '/api/channels/discord/interactions-config');
-      const data = await res.json();
-      setDiscordSlashConfig(data);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {}
-  }, []);
-
-  const handleCopyInteractionsUrl = useCallback(async () => {
-    if (!discordSlashConfig?.interactionsUrl) return;
-    await Clipboard.setStringAsync(discordSlashConfig.interactionsUrl);
-    setDiscordUrlCopied(true);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setTimeout(() => setDiscordUrlCopied(false), 2000);
-  }, [discordSlashConfig]);
 
   const handleTimezoneChange = useCallback(async (tz: string) => {
     setTimezone(tz);
@@ -1530,18 +1374,7 @@ export default function ProfileScreen() {
     }
   }, [stopTelegramPolling]);
 
-  const handleGenerateWhatsAppCode = useCallback(async () => {
-    setChannelBusy('whatsapp');
-    try {
-      const res = await apiRequest('POST', '/api/channels/whatsapp/code');
-      const data = await res.json();
-      setWhatsappCode({ code: data.code, twilioNumber: data.twilioNumber });
-    } catch (err) {
-      console.error('[whatsapp] code error:', err);
-    } finally {
-      setChannelBusy(null);
-    }
-  }, []);
+
 
   const handleGenerateDaemonCode = useCallback(async () => {
     setChannelBusy('desktop-daemon');
@@ -1701,11 +1534,9 @@ export default function ProfileScreen() {
     setChannelBusy(channel);
     try {
       await apiRequest('DELETE', `/api/channels/${channel}`);
-      if (channel === 'whatsapp') setWhatsappCode(null);
       if (channel === 'daemon') { setDaemonCode(null); setAndroidDaemonCode(null); }
       if (channel === 'desktop-daemon') { setDaemonCode(null); }
       if (channel === 'android-daemon') { setAndroidDaemonCode(null); }
-      if (channel === 'discord') { setDiscordBotToken(''); setDiscordPairCode(''); }
       await loadChannels();
     } catch (err) {
       console.error('[channels] unlink error:', err);
@@ -1714,124 +1545,7 @@ export default function ProfileScreen() {
     }
   }, [loadChannels]);
 
-  const handleSaveDiscordToken = useCallback(async () => {
-    if (!discordBotToken.trim()) return;
-    setDiscordSaving(true);
-    try {
-      const res = await apiRequest('POST', '/api/channels/discord/token', { botToken: discordBotToken.trim() });
-      const data = await res.json();
-      if (data.error) { alert(data.error); }
-      else { setDiscordBotToken(''); await loadChannels(); }
-    } catch (err: any) {
-      alert(err?.message || 'Failed to save bot token — check the token and ensure Message Content + Server Members intents are enabled.');
-    }
-    setDiscordSaving(false);
-  }, [discordBotToken, loadChannels]);
 
-  const handleDiscordPair = useCallback(async () => {
-    if (!discordPairCode.trim()) return;
-    setDiscordPairing(true);
-    try {
-      const res = await apiRequest('POST', '/api/channels/discord/pair', { code: discordPairCode.trim().toUpperCase() });
-      const data = await res.json();
-      if (data.error) { alert(data.error); }
-      else { setDiscordPairCode(''); await loadChannels(); }
-    } catch (err: any) {
-      alert(err?.message || 'Pairing failed — check the code and try again.');
-    }
-    setDiscordPairing(false);
-  }, [discordPairCode, loadChannels]);
-
-  const handleFetchDiscordGuilds = useCallback(async () => {
-    setDiscordAllowlistBusy(true);
-    try {
-      const res = await apiRequest('GET', '/api/channels/discord/guilds');
-      const data = await res.json();
-      setDiscordGuilds(data.guilds || []);
-      setDiscordSelGuildId('');
-      setDiscordGuildChannels([]);
-      setDiscordSelChannelId('');
-    } catch (err) {
-      console.error('[discord] fetch guilds failed:', err);
-    }
-    setDiscordAllowlistBusy(false);
-  }, []);
-
-  const handleFetchDiscordChannels = useCallback(async (guildId: string) => {
-    setDiscordSelGuildId(guildId);
-    setDiscordSelChannelId('');
-    if (!guildId) { setDiscordGuildChannels([]); return; }
-    try {
-      const res = await apiRequest('GET', `/api/channels/discord/channels/${guildId}`);
-      const data = await res.json();
-      setDiscordGuildChannels(data.channels || []);
-    } catch (err) {
-      console.error('[discord] fetch channels failed:', err);
-    }
-  }, []);
-
-  const handleAddDiscordAllowlist = useCallback(async () => {
-    if (!discordSelGuildId || !discordSelChannelId) return;
-    setDiscordAllowlistBusy(true);
-    try {
-      const guild = discordGuilds.find(g => g.id === discordSelGuildId);
-      const chan = discordGuildChannels.find(c => c.id === discordSelChannelId);
-      await apiRequest('PUT', '/api/channels/discord/allowlist', {
-        guildId: discordSelGuildId,
-        guildName: guild?.name || discordSelGuildId,
-        channelId: discordSelChannelId,
-        channelName: chan?.name || discordSelChannelId,
-        requireMention: discordRequireMention,
-      });
-      setDiscordSelGuildId(''); setDiscordSelChannelId(''); setDiscordGuildChannels([]);
-      await loadChannels();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to add channel.');
-    }
-    setDiscordAllowlistBusy(false);
-  }, [discordSelGuildId, discordSelChannelId, discordGuilds, discordGuildChannels, discordRequireMention, loadChannels]);
-
-  const handleRemoveDiscordAllowlist = useCallback(async (guildId: string, channelId: string) => {
-    setDiscordAllowlistBusy(true);
-    try {
-      await apiRequest('DELETE', `/api/channels/discord/allowlist/${guildId}/${channelId}`);
-      await loadChannels();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to remove channel.');
-    }
-    setDiscordAllowlistBusy(false);
-  }, [loadChannels]);
-
-  const handleOpenWorkspaceSetup = useCallback(async () => {
-    setDiscordShowWorkspaceSetup(v => !v);
-    if (!discordShowWorkspaceSetup && discordWorkspaceGuilds.length === 0) {
-      setDiscordWorkspaceBusy(true);
-      try {
-        const res = await apiRequest('GET', '/api/channels/discord/guilds');
-        const data = await res.json();
-        setDiscordWorkspaceGuilds(data.guilds || []);
-      } catch (err: any) {
-        console.error('[discord workspace] fetch guilds failed:', err);
-      }
-      setDiscordWorkspaceBusy(false);
-    }
-  }, [discordShowWorkspaceSetup, discordWorkspaceGuilds.length]);
-
-  const handleSetupWorkspace = useCallback(async (guildId: string) => {
-    setDiscordWorkspaceBusy(true);
-    try {
-      const res = await apiRequest('POST', '/api/channels/discord/workspace/setup', { guildId });
-      const data = await res.json();
-      if (!res.ok) { alert(data.error || 'Setup failed.'); return; }
-      setDiscordShowWorkspaceSetup(false);
-      setDiscordWorkspaceSelGuild('');
-      await loadChannels();
-      alert('✅ Jarvis Workspace created! Check your Discord server for the new channels.');
-    } catch (err: any) {
-      alert(err?.message || 'Setup failed.');
-    }
-    setDiscordWorkspaceBusy(false);
-  }, [loadChannels]);
 
   const MUTE_SENTINEL = '__muted__';
 
@@ -1904,46 +1618,7 @@ export default function ProfileScreen() {
     }
   }, [appUpdateChecking]);
 
-  const handleConnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack') => {
-    setConnectingId(provider);
-    try {
-      const res = await apiRequest('GET', `/api/oauth/${provider}/authorize`);
-      const data = await res.json();
-      if (!data.url) {
-        if (data.error === 'Microsoft OAuth not configured') {
-          alert('Microsoft OAuth is not yet configured. Add MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET to connect Outlook.');
-        } else if (data.error === 'Slack OAuth not configured') {
-          alert('Slack OAuth is not yet configured. Add SLACK_CLIENT_ID and SLACK_CLIENT_SECRET to connect Slack.');
-        }
-        return;
-      }
-      await WebBrowser.openBrowserAsync(data.url, {
-        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
-      });
-      await loadOAuthStatus();
-    } catch (e: any) {
-      console.error('Connect error:', e);
-      alert('Could not connect. Please try again.');
-    } finally {
-      setConnectingId(null);
-    }
-  }, [loadOAuthStatus]);
 
-  const handleDisconnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack', email?: string) => {
-    setConnectingId(provider + (email || ''));
-    try {
-      const url = email
-        ? `/api/oauth/${provider}/disconnect?email=${encodeURIComponent(email)}`
-        : `/api/oauth/${provider}/disconnect`;
-      await apiRequest('DELETE', url);
-      await loadOAuthStatus();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e) {
-      console.error('Disconnect error:', e);
-    } finally {
-      setConnectingId(null);
-    }
-  }, [loadOAuthStatus]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -2037,14 +1712,10 @@ export default function ProfileScreen() {
       case 'notes':
         return `${morningNotes.length + dreamInsights.length} items`;
       case 'connections': {
-        const connectedApps = PLATFORMS.filter((platform) => {
-          const status = oauthStatus[platform.id];
-          return (status?.accounts?.length ?? 0) > 0 || !!status?.connected;
-        }).length;
         const connectedChannels = channelData
           ? Object.values(channelData.connected).filter(Boolean).length
           : 0;
-        return `${connectedApps + connectedChannels} live`;
+        return `${connectedChannels} live`;
       }
       case 'agents':
         return `${customAgents.length + activeUserSkills.length} active`;
@@ -3154,134 +2825,30 @@ export default function ProfileScreen() {
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
           <Text style={styles.sectionSubtitle}>
-            Real data feeds your daily plan and coach
+            Telegram stays native. Everything else connects through OneCLI.
           </Text>
           <View style={styles.platformsList}>
-            {PLATFORMS.map((platform, index) => {
-              const status = oauthStatus[platform.id];
-              const accounts = status?.accounts ?? [];
-              const connected = accounts.length > 0 || (status?.connected ?? false);
-              const isLast = index === PLATFORMS.length - 1;
-
-              if (platform.id === 'google' && accounts.length > 0) {
-                return (
-                  <View key={platform.id} style={[!isLast && styles.platformRowBorder]}>
-                    {accounts.map((account, accIdx) => {
-                      const accLoading = connectingId === platform.id + account.email;
-                      const needsCompose = account.scopes && !account.scopes.includes('gmail.compose');
-                      return (
-                        <View
-                          key={account.email || accIdx}
-                          style={[styles.platformRow, accIdx < accounts.length - 1 && styles.platformRowBorder]}
-                        >
-                          <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
-                            <Ionicons name={platform.icon} size={20} color={platform.color} />
-                          </View>
-                          <View style={styles.platformInfo}>
-                            <View style={styles.platformNameRow}>
-                              <Text style={styles.platformName}>{platform.name}</Text>
-                              {account.scopes?.includes('gmail.compose') ? (
-                                <View style={styles.draftsBadge}>
-                                  <Ionicons name="checkmark" size={10} color="#059669" />
-                                  <Text style={styles.draftsBadgeText}>Drafts</Text>
-                                </View>
-                              ) : (
-                                <View style={styles.readOnlyBadge}>
-                                  <Text style={styles.readOnlyBadgeText}>Read only</Text>
-                                </View>
-                              )}
-                            </View>
-                            {account.email ? (
-                              <Text style={styles.platformEmail}>{account.email}</Text>
-                            ) : (
-                              <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
-                            )}
-                            {needsCompose && (
-                              <Pressable onPress={() => handleConnect(platform.id)}>
-                                <Text style={styles.upgradePermText}>Grant draft access</Text>
-                              </Pressable>
-                            )}
-                          </View>
-                          {loadingStatus ? (
-                            <ActivityIndicator size="small" color={Colors.textTertiary} />
-                          ) : accLoading ? (
-                            <ActivityIndicator size="small" color={platform.color} />
-                          ) : (
-                            <Pressable
-                              style={styles.disconnectBtn}
-                              onPress={() => handleDisconnect(platform.id, account.email)}
-                            >
-                              <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                              <Text style={styles.disconnectBtnText}>Disconnect</Text>
-                            </Pressable>
-                          )}
-                        </View>
-                      );
-                    })}
-                    <View style={[styles.platformRow, styles.platformRowBorder]}>
-                      <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
-                        <Ionicons name="add-circle-outline" size={20} color={platform.color} />
-                      </View>
-                      <View style={styles.platformInfo}>
-                        <Text style={[styles.platformName, { color: platform.color }]}>Add Google Account</Text>
-                        <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
-                      </View>
-                      {connectingId === platform.id ? (
-                        <ActivityIndicator size="small" color={platform.color} />
-                      ) : (
-                        <Pressable
-                          style={[styles.connectBtn, { borderColor: platform.color }]}
-                          onPress={() => handleConnect(platform.id)}
-                        >
-                          <Text style={[styles.connectBtnText, { color: platform.color }]}>Add</Text>
-                        </Pressable>
-                      )}
-                    </View>
-                  </View>
-                );
-              }
-
-              const isLoading = connectingId === platform.id;
-              return (
-                <View
-                  key={platform.id}
-                  style={[styles.platformRow, !isLast && styles.platformRowBorder]}
-                >
-                  <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
-                    <Ionicons name={platform.icon} size={20} color={platform.color} />
-                  </View>
-                  <View style={styles.platformInfo}>
-                    <Text style={styles.platformName}>{platform.name}</Text>
-                    <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
-                    {connected && status?.email ? (
-                      <Text style={styles.platformEmail}>{status.email}</Text>
-                    ) : null}
-                  </View>
-                  {loadingStatus ? (
-                    <ActivityIndicator size="small" color={Colors.textTertiary} />
-                  ) : isLoading ? (
-                    <ActivityIndicator size="small" color={platform.color} />
-                  ) : connected ? (
-                    <Pressable
-                      style={styles.disconnectBtn}
-                      onPress={() => handleDisconnect(platform.id)}
-                    >
-                      <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                      <Text style={styles.disconnectBtnText}>Disconnect</Text>
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      style={[styles.connectBtn, { borderColor: platform.color }]}
-                      onPress={() => handleConnect(platform.id)}
-                    >
-                      <Text style={[styles.connectBtnText, { color: platform.color }]}>Connect</Text>
-                    </Pressable>
-                  )}
-                </View>
-              );
-            })}
+            <View style={styles.platformRow}>
+              <View style={[styles.platformIcon, { backgroundColor: '#6366F118' }]}>
+                <Ionicons name="key-outline" size={20} color="#6366F1" />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>OneCLI Connector</Text>
+                <Text style={styles.platformSubtitle}>
+                  Connect Gmail, Outlook, calendars, Slack, WhatsApp, and Discord through OneCLI Agent Vault.
+                </Text>
+                <Text style={styles.platformEmail}>
+                  Install OneCLI, create an Agent Vault account, then add each account there. Jarvis will use that vault instead of storing those credentials here.
+                </Text>
+              </View>
+              <Pressable
+                style={[styles.connectBtn, { borderColor: '#6366F1' }]}
+                onPress={() => WebBrowser.openBrowserAsync('https://github.com/onecli/onecli')}
+              >
+                <Text style={[styles.connectBtnText, { color: '#6366F1' }]}>Setup</Text>
+              </Pressable>
+            </View>
           </View>
-
           {/* Google Drive */}
           <View ref={driveRowRef}>
           {driveStatus?.googleConnected && (
@@ -3478,728 +3045,15 @@ export default function ProfileScreen() {
           </Text>
         </Animated.View>
 
-        {/* Connected Channels (Phase 5: multi-channel + desktop daemon) */}
+        {/* Native channels and local daemons */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Channels</Text>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Native Channels</Text>
           <View style={styles.platformsList}>
             <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
               <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
                 Choose where Jarvis reaches you for each kind of nudge — and pair a desktop daemon so the agent can run shell commands, edit files, and pop native notifications on your computer.
               </Text>
             </View>
-
-            {/* WhatsApp */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#25D36618' }]}>
-                <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>WhatsApp</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.whatsapp
-                    ? channelData.meta?.whatsapp?.phone || 'Linked'
-                    : 'Get nudges + chat with Jarvis on WhatsApp'}
-                </Text>
-              </View>
-              {channelBusy === 'whatsapp' ? (
-                <ActivityIndicator size="small" color="#25D366" />
-              ) : channelData?.connected.whatsapp ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('whatsapp')}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={styles.disconnectBtnText}>Unlink</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  style={[styles.connectBtn, { borderColor: '#25D366' }]}
-                  onPress={handleGenerateWhatsAppCode}
-                  disabled={!channelData?.channels.find(c => c.name === 'whatsapp')?.configured}
-                >
-                  <Text style={[styles.connectBtnText, { color: '#25D366' }]}>
-                    {channelData?.channels.find(c => c.name === 'whatsapp')?.configured ? 'Get code' : 'Not configured'}
-                  </Text>
-                </Pressable>
-              )}
-            </View>
-            {whatsappCode && (
-              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
-                  Send this code from WhatsApp to {whatsappCode.twilioNumber || 'the GamePlan number'}:
-                </Text>
-                <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#25D366', marginBottom: 6 }}>
-                  {whatsappCode.code}
-                </Text>
-                <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular' }}>
-                  Code expires in 15 minutes.
-                </Text>
-              </View>
-            )}
-
-            {/* Slack */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#4A154B18' }]}>
-                <Ionicons name="logo-slack" size={20} color="#4A154B" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>Slack DM</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.slack ? 'Workspace linked — DM Jarvis or use /jarvis' : 'Connect Slack above to enable DM coaching'}
-                </Text>
-              </View>
-              {channelData?.connected.slack && (
-                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
-              )}
-            </View>
-
-            {/* Discord */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#5865F218' }]}>
-                <Ionicons name="logo-discord" size={20} color="#5865F2" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>Discord</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.discord
-                    ? (channelData.meta?.discord as any)?.discordUsername
-                      ? `Linked as ${(channelData.meta.discord as any).discordUsername}`
-                      : 'Connected — DM Jarvis anytime'
-                    : (channelData?.meta?.discord as any)?.hasBotToken
-                      ? 'Bot saved — DM it to get your pairing code'
-                      : (channelData?.meta?.discord as any)?.sharedBotAvailable
-                        ? 'Add to Discord and start chatting'
-                        : 'Chat with Jarvis via Discord'}
-                </Text>
-              </View>
-              {channelBusy === 'discord' ? (
-                <ActivityIndicator size="small" color="#5865F2" />
-              ) : channelData?.connected.discord ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('discord')}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={styles.disconnectBtnText}>Unlink</Text>
-                </Pressable>
-              ) : (channelData?.meta?.discord as any)?.hasBotToken ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('discord')}>
-                  <Text style={[styles.disconnectBtnText, { color: Colors.textSecondary }]}>Remove</Text>
-                </Pressable>
-              ) : null}
-            </View>
-            {/* Discord setup panel */}
-            {!channelData?.connected.discord && (
-              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.border }}>
-                {/* Pairing instructions — always visible */}
-                {(() => {
-                  const dm = channelData?.meta?.discord as any;
-                  const hasShared = !!dm?.sharedBotAvailable;
-                  const hasTok = !!dm?.hasBotToken;
-                  return (
-                    <>
-                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
-                        {hasTok ? 'Pair your Discord account' : 'Connect Discord'}
-                      </Text>
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
-                        {hasTok
-                          ? 'Send any message to your bot on Discord. It will reply with a 6-character code — enter it below.'
-                          : hasShared
-                            ? 'Add the Jarvis bot to your server (or DM it directly), send any message, and enter the 6-character code it replies with.'
-                            : 'Set up your own Discord bot token below, then DM it to get a pairing code.'}
-                      </Text>
-                    </>
-                  );
-                })()}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <TextInput
-                    value={discordPairCode}
-                    onChangeText={t => setDiscordPairCode(t.toUpperCase())}
-                    placeholder="Pairing code (e.g. AB3X7Y)"
-                    placeholderTextColor={Colors.textTertiary}
-                    style={{
-                      flex: 1, fontSize: 15, fontFamily: 'Inter_600SemiBold', letterSpacing: 3,
-                      color: '#5865F2', borderWidth: 1, borderColor: '#5865F2',
-                      borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
-                      backgroundColor: Colors.card, textAlign: 'center',
-                    }}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    maxLength={6}
-                  />
-                  <Pressable
-                    onPress={handleDiscordPair}
-                    disabled={discordPairing || discordPairCode.trim().length !== 6}
-                    style={{
-                      paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8,
-                      backgroundColor: '#5865F2', opacity: discordPairing || discordPairCode.trim().length !== 6 ? 0.5 : 1,
-                    }}
-                  >
-                    {discordPairing
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Pair</Text>}
-                  </Pressable>
-                </View>
-
-                {/* "Use your own bot" disclosure toggle */}
-                <Pressable
-                  onPress={() => setDiscordShowOwnBot(v => !v)}
-                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 4 }}
-                >
-                  <Ionicons
-                    name={discordShowOwnBot ? 'chevron-down' : 'chevron-forward'}
-                    size={14}
-                    color={Colors.textSecondary}
-                  />
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>
-                    Use your own bot token instead
-                  </Text>
-                </Pressable>
-
-                {discordShowOwnBot && (
-                  <View style={{ marginTop: 10 }}>
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 8 }}>
-                      1. Go to{' '}
-                      <Text style={{ color: '#5865F2' }}>discord.com/developers/applications</Text>
-                      {'\n'}2. New Application → Bot → Reset Token → copy it
-                      {'\n'}3. Enable <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Message Content</Text> and{' '}
-                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Server Members</Text> intents
-                      {'\n'}4. Invite the bot to your server (OAuth2 → URL Generator)
-                    </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <TextInput
-                        value={discordBotToken}
-                        onChangeText={setDiscordBotToken}
-                        placeholder="Bot token…"
-                        secureTextEntry={!discordBotTokenVisible}
-                        placeholderTextColor={Colors.textTertiary}
-                        style={{
-                          flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular',
-                          color: Colors.text, borderWidth: 1, borderColor: Colors.border,
-                          borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
-                          backgroundColor: Colors.card,
-                        }}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
-                      <Pressable onPress={() => setDiscordBotTokenVisible(v => !v)} style={{ padding: 6 }}>
-                        <Ionicons name={discordBotTokenVisible ? 'eye-off-outline' : 'eye-outline'} size={18} color={Colors.textSecondary} />
-                      </Pressable>
-                    </View>
-                    <Pressable
-                      onPress={handleSaveDiscordToken}
-                      disabled={discordSaving || !discordBotToken.trim()}
-                      style={{
-                        marginTop: 8, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
-                        backgroundColor: '#5865F2', opacity: discordSaving || !discordBotToken.trim() ? 0.5 : 1,
-                      }}
-                    >
-                      {discordSaving
-                        ? <ActivityIndicator size="small" color="#fff" />
-                        : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Save token & start bot</Text>}
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* Discord: allowlisted server channels (when connected) */}
-            {channelData?.connected.discord && (
-              <View style={{ borderTopWidth: 1, borderTopColor: Colors.border, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Server channels
-                  </Text>
-                  <Pressable
-                    onPress={() => { setDiscordShowManage(v => !v); if (!discordShowManage) handleFetchDiscordGuilds(); }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: '#5865F215' }}
-                  >
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2' }}>
-                      {discordShowManage ? 'Done' : '+ Add'}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {/* Existing allowlisted channels */}
-                {((channelData.meta?.discord as any)?.allowlistedGuilds || []).length === 0 && !discordShowManage && (
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
-                    No server channels yet — Jarvis responds to DMs only.
-                  </Text>
-                )}
-                {((channelData.meta?.discord as any)?.allowlistedGuilds || []).map((g: any) => (
-                  <View key={`${g.guildId}-${g.channelId}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 }}>
-                    <Ionicons name="grid-outline" size={14} color={Colors.textSecondary} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.text }}>
-                        {g.channelName} <Text style={{ color: Colors.textSecondary }}>in {g.guildName}</Text>
-                      </Text>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
-                        {g.requireMention ? '@mention required' : 'Always responds'}
-                      </Text>
-                    </View>
-                    <Pressable onPress={() => handleRemoveDiscordAllowlist(g.guildId, g.channelId)} hitSlop={8}>
-                      <Ionicons name="close-circle" size={18} color={Colors.textTertiary} />
-                    </Pressable>
-                  </View>
-                ))}
-
-                {/* Workspace setup inline banner */}
-                {!(channelData.meta?.discord as any)?.workspace && !discordShowManage && (
-                  <View style={{ marginTop: 6, padding: 10, borderRadius: 10, backgroundColor: '#5865F210', borderWidth: 1, borderColor: '#5865F230' }}>
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2', marginBottom: 2 }}>
-                      🧠 Jarvis Workspace
-                    </Text>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginBottom: 8 }}>
-                      Let Jarvis organise your life in Discord — topic channels for Finance, Ideas, Business, and more.
-                    </Text>
-                    <Pressable
-                      onPress={handleOpenWorkspaceSetup}
-                      style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2' }}
-                    >
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
-                        {discordShowWorkspaceSetup ? 'Cancel' : 'Set up Workspace'}
-                      </Text>
-                    </Pressable>
-                    {discordShowWorkspaceSetup && (
-                      <View style={{ marginTop: 10, gap: 6 }}>
-                        {discordWorkspaceBusy && discordWorkspaceGuilds.length === 0 ? (
-                          <ActivityIndicator size="small" color="#5865F2" />
-                        ) : discordWorkspaceGuilds.length === 0 ? (
-                          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
-                            No servers found — make sure your bot is in a server.
-                          </Text>
-                        ) : (
-                          <>
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>
-                              Pick the server for the workspace:
-                            </Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                              <View style={{ flexDirection: 'row', gap: 6 }}>
-                                {discordWorkspaceGuilds.map(g => (
-                                  <Pressable
-                                    key={g.id}
-                                    onPress={() => setDiscordWorkspaceSelGuild(g.id)}
-                                    style={{
-                                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
-                                      borderWidth: 1,
-                                      borderColor: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.border,
-                                      backgroundColor: discordWorkspaceSelGuild === g.id ? '#5865F215' : Colors.card,
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.text }}>
-                                      {g.name}
-                                    </Text>
-                                  </Pressable>
-                                ))}
-                              </View>
-                            </ScrollView>
-                            {discordWorkspaceSelGuild !== '' && (
-                              <Pressable
-                                onPress={() => handleSetupWorkspace(discordWorkspaceSelGuild)}
-                                disabled={discordWorkspaceBusy}
-                                style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2', opacity: discordWorkspaceBusy ? 0.5 : 1 }}
-                              >
-                                {discordWorkspaceBusy
-                                  ? <ActivityIndicator size="small" color="#fff" />
-                                  : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Create Workspace →</Text>}
-                              </Pressable>
-                            )}
-                          </>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {/* Existing workspace info */}
-                {(channelData.meta?.discord as any)?.workspace && (
-                  <View style={{ marginTop: 6, padding: 10, borderRadius: 10, backgroundColor: '#5865F210', borderWidth: 1, borderColor: '#5865F230' }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2' }}>
-                          🧠 Jarvis Workspace
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 2 }}>
-                          Active in {(channelData.meta.discord as any).workspace.guildName}
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginTop: 3 }}>
-                          {Object.keys((channelData.meta.discord as any).workspace.channels || {}).map((k: string) => {
-                            const emojis: Record<string, string> = { tasks: '📋', finance: '💰', ideas: '💡', business: '💼', personal: '🌱', thinking: '🧠' };
-                            return (emojis[k] || '') + '#' + k;
-                          }).join('  ')}
-                        </Text>
-                      </View>
-                      <Pressable
-                        onPress={handleOpenWorkspaceSetup}
-                        style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#5865F215' }}
-                      >
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#5865F2' }}>
-                          {discordShowWorkspaceSetup ? 'Cancel' : 'Reconfigure'}
-                        </Text>
-                      </Pressable>
-                    </View>
-                    {discordShowWorkspaceSetup && (
-                      <View style={{ marginTop: 10, gap: 6 }}>
-                        {discordWorkspaceBusy && discordWorkspaceGuilds.length === 0 ? (
-                          <ActivityIndicator size="small" color="#5865F2" />
-                        ) : discordWorkspaceGuilds.length === 0 ? (
-                          <Text style={{ fontSize: 11, color: Colors.textSecondary }}>No servers found.</Text>
-                        ) : (
-                          <>
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Pick a server:</Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                              <View style={{ flexDirection: 'row', gap: 6 }}>
-                                {discordWorkspaceGuilds.map(g => (
-                                  <Pressable key={g.id} onPress={() => setDiscordWorkspaceSelGuild(g.id)}
-                                    style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1,
-                                      borderColor: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.border,
-                                      backgroundColor: discordWorkspaceSelGuild === g.id ? '#5865F215' : Colors.card }}>
-                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.text }}>{g.name}</Text>
-                                  </Pressable>
-                                ))}
-                              </View>
-                            </ScrollView>
-                            {discordWorkspaceSelGuild !== '' && (
-                              <Pressable onPress={() => handleSetupWorkspace(discordWorkspaceSelGuild)} disabled={discordWorkspaceBusy}
-                                style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2', opacity: discordWorkspaceBusy ? 0.5 : 1 }}>
-                                {discordWorkspaceBusy ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Recreate Workspace →</Text>}
-                              </Pressable>
-                            )}
-                          </>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {/* Slash commands setup */}
-                <View style={{ borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Pressable
-                      onPress={handleToggleSlashSetup}
-                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 }}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Slash commands</Text>
-                          {discordSlashConfig && !discordSlashConfig.publicKeyConfigured && (
-                            <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: 'rgba(245,158,11,0.15)' }}>
-                              <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#F59E0B' }}>Setup needed</Text>
-                            </View>
-                          )}
-                          {discordSlashConfig?.publicKeyConfigured && (
-                            <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
-                          )}
-                        </View>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
-                          Enable /jarvis commands in your server
-                        </Text>
-                      </View>
-                      <Ionicons
-                        name={discordShowSlashSetup ? 'chevron-up' : 'chevron-down'}
-                        size={16}
-                        color={Colors.textSecondary}
-                      />
-                    </Pressable>
-                    {discordShowSlashSetup && (
-                      <Pressable onPress={handleRefreshSlashConfig} style={{ paddingLeft: 8, paddingVertical: 10 }} hitSlop={8}>
-                        <Ionicons name="refresh-outline" size={16} color={Colors.textSecondary} />
-                      </Pressable>
-                    )}
-                  </View>
-
-                  {discordShowSlashSetup && (
-                    <View style={{ paddingBottom: 12, gap: 12 }}>
-                      {/* Step 1 — Interactions URL */}
-                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 8 }}>
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
-                          Step 1 — Set Interactions Endpoint URL
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
-                          In the Discord Developer Portal → Your Application → General Information, paste this URL into the{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>Interactions Endpoint URL</Text> field:
-                        </Text>
-                        {discordSlashConfig ? (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Text
-                              selectable
-                              style={{
-                                flex: 1, fontSize: 11, fontFamily: 'Inter_400Regular',
-                                color: '#5865F2', backgroundColor: '#5865F210',
-                                borderRadius: 6, padding: 8, lineHeight: 16,
-                              }}
-                            >
-                              {discordSlashConfig.interactionsUrl}
-                            </Text>
-                            <Pressable
-                              onPress={handleCopyInteractionsUrl}
-                              style={{
-                                padding: 8, borderRadius: 8,
-                                backgroundColor: discordUrlCopied ? '#22C55E20' : '#5865F215',
-                              }}
-                            >
-                              <Ionicons
-                                name={discordUrlCopied ? 'checkmark' : 'copy-outline'}
-                                size={16}
-                                color={discordUrlCopied ? '#22C55E' : '#5865F2'}
-                              />
-                            </Pressable>
-                          </View>
-                        ) : (
-                          <ActivityIndicator size="small" color="#5865F2" />
-                        )}
-                      </View>
-
-                      {/* Step 2 — DISCORD_PUBLIC_KEY */}
-                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 6 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
-                            Step 2 — Add Public Key secret
-                          </Text>
-                          {discordSlashConfig?.publicKeyConfigured
-                            ? <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
-                            : <Ionicons name="alert-circle-outline" size={14} color="#F59E0B" />}
-                        </View>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
-                          In Discord Developer Portal → General Information, copy the{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>Public Key</Text>{' '}
-                          value. Then in Railway Variables, add it as{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>DISCORD_PUBLIC_KEY</Text>.
-                        </Text>
-                        {discordSlashConfig?.publicKeyConfigured ? (
-                          <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#22C55E' }}>
-                            ✓ Public key is configured
-                          </Text>
-                        ) : (
-                          <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#F59E0B' }}>
-                            Not configured — slash commands will be rejected until this is set
-                          </Text>
-                        )}
-                      </View>
-
-                      {/* Step 3 — Register commands */}
-                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 6 }}>
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
-                          Step 3 — Done
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
-                          Once the endpoint is saved and the public key is set, restart your server. Jarvis will register{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis chat</Text>,{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis plan</Text>,{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis status</Text>, and{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis help</Text> automatically.
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-                {/* Voice replies toggle */}
-                <View style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Voice replies</Text>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
-                        Jarvis sends audio notes to this channel
-                      </Text>
-                    </View>
-                    <Switch
-                      value={discordTtsEnabled}
-                      onValueChange={handleToggleDiscordTts}
-                      trackColor={{ true: '#5865F2', false: Colors.border }}
-                      thumbColor="#fff"
-                    />
-                  </View>
-
-                  {/* Voice picker — always visible so users can set their preferred voice */}
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 6 }}>Voice</Text>
-                    {/* OpenAI voices */}
-                    <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 4, opacity: 0.7 }}>OpenAI</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        {[
-                          { id: 'nova', label: 'Nova' },
-                          { id: 'alloy', label: 'Alloy' },
-                          { id: 'echo', label: 'Echo' },
-                          { id: 'fable', label: 'Fable' },
-                          { id: 'onyx', label: 'Onyx' },
-                          { id: 'shimmer', label: 'Shimmer' },
-                        ].map(v => (
-                          <Pressable
-                            key={v.id}
-                            onPress={() => handleSelectVoice(v.id)}
-                            style={{
-                              paddingHorizontal: 12, paddingVertical: 6,
-                              borderRadius: 16, borderWidth: 1,
-                              borderColor: ttsVoice === v.id ? '#5865F2' : Colors.border,
-                              backgroundColor: ttsVoice === v.id ? 'rgba(88,101,242,0.15)' : 'transparent',
-                            }}
-                          >
-                            <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: ttsVoice === v.id ? '#5865F2' : Colors.textSecondary }}>
-                              {v.label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </ScrollView>
-                    {/* ElevenLabs voices */}
-                    <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 4, opacity: 0.7 }}>ElevenLabs</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        {[
-                          { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Sarah' },
-                          { id: 'FGY2WhTYpPnrIDTdsKH5', label: 'Laura' },
-                          { id: 'IKne3meq5aSn9XLyUdCD', label: 'Charlie' },
-                          { id: 'JBFqnCBsd6RMkjVDRZzb', label: 'George' },
-                          { id: 'N2lVS1w4EtoT3dr4eOWO', label: 'Callum' },
-                          { id: 'SAz9YHcvj6GT2YYXdXww', label: 'River' },
-                          { id: 'Xb7hH8MSUJpSbSDYk0k2', label: 'Alice' },
-                          { id: 'XrExE9yKIg1WjnnlVkGX', label: 'Matilda' },
-                          { id: 'cgSgspJ2msm6clMCkdW9', label: 'Jessica' },
-                          { id: 'cjVigY5qzO86Huf0OWal', label: 'Eric' },
-                          { id: 'nPczCjzI2devNBz1zQrb', label: 'Brian' },
-                          { id: 'onwK4e9ZLuTAKqWW03F9', label: 'Daniel' },
-                          { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam' },
-                        ].map(v => (
-                          <Pressable
-                            key={v.id}
-                            onPress={() => handleSelectVoice(v.id)}
-                            style={{
-                              paddingHorizontal: 12, paddingVertical: 6,
-                              borderRadius: 16, borderWidth: 1,
-                              borderColor: ttsVoice === v.id ? '#F0A500' : Colors.border,
-                              backgroundColor: ttsVoice === v.id ? 'rgba(240,165,0,0.12)' : 'transparent',
-                            }}
-                          >
-                            <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: ttsVoice === v.id ? '#F0A500' : Colors.textSecondary }}>
-                              {v.label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </ScrollView>
-                  </View>
-
-                  {/* ElevenLabs latency tier — only shown when an ElevenLabs voice is selected */}
-                  {!['nova','alloy','echo','fable','onyx','shimmer'].includes(ttsVoice) && (
-                    <View style={{ marginTop: 12 }}>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 6 }}>Response Speed</Text>
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        {([
-                          { tier: 4 as const, label: 'Low Latency' },
-                          { tier: 2 as const, label: 'Balanced' },
-                          { tier: 0 as const, label: 'High Quality' },
-                        ] as { tier: 0 | 2 | 4; label: string }[]).map(({ tier, label }) => (
-                          <Pressable
-                            key={tier}
-                            onPress={() => handleSelectLatencyTier(tier)}
-                            style={{
-                              flex: 1, paddingVertical: 7,
-                              borderRadius: 10, borderWidth: 1, alignItems: 'center',
-                              borderColor: ttsLatencyTier === tier ? '#F0A500' : Colors.border,
-                              backgroundColor: ttsLatencyTier === tier ? 'rgba(240,165,0,0.12)' : 'transparent',
-                            }}
-                          >
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: ttsLatencyTier === tier ? '#F0A500' : Colors.textSecondary }}>
-                              {label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-                {/* Add channel form */}
-                {discordShowManage && (
-                  <View style={{ marginTop: 8, gap: 8 }}>
-                    {discordAllowlistBusy && discordGuilds.length === 0 ? (
-                      <ActivityIndicator size="small" color="#5865F2" />
-                    ) : discordGuilds.length === 0 ? (
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
-                        No servers found — invite your bot to a server first.
-                      </Text>
-                    ) : (
-                      <>
-                        {/* Guild picker */}
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Select server:</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
-                          <View style={{ flexDirection: 'row', gap: 6 }}>
-                            {discordGuilds.map(g => (
-                              <Pressable
-                                key={g.id}
-                                onPress={() => handleFetchDiscordChannels(g.id)}
-                                style={{
-                                  paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
-                                  borderWidth: 1,
-                                  borderColor: discordSelGuildId === g.id ? '#5865F2' : Colors.border,
-                                  backgroundColor: discordSelGuildId === g.id ? '#5865F215' : Colors.card,
-                                }}
-                              >
-                                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordSelGuildId === g.id ? '#5865F2' : Colors.text }}>
-                                  {g.name}
-                                </Text>
-                              </Pressable>
-                            ))}
-                          </View>
-                        </ScrollView>
-
-                        {/* Channel picker */}
-                        {discordSelGuildId !== '' && discordGuildChannels.length > 0 && (
-                          <>
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Select channel:</Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
-                              <View style={{ flexDirection: 'row', gap: 6 }}>
-                                {discordGuildChannels.map(c => (
-                                  <Pressable
-                                    key={c.id}
-                                    onPress={() => setDiscordSelChannelId(c.id)}
-                                    style={{
-                                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
-                                      borderWidth: 1,
-                                      borderColor: discordSelChannelId === c.id ? '#5865F2' : Colors.border,
-                                      backgroundColor: discordSelChannelId === c.id ? '#5865F215' : Colors.card,
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordSelChannelId === c.id ? '#5865F2' : Colors.text }}>
-                                      #{c.name}
-                                    </Text>
-                                  </Pressable>
-                                ))}
-                              </View>
-                            </ScrollView>
-                          </>
-                        )}
-
-                        {/* requireMention + Add button */}
-                        {discordSelChannelId !== '' && (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <Switch
-                                value={discordRequireMention}
-                                onValueChange={setDiscordRequireMention}
-                                trackColor={{ true: '#5865F2', false: Colors.border }}
-                                thumbColor="#fff"
-                              />
-                              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
-                                Require @mention
-                              </Text>
-                            </View>
-                            <Pressable
-                              onPress={handleAddDiscordAllowlist}
-                              disabled={discordAllowlistBusy}
-                              style={{
-                                paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8,
-                                backgroundColor: '#5865F2', opacity: discordAllowlistBusy ? 0.5 : 1,
-                              }}
-                            >
-                              {discordAllowlistBusy
-                                ? <ActivityIndicator size="small" color="#fff" />
-                                : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Add channel</Text>}
-                            </Pressable>
-                          </View>
-                        )}
-                      </>
-                    )}
-                  </View>
-                )}
-              </View>
-            )}
 
             {/* Desktop Daemon */}
             <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>

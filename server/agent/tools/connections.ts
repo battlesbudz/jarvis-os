@@ -4,7 +4,7 @@ import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { channelLinks, telegramLinks } from "@shared/schema";
 import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive } from "../../daemon/bridge";
-import { getPublicBaseUrl } from "../../publicUrl";
+import { getOneCliConnectionHint, getOneCliConnectUrl, isOneCliInstalled, type OneCliConnection } from "../../oneCliConnection";
 
 export const checkConnectionsTool: AgentTool = {
   name: "check_connections",
@@ -61,7 +61,7 @@ export const checkConnectionsTool: AgentTool = {
 
 export const generateReconnectLinkTool: AgentTool = {
   name: "generate_reconnect_link",
-  description: "Generate a fresh OAuth authorization URL to reconnect a disconnected or expired account. Returns a URL and a button label. Use after check_connections shows a service is not connected. provider must be 'google' (Gmail + Calendar) or 'microsoft' (Outlook + Calendar).",
+  description: "Hand off Google/Gmail/Calendar or Microsoft/Outlook/Calendar reconnects to OneCLI OAuth. Returns OneCLI instructions and an optional URL.",
   parameters: {
     type: "object",
     properties: {
@@ -73,62 +73,26 @@ export const generateReconnectLinkTool: AgentTool = {
     },
     required: ["provider"],
   },
-  async execute(args: ToolArgs, ctx: ToolContext): Promise<ToolResult> {
+  async execute(args: ToolArgs, _ctx: ToolContext): Promise<ToolResult> {
     const provider = String(args.provider || "").toLowerCase();
-    const baseUrl = getPublicBaseUrl();
 
-    if (provider === "google") {
-      const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
-      if (!clientId) {
-        return { ok: false, content: "Google OAuth is not configured on this server.", label: "Google not configured" };
-      }
-      const redirectUri = `${baseUrl}/api/oauth/google/callback`;
-      const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: "code",
-        scope: [
-          "openid", "email",
-          "https://www.googleapis.com/auth/calendar.events",
-          "https://www.googleapis.com/auth/calendar.readonly",
-          "https://www.googleapis.com/auth/gmail.readonly",
-          "https://www.googleapis.com/auth/gmail.compose",
-          "https://www.googleapis.com/auth/gmail.modify",
-          "https://www.googleapis.com/auth/drive.file",
-        ].join(" "),
-        access_type: "offline",
-        prompt: "consent",
-        state: ctx.userId,
-      });
-      const url = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
-      return {
-        ok: true,
-        content: `Google reconnect link ready. Present this to the user as a tappable button labelled "Reconnect Google". URL: ${url}`,
-        label: "Reconnect Google",
-        detail: JSON.stringify({ url, buttonLabel: "Reconnect Google", provider: "google" }),
+    if (provider === "google" || provider === "microsoft") {
+      const connection = provider as OneCliConnection;
+      const url = getOneCliConnectUrl(connection);
+      const buttonLabel = provider === "google" ? "Connect Google with OneCLI" : "Connect Outlook with OneCLI";
+      const payload = {
+        provider,
+        connection,
+        buttonLabel: url ? buttonLabel : "Open OneCLI",
+        url,
+        oneCliInstalled: isOneCliInstalled(),
+        instructions: getOneCliConnectionHint(connection),
       };
-    }
-
-    if (provider === "microsoft") {
-      const clientId = process.env.MICROSOFT_CLIENT_ID;
-      if (!clientId) {
-        return { ok: false, content: "Microsoft OAuth is not configured on this server.", label: "Microsoft not configured" };
-      }
-      const redirectUri = `${baseUrl}/api/oauth/microsoft/callback`;
-      const params = new URLSearchParams({
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        response_type: "code",
-        scope: "offline_access Calendars.ReadWrite Mail.ReadWrite Mail.Send User.Read",
-        state: ctx.userId,
-        response_mode: "query",
-      });
-      const url = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`;
       return {
         ok: true,
-        content: `Microsoft reconnect link ready. Present this to the user as a tappable button labelled "Reconnect Outlook". URL: ${url}`,
-        label: "Reconnect Outlook",
-        detail: JSON.stringify({ url, buttonLabel: "Reconnect Outlook", provider: "microsoft" }),
+        content: JSON.stringify(payload),
+        label: payload.buttonLabel,
+        detail: JSON.stringify(payload),
       };
     }
 

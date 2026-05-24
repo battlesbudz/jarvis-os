@@ -3,7 +3,6 @@ import { startHeartbeat } from "../heartbeat";
 import { inboxItems, telegramLinks } from "@shared/schema";
 import { startCuriosityScanner } from "../curiosityScanner";
 import { db } from "../db";
-import { bootAllBots as bootDiscordBots, bootSharedBot } from "../discord/manager";
 import {
   deleteWebhook,
   ensureMiniAppMenuButton,
@@ -143,22 +142,10 @@ function startTelegramBoot(): void {
   }
 }
 
-function startDiscordBoot(): void {
-  const isDiscordProduction = process.env.NODE_ENV === "production";
-  if (isDiscordProduction) {
-    bootDiscordBots().catch(err => {
-      console.error("Failed to boot Discord bots:", err);
-    });
-
-    bootSharedBot().catch(err => {
-      console.error("Failed to boot shared Discord bot:", err);
-    });
-  } else {
-    console.warn(
-      "[Discord] Dev mode - Discord bots NOT started to avoid competing with " +
-      "the production bot and sending duplicate notifications to your real Discord channel."
-    );
-  }
+function logExternalChannelBoot(): void {
+  console.warn(
+    "[Discord] Native Discord startup disabled. Use the One Connector for Discord OAuth/actions; Telegram remains Jarvis-owned."
+  );
 }
 
 function startProactiveEngines(): void {
@@ -227,7 +214,7 @@ function startDiagnosticsBoot(): void {
 
 export function startPostListenBoot(): void {
   startTelegramBoot();
-  startDiscordBoot();
+  logExternalChannelBoot();
   startProactiveEngines();
   startWorkspaceBoot();
   startDiagnosticsBoot();
