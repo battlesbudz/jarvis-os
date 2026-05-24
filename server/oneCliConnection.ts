@@ -137,6 +137,27 @@ export type OneCliRunResult = {
   error?: string;
 };
 
+export type OneCliSetupConnection = {
+  platform: string;
+  state: string;
+  keyPreview: string;
+};
+
+export type OneCliSetupStatus = {
+  installed: boolean;
+  authenticated: boolean;
+  ready: boolean;
+  command: string;
+  dashboardUrl: string;
+  accountEmail: string | null;
+  accountName: string | null;
+  configScope: string | null;
+  apiBase: string | null;
+  connections: OneCliSetupConnection[];
+  nextSteps: string[];
+  error: string | null;
+};
+
 export function runOneCli(args: string[], timeoutMs = 30000): OneCliRunResult {
   const invocation = resolveOneCliInvocation();
   const fullArgs = [...invocation.argsPrefix, ...args];
@@ -161,12 +182,119 @@ export function runOneCli(args: string[], timeoutMs = 30000): OneCliRunResult {
   };
 }
 
+function parseJsonObject(value: string): Record<string, any> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function maskConnectionKey(key: string): string {
+  if (!key) return "";
+  if (key.length <= 18) return `${key.slice(0, 6)}...`;
+  return `${key.slice(0, 12)}...${key.slice(-6)}`;
+}
+
+export function getOneCliSetupStatus(): OneCliSetupStatus {
+  const command = resolveOneCliCommand();
+  const dashboardUrl = process.env.ONECLI_DASHBOARD_URL || "https://app.withone.ai";
+  const installed = isOneCliInstalled();
+  const installStep =
+    process.platform === "win32"
+      ? "Install One CLI: npm install -g @withone/cli"
+      : "Install One CLI: npm install -g @withone/cli";
+
+  if (!installed) {
+    return {
+      installed: false,
+      authenticated: false,
+      ready: false,
+      command,
+      dashboardUrl,
+      accountEmail: null,
+      accountName: null,
+      configScope: null,
+      apiBase: null,
+      connections: [],
+      nextSteps: [
+        installStep,
+        "Sign in: one login",
+        "Connect an account: one add gmail, one add google-calendar, or one add outlook-mail",
+        "Refresh this screen.",
+      ],
+      error: "One CLI is not installed or is not on PATH.",
+    };
+  }
+
+  const whoami = runOneCli(["--agent", "whoami"], 15000);
+  const whoamiJson = whoami.ok ? parseJsonObject(whoami.stdout) : null;
+  const authenticated = Boolean(whoamiJson?.user);
+
+  if (!authenticated) {
+    return {
+      installed: true,
+      authenticated: false,
+      ready: false,
+      command,
+      dashboardUrl,
+      accountEmail: null,
+      accountName: null,
+      configScope: null,
+      apiBase: null,
+      connections: [],
+      nextSteps: [
+        "Sign in: one login",
+        "Connect an account in the browser or run: one add gmail",
+        "Refresh this screen.",
+      ],
+      error: whoami.stderr || whoami.error || "One CLI is installed but not signed in.",
+    };
+  }
+
+  const list = runOneCli(["--agent", "list"], 15000);
+  const listJson = list.ok ? parseJsonObject(list.stdout) : null;
+  const rawConnections = Array.isArray(listJson?.connections) ? listJson.connections : [];
+  const connections = rawConnections
+    .map((connection: any) => ({
+      platform: String(connection?.platform || "unknown"),
+      state: String(connection?.state || "unknown"),
+      keyPreview: maskConnectionKey(String(connection?.key || "")),
+    }))
+    .filter((connection) => connection.platform !== "unknown");
+  const ready = connections.some((connection) => connection.state === "operational");
+
+  return {
+    installed: true,
+    authenticated: true,
+    ready,
+    command,
+    dashboardUrl,
+    accountEmail: String(whoamiJson?.user?.email || "") || null,
+    accountName: String(whoamiJson?.user?.name || "") || null,
+    configScope: String(whoamiJson?.configScope || "") || null,
+    apiBase: String(whoamiJson?.apiBase || "") || null,
+    connections,
+    nextSteps: ready
+      ? [
+          "Add more accounts from One when needed: one add gmail, one add google-calendar, one add slack, or one add outlook-mail",
+          "Refresh this screen after adding accounts.",
+        ]
+      : [
+          "Connect an account: one add gmail, one add google-calendar, or one add outlook-mail",
+          "Refresh this screen after OAuth finishes.",
+        ],
+    error: list.ok ? null : (list.stderr || list.error || "Unable to list One connections."),
+  };
+}
+
 export function getOneCliConnectionHint(connection: OneCliConnection): string {
   const command = resolveOneCliCommand();
-  const dashboard = process.env.ONECLI_DASHBOARD_URL || "http://127.0.0.1:10254";
+  const dashboard = process.env.ONECLI_DASHBOARD_URL || "https://app.withone.ai";
   return [
-    `Connect ${connection} through OneCLI OAuth instead of a Jarvis-built adapter.`,
-    `Open ${dashboard} or run ${command} --help to start the OneCLI Agent Vault flow.`,
+    `Connect ${connection} through One OAuth instead of a Jarvis-built adapter.`,
+    `Open ${dashboard}, or run ${command} login and then ${command} add ${connection}.`,
     "Telegram remains the only separate Jarvis-owned channel.",
   ].join(" ");
 }

@@ -50,7 +50,7 @@ function toolResult(label: string, result: ReturnType<typeof runOneCli>): ToolRe
 export const oneListConnectionsTool: AgentTool = {
   name: "one_list_connections",
   description:
-    "List the platforms/accounts available through the local One CLI Agent Vault. Use this before claiming whether Gmail, Outlook, calendars, Slack, WhatsApp, Discord, or other One-supported accounts are connected.",
+    "List the platforms/accounts available through the configured One Connector session. Use this before claiming whether Gmail, Outlook, calendars, Slack, Discord, or other One-supported accounts are connected.",
   parameters: {
     type: "object",
     properties: {},
@@ -64,7 +64,7 @@ export const oneListConnectionsTool: AgentTool = {
 export const oneSearchActionsTool: AgentTool = {
   name: "one_search_actions",
   description:
-    "Search One CLI for actions on a connected platform using natural language. Run one_get_action_knowledge on the chosen action before executing it.",
+    "Search One for actions on a connected platform using natural language. Run one_get_action_knowledge on the chosen action before executing it.",
   parameters: {
     type: "object",
     properties: {
@@ -102,7 +102,7 @@ export const oneSearchActionsTool: AgentTool = {
 export const oneGetActionKnowledgeTool: AgentTool = {
   name: "one_get_action_knowledge",
   description:
-    "Fetch full One CLI documentation for an action ID before executing it. This is required before one_execute_action so Jarvis knows the required fields.",
+    "Fetch full One action documentation for an action ID before executing it. This is required before one_execute_action so Jarvis knows the required fields.",
   parameters: {
     type: "object",
     properties: {
@@ -132,7 +132,7 @@ export const oneGetActionKnowledgeTool: AgentTool = {
 export const oneExecuteActionTool: AgentTool = {
   name: "one_execute_action",
   description:
-    "Execute a One CLI action against a connected account. First call one_search_actions, then one_get_action_knowledge, then execute with platform, action_id, connection_key, and JSON data. This may change external services and requires approval.",
+    "Execute a One action against a connected account. First call one_search_actions, then one_get_action_knowledge, then execute with platform, action_id, connection_key, and JSON data. This may change external services and requires approval.",
   parameters: {
     type: "object",
     properties: {

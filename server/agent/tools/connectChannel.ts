@@ -5,8 +5,8 @@ import { getTelegramBotUsername, isTelegramConfigured } from "../../integrations
 import {
   getOneCliConnectionHint,
   getOneCliConnectUrl,
+  getOneCliSetupStatus,
   isOneCliConnection,
-  isOneCliInstalled,
   ONECLI_CONNECTIONS,
   type OneCliConnection,
 } from "../../oneCliConnection";
@@ -16,14 +16,14 @@ const SUPPORTED_CONNECTIONS = ["telegram", ...ONECLI_CONNECTIONS] as const;
 export const connectChannelTool: AgentTool = {
   name: "connect_channel",
   description:
-    "Connect Telegram directly through Jarvis, or hand off WhatsApp, Slack, Discord, Google/Gmail/Calendar, and Microsoft/Outlook/Calendar to OneCLI OAuth.",
+    "Connect Telegram directly through Jarvis, or hand off WhatsApp, Slack, Discord, Google/Gmail/Calendar, and Microsoft/Outlook/Calendar to the One Connector.",
   parameters: {
     type: "object",
     properties: {
       channel: {
         type: "string",
         enum: SUPPORTED_CONNECTIONS,
-        description: "Connection to set up. Telegram is Jarvis-owned; all other values use OneCLI OAuth.",
+        description: "Connection to set up. Telegram is Jarvis-owned; all other values use the One Connector.",
       },
     },
     required: ["channel"],
@@ -71,11 +71,12 @@ export const connectChannelTool: AgentTool = {
 
     const connection = channel as OneCliConnection;
     const url = getOneCliConnectUrl(connection);
+    const one = getOneCliSetupStatus();
     const payload = {
       connection,
-      buttonLabel: url ? `Connect ${connection} with OneCLI` : "Open OneCLI",
+      buttonLabel: url ? `Set up ${connection} in One` : "Open One setup",
       url,
-      oneCliInstalled: isOneCliInstalled(),
+      one,
       instructions: getOneCliConnectionHint(connection),
     };
 

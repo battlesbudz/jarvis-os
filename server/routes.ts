@@ -100,6 +100,7 @@ import { getCodexOAuthCommand } from "./agent/providers/env";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
+import { getOneCliSetupStatus } from "./oneCliConnection";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import {
   buildCoachSystemPrompt,
@@ -6539,6 +6540,17 @@ Extract up to 8 memories per batch.`;
   };
   app.patch("/api/skills/candidates/:id/review", skillCandidatesReviewHandler);
   app.patch("/api/skill-candidates/:id/review", skillCandidatesReviewHandler);
+
+  app.get("/api/one/status", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      res.json(getOneCliSetupStatus());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "Failed to inspect One CLI", message });
+    }
+  });
 
   // ── Integration pre-flight status ────────────────────────────────────────
   // Returns a map of { integration → { status, errorMessage, expiresAt, lastCheckedAt } }

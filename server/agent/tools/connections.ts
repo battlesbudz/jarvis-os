@@ -4,7 +4,7 @@ import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import { channelLinks, telegramLinks } from "@shared/schema";
 import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive } from "../../daemon/bridge";
-import { getOneCliConnectionHint, getOneCliConnectUrl, isOneCliInstalled, type OneCliConnection } from "../../oneCliConnection";
+import { getOneCliConnectionHint, getOneCliConnectUrl, getOneCliSetupStatus, type OneCliConnection } from "../../oneCliConnection";
 
 export const checkConnectionsTool: AgentTool = {
   name: "check_connections",
@@ -36,7 +36,14 @@ export const checkConnectionsTool: AgentTool = {
         ? daemonParts.join(" | ")
         : `Android/Desktop Daemon: ✗ not connected`;
 
+      const oneStatus = getOneCliSetupStatus();
+      const oneConnectionSummary = oneStatus.ready
+        ? oneStatus.connections.map((connection) => `${connection.platform} (${connection.state})`).join(", ")
+        : oneStatus.installed
+          ? "installed but not ready"
+          : "not installed";
       const lines: string[] = [
+        `One Connector: ${oneStatus.ready ? `ready — ${oneConnectionSummary}` : `not ready — ${oneConnectionSummary}`}`,
         `Google (Gmail + Calendar): ${googleToken ? `✓ token valid — ${googleEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
         `Microsoft (Outlook + Calendar): ${msToken ? `✓ token valid — ${msEmail}` : '✗ not connected or token expired (reconnect needed)'}`,
         `Slack OAuth: ${oauthStatus?.slack?.connected ? '✓ connected' : '✗ not connected'}`,
@@ -61,7 +68,7 @@ export const checkConnectionsTool: AgentTool = {
 
 export const generateReconnectLinkTool: AgentTool = {
   name: "generate_reconnect_link",
-  description: "Hand off Google/Gmail/Calendar or Microsoft/Outlook/Calendar reconnects to OneCLI OAuth. Returns OneCLI instructions and an optional URL.",
+  description: "Hand off Google/Gmail/Calendar or Microsoft/Outlook/Calendar reconnects to the One Connector. Returns setup instructions and an optional URL.",
   parameters: {
     type: "object",
     properties: {
@@ -79,13 +86,13 @@ export const generateReconnectLinkTool: AgentTool = {
     if (provider === "google" || provider === "microsoft") {
       const connection = provider as OneCliConnection;
       const url = getOneCliConnectUrl(connection);
-      const buttonLabel = provider === "google" ? "Connect Google with OneCLI" : "Connect Outlook with OneCLI";
+      const buttonLabel = provider === "google" ? "Set up Google in One" : "Set up Outlook in One";
       const payload = {
         provider,
         connection,
-        buttonLabel: url ? buttonLabel : "Open OneCLI",
+        buttonLabel: url ? buttonLabel : "Open One setup",
         url,
-        oneCliInstalled: isOneCliInstalled(),
+        one: getOneCliSetupStatus(),
         instructions: getOneCliConnectionHint(connection),
       };
       return {

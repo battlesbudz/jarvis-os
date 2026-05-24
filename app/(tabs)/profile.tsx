@@ -2825,7 +2825,7 @@ export default function ProfileScreen() {
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
           <Text style={styles.sectionSubtitle}>
-            Telegram stays native. Everything else connects through OneCLI.
+            Telegram stays native. External accounts connect through One.
           </Text>
           <View style={styles.platformsList}>
             <View style={styles.platformRow}>
@@ -2833,17 +2833,17 @@ export default function ProfileScreen() {
                 <Ionicons name="key-outline" size={20} color="#6366F1" />
               </View>
               <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>OneCLI Connector</Text>
+                <Text style={styles.platformName}>One Connector</Text>
                 <Text style={styles.platformSubtitle}>
-                  Connect Gmail, Outlook, calendars, Slack, WhatsApp, and Discord through OneCLI Agent Vault.
+                  Connect Gmail, Outlook, calendars, Slack, Discord, and other external accounts through One.
                 </Text>
                 <Text style={styles.platformEmail}>
-                  Install OneCLI, create an Agent Vault account, then add each account there. Jarvis will use that vault instead of storing those credentials here.
+                  New users should open Settings for the guided One setup checklist. Jarvis only uses accounts that are visible to this One session.
                 </Text>
               </View>
               <Pressable
                 style={[styles.connectBtn, { borderColor: '#6366F1' }]}
-                onPress={() => WebBrowser.openBrowserAsync('https://github.com/onecli/onecli')}
+                onPress={() => router.push('/(tabs)/settings?scrollTo=connections')}
               >
                 <Text style={[styles.connectBtnText, { color: '#6366F1' }]}>Setup</Text>
               </Pressable>

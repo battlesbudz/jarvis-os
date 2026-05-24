@@ -10,7 +10,7 @@ export function initChannels(): void {
   registerChannel(inAppChannel);
   registerChannel(webchatChannel);
   console.log("[channels] registered: telegram, daemon, in_app, webchat");
-  console.log("[channels] WhatsApp, Slack, and Discord adapters are intentionally not registered; connect them through OneCLI/OAuth.");
+  console.log("[channels] WhatsApp, Slack, and Discord adapters are intentionally not registered; connect them through the One Connector.");
 }
 
 export { notifyUser, getActiveChannelsFor, getAllPreferences, setPreference, getChannel, listChannels } from "./registry";

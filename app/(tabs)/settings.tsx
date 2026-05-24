@@ -75,6 +75,21 @@ interface TelegramStatus {
   botUsername?: string | null;
 }
 
+interface OneSetupStatus {
+  installed: boolean;
+  authenticated: boolean;
+  ready: boolean;
+  command: string;
+  dashboardUrl: string;
+  accountEmail: string | null;
+  accountName: string | null;
+  configScope: string | null;
+  apiBase: string | null;
+  connections: { platform: string; state: string; keyPreview: string }[];
+  nextSteps: string[];
+  error: string | null;
+}
+
 interface McpServerInfo {
   id: string;
   name: string;
@@ -277,6 +292,8 @@ export default function SettingsScreen() {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
+  const [oneStatus, setOneStatus] = useState<OneSetupStatus | null>(null);
+  const [oneCommandCopied, setOneCommandCopied] = useState<string | null>(null);
 
   // ── Per-section error states ──
   const [connectionsError, setConnectionsError] = useState(false);
@@ -1054,18 +1071,20 @@ export default function SettingsScreen() {
     setLoadingStatus(true);
     // Each call is independent — a failure on one doesn't block others.
     // We track per-call results to detect when required data is unavailable.
-    const [telegramResult, integrationResult, channelsResult] = await Promise.allSettled([
+    const [telegramResult, integrationResult, channelsResult, oneResult] = await Promise.allSettled([
       apiRequest('GET', '/api/telegram/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/integrations/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/channels').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/one/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
     ]);
 
     const telegramRes = telegramResult.status === 'fulfilled' ? telegramResult.value : null;
     const integrationRes = integrationResult.status === 'fulfilled' ? integrationResult.value : null;
     const channelsRes = channelsResult.status === 'fulfilled' ? channelsResult.value : null;
+    const oneRes = oneResult.status === 'fulfilled' ? oneResult.value as OneSetupStatus : null;
 
     // Show error row when any connections endpoint fails.
-    const anyConnectionFailed = [telegramResult, integrationResult, channelsResult]
+    const anyConnectionFailed = [telegramResult, integrationResult, channelsResult, oneResult]
       .some(r => r.status === 'rejected');
     setConnectionsError(anyConnectionFailed);
 
@@ -1078,6 +1097,7 @@ export default function SettingsScreen() {
     setAndroidDaemonConnected(
       channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false
     );
+    if (oneRes) setOneStatus(oneRes);
     if (integrationRes && typeof integrationRes === 'object') {
       const health: Record<string, string> = {};
       const errors: Record<string, string | null> = {};
@@ -1476,6 +1496,12 @@ export default function SettingsScreen() {
     await saveWakeSettings({ wakeWords: next });
   }, [wakeWords, saveWakeSettings]);
 
+  const copyOneCommand = useCallback(async (command: string) => {
+    await Clipboard.setStringAsync(command);
+    setOneCommandCopied(command);
+    setTimeout(() => setOneCommandCopied(null), 1800);
+  }, []);
+
   // ── Reward claim ──
   const handleClaimReward = useCallback(async (reward: Reward) => {
     try {
@@ -1526,19 +1552,67 @@ export default function SettingsScreen() {
               <Ionicons name="key-outline" size={18} color="#6366F1" />
             </View>
             <View style={styles.connInfo}>
-              <Text style={styles.connName}>OneCLI Connector</Text>
+              <Text style={styles.connName}>One Connector</Text>
               <Text style={styles.connSub}>
-                Use OneCLI Agent Vault for Gmail, Outlook, calendars, Slack, WhatsApp, and Discord.
+                Use One for Gmail, Outlook, calendars, Slack, Discord, and other external accounts.
               </Text>
               <Text style={styles.connSub}>
-                Install OneCLI, create or sign into your vault, then add each account there. Jarvis keeps Telegram separate.
+                Jarvis only uses accounts visible to this One session. Telegram stays separate.
               </Text>
+              {oneStatus && (
+                <View style={{ marginTop: 8, gap: 6 }}>
+                  <Text style={[styles.connSub, { color: oneStatus.ready ? Colors.success : Colors.warning }]}>
+                    {oneStatus.ready
+                      ? `${oneStatus.connections.length} One connection${oneStatus.connections.length === 1 ? '' : 's'} ready${oneStatus.accountEmail ? ` for ${oneStatus.accountEmail}` : ''}`
+                      : oneStatus.authenticated
+                        ? 'One is signed in, but no operational accounts are visible to Jarvis yet.'
+                        : oneStatus.installed
+                          ? 'One is installed, but this Jarvis session is not signed in yet.'
+                          : 'One is not installed for this Jarvis session yet.'}
+                  </Text>
+                  {oneStatus.connections.length > 0 && (
+                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                      {oneStatus.connections.map((connection) => (
+                        <View key={`${connection.platform}-${connection.keyPreview}`} style={styles.onePill}>
+                          <Text style={styles.onePillText}>{connection.platform}</Text>
+                        </View>
+                      ))}
+                    </View>
+                  )}
+                  <View style={styles.oneSteps}>
+                    {(oneStatus.nextSteps.length ? oneStatus.nextSteps : [
+                      'Install: npm install -g @withone/cli',
+                      'Sign in: one login',
+                      'Add accounts: one add gmail or one add google-calendar',
+                    ]).slice(0, 3).map((step, idx) => {
+                      const command = step.includes(': ') ? step.split(': ').slice(1).join(': ') : '';
+                      return (
+                        <View key={`${step}-${idx}`} style={styles.oneStepRow}>
+                          <Text style={styles.oneStepNumber}>{idx + 1}</Text>
+                          <Text style={styles.oneStepText}>{step}</Text>
+                          {command.includes('one') && (
+                            <Pressable onPress={() => copyOneCommand(command)} hitSlop={8}>
+                              <Ionicons
+                                name={oneCommandCopied === command ? 'checkmark-circle' : 'copy-outline'}
+                                size={16}
+                                color={oneCommandCopied === command ? Colors.success : Colors.textSecondary}
+                              />
+                            </Pressable>
+                          )}
+                        </View>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
             </View>
             <Pressable
               style={[styles.connBtn, styles.connBtnDisconnected, { borderColor: '#6366F1' }]}
-              onPress={() => WebBrowser.openBrowserAsync('https://github.com/onecli/onecli')}
+              onPress={() => oneStatus?.ready ? loadConnections() : WebBrowser.openBrowserAsync(oneStatus?.dashboardUrl || 'https://app.withone.ai')}
             >
-              <Text style={[styles.connBtnText, { color: '#6366F1' }]}>Setup</Text>
+              <Text style={[styles.connBtnText, { color: '#6366F1' }]}>
+                {oneStatus?.ready ? 'Refresh' : 'Setup'}
+              </Text>
             </Pressable>
           </View>
 
@@ -3849,6 +3923,45 @@ const styles = StyleSheet.create({
   },
   connBtnTextConnected: {
     color: Colors.success,
+  },
+  onePill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#6366F120',
+    borderWidth: 1,
+    borderColor: '#6366F150',
+  },
+  onePillText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#A5B4FC',
+  },
+  oneSteps: {
+    gap: 5,
+    marginTop: 2,
+  },
+  oneStepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  oneStepNumber: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    textAlign: 'center',
+    lineHeight: 18,
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: '#C7D2FE',
+    backgroundColor: '#6366F120',
+  },
+  oneStepText: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
   },
   linkCodeBlock: {
     marginHorizontal: 14,
