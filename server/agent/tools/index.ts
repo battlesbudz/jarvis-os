@@ -39,6 +39,12 @@ import { spawnSubagentTool } from "./spawnSubagent";
 import { daemonActionTool } from "./daemon";
 import { daemonShellTool, daemonStatusTool, androidScreenUnderstandTool, androidSearchInAppTool, androidTypeInFieldTool, androidTapElementTool, androidSwipeElementTool, androidPinchElementTool, androidPinchCoordinatesTool, androidTrainButtonTool, androidFindTrainedButtonTool, androidTypeIntoElementTool, androidLongPressElementTool, androidDragElementTool, androidDragCoordinatesTool, androidFillFormTool, androidScrollToTopTool, androidSelectOptionTool } from "./daemonShellTool";
 import { checkConnectionsTool, generateReconnectLinkTool } from "./connections";
+import {
+  oneExecuteActionTool,
+  oneGetActionKnowledgeTool,
+  oneListConnectionsTool,
+  oneSearchActionsTool,
+} from "./oneCliActions";
 import { createCalendarEventTool } from "./calendarCreate";
 import { sendEmailTool } from "./sendEmail";
 import { fetchEmailsTool } from "./fetchEmails";
@@ -285,6 +291,10 @@ export {
   androidFillFormTool,
   checkConnectionsTool,
   generateReconnectLinkTool,
+  oneListConnectionsTool,
+  oneSearchActionsTool,
+  oneGetActionKnowledgeTool,
+  oneExecuteActionTool,
   sendEmailTool,
   fetchEmailsTool,
   connectChannelTool,

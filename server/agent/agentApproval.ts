@@ -72,6 +72,7 @@ const HIGH_RISK_TOOLS = new Set([
   "discord_post",
   "connect_channel",
   "sessions_send",
+  "one_execute_action",
   // Voice / call user
   "speak",
   // Memory clear (permanent, irreversible)
@@ -114,6 +115,7 @@ export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
   "discord_post",
   "speak",
   "sessions_send",
+  "one_execute_action",
 ]);
 
 // ── In-memory EventEmitter (for awaitApproval) ────────────────────────────────

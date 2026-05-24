@@ -1,6 +1,12 @@
 import type { Capability } from "./types";
 import { checkConnectionsTool, generateReconnectLinkTool } from "../agent/tools/connections";
 import { connectChannelTool } from "../agent/tools/connectChannel";
+import {
+  oneExecuteActionTool,
+  oneGetActionKnowledgeTool,
+  oneListConnectionsTool,
+  oneSearchActionsTool,
+} from "../agent/tools/oneCliActions";
 
 /**
  * Connections capability — tools that help users connect integrations.
@@ -13,11 +19,23 @@ export const connectionsCapability: Capability = {
   label: "Connections & Channels",
   toolGroups: ["connections"],
   toolGroupOverrides: {
-    check_connections:       ["connections", "system"],
-    generate_reconnect_link: ["connections", "system"],
-    connect_channel:         ["connections", "system"],
+    check_connections:        ["connections", "system"],
+    generate_reconnect_link:  ["connections", "system"],
+    connect_channel:          ["connections", "system"],
+    one_list_connections:     ["connections", "email", "calendar", "discord", "system"],
+    one_search_actions:       ["connections", "email", "calendar", "discord", "system"],
+    one_get_action_knowledge: ["connections", "email", "calendar", "discord", "system"],
+    one_execute_action:       ["connections", "email", "calendar", "discord", "system"],
   },
-  tools: [checkConnectionsTool, generateReconnectLinkTool, connectChannelTool],
+  tools: [
+    checkConnectionsTool,
+    generateReconnectLinkTool,
+    connectChannelTool,
+    oneListConnectionsTool,
+    oneSearchActionsTool,
+    oneGetActionKnowledgeTool,
+    oneExecuteActionTool,
+  ],
   integrationDependencies: [
     { integrationId: "telegram",  label: "Telegram",                toolNames: [] },
     { integrationId: "slack",     label: "Slack",                   toolNames: [] },

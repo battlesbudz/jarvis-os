@@ -52,8 +52,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     ],
     capabilityIds: ["calendar"],
     toolGroups: ["calendar"],
-    priorityToolNames: ["fetch_calendar", "create_calendar_event"],
-    guidance: "For calendar questions, use fetch_calendar before summarizing. For calendar changes, use the calendar tool path with the normal approval/safety rules.",
+    priorityToolNames: ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action", "fetch_calendar", "create_calendar_event"],
+    guidance: "For calendar questions or changes, prefer the One CLI tools when a One connection is available: list connections, search actions, read action docs, then execute with approval when needed. Fall back to the legacy calendar tools only when One is unavailable.",
   },
   {
     intent: "email",
@@ -63,8 +63,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     ],
     capabilityIds: ["email"],
     toolGroups: ["email"],
-    priorityToolNames: ["fetch_emails", "gmail_action", "create_gmail_draft", "send_email"],
-    guidance: "For Gmail or inbox requests, use email tools before answering. Draft or send actions must stay reviewable and respect approval gates.",
+    priorityToolNames: ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action", "fetch_emails", "gmail_action", "create_gmail_draft", "send_email"],
+    guidance: "For Gmail, Outlook, inbox, or email action requests, prefer the One CLI tools when a One connection is available: list connections, search actions, read action docs, then execute with approval when needed. Legacy email tools are fallback only.",
   },
   {
     intent: "memory",
