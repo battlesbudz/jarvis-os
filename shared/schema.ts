@@ -1346,6 +1346,18 @@ export const agentChatSessions = pgTable("agent_chat_sessions", {
 
 export type AgentChatSession = typeof agentChatSessions.$inferSelect;
 
+export const agentChatSessionSummaries = pgTable("agent_chat_session_summaries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sdkSessionId: varchar("sdk_session_id").notNull().references(() => agentChatSessions.sdkSessionId, { onDelete: "cascade" }),
+  agentId: varchar("agent_id").notNull().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  summary: text("summary").notNull(),
+  messageCount: integer("message_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type AgentChatSessionSummary = typeof agentChatSessionSummaries.$inferSelect;
+
 // ── Coach channel sessions ────────────────────────────────────────────────────
 // Persists the per-user, per-channel sdkSessionId so conversations survive
 // server restarts.  The channel server-handlers use this as a write-through

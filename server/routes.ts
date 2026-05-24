@@ -71,6 +71,7 @@ import { logInteraction, getRecentInteractions, formatInteractionTimeline } from
 import { extractAndStore } from "./memory/extractor";
 import { processLivingContextUpdate } from "./workspace/livingContextRouter";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
+import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
 import { listPeople, deletePerson } from "./memory/people";
 import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
@@ -2517,7 +2518,11 @@ Answer (yes/no):`,
           } catch {}
         }
 
-        soulBlock = await getSoulPromptBlock(userId ?? "");
+        soulBlock = buildUntrustedSoulContext(
+          await getSoulPromptBlock(userId ?? ""),
+          "User context from JARVIS Soul",
+          BUDGET_PRESETS.coachTurn.soul,
+        );
 
         emotionalStateBlock = '';
         if (userId) {
@@ -4110,7 +4115,11 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
           .limit(10);
       } catch {}
 
-      const soulBlock = await getSoulPromptBlock(userId ?? "");
+      const soulBlock = buildUntrustedSoulContext(
+        await getSoulPromptBlock(userId ?? ""),
+        "User context from JARVIS Soul",
+        BUDGET_PRESETS.coachTurn.soul,
+      );
       const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], [], lifeContext || null, [], false, [], false, userCommitments, undefined, [], [], false, undefined, undefined, undefined, soulBlock);
 
       res.setHeader('Content-Type', 'text/event-stream');

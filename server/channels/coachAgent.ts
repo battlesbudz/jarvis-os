@@ -18,6 +18,7 @@ import { runOrchestrator } from "../agent/orchestrator";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
+import { buildBudgetedContextBlock, BUDGET_PRESETS, truncateToBudget } from "../memory/contextBuilder";
 import { processLivingContextUpdate } from "../workspace/livingContextRouter";
 import { classifyBuildIntent, classifyBuildFollowUp, classifyToolAwareRoute, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
@@ -268,7 +269,14 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     preThinkResult.status === "fulfilled" ? (preThinkResult.value as string) : "";
 
   // Soul and website crawl blocks were fetched in the parallel batch above.
-  const soulBlock = soulBlockResult.status === "fulfilled" ? soulBlockResult.value : "";
+  const rawSoulBlock = soulBlockResult.status === "fulfilled" ? soulBlockResult.value : "";
+  const soulBlock = rawSoulBlock
+    ? buildBudgetedContextBlock({
+        title: "User context from JARVIS Soul",
+        items: [{ text: rawSoulBlock }],
+        budget: BUDGET_PRESETS.coachTurn.soul,
+      })
+    : "";
   let websiteCrawlBlock = websiteCrawlResult.status === "fulfilled" ? websiteCrawlResult.value : "";
 
   const localForDateKey = new Date(new Date().toLocaleString("en-US", { timeZone: userTimezone }));
@@ -358,7 +366,10 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
 
   const gmailSection = gmailItems.length > 0
     ? `## Recent Emails (last 14 days)\n` +
-      gmailItems.slice(0, 100).map((i: any) => `- [id:${i.id}] From: ${i.from || "unknown"} | "${i.subject}" — ${i.snippet}`).join("\n")
+      truncateToBudget(
+        gmailItems.slice(0, 100).map((i: any) => `- [id:${i.id}] From: ${i.from || "unknown"} | "${i.subject}" — ${i.snippet}`).join("\n"),
+        BUDGET_PRESETS.coachTurn.gmailSnippets,
+      )
     : gmailConnected
       ? `## Recent Emails\nGmail is connected but no emails found.`
       : `## Recent Emails\nGmail not connected.`;

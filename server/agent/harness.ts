@@ -282,9 +282,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // heading. This runs before all other injections so workspace rules take
   // highest precedence.
   let messages = opts.messages;
+  const seedUserMessage = [...messages].reverse().find((m) => m.role === "user");
+  const seedQuery =
+    typeof seedUserMessage?.content === "string"
+      ? seedUserMessage.content
+      : Array.isArray(seedUserMessage?.content)
+        ? (seedUserMessage.content as Array<{ type: string; text?: string }>)
+            .filter((p) => p.type === "text")
+            .map((p) => p.text ?? "")
+            .join(" ")
+        : "";
   try {
     const { getWorkspaceContext } = await import("../workspace/loader");
-    const workspaceBlock = await getWorkspaceContext();
+    const workspaceBlock = await getWorkspaceContext({ seedQuery });
     if (workspaceBlock) {
       messages = messages.map((m, i) => {
         if (i === 0 && m.role === "system") {
@@ -304,11 +314,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   if (context.userId) {
     try {
       const { loadUserSkills } = await import("../intelligence/skillWriter");
+      const { truncateToBudget, BUDGET_PRESETS } = await import("../memory/contextBuilder");
       const skills = await loadUserSkills(context.userId);
       if (skills.length > 0) {
-        const skillBlock = skills
+        const skillBlockRaw = skills
           .map((s) => `### Skill: ${s.name}\n${s.instructions}`)
           .join("\n\n");
+        const skillBlock = truncateToBudget(skillBlockRaw, BUDGET_PRESETS.agentTurn.skills);
         const injected = `\n\n---\n## Learnt Behaviour Skills\nThe following skills have been crystallised from repeated patterns and MUST be followed:\n\n${skillBlock}`;
         messages = messages.map((m, i) => {
           if (i === 0 && m.role === "system") {
@@ -328,14 +340,16 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       const { userSkills: userSkillsTable } = await import("@shared/schema");
       const { eq, and } = await import("drizzle-orm");
       const { db: dbImport } = await import("../db");
+      const { truncateToBudget, BUDGET_PRESETS } = await import("../memory/contextBuilder");
       const activeSkills = await dbImport
         .select()
         .from(userSkillsTable)
         .where(and(eq(userSkillsTable.userId, context.userId), eq(userSkillsTable.isActive, true)));
       if (activeSkills.length > 0) {
-        const skillBlock = activeSkills
+        const skillBlockRaw = activeSkills
           .map((s) => `### ${s.emoji} ${s.name}\n${s.instructions}`)
           .join("\n\n");
+        const skillBlock = truncateToBudget(skillBlockRaw, BUDGET_PRESETS.agentTurn.skills);
         const injected = `\n\n---\n## Active Skills\nThe user has enabled the following personal skills. You MUST follow their instructions:\n\n${skillBlock}`;
         messages = messages.map((m, i) => {
           if (i === 0 && m.role === "system") {
@@ -356,11 +370,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     // Falls back silently on any error so existing behaviour is unchanged.
     try {
       const { loadPackInstructionsForUser } = await import("../intelligence/behaviorStore");
+      const { truncateToBudget, BUDGET_PRESETS } = await import("../memory/contextBuilder");
       const packs = await loadPackInstructionsForUser(context.userId);
       if (packs.length > 0) {
-        const packBlock = packs
+        const packBlockRaw = packs
           .map((p) => `### Pack: ${p.name} (v${p.version})\n${p.merged}`)
           .join("\n\n");
+        const packBlock = truncateToBudget(packBlockRaw, BUDGET_PRESETS.agentTurn.behaviorPacks);
         // Build heartbeat-rules summary for packs that have non-empty rules.
         const heartbeatLines: string[] = [];
         for (const p of packs) {

@@ -17,6 +17,7 @@ import type {
   GoalTreeMilestone,
   GoalTreeTask,
 } from "@shared/schema";
+import { buildUntrustedSoulContext, BUDGET_PRESETS } from "../memory/contextBuilder";
 
 const openai = createRoutedOpenAIChatShim("[GoalDecomposer]", "balanced");
 
@@ -102,7 +103,11 @@ async function generateTreeWithLLM(goal: UserGoal, userId: string): Promise<Goal
   let soulBlock = "";
   try {
     const { getSoulPromptBlock } = await import("../memory/soul");
-    soulBlock = await getSoulPromptBlock(userId);
+    soulBlock = buildUntrustedSoulContext(
+      await getSoulPromptBlock(userId),
+      "User context from JARVIS Soul",
+      BUDGET_PRESETS.planning.soul,
+    );
   } catch (err) {
     console.error(`[goalDecomposer] SOUL load failed for ${userId}:`, err);
   }

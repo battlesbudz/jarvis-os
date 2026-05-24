@@ -322,8 +322,12 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       try {
         const memories = await readAgentMemories(agentId, userId, userMessage, 8);
         if (memories.length > 0) {
-          memoryBlock = `\n\n## My Memory (${agent.name})\n` +
-            memories.map((m) => `- [${m.category}] ${m.content}`).join("\n");
+          const { buildBudgetedContextBlock, BUDGET_PRESETS } = await import("../memory/contextBuilder");
+          memoryBlock = buildBudgetedContextBlock({
+            title: `My Memory (${agent.name})`,
+            items: memories.map((m) => ({ label: m.category, text: m.content })),
+            budget: BUDGET_PRESETS.agentTurn.memory,
+          });
         }
       } catch { /* non-blocking */ }
 
@@ -332,8 +336,15 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       if (agent.accessGlobalMemory) {
         try {
           const { getSoulPromptBlock } = await import("../memory/soul");
+          const { buildBudgetedContextBlock, BUDGET_PRESETS } = await import("../memory/contextBuilder");
           const soul = await getSoulPromptBlock(userId);
-          if (soul) soulBlock = `\n\n## User Context (Global)\n${soul.trim()}`;
+          if (soul) {
+            soulBlock = buildBudgetedContextBlock({
+              title: "User Context (Global)",
+              items: [{ text: soul.trim() }],
+              budget: BUDGET_PRESETS.agentTurn.soul,
+            });
+          }
         } catch { /* non-blocking */ }
       }
 

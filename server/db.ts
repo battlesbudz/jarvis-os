@@ -1275,6 +1275,22 @@ export async function ensureTablesExist() {
         ON agent_chat_messages(agent_id, user_id, created_at ASC)
     `).catch(() => {});
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_chat_session_summaries (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        sdk_session_id VARCHAR NOT NULL REFERENCES agent_chat_sessions(sdk_session_id) ON DELETE CASCADE,
+        agent_id VARCHAR NOT NULL REFERENCES discord_agents(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        summary TEXT NOT NULL,
+        message_count INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS agent_chat_session_summaries_session_idx
+        ON agent_chat_session_summaries(sdk_session_id, created_at ASC)
+    `).catch(() => {});
+
     // ── Coach channel sessions (persist sdkSessionId across server restarts) ──
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS coach_channel_sessions (

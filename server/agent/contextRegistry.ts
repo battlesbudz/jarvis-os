@@ -9,6 +9,7 @@
 
 import fs from "fs/promises";
 import path from "path";
+import { BUDGET_PRESETS } from "../memory/contextBuilder";
 
 export type ContextProviderInput = {
   userId: string;
@@ -96,8 +97,8 @@ type RouterSelection = {
 };
 
 const REPO_ROOT = process.cwd();
-const MAX_ROUTER_DOC_CHARS = 6_000;
-const MAX_CONTEXT_DOC_CHARS = 3_500;
+const MAX_ROUTER_DOC_CHARS = BUDGET_PRESETS.agentTurn.routerDocs;
+const MAX_CONTEXT_DOC_CHARS = 1_600;
 
 async function readRepoDoc(relativePath: string, maxChars = MAX_CONTEXT_DOC_CHARS): Promise<string> {
   try {

@@ -54,6 +54,8 @@ const tests = [
   { file: "server/agent/__tests__/telegramMiniAppUrl.test.ts" },
   { file: "server/agent/__tests__/telegramNeedsAttention.test.ts" },
   { file: "server/agent/__tests__/weatherLookup.test.ts" },
+  { file: "server/agent/tests/sessionCompaction.test.ts" },
+  { file: "server/memory/tests/contextBuilder.test.ts" },
 ];
 
 const hasDatabase = configureDatabaseEnvForTests();

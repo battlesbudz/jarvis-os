@@ -15,6 +15,7 @@ import {
   readDocumentTool,
   fetchCalendarTool,
 } from "./tools";
+import { buildUntrustedSoulContext, BUDGET_PRESETS } from "../memory/contextBuilder";
 
 export type SubAgentType = "research" | "writing" | "planning" | "email";
 
@@ -244,7 +245,11 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
       const { getSoulPromptBlock } = await import("../memory/soul");
       const soulText = await getSoulPromptBlock(opts.context.userId);
       if (soulText && soulText.trim()) {
-        enrich.push(`What I know about the sender (JARVIS Soul):\n${soulText.trim()}`);
+        enrich.push(buildUntrustedSoulContext(
+          soulText,
+          "What I know about the sender (JARVIS Soul)",
+          BUDGET_PRESETS.agentTurn.soul,
+        ));
       }
     } catch (err) {
       console.error(`[subagents/email] SOUL enrichment failed for ${opts.context.userId}:`, err);
