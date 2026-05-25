@@ -3836,19 +3836,6 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
           (lifeContext.improvementArea ? `\n- Wants to improve: ${lifeContext.improvementArea}` : '')
         : '';
 
-      let commitmentText = '';
-      if (userId) {
-        try {
-          const pendingCommitments = await db
-            .select()
-            .from(schema.commitments)
-            .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-            .limit(5);
-          if (pendingCommitments.length > 0) {
-            commitmentText = `\n- Open commitments: ${pendingCommitments.map((c: any) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`).join(', ')}`;
-          }
-        } catch {}
-      }
       const persona = getPersonaBlock(coachingMode);
 
       const prompt = `You are a personal productivity coach. Write a 1-2 sentence daily coaching note for this person.
@@ -3859,9 +3846,9 @@ Their profile:
 - Streak: ${stats?.streak || 0} days, ${completionRate}% task completion this week
 - Goals: ${goalsText}
 - Recently completed: ${completedHistory.slice(0, 4).map((h: any) => h.title).join(', ') || 'nothing yet'}
-- Recently skipped: ${skippedHistory.slice(0, 3).map((h: any) => h.title).join(', ') || 'nothing'}${lifeCtxText}${commitmentText}
+- Recently skipped: ${skippedHistory.slice(0, 3).map((h: any) => h.title).join(', ') || 'nothing'}${lifeCtxText}
 
-Write ONE short, specific coaching observation. Be direct — name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. If they have open commitments, call out specific ones by name. No greeting, no sign-off.
+Write ONE short, specific coaching observation. Be direct — name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. No greeting, no sign-off.
 
 Return JSON: { "note": "your 1-2 sentence note here" }`;
 

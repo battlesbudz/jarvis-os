@@ -311,14 +311,6 @@ export function buildCoachSystemPrompt(goals: any[], stats: any, history: any[],
   const documentsSection = documentsContext || '';
   const websiteSection = websiteContext || '';
 
-  const commitmentsSection = commitmentsList && commitmentsList.length > 0
-    ? `\n## Open Commitments (user said they would do these)\n` +
-      commitmentsList.filter((c: any) => c.status === 'pending').slice(0, 10)
-        .map((c: any) => `- "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ''}`)
-        .join('\n') +
-      `\nIf relevant, ask about progress on these commitments. Hold the user accountable to what they promised.`
-    : '';
-
   const gmailSection = gmailItems && gmailItems.length > 0
     ? `\n## Recent Emails (last 7 days)\n` +
       gmailItems.slice(0, 40).map((i: any) => {
@@ -418,7 +410,7 @@ ${calendarText}${gmailSection}${slackSection}${telegramSection}
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
 - Left undone: ${recentSkipped}
-${commitmentsSection}${morningNoteSummary || ''}
+${morningNoteSummary || ''}
 ${PRIME.coachingRules}
 
 ${PRIME.emailFormat}
