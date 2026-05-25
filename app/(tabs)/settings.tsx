@@ -3184,7 +3184,7 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
           <Link href="/skills" asChild>
-            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+            <Pressable style={styles.prefRowBordered}>
               <View style={styles.prefLeft}>
                 <Ionicons name="sparkles-outline" size={16} color={Colors.violet} />
                 <View>
@@ -3196,7 +3196,7 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
           <Link href="/code-proposals" asChild>
-            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+            <Pressable style={styles.prefRowBordered}>
               <View style={styles.prefLeft}>
                 <Ionicons name="code-slash-outline" size={16} color={Colors.cyan} />
                 <View>
@@ -3208,7 +3208,7 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
           <Link href="/self-repair-history" asChild>
-            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+            <Pressable style={styles.prefRowBordered}>
               <View style={styles.prefLeft}>
                 <Ionicons name="construct-outline" size={16} color={Colors.violet} />
                 <View>
@@ -3220,7 +3220,7 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
           <Link href="/capability-gaps" asChild>
-            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+            <Pressable style={styles.prefRowBordered}>
               <View style={styles.prefLeft}>
                 <Ionicons name="alert-circle-outline" size={16} color={Colors.warning} />
                 <View>
@@ -4208,6 +4208,15 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   prefRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  prefRowBordered: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    gap: 12,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
   },
