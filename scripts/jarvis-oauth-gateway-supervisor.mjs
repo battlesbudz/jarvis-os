@@ -1,9 +1,11 @@
 import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const isWindows = process.platform === "win32";
+const execFileAsync = promisify(execFile);
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, "..");
 const logDir = resolve(process.env.JARVIS_OAUTH_GATEWAY_LOG_DIR || join(repoRoot, ".jarvis", "logs"));
@@ -17,6 +19,7 @@ const startupGraceMs = Math.max(10_000, Number(process.env.JARVIS_OAUTH_GATEWAY_
 const maxLocalFailures = Math.max(1, Number(process.env.JARVIS_OAUTH_GATEWAY_MAX_LOCAL_FAILURES || 2));
 const maxPublicFailures = Math.max(1, Number(process.env.JARVIS_OAUTH_GATEWAY_MAX_PUBLIC_FAILURES || 3));
 const restartOnPublicFailure = process.env.JARVIS_OAUTH_GATEWAY_RESTART_ON_PUBLIC_FAILURE === "true";
+const repairPublicFunnel = process.env.JARVIS_OAUTH_GATEWAY_REPAIR_PUBLIC_FUNNEL !== "false";
 
 mkdirSync(logDir, { recursive: true });
 
@@ -57,6 +60,25 @@ function publicHealthUrl() {
   ).trim();
   if (!raw) return null;
   return `${raw.replace(/\/+$/, "")}/api/codex/gateway-health`;
+}
+
+async function republishPublicFunnel() {
+  if (!repairPublicFunnel || !isWindows) return false;
+  const port = process.env.PORT || "5000";
+  const tailscale = process.env.TAILSCALE_EXE || "tailscale.exe";
+  const target = `http://127.0.0.1:${port}`;
+  try {
+    await execFileAsync(tailscale, ["funnel", "--bg", target], {
+      cwd: repoRoot,
+      timeout: 30_000,
+      windowsHide: true,
+    });
+    log(`republished Tailscale Funnel root route to ${target}`);
+    return true;
+  } catch (error) {
+    log(`failed to republish Tailscale Funnel root route: ${error instanceof Error ? error.message : String(error)}`);
+    return false;
+  }
 }
 
 async function probeJson(url, headers = {}) {
@@ -233,6 +255,7 @@ async function checkGatewayHealth() {
       maxLocalFailures,
       maxPublicFailures,
       restartOnPublicFailure,
+      repairPublicFunnel,
     },
   };
   writeStatus(status);
@@ -250,12 +273,14 @@ async function checkGatewayHealth() {
     return;
   }
 
-  if (restartOnPublicFailure && publicUrl && publicFailureCount >= maxPublicFailures) {
+  if (publicUrl && publicFailureCount >= maxPublicFailures) {
     publicFailureCount = 0;
-    restartGateway(`public gateway health failed ${maxPublicFailures} time(s)`);
-  } else if (!restartOnPublicFailure && publicUrl && publicFailureCount >= maxPublicFailures) {
-    publicFailureCount = maxPublicFailures;
-    log("public gateway health is failing; leaving the local gateway running because public tunnel restarts are disabled by default");
+    const repaired = await republishPublicFunnel();
+    if (restartOnPublicFailure) {
+      restartGateway(`public gateway health failed ${maxPublicFailures} time(s)${repaired ? " after Funnel republish" : ""}`);
+    } else {
+      log(`public gateway health failed ${maxPublicFailures} time(s); ${repaired ? "republished Funnel and left local gateway running" : "left local gateway running"}`);
+    }
   }
 }
 

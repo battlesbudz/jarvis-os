@@ -25,6 +25,7 @@
     "jarvis:oauth:gateway": "node scripts/jarvis-local-oauth-gateway.mjs",
     "jarvis:oauth:gateway:doctor": "node scripts/jarvis-oauth-gateway-doctor.mjs",
     "jarvis:oauth:gateway:supervisor": "node scripts/jarvis-oauth-gateway-supervisor.mjs",
+    "jarvis:oauth:gateway:watchdog": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/watch-jarvis-oauth-gateway.ps1",
     "jarvis:oauth:gateway:install-startup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-jarvis-oauth-gateway-startup.ps1",
     "jarvis:oauth:gateway:uninstall-startup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-jarvis-oauth-gateway-startup.ps1",
     "jarvis:qa:endpoints": "node scripts/deployed-jarvis-endpoint-qa.mjs",
