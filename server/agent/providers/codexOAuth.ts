@@ -246,7 +246,10 @@ export async function runCodexOAuthPrompt(command: string, prompt: string, signa
       const child = spawn(
         codex.command,
         codex.args,
-        { stdio: ["pipe", "pipe", "pipe"] },
+        {
+          stdio: ["pipe", "pipe", "pipe"],
+          windowsHide: true,
+        },
       );
       let stderr = "";
       let settled = false;

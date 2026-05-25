@@ -4,6 +4,10 @@ import {
   type AutonomyRuntimeResult,
 } from "./autonomyRuntime";
 import { decideAutonomyMode } from "./autonomyPolicy";
+import {
+  buildCodexGatewayRecoveryReply,
+  classifyCodexGatewayRecoveryRequest,
+} from "./codexGatewayRecovery";
 
 export interface AppCoachChatMessage {
   role?: string;
@@ -79,6 +83,18 @@ export async function routeAppCoachChatAutonomy(
       decision: {
         mode: "answer_inline",
         reason: "App chat autonomy requires an authenticated user and a latest user message.",
+      },
+    };
+  }
+
+  if (classifyCodexGatewayRecoveryRequest(userText)) {
+    return {
+      handled: true,
+      reply: buildCodexGatewayRecoveryReply(),
+      userText,
+      decision: {
+        mode: "answer_inline",
+        reason: "Codex gateway recovery requests must be answerable without the Codex OAuth provider.",
       },
     };
   }

@@ -88,6 +88,27 @@ async function main(): Promise<void> {
   ]);
 
   {
+    const gatewayResult = await routeAppCoachChatAutonomy(
+      {
+        userId: "user_app_gateway",
+        messages: [
+          { role: "user", content: "Jarvis, the Codex gateway is down. Fix the gateway." },
+        ],
+        originChannel: "appchat",
+      },
+      {
+        now: () => 1_700_000_010_000,
+      },
+    );
+
+    assert.equal(gatewayResult.handled, true);
+    assert.match(gatewayResult.reply ?? "", /Codex gateway/i);
+    assert.match(gatewayResult.reply ?? "", /without using Codex/i);
+    assert.match(gatewayResult.reply ?? "", /jarvis:oauth:gateway:doctor/i);
+    assert.doesNotMatch(gatewayResult.reply ?? "", /queued/i);
+  }
+
+  {
     const submittedWithFailingPersistence: Array<{ agentType: string; prompt: string }> = [];
     const originalWarn = console.warn;
     console.warn = () => {};

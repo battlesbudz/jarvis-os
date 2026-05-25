@@ -6,15 +6,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$RunnerPath = Join-Path $ScriptDir "start-jarvis-oauth-gateway-supervisor.ps1"
+$RepoRoot = Split-Path -Parent $ScriptDir
+$SupervisorPath = Join-Path $ScriptDir "jarvis-oauth-gateway-supervisor.mjs"
 
-if (!(Test-Path $RunnerPath)) {
-  throw "Gateway supervisor runner not found: $RunnerPath"
+if (!(Test-Path $SupervisorPath)) {
+  throw "Gateway supervisor not found: $SupervisorPath"
 }
 
 $Action = New-ScheduledTaskAction `
-  -Execute "powershell.exe" `
-  -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$RunnerPath`""
+  -Execute "node.exe" `
+  -Argument "`"$SupervisorPath`"" `
+  -WorkingDirectory "$RepoRoot"
 
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 
@@ -41,7 +43,8 @@ Register-ScheduledTask `
   -Force | Out-Null
 
 Write-Host "Installed scheduled task: $TaskName"
-Write-Host "Runner: $RunnerPath"
+Write-Host "Runner: node.exe `"$SupervisorPath`""
+Write-Host "Working directory: $RepoRoot"
 
 if (!$NoStart) {
   Start-ScheduledTask -TaskName $TaskName

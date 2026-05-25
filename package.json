@@ -23,6 +23,7 @@
     "jarvis:doctor": "npx --yes tsx scripts/jarvis-doctor.ts",
     "jarvis:oauth:probe": "node scripts/probe-jarvis-codex-oauth.mjs",
     "jarvis:oauth:gateway": "node scripts/jarvis-local-oauth-gateway.mjs",
+    "jarvis:oauth:gateway:doctor": "node scripts/jarvis-oauth-gateway-doctor.mjs",
     "jarvis:oauth:gateway:supervisor": "node scripts/jarvis-oauth-gateway-supervisor.mjs",
     "jarvis:oauth:gateway:install-startup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-jarvis-oauth-gateway-startup.ps1",
     "jarvis:oauth:gateway:uninstall-startup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-jarvis-oauth-gateway-startup.ps1",

@@ -17,10 +17,11 @@ The probe should report that Codex is logged in with ChatGPT.
 Create a local `.env.local` file on the gateway host:
 
 ```text
-DATABASE_URL=postgresql://...
 JARVIS_MODEL_PROVIDER=chatgpt-codex-oauth
 JARVIS_CODEX_OAUTH_ENABLED=true
 ```
+
+The keepalive gateway itself is intentionally lightweight and does not need the app database. The full Jarvis app still needs `DATABASE_URL` when you run the whole server.
 
 Optional:
 
@@ -32,17 +33,11 @@ JARVIS_CODEX_OAUTH_MODEL=chatgpt-codex-oauth/auto
 Local Windows gateway stability options:
 
 ```text
-# Use the built server bundle instead of tsx for the supervised local gateway.
-JARVIS_OAUTH_GATEWAY_ENTRY=server_dist/index.js
+# The default supervised gateway entry is the lightweight Codex-only server.
+JARVIS_OAUTH_GATEWAY_ENTRY=scripts/jarvis-codex-gateway-server.mjs
 
 # Only use this after `codex login status` succeeds manually on the same machine.
 JARVIS_CODEX_OAUTH_SKIP_CHECK=true
-```
-
-When `JARVIS_OAUTH_GATEWAY_ENTRY=server_dist/index.js` is set, rebuild after server route changes:
-
-```powershell
-npm.cmd run server:build
 ```
 
 Then start the gateway:
@@ -59,7 +54,11 @@ On the Windows desktop that owns the Codex/ChatGPT login, install the gateway as
 npm.cmd run jarvis:oauth:gateway:install-startup
 ```
 
-This creates a Scheduled Task named `Jarvis Codex OAuth Gateway` that starts at Windows login. The task runs `scripts/start-jarvis-oauth-gateway-supervisor.ps1`, which launches `scripts/jarvis-oauth-gateway-supervisor.mjs`. The supervisor restarts the gateway if the Node/server process exits.
+This creates a Scheduled Task named `Jarvis Codex OAuth Gateway` that starts at Windows login. The task runs `node.exe scripts/jarvis-oauth-gateway-supervisor.mjs` in the repo root. The supervisor starts the lightweight Codex-only gateway, restarts it if the process exits, and health-checks the local gateway plus the optional public tunnel URL.
+
+By default, a public tunnel failure is reported but does not restart the local gateway. Set `JARVIS_OAUTH_GATEWAY_RESTART_ON_PUBLIC_FAILURE=true` only if the public tunnel is managed by the same process and a local restart is known to fix it.
+
+The supervised background process skips the startup-only `codex login status` probe by default because that command can fail in a non-interactive Windows Scheduled Task even when Codex is usable for real requests. If Codex is actually logged out, provider calls still fail clearly in the gateway logs and doctor output.
 
 Useful commands:
 
@@ -69,6 +68,9 @@ npm.cmd run jarvis:oauth:gateway -- --check
 
 # Start supervised gateway in the current terminal
 npm.cmd run jarvis:oauth:gateway:supervisor
+
+# Check local process, public tunnel, scheduled task, and last supervisor status
+npm.cmd run jarvis:oauth:gateway:doctor
 
 # Remove the login task
 npm.cmd run jarvis:oauth:gateway:uninstall-startup
@@ -81,6 +83,26 @@ Logs are written under:
 ```
 
 Keep Tailscale running and keep the PC awake. The scheduled task starts the gateway after login; it cannot run while the machine is fully shut down or asleep.
+
+### Stable public URL with Tailscale Funnel
+
+Use Tailscale Funnel for the public gateway URL instead of temporary Cloudflare tunnels. On the desktop gateway host, Funnel should point the machine's stable Tailscale HTTPS name at the local gateway:
+
+```powershell
+tailscale serve --bg https / http://127.0.0.1:5000
+tailscale funnel 443 on
+tailscale funnel status
+```
+
+The current stable gateway URL for this machine is:
+
+```text
+https://battles-pc.tailf68942.ts.net
+```
+
+Railway should use that value for `JARVIS_CODEX_GATEWAY_URL`. The local `.env.local` should use the same value so `npm.cmd run jarvis:oauth:gateway:doctor` checks the same path that hosted Jarvis uses.
+
+Vercel/Railway can host proxy code, but they cannot use this desktop's local Codex/ChatGPT login by themselves. A hosted proxy would still need a stable private path back to this PC, so Tailscale Funnel is the simpler durable layer.
 
 ## Hosted Jarvis calling the gateway
 

@@ -324,6 +324,12 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return next();
   }
 
+  // Codex gateway endpoints use JARVIS_CODEX_GATEWAY_TOKEN, not user JWTs.
+  // The route handlers perform their own bearer-token check.
+  if (req.path.startsWith("/api/codex/")) {
+    return next();
+  }
+
   if (!req.path.startsWith("/api/")) {
     return next();
   }

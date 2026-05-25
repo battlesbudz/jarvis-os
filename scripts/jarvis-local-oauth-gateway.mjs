@@ -75,7 +75,10 @@ function buildCommand(rawCommand, args) {
 async function assertCodexOAuthReady() {
   try {
     const built = buildCommand(process.env.JARVIS_CODEX_COMMAND, ["login", "status"]);
-    const result = await execFileAsync(built.command, built.args, { timeout: 30_000 });
+    const result = await execFileAsync(built.command, built.args, {
+      timeout: 30_000,
+      windowsHide: true,
+    });
     const output = `${result.stdout}\n${result.stderr}`;
     if (/ChatGPT OAuth|Authenticated:\s*Yes|Logged in using ChatGPT/i.test(output)) return;
     throw new Error("Codex is installed but not logged in with ChatGPT.");
@@ -93,11 +96,6 @@ process.env.NODE_ENV ||= "development";
 process.env.HOST ||= "127.0.0.1";
 process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
 process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
-
-if (!process.env.DATABASE_URL) {
-  console.error("DATABASE_URL is not set. Put your Railway Postgres public URL in .env.local first.");
-  process.exit(1);
-}
 
 if (process.env.JARVIS_CODEX_OAUTH_SKIP_CHECK === "true") {
   console.warn("Skipping Codex OAuth startup probe because JARVIS_CODEX_OAUTH_SKIP_CHECK=true.");
@@ -119,8 +117,11 @@ console.log(`Codex command: ${process.env.JARVIS_CODEX_COMMAND}`);
 console.log(`URL: http://${process.env.HOST}:${process.env.PORT || "5000"}`);
 
 const localTsx = join("node_modules", ".bin", isWindows ? "tsx.cmd" : "tsx");
-const serverEntry = process.env.JARVIS_OAUTH_GATEWAY_ENTRY?.trim();
-const serverCommand = serverEntry ? "node.exe" : isWindows ? "cmd.exe" : localTsx;
+const configuredEntry = process.env.JARVIS_OAUTH_GATEWAY_ENTRY?.trim();
+const serverEntry = !configuredEntry || configuredEntry === "server_dist/index.js"
+  ? "scripts/jarvis-codex-gateway-server.mjs"
+  : configuredEntry;
+const serverCommand = serverEntry ? (isWindows ? "node.exe" : "node") : isWindows ? "cmd.exe" : localTsx;
 const serverArgs = serverEntry
   ? [serverEntry]
   : isWindows

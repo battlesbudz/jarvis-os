@@ -642,6 +642,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/codex/gateway-health", async (req: Request, res: Response) => {
+    const expectedToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim();
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    if (!expectedToken || token !== expectedToken) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    res.json({
+      ok: true,
+      role: "jarvis-codex-oauth-gateway",
+      checkedAt: new Date().toISOString(),
+      codexCommandConfigured: !!(process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND),
+      codexCommand: getCodexOAuthCommand(),
+      nodeEnv: process.env.NODE_ENV || null,
+      host: process.env.HOST || null,
+      port: process.env.PORT || "5000",
+    });
+  });
+
   app.post("/api/codex/provider-turn", async (req: Request, res: Response) => {
     try {
       const expectedToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim();
