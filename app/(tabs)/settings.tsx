@@ -1505,7 +1505,7 @@ export default function SettingsScreen() {
 
   const openOneApiKeys = useCallback(async () => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.open(ONE_API_KEYS_URL, '_blank', 'noopener,noreferrer');
+      window.location.assign(ONE_API_KEYS_URL);
       return;
     }
     await WebBrowser.openBrowserAsync(ONE_API_KEYS_URL, {
