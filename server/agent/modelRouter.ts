@@ -482,11 +482,12 @@ function configuredProviderEntries(tier: ModelExecutionTier): FallbackChainEntry
 }
 
 export function getModelRouteChain(tier: ModelExecutionTier): FallbackChainEntry[] {
+  const globalChain = getGlobalFallbackChain();
+  if (globalChain) return globalChain;
+
   const strictCodex = strictCodexOAuthEntry();
   if (strictCodex) return [strictCodex];
 
-  const globalChain = getGlobalFallbackChain();
-  if (globalChain) return globalChain;
   return configuredProviderEntries(tier);
 }
 

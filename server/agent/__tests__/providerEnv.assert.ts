@@ -120,6 +120,20 @@ withCleanEnv({
   console.log("OK: explicit ChatGPT/Codex OAuth provider is the only model route even when other keys exist");
 });
 
+withCleanEnv({
+  JARVIS_MODEL_PROVIDER: "chatgpt-codex-oauth",
+  OPENAI_API_KEY: "sk-openai",
+  PROVIDER_FALLBACK_CHAIN: "chatgpt-codex-oauth:chatgpt-codex-oauth/auto,openai:gpt-4.1-mini",
+}, () => {
+  applyProviderEnvAliases();
+  const chain = getModelRouteChain("balanced");
+  assert.deepEqual(chain, [
+    CODEX_ROUTE,
+    { providerName: "openai", model: "gpt-4.1-mini" },
+  ]);
+  console.log("OK: explicit provider fallback chain can backstop Codex OAuth");
+});
+
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
   const chain = getModelRouteChain("balanced");
   assert.deepEqual(chain[0], CODEX_ROUTE);
