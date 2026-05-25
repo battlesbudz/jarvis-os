@@ -10518,8 +10518,8 @@ var init_toolAwareRouting = __esm({
         ],
         capabilityIds: ["calendar"],
         toolGroups: ["calendar"],
-        priorityToolNames: ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action", "fetch_calendar", "create_calendar_event"],
-        guidance: "For calendar questions or changes, prefer the One CLI tools when a One connection is available: list connections, search actions, read action docs, then execute with approval when needed. Fall back to the legacy calendar tools only when One is unavailable."
+        priorityToolNames: ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
+        guidance: "For calendar questions or changes, use the One gateway tools only: list connections, search actions, read action docs, then execute with approval when needed. Do not use legacy Google/Microsoft calendar tools in this route."
       },
       {
         intent: "email",
@@ -10529,8 +10529,8 @@ var init_toolAwareRouting = __esm({
         ],
         capabilityIds: ["email"],
         toolGroups: ["email"],
-        priorityToolNames: ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action", "fetch_emails", "gmail_action", "create_gmail_draft", "send_email"],
-        guidance: "For Gmail, Outlook, inbox, or email action requests, prefer the One CLI tools when a One connection is available: list connections, search actions, read action docs, then execute with approval when needed. Legacy email tools are fallback only."
+        priorityToolNames: ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
+        guidance: "For Gmail, Outlook, inbox, or email action requests, use the One gateway tools only: list connections, search actions, read action docs, then execute with approval when needed. Do not use legacy Gmail, Outlook, fetch_emails, create_gmail_draft, or send_email tools in this route."
       },
       {
         intent: "memory",
@@ -75399,6 +75399,16 @@ Do not give a capability disclaimer until you have tried the matching tool path 
         if (toolAwareRoute.shouldPreferTool) {
           toolAwareRoute.priorityToolNames.forEach((name) => focusedToolNames.add(name));
           filterToolsByGroups(toolAwareRoute.toolGroups, resolvedGmailConnected).forEach((tool) => focusedToolNames.add(tool.name));
+        }
+        if (toolAwareRoute.intents.includes("email") || toolAwareRoute.intents.includes("calendar")) {
+          [
+            "fetch_emails",
+            "gmail_action",
+            "create_gmail_draft",
+            "send_email",
+            "fetch_calendar",
+            "create_calendar_event"
+          ].forEach((name) => focusedToolNames.delete(name));
         }
         if (isResearchRequest) {
           [

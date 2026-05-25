@@ -41,14 +41,30 @@ assertRoute(
   "what's on my calendar today?",
   "calendar",
   ["calendar"],
-  ["fetch_calendar"],
+  ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
 );
 assertRoute(
   "check my Gmail and unread email",
   "email",
   ["email"],
-  ["fetch_emails", "gmail_action"],
+  ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
 );
+{
+  const plan = classifyToolAwareRoute("draft an email in Gmail to wickedclown.jb@gmail.com");
+  const legacyTools = ["fetch_emails", "gmail_action", "create_gmail_draft", "send_email"];
+  assert(plan.intents.includes("email"), "email gateway: intent detected");
+  for (const tool of legacyTools) {
+    assert(!plan.priorityToolNames.includes(tool), `email gateway: does not prioritize ${tool}`);
+  }
+}
+{
+  const plan = classifyToolAwareRoute("schedule a meeting on my calendar tomorrow");
+  const legacyTools = ["fetch_calendar", "create_calendar_event"];
+  assert(plan.intents.includes("calendar"), "calendar gateway: intent detected");
+  for (const tool of legacyTools) {
+    assert(!plan.priorityToolNames.includes(tool), `calendar gateway: does not prioritize ${tool}`);
+  }
+}
 assertRoute(
   "what do you remember about my work hours?",
   "memory",

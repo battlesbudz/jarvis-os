@@ -2824,6 +2824,16 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           filterToolsByGroups(toolAwareRoute.toolGroups as ToolGroup[], resolvedGmailConnected)
             .forEach((tool) => focusedToolNames.add(tool.name));
         }
+        if (toolAwareRoute.intents.includes("email") || toolAwareRoute.intents.includes("calendar")) {
+          [
+            "fetch_emails",
+            "gmail_action",
+            "create_gmail_draft",
+            "send_email",
+            "fetch_calendar",
+            "create_calendar_event",
+          ].forEach((name) => focusedToolNames.delete(name));
+        }
         if (isResearchRequest) {
           [
             "search_web",
