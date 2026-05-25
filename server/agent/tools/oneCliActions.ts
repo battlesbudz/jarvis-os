@@ -1,5 +1,7 @@
-import type { AgentTool, ToolArgs, ToolResult } from "../types";
+import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
 import { runOneCli } from "../../oneCliConnection";
+import { classifyOneActionPermission } from "../../oneConnectionCenter";
+import { createOneApiClient, getSavedOneApiKey, type OneApiFetch } from "../../oneApiConnection";
 
 const ONE_TIMEOUT_MS = 45000;
 
@@ -19,6 +21,18 @@ function parseData(value: unknown): string | null {
   } catch {
     return null;
   }
+}
+
+function apiFetchFromArgs(args: ToolArgs): OneApiFetch | undefined {
+  return typeof args._oneApiFetchForTest === "function" ? args._oneApiFetchForTest as OneApiFetch : undefined;
+}
+
+async function getOneApiKeyForTool(args: ToolArgs, ctx?: ToolContext): Promise<string | null> {
+  if (typeof args._oneApiKeyForTest === "string" && args._oneApiKeyForTest.trim()) {
+    return args._oneApiKeyForTest.trim();
+  }
+  if (!ctx?.userId) return null;
+  return getSavedOneApiKey(ctx.userId);
 }
 
 function toolResult(label: string, result: ReturnType<typeof runOneCli>): ToolResult {
@@ -47,6 +61,24 @@ function toolResult(label: string, result: ReturnType<typeof runOneCli>): ToolRe
   };
 }
 
+function apiToolResult(label: string, result: { ok: boolean; status: number; url: string; error?: string; [key: string]: unknown }): ToolResult {
+  const payload = JSON.stringify(result);
+  if (!result.ok) {
+    return {
+      ok: false,
+      label,
+      content: payload,
+      detail: result.error || payload,
+    };
+  }
+  return {
+    ok: true,
+    label,
+    content: payload,
+    detail: JSON.stringify({ status: result.status, url: result.url }),
+  };
+}
+
 export const oneListConnectionsTool: AgentTool = {
   name: "one_list_connections",
   description:
@@ -55,7 +87,13 @@ export const oneListConnectionsTool: AgentTool = {
     type: "object",
     properties: {},
   },
-  async execute(): Promise<ToolResult> {
+  async execute(args: ToolArgs = {}, ctx?: ToolContext): Promise<ToolResult> {
+    const apiKey = await getOneApiKeyForTool(args, ctx);
+    if (apiKey) {
+      const result = await createOneApiClient(apiKey, apiFetchFromArgs(args)).listConnections();
+      return apiToolResult("One connections", result);
+    }
+
     const result = runOneCli(["--agent", "list"], ONE_TIMEOUT_MS);
     return toolResult("One connections", result);
   },
@@ -84,15 +122,21 @@ export const oneSearchActionsTool: AgentTool = {
     },
     required: ["platform", "query"],
   },
-  async execute(args: ToolArgs): Promise<ToolResult> {
+  async execute(args: ToolArgs, ctx?: ToolContext): Promise<ToolResult> {
     const platform = normalizePlatform(args.platform);
-    const query = asString(args.query).replace(/\s+/g, "+");
+    const query = asString(args.query);
     const actionType = asString(args.action_type || "execute");
     if (!platform || !query) {
       return { ok: false, label: "Missing One action search args", content: "platform and query are required." };
     }
 
-    const cliArgs = ["--agent", "actions", "search", platform, query];
+    const apiKey = await getOneApiKeyForTool(args, ctx);
+    if (apiKey) {
+      const result = await createOneApiClient(apiKey, apiFetchFromArgs(args)).searchActions(platform, query);
+      return apiToolResult(`One search ${platform}`, result);
+    }
+
+    const cliArgs = ["--agent", "actions", "search", platform, query.replace(/\s+/g, "+")];
     if (actionType && actionType !== "all") cliArgs.push("-t", actionType);
     const result = runOneCli(cliArgs, ONE_TIMEOUT_MS);
     return toolResult(`One search ${platform}`, result);
@@ -117,11 +161,17 @@ export const oneGetActionKnowledgeTool: AgentTool = {
     },
     required: ["platform", "action_id"],
   },
-  async execute(args: ToolArgs): Promise<ToolResult> {
+  async execute(args: ToolArgs, ctx?: ToolContext): Promise<ToolResult> {
     const platform = normalizePlatform(args.platform);
     const actionId = asString(args.action_id);
     if (!platform || !actionId) {
       return { ok: false, label: "Missing One action docs args", content: "platform and action_id are required." };
+    }
+
+    const apiKey = await getOneApiKeyForTool(args, ctx);
+    if (apiKey) {
+      const result = await createOneApiClient(apiKey, apiFetchFromArgs(args)).searchActions(platform, actionId);
+      return apiToolResult(`One docs ${platform}`, result);
     }
 
     const result = runOneCli(["--agent", "actions", "knowledge", platform, actionId], ONE_TIMEOUT_MS);
@@ -168,10 +218,18 @@ export const oneExecuteActionTool: AgentTool = {
         type: "boolean",
         description: "When true, show the request One would send without executing it.",
       },
+      approved: {
+        type: "boolean",
+        description: "Set to true only after the user explicitly approves a draft/create/send/delete/post/update calendar action.",
+      },
+      confirmed: {
+        type: "boolean",
+        description: "Alias for approved. Use only after explicit user confirmation.",
+      },
     },
     required: ["platform", "action_id", "connection_key"],
   },
-  async execute(args: ToolArgs): Promise<ToolResult> {
+  async execute(args: ToolArgs, ctx?: ToolContext): Promise<ToolResult> {
     const platform = normalizePlatform(args.platform);
     const actionId = asString(args.action_id);
     const connectionKey = asString(args.connection_key);
@@ -187,6 +245,35 @@ export const oneExecuteActionTool: AgentTool = {
       };
     }
 
+    const permission = classifyOneActionPermission(platform, actionId);
+    const approved = args.approved === true || args.confirmed === true || args._approved === true;
+    if (permission.approvalRequired && !approved && args.dry_run !== true) {
+      return {
+        ok: false,
+        label: "One approval required",
+        content:
+          `Approval required before running One action '${actionId}' on ${platform}. ${permission.reason} ` +
+          "Show the user exactly what will happen, then call one_execute_action again with approved=true only after they confirm.",
+        detail: JSON.stringify({ requiresApproval: true, permission }),
+      };
+    }
+
+    const apiKey = await getOneApiKeyForTool(args, ctx);
+    if (apiKey) {
+      const payload = {
+        platform,
+        actionId,
+        action_id: actionId,
+        data: args.data ?? {},
+        pathVars: args.path_vars ?? {},
+        queryParams: args.query_params ?? {},
+        headers: args.headers ?? {},
+        dryRun: args.dry_run === true,
+      };
+      const result = await createOneApiClient(apiKey, apiFetchFromArgs(args)).passthrough(connectionKey, payload);
+      return apiToolResult(`One execute ${platform}`, result);
+    }
+
     const cliArgs = ["--agent", "actions", "execute", platform, actionId, connectionKey];
     if (data) cliArgs.push("-d", data);
     if (pathVars) cliArgs.push("--path-vars", pathVars);
@@ -194,7 +281,8 @@ export const oneExecuteActionTool: AgentTool = {
     if (headers) cliArgs.push("--headers", headers);
     if (args.dry_run === true) cliArgs.push("--dry-run");
 
-    const result = runOneCli(
+    const run = typeof args._runOneCliForTest === "function" ? args._runOneCliForTest as typeof runOneCli : runOneCli;
+    const result = run(
       cliArgs,
       ONE_TIMEOUT_MS,
     );

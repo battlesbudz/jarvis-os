@@ -9,7 +9,7 @@ import {
 } from "../agent/tools/oneCliActions";
 
 /**
- * Connections capability â€” tools that help users connect integrations.
+ * Connections capability — tools that help users connect integrations.
  * Also registers the channel-only integrations (Outlook, Telegram, Slack,
  * WhatsApp) so the harness can inject advisory system prompt notes when
  * those delivery channels are broken (even though they have no agent tools).
@@ -19,13 +19,13 @@ export const connectionsCapability: Capability = {
   label: "Connections & Channels",
   toolGroups: ["connections"],
   toolGroupOverrides: {
-    check_connections:        ["connections", "system"],
-    generate_reconnect_link:  ["connections", "system"],
-    connect_channel:          ["connections", "system"],
-    one_list_connections:     ["connections", "email", "calendar", "discord", "system"],
-    one_search_actions:       ["connections", "email", "calendar", "discord", "system"],
-    one_get_action_knowledge: ["connections", "email", "calendar", "discord", "system"],
-    one_execute_action:       ["connections", "email", "calendar", "discord", "system"],
+    check_connections:       ["connections", "system"],
+    generate_reconnect_link: ["connections", "system"],
+    connect_channel:         ["connections", "system"],
+    one_list_connections:    ["connections", "system"],
+    one_search_actions:      ["connections", "system"],
+    one_get_action_knowledge:["connections", "system"],
+    one_execute_action:      ["connections", "system"],
   },
   tools: [
     checkConnectionsTool,

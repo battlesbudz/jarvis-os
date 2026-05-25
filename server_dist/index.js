@@ -20851,7 +20851,7 @@ var ONECLI_CONNECTIONS, DEFAULT_ONECLI_COMMANDS;
 var init_oneCliConnection = __esm({
   "server/oneCliConnection.ts"() {
     "use strict";
-    ONECLI_CONNECTIONS = ["whatsapp", "discord", "slack", "google", "microsoft"];
+    ONECLI_CONNECTIONS = ["gmail", "google-calendar", "outlook-mail", "outlook-calendar", "whatsapp", "discord", "slack", "google", "microsoft"];
     DEFAULT_ONECLI_COMMANDS = process.platform === "win32" ? ["one.cmd", "one", "onecli.cmd", "onecli"] : ["one", "onecli"];
   }
 });
@@ -20958,6 +20958,326 @@ ${summary}`,
   }
 });
 
+// server/oneConnectionCenter.ts
+function isOneConnectionPlatform(value) {
+  return ONE_CONNECTION_PLATFORMS.includes(value);
+}
+function normalizeActionId(actionId) {
+  return actionId.toLowerCase().replace(/\s+/g, "_");
+}
+function classifyOneActionPermission(_platform, actionId) {
+  const normalized = normalizeActionId(actionId);
+  if (RISKY_ACTION_WORDS.some((word) => normalized.includes(word))) {
+    return {
+      level: "write",
+      approvalRequired: true,
+      reason: "This action can send, delete, post, or update an external account."
+    };
+  }
+  if (PROPOSAL_ACTION_WORDS.some((word) => normalized.includes(word))) {
+    return {
+      level: "proposal",
+      approvalRequired: true,
+      reason: "This action creates a draft or proposal and needs user approval first."
+    };
+  }
+  if (READ_ACTION_WORDS.some((word) => normalized.includes(word))) {
+    return {
+      level: "read",
+      approvalRequired: false,
+      reason: "Read-only One actions are allowed without an approval gate."
+    };
+  }
+  return {
+    level: "proposal",
+    approvalRequired: true,
+    reason: "Jarvis could not prove this One action is read-only."
+  };
+}
+function buildOneStatusResponse(status) {
+  return {
+    apiKeyConfigured: Boolean(status.apiKeyConfigured),
+    apiKeyPreview: status.apiKeyPreview,
+    installed: Boolean(status.installed),
+    authenticated: Boolean(status.authenticated),
+    ready: Boolean(status.ready),
+    command: status.command || "one",
+    dashboardUrl: status.dashboardUrl,
+    accountEmail: status.accountEmail,
+    accountName: status.accountName,
+    connections: status.connections,
+    nextSteps: status.nextSteps,
+    error: status.error
+  };
+}
+function withConnectionParam(dashboardUrl, platform) {
+  if (!dashboardUrl) return null;
+  try {
+    const url = new URL(dashboardUrl);
+    url.searchParams.set("connection", platform);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+function buildOneConnectIntent(platform, status) {
+  const label = PLATFORM_LABELS[platform];
+  const dashboardUrl = withConnectionParam(status.dashboardUrl, platform);
+  const cliFallbackCommand = `${status.command || "one"} add ${platform}`;
+  return {
+    platform,
+    label,
+    recommendedAction: `Developer fallback for ${label}`,
+    dashboardUrl,
+    cliFallbackCommand,
+    setupInstructions: [
+      "Normal users should paste a One API key from One API Keys in Connection Center.",
+      `Developer fallback only: copy and run "${cliFallbackCommand}" if API-key mode is unavailable.`,
+      "After a developer fallback connection finishes, return to Jarvis and tap Refresh."
+    ]
+  };
+}
+function buildOneTestResponse(status) {
+  const results = status.connections.map((connection) => {
+    const ok3 = connection.state === "operational" || connection.state === "connected" || connection.state === "ready";
+    const platform = connection.platform || "unknown";
+    return {
+      platform,
+      label: PLATFORM_LABELS[platform] || connection.label || platform,
+      accountEmail: connection.accountEmail || null,
+      ok: ok3,
+      status: connection.state || "unknown",
+      message: ok3 ? `${connection.label || platform} is connected and ready.` : `${connection.label || platform} is present but needs attention: ${connection.state || "unknown"}.`
+    };
+  });
+  const readyCount = results.filter((result) => result.ok).length;
+  return {
+    ok: status.apiKeyConfigured && status.authenticated && results.length > 0 && readyCount === results.length,
+    summary: !status.apiKeyConfigured ? "Add a One API key before testing connected accounts." : results.length === 0 ? "The One API key works, but no connected accounts were found yet." : `${readyCount} of ${results.length} connected accounts are ready.`,
+    results,
+    nextSteps: status.nextSteps,
+    error: status.error
+  };
+}
+var ONE_CONNECTION_PLATFORMS, PLATFORM_LABELS, RISKY_ACTION_WORDS, PROPOSAL_ACTION_WORDS, READ_ACTION_WORDS;
+var init_oneConnectionCenter = __esm({
+  "server/oneConnectionCenter.ts"() {
+    "use strict";
+    ONE_CONNECTION_PLATFORMS = [
+      "gmail",
+      "google-calendar",
+      "outlook-mail",
+      "outlook-calendar",
+      "slack",
+      "discord",
+      "whatsapp"
+    ];
+    PLATFORM_LABELS = {
+      gmail: "Gmail",
+      "google-calendar": "Google Calendar",
+      "outlook-mail": "Outlook Mail",
+      "outlook-calendar": "Outlook Calendar",
+      slack: "Slack",
+      discord: "Discord",
+      whatsapp: "WhatsApp"
+    };
+    RISKY_ACTION_WORDS = [
+      "send",
+      "delete",
+      "remove",
+      "trash",
+      "post",
+      "publish",
+      "update",
+      "patch",
+      "modify",
+      "write",
+      "calendar-write",
+      "calendar_write",
+      "createevent",
+      "create_event",
+      "events.create",
+      "events.update",
+      "calendar.create",
+      "calendar.update",
+      "chat.postmessage"
+    ];
+    PROPOSAL_ACTION_WORDS = ["draft", "create", "insert", "compose", "proposal"];
+    READ_ACTION_WORDS = ["get", "list", "read", "search", "find", "fetch", "lookup", "query"];
+  }
+});
+
+// server/oneApiConnection.ts
+function normalizeBaseUrl2(baseUrl) {
+  return baseUrl.replace(/\/+$/, "");
+}
+function sanitizeOneError(message, apiKey) {
+  return message.replaceAll(apiKey, maskOneApiKey(apiKey));
+}
+function isRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+function firstArray(value, keys) {
+  if (Array.isArray(value)) return value;
+  if (!isRecord(value)) return [];
+  for (const key of keys) {
+    const candidate = value[key];
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+}
+function normalizeConnection(value) {
+  if (!isRecord(value)) return { platform: "unknown", state: "unknown" };
+  const rawKey = String(value.key || value.id || value.connectionKey || "");
+  return {
+    ...value,
+    key: rawKey || void 0,
+    platform: String(value.platform || value.connector || value.provider || value.name || "unknown").toLowerCase(),
+    accountEmail: String(value.accountEmail || value.email || value.account || ""),
+    accountName: String(value.accountName || value.name || value.label || ""),
+    state: String(value.state || value.status || "operational").toLowerCase(),
+    keyPreview: rawKey ? maskConnectionKey2(rawKey) : void 0
+  };
+}
+function maskConnectionKey2(key) {
+  if (key.length <= 8) return key;
+  return `${key.slice(0, 5)}...${key.slice(-3)}`;
+}
+function maskOneApiKey(apiKey) {
+  const trimmed = apiKey.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= 8) return `${trimmed.slice(0, 2)}...${trimmed.length}`;
+  if (trimmed.startsWith("one_sk_")) return `${trimmed.slice(0, 7)}...${trimmed.slice(-4)}`;
+  return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+}
+function buildOneActionSearchUrl(platform, query, baseUrl = ONE_API_BASE_URL) {
+  const url = new URL(`/v1/available-actions/search/${encodeURIComponent(platform)}`, normalizeBaseUrl2(baseUrl));
+  url.searchParams.set("query", query);
+  url.searchParams.set("includeKnowledge", "true");
+  return url.toString();
+}
+function createOneApiClient(apiKey, fetchImpl = fetch, baseUrl = ONE_API_BASE_URL) {
+  const secret = apiKey.trim();
+  const root = normalizeBaseUrl2(baseUrl);
+  async function request(pathOrUrl, init = {}) {
+    const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${root}${pathOrUrl}`;
+    try {
+      const headers = {
+        "x-one-secret": secret,
+        ...init.body ? { "content-type": "application/json" } : {},
+        ...init.headers || {}
+      };
+      const response = await fetchImpl(url, { ...init, headers });
+      const text2 = await response.text();
+      let data = {};
+      if (text2) {
+        try {
+          data = JSON.parse(text2);
+        } catch {
+          data = { message: text2 };
+        }
+      }
+      if (!response.ok) {
+        const message = isRecord(data) && typeof data.message === "string" ? data.message : response.statusText || "One API request failed.";
+        return { ok: false, status: response.status, url, error: sanitizeOneError(message, secret) };
+      }
+      return { ...isRecord(data) ? data : { data }, ok: true, status: response.status, url };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, status: 0, url, error: sanitizeOneError(message, secret) };
+    }
+  }
+  return {
+    async listConnections() {
+      const result = await request("/v1/vault/connections");
+      const connections = firstArray(result, ["connections", "items", "data"]).map(normalizeConnection);
+      return { ...result, connections };
+    },
+    async listAvailableConnectors() {
+      const result = await request("/v1/available-connectors");
+      const connectors = firstArray(result, ["connectors", "items", "data"]);
+      return { ...result, connectors };
+    },
+    async searchActions(platform, query) {
+      const url = buildOneActionSearchUrl(platform, query, root);
+      const result = await request(url);
+      const actions = firstArray(result, ["actions", "items", "data", "results"]);
+      return { ...result, actions };
+    },
+    async passthrough(connectionKey, payload) {
+      return request(`/v1/passthrough/${encodeURIComponent(connectionKey)}`, {
+        method: "POST",
+        body: JSON.stringify(payload)
+      });
+    }
+  };
+}
+async function getSavedOneApiKey(userId) {
+  const { getUserToken: getUserToken3 } = await Promise.resolve().then(() => (init_userTokenStore(), userTokenStore_exports));
+  const token = await getUserToken3(userId, ONE_API_TOKEN_PROVIDER);
+  return token?.accessToken || null;
+}
+async function saveOneApiKey(userId, apiKey) {
+  const { saveUserToken: saveUserToken2 } = await Promise.resolve().then(() => (init_userTokenStore(), userTokenStore_exports));
+  await saveUserToken2({
+    userId,
+    provider: ONE_API_TOKEN_PROVIDER,
+    accessToken: apiKey.trim(),
+    accountEmail: ONE_API_TOKEN_ACCOUNT,
+    scopes: "one-api"
+  });
+}
+async function deleteOneApiKey(userId) {
+  const { deleteUserToken: deleteUserToken2 } = await Promise.resolve().then(() => (init_userTokenStore(), userTokenStore_exports));
+  await deleteUserToken2(userId, ONE_API_TOKEN_PROVIDER);
+}
+async function getOneApiStatus(userId, fetchImpl = fetch) {
+  const apiKey = await getSavedOneApiKey(userId);
+  if (!apiKey) {
+    return {
+      apiKeyConfigured: false,
+      apiKeyPreview: null,
+      installed: false,
+      authenticated: false,
+      ready: false,
+      command: "one",
+      dashboardUrl: ONE_API_KEYS_URL,
+      accountEmail: null,
+      accountName: null,
+      connections: [],
+      nextSteps: ["Paste a One API key from One API Keys, then Jarvis will verify the accounts it can access."],
+      error: null
+    };
+  }
+  const client = createOneApiClient(apiKey, fetchImpl);
+  const result = await client.listConnections();
+  const account = result.connections.find((connection) => connection.accountEmail || connection.accountName);
+  return {
+    apiKeyConfigured: true,
+    apiKeyPreview: maskOneApiKey(apiKey),
+    installed: true,
+    authenticated: result.ok,
+    ready: result.ok && result.connections.length > 0,
+    command: "one",
+    dashboardUrl: ONE_API_KEYS_URL,
+    accountEmail: account?.accountEmail || null,
+    accountName: account?.accountName || null,
+    connections: result.ok ? result.connections : [],
+    nextSteps: result.ok ? result.connections.length > 0 ? [`Jarvis can access ${result.connections.length} One connected account${result.connections.length === 1 ? "" : "s"}.`] : ["The One API key is valid, but no connected accounts were returned yet."] : ["Check that your One API key is active, then paste it again."],
+    error: result.ok ? null : result.error || "Jarvis could not verify this One API key."
+  };
+}
+var ONE_API_BASE_URL, ONE_API_KEYS_URL, ONE_API_TOKEN_PROVIDER, ONE_API_TOKEN_ACCOUNT;
+var init_oneApiConnection = __esm({
+  "server/oneApiConnection.ts"() {
+    "use strict";
+    ONE_API_BASE_URL = process.env.ONE_API_BASE_URL || "https://api.withone.ai";
+    ONE_API_KEYS_URL = process.env.ONE_API_KEYS_URL || "https://app.withone.ai";
+    ONE_API_TOKEN_PROVIDER = "one_api";
+    ONE_API_TOKEN_ACCOUNT = "api-key";
+  }
+});
+
 // server/agent/tools/oneCliActions.ts
 function normalizePlatform(value) {
   return String(value || "").trim().toLowerCase();
@@ -20973,6 +21293,16 @@ function parseData(value) {
   } catch {
     return null;
   }
+}
+function apiFetchFromArgs(args) {
+  return typeof args._oneApiFetchForTest === "function" ? args._oneApiFetchForTest : void 0;
+}
+async function getOneApiKeyForTool(args, ctx) {
+  if (typeof args._oneApiKeyForTest === "string" && args._oneApiKeyForTest.trim()) {
+    return args._oneApiKeyForTest.trim();
+  }
+  if (!ctx?.userId) return null;
+  return getSavedOneApiKey(ctx.userId);
 }
 function toolResult(label, result) {
   const payload = {
@@ -20997,11 +21327,30 @@ function toolResult(label, result) {
     detail: JSON.stringify(payload)
   };
 }
+function apiToolResult(label, result) {
+  const payload = JSON.stringify(result);
+  if (!result.ok) {
+    return {
+      ok: false,
+      label,
+      content: payload,
+      detail: result.error || payload
+    };
+  }
+  return {
+    ok: true,
+    label,
+    content: payload,
+    detail: JSON.stringify({ status: result.status, url: result.url })
+  };
+}
 var ONE_TIMEOUT_MS, oneListConnectionsTool, oneSearchActionsTool, oneGetActionKnowledgeTool, oneExecuteActionTool;
 var init_oneCliActions = __esm({
   "server/agent/tools/oneCliActions.ts"() {
     "use strict";
     init_oneCliConnection();
+    init_oneConnectionCenter();
+    init_oneApiConnection();
     ONE_TIMEOUT_MS = 45e3;
     oneListConnectionsTool = {
       name: "one_list_connections",
@@ -21010,7 +21359,12 @@ var init_oneCliActions = __esm({
         type: "object",
         properties: {}
       },
-      async execute() {
+      async execute(args = {}, ctx) {
+        const apiKey = await getOneApiKeyForTool(args, ctx);
+        if (apiKey) {
+          const result2 = await createOneApiClient(apiKey, apiFetchFromArgs(args)).listConnections();
+          return apiToolResult("One connections", result2);
+        }
         const result = runOneCli(["--agent", "list"], ONE_TIMEOUT_MS);
         return toolResult("One connections", result);
       }
@@ -21037,14 +21391,19 @@ var init_oneCliActions = __esm({
         },
         required: ["platform", "query"]
       },
-      async execute(args) {
+      async execute(args, ctx) {
         const platform = normalizePlatform(args.platform);
-        const query = asString(args.query).replace(/\s+/g, "+");
+        const query = asString(args.query);
         const actionType = asString(args.action_type || "execute");
         if (!platform || !query) {
           return { ok: false, label: "Missing One action search args", content: "platform and query are required." };
         }
-        const cliArgs = ["--agent", "actions", "search", platform, query];
+        const apiKey = await getOneApiKeyForTool(args, ctx);
+        if (apiKey) {
+          const result2 = await createOneApiClient(apiKey, apiFetchFromArgs(args)).searchActions(platform, query);
+          return apiToolResult(`One search ${platform}`, result2);
+        }
+        const cliArgs = ["--agent", "actions", "search", platform, query.replace(/\s+/g, "+")];
         if (actionType && actionType !== "all") cliArgs.push("-t", actionType);
         const result = runOneCli(cliArgs, ONE_TIMEOUT_MS);
         return toolResult(`One search ${platform}`, result);
@@ -21067,11 +21426,16 @@ var init_oneCliActions = __esm({
         },
         required: ["platform", "action_id"]
       },
-      async execute(args) {
+      async execute(args, ctx) {
         const platform = normalizePlatform(args.platform);
         const actionId = asString(args.action_id);
         if (!platform || !actionId) {
           return { ok: false, label: "Missing One action docs args", content: "platform and action_id are required." };
+        }
+        const apiKey = await getOneApiKeyForTool(args, ctx);
+        if (apiKey) {
+          const result2 = await createOneApiClient(apiKey, apiFetchFromArgs(args)).searchActions(platform, actionId);
+          return apiToolResult(`One docs ${platform}`, result2);
         }
         const result = runOneCli(["--agent", "actions", "knowledge", platform, actionId], ONE_TIMEOUT_MS);
         return toolResult(`One docs ${platform}`, result);
@@ -21114,11 +21478,19 @@ var init_oneCliActions = __esm({
           dry_run: {
             type: "boolean",
             description: "When true, show the request One would send without executing it."
+          },
+          approved: {
+            type: "boolean",
+            description: "Set to true only after the user explicitly approves a draft/create/send/delete/post/update calendar action."
+          },
+          confirmed: {
+            type: "boolean",
+            description: "Alias for approved. Use only after explicit user confirmation."
           }
         },
         required: ["platform", "action_id", "connection_key"]
       },
-      async execute(args) {
+      async execute(args, ctx) {
         const platform = normalizePlatform(args.platform);
         const actionId = asString(args.action_id);
         const connectionKey = asString(args.connection_key);
@@ -21133,13 +21505,39 @@ var init_oneCliActions = __esm({
             content: "platform, action_id, and connection_key are required."
           };
         }
+        const permission = classifyOneActionPermission(platform, actionId);
+        const approved = args.approved === true || args.confirmed === true || args._approved === true;
+        if (permission.approvalRequired && !approved && args.dry_run !== true) {
+          return {
+            ok: false,
+            label: "One approval required",
+            content: `Approval required before running One action '${actionId}' on ${platform}. ${permission.reason} Show the user exactly what will happen, then call one_execute_action again with approved=true only after they confirm.`,
+            detail: JSON.stringify({ requiresApproval: true, permission })
+          };
+        }
+        const apiKey = await getOneApiKeyForTool(args, ctx);
+        if (apiKey) {
+          const payload = {
+            platform,
+            actionId,
+            action_id: actionId,
+            data: args.data ?? {},
+            pathVars: args.path_vars ?? {},
+            queryParams: args.query_params ?? {},
+            headers: args.headers ?? {},
+            dryRun: args.dry_run === true
+          };
+          const result2 = await createOneApiClient(apiKey, apiFetchFromArgs(args)).passthrough(connectionKey, payload);
+          return apiToolResult(`One execute ${platform}`, result2);
+        }
         const cliArgs = ["--agent", "actions", "execute", platform, actionId, connectionKey];
         if (data) cliArgs.push("-d", data);
         if (pathVars) cliArgs.push("--path-vars", pathVars);
         if (queryParams) cliArgs.push("--query-params", queryParams);
         if (headers) cliArgs.push("--headers", headers);
         if (args.dry_run === true) cliArgs.push("--dry-run");
-        const result = runOneCli(
+        const run = typeof args._runOneCliForTest === "function" ? args._runOneCliForTest : runOneCli;
+        const result = run(
           cliArgs,
           ONE_TIMEOUT_MS
         );
@@ -21436,7 +21834,7 @@ var init_agentManager = __esm({
 });
 
 // server/agent/approvalReceipt.ts
-function isRecord(value) {
+function isRecord2(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 function isIsoDateLike(value) {
@@ -21455,7 +21853,7 @@ function createApprovalReceipt(input) {
   };
 }
 function normalizeApprovalReceipt(value) {
-  if (!isRecord(value)) return void 0;
+  if (!isRecord2(value)) return void 0;
   const gateId = typeof value.gateId === "string" ? value.gateId.trim() : "";
   const userId = typeof value.userId === "string" ? value.userId.trim() : "";
   const toolName = typeof value.toolName === "string" ? value.toolName.trim() : "";
@@ -52092,10 +52490,10 @@ var init_connectionsCapability = __esm({
         check_connections: ["connections", "system"],
         generate_reconnect_link: ["connections", "system"],
         connect_channel: ["connections", "system"],
-        one_list_connections: ["connections", "email", "calendar", "discord", "system"],
-        one_search_actions: ["connections", "email", "calendar", "discord", "system"],
-        one_get_action_knowledge: ["connections", "email", "calendar", "discord", "system"],
-        one_execute_action: ["connections", "email", "calendar", "discord", "system"]
+        one_list_connections: ["connections", "system"],
+        one_search_actions: ["connections", "system"],
+        one_get_action_knowledge: ["connections", "system"],
+        one_execute_action: ["connections", "system"]
       },
       tools: [
         checkConnectionsTool,
@@ -77864,10 +78262,91 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
-      res.json(getOneCliSetupStatus());
+      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
     } catch (err2) {
       const message = err2 instanceof Error ? err2.message : String(err2);
-      res.status(500).json({ error: "Failed to inspect One CLI", message });
+      res.json({
+        apiKeyConfigured: false,
+        apiKeyPreview: null,
+        installed: false,
+        authenticated: false,
+        ready: false,
+        command: "one",
+        dashboardUrl: "https://app.withone.ai",
+        accountEmail: null,
+        accountName: null,
+        connections: [],
+        nextSteps: ["Open Connection Center again in a moment, then paste your One API key."],
+        error: message
+      });
+    }
+  });
+  app2.post("/api/one/api-key", async (req, res) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const apiKey = String(req.body?.apiKey || "").trim();
+      if (!apiKey) {
+        return res.status(400).json({
+          error: "missing_api_key",
+          message: "Paste a One API key from One API Keys."
+        });
+      }
+      const verification = await createOneApiClient(apiKey).listConnections();
+      if (!verification.ok) {
+        return res.status(400).json({
+          error: "one_api_key_invalid",
+          message: verification.error || "Jarvis could not verify this One API key.",
+          apiKeyPreview: maskOneApiKey(apiKey)
+        });
+      }
+      await saveOneApiKey(userId, apiKey);
+      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
+    } catch (err2) {
+      const message = err2 instanceof Error ? err2.message : String(err2);
+      res.status(500).json({ error: "one_api_key_save_failed", message });
+    }
+  });
+  app2.delete("/api/one/api-key", async (req, res) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      await deleteOneApiKey(userId);
+      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
+    } catch (err2) {
+      const message = err2 instanceof Error ? err2.message : String(err2);
+      res.status(500).json({ error: "one_api_key_delete_failed", message });
+    }
+  });
+  app2.post("/api/one/connect-intent", async (req, res) => {
+    try {
+      const platform = String(req.body?.platform || "").trim().toLowerCase();
+      if (!isOneConnectionPlatform(platform)) {
+        return res.status(400).json({
+          error: "unsupported_platform",
+          message: "Choose Gmail, Google Calendar, Outlook Mail, Outlook Calendar, Slack, Discord, or WhatsApp."
+        });
+      }
+      res.json(buildOneConnectIntent(platform, getOneCliSetupStatus()));
+    } catch (err2) {
+      const message = err2 instanceof Error ? err2.message : String(err2);
+      res.status(500).json({ error: "one_connect_intent_failed", message });
+    }
+  });
+  app2.post("/api/one/test", async (req, res) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      res.json(buildOneTestResponse(buildOneStatusResponse(await getOneApiStatus(userId))));
+    } catch (err2) {
+      const message = err2 instanceof Error ? err2.message : String(err2);
+      res.json({
+        ok: false,
+        summary: "Jarvis could not test One connected accounts right now.",
+        results: [],
+        nextSteps: ["Refresh Connection Center, then verify your One API key again."],
+        error: message
+      });
     }
   });
   app2.get("/api/integrations/status", async (req, res) => {
@@ -78571,6 +79050,8 @@ var init_routes2 = __esm({
     init_appCoachChatAutonomy();
     init_coreAgentIds();
     init_oneCliConnection();
+    init_oneApiConnection();
+    init_oneConnectionCenter();
     init_coachRuntimeState();
     init_aiCoachContextService();
     init_planGenerationService();

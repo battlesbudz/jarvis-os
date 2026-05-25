@@ -102,6 +102,19 @@ import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
 import { getOneCliSetupStatus } from "./oneCliConnection";
+import {
+  createOneApiClient,
+  deleteOneApiKey,
+  getOneApiStatus,
+  maskOneApiKey,
+  saveOneApiKey,
+} from "./oneApiConnection";
+import {
+  buildOneConnectIntent,
+  buildOneStatusResponse,
+  buildOneTestResponse,
+  isOneConnectionPlatform,
+} from "./oneConnectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import {
   buildCoachSystemPrompt,
@@ -6574,10 +6587,97 @@ Extract up to 8 memories per batch.`;
     const userId = (req as any).userId as string | undefined;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
-      res.json(getOneCliSetupStatus());
+      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: "Failed to inspect One CLI", message });
+      res.json({
+        apiKeyConfigured: false,
+        apiKeyPreview: null,
+        installed: false,
+        authenticated: false,
+        ready: false,
+        command: "one",
+        dashboardUrl: "https://app.withone.ai",
+        accountEmail: null,
+        accountName: null,
+        connections: [],
+        nextSteps: ["Open Connection Center again in a moment, then paste your One API key."],
+        error: message,
+      });
+    }
+  });
+
+  app.post("/api/one/api-key", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      const apiKey = String(req.body?.apiKey || "").trim();
+      if (!apiKey) {
+        return res.status(400).json({
+          error: "missing_api_key",
+          message: "Paste a One API key from One API Keys.",
+        });
+      }
+
+      const verification = await createOneApiClient(apiKey).listConnections();
+      if (!verification.ok) {
+        return res.status(400).json({
+          error: "one_api_key_invalid",
+          message: verification.error || "Jarvis could not verify this One API key.",
+          apiKeyPreview: maskOneApiKey(apiKey),
+        });
+      }
+
+      await saveOneApiKey(userId, apiKey);
+      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "one_api_key_save_failed", message });
+    }
+  });
+
+  app.delete("/api/one/api-key", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      await deleteOneApiKey(userId);
+      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "one_api_key_delete_failed", message });
+    }
+  });
+
+  app.post("/api/one/connect-intent", async (req: Request, res: Response) => {
+    try {
+      const platform = String(req.body?.platform || "").trim().toLowerCase();
+      if (!isOneConnectionPlatform(platform)) {
+        return res.status(400).json({
+          error: "unsupported_platform",
+          message: "Choose Gmail, Google Calendar, Outlook Mail, Outlook Calendar, Slack, Discord, or WhatsApp.",
+        });
+      }
+      res.json(buildOneConnectIntent(platform, getOneCliSetupStatus()));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: "one_connect_intent_failed", message });
+    }
+  });
+
+  app.post("/api/one/test", async (req: Request, res: Response) => {
+    const userId = (req as any).userId as string | undefined;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      res.json(buildOneTestResponse(buildOneStatusResponse(await getOneApiStatus(userId))));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.json({
+        ok: false,
+        summary: "Jarvis could not test One connected accounts right now.",
+        results: [],
+        nextSteps: ["Refresh Connection Center, then verify your One API key again."],
+        error: message,
+      });
     }
   });
 

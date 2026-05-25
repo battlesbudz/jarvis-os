@@ -38,6 +38,8 @@ const tests = [
   { file: "server/agent/__tests__/providerFallback.assert.ts" },
   { file: "server/agent/__tests__/routedChatCompletion.assert.ts" },
   { file: "server/agent/__tests__/providerEnv.assert.ts" },
+  { file: "server/agent/__tests__/oneConnectionCenter.assert.ts" },
+  { file: "server/agent/__tests__/oneApiConnection.assert.ts" },
   { file: "server/agent/__tests__/inboxTriageConfig.assert.ts" },
   { file: "server/agent/__tests__/contextRegistryRouting.assert.ts" },
   { file: "server/agent/__tests__/livingContextUpdateTool.assert.ts" },

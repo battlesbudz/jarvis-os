@@ -1,0 +1,228 @@
+export const ONE_API_BASE_URL = process.env.ONE_API_BASE_URL || "https://api.withone.ai";
+export const ONE_API_KEYS_URL = process.env.ONE_API_KEYS_URL || "https://app.withone.ai";
+export const ONE_API_TOKEN_PROVIDER = "one_api";
+const ONE_API_TOKEN_ACCOUNT = "api-key";
+
+export type OneApiFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+
+export type OneApiConnection = {
+  key?: string;
+  id?: string;
+  platform?: string;
+  connector?: string;
+  name?: string;
+  label?: string;
+  accountEmail?: string;
+  accountName?: string;
+  email?: string;
+  status?: string;
+  state?: string;
+  keyPreview?: string;
+  [key: string]: unknown;
+};
+
+export type OneApiStatus = {
+  apiKeyConfigured: boolean;
+  apiKeyPreview: string | null;
+  installed: boolean;
+  authenticated: boolean;
+  ready: boolean;
+  command: string;
+  dashboardUrl: string;
+  accountEmail: string | null;
+  accountName: string | null;
+  connections: OneApiConnection[];
+  nextSteps: string[];
+  error: string | null;
+};
+
+export type OneApiResult<T extends Record<string, unknown> = Record<string, unknown>> = T & {
+  ok: boolean;
+  status: number;
+  url: string;
+  error?: string;
+};
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "");
+}
+
+function sanitizeOneError(message: string, apiKey: string): string {
+  return message.replaceAll(apiKey, maskOneApiKey(apiKey));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function firstArray(value: unknown, keys: string[]): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!isRecord(value)) return [];
+  for (const key of keys) {
+    const candidate = value[key];
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+}
+
+function normalizeConnection(value: unknown): OneApiConnection {
+  if (!isRecord(value)) return { platform: "unknown", state: "unknown" };
+  const rawKey = String(value.key || value.id || value.connectionKey || "");
+  return {
+    ...value,
+    key: rawKey || undefined,
+    platform: String(value.platform || value.connector || value.provider || value.name || "unknown").toLowerCase(),
+    accountEmail: String(value.accountEmail || value.email || value.account || ""),
+    accountName: String(value.accountName || value.name || value.label || ""),
+    state: String(value.state || value.status || "operational").toLowerCase(),
+    keyPreview: rawKey ? maskConnectionKey(rawKey) : undefined,
+  };
+}
+
+function maskConnectionKey(key: string): string {
+  if (key.length <= 8) return key;
+  return `${key.slice(0, 5)}...${key.slice(-3)}`;
+}
+
+export function maskOneApiKey(apiKey: string): string {
+  const trimmed = apiKey.trim();
+  if (!trimmed) return "";
+  if (trimmed.length <= 8) return `${trimmed.slice(0, 2)}...${trimmed.length}`;
+  if (trimmed.startsWith("one_sk_")) return `${trimmed.slice(0, 7)}...${trimmed.slice(-4)}`;
+  return `${trimmed.slice(0, 4)}...${trimmed.slice(-4)}`;
+}
+
+export function buildOneActionSearchUrl(platform: string, query: string, baseUrl = ONE_API_BASE_URL): string {
+  const url = new URL(`/v1/available-actions/search/${encodeURIComponent(platform)}`, normalizeBaseUrl(baseUrl));
+  url.searchParams.set("query", query);
+  url.searchParams.set("includeKnowledge", "true");
+  return url.toString();
+}
+
+export function createOneApiClient(apiKey: string, fetchImpl: OneApiFetch = fetch, baseUrl = ONE_API_BASE_URL) {
+  const secret = apiKey.trim();
+  const root = normalizeBaseUrl(baseUrl);
+
+  async function request<T extends Record<string, unknown>>(
+    pathOrUrl: string,
+    init: RequestInit = {},
+  ): Promise<OneApiResult<T>> {
+    const url = pathOrUrl.startsWith("http") ? pathOrUrl : `${root}${pathOrUrl}`;
+    try {
+      const headers: Record<string, string> = {
+        "x-one-secret": secret,
+        ...(init.body ? { "content-type": "application/json" } : {}),
+        ...((init.headers as Record<string, string> | undefined) || {}),
+      };
+      const response = await fetchImpl(url, { ...init, headers });
+      const text = await response.text();
+      let data: unknown = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { message: text };
+        }
+      }
+      if (!response.ok) {
+        const message = isRecord(data) && typeof data.message === "string"
+          ? data.message
+          : response.statusText || "One API request failed.";
+        return { ok: false, status: response.status, url, error: sanitizeOneError(message, secret) } as OneApiResult<T>;
+      }
+      return { ...(isRecord(data) ? data : { data }), ok: true, status: response.status, url } as OneApiResult<T>;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { ok: false, status: 0, url, error: sanitizeOneError(message, secret) } as OneApiResult<T>;
+    }
+  }
+
+  return {
+    async listConnections() {
+      const result = await request<{ connections: OneApiConnection[] }>("/v1/vault/connections");
+      const connections = firstArray(result, ["connections", "items", "data"]).map(normalizeConnection);
+      return { ...result, connections };
+    },
+    async listAvailableConnectors() {
+      const result = await request<{ connectors: unknown[] }>("/v1/available-connectors");
+      const connectors = firstArray(result, ["connectors", "items", "data"]);
+      return { ...result, connectors };
+    },
+    async searchActions(platform: string, query: string) {
+      const url = buildOneActionSearchUrl(platform, query, root);
+      const result = await request<{ actions: unknown[] }>(url);
+      const actions = firstArray(result, ["actions", "items", "data", "results"]);
+      return { ...result, actions };
+    },
+    async passthrough(connectionKey: string, payload: Record<string, unknown>) {
+      return request(`/v1/passthrough/${encodeURIComponent(connectionKey)}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+    },
+  };
+}
+
+export async function getSavedOneApiKey(userId: string): Promise<string | null> {
+  const { getUserToken } = await import("./userTokenStore");
+  const token = await getUserToken(userId, ONE_API_TOKEN_PROVIDER);
+  return token?.accessToken || null;
+}
+
+export async function saveOneApiKey(userId: string, apiKey: string): Promise<void> {
+  const { saveUserToken } = await import("./userTokenStore");
+  await saveUserToken({
+    userId,
+    provider: ONE_API_TOKEN_PROVIDER,
+    accessToken: apiKey.trim(),
+    accountEmail: ONE_API_TOKEN_ACCOUNT,
+    scopes: "one-api",
+  });
+}
+
+export async function deleteOneApiKey(userId: string): Promise<void> {
+  const { deleteUserToken } = await import("./userTokenStore");
+  await deleteUserToken(userId, ONE_API_TOKEN_PROVIDER);
+}
+
+export async function getOneApiStatus(userId: string, fetchImpl: OneApiFetch = fetch): Promise<OneApiStatus> {
+  const apiKey = await getSavedOneApiKey(userId);
+  if (!apiKey) {
+    return {
+      apiKeyConfigured: false,
+      apiKeyPreview: null,
+      installed: false,
+      authenticated: false,
+      ready: false,
+      command: "one",
+      dashboardUrl: ONE_API_KEYS_URL,
+      accountEmail: null,
+      accountName: null,
+      connections: [],
+      nextSteps: ["Paste a One API key from One API Keys, then Jarvis will verify the accounts it can access."],
+      error: null,
+    };
+  }
+
+  const client = createOneApiClient(apiKey, fetchImpl);
+  const result = await client.listConnections();
+  const account = result.connections.find((connection) => connection.accountEmail || connection.accountName);
+  return {
+    apiKeyConfigured: true,
+    apiKeyPreview: maskOneApiKey(apiKey),
+    installed: true,
+    authenticated: result.ok,
+    ready: result.ok && result.connections.length > 0,
+    command: "one",
+    dashboardUrl: ONE_API_KEYS_URL,
+    accountEmail: account?.accountEmail || null,
+    accountName: account?.accountName || null,
+    connections: result.ok ? result.connections : [],
+    nextSteps: result.ok
+      ? result.connections.length > 0
+        ? [`Jarvis can access ${result.connections.length} One connected account${result.connections.length === 1 ? "" : "s"}.`]
+        : ["The One API key is valid, but no connected accounts were returned yet."]
+      : ["Check that your One API key is active, then paste it again."],
+    error: result.ok ? null : result.error || "Jarvis could not verify this One API key.",
+  };
+}

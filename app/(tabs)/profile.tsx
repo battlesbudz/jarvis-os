@@ -165,6 +165,66 @@ const TIMEZONES = [
   { label: 'Sydney (AEST)', value: 'Australia/Sydney' },
 ];
 
+const PLATFORMS: PlatformInfo[] = [
+  {
+    id: 'google',
+    name: 'Google Account',
+    subtitle: 'Calendar + Gmail',
+    icon: 'logo-google',
+    color: '#4285F4',
+  },
+  {
+    id: 'microsoft',
+    name: 'Microsoft Account',
+    subtitle: 'Outlook Calendar',
+    icon: 'logo-windows',
+    color: '#0078D4',
+  },
+  {
+    id: 'slack',
+    name: 'Slack',
+    subtitle: 'Messages & Channels',
+    icon: 'chatbubbles-outline',
+    color: '#4A154B',
+  },
+];
+
+type OneProviderId = 'gmail' | 'google-calendar' | 'outlook-mail' | 'outlook-calendar' | 'slack' | 'discord' | 'whatsapp';
+
+interface OneConnectionStatus {
+  platform: string;
+  state: string;
+  label?: string;
+  accountEmail?: string | null;
+  accountName?: string | null;
+  keyPreview?: string;
+}
+
+interface OneStatus {
+  apiKeyConfigured: boolean;
+  apiKeyPreview: string | null;
+  installed: boolean;
+  authenticated: boolean;
+  ready: boolean;
+  command: string;
+  dashboardUrl: string;
+  accountEmail: string | null;
+  accountName: string | null;
+  connections: OneConnectionStatus[];
+  nextSteps: string[];
+  error: string | null;
+}
+
+const ONE_PROVIDERS: { id: OneProviderId; label: string; icon: keyof typeof Ionicons.glyphMap; color: string }[] = [
+  { id: 'gmail', label: 'Gmail', icon: 'mail-outline', color: '#EA4335' },
+  { id: 'google-calendar', label: 'Google Calendar', icon: 'calendar-outline', color: '#4285F4' },
+  { id: 'outlook-mail', label: 'Outlook Mail', icon: 'mail-open-outline', color: '#0078D4' },
+  { id: 'outlook-calendar', label: 'Outlook Calendar', icon: 'calendar-number-outline', color: '#2563EB' },
+  { id: 'slack', label: 'Slack', icon: 'chatbubbles-outline', color: '#4A154B' },
+  { id: 'discord', label: 'Discord', icon: 'game-controller-outline', color: '#5865F2' },
+  { id: 'whatsapp', label: 'WhatsApp', icon: 'logo-whatsapp', color: '#25D366' },
+];
+
 const PROFILE_PANEL = Colors.card;
 const PROFILE_PANEL_MUTED = '#151923';
 const PROFILE_BORDER = Colors.border;
@@ -363,6 +423,13 @@ export default function ProfileScreen() {
   } | null>(null);
   const [driveLoading, setDriveLoading] = useState(false);
   const [driveEnabling, setDriveEnabling] = useState(false);
+  const [oneStatus, setOneStatus] = useState<OneStatus | null>(null);
+  const [oneLoading, setOneLoading] = useState(false);
+  const [oneBusyProvider, setOneBusyProvider] = useState<'save' | 'delete' | 'test' | null>(null);
+  const [oneApiKeyInput, setOneApiKeyInput] = useState('');
+  const [oneAdvancedOpen, setOneAdvancedOpen] = useState(false);
+  const [oneTestSummary, setOneTestSummary] = useState<string | null>(null);
+  const [oneCopiedCommand, setOneCopiedCommand] = useState<string | null>(null);
 
   interface CustomAgent {
     id: string;
@@ -586,6 +653,32 @@ export default function ProfileScreen() {
   }, []);
 
 
+
+  const loadOneStatus = useCallback(async () => {
+    setOneLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/one/status');
+      const data = await res.json();
+      setOneStatus(data);
+    } catch {
+      setOneStatus({
+        apiKeyConfigured: false,
+        apiKeyPreview: null,
+        installed: false,
+        authenticated: false,
+        ready: false,
+        command: 'one',
+        dashboardUrl: 'https://app.withone.ai',
+        accountEmail: null,
+        accountName: null,
+        connections: [],
+        nextSteps: ['Jarvis could not reach One Connection Center. Try Refresh.'],
+        error: 'Connection Center is unavailable.',
+      });
+    } finally {
+      setOneLoading(false);
+    }
+  }, []);
 
   const loadMemories = useCallback(async () => {
     setMemoriesLoading(true);
@@ -1107,7 +1200,7 @@ export default function ProfileScreen() {
     }
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadPendingLivingContextUpdates(), loadSkills()]);
+    await Promise.all([loadOAuthStatus(), loadOneStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadPendingLivingContextUpdates(), loadSkills()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -1125,7 +1218,7 @@ export default function ProfileScreen() {
   // useCallback([], []) / stable refs declared after loadAll — omit from deps
   // to avoid temporal-dead-zone ReferenceErrors at initialisation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents, loadSkills]);
+  }, [loadOAuthStatus, loadOneStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents, loadSkills]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -1618,7 +1711,83 @@ export default function ProfileScreen() {
     }
   }, [appUpdateChecking]);
 
+  const handleOneApiKeySave = useCallback(async () => {
+    const apiKey = oneApiKeyInput.trim();
+    if (!apiKey) {
+      Alert.alert('One API Key', 'Paste a One API key from One API Keys first.');
+      return;
+    }
+    setOneBusyProvider('save');
+    try {
+      const res = await apiRequest('POST', '/api/one/api-key', { apiKey });
+      const data = await res.json();
+      setOneStatus(data);
+      setOneApiKeyInput('');
+      setOneTestSummary(data.ready ? 'One API key verified. Jarvis can see your connected accounts.' : data.nextSteps?.[0] || 'One API key saved.');
+    } catch (error: any) {
+      Alert.alert('One API Key', error?.message || 'Jarvis could not verify that One API key.');
+    } finally {
+      setOneBusyProvider(null);
+    }
+  }, [oneApiKeyInput]);
 
+  const handleOneApiKeyDelete = useCallback(async () => {
+    setOneBusyProvider('delete');
+    try {
+      const res = await apiRequest('DELETE', '/api/one/api-key');
+      const data = await res.json();
+      setOneStatus(data);
+      setOneTestSummary('One API key removed from Jarvis.');
+    } catch {
+      Alert.alert('One API Key', 'Jarvis could not remove the saved One API key.');
+    } finally {
+      setOneBusyProvider(null);
+    }
+  }, []);
+
+  const handleOpenOneApiKeys = useCallback(async () => {
+    await WebBrowser.openBrowserAsync('https://app.withone.ai', {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+    });
+  }, []);
+
+  const handleOneTest = useCallback(async () => {
+    setOneBusyProvider('test');
+    try {
+      const res = await apiRequest('POST', '/api/one/test');
+      const data = await res.json();
+      setOneTestSummary(data.summary || 'Connection test finished.');
+      if (!data.ok && data.error) {
+        setOneTestSummary(`${data.summary || 'Connection test failed.'} ${data.error}`);
+      }
+    } catch {
+      setOneTestSummary('Jarvis could not test connected accounts right now.');
+    } finally {
+      setOneBusyProvider(null);
+    }
+  }, []);
+
+  const handleCopyOneCommand = useCallback(async (command: string) => {
+    await Clipboard.setStringAsync(command);
+    setOneCopiedCommand(command);
+    setTimeout(() => setOneCopiedCommand((current) => current === command ? null : current), 1800);
+  }, []);
+
+  const handleDisconnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack', email?: string) => {
+    setConnectingId(provider + (email || ''));
+    try {
+      const url = email
+        ? `/api/oauth/${provider}/disconnect?email=${encodeURIComponent(email)}`
+        : `/api/oauth/${provider}/disconnect`;
+      await apiRequest('DELETE', url);
+      await loadOAuthStatus();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      console.error('Disconnect error:', e);
+    } finally {
+      setConnectingId(null);
+    }
+  }, [loadOAuthStatus]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -2821,6 +2990,154 @@ export default function ProfileScreen() {
         )}
         {activeProfilePanel === 'connections' && (
           <>
+        <Animated.View entering={FadeInDown.duration(400).delay(420)}>
+          <View style={styles.sectionHeaderRow}>
+            <View>
+              <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Accounts</Text>
+              <Text style={styles.sectionSubtitle}>
+                One keeps Gmail, calendars, Slack, Discord, and WhatsApp in one place
+              </Text>
+            </View>
+            <Pressable style={styles.oneHeaderButton} onPress={loadOneStatus}>
+              {oneLoading ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <Ionicons name="refresh" size={16} color={Colors.primary} />
+              )}
+              <Text style={styles.oneHeaderButtonText}>Refresh</Text>
+            </Pressable>
+          </View>
+          <View style={styles.platformsList}>
+            <View style={[styles.oneSummaryRow, styles.platformRowBorder]}>
+              <View style={[styles.platformIcon, { backgroundColor: Colors.primary + '18' }]}>
+                <Ionicons name="key-outline" size={20} color={Colors.primary} />
+              </View>
+              <View style={styles.platformInfo}>
+                <Text style={styles.platformName}>
+                  {oneStatus?.ready ? 'One API key verified' : oneStatus?.apiKeyConfigured ? 'One API key needs attention' : 'Add your One API key'}
+                </Text>
+                <Text style={styles.platformSubtitle}>
+                  {oneStatus?.apiKeyPreview ? `Saved key ${oneStatus.apiKeyPreview}` : 'Paste a key from One API Keys so Jarvis can verify your connected apps.'}
+                </Text>
+                {oneStatus?.error ? <Text style={styles.oneErrorText}>{oneStatus.error}</Text> : null}
+              </View>
+              <Pressable style={[styles.connectBtn, { borderColor: Colors.primary }]} onPress={handleOneTest}>
+                <Text style={[styles.connectBtnText, { color: Colors.primary }]}>
+                  {oneBusyProvider === 'test' ? 'Testing' : 'Test'}
+                </Text>
+              </Pressable>
+            </View>
+            {!oneStatus?.apiKeyConfigured ? (
+              <View style={[styles.oneApiKeyPanel, styles.platformRowBorder]}>
+                <TextInput
+                  value={oneApiKeyInput}
+                  onChangeText={setOneApiKeyInput}
+                  placeholder="Paste One API key"
+                  placeholderTextColor={Colors.textTertiary}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.oneApiKeyInput}
+                />
+                <View style={styles.oneApiActionsRow}>
+                  <Pressable style={styles.oneSecondaryButton} onPress={handleOpenOneApiKeys}>
+                    <Ionicons name="open-outline" size={15} color={Colors.textSecondary} />
+                    <Text style={styles.oneSecondaryButtonText}>One API Keys</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.connectBtn, { borderColor: Colors.primary, opacity: oneBusyProvider === 'save' ? 0.65 : 1 }]}
+                    onPress={handleOneApiKeySave}
+                    disabled={oneBusyProvider === 'save'}
+                  >
+                    <Text style={[styles.connectBtnText, { color: Colors.primary }]}>
+                      {oneBusyProvider === 'save' ? 'Verifying' : 'Verify & Save'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : (
+              <View style={[styles.oneApiKeyPanel, styles.platformRowBorder]}>
+                <View style={styles.platformNameRow}>
+                  <Text style={styles.platformSubtitle}>Saved One key</Text>
+                  <Text style={styles.oneKeyPreview}>{oneStatus.apiKeyPreview}</Text>
+                </View>
+                <Pressable style={styles.disconnectBtn} onPress={handleOneApiKeyDelete} disabled={oneBusyProvider === 'delete'}>
+                  <Ionicons name="trash-outline" size={14} color={Colors.textTertiary} />
+                  <Text style={styles.disconnectBtnText}>{oneBusyProvider === 'delete' ? 'Removing' : 'Remove key'}</Text>
+                </Pressable>
+              </View>
+            )}
+            {(oneStatus?.connections?.length ?? 0) > 0 ? oneStatus?.connections.map((connection, index) => {
+              const platform = ONE_PROVIDERS.find((provider) => provider.id === connection.platform);
+              const color = platform?.color || Colors.primary;
+              const icon = platform?.icon || 'link-outline';
+              const connected = ['operational', 'connected', 'ready'].includes(String(connection.state || '').toLowerCase());
+              const label = connection.label || platform?.label || connection.platform || 'Connected app';
+              const account = connection.accountEmail || connection.accountName || connection.keyPreview || 'Account connected through One';
+              return (
+                <View key={`${connection.platform}-${connection.keyPreview || index}`} style={[styles.platformRow, index < (oneStatus?.connections.length ?? 0) - 1 && styles.platformRowBorder]}>
+                  <View style={[styles.platformIcon, { backgroundColor: color + '18' }]}>
+                    <Ionicons name={icon} size={20} color={color} />
+                  </View>
+                  <View style={styles.platformInfo}>
+                    <View style={styles.platformNameRow}>
+                      <Text style={styles.platformName}>{label}</Text>
+                      <View style={[styles.oneStatusBadge, connected ? styles.oneStatusBadgeConnected : styles.oneStatusBadgeAttention]}>
+                        <Text style={[styles.oneStatusBadgeText, connected ? styles.oneStatusTextConnected : styles.oneStatusTextAttention]}>
+                          {connected ? 'Connected' : 'Needs attention'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.platformSubtitle}>{account}</Text>
+                  </View>
+                </View>
+              );
+            }) : (
+              <View style={[styles.platformRow, styles.platformRowBorder]}>
+                <View style={[styles.platformIcon, { backgroundColor: PROFILE_CHIP }]}>
+                  <Ionicons name="apps-outline" size={20} color={Colors.textSecondary} />
+                </View>
+                <View style={styles.platformInfo}>
+                  <Text style={styles.platformName}>No One accounts visible yet</Text>
+                  <Text style={styles.platformSubtitle}>
+                    {oneStatus?.apiKeyConfigured ? 'The key works, but One did not return connected apps yet.' : 'Create or paste a One API key to show exact apps and accounts.'}
+                  </Text>
+                </View>
+              </View>
+            )}
+            {oneTestSummary ? (
+              <View style={styles.oneTestRow}>
+                <Ionicons name="pulse-outline" size={16} color={Colors.textSecondary} />
+                <Text style={styles.oneTestText}>{oneTestSummary}</Text>
+              </View>
+            ) : null}
+            <Pressable style={styles.oneAdvancedToggle} onPress={() => setOneAdvancedOpen((value) => !value)}>
+              <Text style={styles.oneAdvancedToggleText}>Advanced setup</Text>
+              <Ionicons name={oneAdvancedOpen ? 'chevron-up' : 'chevron-down'} size={16} color={Colors.textSecondary} />
+            </Pressable>
+            {oneAdvancedOpen && (
+              <View style={styles.oneAdvancedPanel}>
+                {['Developer fallback only. Normal setup uses a One API key from the browser.', ...(oneStatus?.nextSteps?.length ? oneStatus.nextSteps : [])].map((step, index) => (
+                  <Text key={`${step}-${index}`} style={styles.oneAdvancedText}>{step}</Text>
+                ))}
+                <Pressable style={styles.oneCommandRow} onPress={() => handleCopyOneCommand(`${oneStatus?.command || 'one'} login`)}>
+                  <Text style={styles.oneCommandText}>{`${oneStatus?.command || 'one'} login`}</Text>
+                  <Ionicons name={oneCopiedCommand === `${oneStatus?.command || 'one'} login` ? 'checkmark' : 'copy-outline'} size={16} color={Colors.primary} />
+                </Pressable>
+                {ONE_PROVIDERS.map((provider) => {
+                  const command = `${oneStatus?.command || 'one'} add ${provider.id}`;
+                  return (
+                    <Pressable key={provider.id} style={styles.oneCommandRow} onPress={() => handleCopyOneCommand(command)}>
+                      <Text style={styles.oneCommandText}>{command}</Text>
+                      <Ionicons name={oneCopiedCommand === command ? 'checkmark' : 'copy-outline'} size={16} color={Colors.primary} />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            )}
+          </View>
+        </Animated.View>
+
         {/* Connected Apps */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
@@ -4744,6 +5061,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
   },
+  oneSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: Colors.primary + '08',
+  },
   platformRowBorder: {
     borderBottomWidth: 1,
     borderBottomColor: PROFILE_BORDER,
@@ -4806,6 +5129,150 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
     textDecorationLine: 'underline',
+  },
+  oneHeaderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary + '44',
+    marginTop: 28,
+  },
+  oneHeaderButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+  },
+  oneStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 7,
+  },
+  oneStatusBadgeConnected: {
+    backgroundColor: Colors.successDim,
+  },
+  oneStatusBadgeAttention: {
+    backgroundColor: Colors.warningDim,
+  },
+  oneStatusBadgeIdle: {
+    backgroundColor: PROFILE_CHIP,
+  },
+  oneStatusBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  oneStatusTextConnected: {
+    color: Colors.success,
+  },
+  oneStatusTextAttention: {
+    color: Colors.warning,
+  },
+  oneStatusTextIdle: {
+    color: Colors.textTertiary,
+  },
+  oneErrorText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.warning,
+    marginTop: 4,
+  },
+  oneApiKeyPanel: {
+    padding: 14,
+    gap: 10,
+  },
+  oneApiKeyInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  oneApiActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  oneSecondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  oneSecondaryButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  oneKeyPreview: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.success,
+  },
+  oneTestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: PROFILE_BORDER,
+  },
+  oneTestText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  oneAdvancedToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: 13,
+    borderTopWidth: 1,
+    borderTopColor: PROFILE_BORDER,
+  },
+  oneAdvancedToggleText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  oneAdvancedPanel: {
+    padding: 14,
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: PROFILE_BORDER,
+    backgroundColor: PROFILE_PANEL_MUTED,
+  },
+  oneAdvancedText: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  oneCommandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: PROFILE_CHIP,
+  },
+  oneCommandText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
   },
   webhookStatusRow: {
     flexDirection: 'row',

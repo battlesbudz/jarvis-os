@@ -2,7 +2,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { spawnSync } from "child_process";
 
-export const ONECLI_CONNECTIONS = ["whatsapp", "discord", "slack", "google", "microsoft"] as const;
+export const ONECLI_CONNECTIONS = ["gmail", "google-calendar", "outlook-mail", "outlook-calendar", "whatsapp", "discord", "slack", "google", "microsoft"] as const;
 export type OneCliConnection = typeof ONECLI_CONNECTIONS[number];
 
 const DEFAULT_ONECLI_COMMANDS =
