@@ -148,6 +148,8 @@ function StatusDot({ status }: { status: HealthStatus }) {
   );
 }
 
+const ONE_API_KEYS_URL = 'https://app.withone.ai/settings/api-keys';
+
 const sectionStyles = StyleSheet.create({
   header: {
     borderLeftWidth: 2,
@@ -1501,7 +1503,7 @@ export default function SettingsScreen() {
   }, [wakeWords, saveWakeSettings]);
 
   const openOneApiKeys = useCallback(async () => {
-    await WebBrowser.openBrowserAsync('https://app.withone.ai', {
+    await WebBrowser.openBrowserAsync(ONE_API_KEYS_URL, {
       presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
     });
   }, []);
@@ -1646,13 +1648,20 @@ export default function SettingsScreen() {
               onPress={oneStatus?.ready ? loadConnections : openOneApiKeys}
             >
               <Text style={[styles.connBtnText, { color: '#6366F1' }]}>
-                {oneStatus?.ready ? 'Refresh' : 'Open One'}
+                {oneStatus?.ready ? 'Refresh' : 'API Keys'}
               </Text>
             </Pressable>
           </View>
           <View style={[styles.oneApiKeyPanel, styles.connRowBorder]}>
+            <View style={styles.oneSetupSteps}>
+              <Text style={styles.oneSetupTitle}>Setup flow</Text>
+              <Text style={styles.oneSetupText}>1. Connect Gmail, Outlook, Slack, or other apps inside One.</Text>
+              <Text style={styles.oneSetupText}>2. Create an API key on One&apos;s API Keys page.</Text>
+              <Text style={styles.oneSetupText}>3. Paste that key into Jarvis below and save it.</Text>
+            </View>
             {!oneStatus?.apiKeyConfigured ? (
               <>
+                <Text style={styles.oneInputLabel}>One API key for Jarvis</Text>
                 <TextInput
                   value={oneApiKeyInput}
                   onChangeText={setOneApiKeyInput}
@@ -1666,7 +1675,7 @@ export default function SettingsScreen() {
                 <View style={styles.oneApiActionsRow}>
                   <Pressable style={styles.oneSecondaryButton} onPress={openOneApiKeys}>
                     <Ionicons name="open-outline" size={15} color={Colors.textSecondary} />
-                    <Text style={styles.oneSecondaryButtonText}>One API Keys</Text>
+                    <Text style={styles.oneSecondaryButtonText}>Open One API Keys</Text>
                   </Pressable>
                   <Pressable
                     style={[styles.connBtn, { borderColor: '#6366F1', opacity: oneBusy === 'save' ? 0.65 : 1 }]}
@@ -4043,6 +4052,32 @@ const styles = StyleSheet.create({
   oneApiKeyPanel: {
     padding: 14,
     gap: 10,
+  },
+  oneSetupSteps: {
+    backgroundColor: '#6366F112',
+    borderWidth: 1,
+    borderColor: '#6366F135',
+    borderRadius: 10,
+    padding: 10,
+    gap: 4,
+  },
+  oneSetupTitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: '#C7D2FE',
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  oneSetupText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  oneInputLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
   },
   oneApiKeyInput: {
     backgroundColor: Colors.surfaceAlt,
