@@ -169,18 +169,19 @@ interface ConfirmCardProps {
 
 function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: ConfirmCardProps) {
   const isEmail = pendingConfirm.tool === 'send_email';
+  const isOneAction = pendingConfirm.tool === 'one_execute_action';
   const preview = pendingConfirm.preview;
 
   return (
     <View style={styles.confirmCard}>
       <View style={styles.confirmCardHeader}>
         <Ionicons
-          name={isEmail ? 'mail-outline' : 'terminal-outline'}
+          name={isEmail ? 'mail-outline' : isOneAction ? 'git-network-outline' : 'terminal-outline'}
           size={15}
           color={Colors.primary}
         />
         <Text style={styles.confirmCardTitle}>
-          {isEmail ? 'Send email?' : `Run terminal command?`}
+          {isEmail ? 'Send email?' : isOneAction ? 'Approve One action?' : `Run terminal command?`}
         </Text>
       </View>
 
@@ -194,6 +195,25 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             <>
               <Text style={styles.confirmPreviewLabel}>Body</Text>
               <Text style={styles.confirmPreviewValue} numberOfLines={4}>{preview.body}</Text>
+            </>
+          )}
+        </View>
+      ) : isOneAction ? (
+        <View style={styles.confirmPreview}>
+          <Text style={styles.confirmPreviewLabel}>Platform</Text>
+          <Text style={styles.confirmPreviewValue} numberOfLines={1}>{preview.platform}</Text>
+          <Text style={styles.confirmPreviewLabel}>Action</Text>
+          <Text style={styles.confirmPreviewCode} numberOfLines={2}>{preview.action}</Text>
+          {!!preview.reason && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Reason</Text>
+              <Text style={styles.confirmPreviewValue} numberOfLines={3}>{preview.reason}</Text>
+            </>
+          )}
+          {!!preview.data && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Data</Text>
+              <Text style={styles.confirmPreviewCode} numberOfLines={4}>{preview.data}</Text>
             </>
           )}
         </View>
@@ -236,7 +256,7 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             <Ionicons name="checkmark" size={14} color="#fff" />
           )}
           <Text style={styles.confirmBtnConfirmText}>
-            {isLoading ? (isEmail ? 'Sending...' : 'Running...') : isEmail ? 'Send' : 'Run'}
+            {isLoading ? (isEmail ? 'Sending...' : isOneAction ? 'Approving...' : 'Running...') : isEmail ? 'Send' : isOneAction ? 'Approve' : 'Run'}
           </Text>
         </Pressable>
       </View>
@@ -2335,7 +2355,7 @@ export default function InsightsScreen() {
         label: data.label || (data.result === 'success' ? 'Done' : 'Failed'),
       };
       const successContent = data.result === 'success'
-        ? (tool === 'send_email' ? `Email sent successfully.` : `Command executed successfully.`)
+        ? (tool === 'send_email' ? `Email sent successfully.` : tool === 'one_execute_action' ? `One action completed successfully.` : `Command executed successfully.`)
         : `Action failed: ${data.detail || data.error || 'Unknown error'}`;
       setMessages(prev => {
         const updated = [...prev];

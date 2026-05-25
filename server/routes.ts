@@ -114,6 +114,7 @@ import {
   buildOneConnectIntent,
   buildOneStatusResponse,
   buildOneTestResponse,
+  classifyOneActionPermission,
   isOneConnectionPlatform,
 } from "./oneConnectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
@@ -3034,7 +3035,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             let args: any = {};
             try { args = JSON.parse(tc.function.arguments); } catch {}
 
+            const onePermission = tc.function.name === 'one_execute_action'
+              ? classifyOneActionPermission(String(args.platform || ''), String(args.action_id || args.actionId || ''))
+              : null;
             const isHighStakes = tc.function.name === 'send_email' ||
+              (tc.function.name === 'one_execute_action' && onePermission?.approvalRequired === true && args.dry_run !== true) ||
               (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || '')));
 
             if (isHighStakes) {
@@ -3051,6 +3056,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.subject = String(args.subject || '');
                 preview.body = String(args.body || '');
                 preview.provider = String(args.provider || 'google');
+              } else if (tc.function.name === 'one_execute_action') {
+                preview.platform = String(args.platform || '');
+                preview.action = String(args.action_id || args.actionId || '');
+                preview.connection = String(args.connection_key || args.connectionKey || '');
+                preview.reason = onePermission?.reason || 'This One action can change an external account.';
+                if (args.data) preview.data = typeof args.data === 'string' ? args.data : JSON.stringify(args.data).slice(0, 500);
+                if (args.query_params) preview.query = typeof args.query_params === 'string' ? args.query_params : JSON.stringify(args.query_params).slice(0, 500);
               } else {
                 preview.action = String(args.action || '');
                 if (args.cmd) preview.cmd = String(args.cmd);
@@ -3678,7 +3690,25 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         return res.status(400).json({ error: 'Confirmation token has expired' });
       }
       pendingConfirmations.delete(token);
-      const execResult = await executeCoachTool(pending.tool, pending.args, userId);
+      let execResult: { result: 'success' | 'error'; label: string; detail: string };
+      if (pending.tool === 'one_execute_action') {
+        const oneTool = getTool('one_execute_action');
+        if (!oneTool) {
+          execResult = { result: 'error', label: 'One action unavailable', detail: 'The One action tool is not registered.' };
+        } else {
+          const toolResult = await oneTool.execute(
+            { ...pending.args, approved: true, confirmed: true },
+            { userId, channel: 'appchat', state: { pendingAttachments: [] } } as ToolContext,
+          );
+          execResult = {
+            result: toolResult.ok ? 'success' : 'error',
+            label: toolResult.label ?? 'One action',
+            detail: toolResult.content ?? toolResult.detail ?? '',
+          };
+        }
+      } else {
+        execResult = await executeCoachTool(pending.tool, pending.args, userId);
+      }
       return res.json({ result: execResult.result, label: execResult.label, detail: execResult.detail });
     } catch (error) {
       console.error('Error in execute-confirmed:', error);
@@ -3699,12 +3729,15 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           tool = pending.tool;
           const a = pending.args;
           if (tool === 'send_email') preview = { to: a.to || '', subject: a.subject || '' };
+          else if (tool === 'one_execute_action') preview = { action: a.action_id || a.actionId || '', platform: a.platform || '' };
           else preview = { action: a.action || '', cmd: a.cmd || '', path: a.path || '' };
           pendingConfirmations.delete(token);
         }
       }
       const toolLabel = tool === 'send_email'
         ? `sending an email to ${preview.to || 'the recipient'}`
+        : tool === 'one_execute_action'
+          ? `running the One ${preview.platform || 'connector'} action ${preview.action || ''}`.trim()
         : `running a terminal command (${preview.cmd || preview.action || 'shell'})`;
       const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence — do not re-propose the action. Stay in your coaching persona.`;
       const resp = await openai.chat.completions.create({

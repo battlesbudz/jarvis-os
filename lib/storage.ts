@@ -327,6 +327,11 @@ export interface PendingConfirm {
     body?: string;
     provider?: string;
     action?: string;
+    platform?: string;
+    connection?: string;
+    reason?: string;
+    data?: string;
+    query?: string;
     cmd?: string;
     path?: string;
     content?: string;

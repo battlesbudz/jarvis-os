@@ -9,11 +9,11 @@ var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __copyProps = (to, from, except, desc52) => {
+var __copyProps = (to, from, except, desc53) => {
   if (from && typeof from === "object" || typeof from === "function") {
     for (let key of __getOwnPropNames(from))
       if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc52 = __getOwnPropDesc(from, key)) || desc52.enumerable });
+        __defProp(to, key, { get: () => from[key], enumerable: !(desc53 = __getOwnPropDesc(from, key)) || desc53.enumerable });
   }
   return to;
 };
@@ -103,6 +103,12 @@ function applyProviderEnvAliases() {
 }
 function getOpenAIClientConfig() {
   applyProviderEnvAliases();
+  if (isDirectOpenAIDisabled()) {
+    return {
+      apiKey: ROUTER_PLACEHOLDER_OPENAI_API_KEY,
+      baseURL: void 0
+    };
+  }
   return {
     apiKey: getProviderEnvValue("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY") ?? ROUTER_PLACEHOLDER_OPENAI_API_KEY,
     baseURL: getProviderEnvValue("AI_INTEGRATIONS_OPENAI_BASE_URL", "OPENAI_BASE_URL")
@@ -8271,11 +8277,11 @@ async function appendAudit(auditLogPath, entry) {
 async function withDb(fn) {
   if (!process.env.DATABASE_URL) return null;
   try {
-    const [{ db: db2 }, { sql: sql48 }] = await Promise.all([
+    const [{ db: db2 }, { sql: sql49 }] = await Promise.all([
       Promise.resolve().then(() => (init_db(), db_exports)),
       import("drizzle-orm")
     ]);
-    return await fn(db2, sql48);
+    return await fn(db2, sql49);
   } catch {
     return null;
   }
@@ -8315,8 +8321,8 @@ function formatLearning(args, now) {
   return { block: lines.join("\n"), learned, status: finalStatus, confidence, sourceType };
 }
 async function persistLivingContextUpdate(input) {
-  await withDb(async (db2, sql48) => {
-    await db2.execute(sql48`
+  await withDb(async (db2, sql49) => {
+    await db2.execute(sql49`
       INSERT INTO living_context_updates (
         user_id,
         target,
@@ -8355,8 +8361,8 @@ async function persistLivingContextUpdate(input) {
 }
 async function syncPersistedUpdatesToFile(input) {
   const existing = await fs.readFile(input.abs, "utf-8").catch(() => "");
-  const rows = await withDb(async (db2, sql48) => {
-    const result = await db2.execute(sql48`
+  const rows = await withDb(async (db2, sql49) => {
+    const result = await db2.execute(sql49`
       SELECT block
       FROM living_context_updates
       WHERE user_id = ${input.userId}
@@ -21190,18 +21196,18 @@ function createOneApiClient(apiKey, fetchImpl = fetch, baseUrl = ONE_API_BASE_UR
   return {
     async listConnections() {
       const result = await request("/v1/vault/connections");
-      const connections = firstArray(result, ["connections", "items", "data"]).map(normalizeConnection);
+      const connections = firstArray(result, ["connections", "rows", "items", "data"]).map(normalizeConnection);
       return { ...result, connections };
     },
     async listAvailableConnectors() {
       const result = await request("/v1/available-connectors");
-      const connectors = firstArray(result, ["connectors", "items", "data"]);
+      const connectors = firstArray(result, ["connectors", "rows", "items", "data"]);
       return { ...result, connectors };
     },
     async searchActions(platform, query) {
       const url = buildOneActionSearchUrl(platform, query, root);
       const result = await request(url);
-      const actions = firstArray(result, ["actions", "items", "data", "results"]);
+      const actions = firstArray(result, ["actions", "rows", "items", "data", "results"]);
       return { ...result, actions };
     },
     async passthrough(connectionKey, payload) {
@@ -22178,8 +22184,8 @@ async function listPendingGates(userId) {
   return rows.map(rowToGate);
 }
 async function listAllGates(userId) {
-  const { desc: desc52 } = await import("drizzle-orm");
-  const rows = await db.select().from(agentApprovalGates).where(eq21(agentApprovalGates.userId, userId)).orderBy(desc52(agentApprovalGates.createdAt)).limit(50);
+  const { desc: desc53 } = await import("drizzle-orm");
+  const rows = await db.select().from(agentApprovalGates).where(eq21(agentApprovalGates.userId, userId)).orderBy(desc53(agentApprovalGates.createdAt)).limit(50);
   return rows.map(rowToGate);
 }
 var HIGH_RISK_TOOLS, STRICTLY_IRREVERSIBLE_TOOLS, gateEmitter, DEFAULT_TTL_MS, _cleanupTimer;
@@ -24368,8 +24374,8 @@ Assignment rules:
     if (crew.length === 0) return staticManifest;
     const rows = crew.map((a) => {
       const cfg = a.configJson ?? {};
-      const desc52 = typeof cfg.description === "string" ? cfg.description : a.role;
-      return `| ${a.name.padEnd(6)} | ${(a.role ?? "").padEnd(14)} | ${desc52} |`;
+      const desc53 = typeof cfg.description === "string" ? cfg.description : a.role;
+      return `| ${a.name.padEnd(6)} | ${(a.role ?? "").padEnd(14)} | ${desc53} |`;
     });
     return `## Crew Manifest
 You have access to the following specialist agents. When decomposing sub-tasks, include an "assignTo" field naming the best specialist.
@@ -24570,12 +24576,12 @@ ${opts.task}`;
 }
 async function getTournamentRunners(userId, tournamentId) {
   try {
-    const { eq: eq134, and: and103, desc: desc52 } = await import("drizzle-orm");
+    const { eq: eq135, and: and104, desc: desc53 } = await import("drizzle-orm");
     let rows;
     if (tournamentId) {
-      rows = await db.select().from(tournamentRuns).where(and103(eq134(tournamentRuns.id, tournamentId), eq134(tournamentRuns.userId, userId))).limit(1);
+      rows = await db.select().from(tournamentRuns).where(and104(eq135(tournamentRuns.id, tournamentId), eq135(tournamentRuns.userId, userId))).limit(1);
     } else {
-      rows = await db.select().from(tournamentRuns).where(eq134(tournamentRuns.userId, userId)).orderBy(desc52(tournamentRuns.createdAt)).limit(1);
+      rows = await db.select().from(tournamentRuns).where(eq135(tournamentRuns.userId, userId)).orderBy(desc53(tournamentRuns.createdAt)).limit(1);
     }
     if (!rows[0]) return { found: false };
     return { found: true, run: rows[0] };
@@ -32456,11 +32462,11 @@ async function describeFrames(frames) {
         }
       }
       for (let j = 0; j < batch.length; j++) {
-        const desc52 = descriptions[j]?.trim();
-        if (desc52) {
+        const desc53 = descriptions[j]?.trim();
+        if (desc53) {
           observations.push({
             timestamp: formatSec(batch[j].timestampSec),
-            description: desc52
+            description: desc53
           });
         }
       }
@@ -47839,9 +47845,9 @@ async function bootAllBots() {
   try {
     await seedSeenMessageIds();
     const { db: _db } = await Promise.resolve().then(() => (init_db(), db_exports));
-    const { sql: sql48 } = await import("drizzle-orm");
+    const { sql: sql49 } = await import("drizzle-orm");
     const rows = await _db.execute(
-      sql48`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
+      sql49`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
     );
     const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
     let started = 0;
@@ -55744,10 +55750,10 @@ ${skillBlock}`;
     }
     try {
       const { userSkills: userSkillsTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq134, and: and103 } = await import("drizzle-orm");
+      const { eq: eq135, and: and104 } = await import("drizzle-orm");
       const { db: dbImport } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { truncateToBudget: truncateToBudget2, BUDGET_PRESETS: BUDGET_PRESETS2 } = await Promise.resolve().then(() => (init_contextBuilder(), contextBuilder_exports));
-      const activeSkills = await dbImport.select().from(userSkillsTable).where(and103(eq134(userSkillsTable.userId, context.userId), eq134(userSkillsTable.isActive, true)));
+      const activeSkills = await dbImport.select().from(userSkillsTable).where(and104(eq135(userSkillsTable.userId, context.userId), eq135(userSkillsTable.isActive, true)));
       if (activeSkills.length > 0) {
         const skillBlockRaw = activeSkills.map((s) => `### ${s.emoji} ${s.name}
 ${s.instructions}`).join("\n\n");
@@ -61015,8 +61021,8 @@ function registerChannelRoutes(app2) {
         if (Object.keys(updates).length > 0) {
           const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
           const { discordChannelSchedules: discordChannelSchedules2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-          const { eq: eq134, and: and103 } = await import("drizzle-orm");
-          await db2.update(discordChannelSchedules2).set(updates).where(and103(eq134(discordChannelSchedules2.id, id), eq134(discordChannelSchedules2.userId, userId)));
+          const { eq: eq135, and: and104 } = await import("drizzle-orm");
+          await db2.update(discordChannelSchedules2).set(updates).where(and104(eq135(discordChannelSchedules2.id, id), eq135(discordChannelSchedules2.userId, userId)));
         }
       }
       const schedules = await listSchedules(userId);
@@ -63439,8 +63445,8 @@ async function checkDatabaseConnectivity() {
   const id = "database_connectivity";
   const label = "Database Connectivity";
   try {
-    const { sql: sql48 } = await import("drizzle-orm");
-    await db.execute(sql48`SELECT 1`);
+    const { sql: sql49 } = await import("drizzle-orm");
+    await db.execute(sql49`SELECT 1`);
     return pass(id, label, "Database is reachable and responding.");
   } catch (err2) {
     const msg = err2 instanceof Error ? err2.message : String(err2);
@@ -69142,8 +69148,510 @@ var init_planGenerationRoutes = __esm({
   }
 });
 
+// server/inboxActions.ts
+var inboxActions_exports = {};
+__export(inboxActions_exports, {
+  executeInboxAction: () => executeInboxAction
+});
+import { eq as eq103, and as and76 } from "drizzle-orm";
+async function getGoogleToken(userId) {
+  try {
+    const tokens = await getValidGoogleTokens(userId);
+    return tokens?.[0] || null;
+  } catch {
+    return null;
+  }
+}
+async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
+  const [item] = await db.select().from(inboxItems).where(and76(eq103(inboxItems.id, itemId), eq103(inboxItems.userId, userId)));
+  if (!item) {
+    return { success: false, message: "Item not found" };
+  }
+  switch (actionType) {
+    case "dismiss": {
+      if (item.sourceType === "email") {
+        const result = await learnFromDismissal(userId, itemId, telegramChatId);
+        return {
+          success: true,
+          message: result.learned ? `Dismissed. Jarvis learned to suppress ${result.ruleName}` : "Dismissed",
+          learned: result.learned
+        };
+      }
+      const newDismissCount = (item.dismissCount ?? 0) + 1;
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date(), dismissCount: newDismissCount }).where(eq103(inboxItems.id, itemId));
+      return { success: true, message: "Dismissed" };
+    }
+    case "never_again": {
+      const senderDomain = item.sender ? (item.sender.match(/@([a-zA-Z0-9.-]+)/)?.[1] || "").toLowerCase() : "";
+      const pattern = senderDomain ? `Auto: suppress ${senderDomain}` : `Auto: suppress "${item.subject || item.sender}"`;
+      const matchHints = senderDomain ? { domains: [senderDomain] } : { subjectKeywords: [(item.subject || "").toLowerCase()] };
+      const isCalendar = item.sourceType === "calendar" || item.sourceType === "google_calendar" || item.sourceType === "outlook_calendar";
+      await db.insert(inboxRules).values({
+        userId,
+        type: "suppress",
+        scope: isCalendar ? "calendar" : "email",
+        pattern,
+        matchHints,
+        source: "user"
+      });
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+      return { success: true, message: "Rule created \u2014 you'll never see these again" };
+    }
+    case "archive": {
+      if (item.sourceType !== "email") {
+        return { success: false, message: "Archive only works for emails" };
+      }
+      const rawId = parseGmailMessageId(item.sourceId || "") || (item.sourceId || "").replace(/^gmail:/, "");
+      const token = await getGoogleToken(userId);
+      if (!token) {
+        return { success: false, message: "No Google connection found" };
+      }
+      try {
+        await gmailModifyMessage(rawId, [], ["INBOX"], token);
+        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+        return { success: true, message: "Email archived" };
+      } catch (err2) {
+        return { success: false, message: `Archive failed: ${err2.message || "unknown error"}` };
+      }
+    }
+    case "mark_important": {
+      if (item.sourceType !== "email") {
+        return { success: false, message: "Only works for emails" };
+      }
+      const rawId = parseGmailMessageId(item.sourceId || "") || (item.sourceId || "").replace(/^gmail:/, "");
+      const token = await getGoogleToken(userId);
+      if (!token) {
+        return { success: false, message: "No Google connection found" };
+      }
+      try {
+        await gmailModifyMessage(rawId, ["STARRED"], [], token);
+        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+        return { success: true, message: "Email starred" };
+      } catch (err2) {
+        return { success: false, message: `Star failed: ${err2.message || "unknown error"}` };
+      }
+    }
+    case "save_as_task": {
+      const taskTitle = item.subject || item.snippet || "Untitled task";
+      const plans2 = await db.select().from(plans).where(eq103(plans.userId, userId));
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const existingPlan = plans2.find((p) => p.date === today);
+      const planData = existingPlan?.data || { tasks: [] };
+      const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
+      const newTask = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        title: taskTitle,
+        completed: false,
+        duration: 15,
+        priority: "high",
+        source: item.sourceType === "email" ? "email" : "calendar"
+      };
+      tasks.push(newTask);
+      planData.tasks = tasks;
+      await db.insert(plans).values({ userId, date: today, data: planData }).onConflictDoUpdate({
+        target: [plans.userId, plans.date],
+        set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+      return { success: true, message: `Task added: "${taskTitle}"` };
+    }
+    case "add_prep_time": {
+      const isCalendarItem = item.sourceType === "calendar" || item.sourceType === "google_calendar" || item.sourceType === "outlook_calendar";
+      if (!isCalendarItem) {
+        return { success: false, message: "Only works for calendar events" };
+      }
+      const prepTitle = `Prep: ${item.subject || "upcoming meeting"}`;
+      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const plans2 = await db.select().from(plans).where(eq103(plans.userId, userId));
+      const existingPlan = plans2.find((p) => p.date === today);
+      const planData = existingPlan?.data || { tasks: [] };
+      const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
+      const prepTask = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        title: prepTitle,
+        completed: false,
+        duration: 15,
+        priority: "high",
+        source: "calendar"
+      };
+      tasks.push(prepTask);
+      planData.tasks = tasks;
+      await db.insert(plans).values({ userId, date: today, data: planData }).onConflictDoUpdate({
+        target: [plans.userId, plans.date],
+        set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+      return { success: true, message: `Prep task added: "${prepTitle}"` };
+    }
+    case "save_to_focus": {
+      const contextText = `${item.subject || ""} \u2014 ${item.snippet || ""}`.trim();
+      const [existing] = await db.select().from(lifeContext).where(eq103(lifeContext.userId, userId));
+      const data = existing?.data || {};
+      const freeText = (data.freeText || "") + `
+[From ${item.sourceType}] ${contextText}`;
+      data.freeText = freeText.trim();
+      await db.insert(lifeContext).values({ userId, data }).onConflictDoUpdate({
+        target: lifeContext.userId,
+        set: { data, updatedAt: /* @__PURE__ */ new Date() }
+      });
+      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+      return { success: true, message: "Saved to your life context" };
+    }
+    case "navigate_telegram_health": {
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+      return { success: true, message: "Opening Telegram health check" };
+    }
+    case "navigate_self_repair": {
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+      return { success: true, message: "Opening Self-Repair Log" };
+    }
+    case "review_approval": {
+      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq103(inboxItems.id, itemId));
+      return { success: true, message: "Opening approval request" };
+    }
+    default:
+      return { success: false, message: `Unknown action: ${actionType}` };
+  }
+}
+var init_inboxActions = __esm({
+  "server/inboxActions.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_inboxRules();
+    init_gmail();
+    init_userTokenStore();
+    init_gmailSourceId();
+  }
+});
+
+// server/intelligence/actionLog.ts
+var actionLog_exports = {};
+__export(actionLog_exports, {
+  isActionSuppressed: () => isActionSuppressed,
+  logAction: () => logAction,
+  resolveAction: () => resolveAction,
+  resolveActionByMetadataKey: () => resolveActionByMetadataKey,
+  resolveActionByTaskId: () => resolveActionByTaskId,
+  resolvePendingActions: () => resolvePendingActions
+});
+import { eq as eq104, and as and77, gte as gte19, sql as sql38 } from "drizzle-orm";
+function emitSkillSignal(userId, actionType, outcome) {
+  if (outcome !== "acted_on" && outcome !== "completed") return;
+  const patternId = `acted_on:${actionType}`;
+  const example = `User consistently engaged with Jarvis's "${actionType}" actions (outcome: ${outcome})`;
+  recordSkillSignal(userId, patternId, example).catch(() => {
+  });
+}
+async function logAction(userId, actionType, metadata = {}) {
+  try {
+    const rows = await db.insert(jarvisActionLog).values({ userId, actionType, outcome: "pending", metadata }).returning({ id: jarvisActionLog.id });
+    return rows[0]?.id ?? null;
+  } catch (err2) {
+    console.error("[Ego] logAction failed:", err2);
+    return null;
+  }
+}
+async function resolveAction(actionId, outcome) {
+  try {
+    const rows = await db.select({ userId: jarvisActionLog.userId, actionType: jarvisActionLog.actionType }).from(jarvisActionLog).where(eq104(jarvisActionLog.id, actionId)).limit(1);
+    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(eq104(jarvisActionLog.id, actionId));
+    if (rows[0]) {
+      emitSkillSignal(rows[0].userId, rows[0].actionType, outcome);
+    }
+  } catch (err2) {
+    console.error("[Ego] resolveAction failed:", err2);
+  }
+}
+async function resolvePendingActions(userId, actionType, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
+  try {
+    const cutoff = new Date(Date.now() - withinMs);
+    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(
+      and77(
+        eq104(jarvisActionLog.userId, userId),
+        eq104(jarvisActionLog.actionType, actionType),
+        eq104(jarvisActionLog.outcome, "pending"),
+        gte19(jarvisActionLog.createdAt, cutoff)
+      )
+    );
+    emitSkillSignal(userId, actionType, outcome);
+  } catch (err2) {
+    console.error("[Ego] resolvePendingActions failed:", err2);
+  }
+}
+async function resolveActionByMetadataKey(userId, actionType, metadataKey, metadataValue, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
+  try {
+    const cutoff = new Date(Date.now() - withinMs);
+    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(
+      and77(
+        eq104(jarvisActionLog.userId, userId),
+        eq104(jarvisActionLog.actionType, actionType),
+        eq104(jarvisActionLog.outcome, "pending"),
+        gte19(jarvisActionLog.createdAt, cutoff),
+        sql38`${jarvisActionLog.metadata}->>${metadataKey} = ${metadataValue}`
+      )
+    );
+    emitSkillSignal(userId, actionType, outcome);
+  } catch (err2) {
+    console.error("[Ego] resolveActionByMetadataKey failed:", err2);
+  }
+}
+async function resolveActionByTaskId(userId, actionType, taskId, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
+  return resolveActionByMetadataKey(userId, actionType, "taskId", taskId, outcome, withinMs);
+}
+async function isActionSuppressed(userId, actionType) {
+  try {
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq104(userPreferences.userId, userId)).limit(1);
+    if (!rows[0]) return false;
+    const suppressed = rows[0].data?.jarvisSuppressedActions;
+    if (!Array.isArray(suppressed)) return false;
+    return suppressed.includes(actionType);
+  } catch {
+    return false;
+  }
+}
+var init_actionLog = __esm({
+  "server/intelligence/actionLog.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_schema();
+    init_skillWriter();
+  }
+});
+
+// server/routes/inboxRoutes.ts
+import { and as and78, desc as desc39, eq as eq105, sql as sql39 } from "drizzle-orm";
+function registerInboxRoutes(app2) {
+  app2.get("/api/inbox/items", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const statusFilter = typeof req.query.status === "string" ? req.query.status : "pending";
+      const whereClause = statusFilter === "dismissed" ? and78(
+        eq105(inboxItems.userId, userId),
+        eq105(inboxItems.status, statusFilter),
+        sql39`${inboxItems.jarvisReason} IS NOT NULL`
+      ) : and78(eq105(inboxItems.userId, userId), eq105(inboxItems.status, statusFilter));
+      const items = await db.select().from(inboxItems).where(whereClause).orderBy(desc39(inboxItems.surfacedAt)).limit(50);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching inbox items:", error);
+      res.status(500).json({ error: "Failed to fetch inbox items" });
+    }
+  });
+  app2.post("/api/inbox/items/:id/important", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue5(req.params.id);
+      const [item] = await db.select().from(inboxItems).where(and78(eq105(inboxItems.id, id), eq105(inboxItems.userId, userId)));
+      if (!item) return res.status(404).json({ error: "Item not found" });
+      if (item.sourceType === "email" || item.sourceType === "gmail") {
+        const senderPart = item.sender ? `emails from ${item.sender}` : item.subject ? `emails with subject "${item.subject}"` : "this type of email";
+        const memoryContent = `User marked as important: ${senderPart}${item.snippet ? ` - "${item.snippet.slice(0, 120)}"` : ""}. Always surface similar emails.`;
+        await db.insert(userMemories).values({
+          userId,
+          content: memoryContent,
+          category: "Email Pattern",
+          confidence: 95,
+          relevanceScore: 80,
+          sourceType: "email_pattern",
+          sourceRef: item.sourceId || null
+        });
+        const senderDomain = item.sender ? (item.sender.match(/@([a-zA-Z0-9.-]+)/)?.[1] || "").toLowerCase() : "";
+        const senderEmail = item.sender ? item.sender.toLowerCase() : "";
+        const subjectKw = (item.subject || "").toLowerCase().trim().slice(0, 60);
+        const canCreateRule = senderDomain || subjectKw.length > 0;
+        if (canCreateRule) {
+          const matchHints = senderDomain ? { domains: [senderDomain], senders: senderEmail ? [senderEmail] : [] } : { subjectKeywords: [subjectKw] };
+          const pattern = senderDomain ? `Always surface emails from ${senderDomain}` : `Always surface: "${item.subject}"`;
+          const { getUserInboxRules: getUserInboxRules2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
+          const existingRules = await getUserInboxRules2(userId);
+          const alreadyExists = existingRules.some((r) => {
+            if (r.type !== "surface" || r.scope !== "email") return false;
+            const hints = r.matchHints || {};
+            if (senderDomain && hints.domains?.includes(senderDomain)) return true;
+            if (!senderDomain && subjectKw && hints.subjectKeywords?.includes(subjectKw)) return true;
+            return false;
+          });
+          if (!alreadyExists) {
+            await db.insert(inboxRules).values({
+              userId,
+              type: "surface",
+              scope: "email",
+              pattern,
+              matchHints,
+              source: "user"
+            });
+          }
+        }
+      }
+      await db.update(inboxItems).set({ status: "important", actedAt: /* @__PURE__ */ new Date() }).where(and78(eq105(inboxItems.id, id), eq105(inboxItems.userId, userId)));
+      res.json({ success: true, message: "Saved to Jarvis memory" });
+    } catch (error) {
+      console.error("Error marking inbox item as important:", error);
+      res.status(500).json({ error: "Failed to mark as important" });
+    }
+  });
+  app2.post("/api/inbox/items/:id/action", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue5(req.params.id);
+      const { actionType } = req.body;
+      if (!actionType) return res.status(400).json({ error: "actionType is required" });
+      let telegramChatId;
+      try {
+        const [link] = await db.select().from(telegramLinks).where(eq105(telegramLinks.userId, userId));
+        telegramChatId = link?.chatId;
+      } catch {
+      }
+      const { executeInboxAction: executeInboxAction2 } = await Promise.resolve().then(() => (init_inboxActions(), inboxActions_exports));
+      const result = await executeInboxAction2(userId, id, actionType, telegramChatId);
+      if (result.success) {
+        const egoOutcome = actionType === "dismiss" || actionType === "never_again" ? "dismissed" : "acted_on";
+        db.select({ sourceId: inboxItems.sourceId }).from(inboxItems).where(eq105(inboxItems.id, id)).then(([item]) => {
+          if (!item?.sourceId) return;
+          Promise.resolve().then(() => (init_actionLog(), actionLog_exports)).then(({ resolveActionByMetadataKey: resolveActionByMetadataKey2 }) => {
+            resolveActionByMetadataKey2(userId, "proactive_message", "sourceId", item.sourceId, egoOutcome).catch(() => {
+            });
+          }).catch(() => {
+          });
+        }).catch(() => {
+        });
+      }
+      res.json(result);
+    } catch (error) {
+      console.error("Error executing inbox action:", error);
+      res.status(500).json({ error: "Failed to execute action" });
+    }
+  });
+  app2.get("/api/inbox/rules", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rules = await db.select().from(inboxRules).where(eq105(inboxRules.userId, userId));
+      res.json(rules);
+    } catch (error) {
+      console.error("Error fetching inbox rules:", error);
+      res.status(500).json({ error: "Failed to fetch rules" });
+    }
+  });
+  app2.post("/api/inbox/rules", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const { pattern, type, scope } = req.body;
+      if (!pattern || !type || !scope) {
+        return res.status(400).json({ error: "pattern, type, and scope are required" });
+      }
+      const { createRuleFromText: createRuleFromText2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
+      const rule = await createRuleFromText2(userId, pattern, type, scope);
+      res.json(rule);
+    } catch (error) {
+      console.error("Error creating inbox rule:", error);
+      res.status(500).json({ error: "Failed to create rule" });
+    }
+  });
+  app2.delete("/api/inbox/rules/:id", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue5(req.params.id);
+      await db.delete(inboxRules).where(and78(eq105(inboxRules.id, id), eq105(inboxRules.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting inbox rule:", error);
+      res.status(500).json({ error: "Failed to delete rule" });
+    }
+  });
+  app2.patch("/api/inbox/rules/:id", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue5(req.params.id);
+      const { active } = req.body;
+      const isActive = active === true || active === "true" || active === 1;
+      await db.update(inboxRules).set({ active: isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and78(eq105(inboxRules.id, id), eq105(inboxRules.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error updating inbox rule:", error);
+      res.status(500).json({ error: "Failed to update rule" });
+    }
+  });
+  app2.get("/api/email-drafts", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const drafts = await db.select().from(emailDrafts).where(and78(eq105(emailDrafts.userId, userId), eq105(emailDrafts.status, "pending_approval"))).orderBy(desc39(emailDrafts.createdAt));
+      res.json(drafts);
+    } catch (error) {
+      console.error("Error fetching email drafts:", error);
+      res.status(500).json({ error: "Failed to fetch drafts" });
+    }
+  });
+  app2.post("/api/email-drafts/:id/approve", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue5(req.params.id);
+      const { editedSubject, editedBody } = req.body;
+      const [draft] = await db.select().from(emailDrafts).where(and78(eq105(emailDrafts.id, id), eq105(emailDrafts.userId, userId))).limit(1);
+      if (!draft) return res.status(404).json({ error: "Draft not found" });
+      if (draft.status !== "pending_approval") return res.status(400).json({ error: "Draft already actioned" });
+      const subject = editedSubject?.trim() || draft.draftSubject;
+      const body = editedBody?.trim() || draft.draftBody;
+      const recipientMatch = (draft.fromSender || "").match(/<([^>]+)>/);
+      const recipient = recipientMatch ? recipientMatch[1] : (draft.fromSender || "").trim();
+      if (!recipient || !recipient.includes("@")) {
+        return res.status(400).json({ error: "Could not determine recipient address" });
+      }
+      const tokens = await getValidGoogleTokens(userId);
+      const token = tokens?.[0];
+      if (!token) return res.status(400).json({ error: "Gmail not connected" });
+      const { createGmailDraft: createGmailDraft3 } = await Promise.resolve().then(() => (init_gmail(), gmail_exports));
+      const result = await createGmailDraft3(token, recipient, subject, body);
+      await db.update(emailDrafts).set({
+        status: "approved",
+        gmailDraftId: result.draftId,
+        gmailDraftUrl: result.gmailUrl,
+        actedAt: /* @__PURE__ */ new Date(),
+        draftSubject: subject,
+        draftBody: body
+      }).where(eq105(emailDrafts.id, id));
+      res.json({ success: true, gmailDraftUrl: result.gmailUrl });
+    } catch (error) {
+      console.error("Error approving email draft:", error);
+      res.status(500).json({ error: "Failed to approve draft" });
+    }
+  });
+  app2.post("/api/email-drafts/:id/discard", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue5(req.params.id);
+      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and78(eq105(emailDrafts.id, id), eq105(emailDrafts.userId, userId)));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error discarding email draft:", error);
+      res.status(500).json({ error: "Failed to discard draft" });
+    }
+  });
+}
+var paramValue5;
+var init_inboxRoutes = __esm({
+  "server/routes/inboxRoutes.ts"() {
+    "use strict";
+    init_schema();
+    init_db();
+    init_userTokenStore();
+    paramValue5 = (value) => Array.isArray(value) ? value[0] ?? "" : value;
+  }
+});
+
 // server/services/coachRuntimeState.ts
-import { eq as eq103 } from "drizzle-orm";
+import { eq as eq106 } from "drizzle-orm";
 function getDaemonScreenshot(id) {
   return screenshotStore.get(id);
 }
@@ -69152,20 +69660,20 @@ function storeDaemonScreenshot(id, data, ttlMs = 30 * 60 * 1e3) {
 }
 async function savePendingCoachResponse(userId, text2, screenshotUrl) {
   const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq103(userPreferences.userId, userId));
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq106(userPreferences.userId, userId));
   const prefs = rows[0]?.data || {};
   const payload = { id, text: text2, createdAt: Date.now() };
   if (screenshotUrl) payload.screenshotUrl = screenshotUrl;
   await db.insert(userPreferences).values({ userId, data: { ...prefs, pendingResponse: payload } }).onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: payload } } });
 }
 async function consumePendingCoachResponse(userId) {
-  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq103(userPreferences.userId, userId));
+  const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq106(userPreferences.userId, userId));
   const prefs = rows[0]?.data || {};
   const pending = prefs.pendingResponse;
   const oneHour = 60 * 60 * 1e3;
   if (pending && pending.createdAt && Date.now() - pending.createdAt < oneHour && pending.text) {
     const updated = { ...prefs, pendingResponse: null };
-    await db.update(userPreferences).set({ data: updated }).where(eq103(userPreferences.userId, userId));
+    await db.update(userPreferences).set({ data: updated }).where(eq106(userPreferences.userId, userId));
     return { id: pending.id, text: pending.text, screenshotUrl: pending.screenshotUrl || null };
   }
   return { text: null };
@@ -69189,7 +69697,7 @@ var init_coachRuntimeState = __esm({
 // server/routes/coachRuntimeRoutes.ts
 function registerPublicCoachRuntimeRoutes(app2) {
   app2.get("/api/daemon/screenshot/:id", (req, res) => {
-    const entry = getDaemonScreenshot(paramValue5(req.params.id));
+    const entry = getDaemonScreenshot(paramValue6(req.params.id));
     if (!entry || entry.expires < Date.now()) {
       return res.status(404).json({ error: "Screenshot not found or expired" });
     }
@@ -69230,13 +69738,13 @@ function registerAuthenticatedCoachRuntimeRoutes(app2) {
     }
   });
 }
-var paramValue5;
+var paramValue6;
 var init_coachRuntimeRoutes = __esm({
   "server/routes/coachRuntimeRoutes.ts"() {
     "use strict";
     init_runRegistry();
     init_coachRuntimeState();
-    paramValue5 = (value) => Array.isArray(value) ? value[0] ?? "" : value;
+    paramValue6 = (value) => Array.isArray(value) ? value[0] ?? "" : value;
   }
 });
 
@@ -69499,7 +70007,7 @@ var init_goalPlanHandoff = __esm({
 });
 
 // server/channels/slackChannel.ts
-import { eq as eq104, and as and76 } from "drizzle-orm";
+import { eq as eq107, and as and79 } from "drizzle-orm";
 async function postSlackMessage(botToken, channel, text2) {
   try {
     const res = await fetch("https://slack.com/api/chat.postMessage", {
@@ -69538,7 +70046,7 @@ __export(slackWebhook_exports, {
 });
 import express from "express";
 import * as crypto9 from "crypto";
-import { eq as eq105, and as and77 } from "drizzle-orm";
+import { eq as eq108, and as and80 } from "drizzle-orm";
 function verifySlackSignature(req) {
   if (!SLACK_SIGNING_SECRET) {
     console.error("[slack] rejecting request: SLACK_SIGNING_SECRET is not configured");
@@ -69559,7 +70067,7 @@ function verifySlackSignature(req) {
 }
 async function findUserBySlackId(teamId, slackUserId) {
   try {
-    const rows = await db.select().from(channelLinks).where(and77(eq105(channelLinks.channel, "slack"), eq105(channelLinks.address, `${teamId}:${slackUserId}`))).limit(1);
+    const rows = await db.select().from(channelLinks).where(and80(eq108(channelLinks.channel, "slack"), eq108(channelLinks.address, `${teamId}:${slackUserId}`))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err2) {
     console.error("[slack] user lookup failed:", err2);
@@ -69604,7 +70112,7 @@ function registerSlackWebhook(app2) {
       const userId = await findUserBySlackId(teamId, slackUserId);
       const text2 = String(ev.text || "").replace(/<@[A-Z0-9]+>/g, "").trim();
       if (!userId) {
-        const tok = await db.select().from(channelLinks).where(and77(eq105(channelLinks.channel, "slack"))).limit(1);
+        const tok = await db.select().from(channelLinks).where(and80(eq108(channelLinks.channel, "slack"))).limit(1);
         const replyToken = tok[0] ? await getSlackBotToken(tok[0].userId) : null;
         if (replyToken) {
           await postSlackMessage(replyToken, ev.channel, "I don't recognize this Slack account. Open the GamePlan app and reconnect Slack from Profile \u2192 Connected Apps.");
@@ -70277,7 +70785,7 @@ var init_appCoachChatAutonomy = __esm({
 // server/services/aiCoachContextService.ts
 import fs22 from "fs";
 import path29 from "path";
-import { and as and78, desc as desc39, eq as eq106, gte as gte19 } from "drizzle-orm";
+import { and as and81, desc as desc40, eq as eq109, gte as gte20 } from "drizzle-orm";
 function providerLabelForModel(model) {
   const normalized = model.toLowerCase();
   if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
@@ -70365,7 +70873,7 @@ function clearMorningNoteSummary(userId) {
 }
 async function getUserLocalDate(userId) {
   try {
-    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq106(userPreferences.userId, userId)).limit(1);
+    const prefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq109(userPreferences.userId, userId)).limit(1);
     const tz = prefs[0]?.data?.timezone || "America/New_York";
     return (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: tz });
   } catch {
@@ -70380,10 +70888,10 @@ async function getMorningNoteSummary(userId) {
     const thirtyDaysAgo = /* @__PURE__ */ new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const cutoffDate = thirtyDaysAgo.toISOString().slice(0, 10);
-    const notes = await db.select().from(morningVoiceNotes).where(and78(
-      eq106(morningVoiceNotes.userId, userId),
-      gte19(morningVoiceNotes.recordedAt, cutoffDate)
-    )).orderBy(desc39(morningVoiceNotes.recordedAt)).limit(30);
+    const notes = await db.select().from(morningVoiceNotes).where(and81(
+      eq109(morningVoiceNotes.userId, userId),
+      gte20(morningVoiceNotes.recordedAt, cutoffDate)
+    )).orderBy(desc40(morningVoiceNotes.recordedAt)).limit(30);
     if (notes.length === 0) return "";
     const moodCounts = {};
     const allThemes = {};
@@ -70440,10 +70948,6 @@ function buildCoachSystemPrompt(goals2, stats2, history, calendarEvents = [], li
 ` : "") + (lifeContext2.freeText ? `- Additional context: ${lifeContext2.freeText}` : "") : "";
   const documentsSection = documentsContext || "";
   const websiteSection = websiteContext || "";
-  const commitmentsSection = commitmentsList && commitmentsList.length > 0 ? `
-## Open Commitments (user said they would do these)
-` + commitmentsList.filter((c) => c.status === "pending").slice(0, 10).map((c) => `- "${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join("\n") + `
-If relevant, ask about progress on these commitments. Hold the user accountable to what they promised.` : "";
   const gmailSection = gmailItems && gmailItems.length > 0 ? `
 ## Recent Emails (last 7 days)
 ` + gmailItems.slice(0, 40).map((i) => {
@@ -70538,7 +71042,7 @@ ${calendarText}${gmailSection}${slackSection}${telegramSection}
 ## Recent Activity (last 7 days)
 - Completed: ${recentCompleted}
 - Left undone: ${recentSkipped}
-${commitmentsSection}${morningNoteSummary || ""}
+${morningNoteSummary || ""}
 ${PRIME.coachingRules}
 
 ${PRIME.emailFormat}
@@ -70654,6 +71158,14 @@ async function checkCodexOAuth() {
 async function checkOpenAI() {
   const providerName = "OpenAIProvider";
   const t0 = Date.now();
+  if (isDirectOpenAIDisabled()) {
+    return {
+      provider: providerName,
+      ok: true,
+      durationMs: Date.now() - t0,
+      result: { textContent: "disabled", finishReason: "config_check" }
+    };
+  }
   try {
     const provider = new OpenAIProvider();
     provider.client = {
@@ -70751,7 +71263,7 @@ __export(ego_exports, {
   runEgoForAllUsers: () => runEgoForAllUsers,
   runEgoForUser: () => runEgoForUser
 });
-import { eq as eq107, and as and79, gte as gte20, lt as lt8 } from "drizzle-orm";
+import { eq as eq110, and as and82, gte as gte21, lt as lt8 } from "drizzle-orm";
 function getISOWeekMonday(date2 = /* @__PURE__ */ new Date()) {
   const d = new Date(Date.UTC(date2.getUTCFullYear(), date2.getUTCMonth(), date2.getUTCDate()));
   const dayOfWeek = (d.getUTCDay() + 6) % 7;
@@ -70763,16 +71275,16 @@ async function analyseEgo(userId, weekOf) {
   const weekEnd = new Date(weekStart.getTime() + ONE_WEEK_MS);
   const prevWeekStart = new Date(weekStart.getTime() - ONE_WEEK_MS);
   const actions = await db.select().from(jarvisActionLog).where(
-    and79(
-      eq107(jarvisActionLog.userId, userId),
-      gte20(jarvisActionLog.createdAt, weekStart),
+    and82(
+      eq110(jarvisActionLog.userId, userId),
+      gte21(jarvisActionLog.createdAt, weekStart),
       lt8(jarvisActionLog.createdAt, weekEnd)
     )
   );
   const allTwoWeekActions = await db.select().from(jarvisActionLog).where(
-    and79(
-      eq107(jarvisActionLog.userId, userId),
-      gte20(jarvisActionLog.createdAt, prevWeekStart),
+    and82(
+      eq110(jarvisActionLog.userId, userId),
+      gte21(jarvisActionLog.createdAt, prevWeekStart),
       lt8(jarvisActionLog.createdAt, weekEnd)
     )
   );
@@ -70803,16 +71315,16 @@ async function analyseEgo(userId, weekOf) {
   const mostEffective = Object.entries(breakdown).filter(([, v]) => v.total >= 2 && v.actedOn / v.total >= 0.6).sort(([, a], [, b]) => b.actedOn / b.total - a.actedOn / a.total).slice(0, 3).map(([k]) => k);
   const leastEffective = Object.entries(twoWeekBreakdown).filter(([, v]) => v.total >= 3 && v.actedOn / v.total < SELF_CORRECTION_THRESHOLD).sort(([, a], [, b]) => a.actedOn / a.total - b.actedOn / b.total).slice(0, 3).map(([k]) => k);
   const recentInteractions = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
-    and79(
-      eq107(interactionLog.userId, userId),
-      gte20(interactionLog.createdAt, weekStart),
+    and82(
+      eq110(interactionLog.userId, userId),
+      gte21(interactionLog.createdAt, weekStart),
       lt8(interactionLog.createdAt, weekEnd)
     )
   );
   const prevWeekInteractions = await db.select({ createdAt: interactionLog.createdAt }).from(interactionLog).where(
-    and79(
-      eq107(interactionLog.userId, userId),
-      gte20(interactionLog.createdAt, prevWeekStart),
+    and82(
+      eq110(interactionLog.userId, userId),
+      gte21(interactionLog.createdAt, prevWeekStart),
       lt8(interactionLog.createdAt, weekStart)
     )
   );
@@ -70879,7 +71391,7 @@ async function analyseEgo(userId, weekOf) {
 async function applySelfCorrections(userId, leastEffective, actionBreakdown) {
   if (leastEffective.length === 0 && Object.keys(actionBreakdown).length === 0) return;
   try {
-    const prefRows = await db.select().from(userPreferences).where(eq107(userPreferences.userId, userId)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq110(userPreferences.userId, userId)).limit(1);
     const prefData = prefRows[0]?.data || {};
     let suppressedActions = prefData.jarvisSuppressedActions || [];
     for (const actionType of leastEffective) {
@@ -71014,7 +71526,7 @@ async function recordSkillSignals(userId, analysis) {
 }
 async function runEgoForUser(userId, weekOf) {
   try {
-    const existing = await db.select({ id: egoWeeklyReports.id, deliveredAt: egoWeeklyReports.deliveredAt, reportText: egoWeeklyReports.reportText }).from(egoWeeklyReports).where(and79(eq107(egoWeeklyReports.userId, userId), eq107(egoWeeklyReports.weekOf, weekOf))).limit(1);
+    const existing = await db.select({ id: egoWeeklyReports.id, deliveredAt: egoWeeklyReports.deliveredAt, reportText: egoWeeklyReports.reportText }).from(egoWeeklyReports).where(and82(eq110(egoWeeklyReports.userId, userId), eq110(egoWeeklyReports.weekOf, weekOf))).limit(1);
     if (existing.length > 0) {
       if (existing[0].deliveredAt) return false;
       const storedText = existing[0].reportText;
@@ -71025,7 +71537,7 @@ ${storedText}`;
         const retryResults = await notifyUser(userId, "ego_report", msg2).catch(() => []);
         const anyDelivered = retryResults.some((r) => r.result.ok);
         if (anyDelivered) {
-          await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(eq107(egoWeeklyReports.id, existing[0].id));
+          await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(eq110(egoWeeklyReports.id, existing[0].id));
           logInteraction(userId, "notification", "outbound", msg2, "ego_report").catch(() => {
           });
           console.log(`[Ego] retry delivery succeeded for user ${userId} (${weekOf})`);
@@ -71067,7 +71579,7 @@ ${reportText}`;
     const deliveryResults = await notifyUser(userId, "ego_report", msg);
     delivered = deliveryResults.some((r) => r.result.ok);
     if (delivered) {
-      await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and79(eq107(egoWeeklyReports.userId, userId), eq107(egoWeeklyReports.weekOf, weekOf)));
+      await db.update(egoWeeklyReports).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and82(eq110(egoWeeklyReports.userId, userId), eq110(egoWeeklyReports.weekOf, weekOf)));
       logInteraction(userId, "notification", "outbound", msg, "ego_report").catch(() => {
       });
       console.log(`[Ego] report delivered for user ${userId} (${weekOf})`);
@@ -71108,278 +71620,6 @@ var init_ego = __esm({
     SELF_CORRECTION_THRESHOLD = 0.25;
     TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1e3;
     ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1e3;
-  }
-});
-
-// server/intelligence/actionLog.ts
-var actionLog_exports = {};
-__export(actionLog_exports, {
-  isActionSuppressed: () => isActionSuppressed,
-  logAction: () => logAction,
-  resolveAction: () => resolveAction,
-  resolveActionByMetadataKey: () => resolveActionByMetadataKey,
-  resolveActionByTaskId: () => resolveActionByTaskId,
-  resolvePendingActions: () => resolvePendingActions
-});
-import { eq as eq108, and as and80, gte as gte21, sql as sql39 } from "drizzle-orm";
-function emitSkillSignal(userId, actionType, outcome) {
-  if (outcome !== "acted_on" && outcome !== "completed") return;
-  const patternId = `acted_on:${actionType}`;
-  const example = `User consistently engaged with Jarvis's "${actionType}" actions (outcome: ${outcome})`;
-  recordSkillSignal(userId, patternId, example).catch(() => {
-  });
-}
-async function logAction(userId, actionType, metadata = {}) {
-  try {
-    const rows = await db.insert(jarvisActionLog).values({ userId, actionType, outcome: "pending", metadata }).returning({ id: jarvisActionLog.id });
-    return rows[0]?.id ?? null;
-  } catch (err2) {
-    console.error("[Ego] logAction failed:", err2);
-    return null;
-  }
-}
-async function resolveAction(actionId, outcome) {
-  try {
-    const rows = await db.select({ userId: jarvisActionLog.userId, actionType: jarvisActionLog.actionType }).from(jarvisActionLog).where(eq108(jarvisActionLog.id, actionId)).limit(1);
-    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(eq108(jarvisActionLog.id, actionId));
-    if (rows[0]) {
-      emitSkillSignal(rows[0].userId, rows[0].actionType, outcome);
-    }
-  } catch (err2) {
-    console.error("[Ego] resolveAction failed:", err2);
-  }
-}
-async function resolvePendingActions(userId, actionType, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
-  try {
-    const cutoff = new Date(Date.now() - withinMs);
-    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(
-      and80(
-        eq108(jarvisActionLog.userId, userId),
-        eq108(jarvisActionLog.actionType, actionType),
-        eq108(jarvisActionLog.outcome, "pending"),
-        gte21(jarvisActionLog.createdAt, cutoff)
-      )
-    );
-    emitSkillSignal(userId, actionType, outcome);
-  } catch (err2) {
-    console.error("[Ego] resolvePendingActions failed:", err2);
-  }
-}
-async function resolveActionByMetadataKey(userId, actionType, metadataKey, metadataValue, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
-  try {
-    const cutoff = new Date(Date.now() - withinMs);
-    await db.update(jarvisActionLog).set({ outcome, updatedAt: /* @__PURE__ */ new Date() }).where(
-      and80(
-        eq108(jarvisActionLog.userId, userId),
-        eq108(jarvisActionLog.actionType, actionType),
-        eq108(jarvisActionLog.outcome, "pending"),
-        gte21(jarvisActionLog.createdAt, cutoff),
-        sql39`${jarvisActionLog.metadata}->>${metadataKey} = ${metadataValue}`
-      )
-    );
-    emitSkillSignal(userId, actionType, outcome);
-  } catch (err2) {
-    console.error("[Ego] resolveActionByMetadataKey failed:", err2);
-  }
-}
-async function resolveActionByTaskId(userId, actionType, taskId, outcome, withinMs = 7 * 24 * 60 * 60 * 1e3) {
-  return resolveActionByMetadataKey(userId, actionType, "taskId", taskId, outcome, withinMs);
-}
-async function isActionSuppressed(userId, actionType) {
-  try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq108(userPreferences.userId, userId)).limit(1);
-    if (!rows[0]) return false;
-    const suppressed = rows[0].data?.jarvisSuppressedActions;
-    if (!Array.isArray(suppressed)) return false;
-    return suppressed.includes(actionType);
-  } catch {
-    return false;
-  }
-}
-var init_actionLog = __esm({
-  "server/intelligence/actionLog.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_schema();
-    init_skillWriter();
-  }
-});
-
-// server/inboxActions.ts
-var inboxActions_exports = {};
-__export(inboxActions_exports, {
-  executeInboxAction: () => executeInboxAction
-});
-import { eq as eq109, and as and81 } from "drizzle-orm";
-async function getGoogleToken(userId) {
-  try {
-    const tokens = await getValidGoogleTokens(userId);
-    return tokens?.[0] || null;
-  } catch {
-    return null;
-  }
-}
-async function executeInboxAction(userId, itemId, actionType, telegramChatId) {
-  const [item] = await db.select().from(inboxItems).where(and81(eq109(inboxItems.id, itemId), eq109(inboxItems.userId, userId)));
-  if (!item) {
-    return { success: false, message: "Item not found" };
-  }
-  switch (actionType) {
-    case "dismiss": {
-      if (item.sourceType === "email") {
-        const result = await learnFromDismissal(userId, itemId, telegramChatId);
-        return {
-          success: true,
-          message: result.learned ? `Dismissed. Jarvis learned to suppress ${result.ruleName}` : "Dismissed",
-          learned: result.learned
-        };
-      }
-      const newDismissCount = (item.dismissCount ?? 0) + 1;
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date(), dismissCount: newDismissCount }).where(eq109(inboxItems.id, itemId));
-      return { success: true, message: "Dismissed" };
-    }
-    case "never_again": {
-      const senderDomain = item.sender ? (item.sender.match(/@([a-zA-Z0-9.-]+)/)?.[1] || "").toLowerCase() : "";
-      const pattern = senderDomain ? `Auto: suppress ${senderDomain}` : `Auto: suppress "${item.subject || item.sender}"`;
-      const matchHints = senderDomain ? { domains: [senderDomain] } : { subjectKeywords: [(item.subject || "").toLowerCase()] };
-      const isCalendar = item.sourceType === "calendar" || item.sourceType === "google_calendar" || item.sourceType === "outlook_calendar";
-      await db.insert(inboxRules).values({
-        userId,
-        type: "suppress",
-        scope: isCalendar ? "calendar" : "email",
-        pattern,
-        matchHints,
-        source: "user"
-      });
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-      return { success: true, message: "Rule created \u2014 you'll never see these again" };
-    }
-    case "archive": {
-      if (item.sourceType !== "email") {
-        return { success: false, message: "Archive only works for emails" };
-      }
-      const rawId = parseGmailMessageId(item.sourceId || "") || (item.sourceId || "").replace(/^gmail:/, "");
-      const token = await getGoogleToken(userId);
-      if (!token) {
-        return { success: false, message: "No Google connection found" };
-      }
-      try {
-        await gmailModifyMessage(rawId, [], ["INBOX"], token);
-        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-        return { success: true, message: "Email archived" };
-      } catch (err2) {
-        return { success: false, message: `Archive failed: ${err2.message || "unknown error"}` };
-      }
-    }
-    case "mark_important": {
-      if (item.sourceType !== "email") {
-        return { success: false, message: "Only works for emails" };
-      }
-      const rawId = parseGmailMessageId(item.sourceId || "") || (item.sourceId || "").replace(/^gmail:/, "");
-      const token = await getGoogleToken(userId);
-      if (!token) {
-        return { success: false, message: "No Google connection found" };
-      }
-      try {
-        await gmailModifyMessage(rawId, ["STARRED"], [], token);
-        await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-        return { success: true, message: "Email starred" };
-      } catch (err2) {
-        return { success: false, message: `Star failed: ${err2.message || "unknown error"}` };
-      }
-    }
-    case "save_as_task": {
-      const taskTitle = item.subject || item.snippet || "Untitled task";
-      const plans2 = await db.select().from(plans).where(eq109(plans.userId, userId));
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const existingPlan = plans2.find((p) => p.date === today);
-      const planData = existingPlan?.data || { tasks: [] };
-      const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
-      const newTask = {
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        title: taskTitle,
-        completed: false,
-        duration: 15,
-        priority: "high",
-        source: item.sourceType === "email" ? "email" : "calendar"
-      };
-      tasks.push(newTask);
-      planData.tasks = tasks;
-      await db.insert(plans).values({ userId, date: today, data: planData }).onConflictDoUpdate({
-        target: [plans.userId, plans.date],
-        set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
-      });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-      return { success: true, message: `Task added: "${taskTitle}"` };
-    }
-    case "add_prep_time": {
-      const isCalendarItem = item.sourceType === "calendar" || item.sourceType === "google_calendar" || item.sourceType === "outlook_calendar";
-      if (!isCalendarItem) {
-        return { success: false, message: "Only works for calendar events" };
-      }
-      const prepTitle = `Prep: ${item.subject || "upcoming meeting"}`;
-      const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const plans2 = await db.select().from(plans).where(eq109(plans.userId, userId));
-      const existingPlan = plans2.find((p) => p.date === today);
-      const planData = existingPlan?.data || { tasks: [] };
-      const tasks = Array.isArray(planData.tasks) ? planData.tasks : [];
-      const prepTask = {
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        title: prepTitle,
-        completed: false,
-        duration: 15,
-        priority: "high",
-        source: "calendar"
-      };
-      tasks.push(prepTask);
-      planData.tasks = tasks;
-      await db.insert(plans).values({ userId, date: today, data: planData }).onConflictDoUpdate({
-        target: [plans.userId, plans.date],
-        set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
-      });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-      return { success: true, message: `Prep task added: "${prepTitle}"` };
-    }
-    case "save_to_focus": {
-      const contextText = `${item.subject || ""} \u2014 ${item.snippet || ""}`.trim();
-      const [existing] = await db.select().from(lifeContext).where(eq109(lifeContext.userId, userId));
-      const data = existing?.data || {};
-      const freeText = (data.freeText || "") + `
-[From ${item.sourceType}] ${contextText}`;
-      data.freeText = freeText.trim();
-      await db.insert(lifeContext).values({ userId, data }).onConflictDoUpdate({
-        target: lifeContext.userId,
-        set: { data, updatedAt: /* @__PURE__ */ new Date() }
-      });
-      await db.update(inboxItems).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-      return { success: true, message: "Saved to your life context" };
-    }
-    case "navigate_telegram_health": {
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-      return { success: true, message: "Opening Telegram health check" };
-    }
-    case "navigate_self_repair": {
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-      return { success: true, message: "Opening Self-Repair Log" };
-    }
-    case "review_approval": {
-      await db.update(inboxItems).set({ status: "dismissed", actedAt: /* @__PURE__ */ new Date() }).where(eq109(inboxItems.id, itemId));
-      return { success: true, message: "Opening approval request" };
-    }
-    default:
-      return { success: false, message: `Unknown action: ${actionType}` };
-  }
-}
-var init_inboxActions = __esm({
-  "server/inboxActions.ts"() {
-    "use strict";
-    init_db();
-    init_schema();
-    init_inboxRules();
-    init_gmail();
-    init_userTokenStore();
-    init_gmailSourceId();
   }
 });
 
@@ -71591,9 +71831,9 @@ var init_reviewLoop = __esm({
 });
 
 // server/agent/deliverableReviewActions.ts
-import { and as and82, eq as eq110 } from "drizzle-orm";
+import { and as and83, eq as eq111 } from "drizzle-orm";
 async function loadDeliverableForReviewAction(db2, userId, deliverableId, action) {
-  const [deliverable] = await db2.select().from(deliverables).where(and82(eq110(deliverables.id, deliverableId), eq110(deliverables.userId, userId))).limit(1);
+  const [deliverable] = await db2.select().from(deliverables).where(and83(eq111(deliverables.id, deliverableId), eq111(deliverables.userId, userId))).limit(1);
   if (!deliverable) {
     return { ok: false, status: 404, error: "Deliverable not found" };
   }
@@ -71620,7 +71860,7 @@ var deliverableReviewHttpRoutes_exports = {};
 __export(deliverableReviewHttpRoutes_exports, {
   registerDeliverableReviewRoutes: () => registerDeliverableReviewRoutes
 });
-import { and as and83, eq as eq111 } from "drizzle-orm";
+import { and as and84, eq as eq112 } from "drizzle-orm";
 async function defaultApproveGate(gateId, userId) {
   const { approveGate: approveGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
   await approveGate2(gateId, userId);
@@ -71652,7 +71892,7 @@ function registerDeliverableReviewRoutes(app2, deps) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = paramValue6(req.params.id);
+      const id = paramValue7(req.params.id);
       const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "approve");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
@@ -71665,7 +71905,7 @@ function registerDeliverableReviewRoutes(app2, deps) {
           console.error("[deliverables] top-level approval continuation failed:", err2);
           return { continued: false, reason: "Continuation failed after approval." };
         }) : { continued: false, reason: "Approval gate not found." };
-        await db2.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq111(deliverables.id, id));
+        await db2.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq112(deliverables.id, id));
         return res.json({ ok: true, continuation });
       }
       if (d.type === "email_draft") {
@@ -71692,9 +71932,9 @@ function registerDeliverableReviewRoutes(app2, deps) {
           summary: d.summary || null
         });
       }
-      await db2.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq111(deliverables.id, id));
+      await db2.update(deliverables).set({ status: "approved", actedAt: /* @__PURE__ */ new Date() }).where(eq112(deliverables.id, id));
       if (d.jobId) {
-        await db2.update(agentJobs).set({ status: "delivered" }).where(and83(eq111(agentJobs.id, d.jobId), eq111(agentJobs.status, "complete")));
+        await db2.update(agentJobs).set({ status: "delivered" }).where(and84(eq112(agentJobs.id, d.jobId), eq112(agentJobs.status, "complete")));
       }
       res.json({ ok: true, ...resultExtra });
     } catch (err2) {
@@ -71706,7 +71946,7 @@ function registerDeliverableReviewRoutes(app2, deps) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = paramValue6(req.params.id);
+      const id = paramValue7(req.params.id);
       const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "reject");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
@@ -71714,7 +71954,7 @@ function registerDeliverableReviewRoutes(app2, deps) {
         const meta = d.meta || {};
         if (meta.gateId) await rejectGate2(meta.gateId, userId);
       }
-      await db2.update(deliverables).set({ status: "rejected", actedAt: /* @__PURE__ */ new Date() }).where(eq111(deliverables.id, id));
+      await db2.update(deliverables).set({ status: "rejected", actedAt: /* @__PURE__ */ new Date() }).where(eq112(deliverables.id, id));
       res.json({ ok: true });
     } catch (err2) {
       console.error("Error rejecting deliverable:", err2);
@@ -71725,7 +71965,7 @@ function registerDeliverableReviewRoutes(app2, deps) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = paramValue6(req.params.id);
+      const id = paramValue7(req.params.id);
       const { title, summary, body, meta } = req.body;
       const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "edit");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
@@ -71740,7 +71980,7 @@ function registerDeliverableReviewRoutes(app2, deps) {
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No editable fields provided" });
       }
-      const [updated] = await db2.update(deliverables).set(patch).where(eq111(deliverables.id, id)).returning();
+      const [updated] = await db2.update(deliverables).set(patch).where(eq112(deliverables.id, id)).returning();
       res.json({ ok: true, deliverable: updated });
     } catch (err2) {
       console.error("Error editing deliverable:", err2);
@@ -71751,13 +71991,13 @@ function registerDeliverableReviewRoutes(app2, deps) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = paramValue6(req.params.id);
+      const id = paramValue7(req.params.id);
       const instructions = typeof req.body?.instructions === "string" ? req.body.instructions.trim() : "";
       if (!instructions) return res.status(400).json({ error: "Revision instructions are required" });
       const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "revise");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
-      const [job] = d.jobId ? await db2.select().from(agentJobs).where(and83(eq111(agentJobs.id, d.jobId), eq111(agentJobs.userId, userId))).limit(1) : [];
+      const [job] = d.jobId ? await db2.select().from(agentJobs).where(and84(eq112(agentJobs.id, d.jobId), eq112(agentJobs.userId, userId))).limit(1) : [];
       const baseInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input) ? { ...job.input } : {};
       delete baseInput.retryCount;
       const revisionPrompt = [
@@ -71789,9 +72029,9 @@ function registerDeliverableReviewRoutes(app2, deps) {
         status: "discarded",
         actedAt: /* @__PURE__ */ new Date(),
         triageNote: `Revision requested: ${instructions.slice(0, 500)}`
-      }).where(eq111(deliverables.id, id));
+      }).where(eq112(deliverables.id, id));
       if (d.jobId) {
-        await db2.update(agentJobs).set({ status: "delivered" }).where(and83(eq111(agentJobs.id, d.jobId), eq111(agentJobs.status, "complete")));
+        await db2.update(agentJobs).set({ status: "delivered" }).where(and84(eq112(agentJobs.id, d.jobId), eq112(agentJobs.status, "complete")));
       }
       res.json({ ok: true, jobId: revision.id, isDuplicate: revision.isDuplicate, status: "queued" });
     } catch (err2) {
@@ -71803,13 +72043,13 @@ function registerDeliverableReviewRoutes(app2, deps) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = paramValue6(req.params.id);
+      const id = paramValue7(req.params.id);
       const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "discard");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
-      await db2.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and83(eq111(deliverables.id, id), eq111(deliverables.userId, userId)));
+      await db2.update(deliverables).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and84(eq112(deliverables.id, id), eq112(deliverables.userId, userId)));
       if (d?.jobId) {
-        await db2.update(agentJobs).set({ status: "delivered" }).where(and83(eq111(agentJobs.id, d.jobId), eq111(agentJobs.status, "complete")));
+        await db2.update(agentJobs).set({ status: "delivered" }).where(and84(eq112(agentJobs.id, d.jobId), eq112(agentJobs.status, "complete")));
       }
       res.json({ ok: true });
     } catch (err2) {
@@ -71821,7 +72061,7 @@ function registerDeliverableReviewRoutes(app2, deps) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = paramValue6(req.params.id);
+      const id = paramValue7(req.params.id);
       const reviewAction = await loadDeliverableForReviewAction(db2, userId, id, "save_to_drive");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
@@ -71841,7 +72081,7 @@ function registerDeliverableReviewRoutes(app2, deps) {
         content,
         { folderId: drive.folderId || void 0 }
       );
-      const [updated] = await db2.update(deliverables).set({ driveLink: created.webViewLink }).where(eq111(deliverables.id, id)).returning();
+      const [updated] = await db2.update(deliverables).set({ driveLink: created.webViewLink }).where(eq112(deliverables.id, id)).returning();
       res.json({ ok: true, driveLink: created.webViewLink, deliverable: updated });
     } catch (err2) {
       console.error("Error saving deliverable to Drive:", err2);
@@ -71849,14 +72089,14 @@ function registerDeliverableReviewRoutes(app2, deps) {
     }
   });
 }
-var paramValue6;
+var paramValue7;
 var init_deliverableReviewHttpRoutes = __esm({
   "server/agent/deliverableReviewHttpRoutes.ts"() {
     "use strict";
     init_schema();
     init_schema();
     init_deliverableReviewActions();
-    paramValue6 = (value) => Array.isArray(value) ? value[0] ?? "" : value;
+    paramValue7 = (value) => Array.isArray(value) ? value[0] ?? "" : value;
   }
 });
 
@@ -71870,7 +72110,7 @@ __export(gut_exports, {
   respondToGutSignal: () => respondToGutSignal,
   runGutScanForUser: () => runGutScanForUser
 });
-import { eq as eq112, and as and84, desc as desc41, gte as gte22, sql as sql40, inArray as inArray8 } from "drizzle-orm";
+import { eq as eq113, and as and85, desc as desc42, gte as gte22, sql as sql41, inArray as inArray8 } from "drizzle-orm";
 function getCachedBaseline(userId) {
   const entry = baselineCache.get(userId);
   if (!entry || Date.now() > entry.expiresAt) return null;
@@ -71897,9 +72137,9 @@ async function computeBaseline2(userId, token) {
   if (cached) return cached;
   const baseline = { ...DEFAULT_BASELINE };
   try {
-    const past = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(and84(
-      eq112(userMemories.userId, userId),
-      eq112(userMemories.category, "work_patterns")
+    const past = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(and85(
+      eq113(userMemories.userId, userId),
+      eq113(userMemories.category, "work_patterns")
     )).limit(30);
     const workText = past.map((m) => m.content).join(" ").toLowerCase();
     if (/deep work|focus block|protected time/.test(workText)) {
@@ -71911,7 +72151,7 @@ async function computeBaseline2(userId, token) {
   } catch {
   }
   try {
-    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq112(plans.userId, userId)).orderBy(desc41(plans.date)).limit(14);
+    const historicPlans = await db.select({ data: plans.data }).from(plans).where(eq113(plans.userId, userId)).orderBy(desc42(plans.date)).limit(14);
     const totalTasks = historicPlans.reduce((sum, p) => {
       const tasks = p.data?.tasks || [];
       return sum + tasks.filter((t) => t.completed).length;
@@ -71934,13 +72174,13 @@ async function computeBaseline2(userId, token) {
   } catch {
   }
   try {
-    const confirmed = await db.select({ count: sql40`count(*)` }).from(gutSignals).where(and84(
-      eq112(gutSignals.userId, userId),
-      eq112(gutSignals.userResponse, "confirmed")
+    const confirmed = await db.select({ count: sql41`count(*)` }).from(gutSignals).where(and85(
+      eq113(gutSignals.userId, userId),
+      eq113(gutSignals.userResponse, "confirmed")
     ));
-    const dismissed = await db.select({ count: sql40`count(*)` }).from(gutSignals).where(and84(
-      eq112(gutSignals.userId, userId),
-      eq112(gutSignals.userResponse, "dismissed")
+    const dismissed = await db.select({ count: sql41`count(*)` }).from(gutSignals).where(and85(
+      eq113(gutSignals.userId, userId),
+      eq113(gutSignals.userResponse, "dismissed")
     ));
     const c = Number(confirmed[0]?.count ?? 0);
     const d = Number(dismissed[0]?.count ?? 0);
@@ -71953,7 +72193,7 @@ async function computeBaseline2(userId, token) {
   }
   let usedStoredCalibration = false;
   try {
-    const storedCalibration = await db.select().from(gutCalibration).where(eq112(gutCalibration.userId, userId));
+    const storedCalibration = await db.select().from(gutCalibration).where(eq113(gutCalibration.userId, userId));
     if (storedCalibration.length > 0) {
       for (const row of storedCalibration) {
         const st = row.signalType;
@@ -71974,15 +72214,15 @@ async function computeBaseline2(userId, token) {
         "relationship_anomaly"
       ];
       for (const st of allSignalTypes) {
-        const [tc] = await db.select({ count: sql40`count(*)` }).from(gutSignals).where(and84(
-          eq112(gutSignals.userId, userId),
-          eq112(gutSignals.signalType, st),
-          eq112(gutSignals.userResponse, "confirmed")
+        const [tc] = await db.select({ count: sql41`count(*)` }).from(gutSignals).where(and85(
+          eq113(gutSignals.userId, userId),
+          eq113(gutSignals.signalType, st),
+          eq113(gutSignals.userResponse, "confirmed")
         ));
-        const [td] = await db.select({ count: sql40`count(*)` }).from(gutSignals).where(and84(
-          eq112(gutSignals.userId, userId),
-          eq112(gutSignals.signalType, st),
-          eq112(gutSignals.userResponse, "dismissed")
+        const [td] = await db.select({ count: sql41`count(*)` }).from(gutSignals).where(and85(
+          eq113(gutSignals.userId, userId),
+          eq113(gutSignals.signalType, st),
+          eq113(gutSignals.userResponse, "dismissed")
         ));
         const tc_ = Number(tc?.count ?? 0);
         const td_ = Number(td?.count ?? 0);
@@ -72001,9 +72241,9 @@ async function detectCalendarAnomalies(userId, events, baseline, userEmail) {
   const signals = [];
   const now = /* @__PURE__ */ new Date();
   const sevenDaysMs = 7 * 24 * 60 * 60 * 1e3;
-  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and84(
-    eq112(gutSignals.userId, userId),
-    eq112(gutSignals.signalType, "calendar_anomaly"),
+  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and85(
+    eq113(gutSignals.userId, userId),
+    eq113(gutSignals.signalType, "calendar_anomaly"),
     gte22(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
   )).limit(100);
   const flaggedRefs = new Set(existing.map((r) => r.itemRef).filter(Boolean));
@@ -72059,9 +72299,9 @@ async function detectCalendarAnomalies(userId, events, baseline, userEmail) {
 }
 async function detectDeepWorkErosion(userId, events, baseline) {
   try {
-    const already = await db.select({ id: gutSignals.id }).from(gutSignals).where(and84(
-      eq112(gutSignals.userId, userId),
-      eq112(gutSignals.signalType, "deep_work_erosion"),
+    const already = await db.select({ id: gutSignals.id }).from(gutSignals).where(and85(
+      eq113(gutSignals.userId, userId),
+      eq113(gutSignals.signalType, "deep_work_erosion"),
       gte22(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
     )).limit(1);
     if (already.length > 0) return null;
@@ -72103,15 +72343,15 @@ async function detectDeepWorkErosion(userId, events, baseline) {
   }
   return null;
 }
-async function detectEmailPatterns(userId, baseline, inboxItems3) {
+async function detectEmailPatterns(userId, baseline, inboxItems2) {
   const signals = [];
-  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and84(
-    eq112(gutSignals.userId, userId),
-    eq112(gutSignals.signalType, "email_pattern"),
+  const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and85(
+    eq113(gutSignals.userId, userId),
+    eq113(gutSignals.signalType, "email_pattern"),
     gte22(gutSignals.createdAt, new Date(Date.now() - 48 * 60 * 60 * 1e3))
   )).limit(100);
   const flagged = new Set(existing.map((r) => r.itemRef).filter(Boolean));
-  for (const item of inboxItems3.slice(0, 20)) {
+  for (const item of inboxItems2.slice(0, 20)) {
     if (flagged.has(item.id)) continue;
     const text2 = `${item.subject || ""} ${item.snippet || ""}`;
     const hasUrgency = URGENCY_SIGNALS.test(text2);
@@ -72146,15 +72386,15 @@ function getSenderName(sender) {
 async function detectProjectDrift(userId, baseline) {
   const signals = [];
   try {
-    const existing = await db.select({ id: gutSignals.id }).from(gutSignals).where(and84(
-      eq112(gutSignals.userId, userId),
-      eq112(gutSignals.signalType, "project_drift"),
+    const existing = await db.select({ id: gutSignals.id }).from(gutSignals).where(and85(
+      eq113(gutSignals.userId, userId),
+      eq113(gutSignals.signalType, "project_drift"),
       gte22(gutSignals.createdAt, new Date(Date.now() - 72 * 60 * 60 * 1e3))
     )).limit(1);
     if (existing.length > 0) return signals;
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3).toISOString().slice(0, 10);
-    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and84(eq112(plans.userId, userId), gte22(plans.date, sevenDaysAgo))).orderBy(desc41(plans.date)).limit(7);
+    const recentPlans = await db.select({ data: plans.data, date: plans.date }).from(plans).where(and85(eq113(plans.userId, userId), gte22(plans.date, sevenDaysAgo))).orderBy(desc42(plans.date)).limit(7);
     if (recentPlans.length < 3) return signals;
     const completedPerDay = recentPlans.map((p) => {
       const tasks = p.data?.tasks || [];
@@ -72182,18 +72422,18 @@ async function detectProjectDrift(userId, baseline) {
   }
   return signals;
 }
-async function detectRelationshipAnomalies(userId, inboxItems3, baseline) {
+async function detectRelationshipAnomalies(userId, inboxItems2, baseline) {
   const signals = [];
   try {
-    const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and84(
-      eq112(gutSignals.userId, userId),
-      eq112(gutSignals.signalType, "relationship_anomaly"),
+    const existing = await db.select({ itemRef: gutSignals.itemRef }).from(gutSignals).where(and85(
+      eq113(gutSignals.userId, userId),
+      eq113(gutSignals.signalType, "relationship_anomaly"),
       gte22(gutSignals.createdAt, new Date(Date.now() - 24 * 60 * 60 * 1e3))
     )).limit(50);
     const flagged = new Set(existing.map((r) => r.itemRef).filter(Boolean));
-    const people2 = await db.select().from(people).where(eq112(people.userId, userId));
+    const people2 = await db.select().from(people).where(eq113(people.userId, userId));
     const dormantCutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1e3);
-    for (const item of inboxItems3.slice(0, 10)) {
+    for (const item of inboxItems2.slice(0, 10)) {
       if (flagged.has(item.id) || !item.sender) continue;
       const emailMatch = item.sender.match(/<([^>]+)>/) || [null, item.sender.trim()];
       const senderEmail = emailMatch[1]?.toLowerCase();
@@ -72264,11 +72504,11 @@ async function runGutScanForUser(userId, userEmail, now) {
   candidates.push(...driftSignals);
   let recentInboxItems = [];
   try {
-    recentInboxItems = await db.select({ id: inboxItems.id, sourceId: inboxItems.sourceId, sender: inboxItems.sender, snippet: inboxItems.snippet, subject: inboxItems.subject }).from(inboxItems).where(and84(
-      eq112(inboxItems.userId, userId),
-      eq112(inboxItems.status, "pending"),
+    recentInboxItems = await db.select({ id: inboxItems.id, sourceId: inboxItems.sourceId, sender: inboxItems.sender, snippet: inboxItems.snippet, subject: inboxItems.subject }).from(inboxItems).where(and85(
+      eq113(inboxItems.userId, userId),
+      eq113(inboxItems.status, "pending"),
       gte22(inboxItems.surfacedAt, new Date(now.getTime() - 24 * 60 * 60 * 1e3))
-    )).orderBy(desc41(inboxItems.surfacedAt)).limit(30);
+    )).orderBy(desc42(inboxItems.surfacedAt)).limit(30);
   } catch {
   }
   if (recentInboxItems.length > 0) {
@@ -72286,20 +72526,20 @@ async function runGutScanForUser(userId, userEmail, now) {
 }
 async function getGutSignalsForUser(userId, opts) {
   const limit = opts?.limit ?? 50;
-  const conditions = [eq112(gutSignals.userId, userId)];
+  const conditions = [eq113(gutSignals.userId, userId)];
   if (opts?.itemRef) {
-    conditions.push(eq112(gutSignals.itemRef, opts.itemRef));
+    conditions.push(eq113(gutSignals.itemRef, opts.itemRef));
   }
   if (!opts?.includeResponded) {
     conditions.push(
-      sql40`(${gutSignals.userResponse} is null or ${gutSignals.userResponse} = 'ignored')`
+      sql41`(${gutSignals.userResponse} is null or ${gutSignals.userResponse} = 'ignored')`
     );
   }
-  const rows = await db.select().from(gutSignals).where(and84(...conditions)).orderBy(desc41(gutSignals.createdAt)).limit(limit);
+  const rows = await db.select().from(gutSignals).where(and85(...conditions)).orderBy(desc42(gutSignals.createdAt)).limit(limit);
   return rows;
 }
 async function respondToGutSignal(userId, signalId, response) {
-  await db.update(gutSignals).set({ userResponse: response, respondedAt: /* @__PURE__ */ new Date() }).where(and84(eq112(gutSignals.id, signalId), eq112(gutSignals.userId, userId)));
+  await db.update(gutSignals).set({ userResponse: response, respondedAt: /* @__PURE__ */ new Date() }).where(and85(eq113(gutSignals.id, signalId), eq113(gutSignals.userId, userId)));
   baselineCache.delete(userId);
   console.log(`[Gut] user ${userId} responded ${response} to signal ${signalId}`);
   calibrateGutForUser(userId).catch(
@@ -72308,12 +72548,12 @@ async function respondToGutSignal(userId, signalId, response) {
 }
 async function getAndMarkMorningBriefSignals(userId) {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1e3);
-  const rows = await db.select().from(gutSignals).where(and84(
-    eq112(gutSignals.userId, userId),
-    eq112(gutSignals.deliveredInMorningBrief, false),
+  const rows = await db.select().from(gutSignals).where(and85(
+    eq113(gutSignals.userId, userId),
+    eq113(gutSignals.deliveredInMorningBrief, false),
     gte22(gutSignals.createdAt, since),
-    sql40`${gutSignals.userResponse} IS NULL`
-  )).orderBy(desc41(gutSignals.confidenceScore)).limit(3);
+    sql41`${gutSignals.userResponse} IS NULL`
+  )).orderBy(desc42(gutSignals.confidenceScore)).limit(3);
   const highConf = rows.filter((r) => r.confidenceScore >= 60);
   if (highConf.length === 0) return [];
   const selectedIds = highConf.map((r) => r.id);
@@ -72330,20 +72570,20 @@ async function calibrateGutForUser(userId) {
   ];
   for (const signalType of allSignalTypes) {
     try {
-      const [tcRow] = await db.select({ count: sql40`count(*)` }).from(gutSignals).where(and84(
-        eq112(gutSignals.userId, userId),
-        eq112(gutSignals.signalType, signalType),
-        eq112(gutSignals.userResponse, "confirmed")
+      const [tcRow] = await db.select({ count: sql41`count(*)` }).from(gutSignals).where(and85(
+        eq113(gutSignals.userId, userId),
+        eq113(gutSignals.signalType, signalType),
+        eq113(gutSignals.userResponse, "confirmed")
       ));
-      const [tdRow] = await db.select({ count: sql40`count(*)` }).from(gutSignals).where(and84(
-        eq112(gutSignals.userId, userId),
-        eq112(gutSignals.signalType, signalType),
-        eq112(gutSignals.userResponse, "dismissed")
+      const [tdRow] = await db.select({ count: sql41`count(*)` }).from(gutSignals).where(and85(
+        eq113(gutSignals.userId, userId),
+        eq113(gutSignals.signalType, signalType),
+        eq113(gutSignals.userResponse, "dismissed")
       ));
-      const [tiRow] = await db.select({ count: sql40`count(*)` }).from(gutSignals).where(and84(
-        eq112(gutSignals.userId, userId),
-        eq112(gutSignals.signalType, signalType),
-        eq112(gutSignals.userResponse, "ignored")
+      const [tiRow] = await db.select({ count: sql41`count(*)` }).from(gutSignals).where(and85(
+        eq113(gutSignals.userId, userId),
+        eq113(gutSignals.signalType, signalType),
+        eq113(gutSignals.userResponse, "ignored")
       ));
       const confirmedCount = Number(tcRow?.count ?? 0);
       const dismissedCount = Number(tdRow?.count ?? 0);
@@ -72429,7 +72669,7 @@ __export(voiceRelayRoutes_exports, {
 });
 import { WebSocketServer as WebSocketServer2, WebSocket as WebSocket2 } from "ws";
 import { randomBytes as randomBytes3 } from "crypto";
-import { eq as eq113, desc as desc42 } from "drizzle-orm";
+import { eq as eq114, desc as desc43 } from "drizzle-orm";
 function createRelayTicket(userId) {
   const ticket = randomBytes3(24).toString("hex");
   ticketStore.set(ticket, {
@@ -72484,7 +72724,7 @@ async function loadUserMemories(userId, maxLines = 50) {
       content: userMemories.content,
       category: userMemories.category,
       confidence: userMemories.confidence
-    }).from(userMemories).where(eq113(userMemories.userId, userId)).orderBy(desc42(userMemories.confidence)).limit(30);
+    }).from(userMemories).where(eq114(userMemories.userId, userId)).orderBy(desc43(userMemories.confidence)).limit(30);
     if (!rows.length) return "";
     const lines = [];
     for (const row of rows) {
@@ -72720,7 +72960,7 @@ var storage_exports = {};
 __export(storage_exports, {
   chatStorage: () => chatStorage
 });
-import { eq as eq114, desc as desc43 } from "drizzle-orm";
+import { eq as eq115, desc as desc44 } from "drizzle-orm";
 var chatStorage;
 var init_storage = __esm({
   "server/replit_integrations/chat/storage.ts"() {
@@ -72729,22 +72969,22 @@ var init_storage = __esm({
     init_schema();
     chatStorage = {
       async getConversation(id) {
-        const [conversation] = await db.select().from(conversations).where(eq114(conversations.id, id));
+        const [conversation] = await db.select().from(conversations).where(eq115(conversations.id, id));
         return conversation;
       },
       async getAllConversations() {
-        return db.select().from(conversations).orderBy(desc43(conversations.createdAt));
+        return db.select().from(conversations).orderBy(desc44(conversations.createdAt));
       },
       async createConversation(title) {
         const [conversation] = await db.insert(conversations).values({ title }).returning();
         return conversation;
       },
       async deleteConversation(id) {
-        await db.delete(messages).where(eq114(messages.conversationId, id));
-        await db.delete(conversations).where(eq114(conversations.id, id));
+        await db.delete(messages).where(eq115(messages.conversationId, id));
+        await db.delete(conversations).where(eq115(conversations.id, id));
       },
       async getMessagesByConversation(conversationId) {
-        return db.select().from(messages).where(eq114(messages.conversationId, conversationId)).orderBy(messages.createdAt);
+        return db.select().from(messages).where(eq115(messages.conversationId, conversationId)).orderBy(messages.createdAt);
       },
       async createMessage(conversationId, role, content) {
         const [message] = await db.insert(messages).values({ conversationId, role, content }).returning();
@@ -72763,7 +73003,7 @@ __export(routes_exports, {
 });
 import { createServer } from "node:http";
 import OpenAI15 from "openai";
-import { eq as eq115, and as and85, desc as desc44, sql as sql41, gte as gte23, asc as asc7 } from "drizzle-orm";
+import { eq as eq116, and as and86, desc as desc45, sql as sql42, gte as gte23, asc as asc7 } from "drizzle-orm";
 import ytSearch from "yt-search";
 async function registerRoutes(app2) {
   app2.use("/api/auth", authRouter);
@@ -72781,7 +73021,7 @@ async function registerRoutes(app2) {
   if (process.env.NODE_ENV !== "production") {
     app2.patch("/api/dev/projects/:id/complete", async (req, res) => {
       try {
-        await db.update(jarvisProjects).set({ status: "complete" }).where(eq115(jarvisProjects.id, req.params.id));
+        await db.update(jarvisProjects).set({ status: "complete" }).where(eq116(jarvisProjects.id, req.params.id));
         res.json({ ok: true });
       } catch (err2) {
         res.status(500).json({ error: String(err2) });
@@ -73026,7 +73266,7 @@ async function registerRoutes(app2) {
     try {
       const { learnedResourceIds: learnedResourceIds2 } = await Promise.resolve().then(() => (init_daemonShellTool(), daemonShellTool_exports));
       const minConfidence = Math.max(1, parseInt(req.query.minConfidence ?? "1", 10) || 1);
-      const rows = await db.execute(sql41`
+      const rows = await db.execute(sql42`
         SELECT
           app_package,
           discovered_resource_id,
@@ -73060,7 +73300,7 @@ async function registerRoutes(app2) {
     try {
       const { token } = req.query;
       if (!token) return res.status(400).json({ error: "token is required" });
-      const [row] = await db.select().from(webchatInviteTokens).where(eq115(webchatInviteTokens.token, token)).limit(1);
+      const [row] = await db.select().from(webchatInviteTokens).where(eq116(webchatInviteTokens.token, token)).limit(1);
       if (!row) return res.status(404).json({ error: "Invite link not found" });
       if (row.expiresAt < /* @__PURE__ */ new Date()) {
         return res.status(410).json({ error: "This invite link has expired" });
@@ -73194,7 +73434,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: goals.data }).from(goals).where(eq115(goals.userId, userId)).limit(1);
+      const row = await db.select({ data: goals.data }).from(goals).where(eq116(goals.userId, userId)).limit(1);
       const raw = row[0]?.data ?? [];
       const goals2 = raw.map((g) => {
         const current = Number(g.current ?? 0);
@@ -73239,7 +73479,7 @@ async function registerRoutes(app2) {
       const { analyseEgo: analyseEgo2, getISOWeekMonday: getISOWeekMonday2 } = await Promise.resolve().then(() => (init_ego(), ego_exports));
       const weekOf = getISOWeekMonday2(/* @__PURE__ */ new Date());
       const analysis = await analyseEgo2(userId, weekOf);
-      const latestReport = await db.select().from(egoWeeklyReports).where(eq115(egoWeeklyReports.userId, userId)).orderBy(desc44(egoWeeklyReports.createdAt)).limit(1);
+      const latestReport = await db.select().from(egoWeeklyReports).where(eq116(egoWeeklyReports.userId, userId)).orderBy(desc45(egoWeeklyReports.createdAt)).limit(1);
       res.json({
         analysis,
         latestReport: latestReport[0] ?? null
@@ -73253,7 +73493,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const reports = await db.select().from(egoWeeklyReports).where(eq115(egoWeeklyReports.userId, userId)).orderBy(desc44(egoWeeklyReports.createdAt)).limit(12);
+      const reports = await db.select().from(egoWeeklyReports).where(eq116(egoWeeklyReports.userId, userId)).orderBy(desc45(egoWeeklyReports.createdAt)).limit(12);
       res.json({ reports });
     } catch (err2) {
       console.error("[Ego] reports failed:", err2);
@@ -73282,7 +73522,7 @@ async function registerRoutes(app2) {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const links = await db.select().from(channelLinks).where(and85(eq115(channelLinks.userId, userId), eq115(channelLinks.channel, "discord")));
+      const links = await db.select().from(channelLinks).where(and86(eq116(channelLinks.userId, userId), eq116(channelLinks.channel, "discord")));
       const link = links[0];
       const meta = link?.metadata;
       res.json({
@@ -73711,7 +73951,7 @@ async function registerRoutes(app2) {
     try {
       switch (toolName) {
         case "add_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and85(eq115(plans.userId, userId), eq115(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and86(eq116(plans.userId, userId), eq116(plans.date, todayKey)));
           const plan = planResult.length > 0 ? planResult[0].data : { date: todayKey, tasks: [], greeting: "", insight: "" };
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
           const catMap = { health: "fitness", work: "career", learning: "personal" };
@@ -73732,7 +73972,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Task added to today`, detail: `Added "${args.title}"` };
         }
         case "add_to_brain_dump": {
-          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq115(brainDumpInbox.userId, userId));
+          const bdResult = await db.select({ data: brainDumpInbox.data }).from(brainDumpInbox).where(eq116(brainDumpInbox.userId, userId));
           const items = bdResult.length > 0 ? Array.isArray(bdResult[0].data) ? bdResult[0].data : [] : [];
           items.unshift({
             id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
@@ -73746,7 +73986,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Added to brain dump`, detail: `Added "${args.text}"` };
         }
         case "log_goal_progress": {
-          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq115(goals.userId, userId));
+          const goalsResult = await db.select({ data: goals.data }).from(goals).where(eq116(goals.userId, userId));
           if (goalsResult.length === 0) return { result: "error", label: "No goals found", detail: "User has no goals set" };
           const goalsList = Array.isArray(goalsResult[0].data) ? goalsResult[0].data : [];
           const matched = goalsList.find((g) => fuzzyMatch(args.goalTitle, g.title));
@@ -73760,7 +74000,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Progress logged`, detail: `Added ${args.amount} to "${matched.title}"` };
         }
         case "update_life_context": {
-          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq115(lifeContext.userId, userId));
+          const lcResult = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq116(lifeContext.userId, userId));
           const existing = lcResult.length > 0 ? lcResult[0].data : {};
           const merged = { ...existing };
           if (args.priorityGoal) merged.priorityGoal = args.priorityGoal;
@@ -73777,7 +74017,7 @@ async function registerRoutes(app2) {
           return { result: "success", label: `Context updated`, detail: `Updated: ${updatedFields}` };
         }
         case "complete_task": {
-          const planResult = await db.select({ data: plans.data }).from(plans).where(and85(eq115(plans.userId, userId), eq115(plans.date, todayKey)));
+          const planResult = await db.select({ data: plans.data }).from(plans).where(and86(eq116(plans.userId, userId), eq116(plans.date, todayKey)));
           if (planResult.length === 0) return { result: "error", label: "No plan today", detail: "No plan found for today" };
           const plan = planResult[0].data;
           const tasks = Array.isArray(plan.tasks) ? plan.tasks : [];
@@ -73836,8 +74076,8 @@ async function registerRoutes(app2) {
             getValidGoogleToken(userId).catch(() => null),
             getValidMicrosoftToken(userId).catch(() => null),
             getUserOAuthStatus(userId).catch(() => ({})),
-            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq115(telegramLinks.userId, userId)).limit(1),
-            db.select().from(channelLinks).where(eq115(channelLinks.userId, userId))
+            db.select({ chatId: telegramLinks.chatId }).from(telegramLinks).where(eq116(telegramLinks.userId, userId)).limit(1),
+            db.select().from(channelLinks).where(eq116(channelLinks.userId, userId))
           ]);
           const daemonOnline = isUserPaired(userId);
           const isAndroid = isAndroidDaemonActive(userId);
@@ -74642,12 +74882,12 @@ ${text2}`
     try {
       const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
       const unanswered = await db.select().from(proactiveQuestionsSent).where(
-        and85(
-          eq115(proactiveQuestionsSent.userId, userId),
-          sql41`${proactiveQuestionsSent.answeredAt} IS NULL`,
-          sql41`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+        and86(
+          eq116(proactiveQuestionsSent.userId, userId),
+          sql42`${proactiveQuestionsSent.answeredAt} IS NULL`,
+          sql42`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
         )
-      ).orderBy(desc44(proactiveQuestionsSent.sentAt)).limit(1);
+      ).orderBy(desc45(proactiveQuestionsSent.sentAt)).limit(1);
       if (unanswered.length > 0) {
         const lastUserMessage = messages2.filter((m) => m.role === "user").pop();
         if (!lastUserMessage?.content) return;
@@ -74666,7 +74906,7 @@ Answer (yes/no):`
         });
         const answer = (checkResponse.choices[0]?.message?.content || "").trim().toLowerCase();
         if (answer.startsWith("yes")) {
-          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq115(proactiveQuestionsSent.id, unanswered[0].id));
+          await db.update(proactiveQuestionsSent).set({ answeredAt: /* @__PURE__ */ new Date() }).where(eq116(proactiveQuestionsSent.id, unanswered[0].id));
           console.log(`[Profile] Marked proactive question as answered via coach chat: ${unanswered[0].id}`);
         }
       }
@@ -74783,7 +75023,7 @@ Answer (yes/no):`
         userCommitments = [];
         if (userId) {
           try {
-            userCommitments = await db.select().from(commitments).where(and85(eq115(commitments.userId, userId), eq115(commitments.status, "pending"))).orderBy(desc44(commitments.extractedAt)).limit(20);
+            userCommitments = await db.select().from(commitments).where(and86(eq116(commitments.userId, userId), eq116(commitments.status, "pending"))).orderBy(desc45(commitments.extractedAt)).limit(20);
           } catch {
           }
         }
@@ -74793,7 +75033,7 @@ Answer (yes/no):`
         if (userId) {
           try {
             const [rows, noteSummary, docsCtx] = await Promise.all([
-              db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq115(userMemories.userId, userId)).orderBy(desc44(userMemories.extractedAt)).limit(50),
+              db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq116(userMemories.userId, userId)).orderBy(desc45(userMemories.extractedAt)).limit(50),
               getMorningNoteSummary(userId),
               getUserDocumentContext(userId)
             ]);
@@ -74808,12 +75048,12 @@ Answer (yes/no):`
           try {
             const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
             const recentUnanswered = await db.select().from(proactiveQuestionsSent).where(
-              and85(
-                eq115(proactiveQuestionsSent.userId, userId),
-                sql41`${proactiveQuestionsSent.answeredAt} IS NULL`,
-                sql41`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
+              and86(
+                eq116(proactiveQuestionsSent.userId, userId),
+                sql42`${proactiveQuestionsSent.answeredAt} IS NULL`,
+                sql42`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
               )
-            ).orderBy(desc44(proactiveQuestionsSent.sentAt)).limit(3);
+            ).orderBy(desc45(proactiveQuestionsSent.sentAt)).limit(3);
             if (recentUnanswered.length > 0) {
               proactiveQuestionContext = `
 ## Recent Proactive Questions You Asked (unanswered)
@@ -75382,7 +75622,8 @@ Do not give a capability disclaimer until you have tried the matching tool path 
               args = JSON.parse(tc.function.arguments);
             } catch {
             }
-            const isHighStakes = tc.function.name === "send_email" || tc.function.name === "daemon_action" && ["shell", "file_write"].includes(String(args.action || ""));
+            const onePermission = tc.function.name === "one_execute_action" ? classifyOneActionPermission(String(args.platform || ""), String(args.action_id || args.actionId || "")) : null;
+            const isHighStakes = tc.function.name === "send_email" || tc.function.name === "one_execute_action" && onePermission?.approvalRequired === true && args.dry_run !== true || tc.function.name === "daemon_action" && ["shell", "file_write"].includes(String(args.action || ""));
             if (isHighStakes) {
               if (!res.headersSent) {
                 res.setHeader("Content-Type", "text/event-stream");
@@ -75397,6 +75638,13 @@ Do not give a capability disclaimer until you have tried the matching tool path 
                 preview.subject = String(args.subject || "");
                 preview.body = String(args.body || "");
                 preview.provider = String(args.provider || "google");
+              } else if (tc.function.name === "one_execute_action") {
+                preview.platform = String(args.platform || "");
+                preview.action = String(args.action_id || args.actionId || "");
+                preview.connection = String(args.connection_key || args.connectionKey || "");
+                preview.reason = onePermission?.reason || "This One action can change an external account.";
+                if (args.data) preview.data = typeof args.data === "string" ? args.data : JSON.stringify(args.data).slice(0, 500);
+                if (args.query_params) preview.query = typeof args.query_params === "string" ? args.query_params : JSON.stringify(args.query_params).slice(0, 500);
               } else {
                 preview.action = String(args.action || "");
                 if (args.cmd) preview.cmd = String(args.cmd);
@@ -75942,7 +76190,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
   app2.get("/api/webchat/invite/active", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const [row] = await db.select().from(webchatInviteTokens).where(and85(eq115(webchatInviteTokens.userId, userId), gte23(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
+      const [row] = await db.select().from(webchatInviteTokens).where(and86(eq116(webchatInviteTokens.userId, userId), gte23(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
       if (!row) return res.json({ active: false });
       const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
       const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
@@ -75958,7 +76206,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       const userId = req.userId;
       const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
       const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
-      const [existing] = await db.select().from(webchatInviteTokens).where(and85(eq115(webchatInviteTokens.userId, userId), gte23(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
+      const [existing] = await db.select().from(webchatInviteTokens).where(and86(eq116(webchatInviteTokens.userId, userId), gte23(webchatInviteTokens.expiresAt, /* @__PURE__ */ new Date()))).limit(1);
       if (existing) {
         const url2 = `${protocol}://${host}/chat?invite=${existing.token}`;
         return res.json({ token: existing.token, url: url2, expiresAt: existing.expiresAt });
@@ -75978,10 +76226,10 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
     try {
       const userId = req.userId;
       const token = _p9(req.params.token);
-      const [row] = await db.select().from(webchatInviteTokens).where(eq115(webchatInviteTokens.token, token)).limit(1);
+      const [row] = await db.select().from(webchatInviteTokens).where(eq116(webchatInviteTokens.token, token)).limit(1);
       if (!row) return res.status(404).json({ error: "Token not found" });
       if (row.userId !== userId) return res.status(403).json({ error: "Forbidden" });
-      await db.delete(webchatInviteTokens).where(eq115(webchatInviteTokens.token, token));
+      await db.delete(webchatInviteTokens).where(eq116(webchatInviteTokens.token, token));
       return res.json({ ok: true });
     } catch (error) {
       console.error("Error revoking webchat invite token:", error);
@@ -76002,7 +76250,25 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
         return res.status(400).json({ error: "Confirmation token has expired" });
       }
       pendingConfirmations.delete(token);
-      const execResult = await executeCoachTool(pending.tool, pending.args, userId);
+      let execResult;
+      if (pending.tool === "one_execute_action") {
+        const oneTool = getTool("one_execute_action");
+        if (!oneTool) {
+          execResult = { result: "error", label: "One action unavailable", detail: "The One action tool is not registered." };
+        } else {
+          const toolResult2 = await oneTool.execute(
+            { ...pending.args, approved: true, confirmed: true },
+            { userId, channel: "appchat", state: { pendingAttachments: [] } }
+          );
+          execResult = {
+            result: toolResult2.ok ? "success" : "error",
+            label: toolResult2.label ?? "One action",
+            detail: toolResult2.content ?? toolResult2.detail ?? ""
+          };
+        }
+      } else {
+        execResult = await executeCoachTool(pending.tool, pending.args, userId);
+      }
       return res.json({ result: execResult.result, label: execResult.label, detail: execResult.detail });
     } catch (error) {
       console.error("Error in execute-confirmed:", error);
@@ -76022,11 +76288,12 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
           tool = pending.tool;
           const a = pending.args;
           if (tool === "send_email") preview = { to: a.to || "", subject: a.subject || "" };
+          else if (tool === "one_execute_action") preview = { action: a.action_id || a.actionId || "", platform: a.platform || "" };
           else preview = { action: a.action || "", cmd: a.cmd || "", path: a.path || "" };
           pendingConfirmations.delete(token);
         }
       }
-      const toolLabel = tool === "send_email" ? `sending an email to ${preview.to || "the recipient"}` : `running a terminal command (${preview.cmd || preview.action || "shell"})`;
+      const toolLabel = tool === "send_email" ? `sending an email to ${preview.to || "the recipient"}` : tool === "one_execute_action" ? `running the One ${preview.platform || "connector"} action ${preview.action || ""}`.trim() : `running a terminal command (${preview.cmd || preview.action || "shell"})`;
       const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence \u2014 do not re-propose the action. Stay in your coaching persona.`;
       const resp = await openai21.chat.completions.create({
         model: "gpt-4o-mini",
@@ -76140,17 +76407,6 @@ Return ONLY a JSON object with a "tasks" array. No other text.`;
 - Priority: ${lifeContext2.priorityGoal || "not set"}` + (lifeContext2.currentBlocker ? `
 - Known blocker: ${lifeContext2.currentBlocker}` : "") + (lifeContext2.improvementArea ? `
 - Wants to improve: ${lifeContext2.improvementArea}` : "") : "";
-      let commitmentText = "";
-      if (userId) {
-        try {
-          const pendingCommitments = await db.select().from(commitments).where(and85(eq115(commitments.userId, userId), eq115(commitments.status, "pending"))).limit(5);
-          if (pendingCommitments.length > 0) {
-            commitmentText = `
-- Open commitments: ${pendingCommitments.map((c) => `"${c.content}"${c.dueDate ? ` (due ${c.dueDate})` : ""}`).join(", ")}`;
-          }
-        } catch {
-        }
-      }
       const persona = getPersonaBlock(coachingMode);
       const prompt = `You are a personal productivity coach. Write a 1-2 sentence daily coaching note for this person.
 
@@ -76160,9 +76416,9 @@ Their profile:
 - Streak: ${stats2?.streak || 0} days, ${completionRate}% task completion this week
 - Goals: ${goalsText}
 - Recently completed: ${completedHistory.slice(0, 4).map((h) => h.title).join(", ") || "nothing yet"}
-- Recently skipped: ${skippedHistory.slice(0, 3).map((h) => h.title).join(", ") || "nothing"}${lifeCtxText}${commitmentText}
+- Recently skipped: ${skippedHistory.slice(0, 3).map((h) => h.title).join(", ") || "nothing"}${lifeCtxText}
 
-Write ONE short, specific coaching observation. Be direct \u2014 name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. If they have open commitments, call out specific ones by name. No greeting, no sign-off.
+Write ONE short, specific coaching observation. Be direct \u2014 name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. No greeting, no sign-off.
 
 Return JSON: { "note": "your 1-2 sentence note here" }`;
       const response = await openai21.chat.completions.create({
@@ -76292,7 +76548,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(commitments).where(and85(eq115(commitments.userId, userId), eq115(commitments.status, "pending"))).orderBy(desc44(commitments.extractedAt));
+      const rows = await db.select().from(commitments).where(and86(eq116(commitments.userId, userId), eq116(commitments.status, "pending"))).orderBy(desc45(commitments.extractedAt));
       res.json({ commitments: rows });
     } catch (error) {
       console.error("Error fetching commitments:", error);
@@ -76308,7 +76564,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       if (!status || !["done", "skipped", "pending"].includes(status)) {
         return res.status(400).json({ error: "status must be 'done', 'skipped', or 'pending'" });
       }
-      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and85(eq115(commitments.id, id), eq115(commitments.userId, userId)));
+      await db.update(commitments).set({ status, resolvedAt: status !== "pending" ? /* @__PURE__ */ new Date() : null }).where(and86(eq116(commitments.id, id), eq116(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error updating commitment:", error);
@@ -76320,7 +76576,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.delete(commitments).where(and85(eq115(commitments.id, id), eq115(commitments.userId, userId)));
+      await db.delete(commitments).where(and86(eq116(commitments.id, id), eq116(commitments.userId, userId)));
       res.json({ ok: true });
     } catch (error) {
       console.error("Error deleting commitment:", error);
@@ -76372,7 +76628,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       if (!context) return res.status(400).json({ error: "context is required" });
       let userCommitments = [];
       try {
-        userCommitments = await db.select().from(commitments).where(and85(eq115(commitments.userId, userId), eq115(commitments.status, "pending"))).orderBy(desc44(commitments.extractedAt)).limit(10);
+        userCommitments = await db.select().from(commitments).where(and86(eq116(commitments.userId, userId), eq116(commitments.status, "pending"))).orderBy(desc45(commitments.extractedAt)).limit(10);
       } catch {
       }
       const soulBlock = buildUntrustedSoulContext(
@@ -76424,7 +76680,7 @@ ${context}` },
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq115(userPreferences.userId, userId));
+      const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq116(userPreferences.userId, userId));
       const prefs = rows[0]?.data || {};
       const brief = prefs.morningBrief;
       if (brief && brief.date === today && brief.text) {
@@ -76437,6 +76693,7 @@ ${context}` },
     }
   });
   registerAuthenticatedCoachRuntimeRoutes(app2);
+  registerInboxRoutes(app2);
   app2.post("/api/coach/weekly-review", async (req, res) => {
     try {
       const userId = req.userId;
@@ -76446,7 +76703,7 @@ ${context}` },
       try {
         const sevenDaysAgo = /* @__PURE__ */ new Date();
         sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db.select().from(commitments).where(eq115(commitments.userId, userId)).orderBy(desc44(commitments.extractedAt)).limit(30);
+        weekCommitments = await db.select().from(commitments).where(eq116(commitments.userId, userId)).orderBy(desc45(commitments.extractedAt)).limit(30);
         weekCommitments = weekCommitments.filter(
           (c) => new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
         );
@@ -76569,7 +76826,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq115(userPreferences.userId, userId)).limit(1);
+      const row = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq116(userPreferences.userId, userId)).limit(1);
       return res.json(row[0]?.data || {});
     } catch (error) {
       console.error("Error getting preferences:", error);
@@ -76581,7 +76838,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq115(userPreferences.userId, userId)).limit(1);
+      const existing = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq116(userPreferences.userId, userId)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
       await db.insert(userPreferences).values({ userId, data: merged }).onConflictDoUpdate({
@@ -76599,7 +76856,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const updates = req.body;
-      const existing = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq115(lifeContext.userId, userId)).limit(1);
+      const existing = await db.select({ data: lifeContext.data }).from(lifeContext).where(eq116(lifeContext.userId, userId)).limit(1);
       const current = existing[0]?.data || {};
       const merged = { ...current, ...updates };
       await db.insert(lifeContext).values({ userId, data: merged, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
@@ -76617,7 +76874,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const limit = parseInt(req.query.limit) || 30;
-      const notes = await db.select().from(morningVoiceNotes).where(eq115(morningVoiceNotes.userId, userId)).orderBy(desc44(morningVoiceNotes.recordedAt)).limit(limit);
+      const notes = await db.select().from(morningVoiceNotes).where(eq116(morningVoiceNotes.userId, userId)).orderBy(desc45(morningVoiceNotes.recordedAt)).limit(limit);
       res.json({ notes });
     } catch (error) {
       console.error("Error fetching morning voice notes:", error);
@@ -76629,7 +76886,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const today = await getUserLocalDate(userId);
-      const notes = await db.select().from(morningVoiceNotes).where(and85(eq115(morningVoiceNotes.userId, userId), eq115(morningVoiceNotes.recordedAt, today))).limit(1);
+      const notes = await db.select().from(morningVoiceNotes).where(and86(eq116(morningVoiceNotes.userId, userId), eq116(morningVoiceNotes.recordedAt, today))).limit(1);
       res.json({ note: notes[0] || null });
     } catch (error) {
       console.error("Error fetching today's morning voice note:", error);
@@ -76694,7 +76951,7 @@ Return ONLY the JSON object.`;
         return res.status(400).json({ error: "transcript is required" });
       }
       const today = await getUserLocalDate(userId);
-      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and85(eq115(morningVoiceNotes.userId, userId), eq115(morningVoiceNotes.recordedAt, today))).limit(1);
+      const existing = await db.select({ id: morningVoiceNotes.id }).from(morningVoiceNotes).where(and86(eq116(morningVoiceNotes.userId, userId), eq116(morningVoiceNotes.recordedAt, today))).limit(1);
       if (existing.length > 0) {
         return res.status(409).json({ error: "Morning note already recorded today" });
       }
@@ -76755,82 +77012,11 @@ Return ONLY the JSON object.`;
       res.status(500).json({ error: "Failed to transcribe audio" });
     }
   });
-  app2.get("/api/inbox/items", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const statusFilter = typeof req.query.status === "string" ? req.query.status : "pending";
-      const whereClause = statusFilter === "dismissed" ? and85(
-        eq115(inboxItems.userId, userId),
-        eq115(inboxItems.status, statusFilter),
-        sql41`${inboxItems.jarvisReason} IS NOT NULL`
-      ) : and85(eq115(inboxItems.userId, userId), eq115(inboxItems.status, statusFilter));
-      const items = await db.select().from(inboxItems).where(whereClause).orderBy(desc44(inboxItems.surfacedAt)).limit(50);
-      res.json(items);
-    } catch (error) {
-      console.error("Error fetching inbox items:", error);
-      res.status(500).json({ error: "Failed to fetch inbox items" });
-    }
-  });
-  app2.post("/api/inbox/items/:id/important", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const [item] = await db.select().from(inboxItems).where(and85(eq115(inboxItems.id, id), eq115(inboxItems.userId, userId)));
-      if (!item) return res.status(404).json({ error: "Item not found" });
-      if (item.sourceType === "email" || item.sourceType === "gmail") {
-        const senderPart = item.sender ? `emails from ${item.sender}` : item.subject ? `emails with subject "${item.subject}"` : "this type of email";
-        const memoryContent = `User marked as important: ${senderPart}${item.snippet ? ` \u2014 "${item.snippet.slice(0, 120)}"` : ""}. Always surface similar emails.`;
-        await db.insert(userMemories).values({
-          userId,
-          content: memoryContent,
-          category: "Email Pattern",
-          confidence: 95,
-          relevanceScore: 80,
-          sourceType: "email_pattern",
-          sourceRef: item.sourceId || null
-        });
-        const senderDomain = item.sender ? (item.sender.match(/@([a-zA-Z0-9.-]+)/)?.[1] || "").toLowerCase() : "";
-        const senderEmail = item.sender ? item.sender.toLowerCase() : "";
-        const subjectKw = (item.subject || "").toLowerCase().trim().slice(0, 60);
-        const canCreateRule = senderDomain || subjectKw.length > 0;
-        if (canCreateRule) {
-          const matchHints = senderDomain ? { domains: [senderDomain], senders: senderEmail ? [senderEmail] : [] } : { subjectKeywords: [subjectKw] };
-          const pattern = senderDomain ? `Always surface emails from ${senderDomain}` : `Always surface: "${item.subject}"`;
-          const { getUserInboxRules: getUserInboxRules2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
-          const existingRules = await getUserInboxRules2(userId);
-          const alreadyExists = existingRules.some((r) => {
-            if (r.type !== "surface" || r.scope !== "email") return false;
-            const hints = r.matchHints || {};
-            if (senderDomain && hints.domains?.includes(senderDomain)) return true;
-            if (!senderDomain && subjectKw && hints.subjectKeywords?.includes(subjectKw)) return true;
-            return false;
-          });
-          if (!alreadyExists) {
-            await db.insert(inboxRules).values({
-              userId,
-              type: "surface",
-              scope: "email",
-              pattern,
-              matchHints,
-              source: "user"
-            });
-          }
-        }
-      }
-      await db.update(inboxItems).set({ status: "important", actedAt: /* @__PURE__ */ new Date() }).where(and85(eq115(inboxItems.id, id), eq115(inboxItems.userId, userId)));
-      res.json({ success: true, message: "Saved to Jarvis memory" });
-    } catch (error) {
-      console.error("Error marking inbox item as important:", error);
-      res.status(500).json({ error: "Failed to mark as important" });
-    }
-  });
   app2.get("/api/jarvis/scheduled-tasks", async (req, res) => {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const tasks = await db.select().from(jarvisScheduledTasks).where(eq115(jarvisScheduledTasks.userId, userId)).orderBy(jarvisScheduledTasks.scheduledAt);
+      const tasks = await db.select().from(jarvisScheduledTasks).where(eq116(jarvisScheduledTasks.userId, userId)).orderBy(jarvisScheduledTasks.scheduledAt);
       res.json(tasks);
     } catch (err2) {
       console.error("Error fetching jarvis scheduled tasks:", err2);
@@ -76907,7 +77093,7 @@ Return ONLY the JSON object.`;
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and85(eq115(jarvisScheduledTasks.id, id), eq115(jarvisScheduledTasks.userId, userId)));
+      await db.update(jarvisScheduledTasks).set({ completedAt: /* @__PURE__ */ new Date() }).where(and86(eq116(jarvisScheduledTasks.id, id), eq116(jarvisScheduledTasks.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("Error completing jarvis scheduled task:", err2);
@@ -76926,7 +77112,7 @@ Return ONLY the JSON object.`;
       if (req.body.scheduledAt) updates.scheduledAt = new Date(req.body.scheduledAt);
       if (req.body.recurrence !== void 0) updates.recurrence = req.body.recurrence || null;
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No updatable fields provided" });
-      const [task] = await db.update(jarvisScheduledTasks).set(updates).where(and85(eq115(jarvisScheduledTasks.id, id), eq115(jarvisScheduledTasks.userId, userId))).returning();
+      const [task] = await db.update(jarvisScheduledTasks).set(updates).where(and86(eq116(jarvisScheduledTasks.id, id), eq116(jarvisScheduledTasks.userId, userId))).returning();
       if (!task) return res.status(404).json({ error: "Task not found" });
       res.json(task);
     } catch (err2) {
@@ -76941,11 +77127,11 @@ Return ONLY the JSON object.`;
       const id = _p9(req.params.id);
       const { attentionQuestion } = req.body;
       if (!attentionQuestion) return res.status(400).json({ error: "attentionQuestion is required" });
-      const [task] = await db.select().from(jarvisScheduledTasks).where(and85(eq115(jarvisScheduledTasks.id, id), eq115(jarvisScheduledTasks.userId, userId))).limit(1);
+      const [task] = await db.select().from(jarvisScheduledTasks).where(and86(eq116(jarvisScheduledTasks.id, id), eq116(jarvisScheduledTasks.userId, userId))).limit(1);
       if (!task) return res.status(404).json({ error: "Task not found" });
-      await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion }).where(and85(eq115(jarvisScheduledTasks.id, id), eq115(jarvisScheduledTasks.userId, userId)));
+      await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion }).where(and86(eq116(jarvisScheduledTasks.id, id), eq116(jarvisScheduledTasks.userId, userId)));
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq115(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq116(telegramLinks.userId, userId));
         if (link?.chatId) {
           const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
           await sendLongMessage2(
@@ -76981,7 +77167,7 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.status(404).json({ error: result.reason === "not_found" ? "Task not found" : "Task does not need attention" });
       }
       try {
-        const [link] = await db.select().from(telegramLinks).where(eq115(telegramLinks.userId, userId));
+        const [link] = await db.select().from(telegramLinks).where(eq116(telegramLinks.userId, userId));
         if (link?.chatId) {
           const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
           await sendLongMessage2(
@@ -77003,7 +77189,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      await db.delete(jarvisScheduledTasks).where(and85(eq115(jarvisScheduledTasks.id, id), eq115(jarvisScheduledTasks.userId, userId)));
+      await db.delete(jarvisScheduledTasks).where(and86(eq116(jarvisScheduledTasks.id, id), eq116(jarvisScheduledTasks.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("Error deleting jarvis scheduled task:", err2);
@@ -77015,7 +77201,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      const [task] = await db.select().from(jarvisScheduledTasks).where(and85(eq115(jarvisScheduledTasks.id, id), eq115(jarvisScheduledTasks.userId, userId))).limit(1);
+      const [task] = await db.select().from(jarvisScheduledTasks).where(and86(eq116(jarvisScheduledTasks.id, id), eq116(jarvisScheduledTasks.userId, userId))).limit(1);
       if (!task) return res.status(404).json({ error: "Task not found" });
       if (!task.shellCommand) return res.status(400).json({ error: "Task has no shell command" });
       const { sendDaemonOp: sendDaemonOp2, isDesktopDaemonActive: isDesktopDaemonActive2, isDaemonActionAllowed: isDaemonActionAllowed2 } = await Promise.resolve().then(() => (init_bridge(), bridge_exports));
@@ -77063,7 +77249,7 @@ Reply directly to this message with your answer and I'll take it from there.
         durationMs: runResult.durationMs,
         ranAt
       };
-      await db.update(jarvisScheduledTasks).set({ lastShellResult: shellResult }).where(and85(eq115(jarvisScheduledTasks.id, id), eq115(jarvisScheduledTasks.userId, userId)));
+      await db.update(jarvisScheduledTasks).set({ lastShellResult: shellResult }).where(and86(eq116(jarvisScheduledTasks.id, id), eq116(jarvisScheduledTasks.userId, userId)));
       console.log(`[Routes] Manual run: task id=${id} exit=${runResult.exitCode} dur=${runResult.durationMs}ms`);
       res.json({ ok: true, result: shellResult, error: runResult.error });
     } catch (err2) {
@@ -77143,155 +77329,11 @@ Reply directly to this message with your answer and I'll take it from there.
       res.status(500).json({ error: "Failed to set override" });
     }
   });
-  app2.post("/api/inbox/items/:id/action", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const { actionType } = req.body;
-      if (!actionType) return res.status(400).json({ error: "actionType is required" });
-      let telegramChatId;
-      try {
-        const [link] = await db.select().from(telegramLinks).where(eq115(telegramLinks.userId, userId));
-        telegramChatId = link?.chatId;
-      } catch {
-      }
-      const { executeInboxAction: executeInboxAction2 } = await Promise.resolve().then(() => (init_inboxActions(), inboxActions_exports));
-      const result = await executeInboxAction2(userId, id, actionType, telegramChatId);
-      if (result.success) {
-        const egoOutcome = actionType === "dismiss" || actionType === "never_again" ? "dismissed" : "acted_on";
-        db.select({ sourceId: inboxItems.sourceId }).from(inboxItems).where(eq115(inboxItems.id, id)).then(([item]) => {
-          if (!item?.sourceId) return;
-          Promise.resolve().then(() => (init_actionLog(), actionLog_exports)).then(({ resolveActionByMetadataKey: resolveActionByMetadataKey2 }) => {
-            resolveActionByMetadataKey2(userId, "proactive_message", "sourceId", item.sourceId, egoOutcome).catch(() => {
-            });
-          }).catch(() => {
-          });
-        }).catch(() => {
-        });
-      }
-      res.json(result);
-    } catch (error) {
-      console.error("Error executing inbox action:", error);
-      res.status(500).json({ error: "Failed to execute action" });
-    }
-  });
-  app2.get("/api/inbox/rules", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rules = await db.select().from(inboxRules).where(eq115(inboxRules.userId, userId));
-      res.json(rules);
-    } catch (error) {
-      console.error("Error fetching inbox rules:", error);
-      res.status(500).json({ error: "Failed to fetch rules" });
-    }
-  });
-  app2.post("/api/inbox/rules", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { pattern, type, scope } = req.body;
-      if (!pattern || !type || !scope) {
-        return res.status(400).json({ error: "pattern, type, and scope are required" });
-      }
-      const { createRuleFromText: createRuleFromText2 } = await Promise.resolve().then(() => (init_inboxRules(), inboxRules_exports));
-      const rule = await createRuleFromText2(userId, pattern, type, scope);
-      res.json(rule);
-    } catch (error) {
-      console.error("Error creating inbox rule:", error);
-      res.status(500).json({ error: "Failed to create rule" });
-    }
-  });
-  app2.delete("/api/inbox/rules/:id", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      await db.delete(inboxRules).where(and85(eq115(inboxRules.id, id), eq115(inboxRules.userId, userId)));
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error deleting inbox rule:", error);
-      res.status(500).json({ error: "Failed to delete rule" });
-    }
-  });
-  app2.patch("/api/inbox/rules/:id", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const { active } = req.body;
-      const isActive = active === true || active === "true" || active === 1;
-      await db.update(inboxRules).set({ active: isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and85(eq115(inboxRules.id, id), eq115(inboxRules.userId, userId)));
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error updating inbox rule:", error);
-      res.status(500).json({ error: "Failed to update rule" });
-    }
-  });
-  app2.get("/api/email-drafts", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const drafts = await db.select().from(emailDrafts).where(and85(eq115(emailDrafts.userId, userId), eq115(emailDrafts.status, "pending_approval"))).orderBy(desc44(emailDrafts.createdAt));
-      res.json(drafts);
-    } catch (error) {
-      console.error("Error fetching email drafts:", error);
-      res.status(500).json({ error: "Failed to fetch drafts" });
-    }
-  });
-  app2.post("/api/email-drafts/:id/approve", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      const { editedSubject, editedBody } = req.body;
-      const [draft] = await db.select().from(emailDrafts).where(and85(eq115(emailDrafts.id, id), eq115(emailDrafts.userId, userId))).limit(1);
-      if (!draft) return res.status(404).json({ error: "Draft not found" });
-      if (draft.status !== "pending_approval") return res.status(400).json({ error: "Draft already actioned" });
-      const subject = editedSubject?.trim() || draft.draftSubject;
-      const body = editedBody?.trim() || draft.draftBody;
-      const recipientMatch = (draft.fromSender || "").match(/<([^>]+)>/);
-      const recipient = recipientMatch ? recipientMatch[1] : (draft.fromSender || "").trim();
-      if (!recipient || !recipient.includes("@")) {
-        return res.status(400).json({ error: "Could not determine recipient address" });
-      }
-      const tokens = await getValidGoogleTokens(userId);
-      const token = tokens?.[0];
-      if (!token) return res.status(400).json({ error: "Gmail not connected" });
-      const { createGmailDraft: createGmailDraft3 } = await Promise.resolve().then(() => (init_gmail(), gmail_exports));
-      const result = await createGmailDraft3(token, recipient, subject, body);
-      await db.update(emailDrafts).set({
-        status: "approved",
-        gmailDraftId: result.draftId,
-        gmailDraftUrl: result.gmailUrl,
-        actedAt: /* @__PURE__ */ new Date(),
-        draftSubject: subject,
-        draftBody: body
-      }).where(eq115(emailDrafts.id, id));
-      res.json({ success: true, gmailDraftUrl: result.gmailUrl });
-    } catch (error) {
-      console.error("Error approving email draft:", error);
-      res.status(500).json({ error: "Failed to approve draft" });
-    }
-  });
-  app2.post("/api/email-drafts/:id/discard", async (req, res) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const id = _p9(req.params.id);
-      await db.update(emailDrafts).set({ status: "discarded", actedAt: /* @__PURE__ */ new Date() }).where(and85(eq115(emailDrafts.id, id), eq115(emailDrafts.userId, userId)));
-      res.json({ success: true });
-    } catch (error) {
-      console.error("Error discarding email draft:", error);
-      res.status(500).json({ error: "Failed to discard draft" });
-    }
-  });
   app2.get("/api/goals", async (req, res) => {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const [row] = await db.select({ data: goals.data }).from(goals).where(eq115(goals.userId, userId)).limit(1);
+      const [row] = await db.select({ data: goals.data }).from(goals).where(eq116(goals.userId, userId)).limit(1);
       res.json({ goals: row?.data ?? [] });
     } catch (err2) {
       console.error("Error fetching goals:", err2);
@@ -77318,7 +77360,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const rawMode = req.body?.mode;
       const mode = normalizeGoalPacingMode(rawMode);
       if (rawMode !== mode) return res.status(400).json({ error: "Invalid goal pacing mode" });
-      const [existing] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq115(userPreferences.userId, userId)).limit(1);
+      const [existing] = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq116(userPreferences.userId, userId)).limit(1);
       const current = existing?.data || {};
       const data = { ...current, goalPacingMode: mode };
       await db.insert(userPreferences).values({ userId, data, updatedAt: /* @__PURE__ */ new Date() }).onConflictDoUpdate({
@@ -77339,7 +77381,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const goalId = _p9(req.params.id);
-      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq115(goals.userId, userId)).limit(1);
+      const [goalsRow] = await db.select({ data: goals.data }).from(goals).where(eq116(goals.userId, userId)).limit(1);
       const goalsList = goalsRow?.data || [];
       const goal = goalsList.find((g) => g.id === goalId);
       if (!goal) return res.status(404).json({ error: "Goal not found" });
@@ -77356,7 +77398,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const goalId = _p9(req.params.id);
-      const [tree] = await db.select().from(goalTrees).where(and85(eq115(goalTrees.userId, userId), eq115(goalTrees.goalId, goalId))).limit(1);
+      const [tree] = await db.select().from(goalTrees).where(and86(eq116(goalTrees.userId, userId), eq116(goalTrees.goalId, goalId))).limit(1);
       if (!tree) return res.status(200).json({ hasTree: false });
       res.json({ hasTree: true, ...tree });
     } catch (err2) {
@@ -77373,10 +77415,10 @@ Reply directly to this message with your answer and I'll take it from there.
       if (!action || typeof action !== "object" || !("type" in action)) {
         return res.status(400).json({ error: "action is required" });
       }
-      const [treeRow] = await db.select().from(goalTrees).where(and85(eq115(goalTrees.userId, userId), eq115(goalTrees.goalId, goalId))).limit(1);
+      const [treeRow] = await db.select().from(goalTrees).where(and86(eq116(goalTrees.userId, userId), eq116(goalTrees.goalId, goalId))).limit(1);
       if (!treeRow) return res.status(404).json({ error: "Goal tree not found" });
       const tree = applyGoalTreeEdit(treeRow.tree, action);
-      const [updated] = await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(and85(eq115(goalTrees.id, treeRow.id), eq115(goalTrees.userId, userId))).returning();
+      const [updated] = await db.update(goalTrees).set({ tree, updatedAt: /* @__PURE__ */ new Date() }).where(and86(eq116(goalTrees.id, treeRow.id), eq116(goalTrees.userId, userId))).returning();
       res.json({
         ok: true,
         hasTree: true,
@@ -77397,7 +77439,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const goalId = _p9(req.params.id);
       const taskId = _p9(req.params.taskId);
       const todayKey = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const [treeRow] = await db.select().from(goalTrees).where(and85(eq115(goalTrees.userId, userId), eq115(goalTrees.goalId, goalId))).limit(1);
+      const [treeRow] = await db.select().from(goalTrees).where(and86(eq116(goalTrees.userId, userId), eq116(goalTrees.goalId, goalId))).limit(1);
       if (!treeRow) return res.status(404).json({ error: "Goal tree not found" });
       const tree = treeRow.tree || { phases: [] };
       let pick = null;
@@ -77426,7 +77468,7 @@ Reply directly to this message with your answer and I'll take it from there.
         if (pick) break;
       }
       if (!pick) return res.status(404).json({ error: "Goal task not found" });
-      const [planRow] = await db.select({ data: plans.data }).from(plans).where(and85(eq115(plans.userId, userId), eq115(plans.date, todayKey))).limit(1);
+      const [planRow] = await db.select({ data: plans.data }).from(plans).where(and86(eq116(plans.userId, userId), eq116(plans.date, todayKey))).limit(1);
       const currentPlan = planRow?.data || {
         date: todayKey,
         tasks: [],
@@ -77482,8 +77524,8 @@ Reply directly to this message with your answer and I'll take it from there.
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
       const status = typeof req.query.status === "string" ? req.query.status : null;
-      const where = status ? and85(eq115(agentJobs.userId, userId), eq115(agentJobs.status, status)) : eq115(agentJobs.userId, userId);
-      const jobs = await db.select().from(agentJobs).where(where).orderBy(desc44(agentJobs.createdAt)).limit(limit);
+      const where = status ? and86(eq116(agentJobs.userId, userId), eq116(agentJobs.status, status)) : eq116(agentJobs.userId, userId);
+      const jobs = await db.select().from(agentJobs).where(where).orderBy(desc45(agentJobs.createdAt)).limit(limit);
       const { attachJobReviewState: attachJobReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
       res.json(jobs.map(attachJobReviewState2));
     } catch (err2) {
@@ -77496,9 +77538,9 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const jobs = await db.select().from(agentJobs).where(
-        and85(
-          eq115(agentJobs.userId, userId),
-          sql41`${agentJobs.status} IN ('queued', 'running', 'cancelling')`
+        and86(
+          eq116(agentJobs.userId, userId),
+          sql42`${agentJobs.status} IN ('queued', 'running', 'cancelling')`
         )
       ).orderBy(asc7(agentJobs.createdAt)).limit(20);
       const { attachJobReviewState: attachJobReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
@@ -77512,7 +77554,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const jobs = await db.select().from(agentJobs).where(eq115(agentJobs.userId, userId)).orderBy(desc44(agentJobs.createdAt)).limit(80);
+      const jobs = await db.select().from(agentJobs).where(eq116(agentJobs.userId, userId)).orderBy(desc45(agentJobs.createdAt)).limit(80);
       const { getRecentEvents: getRecentEvents2 } = await Promise.resolve().then(() => (init_diagnosticsService(), diagnosticsService_exports));
       const { buildJobRunnerObservability: buildJobRunnerObservability2 } = await Promise.resolve().then(() => (init_jobObservability(), jobObservability_exports));
       const diagnosticEvents2 = await getRecentEvents2({
@@ -77533,7 +77575,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      const [job] = await db.select().from(agentJobs).where(and85(eq115(agentJobs.id, id), eq115(agentJobs.userId, userId))).limit(1);
+      const [job] = await db.select().from(agentJobs).where(and86(eq116(agentJobs.id, id), eq116(agentJobs.userId, userId))).limit(1);
       if (!job) return res.status(404).json({ error: "Job not found" });
       if (job.status === "complete" || job.status === "failed") {
         return res.status(400).json({ error: "Job is already finished" });
@@ -77542,7 +77584,7 @@ Reply directly to this message with your answer and I'll take it from there.
         return res.json({ ok: true, status: job.status });
       }
       const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
-      await db.update(agentJobs).set({ status: newStatus, completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0 }).where(eq115(agentJobs.id, id));
+      await db.update(agentJobs).set({ status: newStatus, completedAt: newStatus === "cancelled" ? /* @__PURE__ */ new Date() : void 0 }).where(eq116(agentJobs.id, id));
       res.json({ ok: true, status: newStatus });
     } catch (err2) {
       console.error("Error cancelling agent job:", err2);
@@ -77554,7 +77596,7 @@ Reply directly to this message with your answer and I'll take it from there.
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = _p9(req.params.id);
-      const [job] = await db.select().from(agentJobs).where(and85(eq115(agentJobs.id, id), eq115(agentJobs.userId, userId))).limit(1);
+      const [job] = await db.select().from(agentJobs).where(and86(eq116(agentJobs.id, id), eq116(agentJobs.userId, userId))).limit(1);
       if (!job) return res.status(404).json({ error: "Job not found" });
       if (!["failed", "cancelled"].includes(job.status)) {
         return res.status(400).json({ error: "Only failed or cancelled jobs can be retried" });
@@ -77587,18 +77629,18 @@ Reply directly to this message with your answer and I'll take it from there.
       if (triageSection === "auto_handled") {
         const since = new Date(Date.now() - 48 * 60 * 60 * 1e3);
         const items2 = await db.select().from(deliverables).where(
-          and85(
-            eq115(deliverables.userId, userId),
-            eq115(deliverables.status, "approved"),
+          and86(
+            eq116(deliverables.userId, userId),
+            eq116(deliverables.status, "approved"),
             gte23(deliverables.actedAt, since),
-            sql41`${deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
+            sql42`${deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
           )
-        ).orderBy(desc44(deliverables.createdAt)).limit(20);
+        ).orderBy(desc45(deliverables.createdAt)).limit(20);
         const { attachDeliverableReviewState: attachDeliverableReviewState3 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
         return res.json(items2.map(attachDeliverableReviewState3));
       }
       const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
-      const items = await db.select().from(deliverables).where(and85(eq115(deliverables.userId, userId), eq115(deliverables.status, status))).orderBy(desc44(deliverables.createdAt)).limit(50);
+      const items = await db.select().from(deliverables).where(and86(eq116(deliverables.userId, userId), eq116(deliverables.status, status))).orderBy(desc45(deliverables.createdAt)).limit(50);
       const { attachDeliverableReviewState: attachDeliverableReviewState2 } = await Promise.resolve().then(() => (init_reviewLoop(), reviewLoop_exports));
       res.json(items.map(attachDeliverableReviewState2));
     } catch (err2) {
@@ -77636,7 +77678,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(websiteCrawls).where(eq115(websiteCrawls.userId, userId)).limit(1);
+      const rows = await db.select().from(websiteCrawls).where(eq116(websiteCrawls.userId, userId)).limit(1);
       if (rows.length === 0) return res.json({ status: "idle" });
       const row = rows[0];
       res.json({
@@ -77655,7 +77697,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      await db.delete(websiteCrawls).where(eq115(websiteCrawls.userId, userId));
+      await db.delete(websiteCrawls).where(eq116(websiteCrawls.userId, userId));
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting website crawl:", error);
@@ -77666,7 +77708,7 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rows = await db.select().from(chatgptImports).where(eq115(chatgptImports.userId, userId));
+      const rows = await db.select().from(chatgptImports).where(eq116(chatgptImports.userId, userId));
       if (rows.length === 0) {
         return res.json({ imported: false });
       }
@@ -77717,7 +77759,7 @@ Reply directly to this message with your answer and I'll take it from there.
       if (allTexts.length === 0) {
         return res.status(400).json({ error: "No readable conversations found in the file." });
       }
-      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq115(userMemories.userId, userId));
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq116(userMemories.userId, userId));
       const existingMemories = existingRows.map((r) => r.content);
       const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent));
       const batchSize = 10;
@@ -77799,7 +77841,7 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const rows = await db.select().from(openclawBuildLog).where(eq115(openclawBuildLog.userId, userId)).orderBy(desc44(openclawBuildLog.createdAt)).limit(50);
+      const rows = await db.select().from(openclawBuildLog).where(eq116(openclawBuildLog.userId, userId)).orderBy(desc45(openclawBuildLog.createdAt)).limit(50);
       res.json({ builds: rows });
     } catch (err2) {
       console.error("[jarvis] GET builds failed:", err2);
@@ -77810,7 +77852,7 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const watches = await db.select().from(nervousSystemWatches).where(eq115(nervousSystemWatches.userId, userId)).orderBy(nervousSystemWatches.createdAt);
+      const watches = await db.select().from(nervousSystemWatches).where(eq116(nervousSystemWatches.userId, userId)).orderBy(nervousSystemWatches.createdAt);
       res.json(watches);
     } catch (err2) {
       console.error("[NervousSystem] watches fetch failed:", err2);
@@ -77847,7 +77889,7 @@ Extract up to 8 memories per batch.`;
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "No valid fields to update" });
       }
-      const [updated] = await db.update(nervousSystemWatches).set(updates).where(and85(eq115(nervousSystemWatches.id, id), eq115(nervousSystemWatches.userId, userId))).returning();
+      const [updated] = await db.update(nervousSystemWatches).set(updates).where(and86(eq116(nervousSystemWatches.id, id), eq116(nervousSystemWatches.userId, userId))).returning();
       if (!updated) return res.status(404).json({ error: "Watch not found" });
       res.json(updated);
     } catch (err2) {
@@ -77860,7 +77902,7 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const id = _p9(req.params.id);
     try {
-      await db.delete(nervousSystemWatches).where(and85(eq115(nervousSystemWatches.id, id), eq115(nervousSystemWatches.userId, userId)));
+      await db.delete(nervousSystemWatches).where(and86(eq116(nervousSystemWatches.id, id), eq116(nervousSystemWatches.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[NervousSystem] watch delete failed:", err2);
@@ -77873,7 +77915,7 @@ Extract up to 8 memories per batch.`;
     const parsedLimit = parseInt(req.query.limit || "20", 10);
     const limit = Math.min(50, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 20 : parsedLimit);
     try {
-      const signals = await db.select().from(nervousSystemSignals).where(eq115(nervousSystemSignals.userId, userId)).orderBy(sql41`${nervousSystemSignals.createdAt} DESC`).limit(limit);
+      const signals = await db.select().from(nervousSystemSignals).where(eq116(nervousSystemSignals.userId, userId)).orderBy(sql42`${nervousSystemSignals.createdAt} DESC`).limit(limit);
       res.json(signals);
     } catch (err2) {
       console.error("[NervousSystem] signals fetch failed:", err2);
@@ -77932,7 +77974,7 @@ Extract up to 8 memories per batch.`;
     const parsedLimit = parseInt(req.query.limit || "30", 10);
     const limit = Math.min(100, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 30 : parsedLimit);
     try {
-      const rows = await db.select().from(gutSignals).where(eq115(gutSignals.userId, userId)).orderBy(desc44(gutSignals.createdAt)).limit(limit);
+      const rows = await db.select().from(gutSignals).where(eq116(gutSignals.userId, userId)).orderBy(desc45(gutSignals.createdAt)).limit(limit);
       res.json(rows);
     } catch (err2) {
       console.error("[Gut] threat-log fetch failed:", err2);
@@ -78094,8 +78136,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq134 } = await import("drizzle-orm");
-      const existing = await db.select().from(userSkills2).where(eq134(userSkills2.userId, userId));
+      const { eq: eq135 } = await import("drizzle-orm");
+      const existing = await db.select().from(userSkills2).where(eq135(userSkills2.userId, userId));
       const existingBuiltInNames = new Set(
         existing.filter((s) => s.isBuiltIn).map((s) => s.name)
       );
@@ -78112,7 +78154,7 @@ Extract up to 8 memories per batch.`;
             isActive: false
           }))
         ).onConflictDoNothing();
-        const fresh = await db.select().from(userSkills2).where(eq134(userSkills2.userId, userId));
+        const fresh = await db.select().from(userSkills2).where(eq135(userSkills2.userId, userId));
         return res.json({ skills: fresh });
       }
       res.json({ skills: existing });
@@ -78151,10 +78193,10 @@ Extract up to 8 memories per batch.`;
     const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq134, and: and103 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and103(eq134(userSkills2.id, id), eq134(userSkills2.userId, userId))).limit(1);
+      const { eq: eq135, and: and104 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and104(eq135(userSkills2.id, id), eq135(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
-      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and103(eq134(userSkills2.id, id), eq134(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and104(eq135(userSkills2.id, id), eq135(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH toggle failed:", err2);
@@ -78168,8 +78210,8 @@ Extract up to 8 memories per batch.`;
     const { name, description, instructions, emoji } = req.body;
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq134, and: and103 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and103(eq134(userSkills2.id, id), eq134(userSkills2.userId, userId))).limit(1);
+      const { eq: eq135, and: and104 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and104(eq135(userSkills2.id, id), eq135(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be modified" });
       const updates = {};
@@ -78178,7 +78220,7 @@ Extract up to 8 memories per batch.`;
       if (instructions?.trim()) updates.instructions = instructions.trim().slice(0, 3e3);
       if (emoji?.trim()) updates.emoji = emoji.trim().slice(0, 8);
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
-      const [updated] = await db.update(userSkills2).set(updates).where(and103(eq134(userSkills2.id, id), eq134(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set(updates).where(and104(eq135(userSkills2.id, id), eq135(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH update failed:", err2);
@@ -78191,11 +78233,11 @@ Extract up to 8 memories per batch.`;
     const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq134, and: and103 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and103(eq134(userSkills2.id, id), eq134(userSkills2.userId, userId))).limit(1);
+      const { eq: eq135, and: and104 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and104(eq135(userSkills2.id, id), eq135(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be deleted" });
-      await db.delete(userSkills2).where(and103(eq134(userSkills2.id, id), eq134(userSkills2.userId, userId)));
+      await db.delete(userSkills2).where(and104(eq135(userSkills2.id, id), eq135(userSkills2.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[UserSkills] DELETE failed:", err2);
@@ -78207,8 +78249,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { skillCandidates: skillCandidates2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq134, and: and103 } = await import("drizzle-orm");
-      const rows = await db.select().from(skillCandidates2).where(and103(eq134(skillCandidates2.userId, userId), eq134(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
+      const { eq: eq135, and: and104 } = await import("drizzle-orm");
+      const rows = await db.select().from(skillCandidates2).where(and104(eq135(skillCandidates2.userId, userId), eq135(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
       res.json({ candidates: rows });
     } catch (err2) {
       console.error("[SkillCandidates] GET failed:", err2);
@@ -78227,15 +78269,15 @@ Extract up to 8 memories per batch.`;
     }
     try {
       const { skillCandidates: skillCandidates2, userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq134, and: and103 } = await import("drizzle-orm");
-      const [candidate] = await db.select().from(skillCandidates2).where(and103(eq134(skillCandidates2.id, id), eq134(skillCandidates2.userId, userId))).limit(1);
+      const { eq: eq135, and: and104 } = await import("drizzle-orm");
+      const [candidate] = await db.select().from(skillCandidates2).where(and104(eq135(skillCandidates2.id, id), eq135(skillCandidates2.userId, userId))).limit(1);
       if (!candidate) return res.status(404).json({ error: "Candidate not found" });
       if (candidate.status !== "pending") {
         return res.status(409).json({ error: "Candidate has already been reviewed" });
       }
       const newStatus = action === "accept" ? "accepted" : action === "edit" ? "edited" : "dismissed";
       await db.transaction(async (tx) => {
-        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq134(skillCandidates2.id, id));
+        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq135(skillCandidates2.id, id));
         if (action === "accept" || action === "edit") {
           const finalName = name?.trim() ? name.trim().slice(0, 80) : candidate.name;
           const finalInstructions = instructionText?.trim() ? instructionText.trim().slice(0, 3e3) : candidate.instructionText;
@@ -78355,9 +78397,9 @@ Extract up to 8 memories per batch.`;
     try {
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { integrationStatus: integrationStatus2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq134, sql: sql48 } = await import("drizzle-orm");
-      const rows = await db2.select().from(integrationStatus2).where(eq134(integrationStatus2.userId, userId));
-      const linkedRaw = await db2.execute(sql48`
+      const { eq: eq135, sql: sql49 } = await import("drizzle-orm");
+      const rows = await db2.select().from(integrationStatus2).where(eq135(integrationStatus2.userId, userId));
+      const linkedRaw = await db2.execute(sql49`
         SELECT DISTINCT integration FROM (
           SELECT 'telegram' AS integration FROM telegram_links WHERE user_id = ${userId}
           UNION ALL
@@ -78600,9 +78642,9 @@ Extract up to 8 memories per batch.`;
           scheduledAt: jarvisScheduledTasks.scheduledAt,
           completedAt: jarvisScheduledTasks.completedAt
         }).from(jarvisScheduledTasks).where(
-          and85(
-            eq115(jarvisScheduledTasks.userId, userId),
-            sql41`DATE(${jarvisScheduledTasks.scheduledAt}) = ${today}`
+          and86(
+            eq116(jarvisScheduledTasks.userId, userId),
+            sql42`DATE(${jarvisScheduledTasks.scheduledAt}) = ${today}`
           )
         ).limit(10);
         return res.json({
@@ -78707,7 +78749,7 @@ Extract up to 8 memories per batch.`;
       }
       const parsedLimit = parseInt(String(req.query.limit ?? ""), 10);
       const limit = Number.isNaN(parsedLimit) ? 50 : Math.max(1, Math.min(parsedLimit, 200));
-      const entries = await db.select().from(selfHealAuditLog).orderBy(desc44(selfHealAuditLog.createdAt)).limit(limit);
+      const entries = await db.select().from(selfHealAuditLog).orderBy(desc45(selfHealAuditLog.createdAt)).limit(limit);
       res.json({ entries });
     } catch (err2) {
       console.error("[self-heal-audit] GET error:", err2);
@@ -78717,7 +78759,7 @@ Extract up to 8 memories per batch.`;
   app2.get("/api/button-locations", authMiddleware, async (req, res) => {
     try {
       const userId = req.userId;
-      const rows = await db.select().from(buttonLocations).where(eq115(buttonLocations.userId, userId)).orderBy(desc44(buttonLocations.updatedAt));
+      const rows = await db.select().from(buttonLocations).where(eq116(buttonLocations.userId, userId)).orderBy(desc45(buttonLocations.updatedAt));
       res.json({ entries: rows });
     } catch (err2) {
       console.error("[button-locations] GET error:", err2);
@@ -78753,9 +78795,9 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select({ id: buttonLocations.id, userId: buttonLocations.userId }).from(buttonLocations).where(eq115(buttonLocations.id, id)).limit(1);
+      const rows = await db.select({ id: buttonLocations.id, userId: buttonLocations.userId }).from(buttonLocations).where(eq116(buttonLocations.id, id)).limit(1);
       if (!rows.length || rows[0].userId !== userId) return res.status(404).json({ error: "Not found" });
-      await db.delete(buttonLocations).where(eq115(buttonLocations.id, id));
+      await db.delete(buttonLocations).where(eq116(buttonLocations.id, id));
       res.json({ deleted: true });
     } catch (err2) {
       console.error("[button-locations] DELETE error:", err2);
@@ -78767,7 +78809,7 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select().from(buttonLocations).where(and85(eq115(buttonLocations.id, id), eq115(buttonLocations.userId, userId))).limit(1);
+      const rows = await db.select().from(buttonLocations).where(and86(eq116(buttonLocations.id, id), eq116(buttonLocations.userId, userId))).limit(1);
       if (!rows.length) return res.status(404).json({ error: "Not found" });
       const current = rows[0];
       const newConfidence = Math.min(1, current.confidence + 0.15);
@@ -78777,7 +78819,7 @@ Extract up to 8 memories per batch.`;
         failCount: 0,
         lastConfirmedAt: /* @__PURE__ */ new Date(),
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq115(buttonLocations.id, id)).returning();
+      }).where(eq116(buttonLocations.id, id)).returning();
       res.json({ entry: updated });
     } catch (err2) {
       console.error("[button-locations] PATCH confirm error:", err2);
@@ -78789,7 +78831,7 @@ Extract up to 8 memories per batch.`;
       const userId = req.userId;
       const id = parseInt(_p9(req.params.id), 10);
       if (isNaN(id)) return res.status(400).json({ error: "Invalid id" });
-      const rows = await db.select().from(buttonLocations).where(and85(eq115(buttonLocations.id, id), eq115(buttonLocations.userId, userId))).limit(1);
+      const rows = await db.select().from(buttonLocations).where(and86(eq116(buttonLocations.id, id), eq116(buttonLocations.userId, userId))).limit(1);
       if (!rows.length) return res.status(404).json({ error: "Not found" });
       const current = rows[0];
       const newConfidence = Math.max(0, current.confidence - 0.2);
@@ -78800,7 +78842,7 @@ Extract up to 8 memories per batch.`;
         stale: nowStale,
         failCount: newFailCount,
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq115(buttonLocations.id, id)).returning();
+      }).where(eq116(buttonLocations.id, id)).returning();
       res.json({ entry: updated });
     } catch (err2) {
       console.error("[button-locations] PATCH deny error:", err2);
@@ -78924,21 +78966,21 @@ Extract up to 8 memories per batch.`;
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1e3);
       const rows = await db.select({
         userMessage: capabilityGaps.userMessage,
-        agentReplySnippet: sql41`MAX(${capabilityGaps.agentReplySnippet})`,
+        agentReplySnippet: sql42`MAX(${capabilityGaps.agentReplySnippet})`,
         detectedReason: capabilityGaps.detectedReason,
-        channel: sql41`MAX(${capabilityGaps.channel})`,
-        occurrenceCount: sql41`COUNT(*)::int`,
-        addressed: sql41`BOOL_AND(${capabilityGaps.addressed})`,
-        latestCreatedAt: sql41`MAX(${capabilityGaps.createdAt})::text`
+        channel: sql42`MAX(${capabilityGaps.channel})`,
+        occurrenceCount: sql42`COUNT(*)::int`,
+        addressed: sql42`BOOL_AND(${capabilityGaps.addressed})`,
+        latestCreatedAt: sql42`MAX(${capabilityGaps.createdAt})::text`
       }).from(capabilityGaps).where(
-        and85(
-          eq115(capabilityGaps.userId, userId),
+        and86(
+          eq116(capabilityGaps.userId, userId),
           gte23(capabilityGaps.createdAt, sevenDaysAgo)
         )
       ).groupBy(
         capabilityGaps.userMessage,
         capabilityGaps.detectedReason
-      ).orderBy(desc44(sql41`MAX(${capabilityGaps.createdAt})`)).limit(50);
+      ).orderBy(desc45(sql42`MAX(${capabilityGaps.createdAt})`)).limit(50);
       res.json({ gaps: rows });
     } catch (err2) {
       console.error("[capability-gaps] GET error:", err2);
@@ -78953,10 +78995,10 @@ Extract up to 8 memories per batch.`;
         return res.status(400).json({ error: "userMessage and detectedReason are required" });
       }
       await db.update(capabilityGaps).set({ addressed: true }).where(
-        and85(
-          eq115(capabilityGaps.userId, userId),
-          eq115(capabilityGaps.userMessage, userMessage),
-          eq115(capabilityGaps.detectedReason, detectedReason)
+        and86(
+          eq116(capabilityGaps.userId, userId),
+          eq116(capabilityGaps.userMessage, userMessage),
+          eq116(capabilityGaps.detectedReason, detectedReason)
         )
       );
       res.json({ ok: true });
@@ -79015,6 +79057,7 @@ var init_routes2 = __esm({
     init_integrationRoutes();
     init_profileMemoryRoutes();
     init_planGenerationRoutes();
+    init_inboxRoutes();
     init_coachRuntimeRoutes();
     init_goalTreeEditor();
     init_goalPlanHandoff();
@@ -79086,7 +79129,7 @@ var flagTaskNeedsAttention_exports = {};
 __export(flagTaskNeedsAttention_exports, {
   buildFlagTaskNeedsAttentionTool: () => buildFlagTaskNeedsAttentionTool
 });
-import { and as and93, eq as eq124 } from "drizzle-orm";
+import { and as and94, eq as eq125 } from "drizzle-orm";
 function buildFlagTaskNeedsAttentionTool(taskId) {
   return {
     name: "flag_task_needs_attention",
@@ -79108,22 +79151,22 @@ function buildFlagTaskNeedsAttentionTool(taskId) {
       }
       try {
         const [task] = await db.select().from(jarvisScheduledTasks).where(
-          and93(
-            eq124(jarvisScheduledTasks.id, taskId),
-            eq124(jarvisScheduledTasks.userId, ctx.userId)
+          and94(
+            eq125(jarvisScheduledTasks.id, taskId),
+            eq125(jarvisScheduledTasks.userId, ctx.userId)
           )
         ).limit(1);
         if (!task) {
           return { ok: false, content: `Scheduled task id=${taskId} not found.`, label: "Task not found" };
         }
         await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion: question }).where(
-          and93(
-            eq124(jarvisScheduledTasks.id, taskId),
-            eq124(jarvisScheduledTasks.userId, ctx.userId)
+          and94(
+            eq125(jarvisScheduledTasks.id, taskId),
+            eq125(jarvisScheduledTasks.userId, ctx.userId)
           )
         );
         try {
-          const [link] = await db.select().from(telegramLinks).where(eq124(telegramLinks.userId, ctx.userId));
+          const [link] = await db.select().from(telegramLinks).where(eq125(telegramLinks.userId, ctx.userId));
           if (link?.chatId) {
             const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
             await sendLongMessage2(
@@ -79169,7 +79212,7 @@ __export(selfImprovementLoop_exports, {
   runSelfImprovementCycle: () => runSelfImprovementCycle,
   runSelfImprovementForAllUsers: () => runSelfImprovementForAllUsers
 });
-import { gte as gte25, desc as desc49 } from "drizzle-orm";
+import { gte as gte25, desc as desc50 } from "drizzle-orm";
 import fs25 from "fs/promises";
 import path32 from "path";
 function getISOWeekKey(d) {
@@ -79280,7 +79323,7 @@ async function _runCycleInner(userId, signal) {
   const [auditEntries, rawInteractions, recentErrors] = await Promise.all([
     readAuditEntries(50).catch(() => []),
     getRecentInteractions(userId, 100, 7 * 24).catch(() => []),
-    db.select().from(systemErrorLog).where(gte25(systemErrorLog.createdAt, sevenDaysAgo)).orderBy(desc49(systemErrorLog.createdAt)).limit(30).catch(() => [])
+    db.select().from(systemErrorLog).where(gte25(systemErrorLog.createdAt, sevenDaysAgo)).orderBy(desc50(systemErrorLog.createdAt)).limit(30).catch(() => [])
   ]);
   const flaggedInteractions = [];
   const sortedInteractions = [...rawInteractions].sort(
@@ -79574,7 +79617,7 @@ __export(primeIdentityAudit_exports, {
 });
 import * as fs26 from "fs/promises";
 import * as path33 from "path";
-import { eq as eq126, and as and95, desc as desc50, inArray as inArray10, gte as gte26 } from "drizzle-orm";
+import { eq as eq127, and as and96, desc as desc51, inArray as inArray10, gte as gte26 } from "drizzle-orm";
 function currentMonthKey() {
   const now = /* @__PURE__ */ new Date();
   const y = now.getUTCFullYear();
@@ -79584,10 +79627,10 @@ function currentMonthKey() {
 async function auditAlreadyRan(userId, monthKey) {
   try {
     const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-      and95(
-        eq126(proactiveScheduleLog.userId, userId),
-        eq126(proactiveScheduleLog.messageType, "prime_identity_audit"),
-        eq126(proactiveScheduleLog.sentDate, monthKey)
+      and96(
+        eq127(proactiveScheduleLog.userId, userId),
+        eq127(proactiveScheduleLog.messageType, "prime_identity_audit"),
+        eq127(proactiveScheduleLog.sentDate, monthKey)
       )
     ).limit(1);
     return rows.length > 0;
@@ -79613,13 +79656,13 @@ async function runPrimeIdentityAudit(userId) {
       label: interactionLog.label,
       createdAt: interactionLog.createdAt
     }).from(interactionLog).where(
-      and95(
-        eq126(interactionLog.userId, userId),
-        eq126(interactionLog.direction, "outbound"),
+      and96(
+        eq127(interactionLog.userId, userId),
+        eq127(interactionLog.direction, "outbound"),
         inArray10(interactionLog.channel, ["telegram", "app_chat"]),
         gte26(interactionLog.createdAt, cutoff)
       )
-    ).orderBy(desc50(interactionLog.createdAt)).limit(40);
+    ).orderBy(desc51(interactionLog.createdAt)).limit(40);
     if (rows.length === 0) {
       console.log(`[PrimeAudit] No conversation sample for user ${userId} \u2014 sending low-data message`);
       try {
@@ -79808,29 +79851,29 @@ __export(decay_exports, {
   reinforceMemories: () => reinforceMemories,
   runDailyDecay: () => runDailyDecay
 });
-import { eq as eq128, sql as sql45, and as and97 } from "drizzle-orm";
+import { eq as eq129, sql as sql46, and as and98 } from "drizzle-orm";
 function utcDayKey2(d) {
   return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
 }
 async function runDailyDecay() {
   const result = { decremented: 0, deleted: 0 };
   try {
-    const dec = await db.execute(sql45`
+    const dec = await db.execute(sql46`
       UPDATE user_memories
-      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql45.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql45.raw(String(DECAY_STEP))} END)
+      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql46.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql46.raw(String(DECAY_STEP))} END)
       WHERE (
-        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql45.raw(String(STALE_AFTER_REF_DAYS))} days')
-        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql45.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql46.raw(String(STALE_AFTER_REF_DAYS))} days')
+        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql46.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
       )
       RETURNING id
     `);
     result.decremented = dec.rows?.length || 0;
-    const del = await db.execute(sql45`
+    const del = await db.execute(sql46`
       DELETE FROM user_memories
       WHERE relevance_score < ${DECAY_FLOOR}
         AND (
-          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql45.raw(String(STALE_AFTER_REF_DAYS))} days')
-          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql45.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql46.raw(String(STALE_AFTER_REF_DAYS))} days')
+          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql46.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
         )
       RETURNING id
     `);
@@ -79853,9 +79896,9 @@ async function reinforceMemories(userId, ids) {
   if (ids.length === 0) return;
   try {
     await db.update(userMemories).set({
-      relevanceScore: sql45`LEAST(100, ${userMemories.relevanceScore} + 5)`,
+      relevanceScore: sql46`LEAST(100, ${userMemories.relevanceScore} + 5)`,
       lastReferencedAt: /* @__PURE__ */ new Date()
-    }).where(and97(eq128(userMemories.userId, userId), sql45`${userMemories.id} = ANY(${ids})`));
+    }).where(and98(eq129(userMemories.userId, userId), sql46`${userMemories.id} = ANY(${ids})`));
   } catch (err2) {
     console.error("[MemoryDecay] reinforce failed:", err2);
   }
@@ -79880,7 +79923,7 @@ __export(scanner_exports, {
   runNervousSystemScan: () => runNervousSystemScan
 });
 import crypto11 from "crypto";
-import { eq as eq129, and as and98 } from "drizzle-orm";
+import { eq as eq130, and as and99 } from "drizzle-orm";
 function contentHash(userId, headline, url) {
   return crypto11.createHash("sha256").update(`${userId}::${headline.toLowerCase().trim()}::${url.toLowerCase().trim()}`).digest("hex").slice(0, 64);
 }
@@ -79939,7 +79982,7 @@ ${items}`;
   }
 }
 async function scanWatchTopic(userId, watch3) {
-  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq129(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
+  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq130(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
   let searchResults = [];
   try {
     const query = `${watch3.label} news latest`;
@@ -80018,7 +80061,7 @@ ${hit.url}` : ""}`;
       const deliveryResults = await notifyUser(userId, "nervous_system", msgText);
       const anyDelivered = deliveryResults.some((r) => r.result.ok && r.channel !== "in_app");
       if (anyDelivered) {
-        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and98(eq129(nervousSystemSignals.userId, userId), eq129(nervousSystemSignals.contentHash, hash)));
+        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and99(eq130(nervousSystemSignals.userId, userId), eq130(nervousSystemSignals.contentHash, hash)));
         logInteraction(userId, "notification", "outbound", msgText, "nervous_system").catch(() => {
         });
       }
@@ -80034,7 +80077,7 @@ async function runNervousSystemScan() {
   const now = Date.now();
   let watches = [];
   try {
-    watches = await db.select().from(nervousSystemWatches).where(eq129(nervousSystemWatches.active, true));
+    watches = await db.select().from(nervousSystemWatches).where(eq130(nervousSystemWatches.active, true));
   } catch (err2) {
     console.error("[NervousSystem] failed to load watches:", err2);
     return;
@@ -80090,7 +80133,7 @@ var peopleSync_exports = {};
 __export(peopleSync_exports, {
   syncPeopleFromGoogle: () => syncPeopleFromGoogle
 });
-import { eq as eq130, and as and99 } from "drizzle-orm";
+import { eq as eq131, and as and100 } from "drizzle-orm";
 function parseSender(from) {
   const angle = from.match(/^"?([^"<]+?)"?\s*<([^>]+)>$/);
   if (angle) return { name: angle[1].trim(), email: angle[2].trim().toLowerCase() };
@@ -80165,7 +80208,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
   for (const obs of byEmail.values()) {
     const upc = upcoming.get(obs.email);
     try {
-      const [existing] = await db.select().from(people).where(and99(eq130(people.userId, userId), eq130(people.email, obs.email))).limit(1);
+      const [existing] = await db.select().from(people).where(and100(eq131(people.userId, userId), eq131(people.email, obs.email))).limit(1);
       const relationshipHint = obs.source === "calendar" ? `calendar attendee \u2014 ${obs.context}` : `email correspondent \u2014 re: ${obs.context}`;
       if (existing) {
         await db.update(people).set({
@@ -80176,7 +80219,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
           nextInteractionAt: upc?.nearest ?? null,
           upcomingCount: upc?.count ?? 0,
           updatedAt: /* @__PURE__ */ new Date()
-        }).where(eq130(people.id, existing.id));
+        }).where(eq131(people.id, existing.id));
       } else {
         await db.insert(people).values({
           userId,
@@ -80230,14 +80273,14 @@ import express4 from "express";
 init_db();
 init_schema();
 init_coachAgent();
-import { eq as eq117, and as and87, sql as sql42 } from "drizzle-orm";
+import { eq as eq118, and as and88, sql as sql43 } from "drizzle-orm";
 import express2 from "express";
 import * as crypto10 from "crypto";
 
 // server/channels/whatsappChannel.ts
 init_db();
 init_schema();
-import { eq as eq116, and as and86 } from "drizzle-orm";
+import { eq as eq117, and as and87 } from "drizzle-orm";
 var TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 var TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 var TWILIO_FROM = process.env.TWILIO_WHATSAPP_NUMBER;
@@ -80292,7 +80335,7 @@ function verifyTwilioSignature(req) {
 }
 async function findUserByPhone(phone) {
   try {
-    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and87(eq117(channelLinks.channel, "whatsapp"), eq117(channelLinks.address, phone))).limit(1);
+    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and88(eq118(channelLinks.channel, "whatsapp"), eq118(channelLinks.address, phone))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err2) {
     console.error("[whatsapp] user lookup failed:", err2);
@@ -80301,11 +80344,11 @@ async function findUserByPhone(phone) {
 }
 async function tryConsumeLinkCode(code, phone) {
   try {
-    const rows = await db.select().from(channelLinkCodes).where(and87(eq117(channelLinkCodes.code, code), eq117(channelLinkCodes.channel, "whatsapp"))).limit(1);
+    const rows = await db.select().from(channelLinkCodes).where(and88(eq118(channelLinkCodes.code, code), eq118(channelLinkCodes.channel, "whatsapp"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-      await db.delete(channelLinkCodes).where(eq117(channelLinkCodes.code, code));
+      await db.delete(channelLinkCodes).where(eq118(channelLinkCodes.code, code));
       return null;
     }
     await db.insert(channelLinks).values({
@@ -80317,7 +80360,7 @@ async function tryConsumeLinkCode(code, phone) {
       target: [channelLinks.channel, channelLinks.address],
       set: { userId: row.userId, lastSeenAt: /* @__PURE__ */ new Date() }
     });
-    await db.delete(channelLinkCodes).where(eq117(channelLinkCodes.code, code));
+    await db.delete(channelLinkCodes).where(eq118(channelLinkCodes.code, code));
     return row.userId;
   } catch (err2) {
     console.error("[whatsapp] link code consume failed:", err2);
@@ -80371,7 +80414,7 @@ function registerWhatsAppWebhook(app2) {
     }
   });
   const cleanup = setInterval(() => {
-    db.delete(channelLinkCodes).where(and87(eq117(channelLinkCodes.channel, "whatsapp"), sql42`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[whatsapp] code cleanup failed:", err2));
+    db.delete(channelLinkCodes).where(and88(eq118(channelLinkCodes.channel, "whatsapp"), sql43`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[whatsapp] code cleanup failed:", err2));
   }, 5 * 60 * 1e3);
   cleanup.unref();
 }
@@ -80744,13 +80787,13 @@ init_bridge();
 import fs24 from "fs";
 import path31 from "path";
 import { WebSocket as WebSocket3, WebSocketServer as WebSocketServer3 } from "ws";
-import { and as and90, desc as desc48, eq as eq121 } from "drizzle-orm";
+import { and as and91, desc as desc49, eq as eq122 } from "drizzle-orm";
 
 // server/gateway/devicePairing.ts
 init_db();
 init_schema();
 import { createHash as createHash8, randomBytes as randomBytes4 } from "crypto";
-import { and as and88, desc as desc45, eq as eq118, isNull as isNull5 } from "drizzle-orm";
+import { and as and89, desc as desc46, eq as eq119, isNull as isNull5 } from "drizzle-orm";
 var JWT_GATEWAY_SCOPES = [
   "operator.admin",
   "operator.read",
@@ -80786,10 +80829,10 @@ function requireGatewayScope(principal, scope) {
 async function authenticateGatewayDeviceToken(token) {
   if (!token?.startsWith("jgwd_")) return null;
   const hash = tokenHash(token);
-  const rows = await db.select().from(gatewayDevices).where(and88(eq118(gatewayDevices.tokenHash, hash), isNull5(gatewayDevices.revokedAt))).limit(1).catch(() => []);
+  const rows = await db.select().from(gatewayDevices).where(and89(eq119(gatewayDevices.tokenHash, hash), isNull5(gatewayDevices.revokedAt))).limit(1).catch(() => []);
   const device = rows[0];
   if (!device) return null;
-  db.update(gatewayDevices).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq118(gatewayDevices.id, device.id)).catch(() => {
+  db.update(gatewayDevices).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq119(gatewayDevices.id, device.id)).catch(() => {
   });
   return {
     userId: device.userId,
@@ -80822,7 +80865,7 @@ async function createGatewayPairingRequest({
   return row;
 }
 async function listGatewayPairingRequests(userId, limit = 25) {
-  return db.select().from(gatewayDevicePairingRequests).where(eq118(gatewayDevicePairingRequests.userId, userId)).orderBy(desc45(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
+  return db.select().from(gatewayDevicePairingRequests).where(eq119(gatewayDevicePairingRequests.userId, userId)).orderBy(desc46(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
 }
 async function approveGatewayPairingRequest({
   userId,
@@ -80830,12 +80873,12 @@ async function approveGatewayPairingRequest({
   code,
   scopes
 }) {
-  const rows = requestId ? await db.select().from(gatewayDevicePairingRequests).where(eq118(gatewayDevicePairingRequests.id, requestId)).limit(1) : await db.select().from(gatewayDevicePairingRequests).where(eq118(gatewayDevicePairingRequests.code, code || "")).limit(1);
+  const rows = requestId ? await db.select().from(gatewayDevicePairingRequests).where(eq119(gatewayDevicePairingRequests.id, requestId)).limit(1) : await db.select().from(gatewayDevicePairingRequests).where(eq119(gatewayDevicePairingRequests.code, code || "")).limit(1);
   const request = rows[0];
   if (!request || request.userId !== userId) throw new Error("Pairing request not found");
   if (request.status !== "pending") throw new Error(`Pairing request is ${request.status}`);
   if (new Date(request.expiresAt).getTime() < Date.now()) {
-    await db.update(gatewayDevicePairingRequests).set({ status: "expired", resolvedAt: /* @__PURE__ */ new Date() }).where(eq118(gatewayDevicePairingRequests.id, request.id)).catch(() => {
+    await db.update(gatewayDevicePairingRequests).set({ status: "expired", resolvedAt: /* @__PURE__ */ new Date() }).where(eq119(gatewayDevicePairingRequests.id, request.id)).catch(() => {
     });
     throw new Error("Pairing request expired");
   }
@@ -80853,26 +80896,26 @@ async function approveGatewayPairingRequest({
       pairedFromRequestId: request.id
     }
   }).returning();
-  await db.update(gatewayDevicePairingRequests).set({ status: "approved", deviceId: device.id, resolvedAt: /* @__PURE__ */ new Date() }).where(eq118(gatewayDevicePairingRequests.id, request.id));
+  await db.update(gatewayDevicePairingRequests).set({ status: "approved", deviceId: device.id, resolvedAt: /* @__PURE__ */ new Date() }).where(eq119(gatewayDevicePairingRequests.id, request.id));
   return {
     device: { ...device, tokenHash: void 0 },
     token: rawToken
   };
 }
 async function rejectGatewayPairingRequest(userId, requestId) {
-  const [request] = await db.select().from(gatewayDevicePairingRequests).where(eq118(gatewayDevicePairingRequests.id, requestId)).limit(1);
+  const [request] = await db.select().from(gatewayDevicePairingRequests).where(eq119(gatewayDevicePairingRequests.id, requestId)).limit(1);
   if (!request || request.userId !== userId) throw new Error("Pairing request not found");
-  await db.update(gatewayDevicePairingRequests).set({ status: "rejected", resolvedAt: /* @__PURE__ */ new Date() }).where(eq118(gatewayDevicePairingRequests.id, request.id));
+  await db.update(gatewayDevicePairingRequests).set({ status: "rejected", resolvedAt: /* @__PURE__ */ new Date() }).where(eq119(gatewayDevicePairingRequests.id, request.id));
   return { ok: true };
 }
 async function listGatewayDevices(userId, includeRevoked = false, limit = 50) {
-  const rows = await db.select().from(gatewayDevices).where(eq118(gatewayDevices.userId, userId)).orderBy(desc45(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
+  const rows = await db.select().from(gatewayDevices).where(eq119(gatewayDevices.userId, userId)).orderBy(desc46(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
   return rows.filter((device) => includeRevoked || !device.revokedAt).map((device) => ({ ...device, tokenHash: void 0 }));
 }
 async function revokeGatewayDevice(userId, deviceId) {
-  const [device] = await db.select().from(gatewayDevices).where(eq118(gatewayDevices.id, deviceId)).limit(1);
+  const [device] = await db.select().from(gatewayDevices).where(eq119(gatewayDevices.id, deviceId)).limit(1);
   if (!device || device.userId !== userId) throw new Error("Gateway device not found");
-  await db.update(gatewayDevices).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq118(gatewayDevices.id, deviceId));
+  await db.update(gatewayDevices).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq119(gatewayDevices.id, deviceId));
   return { ok: true };
 }
 
@@ -80880,7 +80923,7 @@ async function revokeGatewayDevice(userId, deviceId) {
 init_db();
 init_schema();
 import { EventEmitter as EventEmitter2 } from "events";
-import { desc as desc46, eq as eq119 } from "drizzle-orm";
+import { desc as desc47, eq as eq120 } from "drizzle-orm";
 var emitter = new EventEmitter2();
 emitter.setMaxListeners(100);
 function onGatewayEvent(listener) {
@@ -80910,9 +80953,9 @@ async function recordGatewayEvent(input) {
   }
 }
 async function listGatewayEvents(userId, limit) {
-  const query = db.select().from(gatewayEvents).orderBy(desc46(gatewayEvents.createdAt)).limit(limit);
+  const query = db.select().from(gatewayEvents).orderBy(desc47(gatewayEvents.createdAt)).limit(limit);
   if (!userId) return query.catch(() => []);
-  return db.select().from(gatewayEvents).where(eq119(gatewayEvents.userId, userId)).orderBy(desc46(gatewayEvents.createdAt)).limit(limit).catch(() => []);
+  return db.select().from(gatewayEvents).where(eq120(gatewayEvents.userId, userId)).orderBy(desc47(gatewayEvents.createdAt)).limit(limit).catch(() => []);
 }
 
 // server/gateway/nodeRegistry.ts
@@ -80920,7 +80963,7 @@ init_db();
 init_registry();
 init_bridge();
 init_schema();
-import { and as and89, desc as desc47, eq as eq120, inArray as inArray9 } from "drizzle-orm";
+import { and as and90, desc as desc48, eq as eq121, inArray as inArray9 } from "drizzle-orm";
 var SERVER_CAPABILITIES = [
   "gateway.health",
   "gateway.status",
@@ -80997,8 +81040,8 @@ async function listGatewayNodes(userId, limit = 50) {
   }
   if (!userId) return nodes;
   const [gatewayDevices2, activeJobs] = await Promise.all([
-    db.select().from(gatewayDevices).where(eq120(gatewayDevices.userId, userId)).orderBy(desc47(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
-    db.select().from(agentJobs).where(and89(eq120(agentJobs.userId, userId), inArray9(agentJobs.status, ["queued", "running"]))).orderBy(desc47(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
+    db.select().from(gatewayDevices).where(eq121(gatewayDevices.userId, userId)).orderBy(desc48(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
+    db.select().from(agentJobs).where(and90(eq121(agentJobs.userId, userId), inArray9(agentJobs.status, ["queued", "running"]))).orderBy(desc48(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
   ]);
   for (const device of gatewayDevices2) {
     const scopes = device.scopes || [];
@@ -81144,7 +81187,7 @@ async function gatewayStatus(userId) {
     severity: diagnosticEvents.severity,
     message: diagnosticEvents.message,
     createdAt: diagnosticEvents.createdAt
-  }).from(diagnosticEvents).orderBy(desc48(diagnosticEvents.createdAt)).limit(10).catch(() => []);
+  }).from(diagnosticEvents).orderBy(desc49(diagnosticEvents.createdAt)).limit(10).catch(() => []);
   return {
     ok: true,
     service: "jarvis-gateway",
@@ -81161,19 +81204,19 @@ async function channelState(userId, limit) {
     configured: channel.isConfigured(),
     toolGroups: channel.toolGroups
   }));
-  const linked = userId ? await db.select().from(channelLinks).where(eq121(channelLinks.userId, userId)).limit(limit).catch(() => []) : [];
+  const linked = userId ? await db.select().from(channelLinks).where(eq122(channelLinks.userId, userId)).limit(limit).catch(() => []) : [];
   return { registered, linked };
 }
 async function sessionState(userId, limit) {
   const [coachSessions, agentSessions] = await Promise.all([
-    db.select().from(coachChannelSessions).where(eq121(coachChannelSessions.userId, userId)).limit(limit).catch(() => []),
+    db.select().from(coachChannelSessions).where(eq122(coachChannelSessions.userId, userId)).limit(limit).catch(() => []),
     db.select({
       sdkSessionId: agentChatSessions.sdkSessionId,
       agentId: agentChatSessions.agentId,
       createdAt: agentChatSessions.createdAt,
       updatedAt: agentChatSessions.updatedAt,
       expiresAt: agentChatSessions.expiresAt
-    }).from(agentChatSessions).where(eq121(agentChatSessions.userId, userId)).orderBy(desc48(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
+    }).from(agentChatSessions).where(eq122(agentChatSessions.userId, userId)).orderBy(desc49(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
   ]);
   return { coachSessions, agentSessions };
 }
@@ -81192,16 +81235,16 @@ async function daemonState(userId) {
 }
 async function agentState(userId, limit) {
   const [discordAgents3, customAgents2] = await Promise.all([
-    db.select().from(discordAgents).where(eq121(discordAgents.userId, userId)).limit(limit).catch(() => []),
-    db.select().from(customAgents).where(eq121(customAgents.userId, userId)).limit(limit).catch(() => [])
+    db.select().from(discordAgents).where(eq122(discordAgents.userId, userId)).limit(limit).catch(() => []),
+    db.select().from(customAgents).where(eq122(customAgents.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { discordAgents: discordAgents3, customAgents: customAgents2 };
 }
 async function cronState(userId, limit) {
   const [scheduledTasks, workflows, jobs] = await Promise.all([
-    db.select().from(jarvisScheduledTasks).where(eq121(jarvisScheduledTasks.userId, userId)).orderBy(desc48(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentWorkflows).where(eq121(agentWorkflows.userId, userId)).orderBy(desc48(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
-    db.select().from(agentJobs).where(eq121(agentJobs.userId, userId)).orderBy(desc48(agentJobs.createdAt)).limit(limit).catch(() => [])
+    db.select().from(jarvisScheduledTasks).where(eq122(jarvisScheduledTasks.userId, userId)).orderBy(desc49(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentWorkflows).where(eq122(agentWorkflows.userId, userId)).orderBy(desc49(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
+    db.select().from(agentJobs).where(eq122(agentJobs.userId, userId)).orderBy(desc49(agentJobs.createdAt)).limit(limit).catch(() => [])
   ]);
   return { scheduledTasks, workflows, jobs };
 }
@@ -81270,11 +81313,11 @@ async function jobCreate(userId, params) {
 async function jobCancel(userId, params) {
   const jobId = typeof params.jobId === "string" ? params.jobId.trim() : "";
   if (!jobId) throw new Error("jobId is required");
-  const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(and90(eq121(agentJobs.id, jobId), eq121(agentJobs.userId, userId))).limit(1);
+  const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(and91(eq122(agentJobs.id, jobId), eq122(agentJobs.userId, userId))).limit(1);
   if (!row) throw new Error("Job not found");
   if (!["queued", "running"].includes(row.status)) throw new Error(`Job is already ${row.status}`);
   const nextStatus = row.status === "running" ? "cancelling" : "cancelled";
-  const [updated] = await db.update(agentJobs).set({ status: nextStatus, ...nextStatus === "cancelled" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(and90(eq121(agentJobs.id, jobId), eq121(agentJobs.userId, userId))).returning({ id: agentJobs.id, status: agentJobs.status });
+  const [updated] = await db.update(agentJobs).set({ status: nextStatus, ...nextStatus === "cancelled" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(and91(eq122(agentJobs.id, jobId), eq122(agentJobs.userId, userId))).returning({ id: agentJobs.id, status: agentJobs.status });
   recordGatewayEvent({
     userId,
     type: "job.cancelled",
@@ -81344,8 +81387,8 @@ async function daemonTest(userId, params) {
 }
 async function approvalState(userId, limit) {
   const [gates, policies] = await Promise.all([
-    db.select().from(agentApprovalGates).where(eq121(agentApprovalGates.userId, userId)).orderBy(desc48(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentApprovalPolicies).where(eq121(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
+    db.select().from(agentApprovalGates).where(eq122(agentApprovalGates.userId, userId)).orderBy(desc49(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentApprovalPolicies).where(eq122(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { gates, policies };
 }
@@ -81374,15 +81417,15 @@ async function resolveApprovalGate(userId, params, decision) {
 async function skillState(userId, limit) {
   const [skillPacks2, mcpServers2, userSkills2] = await Promise.all([
     db.select().from(skillPacks).limit(limit).catch(() => []),
-    userId ? db.select().from(mcpServers).where(eq121(mcpServers.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([]),
-    userId ? db.select().from(userSkills).where(eq121(userSkills.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([])
+    userId ? db.select().from(mcpServers).where(eq122(mcpServers.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([]),
+    userId ? db.select().from(userSkills).where(eq122(userSkills.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([])
   ]);
   return { skillPacks: skillPacks2, mcpServers: mcpServers2, userSkills: userSkills2 };
 }
 async function logState(userId, limit) {
   const [diagnostics, selfHeal] = await Promise.all([
-    db.select().from(diagnosticEvents).orderBy(desc48(diagnosticEvents.createdAt)).limit(limit).catch(() => []),
-    db.select().from(selfHealAuditLog).orderBy(desc48(selfHealAuditLog.id)).limit(Math.min(limit, 25)).catch(() => [])
+    db.select().from(diagnosticEvents).orderBy(desc49(diagnosticEvents.createdAt)).limit(limit).catch(() => []),
+    db.select().from(selfHealAuditLog).orderBy(desc49(selfHealAuditLog.id)).limit(Math.min(limit, 25)).catch(() => [])
   ]);
   return { userScoped: Boolean(userId), diagnostics, selfHeal };
 }
@@ -81867,7 +81910,7 @@ init_schema();
 init_soul();
 init_agentApproval();
 init_routedChatCompletion();
-import { eq as eq122, and as and91, sql as drizzleSql2 } from "drizzle-orm";
+import { eq as eq123, and as and92, sql as drizzleSql2 } from "drizzle-orm";
 
 // server/inboxTriageConfig.ts
 function isInboxTriageEnabled(env = process.env) {
@@ -81973,9 +82016,9 @@ Jarvis reason: ${item.jarvisReason || "(none)"}`;
 }
 async function triageInboxItemsForUser(userId) {
   const pendingItems = await db.select().from(inboxItems).where(
-    and91(
-      eq122(inboxItems.userId, userId),
-      eq122(inboxItems.status, "pending")
+    and92(
+      eq123(inboxItems.userId, userId),
+      eq123(inboxItems.status, "pending")
     )
   ).limit(15);
   for (const item of pendingItems) {
@@ -81986,7 +82029,7 @@ async function triageInboxItemsForUser(userId) {
           status: "dismissed",
           actedAt: /* @__PURE__ */ new Date(),
           jarvisReason: reason || "Auto-dismissed \u2014 not actionable"
-        }).where(eq122(inboxItems.id, item.id));
+        }).where(eq123(inboxItems.id, item.id));
         console.log(`[InboxTriage] auto-dismissed inbox item: ${item.id} (${(item.subject || "").slice(0, 60)}) \u2014 ${reason}`);
       }
     } catch (err2) {
@@ -81996,10 +82039,10 @@ async function triageInboxItemsForUser(userId) {
 }
 async function runTriagePassForUser(userId) {
   const pending = await db.select().from(deliverables).where(
-    and91(
-      eq122(deliverables.userId, userId),
-      eq122(deliverables.status, "pending_approval"),
-      eq122(deliverables.triageStatus, "needs_attention")
+    and92(
+      eq123(deliverables.userId, userId),
+      eq123(deliverables.status, "pending_approval"),
+      eq123(deliverables.triageStatus, "needs_attention")
     )
   ).limit(20);
   for (const d of pending) {
@@ -82011,7 +82054,7 @@ async function runTriagePassForUser(userId) {
           if (meta.gateId) {
             const gateOk = await approveGate(meta.gateId, userId).catch(() => false);
             if (!gateOk) {
-              await db.update(deliverables).set({ triageNote: "Auto-approve attempted but gate not found / already resolved" }).where(eq122(deliverables.id, d.id));
+              await db.update(deliverables).set({ triageNote: "Auto-approve attempted but gate not found / already resolved" }).where(eq123(deliverables.id, d.id));
               console.warn(`[InboxTriage] approveGate failed for ${d.id} \u2014 gate may already be resolved`);
               continue;
             }
@@ -82022,7 +82065,7 @@ async function runTriagePassForUser(userId) {
           triageStatus: "auto_handled",
           triageNote: note || "Auto-handled by Jarvis",
           actedAt: /* @__PURE__ */ new Date()
-        }).where(eq122(deliverables.id, d.id));
+        }).where(eq123(deliverables.id, d.id));
         console.log(`[InboxTriage] auto-handled: ${d.id} (${d.title.slice(0, 60)})`);
       } else if (verdict === "promote_memory") {
         await promoteToMemory(userId, d);
@@ -82031,10 +82074,10 @@ async function runTriagePassForUser(userId) {
           triageStatus: "promoted_memory",
           triageNote: note || "Saved to long-term memory by Jarvis",
           actedAt: /* @__PURE__ */ new Date()
-        }).where(eq122(deliverables.id, d.id));
+        }).where(eq123(deliverables.id, d.id));
         console.log(`[InboxTriage] promoted to memory: ${d.id} (${d.title.slice(0, 60)})`);
       } else {
-        await db.update(deliverables).set({ triageStatus: "escalated", triageNote: note || void 0 }).where(eq122(deliverables.id, d.id));
+        await db.update(deliverables).set({ triageStatus: "escalated", triageNote: note || void 0 }).where(eq123(deliverables.id, d.id));
         console.log(`[InboxTriage] escalated to user: ${d.id} (${d.title.slice(0, 60)})`);
       }
     } catch (err2) {
@@ -82044,10 +82087,10 @@ async function runTriagePassForUser(userId) {
   await triageInboxItemsForUser(userId);
   try {
     const orphanedGates = await db.select().from(agentApprovalGates).where(
-      and91(
-        eq122(agentApprovalGates.userId, userId),
-        eq122(agentApprovalGates.status, "pending"),
-        eq122(agentApprovalGates.initiatedBy, "jarvis"),
+      and92(
+        eq123(agentApprovalGates.userId, userId),
+        eq123(agentApprovalGates.status, "pending"),
+        eq123(agentApprovalGates.initiatedBy, "jarvis"),
         drizzleSql2`${agentApprovalGates.expiresAt} > NOW()`
       )
     ).limit(10);
@@ -82112,28 +82155,28 @@ init_routes2();
 init_goalScheduler();
 init_weeklyJob();
 init_schedules();
-import { eq as eq127, and as and96, lt as lt9, lte as lte2, or as or5, sql as sql44, isNull as isNull6 } from "drizzle-orm";
+import { eq as eq128, and as and97, lt as lt9, lte as lte2, or as or5, sql as sql45, isNull as isNull6 } from "drizzle-orm";
 
 // server/discord/digest.ts
 init_db();
 init_schema();
 init_schedules();
-import { eq as eq123, and as and92 } from "drizzle-orm";
+import { eq as eq124, and as and93 } from "drizzle-orm";
 async function buildDailyDigest(userId) {
   const now = /* @__PURE__ */ new Date();
   const midnight = new Date(now);
   midnight.setHours(0, 0, 0, 0);
-  const allSchedules = await db.select().from(discordChannelSchedules).where(eq123(discordChannelSchedules.userId, userId));
+  const allSchedules = await db.select().from(discordChannelSchedules).where(eq124(discordChannelSchedules.userId, userId));
   const completedToday = allSchedules.filter(
     (s) => s.lastRun && s.lastRun >= midnight
   );
   const pendingApprovals = await db.select().from(discordPendingApprovals).where(
-    and92(
-      eq123(discordPendingApprovals.userId, userId),
-      eq123(discordPendingApprovals.status, "pending")
+    and93(
+      eq124(discordPendingApprovals.userId, userId),
+      eq124(discordPendingApprovals.status, "pending")
     )
   );
-  const agents = await db.select().from(discordAgents).where(eq123(discordAgents.userId, userId));
+  const agents = await db.select().from(discordAgents).where(eq124(discordAgents.userId, userId));
   const upcoming = allSchedules.filter((s) => s.enabled).map((s) => ({ schedule: s, next: nextRunTime(s.cronExpression) })).filter((x) => x.next !== null && x.next <= new Date(now.getTime() + 24 * 60 * 60 * 1e3)).sort((a, b) => a.next.getTime() - b.next.getTime());
   const dateStr = now.toLocaleDateString("en-US", {
     weekday: "long",
@@ -82202,7 +82245,7 @@ init_googleDrive();
 init_db();
 init_retrieve();
 init_diagnosticsService();
-import { sql as sql43 } from "drizzle-orm";
+import { sql as sql44 } from "drizzle-orm";
 var BATCH_SIZE = 50;
 var INTER_ITEM_DELAY_MS = 200;
 var isRunning = false;
@@ -82214,7 +82257,7 @@ async function isEmbeddingsAvailable() {
   return result !== null;
 }
 async function fetchUnembedded(limit) {
-  const rows = await db.execute(sql43`
+  const rows = await db.execute(sql44`
     SELECT id, content
     FROM user_memories
     WHERE embedding IS NULL
@@ -82226,7 +82269,7 @@ async function fetchUnembedded(limit) {
   return rows.rows ?? [];
 }
 async function countUnembedded() {
-  const result = await db.execute(sql43`
+  const result = await db.execute(sql44`
     SELECT COUNT(*) AS cnt FROM user_memories WHERE embedding IS NULL
   `);
   return parseInt(result.rows?.[0]?.cnt ?? "0", 10);
@@ -82334,7 +82377,7 @@ function sundayKey(d) {
 }
 async function runDiscordSchedules(now) {
   try {
-    const schedules = await db.select().from(discordChannelSchedules).where(eq127(discordChannelSchedules.enabled, true));
+    const schedules = await db.select().from(discordChannelSchedules).where(eq128(discordChannelSchedules.enabled, true));
     for (const schedule of schedules) {
       if (matchesCron(schedule.cronExpression, now)) {
         console.log(`[Scheduler] Firing Discord schedule "${schedule.label}" (${schedule.id})`);
@@ -82349,9 +82392,9 @@ async function runDiscordSchedules(now) {
 }
 async function runAgentLoops(now) {
   try {
-    const agents = await db.select().from(discordAgents).where(and96(
-      eq127(discordAgents.isActive, 1),
-      eq127(discordAgents.loopEnabled, 1)
+    const agents = await db.select().from(discordAgents).where(and97(
+      eq128(discordAgents.isActive, 1),
+      eq128(discordAgents.loopEnabled, 1)
     ));
     for (const agent of agents) {
       const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1e3;
@@ -82387,11 +82430,11 @@ ${prompt}`,
   if (result && agent.channelName) {
     await postToDiscordChannel2(agent.userId, agent.channelName, agent.channelId, result);
   }
-  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq127(discordAgents.id, agent.id));
+  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq128(discordAgents.id, agent.id));
 }
 async function runDailyDigests() {
   try {
-    const links = await db.select().from(channelLinks).where(eq127(channelLinks.channel, "discord"));
+    const links = await db.select().from(channelLinks).where(eq128(channelLinks.channel, "discord"));
     for (const link of links) {
       try {
         const meta = link.metadata;
@@ -82410,7 +82453,7 @@ async function runDailyDigests() {
 }
 async function cleanUpExpiredMemories() {
   try {
-    const result = await db.execute(sql44`
+    const result = await db.execute(sql45`
       DELETE FROM user_memories
       WHERE expires_at IS NOT NULL AND expires_at < NOW()
       RETURNING id
@@ -82433,7 +82476,7 @@ async function cleanUpExpiredAgentChatSessions() {
 async function cleanUpOldInteractionLogs() {
   try {
     const cutoff = new Date(Date.now() - INTERACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1e3);
-    const result = await db.execute(sql44`
+    const result = await db.execute(sql45`
       DELETE FROM interaction_log WHERE created_at < ${cutoff}
     `);
     const count2 = result.rowCount ?? 0;
@@ -82444,7 +82487,7 @@ async function cleanUpOldInteractionLogs() {
 }
 async function cleanUpOldBuildSessions() {
   try {
-    const result = await db.execute(sql44`
+    const result = await db.execute(sql45`
       DELETE FROM build_sessions
       WHERE
         (reminded = true  AND created_at < NOW() - INTERVAL '30 days')
@@ -82461,7 +82504,7 @@ async function cleanUpOldBuildSessions() {
 async function cleanUpOldActionLogs() {
   try {
     const cutoff = new Date(Date.now() - ACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1e3);
-    const result = await db.execute(sql44`
+    const result = await db.execute(sql45`
       DELETE FROM jarvis_action_log WHERE created_at < ${cutoff}
     `);
     const count2 = result.rowCount ?? 0;
@@ -82603,11 +82646,11 @@ async function runDueScheduledTasks(now) {
   let claimed = [];
   try {
     claimed = await db.update(jarvisScheduledTasks).set({ inProgressAt: now }).where(
-      and96(
+      and97(
         lte2(jarvisScheduledTasks.scheduledAt, now),
         isNull6(jarvisScheduledTasks.completedAt),
-        eq127(jarvisScheduledTasks.active, true),
-        eq127(jarvisScheduledTasks.needsAttention, false),
+        eq128(jarvisScheduledTasks.active, true),
+        eq128(jarvisScheduledTasks.needsAttention, false),
         or5(
           isNull6(jarvisScheduledTasks.inProgressAt),
           lt9(jarvisScheduledTasks.inProgressAt, staleThreshold)
@@ -82621,7 +82664,7 @@ async function runDueScheduledTasks(now) {
   for (const task of claimed) {
     handleDueTask(task, now).catch((err2) => {
       console.error(`[Scheduler] handleDueTask id=${task.id} failed:`, err2);
-      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq127(jarvisScheduledTasks.id, task.id)).catch(() => {
+      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq128(jarvisScheduledTasks.id, task.id)).catch(() => {
       });
     });
   }
@@ -82632,7 +82675,7 @@ async function appendVoiceCallKeyboardOnTelegram(userId, notificationType) {
     if (!activeChannels.includes("telegram")) return;
     const { buildVoiceCallKeyboard: buildVoiceCallKeyboard2, isTelegramConfigured: isTelegramConfigured2, sendMessage: tgSend } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
     if (!isTelegramConfigured2()) return;
-    const links = await db.select().from(telegramLinks).where(eq127(telegramLinks.userId, userId)).limit(1);
+    const links = await db.select().from(telegramLinks).where(eq128(telegramLinks.userId, userId)).limit(1);
     const chatId = links[0]?.chatId;
     if (!chatId) return;
     const keyboard = buildVoiceCallKeyboard2({ includeTextReplyButton: true });
@@ -82676,12 +82719,12 @@ ${relevant.map((m) => `- ${m.content}`).join("\n")}
     if (isRecurring) {
       const nextRun = computeNextRun(task.recurrence, firedAt);
       if (nextRun) {
-        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq127(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq128(jarvisScheduledTasks.id, task.id));
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq127(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq128(jarvisScheduledTasks.id, task.id));
       }
     } else {
-      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq127(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq128(jarvisScheduledTasks.id, task.id));
     }
     let notifText;
     if (!result.ok && result.error) {
@@ -82731,20 +82774,20 @@ If you encounter a blocker or need the user's input to proceed, call the flag_ta
     } catch (err2) {
       agentReply = `\u26A0\uFE0F Scheduled task "${task.title}" encountered an error: ${err2 instanceof Error ? err2.message : String(err2)}`;
     }
-    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq127(jarvisScheduledTasks.id, task.id)).limit(1);
+    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq128(jarvisScheduledTasks.id, task.id)).limit(1);
     if (freshTask?.needsAttention) {
-      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq127(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq128(jarvisScheduledTasks.id, task.id));
       console.log(`[Scheduler] Agent task id=${task.id} paused \u2014 needsAttention=true, skipping completion`);
     } else {
       if (isRecurring) {
         const nextRun = computeNextRun(task.recurrence, firedAt);
         if (nextRun) {
-          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq127(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq128(jarvisScheduledTasks.id, task.id));
         } else {
-          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq127(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq128(jarvisScheduledTasks.id, task.id));
         }
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq127(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq128(jarvisScheduledTasks.id, task.id));
       }
       if (agentReply) {
         try {
@@ -82913,11 +82956,11 @@ function startScheduler() {
 async function runDueAutonomousProjectSessions() {
   const now = /* @__PURE__ */ new Date();
   const due = await db.update(jarvisProjects).set({ nextRunAt: null }).where(
-    and96(
-      eq127(jarvisProjects.autonomousMode, true),
+    and97(
+      eq128(jarvisProjects.autonomousMode, true),
       or5(
-        eq127(jarvisProjects.status, "building"),
-        eq127(jarvisProjects.status, "waiting_for_input")
+        eq128(jarvisProjects.status, "building"),
+        eq128(jarvisProjects.status, "waiting_for_input")
       ),
       lte2(jarvisProjects.nextRunAt, now)
     )
@@ -82978,7 +83021,7 @@ async function runMorningPlanBuild() {
   console.log(`[Scheduler] Processing ${allUsers.length} user(s) for auto-plan build`);
   for (const user of allUsers) {
     try {
-      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and96(eq127(plans.userId, user.id), eq127(plans.date, today)));
+      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and97(eq128(plans.userId, user.id), eq128(plans.date, today)));
       const existingTasks = existingPlan[0]?.data?.tasks || [];
       if (existingTasks.length > 0) {
         console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, skipping`);
@@ -83091,7 +83134,7 @@ async function runMorningPlanBuild() {
         console.error(`[Scheduler] prediction fetch failed for ${user.id}:`, predErr);
       }
       const topTask = newTasks[0];
-      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq127(userPreferences.userId, user.id));
+      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq128(userPreferences.userId, user.id));
       const currentPrefs = existingPrefs[0]?.data || {};
       const lastDreamCycle = currentPrefs.lastDreamCycle || null;
       const updatedPrefs = {
@@ -83256,10 +83299,10 @@ async function runDreamCycleForAllUsers(now) {
     const messageType = `dream_cycle:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and96(
-          eq127(proactiveScheduleLog.userId, user.id),
-          eq127(proactiveScheduleLog.messageType, messageType),
-          eq127(proactiveScheduleLog.sentDate, localDate)
+        and97(
+          eq128(proactiveScheduleLog.userId, user.id),
+          eq128(proactiveScheduleLog.messageType, messageType),
+          eq128(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -83277,7 +83320,7 @@ async function runDreamCycleForAllUsers(now) {
         );
       }
       try {
-        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq127(userPreferences.userId, user.id));
+        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq128(userPreferences.userId, user.id));
         const existingPrefs = existingPrefsRows[0]?.data || {};
         const updatedPrefsWithDream = {
           ...existingPrefs,
@@ -83329,10 +83372,10 @@ async function runDreamDeliveryForAllUsers(now) {
     const messageType = `dream_delivery:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and96(
-          eq127(proactiveScheduleLog.userId, user.id),
-          eq127(proactiveScheduleLog.messageType, messageType),
-          eq127(proactiveScheduleLog.sentDate, localDate)
+        and97(
+          eq128(proactiveScheduleLog.userId, user.id),
+          eq128(proactiveScheduleLog.messageType, messageType),
+          eq128(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -83424,7 +83467,7 @@ function startWorkerBoot() {
 }
 
 // server/boot/postListen.ts
-import { and as and102, eq as eq133 } from "drizzle-orm";
+import { and as and103, eq as eq134 } from "drizzle-orm";
 
 // server/heartbeat.ts
 init_db();
@@ -83445,7 +83488,7 @@ init_diagnosticsService();
 init_routedChatCompletion();
 import * as fs27 from "fs";
 import * as path34 from "path";
-import { eq as eq131, and as and100, sql as sql47, desc as desc51, gte as gte27 } from "drizzle-orm";
+import { eq as eq132, and as and101, sql as sql48, desc as desc52, gte as gte27 } from "drizzle-orm";
 var openai23 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 var CHECKLIST_PATH = path34.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
@@ -83551,7 +83594,7 @@ async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEm
     try {
       const emails = externalAttendees.map((a) => a.email.toLowerCase()).filter(Boolean);
       if (emails.length > 0) {
-        const peopleRows = await db.select().from(people).where(and100(eq131(people.userId, userId), sql47`lower(${people.email}) = ANY(${emails})`));
+        const peopleRows = await db.select().from(people).where(and101(eq132(people.userId, userId), sql48`lower(${people.email}) = ANY(${emails})`));
         if (peopleRows.length > 0) {
           peopleContext = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -83638,13 +83681,13 @@ async function runEmailDrafts(userId, chatId, token, now) {
   let urgentItems = [];
   try {
     urgentItems = await db.select().from(inboxItems).where(
-      and100(
-        eq131(inboxItems.userId, userId),
-        eq131(inboxItems.sourceType, "email"),
-        eq131(inboxItems.status, "pending"),
-        sql47`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
-        sql47`${inboxItems.jarvisReason} IS NOT NULL`,
-        sql47`${inboxItems.matchedRuleId} IS NULL`
+      and101(
+        eq132(inboxItems.userId, userId),
+        eq132(inboxItems.sourceType, "email"),
+        eq132(inboxItems.status, "pending"),
+        sql48`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
+        sql48`${inboxItems.jarvisReason} IS NOT NULL`,
+        sql48`${inboxItems.matchedRuleId} IS NULL`
       )
     ).limit(10);
   } catch (err2) {
@@ -83666,9 +83709,9 @@ async function runEmailDrafts(userId, chatId, token, now) {
     if (!sourceMessageId) continue;
     try {
       const existing = await db.select({ id: emailDrafts.id }).from(emailDrafts).where(
-        and100(
-          eq131(emailDrafts.userId, userId),
-          eq131(emailDrafts.sourceMessageId, sourceMessageId)
+        and101(
+          eq132(emailDrafts.userId, userId),
+          eq132(emailDrafts.sourceMessageId, sourceMessageId)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -83761,7 +83804,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   if (!await claimAndMark(userId, messageType, localKey)) return false;
   let tasks = [];
   try {
-    const planRows = await db.select().from(plans).where(and100(eq131(plans.userId, userId), eq131(plans.date, localKey))).limit(1);
+    const planRows = await db.select().from(plans).where(and101(eq132(plans.userId, userId), eq132(plans.date, localKey))).limit(1);
     const data = planRows[0]?.data || {};
     tasks = Array.isArray(data.tasks) ? data.tasks : [];
   } catch {
@@ -83769,7 +83812,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   let statsData = {};
   let statsRowExists = false;
   try {
-    const statsRows = await db.select().from(stats).where(eq131(stats.userId, userId)).limit(1);
+    const statsRows = await db.select().from(stats).where(eq132(stats.userId, userId)).limit(1);
     if (statsRows.length > 0) {
       statsData = statsRows[0].data || {};
       statsRowExists = true;
@@ -83808,7 +83851,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
           lastStreakDate: localKey
         },
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq131(stats.userId, userId));
+      }).where(eq132(stats.userId, userId));
       statsData = {
         ...statsData,
         streak: newStreak,
@@ -83880,7 +83923,7 @@ ${summary}`);
       d.setDate(d.getDate() + 1);
       return localDateKey3(d, tz);
     })();
-    const prefRows = await db.select().from(userPreferences).where(eq131(userPreferences.userId, userId)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq132(userPreferences.userId, userId)).limit(1);
     const prefData = prefRows[0]?.data || {};
     const tomorrowSeed = {
       date: tomorrowKey,
@@ -83889,7 +83932,7 @@ ${summary}`);
       observation,
       tomorrowPrompt
     };
-    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq131(userPreferences.userId, userId));
+    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq132(userPreferences.userId, userId));
     console.log(`[Heartbeat] tomorrow seed written for ${userId} (date: ${tomorrowKey})`);
   } catch (err2) {
     console.error(`[Heartbeat] tomorrow seed write failed (non-fatal):`, err2);
@@ -83928,11 +83971,11 @@ async function enqueueNewInboxItemsForPrime(userId) {
   let items = [];
   try {
     items = await db.select().from(inboxItems).where(
-      and100(
-        eq131(inboxItems.userId, userId),
-        eq131(inboxItems.status, "pending"),
-        sql47`${inboxItems.actedAt} IS NULL`,
-        sql47`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
+      and101(
+        eq132(inboxItems.userId, userId),
+        eq132(inboxItems.status, "pending"),
+        sql48`${inboxItems.actedAt} IS NULL`,
+        sql48`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
       )
     ).limit(CREW_BATCH_MAX);
   } catch (err2) {
@@ -84069,7 +84112,7 @@ async function runHeartbeatTick() {
     }
     let memories = [];
     try {
-      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq131(userMemories.userId, link.userId)).orderBy(desc51(userMemories.extractedAt)).limit(30);
+      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq132(userMemories.userId, link.userId)).orderBy(desc52(userMemories.extractedAt)).limit(30);
     } catch {
     }
     let actionsFired = 0;
@@ -84162,7 +84205,7 @@ async function runHeartbeatMemoryPass(userId, googleToken, now) {
   lastHeartbeatExtractAt[userId] = now.getTime();
   const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
   try {
-    const recentMessages = await db.select().from(telegramGroupMessages).where(and100(eq131(telegramGroupMessages.userId, userId), gte27(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc51(telegramGroupMessages.messageDate)).limit(20);
+    const recentMessages = await db.select().from(telegramGroupMessages).where(and101(eq132(telegramGroupMessages.userId, userId), gte27(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc52(telegramGroupMessages.messageDate)).limit(20);
     if (recentMessages.length > 0) {
       const text2 = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4e3);
       const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
@@ -84198,7 +84241,7 @@ async function runAgentHealthCheck() {
     const { logAgentEvent: logAgentEvent2 } = await Promise.resolve().then(() => (init_agentLogger(), agentLogger_exports));
     const now = /* @__PURE__ */ new Date();
     const THIRTY_MIN_MS = 30 * 60 * 1e3;
-    const allActive = await db.select().from(discordAgents3).where(eq131(discordAgents3.isActive, 1));
+    const allActive = await db.select().from(discordAgents3).where(eq132(discordAgents3.isActive, 1));
     const summaryByUser = /* @__PURE__ */ new Map();
     for (const agent of allActive) {
       const configIssues = [];
@@ -84224,7 +84267,7 @@ async function runAgentHealthCheck() {
           const newFailCount = (agent.heartbeatFailCount ?? 0) + 1;
           if (newFailCount >= 3) {
             await disableAgent2(agent.id);
-            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq131(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq132(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] auto-disabled stuck agent ${agent.name} (${agent.id}), fails=${newFailCount}`);
             logAgentEvent2({
               event: "agent_disabled_stuck",
@@ -84234,7 +84277,7 @@ async function runAgentHealthCheck() {
             });
             addSummary2(agent.userId, `\u{1F534} Agent "${agent.name}" was auto-disabled after ${newFailCount} missed heartbeats.`);
           } else {
-            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq131(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq132(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] agent ${agent.name} (${agent.id}) stale \u2014 fail ${newFailCount}/3`);
             logAgentEvent2({
               event: "heartbeat_check",
@@ -84245,7 +84288,7 @@ async function runAgentHealthCheck() {
             addSummary2(agent.userId, `\u{1F7E1} Agent "${agent.name}" missed heartbeat (${newFailCount}/3 before auto-disable).`);
           }
         } else {
-          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq131(discordAgents3.id, agent.id));
+          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq132(discordAgents3.id, agent.id));
         }
       }
       const agentPlatforms = agent.platforms ?? ["discord"];
@@ -84361,15 +84404,15 @@ init_outlook();
 init_interactionLog();
 init_actionLog();
 init_routedChatCompletion();
-import { eq as eq132, and as and101, gt as gt6, lt as lt10, inArray as inArray11 } from "drizzle-orm";
+import { eq as eq133, and as and102, gt as gt6, lt as lt10, inArray as inArray11 } from "drizzle-orm";
 var CURIOSITY_SCAN_LOCK_ID = 7654321098;
 var scannerStarted = false;
 var ALREADY_ASKED_WINDOW_DAYS = 30;
 async function getAlreadyAskedSourceIds(userId) {
   const windowStart = new Date(Date.now() - ALREADY_ASKED_WINDOW_DAYS * 24 * 60 * 60 * 1e3);
   const rows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and101(
-      eq132(proactiveQuestionsSent.userId, userId),
+    and102(
+      eq133(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, windowStart)
     )
   );
@@ -84388,16 +84431,16 @@ function extractSenderKey(sender) {
 var EMAIL_SOURCE_TYPES = ["email", "gmail", "outlook_email"];
 async function getRecentlySurfacedSenders(userId, since) {
   const sentRows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and101(
-      eq132(proactiveQuestionsSent.userId, userId),
+    and102(
+      eq133(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, since)
     )
   );
   if (sentRows.length === 0) return /* @__PURE__ */ new Set();
   const sentSourceIds = sentRows.map((r) => r.sourceId);
   const inboxRows = await db.select({ sender: inboxItems.sender }).from(inboxItems).where(
-    and101(
-      eq132(inboxItems.userId, userId),
+    and102(
+      eq133(inboxItems.userId, userId),
       inArray11(inboxItems.sourceId, sentSourceIds),
       inArray11(inboxItems.sourceType, [...EMAIL_SOURCE_TYPES])
     )
@@ -84413,7 +84456,7 @@ async function getUserMemories(userId) {
   return db.select({
     content: userMemories.content,
     category: userMemories.category
-  }).from(userMemories).where(eq132(userMemories.userId, userId));
+  }).from(userMemories).where(eq133(userMemories.userId, userId));
 }
 async function generateCuriosityQuestions(items, memories, userId) {
   if (items.length === 0) return [];
@@ -84876,11 +84919,11 @@ async function alertTelegramUsersWebhookDown() {
     let alertedCount = 0;
     for (const userId of uniqueUserIds) {
       const existing = await db.select({ id: inboxItems.id }).from(inboxItems).where(
-        and102(
-          eq133(inboxItems.userId, userId),
-          eq133(inboxItems.sourceType, "other"),
-          eq133(inboxItems.status, "pending"),
-          eq133(inboxItems.subject, "Telegram bot is offline")
+        and103(
+          eq134(inboxItems.userId, userId),
+          eq134(inboxItems.sourceType, "other"),
+          eq134(inboxItems.status, "pending"),
+          eq134(inboxItems.subject, "Telegram bot is offline")
         )
       ).limit(1);
       if (existing.length > 0) continue;
