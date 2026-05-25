@@ -76,6 +76,8 @@ interface TelegramStatus {
 }
 
 interface OneSetupStatus {
+  apiKeyConfigured: boolean;
+  apiKeyPreview: string | null;
   installed: boolean;
   authenticated: boolean;
   ready: boolean;
@@ -293,7 +295,9 @@ export default function SettingsScreen() {
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
   const [oneStatus, setOneStatus] = useState<OneSetupStatus | null>(null);
-  const [oneCommandCopied, setOneCommandCopied] = useState<string | null>(null);
+  const [oneApiKeyInput, setOneApiKeyInput] = useState('');
+  const [oneBusy, setOneBusy] = useState<'save' | 'delete' | 'test' | null>(null);
+  const [oneTestSummary, setOneTestSummary] = useState<string | null>(null);
 
   // ── Per-section error states ──
   const [connectionsError, setConnectionsError] = useState(false);
@@ -1496,10 +1500,60 @@ export default function SettingsScreen() {
     await saveWakeSettings({ wakeWords: next });
   }, [wakeWords, saveWakeSettings]);
 
-  const copyOneCommand = useCallback(async (command: string) => {
-    await Clipboard.setStringAsync(command);
-    setOneCommandCopied(command);
-    setTimeout(() => setOneCommandCopied(null), 1800);
+  const openOneApiKeys = useCallback(async () => {
+    await WebBrowser.openBrowserAsync('https://app.withone.ai', {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+    });
+  }, []);
+
+  const saveOneApiKey = useCallback(async () => {
+    const apiKey = oneApiKeyInput.trim();
+    if (!apiKey) {
+      Alert.alert('One API Key', 'Paste the API key you created in One first.');
+      return;
+    }
+    setOneBusy('save');
+    try {
+      const res = await apiRequest('POST', '/api/one/api-key', { apiKey });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Jarvis could not save that One API key.');
+      setOneStatus(data);
+      setOneApiKeyInput('');
+      setOneTestSummary(data.ready ? 'One API key verified. Jarvis can see the apps connected in One.' : data.nextSteps?.[0] || 'One API key saved.');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error: any) {
+      Alert.alert('One API Key', error?.message || 'Jarvis could not verify that One API key.');
+    } finally {
+      setOneBusy(null);
+    }
+  }, [oneApiKeyInput]);
+
+  const deleteOneApiKey = useCallback(async () => {
+    setOneBusy('delete');
+    try {
+      const res = await apiRequest('DELETE', '/api/one/api-key');
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || 'Jarvis could not remove the saved One API key.');
+      setOneStatus(data);
+      setOneTestSummary('One API key removed from Jarvis.');
+    } catch (error: any) {
+      Alert.alert('One API Key', error?.message || 'Jarvis could not remove the saved One API key.');
+    } finally {
+      setOneBusy(null);
+    }
+  }, []);
+
+  const testOneConnection = useCallback(async () => {
+    setOneBusy('test');
+    try {
+      const res = await apiRequest('POST', '/api/one/test');
+      const data = await res.json();
+      setOneTestSummary(data.summary || (res.ok ? 'One connection test finished.' : 'One connection test failed.'));
+    } catch {
+      setOneTestSummary('Jarvis could not test One right now.');
+    } finally {
+      setOneBusy(null);
+    }
   }, []);
 
   // ── Reward claim ──
@@ -1554,22 +1608,27 @@ export default function SettingsScreen() {
             <View style={styles.connInfo}>
               <Text style={styles.connName}>One Connector</Text>
               <Text style={styles.connSub}>
-                Use One for Gmail, Outlook, calendars, Slack, Discord, and other external accounts.
+                Connect apps in One, then paste the One API key here so Jarvis can use those connected accounts.
               </Text>
               <Text style={styles.connSub}>
-                Jarvis only uses accounts visible to this One session. Telegram stays separate.
+                Jarvis uses One as the OAuth bridge. Telegram, Desktop, and Android stay native.
               </Text>
               {oneStatus && (
                 <View style={{ marginTop: 8, gap: 6 }}>
                   <Text style={[styles.connSub, { color: oneStatus.ready ? Colors.success : Colors.warning }]}>
-                    {oneStatus.ready
+                    {oneStatus.apiKeyConfigured
+                      ? oneStatus.ready
                       ? `${oneStatus.connections.length} One connection${oneStatus.connections.length === 1 ? '' : 's'} ready${oneStatus.accountEmail ? ` for ${oneStatus.accountEmail}` : ''}`
+                      : 'One API key saved, but Jarvis cannot see operational connected apps yet.'
                       : oneStatus.authenticated
                         ? 'One is signed in, but no operational accounts are visible to Jarvis yet.'
                         : oneStatus.installed
-                          ? 'One is installed, but this Jarvis session is not signed in yet.'
-                          : 'One is not installed for this Jarvis session yet.'}
+                          ? 'One CLI is installed, but this Jarvis session is not signed in yet.'
+                          : 'Add a One API key from the One dashboard to connect apps.'}
                   </Text>
+                  {oneStatus.apiKeyPreview && (
+                    <Text style={styles.oneKeyPreview}>Saved key {oneStatus.apiKeyPreview}</Text>
+                  )}
                   {oneStatus.connections.length > 0 && (
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
                       {oneStatus.connections.map((connection) => (
@@ -1579,41 +1638,80 @@ export default function SettingsScreen() {
                       ))}
                     </View>
                   )}
-                  <View style={styles.oneSteps}>
-                    {(oneStatus.nextSteps.length ? oneStatus.nextSteps : [
-                      'Install: npm install -g @withone/cli',
-                      'Sign in: one login',
-                      'Add accounts: one add gmail or one add google-calendar',
-                    ]).slice(0, 3).map((step, idx) => {
-                      const command = step.includes(': ') ? step.split(': ').slice(1).join(': ') : '';
-                      return (
-                        <View key={`${step}-${idx}`} style={styles.oneStepRow}>
-                          <Text style={styles.oneStepNumber}>{idx + 1}</Text>
-                          <Text style={styles.oneStepText}>{step}</Text>
-                          {command.includes('one') && (
-                            <Pressable onPress={() => copyOneCommand(command)} hitSlop={8}>
-                              <Ionicons
-                                name={oneCommandCopied === command ? 'checkmark-circle' : 'copy-outline'}
-                                size={16}
-                                color={oneCommandCopied === command ? Colors.success : Colors.textSecondary}
-                              />
-                            </Pressable>
-                          )}
-                        </View>
-                      );
-                    })}
-                  </View>
                 </View>
               )}
             </View>
             <Pressable
               style={[styles.connBtn, styles.connBtnDisconnected, { borderColor: '#6366F1' }]}
-              onPress={() => oneStatus?.ready ? loadConnections() : WebBrowser.openBrowserAsync(oneStatus?.dashboardUrl || 'https://app.withone.ai')}
+              onPress={oneStatus?.ready ? loadConnections : openOneApiKeys}
             >
               <Text style={[styles.connBtnText, { color: '#6366F1' }]}>
-                {oneStatus?.ready ? 'Refresh' : 'Setup'}
+                {oneStatus?.ready ? 'Refresh' : 'Open One'}
               </Text>
             </Pressable>
+          </View>
+          <View style={[styles.oneApiKeyPanel, styles.connRowBorder]}>
+            {!oneStatus?.apiKeyConfigured ? (
+              <>
+                <TextInput
+                  value={oneApiKeyInput}
+                  onChangeText={setOneApiKeyInput}
+                  placeholder="Paste One API key"
+                  placeholderTextColor={Colors.textTertiary}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  style={styles.oneApiKeyInput}
+                />
+                <View style={styles.oneApiActionsRow}>
+                  <Pressable style={styles.oneSecondaryButton} onPress={openOneApiKeys}>
+                    <Ionicons name="open-outline" size={15} color={Colors.textSecondary} />
+                    <Text style={styles.oneSecondaryButtonText}>One API Keys</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.connBtn, { borderColor: '#6366F1', opacity: oneBusy === 'save' ? 0.65 : 1 }]}
+                    onPress={saveOneApiKey}
+                    disabled={oneBusy === 'save'}
+                  >
+                    <Text style={[styles.connBtnText, { color: '#6366F1' }]}>
+                      {oneBusy === 'save' ? 'Verifying' : 'Verify & Save'}
+                    </Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <View style={styles.oneApiActionsRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.connName}>One API key saved</Text>
+                  <Text style={styles.connSub}>Jarvis will use One for Gmail, Outlook, calendars, Slack, Discord, and WhatsApp.</Text>
+                </View>
+                <Pressable style={styles.connBtn} onPress={deleteOneApiKey} disabled={oneBusy === 'delete'}>
+                  <Text style={styles.connBtnText}>{oneBusy === 'delete' ? 'Removing' : 'Remove'}</Text>
+                </Pressable>
+              </View>
+            )}
+            <View style={styles.oneApiActionsRow}>
+              <Pressable style={styles.oneSecondaryButton} onPress={testOneConnection} disabled={oneBusy === 'test'}>
+                {oneBusy === 'test' ? (
+                  <ActivityIndicator size="small" color={Colors.textSecondary} />
+                ) : (
+                  <Ionicons name="pulse-outline" size={15} color={Colors.textSecondary} />
+                )}
+                <Text style={styles.oneSecondaryButtonText}>Test One</Text>
+              </Pressable>
+              <Text style={styles.oneApiHint}>Connect apps on One first, then refresh Jarvis.</Text>
+            </View>
+            {oneTestSummary ? <Text style={styles.oneTestText}>{oneTestSummary}</Text> : null}
+            {oneStatus?.nextSteps?.length ? (
+              <View style={styles.oneSteps}>
+                {oneStatus.nextSteps.slice(0, 3).map((step, idx) => (
+                  <View key={`${step}-${idx}`} style={styles.oneStepRow}>
+                    <Text style={styles.oneStepNumber}>{idx + 1}</Text>
+                    <Text style={styles.oneStepText}>{step}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
           </View>
 
 
@@ -3936,6 +4034,55 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter_600SemiBold',
     color: '#A5B4FC',
+  },
+  oneKeyPreview: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.success,
+  },
+  oneApiKeyPanel: {
+    padding: 14,
+    gap: 10,
+  },
+  oneApiKeyInput: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  oneApiActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  oneSecondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  oneSecondaryButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  oneApiHint: {
+    flex: 1,
+    textAlign: 'right',
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  oneTestText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
   },
   oneSteps: {
     gap: 5,
