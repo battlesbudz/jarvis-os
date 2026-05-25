@@ -140,18 +140,18 @@ export function createOneApiClient(apiKey: string, fetchImpl: OneApiFetch = fetc
   return {
     async listConnections() {
       const result = await request<{ connections: OneApiConnection[] }>("/v1/vault/connections");
-      const connections = firstArray(result, ["connections", "items", "data"]).map(normalizeConnection);
+      const connections = firstArray(result, ["connections", "rows", "items", "data"]).map(normalizeConnection);
       return { ...result, connections };
     },
     async listAvailableConnectors() {
       const result = await request<{ connectors: unknown[] }>("/v1/available-connectors");
-      const connectors = firstArray(result, ["connectors", "items", "data"]);
+      const connectors = firstArray(result, ["connectors", "rows", "items", "data"]);
       return { ...result, connectors };
     },
     async searchActions(platform: string, query: string) {
       const url = buildOneActionSearchUrl(platform, query, root);
       const result = await request<{ actions: unknown[] }>(url);
-      const actions = firstArray(result, ["actions", "items", "data", "results"]);
+      const actions = firstArray(result, ["actions", "rows", "items", "data", "results"]);
       return { ...result, actions };
     },
     async passthrough(connectionKey: string, payload: Record<string, unknown>) {

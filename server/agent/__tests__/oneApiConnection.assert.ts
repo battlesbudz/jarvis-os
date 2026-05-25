@@ -54,6 +54,29 @@ async function main(): Promise<void> {
   assert.deepEqual(connections.connections.map((connection) => connection.platform), ["gmail"]);
   console.log("OK: One API connection listing uses x-one-secret");
 
+  const paginatedClient = createOneApiClient("one_sk_test_secret", async (input) => {
+    if (String(input).endsWith("/v1/vault/connections")) {
+      return jsonResponse({
+        rows: [
+          {
+            platform: "outlook-mail",
+            key: "live::outlook-mail::default::abc123",
+            state: "operational",
+          },
+        ],
+        total: 1,
+        pages: 1,
+        page: 1,
+      });
+    }
+    return jsonResponse({ rows: [] });
+  });
+  const paginatedConnections = await paginatedClient.listConnections();
+  assert.equal(paginatedConnections.ok, true);
+  assert.deepEqual(paginatedConnections.connections.map((connection) => connection.platform), ["outlook-mail"]);
+  assert.equal(paginatedConnections.connections[0].state, "operational");
+  console.log("OK: One API paginated rows are parsed as connections");
+
   await client.searchActions("gmail", "recent unread");
   assert.ok(calls.some((call) => call.url.includes("/v1/available-actions/search/gmail?")));
   assert.ok(calls.some((call) => new URL(call.url).searchParams.get("includeKnowledge") === "true"));
