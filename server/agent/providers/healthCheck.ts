@@ -17,7 +17,7 @@
 import { OpenAIProvider } from "./openai";
 import { accumulateTurn } from "./base";
 import type { ProviderQueryParams, ProviderTurnResult } from "./base";
-import { hasCodexOAuthProvider } from "./env";
+import { hasCodexOAuthProvider, isDirectOpenAIDisabled } from "./env";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -69,6 +69,14 @@ async function checkCodexOAuth(): Promise<ProviderHealthResult> {
 async function checkOpenAI(): Promise<ProviderHealthResult> {
   const providerName = "OpenAIProvider";
   const t0 = Date.now();
+  if (isDirectOpenAIDisabled()) {
+    return {
+      provider: providerName,
+      ok: true,
+      durationMs: Date.now() - t0,
+      result: { textContent: "disabled", finishReason: "config_check" },
+    };
+  }
   try {
     const provider = new OpenAIProvider() as unknown as {
       _completeTurn(params: ProviderQueryParams): AsyncGenerator<import("./base").ProviderChunk>;
@@ -126,7 +134,7 @@ async function checkOpenAI(): Promise<ProviderHealthResult> {
 // ── Public API ─────────────────────────────────────────────────────────────────
 
 /**
- * Run smoke tests against Codex OAuth and OpenAIProvider in parallel.
+ * Run smoke tests against the configured provider surface in parallel.
  * Logs a clear warning for every provider that fails; logs confirmation when
  * all providers pass.
  *

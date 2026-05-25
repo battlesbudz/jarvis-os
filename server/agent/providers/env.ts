@@ -114,6 +114,12 @@ export function applyProviderEnvAliases(): void {
 
 export function getOpenAIClientConfig(): { apiKey: string; baseURL?: string } {
   applyProviderEnvAliases();
+  if (isDirectOpenAIDisabled()) {
+    return {
+      apiKey: ROUTER_PLACEHOLDER_OPENAI_API_KEY,
+      baseURL: undefined,
+    };
+  }
   return {
     apiKey:
       getProviderEnvValue("AI_INTEGRATIONS_OPENAI_API_KEY", "OPENAI_API_KEY") ??
