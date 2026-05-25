@@ -11,6 +11,7 @@ import {
   Alert,
   TextInput,
   Modal,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -1503,8 +1504,14 @@ export default function SettingsScreen() {
   }, [wakeWords, saveWakeSettings]);
 
   const openOneApiKeys = useCallback(async () => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(ONE_API_KEYS_URL, '_blank', 'noopener,noreferrer');
+      return;
+    }
     await WebBrowser.openBrowserAsync(ONE_API_KEYS_URL, {
       presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+    }).catch(() => {
+      void Linking.openURL(ONE_API_KEYS_URL);
     });
   }, []);
 
