@@ -132,9 +132,8 @@ function startGateway() {
   const command = isWindows ? "node.exe" : "node";
   const args = ["scripts/jarvis-local-oauth-gateway.mjs"];
   const childEnv = { ...process.env };
-  if (!childEnv.JARVIS_CODEX_OAUTH_SKIP_CHECK) {
-    childEnv.JARVIS_CODEX_OAUTH_SKIP_CHECK = "true";
-  }
+  childEnv.JARVIS_OAUTH_GATEWAY_SUPERVISED = "true";
+  childEnv.JARVIS_CODEX_OAUTH_SKIP_CHECK = "true";
   log(`starting gateway: ${command} ${args.join(" ")}`);
   childStartedAt = Date.now();
 

@@ -96,6 +96,9 @@ process.env.NODE_ENV ||= "development";
 process.env.HOST ||= "127.0.0.1";
 process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
 process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+if (process.env.JARVIS_OAUTH_GATEWAY_SUPERVISED === "true") {
+  process.env.JARVIS_CODEX_OAUTH_SKIP_CHECK = "true";
+}
 
 if (process.env.JARVIS_CODEX_OAUTH_SKIP_CHECK === "true") {
   console.warn("Skipping Codex OAuth startup probe because JARVIS_CODEX_OAUTH_SKIP_CHECK=true.");

@@ -68,7 +68,6 @@ import { getApiUrl, queryClient, apiRequest } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
 import { Linking, Image } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface EmailSuggestion {
   title: string;
@@ -94,7 +93,6 @@ const SUGGESTED_PROMPTS = [
   "I'm struggling to stay consistent",
 ];
 
-const COMMITMENTS_COLLAPSED_KEY = '@gameplan_commitments_collapsed';
 
 function isNoisyChatFailure(message: ChatMessage, index: number): boolean {
   if (message.role !== 'assistant' || index < 6) return false;
@@ -763,7 +761,6 @@ export default function InsightsScreen() {
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
-  const [commitmentsCollapsed, setCommitmentsCollapsed] = useState(false);
   // MCP prompt browser state
   interface McpPromptEntry {
     serverName: string;
@@ -776,16 +773,6 @@ export default function InsightsScreen() {
   const [mcpPrompts, setMcpPrompts] = useState<McpPromptEntry[]>([]);
   const [mcpPromptsLoading, setMcpPromptsLoading] = useState(false);
 
-  const [weeklyInsights, setWeeklyInsights] = useState<{
-    id: string;
-    weekOf: string;
-    summary: string | null;
-    patterns: { category: string; observation: string; evidence: string[]; confidence: number }[];
-    createdAt: string;
-  }[]>([]);
-  const [weeklyInsightsLoading, setWeeklyInsightsLoading] = useState(true);
-  const [weeklyInsightsCollapsed, setWeeklyInsightsCollapsed] = useState(false);
-  const latestInsight = weeklyInsights[0] || null;
   const [isBaseLoading, setIsBaseLoading] = useState(true);
   const [isEmailLoading, setIsEmailLoading] = useState(true);
   const commitmentsRef = useRef<Commitment[]>([]);
@@ -825,17 +812,6 @@ export default function InsightsScreen() {
     }
   }, [isRecording, micPulse]);
 
-  useEffect(() => {
-    AsyncStorage.getItem(COMMITMENTS_COLLAPSED_KEY)
-      .then((value) => {
-        if (value === '1') setCommitmentsCollapsed(true);
-      })
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    AsyncStorage.setItem(COMMITMENTS_COLLAPSED_KEY, commitmentsCollapsed ? '1' : '0').catch(() => {});
-  }, [commitmentsCollapsed]);
 
   useEffect(() => {
     if (!messages[0]?.id || messages.length === 0) return;
@@ -1569,41 +1545,6 @@ export default function InsightsScreen() {
       if (data.commitments && Array.isArray(data.commitments)) {
         setCommitments(data.commitments);
       }
-    } catch {}
-  }, []);
-
-  const fetchWeeklyInsights = useCallback(async () => {
-    setWeeklyInsightsLoading(true);
-    try {
-      const url = new URL('/api/weekly-insights', getApiUrl());
-      const res = await authFetch(url.toString());
-      const data = await res.json();
-      if (data.insights && Array.isArray(data.insights)) {
-        setWeeklyInsights(data.insights);
-      }
-    } catch {}
-    setWeeklyInsightsLoading(false);
-  }, []);
-
-  useEffect(() => { fetchWeeklyInsights(); }, [fetchWeeklyInsights]);
-
-  const markCommitmentDone = useCallback(async (id: string) => {
-    try {
-      const url = new URL(`/api/commitments/${id}`, getApiUrl());
-      await authFetch(url.toString(), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'done' }),
-      });
-      setCommitments(prev => prev.filter(c => c.id !== id));
-    } catch {}
-  }, []);
-
-  const dismissCommitment = useCallback(async (id: string) => {
-    try {
-      const url = new URL(`/api/commitments/${id}`, getApiUrl());
-      await authFetch(url.toString(), { method: 'DELETE' });
-      setCommitments(prev => prev.filter(c => c.id !== id));
     } catch {}
   }, []);
 
@@ -2619,104 +2560,6 @@ export default function InsightsScreen() {
 
   const isEmpty = messages.length === 0 && !isStreaming;
 
-  const getCommitmentDueBadgeStyle = (dueDate: string | null) => {
-    if (!dueDate) return { bg: '#F3F4F6', color: '#6B7280', label: 'Open' };
-    const today = getTodayKey();
-    if (dueDate < today) return { bg: '#FEE2E2', color: '#DC2626', label: 'Overdue' };
-    if (dueDate === today) return { bg: '#FEF3C7', color: '#D97706', label: 'Today' };
-    return { bg: '#ECFDF5', color: '#059669', label: dueDate };
-  };
-
-  const renderWeeklyInsightsSection = () => {
-    if (weeklyInsightsLoading) return null;
-    if (!latestInsight || (!latestInsight.summary && (!latestInsight.patterns || latestInsight.patterns.length === 0))) return null;
-    return (
-      <View style={[styles.commitmentsSection, { backgroundColor: Colors.surface }]}>
-        <Pressable style={styles.commitmentsHeader} onPress={() => setWeeklyInsightsCollapsed(p => !p)}>
-          <View style={styles.commitmentsHeaderLeft}>
-            <Ionicons name="bulb-outline" size={16} color={Colors.primary} />
-            <Text style={styles.commitmentsHeaderTitle}>What we're noticing</Text>
-            <View style={styles.commitmentsBadge}>
-              <Text style={styles.commitmentsBadgeText}>{latestInsight.patterns?.length || 0}</Text>
-            </View>
-          </View>
-          <Ionicons
-            name={weeklyInsightsCollapsed ? 'chevron-down' : 'chevron-up'}
-            size={16}
-            color={Colors.textSecondary}
-          />
-        </Pressable>
-        {!weeklyInsightsCollapsed && (
-          <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
-            {latestInsight.summary ? (
-              <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 19, marginBottom: 10 }}>
-                {latestInsight.summary}
-              </Text>
-            ) : null}
-            {(latestInsight.patterns || []).slice(0, 5).map((p, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
-                <View style={{ marginTop: 6, width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.primary }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 18 }}>{p.observation}</Text>
-                  {p.evidence && p.evidence.length > 0 ? (
-                    <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 2 }}>
-                      Why: {p.evidence.slice(0, 2).join(' · ')}
-                    </Text>
-                  ) : null}
-                </View>
-                <Text style={{ color: Colors.textTertiary, fontSize: 10, fontWeight: '600' }}>{p.confidence}%</Text>
-              </View>
-            ))}
-            <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 4 }}>
-              Updated weekly · learned from your last 30 days
-            </Text>
-          </View>
-        )}
-      </View>
-    );
-  };
-
-  const renderCommitmentsSection = () => {
-    if (commitments.length === 0) return null;
-    return (
-      <View style={styles.commitmentsSection}>
-        <Pressable style={styles.commitmentsHeader} onPress={() => setCommitmentsCollapsed(prev => !prev)}>
-          <View style={styles.commitmentsHeaderLeft}>
-            <Ionicons name="flag-outline" size={16} color={Colors.primary} />
-            <Text style={styles.commitmentsHeaderTitle}>Open Commitments</Text>
-            <View style={styles.commitmentsBadge}>
-              <Text style={styles.commitmentsBadgeText}>{commitments.length}</Text>
-            </View>
-          </View>
-          <Ionicons
-            name={commitmentsCollapsed ? 'chevron-down' : 'chevron-up'}
-            size={16}
-            color={Colors.textSecondary}
-          />
-        </Pressable>
-        {!commitmentsCollapsed && commitments.map((c) => {
-          const badge = getCommitmentDueBadgeStyle(c.dueDate);
-          return (
-            <View key={c.id} style={styles.commitmentCard}>
-              <Pressable style={styles.commitmentCheckbox} onPress={() => markCommitmentDone(c.id)}>
-                <Ionicons name="square-outline" size={20} color={Colors.textSecondary} />
-              </Pressable>
-              <View style={styles.commitmentContent}>
-                <Text style={styles.commitmentText}>{c.content}</Text>
-                <View style={[styles.commitmentDueBadge, { backgroundColor: badge.bg }]}>
-                  <Text style={[styles.commitmentDueText, { color: badge.color }]}>{badge.label}</Text>
-                </View>
-              </View>
-              <Pressable style={styles.commitmentDismiss} onPress={() => dismissCommitment(c.id)}>
-                <Ionicons name="close" size={16} color={Colors.textSecondary} />
-              </Pressable>
-            </View>
-          );
-        })}
-      </View>
-    );
-  };
-
   const renderInboxSection = (extraStyle?: any) => (
     <View style={[styles.inboxSection, extraStyle]}>
       <Pressable style={styles.inboxHeader} onPress={() => setInboxCollapsed(prev => !prev)}>
@@ -2832,9 +2675,6 @@ export default function InsightsScreen() {
           <Text style={styles.emailLoadingText}>Loading email & Slack context…</Text>
         </View>
       )}
-
-      {renderWeeklyInsightsSection()}
-      {renderCommitmentsSection()}
 
       <View style={styles.chatArea}>
         {gmailConnected && isEmpty && renderInboxSection({ paddingHorizontal: 16 })}
