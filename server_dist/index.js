@@ -1670,6 +1670,7 @@ __export(schema_exports, {
   userEmotionalState: () => userEmotionalState,
   userEmotionalStateHistory: () => userEmotionalStateHistory,
   userMemories: () => userMemories,
+  userOAuthTokens: () => userOAuthTokens,
   userPreferences: () => userPreferences,
   userSkillPacks: () => userSkillPacks,
   userSkills: () => userSkills,
@@ -1684,7 +1685,7 @@ __export(schema_exports, {
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, commitments, userMemories, MEMORY_TIERS, MEMORY_TYPES, MEMORY_CATEGORIES, people, jarvisSouls, livingContextUpdates, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, websiteCrawls, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, buildSessions, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, SIMPLE_ORIGIN_CHANNELS, discordChannelSchedules, interactionLog, discordPendingApprovals, DEFAULT_AGENT_PERMISSIONS, discordAgents, agentMemories, AGENT_MESSAGE_TYPES, AGENT_MESSAGE_STATUSES, agentMessages, AGENT_APPROVAL_STATUSES, agentApprovalGates, AGENT_POLICY_SCOPES, agentApprovalPolicies, agentApprovalAllowlist, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, mcpApiKeys, mcpRateLimits, jarvisActionLog, openclawBuildLog, egoWeeklyReports, INTEGRATION_NAMES, integrationStatus, skillPacks, DIAGNOSTIC_SUBSYSTEMS, DIAGNOSTIC_SEVERITIES, diagnosticEvents, orchestrationTraces, agentChatMessages, agentChatSessions, agentChatSessionSummaries, coachChannelSessions, userSkillPacks, systemErrorLog, CODE_PROPOSAL_STATUSES, codeProposals, MCP_CREDENTIAL_MODES, userSkills, skillCandidates, mcpServers, writeBudgetLog, writeBudgetWarnings, conversations, messages, learningSynthesisLog, discordConfirmTokens, webchatInviteTokens, GATEWAY_DEVICE_SCOPES, gatewayDevicePairingRequests, gatewayDevices, gatewayEvents, CUSTOM_AGENT_BASE_TYPES, customAgents, insertCustomAgentSchema, jarvisProjects, jarvisProjectSessions, jarvisProjectFiles, jarvisProjectArchives, selfHealAuditLog, searchBarLocations, buttonLocations, tournamentRuns, VAULT_SLUGS, VAULT_PAGE_TYPES, knowledgeVaultPages, wikiLintLog, transcriptJobs, capabilityGaps;
+var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, userOAuthTokens, commitments, userMemories, MEMORY_TIERS, MEMORY_TYPES, MEMORY_CATEGORIES, people, jarvisSouls, livingContextUpdates, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, websiteCrawls, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, buildSessions, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, SIMPLE_ORIGIN_CHANNELS, discordChannelSchedules, interactionLog, discordPendingApprovals, DEFAULT_AGENT_PERMISSIONS, discordAgents, agentMemories, AGENT_MESSAGE_TYPES, AGENT_MESSAGE_STATUSES, agentMessages, AGENT_APPROVAL_STATUSES, agentApprovalGates, AGENT_POLICY_SCOPES, agentApprovalPolicies, agentApprovalAllowlist, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, mcpApiKeys, mcpRateLimits, jarvisActionLog, openclawBuildLog, egoWeeklyReports, INTEGRATION_NAMES, integrationStatus, skillPacks, DIAGNOSTIC_SUBSYSTEMS, DIAGNOSTIC_SEVERITIES, diagnosticEvents, orchestrationTraces, agentChatMessages, agentChatSessions, agentChatSessionSummaries, coachChannelSessions, userSkillPacks, systemErrorLog, CODE_PROPOSAL_STATUSES, codeProposals, MCP_CREDENTIAL_MODES, userSkills, skillCandidates, mcpServers, writeBudgetLog, writeBudgetWarnings, conversations, messages, learningSynthesisLog, discordConfirmTokens, webchatInviteTokens, GATEWAY_DEVICE_SCOPES, gatewayDevicePairingRequests, gatewayDevices, gatewayEvents, CUSTOM_AGENT_BASE_TYPES, customAgents, insertCustomAgentSchema, jarvisProjects, jarvisProjectSessions, jarvisProjectFiles, jarvisProjectArchives, selfHealAuditLog, searchBarLocations, buttonLocations, tournamentRuns, VAULT_SLUGS, VAULT_PAGE_TYPES, knowledgeVaultPages, wikiLintLog, transcriptJobs, capabilityGaps;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1796,6 +1797,18 @@ var init_schema = __esm({
       text: text("text").notNull(),
       messageDate: timestamp("message_date").defaultNow().notNull()
     });
+    userOAuthTokens = pgTable("user_oauth_tokens", {
+      userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+      provider: varchar("provider").notNull(),
+      accessToken: text("access_token").notNull(),
+      refreshToken: text("refresh_token"),
+      expiresAt: timestamp("expires_at"),
+      scopes: text("scopes"),
+      accountEmail: text("account_email").notNull().default(""),
+      updatedAt: timestamp("updated_at").defaultNow().notNull()
+    }, (table) => [
+      primaryKey({ columns: [table.userId, table.provider, table.accountEmail] })
+    ]);
     commitments = pgTable("commitments", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       userId: varchar("user_id").notNull().references(() => users.id),

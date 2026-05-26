@@ -134,6 +134,19 @@ export const telegramGroupMessages = pgTable("telegram_group_messages", {
   messageDate: timestamp("message_date").defaultNow().notNull(),
 });
 
+export const userOAuthTokens = pgTable("user_oauth_tokens", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: varchar("provider").notNull(),
+  accessToken: text("access_token").notNull(),
+  refreshToken: text("refresh_token"),
+  expiresAt: timestamp("expires_at"),
+  scopes: text("scopes"),
+  accountEmail: text("account_email").notNull().default(""),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.provider, table.accountEmail] }),
+]);
+
 export const commitments = pgTable("commitments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
