@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -235,6 +235,7 @@ function CorePlaceholderCard({ name }: { name: string }) {
 
 function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () => void }) {
   const insets = useSafeAreaInsets();
+  const agentId = agent?.id;
   const [message, setMessage] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streamingContent, setStreamingContent] = useState("");
@@ -249,29 +250,29 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
   // Load history: try permanent server history first (no TTL), fall back to AsyncStorage.
   // Also restore the session ID from storage so subsequent turns can resume the session.
   useEffect(() => {
-    if (!agent) return;
-    if (prevAgentIdRef.current === agent.id) return;
-    prevAgentIdRef.current = agent.id;
+    if (!agentId) return;
+    if (prevAgentIdRef.current === agentId) return;
+    prevAgentIdRef.current = agentId;
     sdkSessionIdRef.current = null;
     setHistoryLoading(true);
 
     (async () => {
       try {
         // Restore session ID from local storage (used for session resumption, not history)
-        const storedSessionId = await loadStoredSessionId(agent.id);
+        const storedSessionId = await loadStoredSessionId(agentId);
         if (storedSessionId) {
           sdkSessionIdRef.current = storedSessionId;
         }
 
         // Primary: permanent history endpoint (survives session expiry)
         const token = await getAuthToken();
-        const historyUrl = new URL(`/api/agents/${agent.id}/history`, getApiUrl());
+        const historyUrl = new URL(`/api/agents/${agentId}/history`, getApiUrl());
         const resp = await fetch(historyUrl.toString(), {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
         if (resp.ok) {
           const data = (await resp.json()) as {
-            messages: Array<{ id: string; role: "user" | "assistant"; content: string; createdAt: string }>;
+            messages: { id: string; role: "user" | "assistant"; content: string; createdAt: string }[];
           };
           if (data.messages && data.messages.length > 0) {
             const serverMessages: ChatMessage[] = data.messages
@@ -284,7 +285,7 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
               }));
             setMessages(serverMessages);
             // Sync local AsyncStorage to server truth
-            await saveChatHistory(agent.id, serverMessages);
+            await saveChatHistory(agentId, serverMessages);
             setStreamingContent("");
             setIntegrationError(null);
             setHistoryLoading(false);
@@ -293,12 +294,12 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
         }
 
         // Fallback: local AsyncStorage history (offline / pre-feature messages)
-        const history = await loadChatHistory(agent.id);
+        const history = await loadChatHistory(agentId);
         setMessages(history);
         setStreamingContent("");
         setIntegrationError(null);
       } catch {
-        const history = await loadChatHistory(agent.id);
+        const history = await loadChatHistory(agentId);
         setMessages(history);
         setStreamingContent("");
         setIntegrationError(null);
@@ -306,9 +307,9 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
         setHistoryLoading(false);
       }
     })();
-  }, [agent?.id]);
+  }, [agentId]);
 
-  function buildConversationHistory(msgs: ChatMessage[]): Array<{ role: string; content: string }> {
+  function buildConversationHistory(msgs: ChatMessage[]): { role: string; content: string }[] {
     const window = agent?.isCoreAgent ? CHAT_HISTORY_WINDOW_MAIN : CHAT_HISTORY_WINDOW_SUB;
     const windowed = msgs.length > window ? msgs.slice(msgs.length - window) : msgs;
     return windowed.map((m) => ({ role: m.role, content: m.content }));
@@ -839,6 +840,16 @@ function AgentDetailSheet({
   const [addingPattern, setAddingPattern] = useState(false);
 
   const queryClient = useQueryClient();
+  const detailAgentId = agent?.id;
+  const detailAgentName = agent?.name;
+  const detailAgentRole = agent?.role;
+  const detailAgentPersona = agent?.persona;
+  const detailAgentChannelId = agent?.channelId;
+  const detailAgentLoopEnabled = agent?.loopEnabled;
+  const detailAgentLoopIntervalMinutes = agent?.loopIntervalMinutes;
+  const detailAgentLoopPrompt = agent?.loopPrompt;
+  const detailAgentPermissions = agent?.permissions;
+  const detailAgentMentionPatterns = agent?.mentionPatterns;
 
   const { data: memData, isLoading: memLoading } = useQuery<{ memories: MemoryItem[]; count: number }>({
     queryKey: ["/api/agents", agent?.id, "memories"],
@@ -873,20 +884,31 @@ function AgentDetailSheet({
   });
 
   useEffect(() => {
-    if (!agent) return;
-    setName(agent.name);
-    setRole(agent.role);
-    setPersona(agent.persona ?? "");
-    setChannelId(agent.channelId ?? "");
-    setLoopEnabled(agent.loopEnabled === 1);
-    setLoopInterval(String(agent.loopIntervalMinutes ?? 60));
-    setLoopPrompt(agent.loopPrompt ?? "");
-    setPerms({ ...DEFAULT_PERMISSIONS, ...(agent.permissions ?? {}) });
-    setMentionPatterns(agent.mentionPatterns ?? []);
+    if (!detailAgentId) return;
+    setName(detailAgentName ?? "");
+    setRole(detailAgentRole ?? "custom");
+    setPersona(detailAgentPersona ?? "");
+    setChannelId(detailAgentChannelId ?? "");
+    setLoopEnabled(detailAgentLoopEnabled === 1);
+    setLoopInterval(String(detailAgentLoopIntervalMinutes ?? 60));
+    setLoopPrompt(detailAgentLoopPrompt ?? "");
+    setPerms({ ...DEFAULT_PERMISSIONS, ...(detailAgentPermissions ?? {}) });
+    setMentionPatterns(detailAgentMentionPatterns ?? []);
     setMentionPatternInput("");
     setSaving(false);
     setActiveTab("overview");
-  }, [agent?.id]);
+  }, [
+    detailAgentId,
+    detailAgentName,
+    detailAgentRole,
+    detailAgentPersona,
+    detailAgentChannelId,
+    detailAgentLoopEnabled,
+    detailAgentLoopIntervalMinutes,
+    detailAgentLoopPrompt,
+    detailAgentPermissions,
+    detailAgentMentionPatterns,
+  ]);
 
   function togglePerm(key: keyof AgentPermissions) {
     setPerms((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -1039,7 +1061,7 @@ function AgentDetailSheet({
               )}
               {agent.loopEnabled && agent.loopPrompt ? (
                 <Text style={[styles.loopPromptSnippet, { color: Colors.textTertiary }]} numberOfLines={2}>
-                  "{agent.loopPrompt.slice(0, 100)}{agent.loopPrompt.length > 100 ? "…" : ""}"
+                  {`"${agent.loopPrompt.slice(0, 100)}${agent.loopPrompt.length > 100 ? "..." : ""}"`}
                 </Text>
               ) : null}
             </View>
@@ -1313,7 +1335,7 @@ function AgentDetailSheet({
             </Text>
 
             <View style={[styles.permsList, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
-              {(Object.keys(PERM_LABELS) as Array<keyof AgentPermissions>).map((key, idx, arr) => {
+              {(Object.keys(PERM_LABELS) as (keyof AgentPermissions)[]).map((key, idx, arr) => {
                 const { label, icon, danger } = PERM_LABELS[key];
                 const isLast = idx === arr.length - 1;
                 return (
@@ -1790,7 +1812,7 @@ export default function AgentsScreen() {
                 No agents yet
               </Text>
               <Text style={[styles.emptyCustomSub, { color: Colors.textTertiary }]}>
-                Tell Jarvis to "set up a researcher agent" or "create a coder in Discord" — the orchestrator spawns them with their own persona, memory, and channel.
+                Tell Jarvis to &quot;set up a researcher agent&quot; or &quot;create a coder in Discord&quot; - the orchestrator spawns them with their own persona, memory, and channel.
               </Text>
             </View>
           )}
