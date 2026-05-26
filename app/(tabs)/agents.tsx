@@ -30,6 +30,11 @@ import Colors from "@/constants/colors";
 import { CouncilModal } from "@/components/agents/CouncilModal";
 import { CreateAgentSheet } from "@/components/agents/CreateAgentSheet";
 import { JobTaskCard, JOB_STATUS_COLORS, JOB_STATUS_LABELS, type AgentTask } from "@/components/agents/JobTaskCard";
+import {
+  SelfRepairAuditCard,
+  SelfRepairAuditModal,
+  type AuditEntry,
+} from "@/components/agents/SelfRepairAudit";
 import { TaskDetailSheet } from "@/components/agents/TaskDetailSheet";
 import { IntegrationErrorCard } from "@/components/IntegrationErrorCard";
 import { ROLE_COLORS, ROLE_ICONS, ROLES } from "@/lib/agents/roleMeta";
@@ -125,15 +130,6 @@ const PERM_LABELS: Record<keyof AgentPermissions, { label: string; icon: keyof t
   can_access_global_memory:{ label: "Read global memory",       icon: "library-outline" },
   can_run_code:            { label: "Run Python code",          icon: "code-slash-outline" },
 };
-
-export interface AuditEntry {
-  timestamp: string;
-  file: string;
-  reason: string;
-  verified: string;
-  changesSummary: string;
-  diff: string;
-}
 
 export interface RosterAgent {
   id: string;
@@ -1012,197 +1008,6 @@ function RunModal({ agent, onClose }: { agent: RosterAgent | null; onClose: () =
     </Modal>
   );
 }
-
-// ── SelfRepairAuditModal ───────────────────────────────────────────────────────
-
-function SelfRepairAuditModal({
-  entry,
-  onClose,
-}: {
-  entry: AuditEntry | null;
-  onClose: () => void;
-}) {
-  if (!entry) return null;
-
-  const ts = new Date(entry.timestamp).toLocaleString();
-
-  return (
-    <Modal visible={!!entry} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
-      <View style={[styles.sheet, { backgroundColor: Colors.background }]}>
-        <View style={[styles.sheetHeader, { borderBottomColor: Colors.border }]}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={[styles.sheetCancel, { color: Colors.textSecondary }]}>Close</Text>
-          </TouchableOpacity>
-          <Text style={[styles.sheetTitle, { color: Colors.text }]}>Self-Repair</Text>
-          <View style={{ width: 48 }} />
-        </View>
-
-        <ScrollView style={styles.sheetBody} showsVerticalScrollIndicator={false}>
-          {/* File + timestamp */}
-          <View style={[styles.personaCard, { backgroundColor: Colors.surface, borderColor: Colors.border, gap: 6 }]}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <View style={[styles.roleIconWrap, { backgroundColor: Colors.primary + "22" }]}>
-                <Ionicons name="code-slash-outline" size={16} color={Colors.primary} />
-              </View>
-              <Text style={[styles.cardName, { color: Colors.text, flex: 1 }]} numberOfLines={2}>
-                {entry.file}
-              </Text>
-            </View>
-            <Text style={[styles.metaText, { color: Colors.textTertiary }]}>{ts}</Text>
-            {entry.changesSummary ? (
-              <View style={[styles.coreBadge, { backgroundColor: Colors.primary + "22", alignSelf: "flex-start" }]}>
-                <Text style={[styles.coreBadgeText, { color: Colors.primary }]}>{entry.changesSummary}</Text>
-              </View>
-            ) : null}
-          </View>
-
-          {/* Verification result */}
-          {(() => {
-            const v = (entry.verified ?? "pending").toLowerCase();
-            const passed = v.startsWith("passed");
-            const failed = v.startsWith("failed") || v.startsWith("error");
-            const bg = passed ? "#16a34a22" : failed ? "#dc262622" : "#78716c22";
-            const fg = passed ? "#16a34a" : failed ? "#dc2626" : Colors.textSecondary;
-            const verifyIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
-              passed: "checkmark-circle-outline",
-              failed: "close-circle-outline",
-              pending: "time-outline",
-            };
-            const iconKey = passed ? "passed" : failed ? "failed" : "pending";
-            const label = passed ? "Passed" : failed ? "Failed" : "Pending";
-            return (
-              <>
-                <Text style={[styles.fieldLabel, { color: Colors.textSecondary, marginTop: 16 }]}>VERIFICATION</Text>
-                <View style={[styles.personaCard, { backgroundColor: bg, borderColor: Colors.border, flexDirection: "row", alignItems: "center", gap: 8 }]}>
-                  <Ionicons name={verifyIcons[iconKey]} size={18} color={fg} />
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.cardName, { color: fg, fontSize: 14 }]}>{label}</Text>
-                    {entry.verified && entry.verified !== "pending" && entry.verified !== "not recorded" ? (
-                      <Text style={[styles.metaText, { color: fg, opacity: 0.8 }]} numberOfLines={2}>{entry.verified}</Text>
-                    ) : null}
-                  </View>
-                </View>
-              </>
-            );
-          })()}
-
-          {/* Reason */}
-          <Text style={[styles.fieldLabel, { color: Colors.textSecondary, marginTop: 16 }]}>REASON</Text>
-          <View style={[styles.personaCard, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
-            <Text style={[styles.personaText, { color: Colors.text }]}>{entry.reason || "No reason recorded"}</Text>
-          </View>
-
-          {/* Diff */}
-          {entry.diff ? (
-            <>
-              <Text style={[styles.fieldLabel, { color: Colors.textSecondary, marginTop: 16 }]}>CHANGES</Text>
-              <View style={[styles.personaCard, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      color: Colors.textSecondary,
-                      fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-                      lineHeight: 18,
-                    }}
-                  >
-                    {entry.diff}
-                  </Text>
-                </ScrollView>
-              </View>
-            </>
-          ) : null}
-
-          <View style={{ height: 40 }} />
-        </ScrollView>
-      </View>
-    </Modal>
-  );
-}
-
-// ── SelfRepairAuditCard — inline card for one audit entry ─────────────────────
-
-function SelfRepairAuditCard({
-  entry,
-  onPress,
-  highlighted = false,
-  onLayout,
-}: {
-  entry: AuditEntry;
-  onPress: () => void;
-  highlighted?: boolean;
-  onLayout?: (event: LayoutChangeEvent) => void;
-}) {
-  const ts = new Date(entry.timestamp).toLocaleString();
-  const shortFile = entry.file.split("/").pop() ?? entry.file;
-  const flashAnim = useRef(new Animated.Value(0)).current;
-
-  useEffect(() => {
-    if (!highlighted) return;
-    Animated.sequence([
-      Animated.timing(flashAnim, { toValue: 1, duration: 250, useNativeDriver: false }),
-      Animated.timing(flashAnim, { toValue: 0, duration: 300, useNativeDriver: false }),
-      Animated.timing(flashAnim, { toValue: 1, duration: 250, useNativeDriver: false }),
-      Animated.timing(flashAnim, { toValue: 0, duration: 400, useNativeDriver: false }),
-    ]).start();
-  }, [highlighted]);
-
-  const animatedBg = flashAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [Colors.surface, Colors.primary + "44"],
-  });
-  const animatedBorder = flashAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [Colors.border, Colors.primary],
-  });
-
-  return (
-    <Animated.View
-      onLayout={onLayout}
-      style={[styles.jobCard, { backgroundColor: animatedBg, borderColor: animatedBorder }]}
-    >
-      <TouchableOpacity activeOpacity={0.75} onPress={onPress}>
-        <View style={styles.jobCardHeader}>
-          <View style={[styles.jobIconWrap, { backgroundColor: Colors.primary + "22" }]}>
-            <Ionicons name="construct-outline" size={16} color={Colors.primary} />
-          </View>
-          <View style={styles.jobCardTitle}>
-            <Text style={[styles.jobTitle, { color: Colors.text }]} numberOfLines={1}>
-              {shortFile}
-            </Text>
-            <Text style={[styles.jobAgent, { color: Colors.textSecondary }]} numberOfLines={1}>
-              {entry.reason}
-            </Text>
-          </View>
-          {(() => {
-            const v = (entry.verified ?? "pending").toLowerCase();
-            const passed = v.startsWith("passed");
-            const failed = v.startsWith("failed") || v.startsWith("error");
-            const bg = passed ? "#16a34a22" : failed ? "#dc262622" : "#78716c22";
-            const fg = passed ? "#16a34a" : failed ? "#dc2626" : Colors.textSecondary;
-            const verifyIcons: Record<string, keyof typeof Ionicons.glyphMap> = {
-              passed: "checkmark-circle-outline",
-              failed: "close-circle-outline",
-              pending: "time-outline",
-            };
-            const iconKey = passed ? "passed" : failed ? "failed" : "pending";
-            return (
-              <View style={[styles.coreBadge, { backgroundColor: bg, flexDirection: "row", alignItems: "center", gap: 3 }]}>
-                <Ionicons name={verifyIcons[iconKey]} size={11} color={fg} />
-                <Text style={[styles.coreBadgeText, { color: fg }]}>
-                  {iconKey}
-                </Text>
-              </View>
-            );
-          })()}
-        </View>
-        <Text style={[styles.jobMeta, { color: Colors.textTertiary }]}>{ts}</Text>
-      </TouchableOpacity>
-    </Animated.View>
-  );
-}
-
-
 
 // ── AgentDetailSheet ───────────────────────────────────────────────────────────
 
