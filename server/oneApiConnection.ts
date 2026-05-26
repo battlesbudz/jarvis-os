@@ -43,6 +43,30 @@ export type OneApiResult<T extends Record<string, unknown> = Record<string, unkn
   error?: string;
 };
 
+export type OneApiAction = {
+  id?: string;
+  _id?: string;
+  systemId?: string;
+  key?: string;
+  title?: string;
+  name?: string;
+  method?: string;
+  path?: string;
+  knowledge?: string;
+  [key: string]: unknown;
+};
+
+export type OnePassthroughArgs = {
+  action: OneApiAction;
+  connectionKey: string;
+  data?: unknown;
+  pathVars?: unknown;
+  queryParams?: unknown;
+  headers?: unknown;
+  dryRun?: boolean;
+  baseUrl?: string;
+};
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, "");
 }
@@ -63,6 +87,19 @@ function firstArray(value: unknown, keys: string[]): unknown[] {
     if (Array.isArray(candidate)) return candidate;
   }
   return [];
+}
+
+function firstRecord(value: unknown, keys: string[]): Record<string, unknown> | null {
+  if (isRecord(value) && isRecord(value.action)) return value.action as Record<string, unknown>;
+  const rows = firstArray(value, keys);
+  const first = rows[0];
+  if (isRecord(first)) return first;
+  if (isRecord(value) && (value.path || value.method || value.title || value._id || value.systemId)) return value;
+  return null;
+}
+
+function toPlainRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? { ...value } : {};
 }
 
 function normalizeConnection(value: unknown): OneApiConnection {
@@ -96,7 +133,120 @@ export function buildOneActionSearchUrl(platform: string, query: string, baseUrl
   const url = new URL(`/v1/available-actions/search/${encodeURIComponent(platform)}`, normalizeBaseUrl(baseUrl));
   url.searchParams.set("query", query);
   url.searchParams.set("includeKnowledge", "true");
+  url.searchParams.set("executeAgent", "true");
   return url.toString();
+}
+
+function getActionOneId(action: OneApiAction): string {
+  return String(action._id || action.systemId || action.id || "").trim();
+}
+
+function getActionKey(action: OneApiAction): string {
+  return String(action.key || "").trim();
+}
+
+function getActionPath(action: OneApiAction): string {
+  return String(action.path || "").trim();
+}
+
+function getActionMethod(action: OneApiAction): string {
+  return String(action.method || "POST").trim().toUpperCase();
+}
+
+function base64UrlEncode(value: string): string {
+  return Buffer.from(value, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function buildRfc2822Message(input: Record<string, unknown>): string {
+  const to = String(input.to || input.recipient || input.email || "").trim();
+  const subject = String(input.subject || "Hello").trim();
+  const body = String(input.body || input.text || input.message || "").trim();
+  const headers = [
+    input.from ? `From: ${String(input.from).trim()}` : null,
+    to ? `To: ${to}` : null,
+    input.cc ? `Cc: ${String(input.cc).trim()}` : null,
+    input.bcc ? `Bcc: ${String(input.bcc).trim()}` : null,
+    `Subject: ${subject}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "MIME-Version: 1.0",
+  ].filter(Boolean);
+  return `${headers.join("\r\n")}\r\n\r\n${body}`;
+}
+
+function normalizeGmailData(path: string, data: unknown): unknown {
+  const body = toPlainRecord(data);
+  const lowerPath = path.toLowerCase();
+  if (lowerPath.endsWith("/drafts/send")) {
+    if (body.draftId && !body.id) return { ...body, id: body.draftId };
+    return data ?? {};
+  }
+
+  const isDraftCreate = lowerPath.endsWith("/drafts");
+  const isMessageSend = lowerPath.endsWith("/messages/send");
+  if (isDraftCreate && body.raw) return { message: { raw: body.raw } };
+  if ((isDraftCreate || isMessageSend) && !isRecord(body.message) && !body.raw && (body.to || body.subject || body.body || body.text || body.message)) {
+    const raw = base64UrlEncode(buildRfc2822Message(body));
+    return isDraftCreate ? { message: { raw } } : { raw };
+  }
+
+  if (lowerPath.endsWith("/modify")) {
+    const action = String(body.action || "").toLowerCase();
+    const removeLabelIds = Array.isArray(body.removeLabelIds) ? [...body.removeLabelIds] : [];
+    const addLabelIds = Array.isArray(body.addLabelIds) ? [...body.addLabelIds] : [];
+    if (body.archive === true || action === "archive") removeLabelIds.push("INBOX");
+    if (action === "mark_read") removeLabelIds.push("UNREAD");
+    if (action === "mark_unread") addLabelIds.push("UNREAD");
+    if (action === "star") addLabelIds.push("STARRED");
+    if (action === "unstar") removeLabelIds.push("STARRED");
+    if (addLabelIds.length || removeLabelIds.length) return { ...body, addLabelIds, removeLabelIds };
+  }
+
+  return data ?? {};
+}
+
+function appendQueryParams(url: URL, queryParams: unknown): void {
+  const params = toPlainRecord(queryParams);
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) url.searchParams.append(key, String(item));
+    } else {
+      url.searchParams.set(key, String(value));
+    }
+  }
+}
+
+export function buildOnePassthroughRequest(args: OnePassthroughArgs): { url: string; init: RequestInit; body: unknown } {
+  const root = normalizeBaseUrl(args.baseUrl || ONE_API_BASE_URL).replace(/\/v1$/i, "");
+  const pathVars = toPlainRecord(args.pathVars);
+  const actionPath = getActionPath(args.action);
+  if (!actionPath) throw new Error("One action is missing a passthrough path.");
+  if (actionPath.includes("{{userId}}") && !pathVars.userId) pathVars.userId = "me";
+
+  const finalPath = actionPath.replace(/\{\{([^}]+)\}\}/g, (_match, key: string) => {
+    const value = pathVars[key.trim()];
+    if (value == null || value === "") throw new Error(`Missing One path variable '${key.trim()}'.`);
+    return encodeURIComponent(String(value));
+  });
+
+  const actionId = getActionOneId(args.action);
+  if (!actionId) throw new Error("One action is missing a system action id.");
+
+  const method = getActionMethod(args.action);
+  const url = new URL(`/v1/passthrough${finalPath.startsWith("/") ? finalPath : `/${finalPath}`}`, root);
+  appendQueryParams(url, args.queryParams);
+  const headers: Record<string, string> = {
+    "x-one-connection-key": args.connectionKey,
+    "x-one-action-id": actionId,
+    ...toPlainRecord(args.headers) as Record<string, string>,
+  };
+  const normalizedBody = normalizeGmailData(finalPath, args.data);
+  const init: RequestInit = { method, headers };
+  if (method !== "GET" && method !== "HEAD") {
+    init.body = JSON.stringify(normalizedBody);
+  }
+  if (args.dryRun) headers["x-one-dry-run"] = "true";
+  return { url: url.toString(), init, body: normalizedBody };
 }
 
 export function createOneApiClient(apiKey: string, fetchImpl: OneApiFetch = fetch, baseUrl = ONE_API_BASE_URL) {
@@ -154,11 +304,55 @@ export function createOneApiClient(apiKey: string, fetchImpl: OneApiFetch = fetc
       const actions = firstArray(result, ["actions", "rows", "items", "data", "results"]);
       return { ...result, actions };
     },
+    async getActionDetails(actionId: string) {
+      const url = new URL("/v1/knowledge", root);
+      url.searchParams.set("_id", actionId);
+      const result = await request<{ action: OneApiAction }>(url.toString());
+      const action = firstRecord(result, ["actions", "rows", "items", "data", "results"]) as OneApiAction | null;
+      return { ...result, action: action || undefined };
+    },
+    async resolveActionDetails(platform: string, actionId: string) {
+      if (!actionId.startsWith("api::")) {
+        const details = await this.getActionDetails(actionId);
+        if (details.ok && details.action) return details;
+      }
+      const search = await this.searchActions(platform, actionId);
+      const normalized = actionId.toLowerCase();
+      const match = search.actions.find((candidate) => {
+        if (!isRecord(candidate)) return false;
+        return [candidate.systemId, candidate._id, candidate.id, candidate.key, candidate.title, candidate.name]
+          .some((value) => String(value || "").toLowerCase() === normalized);
+      }) || search.actions.find((candidate) => {
+        if (!isRecord(candidate)) return false;
+        return [candidate.key, candidate.title, candidate.name].some((value) => String(value || "").toLowerCase().includes(normalized));
+      });
+      const action = isRecord(match) ? match as OneApiAction : undefined;
+      return { ...search, action };
+    },
     async passthrough(connectionKey: string, payload: Record<string, unknown>) {
+      const action = payload.action as OneApiAction | undefined;
+      if (action) {
+        const requestArgs = buildOnePassthroughRequest({
+          action,
+          connectionKey,
+          data: payload.data,
+          pathVars: payload.pathVars,
+          queryParams: payload.queryParams,
+          headers: payload.headers,
+          dryRun: payload.dryRun === true,
+          baseUrl: root,
+        });
+        return request(requestArgs.url, requestArgs.init);
+      }
       return request(`/v1/passthrough/${encodeURIComponent(connectionKey)}`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
+    },
+    async executeAction(args: Omit<OnePassthroughArgs, "baseUrl">) {
+      const passthrough = buildOnePassthroughRequest({ ...args, baseUrl: root });
+      const result = await request(passthrough.url, passthrough.init);
+      return { ...result, request: { url: passthrough.url, method: passthrough.init.method, body: passthrough.body } };
     },
   };
 }

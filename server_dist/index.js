@@ -21145,6 +21145,17 @@ function firstArray(value, keys) {
   }
   return [];
 }
+function firstRecord(value, keys) {
+  if (isRecord(value) && isRecord(value.action)) return value.action;
+  const rows = firstArray(value, keys);
+  const first = rows[0];
+  if (isRecord(first)) return first;
+  if (isRecord(value) && (value.path || value.method || value.title || value._id || value.systemId)) return value;
+  return null;
+}
+function toPlainRecord(value) {
+  return isRecord(value) ? { ...value } : {};
+}
 function normalizeConnection(value) {
   if (!isRecord(value)) return { platform: "unknown", state: "unknown" };
   const rawKey = String(value.key || value.id || value.connectionKey || "");
@@ -21173,7 +21184,104 @@ function buildOneActionSearchUrl(platform, query, baseUrl = ONE_API_BASE_URL) {
   const url = new URL(`/v1/available-actions/search/${encodeURIComponent(platform)}`, normalizeBaseUrl2(baseUrl));
   url.searchParams.set("query", query);
   url.searchParams.set("includeKnowledge", "true");
+  url.searchParams.set("executeAgent", "true");
   return url.toString();
+}
+function getActionOneId(action) {
+  return String(action._id || action.systemId || action.id || "").trim();
+}
+function getActionPath(action) {
+  return String(action.path || "").trim();
+}
+function getActionMethod(action) {
+  return String(action.method || "POST").trim().toUpperCase();
+}
+function base64UrlEncode(value) {
+  return Buffer.from(value, "utf8").toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function buildRfc2822Message(input) {
+  const to = String(input.to || input.recipient || input.email || "").trim();
+  const subject = String(input.subject || "Hello").trim();
+  const body = String(input.body || input.text || input.message || "").trim();
+  const headers = [
+    input.from ? `From: ${String(input.from).trim()}` : null,
+    to ? `To: ${to}` : null,
+    input.cc ? `Cc: ${String(input.cc).trim()}` : null,
+    input.bcc ? `Bcc: ${String(input.bcc).trim()}` : null,
+    `Subject: ${subject}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "MIME-Version: 1.0"
+  ].filter(Boolean);
+  return `${headers.join("\r\n")}\r
+\r
+${body}`;
+}
+function normalizeGmailData(path35, data) {
+  const body = toPlainRecord(data);
+  const lowerPath = path35.toLowerCase();
+  if (lowerPath.endsWith("/drafts/send")) {
+    if (body.draftId && !body.id) return { ...body, id: body.draftId };
+    return data ?? {};
+  }
+  const isDraftCreate = lowerPath.endsWith("/drafts");
+  const isMessageSend = lowerPath.endsWith("/messages/send");
+  if (isDraftCreate && body.raw) return { message: { raw: body.raw } };
+  if ((isDraftCreate || isMessageSend) && !isRecord(body.message) && !body.raw && (body.to || body.subject || body.body || body.text || body.message)) {
+    const raw = base64UrlEncode(buildRfc2822Message(body));
+    return isDraftCreate ? { message: { raw } } : { raw };
+  }
+  if (lowerPath.endsWith("/modify")) {
+    const action = String(body.action || "").toLowerCase();
+    const removeLabelIds = Array.isArray(body.removeLabelIds) ? [...body.removeLabelIds] : [];
+    const addLabelIds = Array.isArray(body.addLabelIds) ? [...body.addLabelIds] : [];
+    if (body.archive === true || action === "archive") removeLabelIds.push("INBOX");
+    if (action === "mark_read") removeLabelIds.push("UNREAD");
+    if (action === "mark_unread") addLabelIds.push("UNREAD");
+    if (action === "star") addLabelIds.push("STARRED");
+    if (action === "unstar") removeLabelIds.push("STARRED");
+    if (addLabelIds.length || removeLabelIds.length) return { ...body, addLabelIds, removeLabelIds };
+  }
+  return data ?? {};
+}
+function appendQueryParams(url, queryParams) {
+  const params = toPlainRecord(queryParams);
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) url.searchParams.append(key, String(item));
+    } else {
+      url.searchParams.set(key, String(value));
+    }
+  }
+}
+function buildOnePassthroughRequest(args) {
+  const root = normalizeBaseUrl2(args.baseUrl || ONE_API_BASE_URL).replace(/\/v1$/i, "");
+  const pathVars = toPlainRecord(args.pathVars);
+  const actionPath = getActionPath(args.action);
+  if (!actionPath) throw new Error("One action is missing a passthrough path.");
+  if (actionPath.includes("{{userId}}") && !pathVars.userId) pathVars.userId = "me";
+  const finalPath = actionPath.replace(/\{\{([^}]+)\}\}/g, (_match, key) => {
+    const value = pathVars[key.trim()];
+    if (value == null || value === "") throw new Error(`Missing One path variable '${key.trim()}'.`);
+    return encodeURIComponent(String(value));
+  });
+  const actionId = getActionOneId(args.action);
+  if (!actionId) throw new Error("One action is missing a system action id.");
+  const method = getActionMethod(args.action);
+  const url = new URL(`/v1/passthrough${finalPath.startsWith("/") ? finalPath : `/${finalPath}`}`, root);
+  appendQueryParams(url, args.queryParams);
+  const headers = {
+    "x-one-connection-key": args.connectionKey,
+    "x-one-action-id": actionId,
+    ...toPlainRecord(args.headers)
+  };
+  const normalizedBody = normalizeGmailData(finalPath, args.data);
+  const init = { method, headers };
+  if (method !== "GET" && method !== "HEAD") {
+    init.body = JSON.stringify(normalizedBody);
+  }
+  if (args.dryRun) headers["x-one-dry-run"] = "true";
+  return { url: url.toString(), init, body: normalizedBody };
 }
 function createOneApiClient(apiKey, fetchImpl = fetch, baseUrl = ONE_API_BASE_URL) {
   const secret = apiKey.trim();
@@ -21223,11 +21331,54 @@ function createOneApiClient(apiKey, fetchImpl = fetch, baseUrl = ONE_API_BASE_UR
       const actions = firstArray(result, ["actions", "rows", "items", "data", "results"]);
       return { ...result, actions };
     },
+    async getActionDetails(actionId) {
+      const url = new URL("/v1/knowledge", root);
+      url.searchParams.set("_id", actionId);
+      const result = await request(url.toString());
+      const action = firstRecord(result, ["actions", "rows", "items", "data", "results"]);
+      return { ...result, action: action || void 0 };
+    },
+    async resolveActionDetails(platform, actionId) {
+      if (!actionId.startsWith("api::")) {
+        const details = await this.getActionDetails(actionId);
+        if (details.ok && details.action) return details;
+      }
+      const search = await this.searchActions(platform, actionId);
+      const normalized = actionId.toLowerCase();
+      const match = search.actions.find((candidate) => {
+        if (!isRecord(candidate)) return false;
+        return [candidate.systemId, candidate._id, candidate.id, candidate.key, candidate.title, candidate.name].some((value) => String(value || "").toLowerCase() === normalized);
+      }) || search.actions.find((candidate) => {
+        if (!isRecord(candidate)) return false;
+        return [candidate.key, candidate.title, candidate.name].some((value) => String(value || "").toLowerCase().includes(normalized));
+      });
+      const action = isRecord(match) ? match : void 0;
+      return { ...search, action };
+    },
     async passthrough(connectionKey, payload) {
+      const action = payload.action;
+      if (action) {
+        const requestArgs = buildOnePassthroughRequest({
+          action,
+          connectionKey,
+          data: payload.data,
+          pathVars: payload.pathVars,
+          queryParams: payload.queryParams,
+          headers: payload.headers,
+          dryRun: payload.dryRun === true,
+          baseUrl: root
+        });
+        return request(requestArgs.url, requestArgs.init);
+      }
       return request(`/v1/passthrough/${encodeURIComponent(connectionKey)}`, {
         method: "POST",
         body: JSON.stringify(payload)
       });
+    },
+    async executeAction(args) {
+      const passthrough = buildOnePassthroughRequest({ ...args, baseUrl: root });
+      const result = await request(passthrough.url, passthrough.init);
+      return { ...result, request: { url: passthrough.url, method: passthrough.init.method, body: passthrough.body } };
     }
   };
 }
@@ -21363,6 +21514,17 @@ function apiToolResult(label, result) {
     detail: JSON.stringify({ status: result.status, url: result.url })
   };
 }
+function actionPermissionText(platform, actionId, action) {
+  return [
+    platform,
+    actionId,
+    action?.title,
+    action?.name,
+    action?.method,
+    action?.path,
+    action?.key
+  ].filter(Boolean).join(" ");
+}
 var ONE_TIMEOUT_MS, oneListConnectionsTool, oneSearchActionsTool, oneGetActionKnowledgeTool, oneExecuteActionTool;
 var init_oneCliActions = __esm({
   "server/agent/tools/oneCliActions.ts"() {
@@ -21420,7 +21582,16 @@ var init_oneCliActions = __esm({
         const apiKey = await getOneApiKeyForTool(args, ctx);
         if (apiKey) {
           const result2 = await createOneApiClient(apiKey, apiFetchFromArgs(args)).searchActions(platform, query);
-          return apiToolResult(`One search ${platform}`, result2);
+          const actions = result2.actions.map((action) => {
+            if (!action || typeof action !== "object" || Array.isArray(action)) return action;
+            const record = action;
+            return {
+              ...record,
+              actionId: record.systemId || record._id || record.id,
+              apiKey: record.key
+            };
+          });
+          return apiToolResult(`One search ${platform}`, { ...result2, actions });
         }
         const cliArgs = ["--agent", "actions", "search", platform, query.replace(/\s+/g, "+")];
         if (actionType && actionType !== "all") cliArgs.push("-t", actionType);
@@ -21453,7 +21624,7 @@ var init_oneCliActions = __esm({
         }
         const apiKey = await getOneApiKeyForTool(args, ctx);
         if (apiKey) {
-          const result2 = await createOneApiClient(apiKey, apiFetchFromArgs(args)).searchActions(platform, actionId);
+          const result2 = await createOneApiClient(apiKey, apiFetchFromArgs(args)).resolveActionDetails(platform, actionId);
           return apiToolResult(`One docs ${platform}`, result2);
         }
         const result = runOneCli(["--agent", "actions", "knowledge", platform, actionId], ONE_TIMEOUT_MS);
@@ -21524,8 +21695,41 @@ var init_oneCliActions = __esm({
             content: "platform, action_id, and connection_key are required."
           };
         }
-        const permission = classifyOneActionPermission(platform, actionId);
+        const apiKey = await getOneApiKeyForTool(args, ctx);
         const approved = args.approved === true || args.confirmed === true || args._approved === true;
+        if (apiKey) {
+          const client = createOneApiClient(apiKey, apiFetchFromArgs(args));
+          const actionDetails = await client.resolveActionDetails(platform, actionId);
+          const action = actionDetails.action;
+          const permission2 = classifyOneActionPermission(platform, actionPermissionText(platform, actionId, action));
+          if (permission2.approvalRequired && !approved && args.dry_run !== true) {
+            return {
+              ok: false,
+              label: "One approval required",
+              content: `Approval required before running One action '${actionId}' on ${platform}. ${permission2.reason} Show the user exactly what will happen, then call one_execute_action again with approved=true only after they confirm.`,
+              detail: JSON.stringify({ requiresApproval: true, permission: permission2, action })
+            };
+          }
+          if (!action) {
+            return {
+              ok: false,
+              label: `One execute ${platform}`,
+              content: JSON.stringify(actionDetails),
+              detail: actionDetails.error || "Jarvis could not resolve the One action details before executing it."
+            };
+          }
+          const result2 = await client.executeAction({
+            action,
+            connectionKey,
+            data: args.data ?? {},
+            pathVars: args.path_vars ?? {},
+            queryParams: args.query_params ?? {},
+            headers: args.headers ?? {},
+            dryRun: args.dry_run === true
+          });
+          return apiToolResult(`One execute ${platform}`, result2);
+        }
+        const permission = classifyOneActionPermission(platform, actionId);
         if (permission.approvalRequired && !approved && args.dry_run !== true) {
           return {
             ok: false,
@@ -21533,21 +21737,6 @@ var init_oneCliActions = __esm({
             content: `Approval required before running One action '${actionId}' on ${platform}. ${permission.reason} Show the user exactly what will happen, then call one_execute_action again with approved=true only after they confirm.`,
             detail: JSON.stringify({ requiresApproval: true, permission })
           };
-        }
-        const apiKey = await getOneApiKeyForTool(args, ctx);
-        if (apiKey) {
-          const payload = {
-            platform,
-            actionId,
-            action_id: actionId,
-            data: args.data ?? {},
-            pathVars: args.path_vars ?? {},
-            queryParams: args.query_params ?? {},
-            headers: args.headers ?? {},
-            dryRun: args.dry_run === true
-          };
-          const result2 = await createOneApiClient(apiKey, apiFetchFromArgs(args)).passthrough(connectionKey, payload);
-          return apiToolResult(`One execute ${platform}`, result2);
         }
         const cliArgs = ["--agent", "actions", "execute", platform, actionId, connectionKey];
         if (data) cliArgs.push("-d", data);

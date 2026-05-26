@@ -1,7 +1,7 @@
 import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
 import { runOneCli } from "../../oneCliConnection";
 import { classifyOneActionPermission } from "../../oneConnectionCenter";
-import { createOneApiClient, getSavedOneApiKey, type OneApiFetch } from "../../oneApiConnection";
+import { createOneApiClient, getSavedOneApiKey, type OneApiAction, type OneApiFetch } from "../../oneApiConnection";
 
 const ONE_TIMEOUT_MS = 45000;
 
@@ -79,6 +79,18 @@ function apiToolResult(label: string, result: { ok: boolean; status: number; url
   };
 }
 
+function actionPermissionText(platform: string, actionId: string, action?: OneApiAction): string {
+  return [
+    platform,
+    actionId,
+    action?.title,
+    action?.name,
+    action?.method,
+    action?.path,
+    action?.key,
+  ].filter(Boolean).join(" ");
+}
+
 export const oneListConnectionsTool: AgentTool = {
   name: "one_list_connections",
   description:
@@ -133,7 +145,16 @@ export const oneSearchActionsTool: AgentTool = {
     const apiKey = await getOneApiKeyForTool(args, ctx);
     if (apiKey) {
       const result = await createOneApiClient(apiKey, apiFetchFromArgs(args)).searchActions(platform, query);
-      return apiToolResult(`One search ${platform}`, result);
+      const actions = result.actions.map((action) => {
+        if (!action || typeof action !== "object" || Array.isArray(action)) return action;
+        const record = action as Record<string, unknown>;
+        return {
+          ...record,
+          actionId: record.systemId || record._id || record.id,
+          apiKey: record.key,
+        };
+      });
+      return apiToolResult(`One search ${platform}`, { ...result, actions });
     }
 
     const cliArgs = ["--agent", "actions", "search", platform, query.replace(/\s+/g, "+")];
@@ -170,7 +191,7 @@ export const oneGetActionKnowledgeTool: AgentTool = {
 
     const apiKey = await getOneApiKeyForTool(args, ctx);
     if (apiKey) {
-      const result = await createOneApiClient(apiKey, apiFetchFromArgs(args)).searchActions(platform, actionId);
+      const result = await createOneApiClient(apiKey, apiFetchFromArgs(args)).resolveActionDetails(platform, actionId);
       return apiToolResult(`One docs ${platform}`, result);
     }
 
@@ -245,8 +266,45 @@ export const oneExecuteActionTool: AgentTool = {
       };
     }
 
-    const permission = classifyOneActionPermission(platform, actionId);
+    const apiKey = await getOneApiKeyForTool(args, ctx);
     const approved = args.approved === true || args.confirmed === true || args._approved === true;
+
+    if (apiKey) {
+      const client = createOneApiClient(apiKey, apiFetchFromArgs(args));
+      const actionDetails = await client.resolveActionDetails(platform, actionId);
+      const action = actionDetails.action;
+      const permission = classifyOneActionPermission(platform, actionPermissionText(platform, actionId, action));
+      if (permission.approvalRequired && !approved && args.dry_run !== true) {
+        return {
+          ok: false,
+          label: "One approval required",
+          content:
+            `Approval required before running One action '${actionId}' on ${platform}. ${permission.reason} ` +
+            "Show the user exactly what will happen, then call one_execute_action again with approved=true only after they confirm.",
+          detail: JSON.stringify({ requiresApproval: true, permission, action }),
+        };
+      }
+      if (!action) {
+        return {
+          ok: false,
+          label: `One execute ${platform}`,
+          content: JSON.stringify(actionDetails),
+          detail: actionDetails.error || "Jarvis could not resolve the One action details before executing it.",
+        };
+      }
+      const result = await client.executeAction({
+        action,
+        connectionKey,
+        data: args.data ?? {},
+        pathVars: args.path_vars ?? {},
+        queryParams: args.query_params ?? {},
+        headers: args.headers ?? {},
+        dryRun: args.dry_run === true,
+      });
+      return apiToolResult(`One execute ${platform}`, result);
+    }
+
+    const permission = classifyOneActionPermission(platform, actionId);
     if (permission.approvalRequired && !approved && args.dry_run !== true) {
       return {
         ok: false,
@@ -256,22 +314,6 @@ export const oneExecuteActionTool: AgentTool = {
           "Show the user exactly what will happen, then call one_execute_action again with approved=true only after they confirm.",
         detail: JSON.stringify({ requiresApproval: true, permission }),
       };
-    }
-
-    const apiKey = await getOneApiKeyForTool(args, ctx);
-    if (apiKey) {
-      const payload = {
-        platform,
-        actionId,
-        action_id: actionId,
-        data: args.data ?? {},
-        pathVars: args.path_vars ?? {},
-        queryParams: args.query_params ?? {},
-        headers: args.headers ?? {},
-        dryRun: args.dry_run === true,
-      };
-      const result = await createOneApiClient(apiKey, apiFetchFromArgs(args)).passthrough(connectionKey, payload);
-      return apiToolResult(`One execute ${platform}`, result);
     }
 
     const cliArgs = ["--agent", "actions", "execute", platform, actionId, connectionKey];

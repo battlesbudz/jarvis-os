@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   buildOneActionSearchUrl,
+  buildOnePassthroughRequest,
   createOneApiClient,
   maskOneApiKey,
   type OneApiFetch,
@@ -28,6 +29,7 @@ const searchUrl = new URL(buildOneActionSearchUrl("gmail", "recent unread"));
 assert.equal(searchUrl.origin + searchUrl.pathname, "https://api.withone.ai/v1/available-actions/search/gmail");
 assert.equal(searchUrl.searchParams.get("query"), "recent unread");
 assert.equal(searchUrl.searchParams.get("includeKnowledge"), "true");
+assert.equal(searchUrl.searchParams.get("executeAgent"), "true");
 console.log("OK: One action search URL includes query and knowledge");
 
 const calls: { url: string; init?: RequestInit }[] = [];
@@ -37,7 +39,28 @@ const fetchImpl: OneApiFetch = async (input, init) => {
     return jsonResponse({ connections: [{ platform: "gmail", accountEmail: "justin@example.com", key: "gmail_123" }] });
   }
   if (String(input).includes("/v1/available-actions/search/gmail")) {
-    return jsonResponse({ actions: [{ id: "messages.list", name: "List messages", knowledge: "Read inbox" }] });
+    return jsonResponse([
+      {
+        systemId: "conn_mod_def::messages-list",
+        key: "api::gmail::v1::messages::list",
+        title: "List a User's Gmail Messages",
+        method: "GET",
+        path: "/gmail/v1/users/{{userId}}/messages",
+        knowledge: "Read inbox",
+      },
+    ]);
+  }
+  if (String(input).includes("/v1/knowledge")) {
+    return jsonResponse({
+      rows: [
+        {
+          _id: "conn_mod_def::messages-send",
+          title: "Send a User's Gmail Message",
+          method: "POST",
+          path: "/gmail/v1/users/{{userId}}/messages/send",
+        },
+      ],
+    });
   }
   if (String(input).endsWith("/v1/passthrough/gmail_123")) {
     return jsonResponse({ ok: true, result: { id: "m_1" } });
@@ -80,7 +103,27 @@ async function main(): Promise<void> {
   await client.searchActions("gmail", "recent unread");
   assert.ok(calls.some((call) => call.url.includes("/v1/available-actions/search/gmail?")));
   assert.ok(calls.some((call) => new URL(call.url).searchParams.get("includeKnowledge") === "true"));
-  console.log("OK: One API action search calls the documented endpoint");
+  const actionSearch = await client.searchActions("gmail", "list messages");
+  assert.equal(actionSearch.actions.length, 1);
+  assert.equal((actionSearch.actions[0] as { systemId?: string }).systemId, "conn_mod_def::messages-list");
+  console.log("OK: One API action search handles One's top-level array response");
+
+  const draftPassthrough = buildOnePassthroughRequest({
+    action: {
+      _id: "conn_mod_def::draft-create",
+      title: "Create a User's Draft",
+      method: "POST",
+      path: "/gmail/v1/users/{{userId}}/drafts",
+    },
+    connectionKey: "live::gmail::default::abc123",
+    data: { to: "friend@example.com", subject: "Hello", body: "Friendly test" },
+    baseUrl: "https://api.withone.ai",
+  });
+  assert.equal(draftPassthrough.url, "https://api.withone.ai/v1/passthrough/gmail/v1/users/me/drafts");
+  assert.equal((draftPassthrough.init.headers as Record<string, string>)["x-one-connection-key"], "live::gmail::default::abc123");
+  assert.equal((draftPassthrough.init.headers as Record<string, string>)["x-one-action-id"], "conn_mod_def::draft-create");
+  assert.ok(((draftPassthrough.body as { message?: { raw?: string } }).message?.raw || "").length > 20);
+  console.log("OK: One passthrough builder creates Gmail draft requests with encoded raw MIME");
 
 const status = buildOneStatusResponse({
   apiKeyConfigured: true,
@@ -118,12 +161,24 @@ console.log("OK: One permission classifier allows reads and gates writes");
   let passthroughCalled = false;
   const riskyResult = await oneExecuteActionTool.execute({
     platform: "gmail",
-    action_id: "messages.send",
+    action_id: "conn_mod_def::messages-send",
     connection_key: "gmail_123",
     data: { to: "friend@example.com", subject: "Hello" },
     _oneApiKeyForTest: "one_sk_test_secret",
-    _oneApiFetchForTest: async () => {
-      passthroughCalled = true;
+    _oneApiFetchForTest: async (input) => {
+      if (String(input).includes("/v1/passthrough")) passthroughCalled = true;
+      if (String(input).includes("/v1/knowledge")) {
+        return jsonResponse({
+          rows: [
+            {
+              _id: "conn_mod_def::messages-send",
+              title: "Send a User's Gmail Message",
+              method: "POST",
+              path: "/gmail/v1/users/{{userId}}/messages/send",
+            },
+          ],
+        });
+      }
       return jsonResponse({ ok: true });
     },
   }, { userId: "user_1", state: {} });
@@ -132,6 +187,37 @@ console.log("OK: One permission classifier allows reads and gates writes");
   assert.match(riskyResult.content, /approval/i);
   console.log("OK: one_execute_action blocks risky API writes without approval");
 
+  let executeCall: { url: string; init?: RequestInit } | null = null;
+  const approvedResult = await oneExecuteActionTool.execute({
+    platform: "gmail",
+    action_id: "conn_mod_def::draft-create",
+    connection_key: "live::gmail::default::abc123",
+    data: { to: "friend@example.com", subject: "Hello", body: "Friendly test" },
+    approved: true,
+    _oneApiKeyForTest: "one_sk_test_secret",
+    _oneApiFetchForTest: async (input, init) => {
+      if (String(input).includes("/v1/knowledge")) {
+        return jsonResponse({
+          rows: [
+            {
+              _id: "conn_mod_def::draft-create",
+              title: "Create a User's Draft",
+              method: "POST",
+              path: "/gmail/v1/users/{{userId}}/drafts",
+            },
+          ],
+        });
+      }
+      executeCall = { url: String(input), init };
+      return jsonResponse({ id: "draft_1", message: { id: "msg_1" } });
+    },
+  }, { userId: "user_1", state: {} });
+  assert.equal(approvedResult.ok, true);
+  assert.ok(executeCall?.url.endsWith("/v1/passthrough/gmail/v1/users/me/drafts"));
+  assert.equal((executeCall?.init?.headers as Record<string, string>)["x-one-action-id"], "conn_mod_def::draft-create");
+  assert.match(String(executeCall?.init?.body), /"message"/);
+  console.log("OK: one_execute_action uses the live One passthrough contract for approved Gmail drafts");
+
   const searchToolResult = await oneSearchActionsTool.execute({
     platform: "gmail",
     query: "recent unread",
@@ -139,7 +225,7 @@ console.log("OK: One permission classifier allows reads and gates writes");
     _oneApiFetchForTest: fetchImpl,
   }, { userId: "user_1", state: {} });
   assert.equal(searchToolResult.ok, true);
-  assert.match(searchToolResult.content, /messages\.list/);
+  assert.match(searchToolResult.content, /conn_mod_def::messages-list/);
   console.log("OK: One tools prefer the saved API-key path when available");
 
   console.log("\nAll One API Connection Center assertions passed.");
