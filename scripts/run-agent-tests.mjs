@@ -65,8 +65,8 @@ const tests = [
   { file: "server/agent/__tests__/telegramMessageBatcher.assert.ts" },
   { file: "server/agent/__tests__/telegramNeedsAttention.test.ts" },
   { file: "server/agent/__tests__/weatherLookup.test.ts" },
-  { file: "server/agent/tests/sessionCompaction.test.ts" },
-  { file: "server/memory/tests/contextBuilder.test.ts" },
+  { file: "server/agent/__tests__/sessionCompaction.test.ts" },
+  { file: "server/memory/__tests__/contextBuilder.test.ts" },
 ];
 
 const hasDatabase = configureDatabaseEnvForTests();
