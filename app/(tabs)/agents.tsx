@@ -13,7 +13,6 @@ import {
   Alert,
   RefreshControl,
   Switch,
-  Animated,
   KeyboardAvoidingView,
   Image,
   Linking,
@@ -30,6 +29,7 @@ import Colors from "@/constants/colors";
 import { CouncilModal } from "@/components/agents/CouncilModal";
 import { CreateAgentSheet } from "@/components/agents/CreateAgentSheet";
 import { JobTaskCard, JOB_STATUS_COLORS, JOB_STATUS_LABELS, type AgentTask } from "@/components/agents/JobTaskCard";
+import { LivingAgentCard, PulsingDot } from "@/components/agents/LivingAgentCard";
 import {
   SelfRepairAuditCard,
   SelfRepairAuditModal,
@@ -196,220 +196,10 @@ const PLATFORM_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   orchestrator: "git-network-outline",
 };
 
-function platformReadinessKey(platform: string): string | null {
-  if (platform === "telegram") return "telegram";
-  if (platform === "discord") return "discord";
-  if (platform === "slack") return "slack";
-  if (platform === "whatsapp") return "whatsapp";
-  return null;
-}
-
-function getRuntimeBadges(
-  agent: RosterAgent,
-  integrations?: Record<string, IntegrationReadiness>,
-): Array<{ label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> {
-  const badges: Array<{ label: string; color: string; icon: keyof typeof Ionicons.glyphMap }> = [];
-
-  if (agent.isActive !== 1) {
-    badges.push({ label: "disabled", color: Colors.textTertiary, icon: "power-outline" });
-  } else if (agent.heartbeatFailCount > 0 || agent.status === "stuck") {
-    badges.push({ label: "heartbeat blocked", color: Colors.error, icon: "warning-outline" });
-  } else if (agent.loopEnabled !== 1 && !agent.isCoreAgent) {
-    badges.push({ label: "loop paused", color: Colors.warning, icon: "pause-circle-outline" });
-  } else {
-    badges.push({ label: agent.loopEnabled === 1 ? "loop enabled" : "listener", color: Colors.success, icon: "radio-outline" });
-  }
-
-  const blockedPlatform = (agent.platforms ?? [])
-    .map((platform) => ({ platform, key: platformReadinessKey(platform) }))
-    .find(({ key }) => key && integrations?.[key] && integrations[key]?.capabilityRunnable === false);
-  if (blockedPlatform?.key) {
-    badges.push({
-      label: `${blockedPlatform.platform} blocked`,
-      color: Colors.error,
-      icon: "link-outline",
-    });
-  } else if ((agent.platforms ?? []).length > 0) {
-    badges.push({ label: "channel ready", color: Colors.cyan, icon: "checkmark-circle-outline" });
-  }
-
-  return badges.slice(0, 2);
-}
 
 // Hardcoded fallback so the PLATFORM BOTS section is never empty
 const CORE_PLACEHOLDER_NAMES = ["Jarvis Telegram Bot", "Jarvis Discord Bot", "Discord Channel Agent"];
 
-// ── PulsingDot ─────────────────────────────────────────────────────────────────
-
-function PulsingDot({ color, active }: { color: string; active: boolean }) {
-  const scale = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    if (!active) return;
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(scale, { toValue: 1.4, duration: 800, useNativeDriver: true }),
-        Animated.timing(scale, { toValue: 1, duration: 800, useNativeDriver: true }),
-      ])
-    );
-    anim.start();
-    return () => anim.stop();
-  }, [active]);
-
-  return (
-    <View style={{ width: 12, height: 12, alignItems: "center", justifyContent: "center" }}>
-      {active && (
-        <Animated.View
-          style={{
-            position: "absolute",
-            width: 12, height: 12, borderRadius: 6,
-            backgroundColor: color + "44",
-            transform: [{ scale }],
-          }}
-        />
-      )}
-      <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
-    </View>
-  );
-}
-
-// ── LivingAgentCard ────────────────────────────────────────────────────────────
-
-function LivingAgentCard({
-  agent,
-  onDetail,
-  onRun,
-  integrations,
-}: {
-  agent: RosterAgent;
-  onDetail: (a: RosterAgent) => void;
-  onRun: (a: RosterAgent) => void;
-  integrations?: Record<string, IntegrationReadiness>;
-}) {
-  const roleColor = ROLE_COLORS[agent.role] || Colors.primary;
-  const isActive = agent.isActive === 1;
-  const statusColor = STATUS_COLORS[agent.status] || "#6b7280";
-  const isPulsing = agent.status === "online";
-  const hasActiveJob = agent.currentJob && ["queued", "running"].includes(agent.currentJob.status);
-  const runtimeBadges = getRuntimeBadges(agent, integrations);
-
-  return (
-    <TouchableOpacity
-      activeOpacity={0.75}
-      onPress={() => onDetail(agent)}
-      style={[
-        styles.livingCard,
-        {
-          backgroundColor: Colors.surface,
-          borderColor: hasActiveJob ? Colors.primary + "55" : Colors.border,
-          opacity: isActive ? 1 : 0.5,
-        },
-      ]}
-    >
-      <View style={[styles.cardAccent, { backgroundColor: roleColor }]} />
-
-      <View style={styles.cardBody}>
-        <View style={styles.cardTopRow}>
-          <View style={[styles.roleIconWrap, { backgroundColor: roleColor + "22" }]}>
-            <Ionicons name={ROLE_ICONS[agent.role] ?? "person-outline"} size={18} color={roleColor} />
-          </View>
-
-          <View style={styles.cardNameBlock}>
-            <Text style={[styles.cardName, { color: Colors.text }]} numberOfLines={1}>
-              {agent.name}
-            </Text>
-            <View style={styles.cardStatusRow}>
-              <PulsingDot color={statusColor} active={isPulsing} />
-              <Text style={[styles.cardStatusText, { color: statusColor }]}>
-                {STATUS_LABELS[agent.status]}
-              </Text>
-              {agent.isCoreAgent && (
-                <View style={[styles.coreBadge, { backgroundColor: Colors.primary + "22" }]}>
-                  <Text style={[styles.coreBadgeText, { color: Colors.primary }]}>core</Text>
-                </View>
-              )}
-              {hasActiveJob && (
-                <View style={[styles.coreBadge, { backgroundColor: Colors.success + "22" }]}>
-                  <Text style={[styles.coreBadgeText, { color: Colors.success }]}>working</Text>
-                </View>
-              )}
-            </View>
-          </View>
-
-          <View style={styles.cardRightCol}>
-            <View style={[styles.memBadge, { backgroundColor: Colors.background }]}>
-              <Ionicons name="library-outline" size={10} color={Colors.textSecondary} />
-              <Text style={[styles.memBadgeText, { color: Colors.textSecondary }]}>
-                {agent.memoryCount > 99 ? "99+" : agent.memoryCount}
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => onRun(agent)}
-              style={[styles.runBtn, { backgroundColor: Colors.background }]}
-            >
-              <Ionicons name="play-outline" size={14} color={Colors.primary} />
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {agent.persona ? (
-          <Text style={[styles.cardPersona, { color: Colors.textSecondary }]} numberOfLines={2}>
-            {agent.persona}
-          </Text>
-        ) : null}
-
-        <View style={styles.runtimeBadgeRow}>
-          {runtimeBadges.map((badge) => (
-            <View key={badge.label} style={[styles.runtimeBadge, { backgroundColor: badge.color + "18", borderColor: badge.color + "55" }]}>
-              <Ionicons name={badge.icon} size={10} color={badge.color} />
-              <Text style={[styles.runtimeBadgeText, { color: badge.color }]} numberOfLines={1}>{badge.label}</Text>
-            </View>
-          ))}
-        </View>
-
-        {hasActiveJob && agent.currentJob ? (
-          <View style={[styles.activeJobRow, { backgroundColor: Colors.success + "11" }]}>
-            <ActivityIndicator size="small" color={Colors.success} style={{ width: 12, height: 12 }} />
-            <Text style={[styles.activeJobText, { color: Colors.success }]} numberOfLines={1}>
-              {agent.currentJob.title}
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.cardMeta}>
-            {agent.lastAction ? (
-              <View style={styles.metaChip}>
-                <Ionicons name="time-outline" size={10} color={Colors.textTertiary} />
-                <Text style={[styles.metaText, { color: Colors.textTertiary }]} numberOfLines={1}>
-                  {agent.lastAction}
-                </Text>
-              </View>
-            ) : null}
-
-            {(agent.platforms ?? []).map((p) => (
-              <View key={p} style={styles.metaChip}>
-                <Ionicons
-                  name={PLATFORM_ICONS[p] ?? "ellipse-outline"}
-                  size={10}
-                  color={Colors.textTertiary}
-                />
-                <Text style={[styles.metaText, { color: Colors.textTertiary }]}>{p}</Text>
-              </View>
-            ))}
-
-            {agent.loopEnabled === 1 && (
-              <View style={styles.metaChip}>
-                <Ionicons name="refresh-outline" size={10} color={Colors.textTertiary} />
-                <Text style={[styles.metaText, { color: Colors.textTertiary }]}>
-                  {agent.loopIntervalMinutes}m loop
-                </Text>
-              </View>
-            )}
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-}
 
 // ── CorePlaceholderCard — shown when seeding hasn't completed yet ──────────────
 
