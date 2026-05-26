@@ -58,6 +58,7 @@ import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
 import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
 import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
+import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryRoutes";
 import {
   registerAuthenticatedCoachRuntimeRoutes,
   registerPublicCoachRuntimeRoutes,
@@ -498,68 +499,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  /**
-   * GET /api/admin/search-bar-registry
-   * Lists all auto-discovered search-bar resource IDs stored in the DB.
-   * Each entry shows the app package, the discovered resource_id, how many
-   * distinct users have confirmed it (confidence), and the most recent update.
-   * Use this to review candidates and decide which ones to promote to
-   * APP_SEARCH_HINTS in daemonShellTool.ts for permanent, zero-heuristic lookups.
-   *
-   * Optional query params:
-   *   ?minConfidence=N  — only return entries seen by >= N distinct users (default 1)
-   */
-  app.get("/api/admin/search-bar-registry", async (req: Request, res: Response) => {
-    if (!requireAdminSecret(req, res)) return;
-    try {
-      const { learnedResourceIds } = await import("./agent/tools/daemonShellTool");
-      const minConfidence = Math.max(1, parseInt((req.query.minConfidence as string) ?? "1", 10) || 1);
-
-      // Return all (app_package, resource_id) pairs that meet the confidence
-      // threshold, grouped by both columns.  When multiple users discovered
-      // different resource IDs for the same app, each variant appears as a
-      // separate row — the admin can compare user_count to decide which one
-      // to promote.  Ordered by confidence descending then recency descending.
-      const rows = await db.execute(sql`
-        SELECT
-          app_package,
-          discovered_resource_id,
-          COUNT(DISTINCT user_id)::int AS user_count,
-          MAX(updated_at)             AS last_seen
-        FROM search_bar_locations
-        WHERE discovered_resource_id IS NOT NULL
-        GROUP BY app_package, discovered_resource_id
-        HAVING COUNT(DISTINCT user_id) >= ${minConfidence}
-        ORDER BY user_count DESC, last_seen DESC
-      `);
-
-      type RegistryRow = {
-        app_package: string;
-        discovered_resource_id: string;
-        user_count: number;
-        last_seen: string;
-      };
-
-      const entries = (rows.rows as RegistryRow[]).map((r) => ({
-        appPackage: r.app_package,
-        discoveredResourceId: r.discovered_resource_id,
-        userCount: r.user_count,
-        lastSeen: r.last_seen,
-        inMemory: learnedResourceIds.get(r.app_package) === r.discovered_resource_id,
-        promotionHint: `APP_SEARCH_HINTS["${r.app_package}"] = { resourceIds: ["${r.discovered_resource_id}"], extraKeywords: [] }`,
-      }));
-
-      res.json({
-        total: entries.length,
-        minConfidence,
-        entries,
-      });
-    } catch (err) {
-      console.error("[Admin/SearchBarRegistry] query failed:", err);
-      res.status(500).json({ error: "Failed to fetch search-bar registry" });
-    }
-  });
-
+  registerAdminSearchRegistryRoutes(app, requireAdminSecret);
   registerPublicWebchatInviteRoutes(app);
   registerCodexGatewayRoutes(app);
   registerAppUpdateRoutes(app);
