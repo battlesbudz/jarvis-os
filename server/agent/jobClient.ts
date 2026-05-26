@@ -8,6 +8,7 @@ import { eq, and, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { findDuplicateJob } from "./tools/jobDuplicateGuard";
+import { buildInitialWorkerRuntime } from "./workerRuntime";
 
 export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research" | "app_project";
 
@@ -155,17 +156,27 @@ export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps 
     callerInput.model !== undefined || routedModel === undefined
       ? callerInput
       : { ...callerInput, model: routedModel };
+  const workerRuntime = buildInitialWorkerRuntime({
+    agentType: input.agentType,
+    title: input.title,
+    input: mergedInput,
+  });
+  const runtimeInput = {
+    ...mergedInput,
+    workerType: workerRuntime.workerType,
+    workerRuntime,
+  };
 
   const id = await insertFn({
     userId: input.userId,
     agentType: input.agentType,
     title: input.title.slice(0, 200),
     prompt: input.prompt,
-    input: mergedInput,
+    input: runtimeInput,
     status: "queued",
   });
 
-  const model = mergedInput.model ?? "agent-default";
+  const model = runtimeInput.model ?? "agent-default";
   console.log(
     `[JobQueue] queued job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`,
   );

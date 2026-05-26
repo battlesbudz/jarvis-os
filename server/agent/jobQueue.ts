@@ -26,6 +26,7 @@ import { markdownToPdfBuffer } from "./tools/exportPdf";
 import { createDriveBinaryFile } from "../integrations/googleDrive";
 import { normalizeApprovalReceipt } from "./approvalReceipt";
 import { decideJobFailureRecovery } from "./jobObservability";
+import { buildWorkerRuntimeEvent, resolveWorkerType, withWorkerRuntimeEvent } from "./workerRuntime";
 
 // Re-export from the shared client so existing callers don't break.
 export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
@@ -647,6 +648,71 @@ let workerRunning = false;
 let workerStarted = false;
 let stopRequested = false;
 
+function jobInputOf(job: { input: unknown }): Record<string, unknown> {
+  return (job.input && typeof job.input === "object" ? job.input : {}) as Record<string, unknown>;
+}
+
+async function appendWorkerEventToJob(opts: {
+  jobId: string;
+  agentType: string;
+  title: string;
+  input: Record<string, unknown>;
+  type: "started" | "progress" | "approval_required" | "retrying" | "completed" | "failed" | "cancelled";
+  message: string;
+  userVisible?: boolean;
+  progress?: { currentStep: string; percent?: number };
+  checkpoint?: { id: string; reason: string; requiredFor: string; gateId?: string };
+  retryAttempt?: number;
+  metadata?: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  const workerType = resolveWorkerType({ agentType: opts.agentType, input: opts.input });
+  const nextInput = withWorkerRuntimeEvent(
+    opts.input,
+    buildWorkerRuntimeEvent({
+      type: opts.type,
+      workerType,
+      message: opts.message,
+      userVisible: opts.userVisible ?? false,
+      progress: opts.progress,
+      checkpoint: opts.checkpoint,
+      retryAttempt: opts.retryAttempt,
+      metadata: opts.metadata,
+    }),
+  );
+  await db
+    .update(schema.agentJobs)
+    .set({ input: nextInput })
+    .where(eq(schema.agentJobs.id, opts.jobId));
+  return nextInput;
+}
+
+async function appendWorkerEventById(opts: {
+  jobId: string;
+  type: "completed" | "failed" | "cancelled";
+  message: string;
+  userVisible?: boolean;
+  progress?: { currentStep: string; percent?: number };
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  const [job] = await db
+    .select()
+    .from(schema.agentJobs)
+    .where(eq(schema.agentJobs.id, opts.jobId))
+    .limit(1);
+  if (!job) return;
+  await appendWorkerEventToJob({
+    jobId: opts.jobId,
+    agentType: job.agentType,
+    title: job.title,
+    input: jobInputOf(job),
+    type: opts.type,
+    message: opts.message,
+    userVisible: opts.userVisible,
+    progress: opts.progress,
+    metadata: opts.metadata,
+  }).catch((err) => console.warn(`[JobQueue] worker event append failed for ${opts.jobId}:`, err));
+}
+
 async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | null> {
   // Pick the oldest queued job whose user has no currently-running job.
   // Use a single SQL CTE so the claim is atomic across worker restarts.
@@ -693,6 +759,14 @@ async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | nu
 }
 
 async function failJob(jobId: string, message: string, userId?: string): Promise<void> {
+  await appendWorkerEventById({
+    jobId,
+    type: "failed",
+    message: `Job failed: ${message.slice(0, 200)}`,
+    userVisible: true,
+    progress: { currentStep: "Failed" },
+    metadata: { error: message.slice(0, 1000) },
+  });
   try {
     await db
       .update(schema.agentJobs)
@@ -766,6 +840,14 @@ async function completeJob(
   jobId: string,
   payload: { result: Record<string, unknown>; turns: number; toolCallsCount: number },
 ): Promise<void> {
+  await appendWorkerEventById({
+    jobId,
+    type: "completed",
+    message: "Job completed",
+    userVisible: true,
+    progress: { currentStep: "Complete", percent: 100 },
+    metadata: { result: payload.result },
+  });
   await db
     .update(schema.agentJobs)
     .set({
@@ -788,10 +870,41 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
   try {
     // Extract origin channel stored at queue time — used to route the completion
     // notification back to the right channel rather than spamming all channels.
-    const jobInput = (job.input as Record<string, unknown>) ?? {};
+    let jobInput = jobInputOf(job);
+    jobInput = await appendWorkerEventToJob({
+      jobId: job.id,
+      agentType: job.agentType,
+      title: job.title,
+      input: jobInput,
+      type: "started",
+      message: `Started ${job.title}`,
+      userVisible: true,
+      progress: { currentStep: "Running", percent: 5 },
+    }).catch((err) => {
+      console.warn(`[JobQueue] worker start event failed for ${job.id}:`, err);
+      return jobInput;
+    });
     const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
     const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
     const approvalReceipt = normalizeApprovalReceipt(jobInput.approvalReceipt);
+    if (typeof jobInput.approvalGateId === "string") {
+      jobInput = await appendWorkerEventToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        type: "approval_required",
+        message: "Approval checkpoint is linked to this job",
+        userVisible: true,
+        progress: { currentStep: "Waiting for approval" },
+        checkpoint: {
+          id: jobInput.approvalGateId,
+          gateId: jobInput.approvalGateId,
+          reason: typeof jobInput.approvalReason === "string" ? jobInput.approvalReason : "User approval required",
+          requiredFor: typeof jobInput.approvalToolName === "string" ? jobInput.approvalToolName : job.agentType,
+        },
+      }).catch(() => jobInput);
+    }
 
     // Helper: fire the workflow hook if this job belongs to a workflow step.
     const wfId    = jobInput.workflowId    as string | undefined;
@@ -2327,13 +2440,25 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     if (recovery.action === "requeue") {
       console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${recovery.nextRetryCount}/${MAX_RETRIES}) after error: ${msg}`);
       try {
+        const retryInput = await appendWorkerEventToJob({
+          jobId: job.id,
+          agentType: job.agentType,
+          title: job.title,
+          input: recovery.nextInput ?? jobInput,
+          type: "retrying",
+          message: `Retrying after failure: ${msg.slice(0, 160)}`,
+          userVisible: true,
+          progress: { currentStep: `Retrying (${recovery.nextRetryCount}/${MAX_RETRIES})` },
+          retryAttempt: recovery.nextRetryCount,
+          metadata: { error: msg.slice(0, 1000) },
+        }).catch(() => recovery.nextInput ?? jobInput);
         await db
           .update(schema.agentJobs)
           .set({
             status: "queued",
             startedAt: null,
             error: recovery.persistedError,
-            input: recovery.nextInput ?? jobInput,
+            input: retryInput,
           })
           .where(eq(schema.agentJobs.id, job.id));
       } catch (retryErr) {

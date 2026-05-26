@@ -1,3 +1,5 @@
+import { getWorkerRuntimeFromInput, type CloudWorkerType, type WorkerApprovalCheckpoint, type WorkerProgressState } from "./workerRuntime";
+
 type Jsonish = unknown;
 
 export interface ObservableJobRow {
@@ -31,6 +33,7 @@ export interface ObservableDiagnosticEvent {
 export interface DecoratedObservableJob {
   id: string;
   agentType: string;
+  workerType: CloudWorkerType | null;
   title: string;
   status: string;
   createdAt: string;
@@ -43,6 +46,9 @@ export interface DecoratedObservableJob {
   resultPreview: string | null;
   turns: number;
   toolCallsCount: number;
+  progress: WorkerProgressState | null;
+  approvalCheckpoints: WorkerApprovalCheckpoint[];
+  userVisibleEventCount: number;
 }
 
 export interface JobRunnerObservabilityReport {
@@ -114,10 +120,12 @@ export function decorateJobForObservability(job: ObservableJobRow, now = new Dat
   const completedAt = toDate(job.completedAt);
   const runtimeEnd = completedAt ?? (job.status === "running" || job.status === "cancelling" ? now : null);
   const runtimeMs = startedAt && runtimeEnd ? Math.max(0, runtimeEnd.getTime() - startedAt.getTime()) : null;
+  const workerRuntime = getWorkerRuntimeFromInput(job.input ?? undefined);
 
   return {
     id: job.id,
     agentType: job.agentType,
+    workerType: workerRuntime?.workerType ?? null,
     title: job.title,
     status: job.status,
     createdAt: createdAt.toISOString(),
@@ -130,6 +138,9 @@ export function decorateJobForObservability(job: ObservableJobRow, now = new Dat
     resultPreview: previewResult(job.result),
     turns: job.turns ?? 0,
     toolCallsCount: job.toolCallsCount ?? 0,
+    progress: workerRuntime?.progress ?? null,
+    approvalCheckpoints: workerRuntime?.approvalCheckpoints ?? [],
+    userVisibleEventCount: workerRuntime?.events.filter((event) => event.userVisible).length ?? 0,
   };
 }
 

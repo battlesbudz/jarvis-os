@@ -4,6 +4,7 @@ import {
   decorateJobForObservability,
   decideJobFailureRecovery,
 } from "../jobObservability";
+import { buildInitialWorkerRuntime, appendWorkerRuntimeEvent, buildWorkerRuntimeEvent } from "../workerRuntime";
 
 const now = new Date("2026-05-18T12:00:00.000Z");
 
@@ -25,10 +26,29 @@ const baseJob = {
 };
 
 {
+  const runtime = appendWorkerRuntimeEvent(
+    buildInitialWorkerRuntime({
+      agentType: "research",
+      title: "Investigate queue behavior",
+      now,
+    }),
+    buildWorkerRuntimeEvent({
+      type: "approval_required",
+      workerType: "research",
+      message: "Need approval before contacting an external source",
+      checkpoint: {
+        id: "checkpoint-1",
+        reason: "External outreach",
+        requiredFor: "outreach",
+      },
+      userVisible: true,
+      now,
+    }),
+  );
   const decorated = decorateJobForObservability({
     ...baseJob,
     status: "running",
-    input: { retryCount: 2 },
+    input: { retryCount: 2, workerRuntime: runtime },
     error: "Retry 2/2: provider timed out",
     result: {
       deliverableId: "deliverable-1",
@@ -40,6 +60,10 @@ const baseJob = {
   assert.equal(decorated.ageMs, 10 * 60 * 1000);
   assert.equal(decorated.runtimeMs, 2 * 60 * 1000);
   assert.equal(decorated.retryCount, 2);
+  assert.equal(decorated.workerType, "research");
+  assert.equal(decorated.progress?.currentStep, "Queued");
+  assert.equal(decorated.approvalCheckpoints[0]?.id, "checkpoint-1");
+  assert.equal(decorated.userVisibleEventCount, 2);
   assert.equal(decorated.lastError, "Retry 2/2: provider timed out");
   assert.match(decorated.resultPreview ?? "", /deliverable-1/);
   assert.ok((decorated.resultPreview ?? "").length <= 243);
