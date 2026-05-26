@@ -3,6 +3,26 @@ import { Ionicons } from "@expo/vector-icons";
 
 import Colors from "@/constants/colors";
 
+export interface WorkerProgressView {
+  currentStep: string;
+  percent?: number;
+  updatedAt?: string;
+}
+
+export interface WorkerApprovalCheckpointView {
+  id: string;
+  reason: string;
+  requiredFor: string;
+  gateId?: string;
+  createdAt?: string;
+}
+
+export interface WorkerEventView {
+  type: string;
+  message: string;
+  createdAt: string;
+}
+
 export interface AgentTask {
   id: string;
   title: string;
@@ -15,6 +35,11 @@ export interface AgentTask {
   completedAt: string | null;
   error: string | null;
   output: string | null;
+  workerType?: string | null;
+  progress?: WorkerProgressView | null;
+  approvalCheckpoints?: WorkerApprovalCheckpointView[];
+  userVisibleEventCount?: number;
+  lastWorkerEvent?: WorkerEventView | null;
 }
 
 export const JOB_STATUS_COLORS: Record<string, string> = {
@@ -41,6 +66,11 @@ export function JobTaskCard({ job, onPress }: { job: AgentTask; onPress: () => v
   const isRunning = job.status === "running";
   const isQueued = job.status === "queued";
   const needsReview = job.status === "complete";
+  const progressPercent = typeof job.progress?.percent === "number"
+    ? Math.max(0, Math.min(100, job.progress.percent))
+    : null;
+  const hasApprovalCheckpoint = (job.approvalCheckpoints?.length ?? 0) > 0;
+  const workerLabel = job.workerType ? `${job.workerType.replace("_", " ")} worker` : null;
 
   return (
     <TouchableOpacity
@@ -75,6 +105,7 @@ export function JobTaskCard({ job, onPress }: { job: AgentTask; onPress: () => v
           <Text style={[styles.jobAgent, { color: Colors.textSecondary }]} numberOfLines={1}>
             {job.agentName}
             {job.iterationCount > 0 ? ` - iter ${job.iterationCount + 1}` : ""}
+            {workerLabel ? ` - ${workerLabel}` : ""}
           </Text>
         </View>
         <View style={[styles.jobStatusBadge, { backgroundColor: statusColor + "22" }]}>
@@ -92,6 +123,37 @@ export function JobTaskCard({ job, onPress }: { job: AgentTask; onPress: () => v
         <Text style={[styles.jobOutput, { color: Colors.error }]} numberOfLines={2}>
           Error: {job.error}
         </Text>
+      )}
+
+      {(job.progress || hasApprovalCheckpoint) && (
+        <View style={styles.workerBlock}>
+          <View style={styles.workerMetaRow}>
+            {job.progress && (
+              <Text style={[styles.workerStep, { color: Colors.textSecondary }]} numberOfLines={1}>
+                {job.progress.currentStep}
+              </Text>
+            )}
+            {hasApprovalCheckpoint && (
+              <View style={[styles.approvalPill, { backgroundColor: Colors.warning + "22" }]}>
+                <Ionicons name="shield-checkmark-outline" size={11} color={Colors.warning} />
+                <Text style={[styles.approvalText, { color: Colors.warning }]}>Approval</Text>
+              </View>
+            )}
+          </View>
+          {progressPercent !== null && (
+            <View style={[styles.progressTrack, { backgroundColor: Colors.border }]}>
+              <View
+                style={[
+                  styles.progressFill,
+                  {
+                    backgroundColor: statusColor,
+                    width: `${progressPercent}%`,
+                  },
+                ]}
+              />
+            </View>
+          )}
+        </View>
       )}
 
       <Text style={[styles.jobMeta, { color: Colors.textTertiary }]}>
@@ -124,5 +186,19 @@ const styles = StyleSheet.create({
   },
   jobStatusText: { fontSize: 11, fontWeight: "600" },
   jobOutput: { fontSize: 12, lineHeight: 17, marginTop: 8 },
+  workerBlock: { marginTop: 8, gap: 5 },
+  workerMetaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  workerStep: { flex: 1, fontSize: 11 },
+  approvalPill: {
+    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 3,
+  },
+  approvalText: { fontSize: 10, fontWeight: "700" },
+  progressTrack: { height: 4, borderRadius: 2, overflow: "hidden" },
+  progressFill: { height: 4, borderRadius: 2 },
   jobMeta: { fontSize: 10, marginTop: 6 },
 });

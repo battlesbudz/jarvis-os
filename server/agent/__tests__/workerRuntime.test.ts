@@ -3,6 +3,7 @@ import {
   appendWorkerRuntimeEvent,
   buildInitialWorkerRuntime,
   buildWorkerRuntimeEvent,
+  buildWorkerRuntimeTaskView,
   getRetryPolicyForWorker,
   resolveWorkerType,
   type WorkerRuntimeState,
@@ -88,6 +89,40 @@ import {
   assert.deepEqual(getRetryPolicyForWorker("coding"), { maxAttempts: 2, backoffMs: 15000 });
   assert.deepEqual(getRetryPolicyForWorker("finance"), { maxAttempts: 1, backoffMs: 0 });
   console.log("OK: worker retry policy is type-aware");
+}
+
+{
+  const runtime = appendWorkerRuntimeEvent(
+    buildInitialWorkerRuntime({
+      agentType: "browser",
+      title: "Check dashboard state",
+      now: new Date("2026-05-26T12:00:00.000Z"),
+    }),
+    buildWorkerRuntimeEvent({
+      type: "approval_required",
+      workerType: "browser",
+      message: "Approval required before submitting the external form",
+      checkpoint: {
+        id: "checkpoint-submit-form",
+        reason: "External form submission",
+        requiredFor: "submit_form",
+        gateId: "gate-123",
+      },
+      now: new Date("2026-05-26T12:03:00.000Z"),
+      userVisible: true,
+    }),
+  );
+
+  const view = buildWorkerRuntimeTaskView({ workerRuntime: runtime });
+
+  assert.equal(view.workerType, "browser");
+  assert.equal(view.progress?.currentStep, "Queued");
+  assert.equal(view.approvalCheckpoints.length, 1);
+  assert.equal(view.approvalCheckpoints[0]?.gateId, "gate-123");
+  assert.equal(view.userVisibleEventCount, 2);
+  assert.equal(view.lastWorkerEvent?.type, "approval_required");
+  assert.equal(view.lastWorkerEvent?.message, "Approval required before submitting the external form");
+  console.log("OK: worker runtime task view exposes compact user-visible progress metadata");
 }
 
 console.log("\nAll worker runtime assertions passed.");

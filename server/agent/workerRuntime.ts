@@ -64,6 +64,14 @@ export interface WorkerRuntimeState {
   events: WorkerRuntimeEvent[];
 }
 
+export interface WorkerRuntimeTaskView {
+  workerType: CloudWorkerType | null;
+  progress: WorkerProgressState | null;
+  approvalCheckpoints: WorkerApprovalCheckpoint[];
+  userVisibleEventCount: number;
+  lastWorkerEvent: Pick<WorkerRuntimeEvent, "type" | "message" | "createdAt"> | null;
+}
+
 const WORKER_TYPE_SET = new Set<string>(CLOUD_WORKER_TYPES);
 
 const DEFAULT_RETRY_POLICIES: Record<CloudWorkerType, WorkerRetryPolicy> = {
@@ -220,6 +228,38 @@ export function getWorkerRuntimeFromInput(input: Record<string, unknown> | null 
   if (!isCloudWorkerType(candidate.workerType)) return null;
   if (!Array.isArray(candidate.events)) return null;
   return candidate as WorkerRuntimeState;
+}
+
+export function buildWorkerRuntimeTaskView(input: Record<string, unknown> | null | undefined): WorkerRuntimeTaskView {
+  const runtime = getWorkerRuntimeFromInput(input);
+  if (!runtime) {
+    return {
+      workerType: null,
+      progress: null,
+      approvalCheckpoints: [],
+      userVisibleEventCount: 0,
+      lastWorkerEvent: null,
+    };
+  }
+
+  const userVisibleEvents = runtime.events.filter((event) => event.userVisible);
+  const lastWorkerEvent = userVisibleEvents.at(-1);
+
+  return {
+    workerType: runtime.workerType,
+    progress: runtime.progress ?? null,
+    approvalCheckpoints: Array.isArray(runtime.approvalCheckpoints)
+      ? runtime.approvalCheckpoints
+      : [],
+    userVisibleEventCount: userVisibleEvents.length,
+    lastWorkerEvent: lastWorkerEvent
+      ? {
+          type: lastWorkerEvent.type,
+          message: lastWorkerEvent.message,
+          createdAt: lastWorkerEvent.createdAt,
+        }
+      : null,
+  };
 }
 
 export function withWorkerRuntimeEvent(input: Record<string, unknown>, event: WorkerRuntimeEvent): Record<string, unknown> {

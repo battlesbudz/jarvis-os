@@ -76,6 +76,7 @@ import type { AgentPolicyScope } from "@shared/schema";
 import { AGENT_POLICY_SCOPES } from "@shared/schema";
 import { readAuditEntries, countAuditEntries } from "./selfHealAudit";
 import { isIntegrationOwner } from "../integrationOwner";
+import { buildWorkerRuntimeTaskView } from "./workerRuntime";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -248,6 +249,7 @@ export function registerAgentRoutes(app: Express): void {
       // Shape recent jobs for the "ACTIVE TASKS" section
       const activeTasks = recentJobs.map((j) => {
         const inp = (j.input as Record<string, unknown>) ?? {};
+        const workerRuntimeView = buildWorkerRuntimeTaskView(inp);
         return {
           id: j.id,
           title: j.title,
@@ -262,6 +264,7 @@ export function registerAgentRoutes(app: Express): void {
           output: j.status === "complete" || j.status === "delivered"
             ? String((j.result as Record<string, unknown>)?.output ?? "").slice(0, 400)
             : null,
+          ...workerRuntimeView,
         };
       });
 

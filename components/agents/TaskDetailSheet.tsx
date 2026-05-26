@@ -18,6 +18,11 @@ export function TaskDetailSheet({
   if (!task) return null;
   const statusColor = JOB_STATUS_COLORS[task.status] ?? "#6b7280";
   const statusLabel = JOB_STATUS_LABELS[task.status] ?? task.status;
+  const progressPercent = typeof task.progress?.percent === "number"
+    ? Math.max(0, Math.min(100, task.progress.percent))
+    : null;
+  const workerLabel = task.workerType ? task.workerType.replace("_", " ") : null;
+  const approvalCheckpoints = task.approvalCheckpoints ?? [];
 
   return (
     <Modal visible={!!task} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
@@ -48,6 +53,11 @@ export function TaskDetailSheet({
                 {task.iterationCount > 0 && (
                   <Text style={[styles.taskHeroIter, { color: Colors.textSecondary }]}>
                     - Iteration {task.iterationCount + 1}
+                  </Text>
+                )}
+                {workerLabel && (
+                  <Text style={[styles.taskHeroIter, { color: Colors.textSecondary }]}>
+                    - {workerLabel}
                   </Text>
                 )}
               </View>
@@ -81,6 +91,63 @@ export function TaskDetailSheet({
               <Text style={[styles.fieldLabel, { color: Colors.error, marginTop: 20 }]}>ERROR</Text>
               <View style={[styles.outputBox, { backgroundColor: Colors.errorDim, borderColor: Colors.error + "33" }]}>
                 <Text style={[styles.outputText, { color: Colors.error }]}>{task.error}</Text>
+              </View>
+            </>
+          )}
+
+          {(task.progress || task.lastWorkerEvent || approvalCheckpoints.length > 0) && (
+            <>
+              <Text style={[styles.fieldLabel, { color: Colors.textSecondary, marginTop: 20 }]}>WORKER PROGRESS</Text>
+              <View style={[styles.progressBox, { backgroundColor: Colors.surface, borderColor: Colors.border }]}>
+                {task.progress && (
+                  <View style={styles.progressRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.progressStep, { color: Colors.text }]} numberOfLines={2}>
+                        {task.progress.currentStep}
+                      </Text>
+                      {task.progress.updatedAt && (
+                        <Text style={[styles.progressMeta, { color: Colors.textTertiary }]}>
+                          Updated {new Date(task.progress.updatedAt).toLocaleTimeString()}
+                        </Text>
+                      )}
+                    </View>
+                    {progressPercent !== null && (
+                      <Text style={[styles.progressPercent, { color: statusColor }]}>{progressPercent}%</Text>
+                    )}
+                  </View>
+                )}
+                {progressPercent !== null && (
+                  <View style={[styles.progressTrack, { backgroundColor: Colors.border }]}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        { backgroundColor: statusColor, width: `${progressPercent}%` },
+                      ]}
+                    />
+                  </View>
+                )}
+                {task.lastWorkerEvent && (
+                  <Text style={[styles.lastEventText, { color: Colors.textSecondary }]} numberOfLines={3}>
+                    {task.lastWorkerEvent.message}
+                  </Text>
+                )}
+                {approvalCheckpoints.map((checkpoint) => (
+                  <View
+                    key={checkpoint.id}
+                    style={[styles.checkpointRow, { backgroundColor: Colors.warningDim }]}
+                  >
+                    <Ionicons name="shield-checkmark-outline" size={14} color={Colors.warning} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.checkpointReason, { color: Colors.warning }]} numberOfLines={1}>
+                        {checkpoint.reason}
+                      </Text>
+                      <Text style={[styles.checkpointMeta, { color: Colors.textSecondary }]} numberOfLines={1}>
+                        {checkpoint.requiredFor}
+                        {checkpoint.gateId ? ` - ${checkpoint.gateId}` : ""}
+                      </Text>
+                    </View>
+                  </View>
+                ))}
               </View>
             </>
           )}
@@ -142,6 +209,23 @@ const styles = StyleSheet.create({
   outputBox: { borderRadius: 10, borderWidth: 1, padding: 14 },
   outputText: { fontSize: 13, lineHeight: 19 },
   taskRunning: { alignItems: "center", gap: 12, marginTop: 40 },
+  progressBox: { borderRadius: 10, borderWidth: 1, padding: 12, gap: 10 },
+  progressRow: { flexDirection: "row", alignItems: "flex-start", gap: 12 },
+  progressStep: { fontSize: 13, fontWeight: "600", lineHeight: 18 },
+  progressMeta: { fontSize: 10, marginTop: 3 },
+  progressPercent: { fontSize: 12, fontWeight: "700" },
+  progressTrack: { height: 5, borderRadius: 3, overflow: "hidden" },
+  progressFill: { height: 5, borderRadius: 3 },
+  lastEventText: { fontSize: 12, lineHeight: 17 },
+  checkpointRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 8,
+    padding: 8,
+  },
+  checkpointReason: { fontSize: 12, fontWeight: "700" },
+  checkpointMeta: { fontSize: 11, marginTop: 1 },
   reviewHint: {
     flexDirection: "row",
     alignItems: "flex-start",
