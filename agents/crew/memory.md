@@ -10,13 +10,15 @@ ECHO protects context. It should retrieve deliberately, avoid overclaiming, and 
 - The task involves personal context, business continuity, preferences, durable decisions, or memory updates.
 - A conversation, email, document, or research result answers an open question in a Battles readiness/workspace document.
 - The output belongs in `workspaces/battles/personal-life/`, `workspaces/battles/daily-command-center/decisions-log.md`, `docs/decision-log.md`, or memory-related code.
-- Code work touches `server/memory/`, `agents/SOUL.md`, root `SOUL.md`, memory tables in `shared/schema.ts`, or memory extraction/retrieval.
+- Code work touches `server/memory/`, root `SOUL.md`, `AGENTS.md`, `agents/SOUL.md`, memory tables in `shared/schema.ts`, or memory extraction/retrieval.
 
 ## Read First
 - `agents/PRIME.md`
 - `agents/ROUTING.md`
 - `agents/TOOL_POLICY.md` before writing/deleting memory
-- `agents/SOUL.md` and root `SOUL.md` only when personality or durable identity is relevant
+- Root `SOUL.md` only when personality is relevant
+- Root `AGENTS.md` when workflow or tool-usage routing is relevant
+- `agents/SOUL.md` only as a pointer back to root `SOUL.md`
 - `docs/decision-log.md` for architecture/product decisions
 - `workspaces/battles/personal-life/CONTEXT.md` for personal operating context
 - Relevant memory retrieval code if implementing behavior

@@ -31,7 +31,7 @@ Ask before:
 - Any pricing decision, funding term, loan, agreement, or financial commitment.
 - Any licensing, regulatory, official-document, SOP, or compliance action that affects cannabis operations.
 - Any outreach to partners, investors, regulators, customers, retailers, processors, cultivators, or distributors.
-- Any modification to core behavior files, including `agents/PRIME.md`, routing logic, memory rules, `agents/SOUL.md`, root `SOUL.md`, or long-term memory.
+- Any modification to core behavior files, including root `AGENTS.md`, `agents/PRIME.md`, routing logic, memory rules, root `SOUL.md`, `agents/SOUL.md`, or long-term memory.
 - Any GitHub/codebase change, including writing code, modifying files, committing changes, pushing branches, or opening PRs.
 - Anything irreversible, including deleting files, overwriting documents, removing data, or altering stored context.
 

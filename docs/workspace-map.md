@@ -1,7 +1,7 @@
 # Jarvis Workspace Map
 
 ## Purpose
-This is the durable index for Jarvis's folder-brain. Use it with `agents/PRIME.md`, `agents/ROUTING.md`, and the nearest workspace `CONTEXT.md`.
+This is the durable index for Jarvis's folder-brain. Use it with root `AGENTS.md`, `agents/PRIME.md`, `agents/ROUTING.md`, and the nearest workspace `CONTEXT.md`.
 
 This file answers:
 - Where work belongs.
@@ -12,18 +12,19 @@ This file answers:
 - Which files require explicit approval before changing or acting on.
 
 ## Routing Order
-1. Read `agents/PRIME.md`.
-2. Read `agents/ROUTING.md`.
-3. Use this map to choose the workspace and canonical files.
-4. Read the target workspace `CONTEXT.md`.
-5. Read the smallest matching work file.
-6. Check `agents/TOOL_POLICY.md` before side effects, external actions, code edits, memory edits, or official business/compliance actions.
+1. Read root `AGENTS.md`.
+2. Read `agents/PRIME.md`.
+3. Read `agents/ROUTING.md`.
+4. Use this map to choose the workspace and canonical files.
+5. Read the target workspace `CONTEXT.md`.
+6. Read the smallest matching work file.
+7. Check `agents/TOOL_POLICY.md` before side effects, external actions, code edits, memory edits, or official business/compliance actions.
 
 ## Top-Level Workspace Index
 
 | Area | Purpose | Read First | Canonical Outputs | Approval Sensitivity |
 |---|---|---|---|---|
-| `agents/` | Jarvis identity, routing, tool policy, crew behavior, reusable skills | `agents/PRIME.md`, `agents/ROUTING.md`, `agents/TOOL_POLICY.md` | Router docs, crew instructions, skills | High. Core behavior changes require explicit approval. |
+| `agents/` | Jarvis workflow routing, tool policy, crew behavior, reusable skills | root `AGENTS.md`, `agents/PRIME.md`, `agents/ROUTING.md`, `agents/TOOL_POLICY.md` | Router docs, crew instructions, skills | High. Core behavior changes require explicit approval. |
 | `workspaces/battles/` | Battles personal/business operating workspace | `workspaces/battles/CONTEXT.md` | Plans, decisions, business docs, research, production notes | Medium to high depending on room. |
 | `workspaces/battles/daily-command-center/` | Current state, priorities, open loops, decisions, next actions | `workspaces/battles/daily-command-center/CONTEXT.md`, `current-state.md` | Daily plans, priority stacks, decision notes | Medium. Do not create external commitments without approval. |
 | `workspaces/battles/business/` | Business operations for Battles Budz, Battle Brew, partnerships, offers | `workspaces/battles/business/CONTEXT.md` | Business plans, partner drafts, SOP drafts, investor notes | High. Finance, legal, compliance, outreach require approval. |
@@ -94,7 +95,9 @@ Living updates are persisted in Postgres through `living_context_updates` and re
 | `agents/PRIME.md` | Read for identity/routing | Any edit |
 | `agents/ROUTING.md` | Read and propose improvements | Any edit unless explicitly approved |
 | `agents/TOOL_POLICY.md` | Read for safety | Any edit |
-| `agents/SOUL.md`, root `SOUL.md` | Read when durable identity is relevant | Any edit |
+| root `AGENTS.md` | Read for workflow and tool-usage index | Any edit |
+| root `SOUL.md` | Read when personality is relevant | Any edit |
+| `agents/SOUL.md` | Read only as a pointer to root `SOUL.md` | Any edit |
 | Code files | Read targeted files for context | Any code modification, commit, push, PR, deploy |
 | Memory records | Retrieve when relevant | Delete, rewrite, or save sensitive memory |
 | External systems | Draft and preview | Send, schedule, post, purchase, commit, or trigger devices |

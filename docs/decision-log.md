@@ -17,3 +17,11 @@ Decision: Improve navigability with additive Markdown maps before moving existin
 Reason: The repo has many deployment, import, and runtime assumptions. Moving `dashboard`, `daemon`, `android-daemon`, `server/agent`, or identity files should be a separate refactor with checks.
 
 Implication: New docs can guide future work immediately while preserving the current naming architecture.
+
+## 2026-05-26 - Split SOUL and AGENTS Responsibilities
+
+Decision: Root `SOUL.md` is the personality source of authority. Root `AGENTS.md` is the workflow and tool-usage index. `agents/SOUL.md` remains only as a pointer back to root `SOUL.md`.
+
+Reason: Keeping personality short and separate from workflow rules reduces prompt bloat and makes behavioral updates easier to review.
+
+Implication: Future workflow, routing, tool, and crew guidance belongs in `AGENTS.md` or the referenced `agents/` files, not in `SOUL.md`.

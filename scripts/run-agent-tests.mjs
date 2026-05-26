@@ -54,6 +54,7 @@ const tests = [
   { file: "server/agent/__tests__/toolCallHooks.test.ts" },
   { file: "server/agent/__tests__/outboundMiddleware.test.ts" },
   { file: "server/agent/__tests__/responseQuality.test.ts" },
+  { file: "server/agent/__tests__/soulAuthority.assert.ts" },
   { file: "server/agent/__tests__/soulCuration.test.ts" },
   { file: "server/agent/__tests__/queryClassifier.test.ts" },
   { file: "server/agent/__tests__/telegramMiniAppUrl.test.ts" },

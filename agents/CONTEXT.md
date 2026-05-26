@@ -9,13 +9,15 @@ This folder is not implementation code. The implementation lives mostly in `serv
 
 | Layer | Files | Job |
 |---|---|---|
-| Master map | `agents/PRIME.md`, `agents/ROUTING.md`, `agents/TOOL_POLICY.md` | Establish identity, route the task, and set safety boundaries. |
+| Master map | `AGENTS.md`, `agents/PRIME.md`, `agents/ROUTING.md`, `agents/TOOL_POLICY.md` | Find workflow rules, route the task, and set safety boundaries. |
 | Specialist rooms | `agents/crew/*.md` | Load only the role-specific behavior for the active task. |
 | Working folders | `server/`, `app/`, `components/`, `workspaces/`, `shared/`, `docs/` | Hold the actual product code, content, memories, decisions, and outputs. |
 
 ## Core Files
+- Root `AGENTS.md` - workflow and tool-usage index.
+- Root `SOUL.md` - personality source of authority.
 - `PRIME.md` - master orchestrator identity and high-level behavior contract.
-- `SOUL.md` - personality seed and memory anchor.
+- `SOUL.md` - pointer to root `SOUL.md`; do not duplicate personality here.
 - `ROUTING.md` - task routing, delegation, escalation, fallback, and output destinations.
 - `TOOL_POLICY.md` - tool use, approval, file write, and destructive action rules.
 
@@ -35,13 +37,14 @@ This folder is not implementation code. The implementation lives mostly in `serv
 - Skills are loaded only when relevant to the active task.
 
 ## Context Loading Rules
-1. Start with `agents/PRIME.md` for identity.
-2. Read `agents/ROUTING.md` to classify the task and choose the room.
-3. Read `agents/TOOL_POLICY.md` before external actions, file writes, code edits, device actions, messages, calendar changes, purchases, or deletions.
-4. Load exactly one primary `agents/crew/*.md` unless the task obviously spans domains.
-5. Load workspace `CONTEXT.md` files only when the work belongs to that workspace.
-6. Pull memory through the memory layer or ECHO; do not broad-scan personal context by default.
-7. Prefer targeted file reads over whole-repo scans.
+1. Start with root `AGENTS.md` for the workflow index.
+2. Read `agents/PRIME.md` for the orchestrator contract.
+3. Read `agents/ROUTING.md` to classify the task and choose the room.
+4. Read `agents/TOOL_POLICY.md` before external actions, file writes, code edits, device actions, messages, calendar changes, purchases, or deletions.
+5. Load exactly one primary `agents/crew/*.md` unless the task obviously spans domains.
+6. Load workspace `CONTEXT.md` files only when the work belongs to that workspace.
+7. Pull memory through the memory layer or ECHO; do not broad-scan personal context by default.
+8. Prefer targeted file reads over whole-repo scans.
 
 ## Implementation Map
 

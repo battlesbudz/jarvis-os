@@ -30,7 +30,7 @@ PRIME orchestrates tasks with minimal context loading, explicit safety boundarie
 | Email, Telegram, Discord, Slack, outreach, drafts | `agents/crew/communications.md` | HERALD | `server/channels/`, `server/integrations/`, `workspaces/battles/business/` | Agent build tools |
 | Monitoring, alerts, health checks, anomalies | `agents/crew/monitoring.md` | SCOUT | `server/heartbeat.ts`, `server/curiosityScanner.ts`, `server/intelligence/`, `server/agent/quality*` | Content workspaces |
 | Documents, content, scripts, app artifacts | `agents/crew/creation.md` | FORGE | `workspaces/battles/content-studio/`, `workspaces/battles/production/`, `app/`, `components/` | OAuth/token code |
-| Memory, preferences, personal context, decision continuity | `agents/crew/memory.md` | ECHO | `agents/SOUL.md`, root `SOUL.md`, `server/memory/`, memory tables in `shared/schema.ts` | Whole repo scans |
+| Memory, preferences, personal context, decision continuity | `agents/crew/memory.md` | ECHO | root `SOUL.md`, `AGENTS.md`, `agents/SOUL.md`, `server/memory/`, memory tables in `shared/schema.ts` | Whole repo scans |
 | Agent orchestration or tool behavior | `agents/ROUTING.md`, `agents/TOOL_POLICY.md` | ORACLE + SCOUT | `server/agent/`, `server/agent/tools/`, `server/capabilities/` | Client UI unless surfaced |
 | Auth, OAuth, integrations | `agents/TOOL_POLICY.md` | SCOUT | `server/auth.ts`, `server/oauthRoutes.ts`, `server/integrations/`, `server/userTokenStore.ts` | Content and personal workspaces |
 | Mobile/web UX | `docs/workspace-map.md` | FORGE | `app/`, `components/`, `lib/`, `hooks/`, `constants/` | Server internals unless API contract changes |
@@ -47,7 +47,7 @@ PRIME orchestrates tasks with minimal context loading, explicit safety boundarie
 
 ## Context Loading Policy
 - Never load the whole repo by default.
-- Always begin with `agents/PRIME.md` and this file.
+- Always begin with root `AGENTS.md`, `agents/PRIME.md`, and this file.
 - For broad workspace placement, living document routing, or "where should this go?" questions, check `docs/workspace-map.md` before opening room-level context.
 - Load `agents/TOOL_POLICY.md` for any action with side effects.
 - Load one primary crew file.
