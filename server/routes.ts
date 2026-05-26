@@ -57,6 +57,7 @@ import { registerInboxRoutes } from "./routes/inboxRoutes";
 import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
 import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
+import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
 import {
   registerAuthenticatedCoachRuntimeRoutes,
   registerPublicCoachRuntimeRoutes,
@@ -384,40 +385,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  /**
-   * GET /api/admin/provider-health
-   * Smoke-tests Codex OAuth/OpenAI provider health and returns a health report.
-   * Useful for verifying API key configuration and SDK compatibility without
-   * waiting for a real user turn to fail.
-   */
-  app.get("/api/admin/provider-health", async (req: Request, res: Response) => {
-    if (!requireAdminSecret(req, res)) return;
-    try {
-      const { runProviderHealthChecks } = await import("./agent/providers/healthCheck");
-      const report = await runProviderHealthChecks();
-      res.status(report.allOk ? 200 : 503).json(report);
-    } catch (err) {
-      console.error("[Admin/ProviderHealth] check threw:", err);
-      res.status(500).json({ error: "Failed to run provider health checks" });
-    }
-  });
-
-  /**
-   * GET /api/admin/audio-transcription-stats
-   * Returns a snapshot of Phase 3 audio transcription failure telemetry.
-   * Shows attempt count, failure breakdown by error class, and the 50 most
-   * recent failure events (video ID, error class, noCaptions flag, message).
-   */
-  app.get("/api/admin/audio-transcription-stats", async (req: Request, res: Response) => {
-    if (!requireAdminSecret(req, res)) return;
-    try {
-      const { getAudioTranscriptTelemetry } = await import("./lib/transcriptCache");
-      res.json(getAudioTranscriptTelemetry());
-    } catch (err) {
-      console.error("[Admin/AudioStats] failed:", err);
-      res.status(500).json({ error: "Failed to retrieve audio transcription telemetry" });
-    }
-  });
+  registerAdminHealthRoutes(app, requireAdminSecret);
 
   /**
    * GET /api/transcript/diagnose?videoId=VIDEO_ID
