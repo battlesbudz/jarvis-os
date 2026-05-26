@@ -54,6 +54,7 @@ import { registerIntegrationRoutes } from "./routes/integrationRoutes";
 import { registerProfileMemoryRoutes } from "./routes/profileMemoryRoutes";
 import { registerPlanGenerationRoutes } from "./routes/planGenerationRoutes";
 import { registerInboxRoutes } from "./routes/inboxRoutes";
+import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import {
   registerAuthenticatedCoachRuntimeRoutes,
   registerPublicCoachRuntimeRoutes,
@@ -92,13 +93,7 @@ import { estimateModelUsage, getModelUsageSummary, recordModelUsage } from "./ag
 import type { AgentTool, ToolContext } from "./agent/types";
 import {
   isCodexDelegationEnabled,
-  normalizeCodexDelegationSandbox,
-  normalizeCodexDelegationTimeoutMs,
-  resolveCodexDelegationCwd,
-  runLocalCodexDelegation,
 } from "./agent/codexDelegation";
-import { runCodexOAuthPrompt } from "./agent/providers/codexOAuth";
-import { getCodexOAuthCommand } from "./agent/providers/env";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
@@ -620,84 +615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/codex/delegate", async (req: Request, res: Response) => {
-    try {
-      const expectedToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim();
-      const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-      if (!expectedToken || token !== expectedToken) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-
-      const task = String(req.body?.task ?? "").trim();
-      if (!task) return res.status(400).json({ error: "task is required" });
-
-      let cwd: string;
-      try {
-        cwd = resolveCodexDelegationCwd(req.body?.working_directory);
-      } catch (err) {
-        return res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
-      }
-
-      const result = await runLocalCodexDelegation({
-        task,
-        context: typeof req.body?.context === "string" ? req.body.context : undefined,
-        allowExternalSideEffects: req.body?.allow_external_side_effects === true,
-        cwd,
-        sandbox: normalizeCodexDelegationSandbox(req.body?.sandbox),
-        timeoutMs: normalizeCodexDelegationTimeoutMs(req.body?.timeout_seconds),
-      });
-
-      return res.json(result);
-    } catch (error) {
-      console.error("[CodexGateway] delegation failed:", error);
-      return res.status(500).json({
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-
-  app.get("/api/codex/gateway-health", async (req: Request, res: Response) => {
-    const expectedToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim();
-    const authHeader = req.headers.authorization;
-    const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-    if (!expectedToken || token !== expectedToken) {
-      return res.status(401).json({ error: "Unauthorized" });
-    }
-
-    res.json({
-      ok: true,
-      role: "jarvis-codex-oauth-gateway",
-      checkedAt: new Date().toISOString(),
-      codexCommandConfigured: !!(process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND),
-      codexCommand: getCodexOAuthCommand(),
-      nodeEnv: process.env.NODE_ENV || null,
-      host: process.env.HOST || null,
-      port: process.env.PORT || "5000",
-    });
-  });
-
-  app.post("/api/codex/provider-turn", async (req: Request, res: Response) => {
-    try {
-      const expectedToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim();
-      const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-      if (!expectedToken || token !== expectedToken) {
-        return res.status(401).json({ error: "Unauthorized" });
-      }
-
-      const prompt = String(req.body?.prompt ?? "").trim();
-      if (!prompt) return res.status(400).json({ error: "prompt is required" });
-
-      const content = await runCodexOAuthPrompt(getCodexOAuthCommand(), prompt);
-      return res.json({ content });
-    } catch (error) {
-      console.error("[CodexGateway] provider turn failed:", error);
-      return res.status(500).json({
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
+  registerCodexGatewayRoutes(app);
 
   app.get("/api/app-update/android", async (_req: Request, res: Response) => {
     const releaseBase = (
