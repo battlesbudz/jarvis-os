@@ -27,6 +27,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { apiRequest, getApiUrl } from "@/lib/query-client";
 import { getAuthToken } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
+import { JobTaskCard, JOB_STATUS_COLORS, JOB_STATUS_LABELS, type AgentTask } from "@/components/agents/JobTaskCard";
 import { IntegrationErrorCard } from "@/components/IntegrationErrorCard";
 import {
   CHAT_HISTORY_WINDOW_MAIN,
@@ -130,20 +131,6 @@ export interface AuditEntry {
   diff: string;
 }
 
-export interface AgentTask {
-  id: string;
-  title: string;
-  status: string;
-  agentId: string;
-  agentName: string;
-  iterationCount: number;
-  createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  error: string | null;
-  output: string | null;
-}
-
 export interface RosterAgent {
   id: string;
   name: string;
@@ -226,24 +213,6 @@ const STATUS_LABELS: Record<string, string> = {
   idle: "Idle",
   dormant: "Dormant",
   stuck: "Stuck",
-};
-
-const JOB_STATUS_COLORS: Record<string, string> = {
-  queued: "#f59e0b",
-  running: "#22c55e",
-  complete: Colors.primary,
-  delivered: "#6b7280",
-  failed: "#ef4444",
-  cancelled: "#6b7280",
-};
-
-const JOB_STATUS_LABELS: Record<string, string> = {
-  queued: "Queued",
-  running: "Running",
-  complete: "Needs Review",
-  delivered: "Delivered",
-  failed: "Failed",
-  cancelled: "Cancelled",
 };
 
 const PLATFORM_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -329,75 +298,6 @@ function PulsingDot({ color, active }: { color: string; active: boolean }) {
       )}
       <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
     </View>
-  );
-}
-
-// ── JobTaskCard — dynamic orchestrator-dispatched task ─────────────────────────
-
-function JobTaskCard({ job, onPress }: { job: AgentTask; onPress: () => void }) {
-  const statusColor = JOB_STATUS_COLORS[job.status] ?? "#6b7280";
-  const statusLabel = JOB_STATUS_LABELS[job.status] ?? job.status;
-  const isRunning = job.status === "running";
-  const isQueued = job.status === "queued";
-  const needsReview = job.status === "complete";
-
-  return (
-    <TouchableOpacity
-      activeOpacity={0.75}
-      onPress={onPress}
-      style={[
-        styles.jobCard,
-        {
-          backgroundColor: Colors.surface,
-          borderColor: needsReview ? Colors.primary + "66" : Colors.border,
-        },
-      ]}
-    >
-      <View style={styles.jobCardHeader}>
-        <View style={[styles.jobIconWrap, { backgroundColor: statusColor + "22" }]}>
-          <Ionicons
-            name={
-              isRunning ? "flash-outline" :
-              isQueued ? "time-outline" :
-              needsReview ? "checkmark-circle-outline" :
-              job.status === "failed" ? "alert-circle-outline" :
-              "archive-outline"
-            }
-            size={16}
-            color={statusColor}
-          />
-        </View>
-        <View style={styles.jobCardTitle}>
-          <Text style={[styles.jobTitle, { color: Colors.text }]} numberOfLines={1}>
-            {job.title}
-          </Text>
-          <Text style={[styles.jobAgent, { color: Colors.textSecondary }]} numberOfLines={1}>
-            {job.agentName}
-            {job.iterationCount > 0 ? ` · iter ${job.iterationCount + 1}` : ""}
-          </Text>
-        </View>
-        <View style={[styles.jobStatusBadge, { backgroundColor: statusColor + "22" }]}>
-          {isRunning && <ActivityIndicator size="small" color={statusColor} style={{ width: 12, height: 12 }} />}
-          <Text style={[styles.jobStatusText, { color: statusColor }]}>{statusLabel}</Text>
-        </View>
-      </View>
-
-      {job.output && (
-        <Text style={[styles.jobOutput, { color: Colors.textSecondary }]} numberOfLines={2}>
-          {job.output}
-        </Text>
-      )}
-      {job.error && (
-        <Text style={[styles.jobOutput, { color: Colors.error }]} numberOfLines={2}>
-          Error: {job.error}
-        </Text>
-      )}
-
-      <Text style={[styles.jobMeta, { color: Colors.textTertiary }]}>
-        {new Date(job.createdAt).toLocaleString()}
-        {job.completedAt ? ` · done ${new Date(job.completedAt).toLocaleTimeString()}` : ""}
-      </Text>
-    </TouchableOpacity>
   );
 }
 
