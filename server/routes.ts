@@ -33,7 +33,7 @@ import {
   sendGmailEmail,
 } from "./integrations/gmail";
 import { getSlackMessages } from "./integrations/slack";
-import { authRouter, authMiddleware, generateToken, generateWebchatToken } from "./auth";
+import { authRouter, authMiddleware, generateToken } from "./auth";
 import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
@@ -56,6 +56,7 @@ import { registerPlanGenerationRoutes } from "./routes/planGenerationRoutes";
 import { registerInboxRoutes } from "./routes/inboxRoutes";
 import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
+import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
 import {
   registerAuthenticatedCoachRuntimeRoutes,
   registerPublicCoachRuntimeRoutes,
@@ -591,31 +592,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // GET /api/webchat/invite/redeem — no auth required; guest redeems invite token
-  app.get("/api/webchat/invite/redeem", async (req: Request, res: Response) => {
-    try {
-      const { token } = req.query as { token?: string };
-      if (!token) return res.status(400).json({ error: "token is required" });
-
-      const [row] = await db
-        .select()
-        .from(webchatInviteTokens)
-        .where(eq(webchatInviteTokens.token, token))
-        .limit(1);
-
-      if (!row) return res.status(404).json({ error: "Invite link not found" });
-      if (row.expiresAt < new Date()) {
-        return res.status(410).json({ error: "This invite link has expired" });
-      }
-
-      const jwtToken = generateWebchatToken(row.userId);
-      return res.json({ token: jwtToken, userId: row.userId });
-    } catch (error) {
-      console.error("Error redeeming webchat invite token:", error);
-      return res.status(500).json({ error: "Failed to redeem invite token" });
-    }
-  });
-
+  registerPublicWebchatInviteRoutes(app);
   registerCodexGatewayRoutes(app);
   registerAppUpdateRoutes(app);
 
