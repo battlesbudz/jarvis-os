@@ -30,6 +30,7 @@ import {
 } from "@/components/agents/SelfRepairAudit";
 import { AgentDetailSheet, type RosterAgent } from "@/components/agents/AgentDetailSheet";
 import { TaskDetailSheet } from "@/components/agents/TaskDetailSheet";
+import { buildRosterSections } from "@/lib/agents/rosterSections";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -41,10 +42,6 @@ interface IntegrationReadiness {
   blockedReason?: string | null;
   readiness?: string;
 }
-
-// Hardcoded fallback so the PLATFORM BOTS section is never empty
-const CORE_PLACEHOLDER_NAMES = ["Jarvis Telegram Bot", "Jarvis Discord Bot", "Discord Channel Agent"];
-
 
 // ── CorePlaceholderCard — shown when seeding hasn't completed yet ──────────────
 
@@ -193,17 +190,15 @@ export default function AgentsScreen() {
 
   const agents = data?.agents ?? [];
   const activeTasks = data?.activeTasks ?? [];
-  const coreAgents = agents.filter((a) => a.isCoreAgent);
-  const customAgents = agents.filter((a) => !a.isCoreAgent);
-  const runningJobs = activeTasks.filter((t) => ["queued", "running"].includes(t.status));
-  const recentJobs = activeTasks.filter((t) => !["queued", "running"].includes(t.status)).slice(0, 10);
-  const onlineCount = agents.filter((a) => a.status === "online").length;
-  const activeCount = agents.filter((a) => a.isActive === 1).length;
-
-  // Fallback core agent names if seeding silently failed
-  const missingCoreNames = CORE_PLACEHOLDER_NAMES.filter(
-    (n) => !coreAgents.some((a) => a.name === n)
-  );
+  const {
+    coreAgents,
+    customAgents,
+    runningJobs,
+    recentJobs,
+    onlineCount,
+    activeCount,
+    missingCoreNames,
+  } = buildRosterSections(agents, activeTasks);
 
   const createMutation = useMutation({
     mutationFn: (body: object) => apiRequest("POST", "/api/agents", body),
