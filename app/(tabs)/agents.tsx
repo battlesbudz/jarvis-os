@@ -28,9 +28,11 @@ import { apiRequest, getApiUrl } from "@/lib/query-client";
 import { getAuthToken } from "@/lib/auth-context";
 import Colors from "@/constants/colors";
 import { CouncilModal } from "@/components/agents/CouncilModal";
+import { CreateAgentSheet } from "@/components/agents/CreateAgentSheet";
 import { JobTaskCard, JOB_STATUS_COLORS, JOB_STATUS_LABELS, type AgentTask } from "@/components/agents/JobTaskCard";
 import { TaskDetailSheet } from "@/components/agents/TaskDetailSheet";
 import { IntegrationErrorCard } from "@/components/IntegrationErrorCard";
+import { ROLE_COLORS, ROLE_ICONS, ROLES } from "@/lib/agents/roleMeta";
 import {
   CHAT_HISTORY_WINDOW_MAIN,
   CHAT_HISTORY_WINDOW_SUB,
@@ -174,34 +176,6 @@ interface IntegrationReadiness {
   blockedReason?: string | null;
   readiness?: string;
 }
-
-const ROLE_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
-  coach: "fitness-outline",
-  researcher: "search-outline",
-  coder: "code-slash-outline",
-  writer: "pencil-outline",
-  analyst: "bar-chart-outline",
-  scheduler: "calendar-outline",
-  support: "headset-outline",
-  security: "shield-outline",
-  devops: "server-outline",
-  custom: "person-outline",
-};
-
-const ROLE_COLORS: Record<string, string> = {
-  coach: "#4A90E2",
-  researcher: "#7B68EE",
-  coder: "#50C878",
-  writer: "#FFD700",
-  analyst: "#FF8C00",
-  scheduler: "#20B2AA",
-  support: "#FF69B4",
-  security: "#DC143C",
-  devops: "#4682B4",
-  custom: "#9370DB",
-};
-
-const ROLES = ["coach", "researcher", "coder", "writer", "analyst", "scheduler", "support", "security", "devops", "custom"];
 
 const STATUS_COLORS: Record<string, string> = {
   online: "#22c55e",
@@ -470,92 +444,6 @@ function CorePlaceholderCard({ name }: { name: string }) {
   );
 }
 
-// ── CreateAgentSheet ───────────────────────────────────────────────────────────
-
-function CreateAgentSheet({
-  visible,
-  onClose,
-  onCreate,
-}: {
-  visible: boolean;
-  onClose: () => void;
-  onCreate: (data: { name: string; role: string; persona?: string }) => void;
-}) {
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("custom");
-  const [persona, setPersona] = useState("");
-
-  function handleCreate() {
-    if (!name.trim()) return;
-    onCreate({ name: name.trim(), role, persona: persona.trim() || undefined });
-    setName("");
-    setRole("custom");
-    setPersona("");
-  }
-
-  return (
-    <Modal visible={visible} animationType="slide" presentationStyle="formSheet" onRequestClose={onClose}>
-      <View style={[styles.sheet, { backgroundColor: Colors.background }]}>
-        <View style={[styles.sheetHeader, { borderBottomColor: Colors.border }]}>
-          <TouchableOpacity onPress={onClose}>
-            <Text style={[styles.sheetCancel, { color: Colors.textSecondary }]}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={[styles.sheetTitle, { color: Colors.text }]}>New Agent</Text>
-          <TouchableOpacity onPress={handleCreate} disabled={!name.trim()}>
-            <Text style={[styles.sheetDone, { color: name.trim() ? Colors.primary : Colors.textTertiary }]}>Create</Text>
-          </TouchableOpacity>
-        </View>
-
-        <ScrollView style={styles.sheetBody} keyboardShouldPersistTaps="handled">
-          <Text style={[styles.fieldLabel, { color: Colors.textSecondary }]}>NAME</Text>
-          <TextInput
-            style={[styles.input, { backgroundColor: Colors.surface, color: Colors.text, borderColor: Colors.border }]}
-            value={name}
-            onChangeText={setName}
-            placeholder="Agent name…"
-            placeholderTextColor={Colors.textTertiary}
-            autoFocus
-          />
-
-          <Text style={[styles.fieldLabel, { color: Colors.textSecondary }]}>ROLE</Text>
-          <View style={styles.roleGrid}>
-            {ROLES.map((r) => {
-              const roleColor = ROLE_COLORS[r] || Colors.primary;
-              const isSelected = role === r;
-              return (
-                <TouchableOpacity
-                  key={r}
-                  style={[
-                    styles.roleChip,
-                    {
-                      backgroundColor: isSelected ? roleColor + "33" : Colors.surface,
-                      borderColor: isSelected ? roleColor : Colors.border,
-                    },
-                  ]}
-                  onPress={() => setRole(r)}
-                >
-                  <Ionicons name={ROLE_ICONS[r] ?? "person-outline"} size={14} color={isSelected ? roleColor : Colors.textSecondary} />
-                  <Text style={[styles.roleChipText, { color: isSelected ? roleColor : Colors.textSecondary }]}>{r}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-
-          <Text style={[styles.fieldLabel, { color: Colors.textSecondary }]}>PERSONA (OPTIONAL)</Text>
-          <TextInput
-            style={[styles.input, styles.inputMultiline, { backgroundColor: Colors.surface, color: Colors.text, borderColor: Colors.border }]}
-            value={persona}
-            onChangeText={setPersona}
-            placeholder="Describe this agent's personality and specialty…"
-            placeholderTextColor={Colors.textTertiary}
-            multiline
-            numberOfLines={4}
-          />
-        </ScrollView>
-      </View>
-    </Modal>
-  );
-}
 
 // ── RunModal ───────────────────────────────────────────────────────────────────
 
