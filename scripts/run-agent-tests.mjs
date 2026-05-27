@@ -27,6 +27,7 @@ const tests = [
   { file: "server/agent/__tests__/deliverableReviewActions.test.ts" },
   { file: "server/agent/__tests__/deliverableReviewHttpRoutes.test.ts" },
   { file: "server/agent/__tests__/localWorkerQueue.assert.ts" },
+  { file: "server/agent/__tests__/ephemeralAgents.test.ts" },
   { file: "server/agent/__tests__/jobObservability.test.ts" },
   { file: "server/agent/__tests__/workerRuntime.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },
