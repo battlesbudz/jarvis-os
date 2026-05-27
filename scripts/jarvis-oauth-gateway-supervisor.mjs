@@ -23,6 +23,30 @@ const repairPublicFunnel = process.env.JARVIS_OAUTH_GATEWAY_REPAIR_PUBLIC_FUNNEL
 
 mkdirSync(logDir, { recursive: true });
 
+function loadEnvFile(path, { override = false } = {}) {
+  if (!existsSync(path)) return;
+  const content = readFileSync(path, "utf8");
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("#")) continue;
+    const idx = line.indexOf("=");
+    if (idx <= 0) continue;
+
+    const key = line.slice(0, idx).trim();
+    let value = line.slice(idx + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    if (override || !process.env[key]) process.env[key] = value;
+  }
+}
+
+loadEnvFile(join(repoRoot, ".env"));
+loadEnvFile(join(repoRoot, ".env.local"), { override: true });
+
 const logStream = createWriteStream(join(logDir, "jarvis-oauth-gateway-supervisor.log"), { flags: "a" });
 const childLogStream = createWriteStream(join(logDir, "jarvis-oauth-gateway.log"), { flags: "a" });
 const childErrStream = createWriteStream(join(logDir, "jarvis-oauth-gateway.err.log"), { flags: "a" });
@@ -151,7 +175,7 @@ function pipeTo(stream, chunk) {
 function startGateway() {
   if (stopping) return;
 
-  const command = isWindows ? "node.exe" : "node";
+  const command = process.execPath;
   const args = ["scripts/jarvis-local-oauth-gateway.mjs"];
   const childEnv = { ...process.env };
   childEnv.JARVIS_OAUTH_GATEWAY_SUPERVISED = "true";

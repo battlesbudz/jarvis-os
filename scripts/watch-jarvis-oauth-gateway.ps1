@@ -10,6 +10,13 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $LogDir = Join-Path $Root ".jarvis\logs"
 $WatchdogLog = Join-Path $LogDir "jarvis-oauth-gateway-watchdog.log"
 $SupervisorScript = Join-Path $PSScriptRoot "start-jarvis-oauth-gateway-supervisor.ps1"
+$TailscaleExe = if ($env:TAILSCALE_EXE) {
+  $env:TAILSCALE_EXE
+} elseif (Test-Path "C:\Program Files\Tailscale\tailscale.exe") {
+  "C:\Program Files\Tailscale\tailscale.exe"
+} else {
+  "tailscale.exe"
+}
 
 New-Item -ItemType Directory -Path $LogDir -Force | Out-Null
 Set-Location $Root
@@ -56,13 +63,13 @@ function Start-GatewaySupervisor {
 
 function Ensure-TailscaleFunnel {
   try {
-    $Status = & tailscale.exe serve status 2>&1 | Out-String
+    $Status = & $TailscaleExe serve status 2>&1 | Out-String
     $Expected = "/               proxy http://127.0.0.1:$Port"
     if ($Status -like "*$Expected*") {
       return
     }
     Write-WatchdogLog "Tailscale root route missing; republishing Funnel to http://127.0.0.1:$Port."
-    & tailscale.exe funnel --bg "http://127.0.0.1:$Port" | Out-Null
+    & $TailscaleExe funnel --bg "http://127.0.0.1:$Port" | Out-Null
   } catch {
     Write-WatchdogLog "Could not verify or republish Tailscale Funnel: $($_.Exception.Message)"
   }

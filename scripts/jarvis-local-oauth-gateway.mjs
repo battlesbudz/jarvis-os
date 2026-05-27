@@ -124,7 +124,7 @@ const configuredEntry = process.env.JARVIS_OAUTH_GATEWAY_ENTRY?.trim();
 const serverEntry = !configuredEntry || configuredEntry === "server_dist/index.js"
   ? "scripts/jarvis-codex-gateway-server.mjs"
   : configuredEntry;
-const serverCommand = serverEntry ? (isWindows ? "node.exe" : "node") : isWindows ? "cmd.exe" : localTsx;
+const serverCommand = serverEntry ? process.execPath : isWindows ? "cmd.exe" : localTsx;
 const serverArgs = serverEntry
   ? [serverEntry]
   : isWindows
