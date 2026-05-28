@@ -5,6 +5,7 @@ import path from "node:path";
 import { createFileAgentSdkRunStore } from "../src/agent/runStore";
 import { createAgentSdkTools } from "../src/agent/toolRegistry";
 import {
+  resumeAgentSdkEmailWorkflowRun,
   resumeAgentSdkRunFromApprovalGate,
   runAgentSdkEmailWorkflow,
 } from "../src/agent/agentRunner";
@@ -101,6 +102,7 @@ async function main() {
     console.log("OK: paused run persisted");
 
     let sendCount = 0;
+    const approvalMessages: string[] = [];
     const approved = await resumeAgentSdkRunFromApprovalGate(
       {
         gate: {
@@ -135,7 +137,9 @@ async function main() {
             }),
           };
         },
-        sendTelegramMessage: async () => undefined,
+        sendTelegramMessage: async (_chatId, text) => {
+          approvalMessages.push(text);
+        },
         sendEmail: async () => {
           sendCount += 1;
           return { ok: true, messageId: "msg_smoke" };
@@ -145,6 +149,63 @@ async function main() {
     assert.equal(approved.status, "complete");
     assert.equal(sendCount, 1);
     console.log("OK: approval resumes and sends");
+    assert.ok(approvalMessages.some((message) => /completed/i.test(message)));
+    console.log("OK: completion notification sent");
+
+    await store.save({
+      meta: {
+        runId: "smoke_restart",
+        userId: "user_smoke",
+        originChannel: "telegram",
+        originChannelId: "123",
+        status: "running",
+        createdAt: now,
+        updatedAt: now,
+      },
+      state: {
+        id: "state_restart",
+        status: "in_progress",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        messages: [],
+      } as any,
+    });
+    const restartRequests: any[] = [];
+    const progressMessages: string[] = [];
+    const restartResult = await resumeAgentSdkEmailWorkflowRun(
+      { runId: "smoke_restart" },
+      {
+        store,
+        callModel: async (request) => {
+          restartRequests.push(request);
+          return {
+            requiresApproval: async () => false,
+            getToolCallsStream: async function* () {
+              yield { id: "call_context", name: "read_context", arguments: { query: "test" } };
+            },
+            getText: async () => "Restarted run finished.",
+            getResponse: async () => ({
+              state: {
+                id: "state_restart",
+                status: "complete",
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                messages: [],
+              },
+            }),
+          };
+        },
+        sendTelegramMessage: async (_chatId, text) => {
+          progressMessages.push(text);
+        },
+      },
+    );
+    assert.equal(restartResult.status, "complete");
+    assert.deepEqual(restartRequests[0].input, []);
+    assert.ok(Array.isArray(restartRequests[0].stopWhen));
+    assert.ok(progressMessages.some((message) => /read_context/.test(message)));
+    console.log("OK: restart resume uses persisted state");
+    console.log("OK: Telegram progress updates sent");
 
     await store.save({
       meta: {

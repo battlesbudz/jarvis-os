@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ConversationState, StateAccessor, Tool } from "@openrouter/agent";
 
@@ -21,6 +21,11 @@ export interface AgentSdkRunMeta {
   gateId?: string;
   createdAt: string;
   updatedAt: string;
+  resumedAt?: string;
+  completedAt?: string;
+  maxCostUsd?: number;
+  maxSteps?: number;
+  usage?: unknown;
   error?: string;
 }
 
@@ -47,14 +52,23 @@ export function createFileAgentSdkRunStore(
   async function load(runId: string): Promise<AgentSdkRunRecord | null> {
     try {
       return JSON.parse(await readFile(fileFor(runId), "utf8")) as AgentSdkRunRecord;
-    } catch {
-      return null;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+      throw error;
     }
+  }
+
+  async function atomicWrite(filePath: string, contents: string): Promise<void> {
+    const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    await writeFile(tmpPath, contents, "utf8");
+    await rename(tmpPath, filePath);
   }
 
   async function save(record: AgentSdkRunRecord): Promise<void> {
     await mkdir(rootDir, { recursive: true });
-    await writeFile(fileFor(record.meta.runId), JSON.stringify(record, null, 2), "utf8");
+    await atomicWrite(fileFor(record.meta.runId), JSON.stringify(record, null, 2));
   }
 
   return {

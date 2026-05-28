@@ -1659,7 +1659,9 @@ async function processUpdate(update: any): Promise<void> {
         originChannelId: chatId,
       });
       if (agentSdkResult.handled) {
-        await sendMessage(chatId, agentSdkResult.reply);
+        if (agentSdkResult.status !== "complete" && agentSdkResult.status !== "failed") {
+          await sendMessage(chatId, agentSdkResult.reply);
+        }
         return;
       }
 

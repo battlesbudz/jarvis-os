@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   isAgentSdkRunnerEnabled,
   matchesAgentSdkEmailWorkflow,
+  resumeAgentSdkEmailWorkflowRun,
   resumeAgentSdkRunFromApprovalGate,
   runAgentSdkEmailWorkflow,
 } from "../agentRunner";
@@ -189,6 +190,103 @@ try {
   assert.equal(requestApprovalForPendingCallCount, 1);
   assert.equal(sent, false);
   assert.equal((await store.load(runnerResult.runId))?.meta.status, "awaiting_approval");
+
+  const longHorizonRequests: any[] = [];
+  const longHorizonMessages: string[] = [];
+  const longHorizonResult = await runAgentSdkEmailWorkflow(
+    {
+      userId: "user_1",
+      userText: "Draft and send an email to sam@example.com saying hello",
+      originChannel: "telegram",
+      originChannelId: "123",
+    },
+    {
+      store,
+      callModel: async (request) => {
+        longHorizonRequests.push(request);
+        return {
+          requiresApproval: async () => false,
+          getToolCallsStream: async function* () {
+            yield { id: "call_context", name: "read_context", arguments: { query: "sam" } };
+          },
+          getTextStream: async function* () {
+            yield "Drafting";
+            yield " email";
+          },
+          getText: async () => "Email workflow complete.",
+          getResponse: async () => ({
+            state: {
+              id: "state_long",
+              status: "complete",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messages: [],
+            },
+            usage: { cost: 0.01 },
+          }),
+        };
+      },
+      sendTelegramMessage: async (_chatId, text) => {
+        longHorizonMessages.push(text);
+      },
+    },
+  );
+  assert.equal(longHorizonResult.status, "complete");
+  assert.equal(Array.isArray(longHorizonRequests[0].stopWhen), true);
+  assert.equal(longHorizonRequests[0].stopWhen.length, 2);
+  assert.ok(longHorizonMessages.some((message) => /read_context/.test(message)));
+  assert.ok(longHorizonMessages.some((message) => /completed/i.test(message)));
+  assert.equal((await store.load(longHorizonResult.runId))?.meta.status, "complete");
+
+  await store.save({
+    meta: {
+      runId: "run_restart",
+      userId: "user_1",
+      originChannel: "telegram",
+      originChannelId: "123",
+      status: "running",
+      createdAt: baseNow,
+      updatedAt: baseNow,
+    },
+    state: {
+      id: "state_restart",
+      status: "in_progress",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [{ type: "message", role: "user", content: [{ type: "input_text", text: "continue" }] }],
+    } as any,
+  });
+  const restartRequests: any[] = [];
+  const restartMessages: string[] = [];
+  const restartResult = await resumeAgentSdkEmailWorkflowRun(
+    { runId: "run_restart" },
+    {
+      store,
+      callModel: async (request) => {
+        restartRequests.push(request);
+        return {
+          requiresApproval: async () => false,
+          getText: async () => "Resumed and finished.",
+          getResponse: async () => ({
+            state: {
+              id: "state_restart",
+              status: "complete",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messages: [],
+            },
+          }),
+        };
+      },
+      sendTelegramMessage: async (_chatId, text) => {
+        restartMessages.push(text);
+      },
+    },
+  );
+  assert.equal(restartResult.status, "complete");
+  assert.deepEqual(restartRequests[0].input, []);
+  assert.equal(Array.isArray(restartRequests[0].stopWhen), true);
+  assert.ok(restartMessages.some((message) => /completed/i.test(message)));
 
   const resumeCalls: any[] = [];
   const telegramMessages: string[] = [];

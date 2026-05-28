@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CallModelInput, ConversationState, Tool } from "@openrouter/agent";
-import { createInitialState } from "@openrouter/agent";
+import { createInitialState, maxCost, stepCountIs } from "@openrouter/agent";
 import { AGENT_SDK_HITL_AGENT_ID, requestTelegramApprovalForPendingCall } from "./hitlApproval";
 import type { AgentSdkPendingApproval, HitlApprovalDeps } from "./hitlApproval";
 import { createFileAgentSdkRunStore } from "./runStore";
@@ -26,7 +26,9 @@ export interface AgentSdkModelResultLike {
   getPendingToolCalls?: () => Promise<Array<{ id: string; name: string; arguments: Record<string, unknown> }>>;
   getState?: () => Promise<ConversationState<any>>;
   getText?: () => Promise<string>;
-  getResponse?: () => Promise<{ state?: ConversationState<any> }>;
+  getResponse?: () => Promise<{ state?: ConversationState<any>; usage?: unknown }>;
+  getToolCallsStream?: () => AsyncIterable<{ id: string; name: string; arguments: Record<string, unknown> }>;
+  getTextStream?: () => AsyncIterable<string>;
 }
 
 export interface AgentSdkRunnerDeps {
@@ -44,6 +46,14 @@ export interface AgentSdkRunnerDeps {
   requestApproval?: HitlApprovalDeps["requestApproval"];
   notifyApprovalRequest?: HitlApprovalDeps["notifyApprovalRequest"];
   sendTelegramMessage?: (chatId: string, text: string) => Promise<unknown>;
+  maxCostUsd?: number;
+  maxSteps?: number;
+  progressTextChunkChars?: number;
+}
+
+export interface ResumeAgentSdkEmailWorkflowRunInput {
+  runId: string;
+  originChannelId?: string;
 }
 
 export interface ResumeAgentSdkRunInput {
@@ -58,6 +68,9 @@ export interface ResumeAgentSdkRunInput {
 }
 
 const DEFAULT_MODEL = "openai/gpt-4o-mini";
+const DEFAULT_MAX_COST_USD = 0.25;
+const DEFAULT_MAX_STEPS = 20;
+const DEFAULT_PROGRESS_TEXT_CHUNK_CHARS = 80;
 
 export function isAgentSdkRunnerEnabled(env = process.env): boolean {
   return String(env.ENABLE_AGENT_SDK_RUNNER || "").toLowerCase() === "true";
@@ -74,6 +87,25 @@ export function matchesAgentSdkEmailWorkflow(message: string): boolean {
 
 function createRunId(): string {
   return `asdk_${Date.now()}_${randomUUID().slice(0, 8)}`;
+}
+
+function parsePositiveNumber(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveLongHorizonOptions(deps: AgentSdkRunnerDeps = {}) {
+  return {
+    maxCostUsd: parsePositiveNumber(deps.maxCostUsd ?? process.env.OPENROUTER_AGENT_SDK_MAX_COST, DEFAULT_MAX_COST_USD),
+    maxSteps: Math.max(
+      1,
+      Math.floor(parsePositiveNumber(deps.maxSteps ?? process.env.OPENROUTER_AGENT_SDK_MAX_STEPS, DEFAULT_MAX_STEPS)),
+    ),
+    progressTextChunkChars: Math.max(
+      20,
+      Math.floor(parsePositiveNumber(deps.progressTextChunkChars, DEFAULT_PROGRESS_TEXT_CHUNK_CHARS)),
+    ),
+  };
 }
 
 async function safeText(result: AgentSdkModelResultLike, fallback: string): Promise<string> {
@@ -136,9 +168,10 @@ async function defaultSendTelegramMessage(chatId: string, text: string): Promise
 }
 
 function buildRequest(
-  userText: string,
+  userText: string | [],
   tools: readonly Tool[],
   state: ReturnType<AgentSdkRunStore["createStateAccessor"]>,
+  options: { maxCostUsd: number; maxSteps: number },
   decisions?: { approveToolCalls?: string[]; rejectToolCalls?: string[] },
 ): Record<string, unknown> {
   return {
@@ -150,11 +183,86 @@ function buildRequest(
       "Never claim the email was sent unless send_email executes successfully.",
       "Keep final user-facing text short.",
     ].join("\n"),
-    input: decisions ? [] : userText,
+    input: Array.isArray(userText) || decisions ? [] : userText,
     tools,
     state,
+    stopWhen: [stepCountIs(options.maxSteps), maxCost(options.maxCostUsd)],
     ...decisions,
   };
+}
+
+async function sendTelegramProgress(
+  result: AgentSdkModelResultLike,
+  deps: AgentSdkRunnerDeps,
+  chatId: string | undefined,
+): Promise<void> {
+  if (!chatId) return;
+  const send = deps.sendTelegramMessage ?? defaultSendTelegramMessage;
+  const textChunkChars = resolveLongHorizonOptions(deps).progressTextChunkChars;
+  const tasks: Promise<void>[] = [];
+
+  if (result.getToolCallsStream) {
+    tasks.push((async () => {
+      for await (const call of result.getToolCallsStream!()) {
+        await send(chatId, `Agent SDK progress: running ${call.name}.`);
+      }
+    })());
+  }
+
+  if (result.getTextStream) {
+    tasks.push((async () => {
+      let buffered = "";
+      for await (const delta of result.getTextStream!()) {
+        buffered += delta;
+        if (buffered.trim().length >= textChunkChars) {
+          await send(chatId, `Agent SDK progress: ${buffered.trim().slice(0, 500)}`);
+          buffered = "";
+        }
+      }
+    })());
+  }
+
+  await Promise.allSettled(tasks);
+}
+
+async function sendTelegramCompletion(
+  deps: AgentSdkRunnerDeps,
+  chatId: string | undefined,
+  text: string,
+  status: "complete" | "failed" | "rejected",
+): Promise<void> {
+  if (!chatId) return;
+  const prefix = status === "complete"
+    ? "Agent SDK email workflow completed."
+    : status === "rejected"
+      ? "Agent SDK email workflow finished without sending."
+      : "Agent SDK email workflow failed.";
+  await (deps.sendTelegramMessage ?? defaultSendTelegramMessage)(chatId, `${prefix}\n\n${text}`.trim());
+}
+
+async function saveResponseState(
+  store: AgentSdkRunStore,
+  runId: string,
+  response: { state?: ConversationState<any>; usage?: unknown } | undefined,
+  status: "complete" | "rejected" | "failed",
+  error?: string,
+): Promise<void> {
+  const record = await store.load(runId);
+  if (!record) return;
+  const now = new Date().toISOString();
+  record.state = response?.state ?? record.state;
+  record.meta.status = status;
+  record.meta.updatedAt = now;
+  if (status === "complete" || status === "rejected") {
+    record.meta.completedAt = now;
+  }
+  if (response?.usage) {
+    record.meta.usage = response.usage;
+  }
+  if (error) {
+    record.meta.error = error;
+  }
+  await store.save(record);
 }
 
 export async function runAgentSdkEmailWorkflow(
@@ -168,6 +276,7 @@ export async function runAgentSdkEmailWorkflow(
   const callModel = deps.callModel ?? defaultCallModel;
   const readContext = deps.readContext ?? defaultReadContext;
   const sendEmail = deps.sendEmail ?? defaultSendEmail;
+  const longHorizon = resolveLongHorizonOptions(deps);
   const runId = createRunId();
   const now = new Date().toISOString();
   const tools = createAgentSdkTools({
@@ -188,12 +297,15 @@ export async function runAgentSdkEmailWorkflow(
       status: "running",
       createdAt: now,
       updatedAt: now,
+      maxCostUsd: longHorizon.maxCostUsd,
+      maxSteps: longHorizon.maxSteps,
     },
     state: createInitialState(runId),
   });
 
   try {
-    const result = await callModel(buildRequest(input.userText, tools, stateAccessor));
+    const result = await callModel(buildRequest(input.userText, tools, stateAccessor, longHorizon));
+    const progressPromise = sendTelegramProgress(result, deps, input.originChannelId);
     const state = await result.getState?.();
     if (state) {
       const record = await store.load(runId);
@@ -205,6 +317,7 @@ export async function runAgentSdkEmailWorkflow(
     }
 
     if (await result.requiresApproval?.()) {
+      await progressPromise;
       const pendingCalls = (await result.getPendingToolCalls?.()) ?? [];
       const pending = pendingCalls.find((call) => call.name === "send_email") ?? pendingCalls[0];
       if (!pending) {
@@ -236,28 +349,20 @@ export async function runAgentSdkEmailWorkflow(
     }
 
     const response = await result.getResponse?.();
-    const record = await store.load(runId);
-    if (record) {
-      record.state = response?.state ?? record.state;
-      record.meta.status = "complete";
-      record.meta.updatedAt = new Date().toISOString();
-      await store.save(record);
-    }
+    await progressPromise;
+    const reply = await safeText(result, "Agent SDK email workflow finished.");
+    await saveResponseState(store, runId, response, "complete");
+    await sendTelegramCompletion(deps, input.originChannelId, reply, "complete");
     return {
       handled: true,
       status: "complete",
       runId,
-      reply: await safeText(result, "Agent SDK email workflow finished."),
+      reply,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const record = await store.load(runId);
-    if (record) {
-      record.meta.status = "failed";
-      record.meta.error = message;
-      record.meta.updatedAt = new Date().toISOString();
-      await store.save(record);
-    }
+    await saveResponseState(store, runId, undefined, "failed", message);
+    await sendTelegramCompletion(deps, input.originChannelId, `Agent SDK email prototype failed: ${message}`, "failed");
     return {
       handled: true,
       status: "failed",
@@ -319,6 +424,7 @@ export async function resumeAgentSdkRunFromApprovalGate(
   const callModel = deps.callModel ?? defaultCallModel;
   const readContext = deps.readContext ?? defaultReadContext;
   const sendEmail = deps.sendEmail ?? defaultSendEmail;
+  const longHorizon = resolveLongHorizonOptions(deps);
   const tools = createAgentSdkTools({
     userId: record.meta.userId,
     runId,
@@ -329,22 +435,16 @@ export async function resumeAgentSdkRunFromApprovalGate(
   const stateAccessor = store.createStateAccessor(runId);
 
   try {
-    const result = await callModel(buildRequest("", tools, stateAccessor, input.approved
+    const result = await callModel(buildRequest("", tools, stateAccessor, longHorizon, input.approved
       ? { approveToolCalls: [toolCallId] }
       : { rejectToolCalls: [toolCallId] }));
+    const progressPromise = sendTelegramProgress(result, deps, input.originChannelId || record.meta.originChannelId);
     const text = await safeText(result, input.approved ? "Email send approved and resumed." : "Email send declined. I did not send it.");
     const response = await result.getResponse?.();
-    const latest = await store.load(runId);
-    if (latest) {
-      latest.state = response?.state ?? latest.state;
-      latest.meta.status = input.approved ? "complete" : "rejected";
-      latest.meta.updatedAt = new Date().toISOString();
-      await store.save(latest);
-    }
+    await progressPromise;
+    await saveResponseState(store, runId, response, input.approved ? "complete" : "rejected");
     const chatId = input.originChannelId || record.meta.originChannelId;
-    if (chatId) {
-      await (deps.sendTelegramMessage ?? defaultSendTelegramMessage)(chatId, text);
-    }
+    await sendTelegramCompletion(deps, chatId, text, input.approved ? "complete" : "rejected");
     return {
       handled: true,
       status: input.approved ? "complete" : "rejected",
@@ -353,13 +453,8 @@ export async function resumeAgentSdkRunFromApprovalGate(
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const latest = await store.load(runId);
-    if (latest) {
-      latest.meta.status = "failed";
-      latest.meta.error = message;
-      latest.meta.updatedAt = new Date().toISOString();
-      await store.save(latest);
-    }
+    await saveResponseState(store, runId, undefined, "failed", message);
+    await sendTelegramCompletion(deps, input.originChannelId || record.meta.originChannelId, `Agent SDK approval resume failed: ${message}`, "failed");
     return {
       handled: true,
       status: "failed",
@@ -372,4 +467,111 @@ export async function resumeAgentSdkRunFromApprovalGate(
 
 export function isAgentSdkApprovalGate(gate: { agentId?: string; toolArgs?: Record<string, unknown> } | null | undefined): boolean {
   return gate?.agentId === AGENT_SDK_HITL_AGENT_ID && gate.toolArgs?.__agentSdkPrototype === true;
+}
+
+export async function resumeAgentSdkEmailWorkflowRun(
+  input: ResumeAgentSdkEmailWorkflowRunInput,
+  deps: AgentSdkRunnerDeps = {},
+): Promise<Exclude<AgentSdkRunnerResult, { handled: false }>> {
+  if (!isAgentSdkRunnerEnabled()) {
+    return {
+      handled: true,
+      status: "failed",
+      runId: input.runId,
+      reply: "Agent SDK runner is disabled.",
+      error: "ENABLE_AGENT_SDK_RUNNER is not true",
+    };
+  }
+
+  const store = deps.store ?? createFileAgentSdkRunStore();
+  const record = await store.load(input.runId);
+  if (!record) {
+    return {
+      handled: true,
+      status: "failed",
+      runId: input.runId,
+      reply: "Agent SDK run could not resume because the run record was missing.",
+      error: "Run record missing",
+    };
+  }
+
+  const callModel = deps.callModel ?? defaultCallModel;
+  const readContext = deps.readContext ?? defaultReadContext;
+  const sendEmail = deps.sendEmail ?? defaultSendEmail;
+  const longHorizon = resolveLongHorizonOptions(deps);
+  const tools = createAgentSdkTools({
+    userId: record.meta.userId,
+    runId: input.runId,
+    store,
+    readContext: (query) => readContext(record.meta.userId, query),
+    sendEmail: (args) => sendEmail(record.meta.userId, args),
+  });
+  const stateAccessor = store.createStateAccessor(input.runId);
+  const now = new Date().toISOString();
+  record.meta.status = "running";
+  record.meta.resumedAt = now;
+  record.meta.updatedAt = now;
+  record.meta.maxCostUsd = longHorizon.maxCostUsd;
+  record.meta.maxSteps = longHorizon.maxSteps;
+  await store.save(record);
+
+  try {
+    const chatId = input.originChannelId || record.meta.originChannelId;
+    const result = await callModel(buildRequest([], tools, stateAccessor, longHorizon));
+    const progressPromise = sendTelegramProgress(result, deps, chatId);
+    if (await result.requiresApproval?.()) {
+      await progressPromise;
+      const pendingCalls = (await result.getPendingToolCalls?.()) ?? [];
+      const pending = pendingCalls.find((call) => call.name === "send_email") ?? pendingCalls[0];
+      if (!pending) {
+        throw new Error("Agent SDK resumed for approval but no pending tool call was returned");
+      }
+      const gateId = await (deps.requestApprovalForPendingCall ?? requestTelegramApprovalForPendingCall)(
+        {
+          runId: input.runId,
+          userId: record.meta.userId,
+          originChannel: record.meta.originChannel,
+          originChannelId: chatId,
+          toolCallId: pending.id,
+          toolName: pending.name,
+          arguments: pending.arguments,
+        },
+        {
+          store,
+          requestApproval: deps.requestApproval ?? defaultRequestApproval,
+          notifyApprovalRequest: deps.notifyApprovalRequest ?? defaultNotifyApprovalRequest,
+        },
+      );
+      return {
+        handled: true,
+        status: "awaiting_approval",
+        runId: input.runId,
+        gateId,
+        reply: await safeText(result, "Resumed run is waiting for approval."),
+      };
+    }
+
+    const text = await safeText(result, "Agent SDK email workflow resumed and finished.");
+    const response = await result.getResponse?.();
+    await progressPromise;
+    await saveResponseState(store, input.runId, response, "complete");
+    await sendTelegramCompletion(deps, chatId, text, "complete");
+    return {
+      handled: true,
+      status: "complete",
+      runId: input.runId,
+      reply: text,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await saveResponseState(store, input.runId, undefined, "failed", message);
+    await sendTelegramCompletion(deps, input.originChannelId || record.meta.originChannelId, `Agent SDK resume failed: ${message}`, "failed");
+    return {
+      handled: true,
+      status: "failed",
+      runId: input.runId,
+      reply: `Agent SDK resume failed: ${message}`,
+      error: message,
+    };
+  }
 }

@@ -14,6 +14,13 @@ $env:OPENROUTER_API_KEY="<set locally>"
 npm.cmd run server:dev
 ```
 
+Optional long-horizon ceilings:
+
+```powershell
+$env:OPENROUTER_AGENT_SDK_MAX_STEPS="20"
+$env:OPENROUTER_AGENT_SDK_MAX_COST="0.25"
+```
+
 The prototype only routes explicit requests that ask Jarvis to draft/write/compose and send an email.
 
 Examples:
@@ -30,14 +37,17 @@ Everything else continues through the normal Jarvis path.
 ```txt
 User asks to draft and send an email
 -> OpenRouter Agent SDK runner starts
+-> step count and cost ceilings are attached to the run
 -> read_context may load small Jarvis context
 -> draft_email creates an internal preview only
 -> send_email is requested with requireApproval=true
 -> run state is persisted under .jarvis/runtime/agent-sdk-runs/
+-> Telegram receives progress updates for tool calls / long-running output
 -> Jarvis approval gate is created
 -> Telegram approval card is sent, with in-app fallback
 -> Approve resumes and sends through existing sendEmailTool
 -> Decline resumes/reports without sending
+-> Telegram receives a completion/failure notification
 ```
 
 ## Safety
@@ -45,8 +55,20 @@ User asks to draft and send an email
 - `ENABLE_AGENT_SDK_RUNNER` defaults off.
 - The existing Jarvis approval gate remains the canonical approval record.
 - `sendEmailTool.execute` is only called after approval resumes.
-- File-backed run state is experimental and not durable production infrastructure.
+- File-backed run state is experimental and uses atomic writes so a restart can resume with the same `StateAccessor`.
 - Normal Gmail, Calendar, Composio, and Jarvis chat behavior remains unchanged unless the feature flag and explicit test workflow both match.
+
+## Resume After Restart
+
+The prototype persists `ConversationState` and local metadata for each run. A server process can resume an interrupted experimental email run by calling `resumeAgentSdkEmailWorkflowRun({ runId })`.
+
+That resume path calls OpenRouter with:
+
+```ts
+input: []
+```
+
+and the same file-backed `StateAccessor`, so the SDK continues from the saved checkpoint instead of starting a new conversation.
 
 ## Mocked Smoke
 
@@ -63,6 +85,9 @@ OK: draft generated
 OK: approval requested
 OK: paused run persisted
 OK: approval resumes and sends
+OK: completion notification sent
+OK: restart resume uses persisted state
+OK: Telegram progress updates sent
 OK: rejection prevents sending
 ```
 
