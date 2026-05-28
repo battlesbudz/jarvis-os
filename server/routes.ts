@@ -87,6 +87,7 @@ import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
+import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
 import { registerSubscriber, removeSubscriberIfCurrent } from "./webchatSSE";
 import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
@@ -946,13 +947,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function" as const,
       function: {
         name: "schedule_jarvis_task",
-        description: "Schedule a future task for Jarvis to act on at a specific time. Use when the user says 'remind me to...', 'schedule...', 'do X at Y time', or asks Jarvis to take an action later. Always confirm the scheduled time before calling.",
+        description: "Schedule a future task/reminder for Jarvis to act on at a specific time. Use when the user says 'remind me in an hour to...', 'schedule...', 'do X at Y time', or asks Jarvis to take an action later. If the user gives a clear relative or absolute time, call this immediately; ask a follow-up only when the time or reminder content is missing or ambiguous.",
         parameters: {
           type: "object",
           properties: {
             title: { type: "string", description: "Short title for the scheduled task (e.g. 'Review inbox', 'Send weekly update')" },
             description: { type: "string", description: "Optional details about what Jarvis should do when the time arrives" },
-            scheduledAt: { type: "string", description: "ISO 8601 datetime when to execute the task (e.g. '2025-04-23T09:00:00Z')" },
+            scheduledAt: { type: "string", description: "When to execute the task. Accepts ISO 8601 or common natural language like 'in an hour', 'tomorrow at 9am', or 'next Monday at 10am'." },
             recurrence: { type: "string", description: "Optional recurrence pattern: 'daily', 'weekly', 'weekdays', 'every Monday', 'every Sunday', etc. Omit for one-time tasks." },
           },
           required: ["title", "scheduledAt"],
@@ -1902,20 +1903,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!args.title || !args.scheduledAt) {
             return { result: 'error', label: 'Missing required fields', detail: 'title and scheduledAt are required' };
           }
-          const scheduledDate = new Date(args.scheduledAt);
+          const scheduledAtText = String(args.scheduledAt);
+          const recurring = parseRecurringExpr(scheduledAtText);
+          const scheduledDate = recurring?.scheduledAt ?? parseNaturalTime(scheduledAtText) ?? new Date(scheduledAtText);
+          const recurrence = args.recurrence ? String(args.recurrence) : recurring?.recurrence ?? null;
           if (isNaN(scheduledDate.getTime())) {
-            return { result: 'error', label: 'Invalid date', detail: `scheduledAt "${args.scheduledAt}" is not a valid ISO 8601 datetime` };
+            return { result: 'error', label: 'Invalid date', detail: `scheduledAt "${args.scheduledAt}" is not a valid date or natural time like "in an hour"` };
           }
-          await db.insert(schema.jarvisScheduledTasks).values({
+          const { task, deduped } = await createJarvisScheduledTask({
             userId,
             title: String(args.title),
             description: args.description ? String(args.description) : null,
             scheduledAt: scheduledDate,
-            recurrence: args.recurrence ? String(args.recurrence) : null,
+            recurrence,
           });
           const timeLabel = scheduledDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-          const recurrenceLabel = args.recurrence ? ` (${args.recurrence})` : '';
-          return { result: 'success', label: 'Task scheduled', detail: `"${args.title}" scheduled for ${timeLabel}${recurrenceLabel}` };
+          const recurrenceLabel = recurrence ? ` (${recurrence})` : '';
+          return {
+            result: 'success',
+            label: deduped ? 'Already scheduled' : 'Task scheduled',
+            detail: `"${task.title}" scheduled for ${timeLabel}${recurrenceLabel}`,
+          };
         }
         case 'image_generate': {
           const prompt = String(args.prompt || '').trim();
@@ -3443,14 +3451,64 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     }
   });
 
+  function titleCaseAction(raw: string): string {
+    const trimmed = raw
+      .replace(/[?.!]+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return trimmed ? trimmed.charAt(0).toUpperCase() + trimmed.slice(1) : "Follow up";
+  }
+
+  function extractReminderSuggestion(text: unknown): {
+    type: "reminder";
+    title: string;
+    category: string;
+    priority: "medium";
+    description: string;
+    scheduledAt: string;
+  } | null {
+    if (typeof text !== "string") return null;
+    const source = text.trim();
+    if (!/\b(remind\s+me|set\s+(a\s+)?reminder|reminder)\b/i.test(source)) return null;
+
+    const timeMatch = source.match(/\bin\s+(\d+(?:\.\d+)?|an?|one)\s+(minute|minutes|hour|hours|day|days|week|weeks)\b/i)
+      ?? source.match(/\btomorrow(?:\s+at\s+[^?.!,]+)?\b/i)
+      ?? source.match(/\btoday\s+at\s+[^?.!,]+\b/i)
+      ?? source.match(/\bnext\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)(?:\s+at\s+[^?.!,]+)?\b/i)
+      ?? source.match(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i);
+    if (!timeMatch) return null;
+
+    const afterTo = source.match(/\b(?:remind\s+me|set\s+(?:a\s+)?reminder)\b[\s\S]*?\bto\s+(.+)$/i)?.[1];
+    const taskText = (afterTo || source)
+      .replace(timeMatch[0], "")
+      .replace(/\b(can you|could you|please|set\s+(?:a\s+)?reminder|remind\s+me|reminder)\b/ig, "")
+      .replace(/\b(to|for)\b\s*$/i, "")
+      .trim();
+    const title = titleCaseAction(taskText || "Follow up");
+
+    return {
+      type: "reminder",
+      title,
+      category: "personal",
+      priority: "medium",
+      description: `Reminder requested from coach chat: ${source}`,
+      scheduledAt: timeMatch[0].trim(),
+    };
+  }
+
   app.post("/api/coach/suggestions", async (req: Request, res: Response) => {
+    let deterministicReminder: ReturnType<typeof extractReminderSuggestion> = null;
     try {
-      const { lastAssistantMessage, goals, coachingMode } = req.body;
+      const { lastAssistantMessage, lastUserMessage, goals, coachingMode } = req.body;
       if (!lastAssistantMessage) {
         return res.json({ actions: [], followups: [] });
       }
+      deterministicReminder = extractReminderSuggestion(lastUserMessage);
 
       const prompt = `Analyze this coaching message and extract structured suggestions.
+
+User's latest message:
+"${typeof lastUserMessage === "string" ? lastUserMessage : ""}"
 
 Coaching message:
 "${lastAssistantMessage}"
@@ -3459,9 +3517,10 @@ User's active goals:
 ${(goals || []).map((g: any) => `- ${g.title} (${g.category})`).join('\n') || 'None set'}
 
 Return a JSON object with:
-1. "actions": array of 0-2 actionable suggestions. Three action types are supported:
+1. "actions": array of 0-2 actionable suggestions. Four action types are supported:
    - { "type": "task", "title": string (verb phrase), "category": "fitness"/"finance"/"career"/"personal"/"social", "priority": "high"/"medium"/"low", "description": one-line context }
    - { "type": "goal", "title": string, "category": "fitness"/"finance"/"career"/"personal"/"social", "description": one-line context }
+   - { "type": "reminder", "title": string, "category": "personal", "priority": "medium", "description": one-line context, "scheduledAt": string, "recurrence": optional string } - Use when the user asked for a reminder or future follow-up. scheduledAt may be natural language like "in an hour", "tomorrow at 9am", or "next Monday at 10am" if that is exactly what the user said.
    - { "type": "link", "title": string, "buttonLabel": string (short CTA ≤4 words), "url": string (use "profile://connections" to open connection settings, or a full https:// URL), "category": "personal" } — Use ONLY when the message explicitly suggests connecting/reconnecting Google, Microsoft, Outlook, or Gmail.
    Only include actions that are specific and actionable. Return empty array for purely conversational messages.
 2. "followups": array of exactly 3 short follow-up questions (max 7 words each) the user would naturally ask next.
@@ -3478,12 +3537,19 @@ Return ONLY the JSON object.`;
       const content = response.textContent || '{"actions":[],"followups":[]}';
       try {
         const parsed = JSON.parse(content);
+        const parsedActions = Array.isArray(parsed.actions) ? parsed.actions.slice(0, 2) : [];
+        const actions = deterministicReminder
+          ? [
+              deterministicReminder,
+              ...parsedActions.filter((action: any) => action?.type !== "reminder").slice(0, 1),
+            ]
+          : parsedActions;
         res.json({
-          actions: Array.isArray(parsed.actions) ? parsed.actions.slice(0, 2) : [],
+          actions,
           followups: Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [],
         });
       } catch {
-        res.json({ actions: [], followups: [] });
+        res.json({ actions: deterministicReminder ? [deterministicReminder] : [], followups: [] });
       }
     } catch (error) {
       if (isRetriableProviderError(error)) {
@@ -3492,7 +3558,7 @@ Return ONLY the JSON object.`;
       } else {
         console.error("Error generating suggestions:", error);
       }
-      res.json({ actions: [], followups: [] });
+      res.json({ actions: deterministicReminder ? [deterministicReminder] : [], followups: [] });
     }
   });
 
@@ -4386,14 +4452,18 @@ Return ONLY the JSON object.`;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { title, description, scheduledAt, recurrence } = req.body;
       if (!title || !scheduledAt) return res.status(400).json({ error: "title and scheduledAt are required" });
-      const scheduledDate = new Date(scheduledAt);
-      if (isNaN(scheduledDate.getTime())) return res.status(400).json({ error: "scheduledAt must be a valid date" });
+      const scheduledAtText = String(scheduledAt);
+      const recurring = parseRecurringExpr(scheduledAtText);
+      const scheduledDate = recurring?.scheduledAt ?? parseNaturalTime(scheduledAtText) ?? new Date(scheduledAtText);
+      if (isNaN(scheduledDate.getTime())) {
+        return res.status(400).json({ error: 'scheduledAt must be a valid date or natural time like "in an hour"' });
+      }
       const { task, deduped } = await createJarvisScheduledTask({
         userId,
         title: String(title),
         description: description ? String(description) : null,
         scheduledAt: scheduledDate,
-        recurrence: recurrence ? String(recurrence) : null,
+        recurrence: recurrence ? String(recurrence) : recurring?.recurrence ?? null,
       });
       res.json({ ...task, deduped });
     } catch (err) {

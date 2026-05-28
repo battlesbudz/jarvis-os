@@ -111,6 +111,10 @@ function shouldSkipLowSignalExtraction(source: string): boolean {
   const normalized = source.trim().toLowerCase().replace(/\s+/g, " ");
   if (!normalized) return true;
   if (
+    /\b(remind\s+me|set\s+(a\s+)?reminder)\b/.test(normalized) &&
+    /\b(in|at|on|tomorrow|today|tonight|morning|afternoon|evening|hour|minute|week)\b/.test(normalized)
+  ) return true;
+  if (
     normalized.startsWith("please reply with exactly") ||
     normalized.includes("please reply with exactly") ||
     normalized.includes("router works") ||

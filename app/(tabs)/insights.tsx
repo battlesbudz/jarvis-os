@@ -281,6 +281,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
   const isUser = message.role === 'user';
   const router = useRouter();
   const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
+  const [actionStatusMap, setActionStatusMap] = useState<Record<string, 'saving' | 'error'>>({});
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'reconnect'>('idle');
   const [gmailUrl, setGmailUrl] = useState<string | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
@@ -332,6 +333,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
 
   const handleAddAction = useCallback(async (action: CoachAction, key: string) => {
     if (addedMap[key]) return;
+    if (actionStatusMap[key] === 'saving') return;
     if (action.type === 'link') {
       if (action.url) {
         if (action.url === 'profile://discord') {
@@ -344,12 +346,26 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
       }
       return;
     }
-    setAddedMap(prev => ({ ...prev, [key]: true }));
+    setActionStatusMap(prev => ({ ...prev, [key]: 'saving' }));
     try {
-      if (action.type === 'task') {
-        const loadedGoals = await getGoals();
-        const plan = await getTodayPlan(loadedGoals);
-        const newTask = {
+      if (action.type === 'reminder') {
+        if (!action.scheduledAt) {
+          throw new Error('No reminder time was provided.');
+        }
+        const res = await apiRequest('POST', '/api/jarvis/scheduled-tasks', {
+          title: action.title,
+          description: action.description || action.title,
+          scheduledAt: action.scheduledAt,
+          recurrence: action.recurrence,
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Could not schedule reminder.');
+        }
+        queryClient.invalidateQueries({ queryKey: ['/api/jarvis/scheduled-tasks'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
+      } else if (action.type === 'task') {
+        const task = {
           id: generateId(),
           title: action.title,
           category: action.category as any,
@@ -357,9 +373,20 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
           priority: (action.priority || 'medium') as any,
           description: action.description,
           goalId: undefined,
+          createdBy: 'coach_suggestion',
+          originSurface: 'coach_chat',
+          sourceIntent: 'suggestion_add',
+          createdAt: Date.now(),
         };
-        const updated = { ...plan, tasks: [...plan.tasks, newTask] };
-        await savePlan(updated);
+        const res = await apiRequest('PATCH', '/api/daily-command/plan', {
+          op: 'add_task',
+          task,
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Could not add task to today.');
+        }
+        queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       } else {
         const validCats = ['fitness', 'finance', 'career', 'personal', 'social'];
         const cat = validCats.includes(action.category) ? action.category : 'personal';
@@ -374,8 +401,17 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
         };
         await saveGoal(newGoal);
       }
-    } catch {}
-  }, [addedMap, onDiscordConnect]);
+      setAddedMap(prev => ({ ...prev, [key]: true }));
+      setActionStatusMap(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } catch (error) {
+      setActionStatusMap(prev => ({ ...prev, [key]: 'error' }));
+      Alert.alert('Could not add this', error instanceof Error ? error.message : 'Please try again.');
+    }
+  }, [addedMap, actionStatusMap, onDiscordConnect, router]);
 
   return (
     <View style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}>
@@ -667,22 +703,64 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
           {message.actions.map((action, idx) => {
             const key = `${action.type}-${idx}`;
             const added = addedMap[key];
+            const status = actionStatusMap[key];
+            const saving = status === 'saving';
+            const failed = status === 'error';
+            const actionIcon = action.type === 'link'
+              ? 'link-outline'
+              : saving
+                ? 'time-outline'
+                : added
+                  ? 'checkmark'
+                  : failed
+                    ? 'alert-circle-outline'
+                    : action.type === 'reminder'
+                      ? 'alarm-outline'
+                      : action.type === 'task'
+                        ? 'add-circle-outline'
+                        : 'flag-outline';
+            const actionLabel = action.type === 'link'
+              ? (action.buttonLabel || action.title)
+              : saving
+                ? 'Adding...'
+                : added
+                  ? (action.type === 'reminder' ? 'Reminder set' : 'Added!')
+                  : failed
+                    ? 'Retry add'
+                    : action.type === 'reminder'
+                      ? `Remind: ${action.title}`
+                      : action.type === 'task'
+                        ? `Add: ${action.title}`
+                        : `Set goal: ${action.title}`;
             return (
               <Pressable
                 key={key}
-                style={[styles.actionPill, added && styles.actionPillAdded, action.type === 'link' && styles.actionPillLink]}
+                style={[
+                  styles.actionPill,
+                  added && styles.actionPillAdded,
+                  failed && styles.actionPillError,
+                  action.type === 'link' && styles.actionPillLink,
+                  action.type === 'reminder' && !added && !failed && styles.actionPillReminder,
+                ]}
                 onPress={() => handleAddAction(action, key)}
+                disabled={saving}
               >
-                <Ionicons
-                  name={action.type === 'link' ? 'link-outline' : added ? 'checkmark' : action.type === 'task' ? 'add-circle-outline' : 'flag-outline'}
-                  size={13}
-                  color={action.type === 'link' ? '#818CF8' : added ? Colors.success : Colors.primary}
-                />
-                <Text style={[styles.actionPillText, added && styles.actionPillTextAdded, action.type === 'link' && styles.actionPillTextLink]}>
-                  {action.type === 'link'
-                    ? (action.buttonLabel || action.title)
-                    : added ? 'Added!'
-                    : action.type === 'task' ? `Add: ${action.title}` : `Set goal: ${action.title}`}
+                {saving ? (
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                ) : (
+                  <Ionicons
+                    name={actionIcon as any}
+                    size={13}
+                    color={action.type === 'link' ? '#818CF8' : failed ? Colors.error : added ? Colors.success : Colors.primary}
+                  />
+                )}
+                <Text style={[
+                  styles.actionPillText,
+                  added && styles.actionPillTextAdded,
+                  failed && styles.actionPillTextError,
+                  action.type === 'link' && styles.actionPillTextLink,
+                ]}>
+                  {actionLabel}
                 </Text>
               </Pressable>
             );
@@ -2172,7 +2250,12 @@ export default function InsightsScreen() {
         const suggestRes = await authFetch(suggestUrl.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lastAssistantMessage: finalContent, goals: goalsRef.current, coachingMode: coachingModeRef.current }),
+          body: JSON.stringify({
+            lastAssistantMessage: finalContent,
+            lastUserMessage: userMsg.content,
+            goals: goalsRef.current,
+            coachingMode: coachingModeRef.current,
+          }),
         });
         const suggestData = await suggestRes.json();
         const actions: CoachAction[] = suggestData.actions || [];
@@ -3990,9 +4073,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECFDF5',
     borderColor: '#A7F3D0',
   },
+  actionPillError: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
   actionPillLink: {
     backgroundColor: 'rgba(99, 102, 241, 0.1)',
     borderColor: 'rgba(99, 102, 241, 0.4)',
+  },
+  actionPillReminder: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
   },
   actionPillText: {
     fontSize: 12,
@@ -4001,6 +4092,9 @@ const styles = StyleSheet.create({
   },
   actionPillTextAdded: {
     color: Colors.success,
+  },
+  actionPillTextError: {
+    color: Colors.error,
   },
   actionPillTextLink: {
     color: '#818CF8',

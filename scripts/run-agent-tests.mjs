@@ -32,6 +32,7 @@ const tests = [
   { file: "server/agent/__tests__/jobObservability.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },
   { file: "server/agent/__tests__/manifestFilter.assert.ts" },
+  { file: "server/agent/__tests__/cronTools.assert.ts" },
   { file: "server/agent/__tests__/toolAwareRouting.assert.ts" },
   { file: "server/agent/__tests__/projectCreateRequest.assert.ts" },
   { file: "server/agent/__tests__/modelRouter.assert.ts" },
