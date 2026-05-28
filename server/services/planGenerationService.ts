@@ -1,13 +1,23 @@
-import OpenAI from "openai";
-import { and, desc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
-import { getOpenAIClientConfig } from "../agent/providers/env";
-import { getValidGoogleTokens } from "../userTokenStore";
-import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
-import { getRecentEmailCommitments } from "../integrations/gmail";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
+import { collectDailyCommandContext } from "../dailyCommand/contextCollector";
+import { getLocalDateKey, type DailyCommandContextWarning } from "../dailyCommand/planOps";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[PlanGeneration]", "balanced");
+
+export interface BuildPlanForUserOptions {
+  dateKey?: string;
+  timezone?: string;
+  existingTasks?: unknown[];
+}
+
+export interface BuildPlanForUserResult {
+  tasks: Array<{ title: string; category: string; priority: string; duration?: number; time?: string; description?: string }>;
+  reasoning: string;
+  contextWarnings: DailyCommandContextWarning[];
+}
 
 export async function buildPlanFromInputs(body: any): Promise<{
   reasoning: string;
@@ -65,9 +75,11 @@ export async function buildPlanFromInputs(body: any): Promise<{
     ? modeInstructions[coachingMode]
     : '';
 
-  const now = new Date();
-  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
-  const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+  const timezone = typeof body.timezone === "string" ? body.timezone : "America/New_York";
+  const dateKey = typeof body.dateKey === "string" ? body.dateKey : undefined;
+  const now = dateKey ? new Date(`${dateKey}T12:00:00.000Z`) : new Date();
+  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: dateKey ? "UTC" : timezone });
+  const dateStr = now.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: dateKey ? "UTC" : timezone });
 
   const { buildAiContextSections } = await import("../memory/promptContext");
   const planSeed = [
@@ -150,53 +162,79 @@ Return ONLY the JSON object.`;
   }
 }
 
-export async function buildPlanForUser(userId: string): Promise<{
-  tasks: Array<{ title: string; category: string; priority: string; duration?: number; time?: string; description?: string }>;
-  reasoning: string;
-} | null> {
-  try {
-    const today = new Date().toISOString().slice(0, 10);
+function buildDeterministicFallbackTask(opts: {
+  goals: any[];
+  brainDump: any[];
+  gmailItems: any[];
+}): { title: string; category: string; priority: string; duration: number; description: string } {
+  const firstBrainDump = opts.brainDump.find((item) => typeof item?.text === "string" && item.text.trim());
+  if (firstBrainDump?.text) {
+    return {
+      title: String(firstBrainDump.text).trim().slice(0, 90),
+      category: "personal",
+      priority: "high",
+      duration: 25,
+      description: "Fallback task pulled from your brain dump because generated planning output was unavailable.",
+    };
+  }
+  const firstGoal = opts.goals.find((goal) => typeof goal?.title === "string" && goal.title.trim());
+  if (firstGoal?.title) {
+    return {
+      title: `Move forward: ${String(firstGoal.title).trim()}`.slice(0, 90),
+      category: "career",
+      priority: "high",
+      duration: 30,
+      description: "Fallback task anchored to your first active goal because generated planning output was unavailable.",
+    };
+  }
+  const firstEmail = opts.gmailItems.find((item) => typeof item?.subject === "string" && item.subject.trim());
+  if (firstEmail?.subject) {
+    return {
+      title: `Review email: ${String(firstEmail.subject).trim()}`.slice(0, 90),
+      category: "personal",
+      priority: "medium",
+      duration: 15,
+      description: "Fallback task anchored to recent email context because generated planning output was unavailable.",
+    };
+  }
+  return {
+    title: "Review today's top priorities",
+    category: "personal",
+    priority: "high",
+    duration: 20,
+    description: "Fallback task created because generated planning output was unavailable.",
+  };
+}
 
-    const [goalsRow, historyRow, brainDumpRow, lifeContextRow, prefsRow, energyRow] = await Promise.all([
+export async function buildPlanForUser(userId: string, opts: BuildPlanForUserOptions = {}): Promise<BuildPlanForUserResult | null> {
+  try {
+    const [prefsRow] = await db
+      .select({ data: schema.userPreferences.data })
+      .from(schema.userPreferences)
+      .where(eq(schema.userPreferences.userId, userId))
+      .limit(1);
+    const prefs = (prefsRow?.data as any) || {};
+    const timezone = opts.timezone || prefs.timezone || "America/New_York";
+    const today = opts.dateKey || getLocalDateKey(new Date(), timezone);
+
+    const [goalsRow, historyRow, brainDumpRow, lifeContextRow, energyRow] = await Promise.all([
       db.select({ data: schema.goals.data }).from(schema.goals).where(eq(schema.goals.userId, userId)),
       db.select({ data: schema.completionHistory.data }).from(schema.completionHistory).where(eq(schema.completionHistory.userId, userId)),
       db.select({ data: schema.brainDumpInbox.data }).from(schema.brainDumpInbox).where(eq(schema.brainDumpInbox.userId, userId)),
       db.select({ data: schema.lifeContext.data }).from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)),
-      db.select({ data: schema.userPreferences.data }).from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId)),
       db.select({ data: schema.energyCheckins.data }).from(schema.energyCheckins).where(and(eq(schema.energyCheckins.userId, userId), eq(schema.energyCheckins.date, today))),
     ]);
 
     const goals = (goalsRow[0]?.data as any[]) || [];
     const completionHistory = (historyRow[0]?.data as any[]) || [];
     const brainDump = (brainDumpRow[0]?.data as any[]) || [];
-    const prefs = (prefsRow[0]?.data as any) || {};
     const coachingMode = prefs.coachingMode;
     const energyCheckin = energyRow[0]?.data as any;
     const energyLevel = energyCheckin?.energy;
 
-    let calendarEvents: any[] = [];
-    let gmailItems: any[] = [];
-
-    try {
-      const googleTokens = await getValidGoogleTokens(userId);
-      if (googleTokens.length > 0) {
-        const startTime = new Date(today + 'T00:00:00').toISOString();
-        const endTime = new Date(today + 'T23:59:59').toISOString();
-        const events = await getGoogleCalendarEvents(today, startTime, endTime, googleTokens[0]);
-        calendarEvents = events.map((e: any) => ({
-          title: e.title,
-          time: e.start ? new Date(e.start).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : undefined,
-          description: e.location || e.description,
-        }));
-      }
-    } catch {}
-
-    try {
-      const googleTokens = await getValidGoogleTokens(userId);
-      if (googleTokens.length > 0) {
-        gmailItems = await getRecentEmailCommitments(7, googleTokens[0]);
-      }
-    } catch {}
+    const dailyContext = await collectDailyCommandContext(userId, today, timezone);
+    const calendarEvents = dailyContext.calendarEvents;
+    const gmailItems = dailyContext.gmailItems;
 
     // Fetch today's predictions and the user's energy peak hour to steer task
     // ordering toward energy windows.
@@ -255,13 +293,35 @@ export async function buildPlanForUser(userId: string): Promise<{
       completionHistory,
       energyLevel: energyLevel ?? 3,
       coachingMode,
-      existingTasks: [],
+      existingTasks: opts.existingTasks ?? [],
       userId,
       predictionContext,
+      dateKey: today,
+      timezone,
     });
 
-    if (!result || result.tasks.length === 0) return null;
-    return result;
+    if (!result || result.tasks.length === 0) {
+      const existingTasks = Array.isArray(opts.existingTasks) ? opts.existingTasks : [];
+      if (existingTasks.length > 0) {
+        return {
+          tasks: [],
+          reasoning: "Existing plan preserved because generated planning output was empty.",
+          contextWarnings: [
+            ...dailyContext.warnings,
+            { source: "plan_generation", severity: "warning", message: "Generated planning output was empty; existing plan was preserved." },
+          ],
+        };
+      }
+      return {
+        reasoning: "Jarvis used a deterministic fallback because generated planning output was empty.",
+        tasks: [buildDeterministicFallbackTask({ goals, brainDump, gmailItems })],
+        contextWarnings: [
+          ...dailyContext.warnings,
+          { source: "plan_generation", severity: "warning", message: "Generated planning output was empty; fallback task was used." },
+        ],
+      };
+    }
+    return { ...result, contextWarnings: dailyContext.warnings };
   } catch (err) {
     console.error(`buildPlanForUser failed for ${userId}:`, err);
     return null;

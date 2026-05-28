@@ -84,6 +84,14 @@ interface Memory {
   content: string;
   category: string;
   extractedAt: string;
+  tier?: string;
+  memoryType?: string;
+  confidence?: number;
+  relevanceScore?: number;
+  sourceType?: string;
+  sourceRef?: string | null;
+  trustStatus?: 'pending' | 'active' | 'edited' | 'rejected';
+  whyJarvisLearnedIt?: string;
 }
 
 interface PendingMemory {
@@ -93,6 +101,11 @@ interface PendingMemory {
   memory_type: string;
   tier: string;
   confidence: number;
+  relevance_score?: number;
+  source_type?: string;
+  source_ref?: string | null;
+  trust_status?: 'pending' | 'active' | 'edited' | 'rejected';
+  why_jarvis_learned_it?: string;
   extracted_at: string;
 }
 
@@ -2453,6 +2466,14 @@ export default function ProfileScreen() {
                       <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
                         <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{mem.category.replace(/_/g, ' ')}</Text>
                       </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{mem.tier.replace(/_/g, ' ')}</Text>
+                      </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>
+                          {mem.confidence}% confidence{typeof mem.relevance_score === 'number' ? ` · ${mem.relevance_score}% relevant` : ''}
+                        </Text>
+                      </View>
                     </View>
                     {editingMemoryId === mem.id ? (
                       <View>
@@ -2494,6 +2515,11 @@ export default function ProfileScreen() {
                     ) : (
                       <View>
                         <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 20, marginBottom: 10 }}>{mem.content}</Text>
+                        {!!mem.why_jarvis_learned_it && (
+                          <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 17, marginBottom: 8 }}>
+                            {mem.why_jarvis_learned_it}
+                          </Text>
+                        )}
                         <View style={{ flexDirection: 'row', gap: 8 }}>
                           <Pressable
                             onPress={() => handleReviewMemory(mem.id, 'keep')}
@@ -2522,6 +2548,8 @@ export default function ProfileScreen() {
                     {mem.extracted_at && (
                       <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }}>
                         Extracted {new Date(mem.extracted_at).toLocaleDateString()}
+                        {mem.source_type ? ` · Source: ${mem.source_type.replace(/_/g, ' ')}` : ''}
+                        {mem.source_ref ? ` · ${mem.source_ref}` : ''}
                       </Text>
                     )}
                   </View>
@@ -2744,30 +2772,50 @@ export default function ProfileScreen() {
             </View>
           ) : (
             <View style={styles.memoryList}>
-              {memories.map((memory, idx) => (
-                <View
-                  key={memory.id}
-                  style={[styles.memoryRow, idx < memories.length - 1 && styles.memoryRowBorder]}
-                >
-                  <View style={styles.memoryContent}>
-                    <View style={styles.memoryCategoryRow}>
-                      <View style={styles.memoryCategoryPill}>
-                        <Text style={styles.memoryCategoryText}>
-                          {memory.category.toUpperCase()}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={styles.memoryText}>{memory.content}</Text>
-                  </View>
-                  <Pressable
-                    style={styles.memoryDeleteBtn}
-                    onPress={() => handleDeleteMemory(memory.id)}
-                    hitSlop={8}
+              {memories.map((memory, idx) => {
+                const metaBits = [
+                  memory.memoryType || 'semantic',
+                  memory.tier || 'long term',
+                  typeof memory.confidence === 'number' ? `${memory.confidence}% confidence` : null,
+                  typeof memory.relevanceScore === 'number' ? `${memory.relevanceScore}% relevant` : null,
+                  memory.trustStatus ? memory.trustStatus : null,
+                ].filter(Boolean);
+                return (
+                  <View
+                    key={memory.id}
+                    style={[styles.memoryRow, idx < memories.length - 1 && styles.memoryRowBorder]}
                   >
-                    <Ionicons name="trash-outline" size={16} color={Colors.textTertiary} />
-                  </Pressable>
-                </View>
-              ))}
+                    <View style={styles.memoryContent}>
+                      <View style={styles.memoryCategoryRow}>
+                        <View style={styles.memoryCategoryPill}>
+                          <Text style={styles.memoryCategoryText}>
+                            {memory.category.toUpperCase()}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.memoryText}>{memory.content}</Text>
+                      {metaBits.length > 0 && (
+                        <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }}>
+                          {metaBits.join(' · ')}
+                          {memory.sourceType ? ` · Source: ${memory.sourceType.replace(/_/g, ' ')}` : ''}
+                        </Text>
+                      )}
+                      {!!memory.whyJarvisLearnedIt && (
+                        <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 6 }}>
+                          {memory.whyJarvisLearnedIt}
+                        </Text>
+                      )}
+                    </View>
+                    <Pressable
+                      style={styles.memoryDeleteBtn}
+                      onPress={() => handleDeleteMemory(memory.id)}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={Colors.textTertiary} />
+                    </Pressable>
+                  </View>
+                );
+              })}
             </View>
           )}
         </Animated.View>

@@ -26,6 +26,7 @@ PRIME orchestrates tasks with minimal context loading, explicit safety boundarie
 | Task Type | Read First | Primary Crew | Code/Workspace Area | Skip Unless Needed |
 |---|---|---|---|---|
 | Daily priorities, calendar strategy, goal breakdown | `agents/crew/planning.md` | ORACLE | `workspaces/battles/daily-command-center/`, `server/agent/planning`, `server/scheduler.ts` | Mobile UI, integrations unrelated to calendar/tasks |
+| Coaching, motivation, user-facing advice, tone selection | `agents/COACHING.md` plus relevant crew if needed | ORACLE or ECHO | root `SOUL.md`, current conversation, relevant workspace context | Tool manuals, broad repo scans |
 | Research, citations, market or technical analysis | `agents/crew/research.md` | ATLAS | `workspaces/battles/research/`, `server/capabilities/researchCapability.ts`, transcript/search tools | App screens, daemon |
 | Email, Telegram, Discord, Slack, outreach, drafts | `agents/crew/communications.md` | HERALD | `server/channels/`, `server/integrations/`, `workspaces/battles/business/` | Agent build tools |
 | Monitoring, alerts, health checks, anomalies | `agents/crew/monitoring.md` | SCOUT | `server/heartbeat.ts`, `server/curiosityScanner.ts`, `server/intelligence/`, `server/agent/quality*` | Content workspaces |
@@ -51,6 +52,7 @@ PRIME orchestrates tasks with minimal context loading, explicit safety boundarie
 - For broad workspace placement, living document routing, or "where should this go?" questions, check `docs/workspace-map.md` before opening room-level context.
 - Load `agents/TOOL_POLICY.md` for any action with side effects.
 - Load one primary crew file.
+- Load `agents/COACHING.md` only when user-facing coaching style or advice is part of the task.
 - Load workspace `CONTEXT.md` only for the workspace being used.
 - Pull memory on demand via ECHO or memory code.
 - For code work, read the exact files touched by the route table and nearby tests.

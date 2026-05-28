@@ -10,7 +10,7 @@ This folder is not implementation code. The implementation lives mostly in `serv
 | Layer | Files | Job |
 |---|---|---|
 | Master map | `AGENTS.md`, `agents/PRIME.md`, `agents/ROUTING.md`, `agents/TOOL_POLICY.md` | Find workflow rules, route the task, and set safety boundaries. |
-| Specialist rooms | `agents/crew/*.md` | Load only the role-specific behavior for the active task. |
+| Specialist rooms | `agents/crew/*.md`, `agents/COACHING.md` when relevant | Load only the role-specific behavior for the active task. |
 | Working folders | `server/`, `app/`, `components/`, `workspaces/`, `shared/`, `docs/` | Hold the actual product code, content, memories, decisions, and outputs. |
 
 ## Core Files
@@ -20,6 +20,7 @@ This folder is not implementation code. The implementation lives mostly in `serv
 - `SOUL.md` - pointer to root `SOUL.md`; do not duplicate personality here.
 - `ROUTING.md` - task routing, delegation, escalation, fallback, and output destinations.
 - `TOOL_POLICY.md` - tool use, approval, file write, and destructive action rules.
+- `COACHING.md` - coaching modes, frameworks, and response style for user-facing advice.
 
 ## Crew Layer
 `crew/` contains specialist role prompts:
@@ -42,9 +43,10 @@ This folder is not implementation code. The implementation lives mostly in `serv
 3. Read `agents/ROUTING.md` to classify the task and choose the room.
 4. Read `agents/TOOL_POLICY.md` before external actions, file writes, code edits, device actions, messages, calendar changes, purchases, or deletions.
 5. Load exactly one primary `agents/crew/*.md` unless the task obviously spans domains.
-6. Load workspace `CONTEXT.md` files only when the work belongs to that workspace.
-7. Pull memory through the memory layer or ECHO; do not broad-scan personal context by default.
-8. Prefer targeted file reads over whole-repo scans.
+6. Load `agents/COACHING.md` only for coaching, prioritization, motivation, planning tone, or user-facing advice.
+7. Load workspace `CONTEXT.md` files only when the work belongs to that workspace.
+8. Pull memory through the memory layer or ECHO; do not broad-scan personal context by default.
+9. Prefer targeted file reads over whole-repo scans.
 
 ## Implementation Map
 

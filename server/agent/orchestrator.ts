@@ -17,6 +17,8 @@ import type { AgentTool } from "./types";
 import { detectTournamentSignals } from "./tournamentRunner";
 import { routeModelTurn } from "./modelRouter";
 import { DEFAULT_CODEX_OAUTH_MODEL } from "./runtimeModel";
+import { getCoachAppAgentId } from "./coreAgentIds";
+import { createSystemApprovalOnBeforeTool } from "./systemApprovalGate";
 
 const ORCHESTRATOR_MAX_TOKENS = 8192;
 
@@ -326,6 +328,15 @@ async function executeSubTask(
     maxTurns: 4,
     maxCompletionTokens: maxCompletionTokens ?? 1500,
     onProgressMessage,
+    onBeforeTool: createSystemApprovalOnBeforeTool({
+      agentId: getCoachAppAgentId(toolContext.userId),
+      agentName: "Jarvis Orchestrator",
+      userId: toolContext.userId,
+      platform: toolContext.channel ?? "orchestrator",
+      channelId: toolContext.discordChannelId,
+      initiatedBy: "user",
+      signal: toolContext.signal,
+    }),
   });
 
   return result.reply || "(no result)";

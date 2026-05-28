@@ -6,6 +6,10 @@ import { notifyUser, getActiveChannelsFor } from './channels/registry';
 import { logInteraction } from './interactionLog';
 import { isActionSuppressed } from './intelligence/actionLog';
 import { buildPlanForUser } from './routes';
+import { getUserTimezone } from './dailyCommand/service';
+import { getLocalDateKey, mergeGeneratedTasksIntoPlan } from './dailyCommand/planOps';
+import { savePlanForUser } from './dailyCommand/planPersistence';
+import { mergeGoalTaskIntoPlan } from './goalPlanHandoff';
 import {
   getInjectableGoalTasks,
   getPlanPacingContextFromTasks,
@@ -936,14 +940,17 @@ export async function runPredictionEngineForAllUsers(startDate: string): Promise
 }
 
 export async function runMorningPlanBuild() {
-  const today = new Date().toISOString().slice(0, 10);
-  await runPredictionEngineForAllUsers(today);
+  const schedulerNow = new Date();
+  const predictionDate = getLocalDateKey(schedulerNow, "America/New_York");
+  await runPredictionEngineForAllUsers(predictionDate);
 
   const allUsers = await db.select({ id: schema.users.id }).from(schema.users);
   console.log(`[Scheduler] Processing ${allUsers.length} user(s) for auto-plan build`);
 
   for (const user of allUsers) {
     try {
+      const userTimezone = await getUserTimezone(user.id).catch(() => "America/New_York");
+      const today = getLocalDateKey(schedulerNow, userTimezone);
       const existingPlan = await db
         .select({ data: schema.plans.data })
         .from(schema.plans)
@@ -951,8 +958,7 @@ export async function runMorningPlanBuild() {
 
       const existingTasks = (existingPlan[0]?.data as any)?.tasks || [];
       if (existingTasks.length > 0) {
-        console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, skipping`);
-        continue;
+        console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, merging daily command updates`);
       }
 
       // Self-correction suppression: if plan_built or task_suggested is suppressed,
@@ -967,36 +973,33 @@ export async function runMorningPlanBuild() {
         console.log(`[Scheduler] AI plan/task suggestions suppressed for user ${user.id} (self-correction) — using goal-tree injection only`);
       }
 
-      const newTasks: {
-        id: string; title: string; category: string; priority: string;
-        duration: number; time: string | undefined; description: string | undefined;
-        completed: boolean; createdAt: number; fromJarvis: boolean;
-      }[] = [];
+      let currentPlanData: any = {
+        ...((existingPlan[0]?.data as any) || {}),
+        date: today,
+        tasks: Array.isArray(existingTasks) ? [...existingTasks] : [],
+      };
+      let newTasks: any[] = currentPlanData.tasks;
 
       let planReasoning = "";
       // aiGeneratedTaskIds tracks only tasks from buildPlanForUser for Ego logging,
       // so goal-injected tasks are not misattributed as AI suggestions.
       const aiGeneratedTaskIds: string[] = [];
       if (!aiSuggestionsSuppressed) {
-        const result = await buildPlanForUser(user.id);
+        const result = await buildPlanForUser(user.id, {
+          dateKey: today,
+          timezone: userTimezone,
+          existingTasks: newTasks,
+        });
         if (result && result.tasks.length > 0) {
           planReasoning = result.reasoning ?? "";
-          for (const t of result.tasks) {
-            const taskId = `jarvis_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-            aiGeneratedTaskIds.push(taskId);
-            newTasks.push({
-              id: taskId,
-              title: t.title,
-              category: t.category,
-              priority: t.priority,
-              duration: t.duration ?? 0,
-              time: t.time,
-              description: t.description,
-              completed: false,
-              createdAt: Date.now(),
-              fromJarvis: true,
-            });
-          }
+          const mergedAiPlan = mergeGeneratedTasksIntoPlan(currentPlanData, result.tasks, {
+            dateKey: today,
+            source: "morning_scheduler",
+            contextWarnings: result.contextWarnings,
+          });
+          currentPlanData = mergedAiPlan.plan;
+          newTasks = currentPlanData.tasks;
+          aiGeneratedTaskIds.push(...mergedAiPlan.inserted.map((task) => task.id));
         } else {
           console.log(`[Scheduler] No AI tasks generated for user ${user.id}`);
         }
@@ -1010,29 +1013,17 @@ export async function runMorningPlanBuild() {
       } catch (e) {
         console.error(`[Scheduler] goal injection lookup failed for ${user.id}:`, e);
       }
+      const insertedGoalPicks: InjectableGoalTask[] = [];
       for (const pick of injected) {
-        const minutes = Math.max(15, Math.round((pick.estimateHours || 1) * 60));
-        (newTasks as (typeof newTasks[number] & { goalTreeId?: string; goalTaskId?: string })[]).push({
-          id: `goal_${pick.taskId}_${today}`,
-          title: pick.title,
-          category: 'goal',
-          priority: 'high',
-          duration: minutes,
-          time: undefined,
-          description: pick.description
-            ? `${pick.description} (from goal: ${pick.goalTitle})`
-            : `From goal: ${pick.goalTitle}`,
-          completed: false,
-          createdAt: Date.now(),
-          fromJarvis: true,
-          goalTreeId: pick.goalTreeId,
-          goalTaskId: pick.taskId,
-        });
+        const mergedGoal = mergeGoalTaskIntoPlan(currentPlanData, pick, today);
+        currentPlanData = mergedGoal.plan;
+        newTasks = currentPlanData.tasks;
+        if (mergedGoal.inserted) insertedGoalPicks.push(pick);
       }
-      if (injected.length > 0) {
+      if (insertedGoalPicks.length > 0) {
         try {
-          await markTasksInjected(user.id, injected, today);
-          console.log(`[Scheduler] injected ${injected.length} goal task(s) for user ${user.id}`);
+          await markTasksInjected(user.id, insertedGoalPicks, today);
+          console.log(`[Scheduler] injected ${insertedGoalPicks.length} goal task(s) for user ${user.id}`);
         } catch (e) {
           console.error(`[Scheduler] markTasksInjected failed for ${user.id}:`, e);
         }
@@ -1043,13 +1034,28 @@ export async function runMorningPlanBuild() {
         continue;
       }
 
-      await db.insert(schema.plans).values({
+      currentPlanData = {
+        ...currentPlanData,
+        meta: {
+          ...(currentPlanData.meta || {}),
+          dailyCommand: {
+            ...(currentPlanData.meta?.dailyCommand || {}),
+            source: "morning_scheduler",
+            generatedAt: new Date().toISOString(),
+            mode: "merge",
+            aiTaskCount: aiGeneratedTaskIds.length,
+            goalTaskCount: insertedGoalPicks.length,
+            preservedTaskCount: Array.isArray(existingTasks) ? existingTasks.length : 0,
+            reasoning: planReasoning || currentPlanData.meta?.dailyCommand?.reasoning,
+          },
+        },
+      };
+
+      await savePlanForUser({
         userId: user.id,
         date: today,
-        data: { date: today, tasks: newTasks },
-      }).onConflictDoUpdate({
-        target: [schema.plans.userId, schema.plans.date],
-        set: { data: { date: today, tasks: newTasks }, updatedAt: new Date() },
+        data: currentPlanData,
+        previousData: existingPlan[0]?.data,
       });
 
       // Log Ego actions only when AI suggestions were generated (not suppressed).

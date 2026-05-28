@@ -54,7 +54,7 @@ async function main(): Promise<void> {
       description: string;
       initiatedBy?: string;
     }> = [];
-    const notifications: Array<{ userId: string; type: string; text: string; gateId?: string }> = [];
+    const notifications: Array<Record<string, unknown>> = [];
     const result = await routeAutonomyRequest(
       {
         userId: "user_1",
@@ -71,8 +71,8 @@ async function main(): Promise<void> {
           approvalRequests.push(request);
           return { id: "gate_123", status: "pending" };
         },
-        notifyApproval: async (userId, text, gateId) => {
-          notifications.push({ userId, type: "approval_request", text, gateId });
+        notifyApproval: async (payload) => {
+          notifications.push(payload as unknown as Record<string, unknown>);
         },
         observeDecision: (observation) => {
           observations.push(observation);
@@ -95,6 +95,8 @@ async function main(): Promise<void> {
     assert.equal(approvalRequests[0].initiatedBy, "user");
     assert.equal(notifications.length, 1);
     assert.equal(notifications[0].gateId, "gate_123");
+    assert.equal(notifications[0].originChannel, "Gateway");
+    assert.equal(notifications[0].toolName, "send_email");
     assert.deepEqual(observations, [
       {
         mode: "requires_approval",

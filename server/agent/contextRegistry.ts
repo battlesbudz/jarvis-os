@@ -10,6 +10,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { BUDGET_PRESETS } from "../memory/contextBuilder";
+import { decideContextPacks } from "./contextPacks";
 
 export type ContextProviderInput = {
   userId: string;
@@ -94,6 +95,10 @@ type RouterSelection = {
   crewFile?: string;
   workspaceContext?: string;
   needsToolPolicy: boolean;
+  contextPacks: string[];
+  riskLevel: string;
+  approvalRequired: boolean;
+  outputDestination?: string;
 };
 
 const REPO_ROOT = process.cwd();
@@ -112,37 +117,42 @@ async function readRepoDoc(relativePath: string, maxChars = MAX_CONTEXT_DOC_CHAR
 }
 
 function selectRouterContext(userMessage: string): RouterSelection {
-  const msg = userMessage.toLowerCase();
-  const needsToolPolicy = /\b(send|email|message|post|publish|calendar|schedule|delete|overwrite|remove|move|rename|deploy|push|commit|daemon|phone|android|desktop|file|edit|write|memory|purchase|buy|contract|legal|pay)\b/.test(msg);
+  const decision = decideContextPacks({ userMessage });
+  const needsToolPolicy =
+    decision.approvalRequired ||
+    decision.riskLevel === "high" ||
+    decision.toolsAllowed.includes("local_patch") ||
+    decision.toolsAllowed.includes("approval_gated_action");
+  const base = {
+    needsToolPolicy,
+    contextPacks: decision.requiredContextPacks,
+    riskLevel: decision.riskLevel,
+    approvalRequired: decision.approvalRequired,
+    outputDestination: decision.outputDestination,
+  };
 
-  if (/\b(email|gmail|outlook|telegram|discord|slack|whatsapp|message|dm|reply|outreach|draft)\b/.test(msg)) {
-    return { taskType: "communications", crewFile: "agents/crew/communications.md", workspaceContext: "workspaces/battles/business/CONTEXT.md", needsToolPolicy: true };
+  if (decision.route === "communications") {
+    return { ...base, taskType: "communications", crewFile: "agents/crew/communications.md", workspaceContext: "workspaces/battles/business/CONTEXT.md" };
   }
-  if (/\b(research|source|citation|cite|find out|look up|market|legal|cannabis|ai|compare|analysis)\b/.test(msg)) {
-    return { taskType: "research", crewFile: "agents/crew/research.md", workspaceContext: "workspaces/battles/research/CONTEXT.md", needsToolPolicy };
+  if (decision.route === "research") {
+    return { ...base, taskType: "research", crewFile: "agents/crew/research.md", workspaceContext: "workspaces/battles/research/CONTEXT.md" };
   }
-  if (/\b(plan|priority|priorities|schedule|calendar|goal|goals|task|tasks|today|week|roadmap|sequence)\b/.test(msg)) {
-    return { taskType: "planning", crewFile: "agents/crew/planning.md", workspaceContext: "workspaces/battles/daily-command-center/CONTEXT.md", needsToolPolicy: true };
+  if (decision.route === "planning") {
+    return { ...base, taskType: "planning", crewFile: "agents/crew/planning.md", workspaceContext: "workspaces/battles/daily-command-center/CONTEXT.md" };
   }
-  if (/\b(monitor|watch|alert|status|health|check|scan|anomaly|failing|offline|heartbeat)\b/.test(msg)) {
-    return { taskType: "monitoring", crewFile: "agents/crew/monitoring.md", workspaceContext: "workspaces/battles/daily-command-center/CONTEXT.md", needsToolPolicy };
+  if (decision.route === "diagnostics" || decision.route === "daemon") {
+    return { ...base, taskType: "monitoring", crewFile: "agents/crew/monitoring.md", workspaceContext: "workspaces/battles/daily-command-center/CONTEXT.md" };
   }
-  if (/\b(write|create|draft|script|content|brief|spec|build|output|presentation|document|asset|ui|screen|component)\b/.test(msg)) {
-    const isProduction = /\b(production|brief|spec|build|output|animation|video)\b/.test(msg);
-    return {
-      taskType: "creation",
-      crewFile: "agents/crew/creation.md",
-      workspaceContext: isProduction ? "workspaces/battles/production/CONTEXT.md" : "workspaces/battles/content-studio/CONTEXT.md",
-      needsToolPolicy,
-    };
+  if (decision.route === "memory") {
+    return { ...base, taskType: "memory", crewFile: "agents/crew/memory.md", workspaceContext: "workspaces/battles/personal-life/CONTEXT.md" };
   }
-  if (/\b(memory|remember|preference|personal|life|family|health|finance|decision|soul|context about me)\b/.test(msg)) {
-    return { taskType: "memory", crewFile: "agents/crew/memory.md", workspaceContext: "workspaces/battles/personal-life/CONTEXT.md", needsToolPolicy };
+  if (decision.route === "code") {
+    return { ...base, taskType: "code/app", crewFile: "agents/crew/creation.md", workspaceContext: "docs/workspace-map.md" };
   }
-  if (/\b(code|repo|bug|fix|implement|typescript|server|app|component|auth|oauth|api|test|lint)\b/.test(msg)) {
-    return { taskType: "code/app", crewFile: "agents/crew/creation.md", workspaceContext: "docs/workspace-map.md", needsToolPolicy: true };
+  if (decision.route === "business") {
+    return { ...base, taskType: "business", crewFile: "agents/crew/planning.md", workspaceContext: "workspaces/battles/business/CONTEXT.md" };
   }
-  return { taskType: "general", needsToolPolicy };
+  return { ...base, taskType: "general" };
 }
 
 contextRegistry.register(
@@ -158,6 +168,10 @@ contextRegistry.register(
 
     const sections = [
       `Task type: ${selection.taskType}`,
+      `Risk level: ${selection.riskLevel}`,
+      `Approval required: ${selection.approvalRequired ? "yes" : "no"}`,
+      `Context packs: ${selection.contextPacks.join(", ")}`,
+      selection.outputDestination ? `Output destination: ${selection.outputDestination}` : "",
       `Loaded crew: ${selection.crewFile ?? "none"}`,
       `Loaded workspace: ${selection.workspaceContext ?? "none"}`,
       agentContext ? `### agents/CONTEXT.md\n${agentContext}` : "",

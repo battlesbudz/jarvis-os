@@ -4,6 +4,7 @@ import {
   type AutonomyPolicyDecision,
   type AutonomyReadiness,
 } from "./autonomyPolicy";
+import type { ApprovalNotificationPayload } from "./approvalNotifications";
 import { getCoachAppAgentId } from "./coreAgentIds";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
 
@@ -11,6 +12,7 @@ export interface AutonomyRuntimeInput {
   userId: string;
   userText: string;
   channelName: string;
+  originChannelId?: string;
   readiness?: AutonomyReadiness;
   hasApproval?: boolean;
 }
@@ -19,7 +21,7 @@ export interface AutonomyRuntimeDeps {
   getReadiness?: (userId: string) => Promise<AutonomyReadiness>;
   submitJob?: (input: SubmitJobInput) => Promise<SubmitJobResult>;
   requestApproval?: (request: TopLevelApprovalRequest) => Promise<{ id: string; status: string }>;
-  notifyApproval?: (userId: string, text: string, gateId: string) => Promise<void>;
+  notifyApproval?: (payload: ApprovalNotificationPayload) => Promise<void>;
   observeDecision?: (observation: AutonomyRuntimeObservation) => void | Promise<void>;
 }
 
@@ -105,9 +107,9 @@ async function defaultRequestApproval(request: TopLevelApprovalRequest): Promise
   return { id: gate.id, status: gate.status };
 }
 
-async function defaultNotifyApproval(userId: string, text: string, gateId: string): Promise<void> {
-  const { notifyUser } = await import("../channels/registry");
-  await notifyUser(userId, "approval_request", text, { gateId });
+async function defaultNotifyApproval(payload: ApprovalNotificationPayload): Promise<void> {
+  const { notifyApprovalRequest } = await import("./approvalNotifications");
+  await notifyApprovalRequest(payload);
 }
 
 async function observeAutonomyDecision(
@@ -226,22 +228,32 @@ export async function routeAutonomyRequest(
     const description = approvalDescription(userText, input.channelName);
     const requestApproval = deps.requestApproval ?? defaultRequestApproval;
     const notifyApproval = deps.notifyApproval ?? defaultNotifyApproval;
+    const agentId = getCoachAppAgentId(input.userId);
     let gate: { id: string; status: string } | undefined;
     try {
       gate = await requestApproval({
-        agentId: getCoachAppAgentId(input.userId),
+        agentId,
         userId: input.userId,
         toolName,
         toolArgs: {
           topLevelAutonomy: true,
           userText,
           channelName: input.channelName,
+          ...(input.originChannelId ? { originChannelId: input.originChannelId } : {}),
         },
         description,
         initiatedBy: "user",
       });
-      const notificationText = `Approval required\n\n${description}\n\nGate ID: ${gate.id}`;
-      await notifyApproval(input.userId, notificationText, gate.id);
+      await notifyApproval({
+        gateId: gate.id,
+        agentId,
+        agentName: "Jarvis App Coach",
+        userId: input.userId,
+        toolName,
+        description,
+        originChannel: input.channelName,
+        originChannelId: input.originChannelId,
+      });
     } catch (err) {
       await observeAutonomyDecision(deps, {
         mode: decision.mode,

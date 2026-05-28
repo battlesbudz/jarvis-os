@@ -110,6 +110,26 @@ interface Deliverable {
   };
 }
 
+interface DailyCommandSnapshot {
+  date: string;
+  status: 'working' | 'ready' | 'waiting_approval' | 'blocked' | 'failed' | 'recovering';
+  plan: { tasks?: { id: string; title: string; completed?: boolean }[] } | null;
+  attention: { pendingCount: number };
+  jobs: { active: AgentJob[]; failed: AgentJob[] };
+  deliverables: { pendingCount: number };
+  approvals: { pendingCount: number };
+  reminders: { morningBriefSent: boolean; eveningWrapSent: boolean };
+  dream: { pendingCount: number; latestInsight?: { insightText: string } | null };
+  contextWarnings: { source: string; severity: 'info' | 'warning' | 'error'; message: string }[];
+  statusReasons?: {
+    state: DailyCommandSnapshot['status'];
+    label: string;
+    detail: string;
+    severity: 'info' | 'warning' | 'error';
+    action?: 'retry_available' | 'approval_required' | 'wait' | 'reconnect' | 'generate_plan';
+  }[];
+}
+
 const DELIVERABLE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   research: 'search',
   document: 'document-text',
@@ -207,6 +227,29 @@ interface EmailDraft {
 function getSenderName(sender: string | null): string {
   if (!sender) return 'Unknown';
   return sender.replace(/<.*>/, '').trim() || sender;
+}
+
+function getDailyCommandStatusConfig(status: DailyCommandSnapshot['status']): {
+  label: string;
+  detail: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+} {
+  switch (status) {
+    case 'working':
+      return { label: 'Jarvis is working', detail: 'Active jobs are moving through the queue.', icon: 'sync-outline', color: Colors.primary };
+    case 'waiting_approval':
+      return { label: 'Waiting approval', detail: 'Review the approval cards before Jarvis acts.', icon: 'shield-checkmark-outline', color: '#F59E0B' };
+    case 'blocked':
+      return { label: 'Blocked', detail: 'A required source or setup path needs attention.', icon: 'alert-circle-outline', color: Colors.error };
+    case 'failed':
+      return { label: 'Needs recovery', detail: 'At least one job failed and can be retried.', icon: 'refresh-circle-outline', color: Colors.error };
+    case 'recovering':
+      return { label: 'Recovering', detail: 'Some jobs failed while other work is still running.', icon: 'construct-outline', color: '#F59E0B' };
+    case 'ready':
+    default:
+      return { label: 'Ready', detail: 'Your daily command loop is clear right now.', icon: 'checkmark-circle-outline', color: Colors.success };
+  }
 }
 
 interface SourceConfig {
@@ -333,6 +376,52 @@ export default function InboxScreen() {
     refetchInterval: 60000,
   });
 
+  const { data: dailyCommand, refetch: refetchDailyCommand } = useQuery<DailyCommandSnapshot>({
+    queryKey: ['/api/daily-command/today'],
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'working' || status === 'recovering' || status === 'waiting_approval' ? 10000 : 60000;
+    },
+  });
+
+  const refreshDailyPlanMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', '/api/daily-command/plan/generate', { mode: 'merge' });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
+      if (dailyCommand?.date) {
+        queryClient.invalidateQueries({ queryKey: [`/api/data/plans/${dailyCommand.date}`] });
+      }
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not refresh the daily plan.');
+    },
+  });
+
+  const refreshAll = useCallback(() => {
+    void Promise.all([
+      refetch(),
+      refetchGut(),
+      refetchDrafts(),
+      refetchDeliverables(),
+      refetchAutoHandled(),
+      refetchActiveJobs(),
+      refetchFailedJobs(),
+      refetchDailyCommand(),
+    ]);
+  }, [
+    refetch,
+    refetchGut,
+    refetchDrafts,
+    refetchDeliverables,
+    refetchAutoHandled,
+    refetchActiveJobs,
+    refetchFailedJobs,
+    refetchDailyCommand,
+  ]);
+
   const cancelJobMutation = useMutation({
     mutationFn: async (jobId: string) => {
       const res = await apiRequest('POST', `/api/agent-jobs/${jobId}/cancel`, {});
@@ -340,6 +429,7 @@ export default function InboxScreen() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
     },
     onError: () => {
       Alert.alert('Error', 'Could not cancel this job.');
@@ -354,6 +444,7 @@ export default function InboxScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
       queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs?status=failed&limit=10'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       Alert.alert('Retry queued', 'Jarvis will try this job again.');
     },
     onError: () => {
@@ -369,6 +460,7 @@ export default function InboxScreen() {
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       const approvedItem = deliverables.find(d => d.id === variables);
       if (approvedItem?.type === 'approval_gate') {
         Alert.alert('Approved', 'The action has been approved and will continue.');
@@ -394,6 +486,7 @@ export default function InboxScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
     },
   });
 
@@ -406,6 +499,7 @@ export default function InboxScreen() {
     },
     onSuccess: (data, id) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       if (data.driveLink) {
         Alert.alert('Saved to Drive', 'Your document has been saved to Google Drive.', [
           { text: 'Open', onPress: () => Linking.openURL(data.driveLink) },
@@ -440,6 +534,7 @@ export default function InboxScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
     },
     onError: () => {
       Alert.alert('Error', 'Could not decline this request.');
@@ -728,6 +823,135 @@ export default function InboxScreen() {
           </View>
         </View>
       </Animated.View>
+    );
+  };
+
+  const renderDailyCommandCard = () => {
+    if (!dailyCommand) return null;
+    const config = getDailyCommandStatusConfig(dailyCommand.status);
+    const tasks = dailyCommand.plan?.tasks || [];
+    const openTasks = tasks.filter((task) => task.completed !== true).length;
+    const warnings = dailyCommand.contextWarnings || [];
+    const activeCount = dailyCommand.jobs?.active?.length ?? 0;
+    const failedCount = dailyCommand.jobs?.failed?.length ?? 0;
+    const approvalCount = dailyCommand.approvals?.pendingCount ?? 0;
+    const attentionCount = dailyCommand.attention?.pendingCount ?? 0;
+    const statusReasons = dailyCommand.statusReasons || [];
+    return (
+      <View style={styles.dailyCommandCard}>
+        <View style={styles.dailyCommandHeader}>
+          <View style={[styles.dailyCommandIcon, { backgroundColor: config.color + '18' }]}>
+            {dailyCommand.status === 'working' ? (
+              <ActivityIndicator size="small" color={config.color} />
+            ) : (
+              <Ionicons name={config.icon} size={18} color={config.color} />
+            )}
+          </View>
+          <View style={styles.dailyCommandHeaderText}>
+            <Text style={styles.dailyCommandTitle}>{config.label}</Text>
+            <Text style={styles.dailyCommandSubtitle} numberOfLines={2}>{config.detail}</Text>
+          </View>
+          <Pressable
+            style={styles.dailyCommandRefresh}
+            onPress={() => refreshDailyPlanMutation.mutate()}
+            disabled={refreshDailyPlanMutation.isPending}
+            testID="daily-command-refresh-plan"
+          >
+            {refreshDailyPlanMutation.isPending ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Ionicons name="refresh-outline" size={17} color={Colors.primary} />
+            )}
+          </Pressable>
+        </View>
+
+        <View style={styles.dailyCommandStats}>
+          <View style={styles.dailyCommandStat}>
+            <Text style={styles.dailyCommandStatValue}>{openTasks}</Text>
+            <Text style={styles.dailyCommandStatLabel}>plan</Text>
+          </View>
+          <View style={styles.dailyCommandStat}>
+            <Text style={styles.dailyCommandStatValue}>{attentionCount}</Text>
+            <Text style={styles.dailyCommandStatLabel}>attention</Text>
+          </View>
+          <View style={styles.dailyCommandStat}>
+            <Text style={styles.dailyCommandStatValue}>{activeCount}</Text>
+            <Text style={styles.dailyCommandStatLabel}>working</Text>
+          </View>
+          <View style={styles.dailyCommandStat}>
+            <Text style={[styles.dailyCommandStatValue, failedCount > 0 && { color: Colors.error }]}>{failedCount}</Text>
+            <Text style={styles.dailyCommandStatLabel}>failed</Text>
+          </View>
+          <View style={styles.dailyCommandStat}>
+            <Text style={[styles.dailyCommandStatValue, approvalCount > 0 && { color: '#F59E0B' }]}>{approvalCount}</Text>
+            <Text style={styles.dailyCommandStatLabel}>approval</Text>
+          </View>
+        </View>
+
+        <View style={styles.dailyCommandLoopRow}>
+          <View style={[styles.loopPill, dailyCommand.reminders?.morningBriefSent && styles.loopPillDone]}>
+            <Ionicons
+              name={dailyCommand.reminders?.morningBriefSent ? 'checkmark-circle' : 'ellipse-outline'}
+              size={12}
+              color={dailyCommand.reminders?.morningBriefSent ? Colors.success : Colors.textTertiary}
+            />
+            <Text style={styles.loopPillText}>Morning</Text>
+          </View>
+          <View style={[styles.loopPill, dailyCommand.reminders?.eveningWrapSent && styles.loopPillDone]}>
+            <Ionicons
+              name={dailyCommand.reminders?.eveningWrapSent ? 'checkmark-circle' : 'ellipse-outline'}
+              size={12}
+              color={dailyCommand.reminders?.eveningWrapSent ? Colors.success : Colors.textTertiary}
+            />
+            <Text style={styles.loopPillText}>Evening</Text>
+          </View>
+          <View style={[styles.loopPill, dailyCommand.dream?.pendingCount > 0 && styles.loopPillActive]}>
+            <Ionicons name="moon-outline" size={12} color={dailyCommand.dream?.pendingCount > 0 ? Colors.primary : Colors.textTertiary} />
+            <Text style={styles.loopPillText}>
+              Dream{dailyCommand.dream?.pendingCount > 0 ? ` ${dailyCommand.dream.pendingCount}` : ''}
+            </Text>
+          </View>
+        </View>
+
+        {statusReasons.length > 0 && (
+          <View style={styles.dailyCommandReasons}>
+            {statusReasons.slice(0, 3).map((reason, index) => (
+              <View key={`${reason.state}-${reason.action || 'status'}-${index}`} style={styles.dailyCommandReasonRow}>
+                <Ionicons
+                  name={
+                    reason.severity === 'error'
+                      ? 'alert-circle-outline'
+                      : reason.severity === 'warning'
+                        ? 'shield-checkmark-outline'
+                        : 'checkmark-circle-outline'
+                  }
+                  size={13}
+                  color={reason.severity === 'error' ? Colors.error : reason.severity === 'warning' ? '#F59E0B' : Colors.success}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.dailyCommandReasonLabel}>{reason.label}</Text>
+                  <Text style={styles.dailyCommandReasonText} numberOfLines={2}>{reason.detail}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {warnings.length > 0 && (
+          <View style={styles.dailyCommandWarnings}>
+            {warnings.slice(0, 2).map((warning, index) => (
+              <View key={`${warning.source}-${index}`} style={styles.dailyCommandWarningRow}>
+                <Ionicons
+                  name={warning.severity === 'error' ? 'alert-circle-outline' : 'information-circle-outline'}
+                  size={13}
+                  color={warning.severity === 'error' ? Colors.error : '#F59E0B'}
+                />
+                <Text style={styles.dailyCommandWarningText} numberOfLines={2}>{warning.message}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
     );
   };
 
@@ -1233,6 +1457,7 @@ export default function InboxScreen() {
 
   const renderListHeader = () => (
     <View>
+      {renderDailyCommandCard()}
       {renderDeliverables()}
       {renderGutNoticed()}
       {renderRunningJobs()}
@@ -1359,7 +1584,7 @@ export default function InboxScreen() {
           ListHeaderComponent={renderListHeader}
           ListEmptyComponent={renderEmpty}
           refreshControl={
-            <RefreshControl refreshing={false} onRefresh={refetch} tintColor={Colors.primary} />
+            <RefreshControl refreshing={false} onRefresh={refreshAll} tintColor={Colors.primary} />
           }
           showsVerticalScrollIndicator={false}
         />
@@ -1963,6 +2188,147 @@ const styles = StyleSheet.create({
   neverButton: {
     marginLeft: 'auto' as const,
     padding: 8,
+  },
+  dailyCommandCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  dailyCommandHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dailyCommandIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dailyCommandHeaderText: {
+    flex: 1,
+  },
+  dailyCommandTitle: {
+    fontSize: 15,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  dailyCommandSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  dailyCommandRefresh: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary + '10',
+  },
+  dailyCommandStats: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  dailyCommandStat: {
+    minWidth: 58,
+    flexGrow: 1,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+  },
+  dailyCommandStatValue: {
+    fontSize: 16,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  dailyCommandStatLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.4,
+    marginTop: 1,
+  },
+  dailyCommandLoopRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 12,
+  },
+  loopPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    backgroundColor: Colors.surfaceAlt,
+  },
+  loopPillDone: {
+    backgroundColor: Colors.success + '12',
+  },
+  loopPillActive: {
+    backgroundColor: Colors.primary + '12',
+  },
+  loopPillText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  dailyCommandReasons: {
+    marginTop: 10,
+    gap: 6,
+  },
+  dailyCommandReasonRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  dailyCommandReasonLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  dailyCommandReasonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 16,
+    marginTop: 1,
+  },
+  dailyCommandWarnings: {
+    marginTop: 10,
+    gap: 6,
+  },
+  dailyCommandWarningRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: '#FFFBEB',
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  dailyCommandWarningText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: '#92400E',
+    lineHeight: 16,
   },
   draftSection: {
     marginBottom: 8,

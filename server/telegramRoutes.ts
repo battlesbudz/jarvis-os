@@ -21,6 +21,7 @@ import { extractAndStore } from "./memory/extractor";
 import { processLivingContextUpdate } from "./workspace/livingContextRouter";
 import { getSoulPromptBlock } from "./memory/soul";
 import { runAgent } from "./agent/harness";
+import { parseTelegramApprovalCallback } from "./agent/approvalNotifications";
 import { telegramCoachTools } from "./agent/tools";
 import { runCoachAgent } from "./channels/coachAgent";
 import { routeToNamedAgent } from "./agent/runNamedAgent";
@@ -298,6 +299,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         userId,
         userText,
         channelName: "Telegram",
+        originChannelId: String(chatId),
         imageUrl,
         sdkSessionId: storedSessionId,
         onToken,
@@ -511,6 +513,54 @@ async function handleCallbackQuery(callbackQuery: any): Promise<void> {
   const chatId: string | undefined = callbackQuery.message?.chat?.id?.toString();
   if (!chatId) {
     await answerCallbackQuery(queryId);
+    return;
+  }
+
+  const approvalCallback = parseTelegramApprovalCallback(data);
+  if (approvalCallback) {
+    const links = await db
+      .select({ userId: schema.telegramLinks.userId })
+      .from(schema.telegramLinks)
+      .where(eq(schema.telegramLinks.chatId, chatId))
+      .limit(1);
+
+    const groupLinks = links.length > 0
+      ? []
+      : await db
+          .select({ userId: schema.telegramLinks.userId })
+          .from(schema.telegramLinks)
+          .where(sql`${schema.telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`)
+          .limit(1);
+    const linkedUserId = links[0]?.userId ?? groupLinks[0]?.userId;
+
+    if (!linkedUserId) {
+      await answerCallbackQuery(queryId, "Session not found. Please re-link Telegram.");
+      return;
+    }
+
+    const { approveGate, getGate, rejectGate } = await import("./agent/agentApproval");
+    const gate = await getGate(approvalCallback.gateId);
+    if (!gate || gate.userId !== linkedUserId) {
+      await answerCallbackQuery(queryId, "Approval not found for this Telegram chat.");
+      return;
+    }
+
+    const ok = approvalCallback.decision === "approve"
+      ? await approveGate(approvalCallback.gateId, linkedUserId)
+      : await rejectGate(approvalCallback.gateId, linkedUserId);
+
+    if (!ok) {
+      await answerCallbackQuery(queryId, "That approval is no longer pending.");
+      return;
+    }
+
+    if (approvalCallback.decision === "approve") {
+      await answerCallbackQuery(queryId, "Approved. Jarvis will continue.");
+      await sendMessage(chatId, `✅ Approved ${gate.toolName}. Jarvis will continue.`);
+    } else {
+      await answerCallbackQuery(queryId, "Declined. Jarvis will stop that action.");
+      await sendMessage(chatId, `❌ Declined ${gate.toolName}. Jarvis will stop that action.`);
+    }
     return;
   }
 

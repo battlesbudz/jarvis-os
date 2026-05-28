@@ -59,7 +59,7 @@ const PERMISSION_TOOL_MAP: Record<keyof AgentPermissions, string[]> = {
     "browser_tab_new", "browser_tab_list", "browser_tab_select", "browser_tab_close",
   ],
   can_send_emails: ["send_email"],
-  can_create_email_drafts: ["gmail_draft"],
+  can_create_email_drafts: ["create_gmail_draft", "gmail_draft"],
   can_read_email: ["fetch_emails", "gmail_action"],
   can_send_messages: [
     "discord_post", "connect_channel", "sessions_send",

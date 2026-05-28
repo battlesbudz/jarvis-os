@@ -23,6 +23,8 @@ import { processLivingContextUpdate } from "../workspace/livingContextRouter";
 import { classifyBuildIntent, classifyBuildFollowUp, classifyToolAwareRoute, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
 import { routeAutonomyRequest } from "../agent/autonomyRuntime";
+import { getCoachAppAgentId } from "../agent/coreAgentIds";
+import { createSystemApprovalOnBeforeTool } from "../agent/systemApprovalGate";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -39,6 +41,8 @@ export interface CoachReplyInput {
    *  (turn 15+, every 5 turns). Callers use this to keep the user informed
    *  without consuming an extra model turn. */
   onProgressMessage?: (message: string) => void;
+  /** Current external chat/channel ID when the caller has one (Telegram chat ID, Discord channel ID, etc.). */
+  originChannelId?: string;
   /** Discord guild (server) ID — set when the request originates from a Discord guild channel.
    *  Surfaced in ToolContext so Discord-specific tools (e.g. deleteDiscordChannel) can
    *  identify the server without requiring a pre-configured workspace. */
@@ -107,7 +111,7 @@ function getMaxTokensForChannel(channelName: string): number {
 const COACH_AGENT_ID = "coach";
 
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
-  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, discordGuildId, discordChannelId } = input;
+  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId } = input;
   const channelLower = channelName.toLowerCase();
 
   // ── Native session resumption (mirrors runNamedAgent pattern) ────────────────
@@ -596,6 +600,15 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     `[${channelName}] tool scope: ${scopedTools.length} tools` +
     (registeredChannel ? ` (groups: ${registeredChannel.toolGroups.join(", ")})` : " (fallback groups)"),
   );
+  const coachApprovalOnBeforeTool = createSystemApprovalOnBeforeTool({
+    agentId: getCoachAppAgentId(userId),
+    agentName: "Jarvis App Coach",
+    userId,
+    platform: channelName,
+    channelId: originChannelId ?? discordChannelId,
+    initiatedBy: "user",
+    signal: agentCtx.signal,
+  });
 
   // ── Activation planner — run before the model session ─────────────────────
   // Channel sessions always run (shouldRun is always true for explicit user
@@ -736,6 +749,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         userId,
         userText,
         channelName,
+        originChannelId: originChannelId ?? discordChannelId,
       });
 
       if (autonomyResult.handled && autonomyResult.reply) {
@@ -802,6 +816,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       onToken,
       onProgressMessage,
       activationPlan: channelActivationPlan,
+      onBeforeTool: coachApprovalOnBeforeTool,
     });
     rawReply = fallback.reply;
   }
@@ -837,6 +852,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
             maxTurns: 4,
             maxCompletionTokens: getMaxTokensForChannel(channelName),
             activationPlan: channelActivationPlan,
+            onBeforeTool: coachApprovalOnBeforeTool,
           });
           if (correction.reply) {
             rawReply = correction.reply;

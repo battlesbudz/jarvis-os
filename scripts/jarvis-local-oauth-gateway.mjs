@@ -121,7 +121,7 @@ console.log(`URL: http://${process.env.HOST}:${process.env.PORT || "5000"}`);
 
 const localTsx = join("node_modules", ".bin", isWindows ? "tsx.cmd" : "tsx");
 const configuredEntry = process.env.JARVIS_OAUTH_GATEWAY_ENTRY?.trim();
-const serverEntry = !configuredEntry || configuredEntry === "server_dist/index.js"
+const serverEntry = !configuredEntry
   ? "scripts/jarvis-codex-gateway-server.mjs"
   : configuredEntry;
 const serverCommand = serverEntry ? process.execPath : isWindows ? "cmd.exe" : localTsx;

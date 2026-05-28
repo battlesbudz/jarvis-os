@@ -3,6 +3,8 @@ import { db } from "./db";
 import { eq, and } from "drizzle-orm";
 import type { PgTable, PgColumn } from "drizzle-orm/pg-core";
 import * as schema from "@shared/schema";
+import { savePlanForUser } from "./dailyCommand/planPersistence";
+import type { DailyPlanData } from "./dailyCommand/planOps";
 
 function requireUserId(req: Request, res: Response): string | null {
   const userId = req.userId;
@@ -120,45 +122,9 @@ export function registerDataRoutes(app: Express): void {
       const date = _p(req.params.date);
       const { data } = req.body;
 
-      // Detect goal-tree task completions (was incomplete → now complete)
-      // and propagate them back into goal_trees so phase/milestone status
-      // advances and tomorrow's morning plan picks up the next task.
-      try {
-        const [prev] = await db
-          .select({ data: schema.plans.data })
-          .from(schema.plans)
-          .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, date)))
-          .limit(1);
-        const prevTasks = ((prev?.data as { tasks?: unknown[] })?.tasks || []) as Array<
-          { id: string; completed?: boolean; goalTreeId?: string; goalTaskId?: string }
-        >;
-        const newTasks = ((data as { tasks?: unknown[] })?.tasks || []) as Array<
-          { id: string; completed?: boolean; goalTreeId?: string; goalTaskId?: string }
-        >;
-        const prevById = new Map(prevTasks.map((t) => [t.id, t]));
-        const justCompleted = newTasks.filter((t) => {
-          if (!t.completed) return false;
-          if (!t.goalTreeId || !t.goalTaskId) return false;
-          const prevTask = prevById.get(t.id);
-          return !prevTask || !prevTask.completed;
-        });
-        if (justCompleted.length > 0) {
-          const { markTreeTaskComplete } = await import("./goalScheduler");
-          for (const t of justCompleted) {
-            await markTreeTaskComplete(userId, t.goalTreeId!, t.goalTaskId!);
-          }
-        }
-      } catch (e) {
-        console.error("[Plans] goal-tree completion propagation failed:", e);
-      }
-
-      await db
-        .insert(schema.plans)
-        .values({ userId, date, data, updatedAt: new Date() })
-        .onConflictDoUpdate({
-          target: [schema.plans.userId, schema.plans.date],
-          set: { data, updatedAt: new Date() },
-        });
+      // Save through the daily-command helper so legacy and patch-based
+      // plan edits share goal-tree completion propagation.
+      await savePlanForUser({ userId, date, data: data as DailyPlanData });
       res.json({ ok: true });
     } catch (e) {
       console.error("Error saving plan:", e);

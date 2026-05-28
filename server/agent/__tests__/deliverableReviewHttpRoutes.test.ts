@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { and, eq } from "drizzle-orm";
-import { agentJobs, deliverables, userPreferences, users } from "@shared/schema";
+import { agentJobs, deliverables, proactiveScheduleLog, userPreferences, users } from "@shared/schema";
 import type { db as dbType } from "../../db";
 import type { ApprovalGate } from "../agentApproval";
 import type { SubmitJobInput } from "../jobClient";
@@ -281,6 +281,7 @@ async function run(): Promise<void> {
     await db.delete(deliverables).where(eq(deliverables.userId, user.id));
     await db.delete(agentJobs).where(eq(agentJobs.userId, user.id));
     await db.delete(userPreferences).where(eq(userPreferences.userId, user.id));
+    await db.delete(proactiveScheduleLog).where(eq(proactiveScheduleLog.userId, user.id));
     await db.delete(users).where(and(eq(users.id, user.id), eq(users.username, username)));
     await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
   }

@@ -54,6 +54,8 @@ import { registerIntegrationRoutes } from "./routes/integrationRoutes";
 import { registerProfileMemoryRoutes } from "./routes/profileMemoryRoutes";
 import { registerPlanGenerationRoutes } from "./routes/planGenerationRoutes";
 import { registerInboxRoutes } from "./routes/inboxRoutes";
+import { registerDailyCommandRoutes } from "./dailyCommand/routes";
+import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
 import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
 import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
@@ -449,6 +451,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/oauth", oauthRouter);
 
   registerDataRoutes(app);
+  registerDailyCommandRoutes(app);
+  registerMindTraceRoutes(app);
 
   // ── GET /api/goals — return goals for the authenticated user ───────────────
   app.get("/api/goals", async (req: Request, res: Response) => {

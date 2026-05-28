@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$RepoName = Split-Path -Leaf $Root
 $LogDir = Join-Path $Root ".jarvis\logs"
 $WatchdogLog = Join-Path $LogDir "jarvis-oauth-gateway-watchdog.log"
 $SupervisorScript = Join-Path $PSScriptRoot "start-jarvis-oauth-gateway-supervisor.ps1"
@@ -41,7 +42,7 @@ function Get-SupervisorProcesses {
         $_.CommandLine -like "*jarvis-oauth-gateway-supervisor.mjs*"
       ) -and
       $_.CommandLine -notlike "*watch-jarvis-oauth-gateway.ps1*" -and
-      $_.CommandLine -like "*Gameplanjarvisai*"
+      $_.CommandLine -like "*$RepoName*"
     }
 }
 
@@ -51,7 +52,7 @@ function Get-OtherWatchdogs {
       $_.ProcessId -ne $PID -and
       $_.CommandLine -and
       $_.CommandLine -like "*watch-jarvis-oauth-gateway.ps1*" -and
-      $_.CommandLine -like "*Gameplanjarvisai*"
+      $_.CommandLine -like "*$RepoName*"
     }
 }
 

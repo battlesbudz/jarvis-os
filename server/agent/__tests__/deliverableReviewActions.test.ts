@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { and, eq } from "drizzle-orm";
-import { deliverables, users } from "@shared/schema";
+import { deliverables, proactiveScheduleLog, users } from "@shared/schema";
 import type { db as dbType } from "../../db";
 import { loadDeliverableForReviewAction } from "../deliverableReviewActions";
 
@@ -101,6 +101,7 @@ async function run(): Promise<void> {
     console.log("All deliverable review action DB assertions passed.");
   } finally {
     await db.delete(deliverables).where(eq(deliverables.userId, user.id));
+    await db.delete(proactiveScheduleLog).where(eq(proactiveScheduleLog.userId, user.id));
     await db.delete(users).where(and(eq(users.id, user.id), eq(users.username, username)));
   }
 }

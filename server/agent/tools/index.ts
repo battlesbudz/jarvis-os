@@ -147,7 +147,7 @@ import { delegateToCodexTool } from "./delegateToCodex";
 export type ToolGroup =
   | "coaching"    // manage_tasks, queue_background_job, daemon_action
   | "calendar"    // fetch_calendar, create_calendar_event  (Google-gated)
-  | "email"       // gmail_action, gmail_draft (Google-gated), send_email, fetch_emails
+  | "email"       // gmail_action, create_gmail_draft (Google-gated), send_email, fetch_emails
   | "memory"      // memory_search, memory_get
   | "documents"   // create/list/read_document, drive_* (Google-gated)
   | "research"    // web_search, research_topic, web_fetch, youtube_search, x_search
