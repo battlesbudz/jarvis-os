@@ -7,6 +7,7 @@ import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildCodexSpawnCommand } from "./codexCommand";
 import { getCodexOAuthCommand } from "./env";
+import { fetchCodexGateway } from "../codexGatewayFetch";
 
 const CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 300_000);
 const CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 120_000);
@@ -306,7 +307,7 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl: string, prompt: string, sig
     let response: Response;
     let raw: string;
     try {
-      response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
+      response = await fetchCodexGateway(`${gatewayUrl}/api/codex/provider-turn`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`,

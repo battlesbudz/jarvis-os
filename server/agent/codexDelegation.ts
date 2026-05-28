@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fetchCodexGateway } from "./codexGatewayFetch";
 import { buildCodexSpawnCommand } from "./providers/codexCommand";
 import { getCodexOAuthCommand } from "./providers/env";
 
@@ -130,7 +131,7 @@ async function runRemoteCodexDelegation(
     ? relativeCwd
     : "";
 
-  const response = await fetch(`${gatewayUrl}/api/codex/delegate`, {
+  const response = await fetchCodexGateway(`${gatewayUrl}/api/codex/delegate`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${token}`,
