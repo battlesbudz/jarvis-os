@@ -49,6 +49,12 @@ assertRoute(
   ["email"],
   ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
 );
+assertRoute(
+  "Can you remind me in an hour to call the company?",
+  "reminder",
+  ["coaching", "scheduling"],
+  ["schedule_jarvis_task"],
+);
 {
   const plan = classifyToolAwareRoute("draft an email in Gmail to wickedclown.jb@gmail.com");
   const legacyTools = ["fetch_emails", "gmail_action", "create_gmail_draft", "send_email"];
