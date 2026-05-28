@@ -250,32 +250,31 @@ async function run() {
     );
   }
 
-  // TH-18: Receipt-approved One execution receives an explicit approval marker
+  // TH-18: Receipt-approved connected account execution receives an explicit approval marker
   {
     const reg = new ToolCallHookRegistry();
-    reg.register(() => ({ requireApproval: { title: "Approve", description: "One write" } }));
+    reg.register(() => ({ requireApproval: { title: "Approve", description: "Connected account write" } }));
     const result = await reg.run(makeCtx({
-      toolName: "one_execute_action",
+      toolName: "connected_accounts_execute",
       userId: "user-test",
       params: {
         platform: "gmail",
-        action_id: "gmail.createDraft",
-        connection_key: "conn_123",
-        data: { to: "sam@example.com" },
+        tool_slug: "GMAIL_CREATE_DRAFT",
+        arguments: { to: "sam@example.com" },
       },
       approvalReceipt: {
-        gateId: "gate_one_receipt",
+        gateId: "gate_connected_account_receipt",
         userId: "user-test",
-        toolName: "one_execute_action",
+        toolName: "connected_accounts_execute",
         scope: "top_level_action",
         originalUserText: "Create the Gmail draft",
         createdAt: new Date().toISOString(),
       },
     }));
-    assert(result.allowed === true, "TH-18: matching receipt allows one_execute_action");
+    assert(result.allowed === true, "TH-18: matching receipt allows connected_accounts_execute");
     assert(
       (result.params as Record<string, unknown>)?.approved === true,
-      "TH-18: receipt-approved one_execute_action params include approved=true",
+      "TH-18: receipt-approved connected_accounts_execute params include approved=true",
     );
   }
 

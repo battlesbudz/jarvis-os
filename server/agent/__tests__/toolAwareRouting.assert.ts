@@ -41,13 +41,13 @@ assertRoute(
   "what's on my calendar today?",
   "calendar",
   ["calendar"],
-  ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
+  ["connected_accounts_list", "connected_accounts_search_tools", "connected_accounts_get_tool_schema", "connected_accounts_execute"],
 );
 assertRoute(
   "check my Gmail and unread email",
   "email",
   ["email"],
-  ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
+  ["connected_accounts_list", "connected_accounts_search_tools", "connected_accounts_get_tool_schema", "connected_accounts_execute"],
 );
 assertRoute(
   "Can you remind me in an hour to call the company?",

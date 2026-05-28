@@ -169,19 +169,19 @@ interface ConfirmCardProps {
 
 function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: ConfirmCardProps) {
   const isEmail = pendingConfirm.tool === 'send_email';
-  const isOneAction = pendingConfirm.tool === 'one_execute_action';
+  const isConnectedAccountAction = pendingConfirm.tool === 'connected_accounts_execute';
   const preview = pendingConfirm.preview;
 
   return (
     <View style={styles.confirmCard}>
       <View style={styles.confirmCardHeader}>
         <Ionicons
-          name={isEmail ? 'mail-outline' : isOneAction ? 'git-network-outline' : 'terminal-outline'}
+          name={isEmail ? 'mail-outline' : isConnectedAccountAction ? 'git-network-outline' : 'terminal-outline'}
           size={15}
           color={Colors.primary}
         />
         <Text style={styles.confirmCardTitle}>
-          {isEmail ? 'Send email?' : isOneAction ? 'Approve One action?' : `Run terminal command?`}
+          {isEmail ? 'Send email?' : isConnectedAccountAction ? 'Approve connected account action?' : `Run terminal command?`}
         </Text>
       </View>
 
@@ -198,7 +198,7 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             </>
           )}
         </View>
-      ) : isOneAction ? (
+      ) : isConnectedAccountAction ? (
         <View style={styles.confirmPreview}>
           <Text style={styles.confirmPreviewLabel}>Platform</Text>
           <Text style={styles.confirmPreviewValue} numberOfLines={1}>{preview.platform}</Text>
@@ -256,7 +256,7 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             <Ionicons name="checkmark" size={14} color="#fff" />
           )}
           <Text style={styles.confirmBtnConfirmText}>
-            {isLoading ? (isEmail ? 'Sending...' : isOneAction ? 'Approving...' : 'Running...') : isEmail ? 'Send' : isOneAction ? 'Approve' : 'Run'}
+            {isLoading ? (isEmail ? 'Sending...' : isConnectedAccountAction ? 'Approving...' : 'Running...') : isEmail ? 'Send' : isConnectedAccountAction ? 'Approve' : 'Run'}
           </Text>
         </Pressable>
       </View>
@@ -2438,7 +2438,7 @@ export default function InsightsScreen() {
         label: data.label || (data.result === 'success' ? 'Done' : 'Failed'),
       };
       const successContent = data.result === 'success'
-        ? (tool === 'send_email' ? `Email sent successfully.` : tool === 'one_execute_action' ? `One action completed successfully.` : `Command executed successfully.`)
+        ? (tool === 'send_email' ? `Email sent successfully.` : tool === 'connected_accounts_execute' ? `Connected account action completed successfully.` : `Command executed successfully.`)
         : `Action failed: ${data.detail || data.error || 'Unknown error'}`;
       setMessages(prev => {
         const updated = [...prev];

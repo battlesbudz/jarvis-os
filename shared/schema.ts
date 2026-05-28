@@ -147,6 +147,21 @@ export const userOAuthTokens = pgTable("user_oauth_tokens", {
   primaryKey({ columns: [table.userId, table.provider, table.accountEmail] }),
 ]);
 
+export const composioConnectedAccounts = pgTable("composio_connected_accounts", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  toolkit: varchar("toolkit").notNull(),
+  authConfigId: varchar("auth_config_id").notNull(),
+  connectedAccountId: varchar("connected_account_id").notNull(),
+  status: varchar("status").notNull().default("ACTIVE"),
+  accountEmail: text("account_email"),
+  accountName: text("account_name"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.connectedAccountId] }),
+]);
+
 export const commitments = pgTable("commitments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),

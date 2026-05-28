@@ -63,14 +63,14 @@ async function main(): Promise<void> {
   assert.equal(notifications[0].gateId, "gate_1");
   assert.equal(notifications[0].platform, "Gateway");
 
-  const oneGate = createSystemApprovalOnBeforeTool({
+  const connectedAccountGate = createSystemApprovalOnBeforeTool({
     agentId: "coach_app:user_1",
     agentName: "Jarvis App Coach",
     userId: "user_1",
     deps: {
-      requiresApproval: (toolName) => toolName === "one_execute_action",
+      requiresApproval: (toolName) => toolName === "connected_accounts_execute",
       requestApproval: async (req) => ({
-        id: "gate_one",
+        id: "gate_connected_account",
         agentId: req.agentId,
         userId: req.userId,
         toolName: req.toolName,
@@ -84,13 +84,13 @@ async function main(): Promise<void> {
       notifyApprovalRequest: async () => {},
     },
   });
-  const oneResult = await oneGate("one_execute_action", {
+  const connectedAccountResult = await connectedAccountGate("connected_accounts_execute", {
     platform: "gmail",
-    action_id: "gmail.createDraft",
-    connection_key: "conn_123",
+    tool_slug: "GMAIL_CREATE_DRAFT",
+    arguments: { subject: "Hello" },
   });
-  assert.equal(oneResult.allowed, true);
-  assert.equal(oneResult.params?.approved, true);
+  assert.equal(connectedAccountResult.allowed, true);
+  assert.equal(connectedAccountResult.params?.approved, true);
 
   const missingUserGate = createSystemApprovalOnBeforeTool({
     agentId: "coach_app:missing",

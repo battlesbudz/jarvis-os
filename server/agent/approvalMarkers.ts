@@ -1,10 +1,10 @@
-const ONE_EXECUTE_ACTION_TOOL = "one_execute_action";
+const CONNECTED_ACCOUNTS_EXECUTE_TOOL = "connected_accounts_execute";
 
 export function withApprovalMarkerForTool(
   toolName: string,
   params: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (toolName !== ONE_EXECUTE_ACTION_TOOL) return params;
+  if (toolName !== CONNECTED_ACCOUNTS_EXECUTE_TOOL) return params;
   return {
     ...params,
     approved: true,

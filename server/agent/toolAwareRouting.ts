@@ -53,8 +53,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     ],
     capabilityIds: ["calendar"],
     toolGroups: ["calendar"],
-    priorityToolNames: ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
-    guidance: "For calendar questions or changes, use the One gateway tools only: list connections, search actions, read action docs, then execute with approval when needed. Do not use legacy Google/Microsoft calendar tools in this route.",
+    priorityToolNames: ["connected_accounts_list", "connected_accounts_search_tools", "connected_accounts_get_tool_schema", "connected_accounts_execute"],
+    guidance: "For calendar questions or changes, use Composio connected account tools only: list connected accounts, search tools, read the selected tool schema, then execute with approval when needed. Do not use legacy Google/Microsoft calendar tools in this route.",
   },
   {
     intent: "email",
@@ -64,8 +64,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     ],
     capabilityIds: ["email"],
     toolGroups: ["email"],
-    priorityToolNames: ["one_list_connections", "one_search_actions", "one_get_action_knowledge", "one_execute_action"],
-    guidance: "For Gmail, Outlook, inbox, or email action requests, use the One gateway tools only: list connections, search actions, read action docs, then execute with approval when needed. Do not use legacy Gmail, Outlook, fetch_emails, create_gmail_draft, or send_email tools in this route.",
+    priorityToolNames: ["connected_accounts_list", "connected_accounts_search_tools", "connected_accounts_get_tool_schema", "connected_accounts_execute"],
+    guidance: "For Gmail, Outlook, inbox, or email action requests, use Composio connected account tools only: list connected accounts, search tools, read the selected tool schema, then execute with approval when needed. Do not use legacy Gmail, Outlook, fetch_emails, create_gmail_draft, or send_email tools in this route.",
   },
   {
     intent: "reminder",

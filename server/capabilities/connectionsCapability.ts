@@ -1,15 +1,16 @@
-import type { Capability } from "./types";
+﻿import type { Capability } from "./types";
 import { checkConnectionsTool, generateReconnectLinkTool } from "../agent/tools/connections";
 import { connectChannelTool } from "../agent/tools/connectChannel";
 import {
-  oneExecuteActionTool,
-  oneGetActionKnowledgeTool,
-  oneListConnectionsTool,
-  oneSearchActionsTool,
-} from "../agent/tools/oneCliActions";
+  connectedAccountsConnectLinkTool,
+  connectedAccountsExecuteTool,
+  connectedAccountsGetToolSchemaTool,
+  connectedAccountsListTool,
+  connectedAccountsSearchToolsTool,
+} from "../agent/tools/connectedAccounts";
 
 /**
- * Connections capability � tools that help users connect integrations.
+ * Connections capability — tools that help users connect integrations.
  * Also registers the channel-only integrations (Outlook, Telegram, Slack,
  * WhatsApp) so the harness can inject advisory system prompt notes when
  * those delivery channels are broken (even though they have no agent tools).
@@ -22,19 +23,20 @@ export const connectionsCapability: Capability = {
     check_connections:       ["connections", "system"],
     generate_reconnect_link: ["connections", "system"],
     connect_channel:         ["connections", "system"],
-    one_list_connections:    ["connections", "system"],
-    one_search_actions:      ["connections", "system"],
-    one_get_action_knowledge:["connections", "system"],
-    one_execute_action:      ["connections", "system"],
+    connected_accounts_list:           ["connections", "system"],
+    connected_accounts_search_tools:   ["connections", "system"],
+    connected_accounts_get_tool_schema:["connections", "system"],
+    connected_accounts_execute:        ["connections", "system"],
   },
   tools: [
     checkConnectionsTool,
     generateReconnectLinkTool,
     connectChannelTool,
-    oneListConnectionsTool,
-    oneSearchActionsTool,
-    oneGetActionKnowledgeTool,
-    oneExecuteActionTool,
+    connectedAccountsListTool,
+    connectedAccountsConnectLinkTool,
+    connectedAccountsSearchToolsTool,
+    connectedAccountsGetToolSchemaTool,
+    connectedAccountsExecuteTool,
   ],
   integrationDependencies: [
     { integrationId: "telegram",  label: "Telegram",                toolNames: [] },
