@@ -23,6 +23,7 @@ const tests = [
   { file: "server/agent/__tests__/goalTreeUi.test.ts" },
   { file: "server/agent/__tests__/goalPlanHandoff.test.ts" },
   { file: "server/agent/__tests__/dailyCommand.test.ts" },
+  { file: "server/agent/__tests__/dailyCommandHttpRoutes.test.ts", requiresDatabase: true },
   { file: "server/agent/__tests__/goalPlanStatus.test.ts" },
   { file: "server/agent/__tests__/goalPacing.test.ts" },
   { file: "server/agent/__tests__/deliverableReviewActions.test.ts" },

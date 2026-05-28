@@ -22,6 +22,11 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { apiRequest } from '@/lib/query-client';
+import DailyCommandPlanEditor, {
+  type DailyCommandPlanPatch,
+  type DailyCommandTask,
+} from '@/components/DailyCommandPlanEditor';
+import MindTraceDebugPanel, { type MindTraceDebugRecord } from '@/components/MindTraceDebugPanel';
 
 class DriveApiError extends Error {
   code: string;
@@ -113,7 +118,7 @@ interface Deliverable {
 interface DailyCommandSnapshot {
   date: string;
   status: 'working' | 'ready' | 'waiting_approval' | 'blocked' | 'failed' | 'recovering';
-  plan: { tasks?: { id: string; title: string; completed?: boolean }[] } | null;
+  plan: { tasks?: DailyCommandTask[] } | null;
   attention: { pendingCount: number };
   jobs: { active: AgentJob[]; failed: AgentJob[] };
   deliverables: { pendingCount: number };
@@ -330,6 +335,7 @@ export default function InboxScreen() {
   }, [gutSignals]);
 
   const [gutModalSignal, setGutModalSignal] = useState<GutSignal | null>(null);
+  const [dailyPlanEditorOpen, setDailyPlanEditorOpen] = useState(false);
 
   const respondGutMutation = useMutation({
     mutationFn: async ({ id, response }: { id: string; response: string }) => {
@@ -384,6 +390,11 @@ export default function InboxScreen() {
     },
   });
 
+  const { data: mindTraceData, isLoading: mindTraceLoading, refetch: refetchMindTrace } = useQuery<{ traces: MindTraceDebugRecord[] }>({
+    queryKey: ['/api/mind-trace/recent?limit=5'],
+    refetchInterval: 60000,
+  });
+
   const refreshDailyPlanMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest('POST', '/api/daily-command/plan/generate', { mode: 'merge' });
@@ -400,6 +411,22 @@ export default function InboxScreen() {
     },
   });
 
+  const patchDailyPlanMutation = useMutation({
+    mutationFn: async (patch: DailyCommandPlanPatch | { ops: DailyCommandPlanPatch[] }) => {
+      const res = await apiRequest('PATCH', '/api/daily-command/plan', patch);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
+      if (dailyCommand?.date) {
+        queryClient.invalidateQueries({ queryKey: [`/api/data/plans/${dailyCommand.date}`] });
+      }
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not update the daily plan.');
+    },
+  });
+
   const refreshAll = useCallback(() => {
     void Promise.all([
       refetch(),
@@ -410,6 +437,7 @@ export default function InboxScreen() {
       refetchActiveJobs(),
       refetchFailedJobs(),
       refetchDailyCommand(),
+      refetchMindTrace(),
     ]);
   }, [
     refetch,
@@ -420,6 +448,7 @@ export default function InboxScreen() {
     refetchActiveJobs,
     refetchFailedJobs,
     refetchDailyCommand,
+    refetchMindTrace,
   ]);
 
   const cancelJobMutation = useMutation({
@@ -852,6 +881,13 @@ export default function InboxScreen() {
             <Text style={styles.dailyCommandSubtitle} numberOfLines={2}>{config.detail}</Text>
           </View>
           <Pressable
+            style={[styles.dailyCommandRefresh, dailyPlanEditorOpen && styles.dailyCommandRefreshActive]}
+            onPress={() => setDailyPlanEditorOpen((open) => !open)}
+            testID="daily-command-toggle-plan-editor"
+          >
+            <Ionicons name={dailyPlanEditorOpen ? 'create' : 'create-outline'} size={17} color={Colors.primary} />
+          </Pressable>
+          <Pressable
             style={styles.dailyCommandRefresh}
             onPress={() => refreshDailyPlanMutation.mutate()}
             disabled={refreshDailyPlanMutation.isPending}
@@ -913,6 +949,14 @@ export default function InboxScreen() {
           </View>
         </View>
 
+        {dailyPlanEditorOpen && (
+          <DailyCommandPlanEditor
+            tasks={tasks}
+            busy={patchDailyPlanMutation.isPending}
+            onPatch={(patch) => patchDailyPlanMutation.mutate(patch)}
+          />
+        )}
+
         {statusReasons.length > 0 && (
           <View style={styles.dailyCommandReasons}>
             {statusReasons.slice(0, 3).map((reason, index) => (
@@ -951,6 +995,11 @@ export default function InboxScreen() {
             ))}
           </View>
         )}
+
+        <MindTraceDebugPanel
+          traces={mindTraceData?.traces ?? []}
+          loading={mindTraceLoading}
+        />
       </View>
     );
   };
@@ -2190,7 +2239,7 @@ const styles = StyleSheet.create({
     padding: 8,
   },
   dailyCommandCard: {
-    backgroundColor: '#fff',
+    backgroundColor: Colors.surface,
     borderRadius: 14,
     padding: 14,
     marginBottom: 12,
@@ -2231,6 +2280,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: Colors.primary + '10',
+  },
+  dailyCommandRefreshActive: {
+    backgroundColor: Colors.greenDim,
+    borderWidth: 1,
+    borderColor: Colors.primary,
   },
   dailyCommandStats: {
     flexDirection: 'row',

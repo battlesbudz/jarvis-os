@@ -8,6 +8,11 @@ import {
   redactTraceValue,
 } from "../mindTrace";
 import {
+  buildHarnessMindTrace,
+  buildMindTracePersistenceRecord,
+  extractMemoriesFromToolCalls,
+} from "../mindTraceRecorder";
+import {
   buildMemoryTrustSummary,
   normalizeMemoryTrustRecord,
 } from "../../memory/trust";
@@ -122,6 +127,83 @@ function hasPack(decision: ContextPackDecision, pack: string): boolean {
   assert.equal(trace.approval.required, false);
   assert.ok(trace.contextLoaded.includes("memory_context"));
   console.log("OK: mind trace explains route, context, memory, SOUL, tools, and approval state");
+}
+
+{
+  const toolCalls = [
+    {
+      name: "memory_search",
+      args: { query: "morning planning", accessToken: "secret-token" },
+      result: {
+        ok: true,
+        label: "Memory search: morning planning",
+        detail: "1 memories retrieved",
+        content: [
+          'Memory search returned 1 actual retrieved memory for: "morning planning"',
+          "",
+          "[1] [long_term/semantic] (preferences, confidence: 91%) User prefers crisp morning plans.",
+        ].join("\n"),
+      },
+      durationMs: 12,
+    },
+    {
+      name: "send_email",
+      args: { to: "bill@example.com", body: "done" },
+      result: {
+        ok: false,
+        label: "Blocked",
+        content: "[Tool blocked] Approval required before sending email.",
+      },
+      durationMs: 4,
+    },
+  ];
+
+  const memories = extractMemoriesFromToolCalls(toolCalls);
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0]?.tier, "long_term");
+  assert.equal(memories[0]?.memoryType, "semantic");
+  assert.equal(memories[0]?.category, "preferences");
+  assert.equal(memories[0]?.confidence, 91);
+
+  const trace = buildHarnessMindTrace({
+    traceId: "harness-trace-test",
+    userId: "user-1",
+    userRequest: "What do you remember about morning planning, then send Bill an update?",
+    channel: "app",
+    model: "test-model",
+    turns: 2,
+    finishReason: "tool_error",
+    reply: "I found the memory and need approval before sending.",
+    toolCalls,
+    durationMs: 42,
+    contextLoaded: ["workspace_context"],
+  });
+
+  assert.equal(trace.traceId, "harness-trace-test");
+  assert.equal(trace.toolsCalled[0]?.argsPreview?.accessToken, "[redacted]");
+  assert.equal(trace.toolsCalled[1]?.status, "blocked");
+  assert.equal(trace.approval.required, true);
+  assert.ok(trace.contextLoaded.includes("memory_context"));
+  assert.ok(trace.contextLoaded.includes("email_context"));
+
+  const record = buildMindTracePersistenceRecord({
+    traceId: "harness-row-test",
+    userId: "user-1",
+    userRequest: "Find the memory and draft the send.",
+    channel: "app",
+    turns: 2,
+    finishReason: "stop",
+    reply: "Draft ready.",
+    toolCalls,
+    durationMs: 33,
+  });
+
+  assert.equal(record.traceId, "harness-row-test");
+  assert.equal(record.userRequest, "Find the memory and draft the send.");
+  assert.ok(Array.isArray(record.subtasks));
+  assert.ok(Array.isArray(record.results));
+  assert.equal((record.results[0] as { type?: string }).type, "mind_trace");
+  console.log("OK: harness Mind Trace captures real tool, memory, approval, and persistence payload events");
 }
 
 {

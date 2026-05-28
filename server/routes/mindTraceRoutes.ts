@@ -11,6 +11,18 @@ function asStringArray(value: unknown): string[] {
     : [];
 }
 
+function getPersistedMindTrace(results: unknown): unknown | null {
+  if (!Array.isArray(results)) return null;
+  for (const result of results) {
+    if (!result || typeof result !== "object") continue;
+    const record = result as Record<string, unknown>;
+    if (record.type === "mind_trace" && record.trace && typeof record.trace === "object") {
+      return record.trace;
+    }
+  }
+  return null;
+}
+
 export function registerMindTraceRoutes(app: Express): void {
   app.post("/api/mind-trace/preview", async (req: Request, res: Response) => {
     try {
@@ -65,8 +77,9 @@ export function registerMindTraceRoutes(app: Express): void {
         .orderBy(desc(schema.orchestrationTraces.createdAt))
         .limit(limit);
 
-      const traces = rows.map((row) => ({
-        ...buildMindTrace({
+      const traces = rows.map((row) => {
+        const persistedTrace = getPersistedMindTrace(row.results);
+        const trace = persistedTrace ?? buildMindTrace({
           traceId: row.traceId,
           userId,
           userRequest: row.userRequest,
@@ -74,16 +87,20 @@ export function registerMindTraceRoutes(app: Express): void {
           confidenceNotes: [`Subtasks: ${Array.isArray(row.subtasks) ? row.subtasks.length : 0}`],
           errors: row.finalAnswer ? [] : ["No final answer recorded on orchestration trace."],
           now: row.createdAt,
-        }),
-        orchestration: {
-          databaseId: row.id,
-          subtaskCount: Array.isArray(row.subtasks) ? row.subtasks.length : 0,
-          resultCount: Array.isArray(row.results) ? row.results.length : 0,
-          totalRetries: row.totalRetries,
-          completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : null,
-          durationMs: row.durationMs,
-        },
-      }));
+        });
+
+        return {
+          ...(trace as Record<string, unknown>),
+          orchestration: {
+            databaseId: row.id,
+            subtaskCount: Array.isArray(row.subtasks) ? row.subtasks.length : 0,
+            resultCount: Array.isArray(row.results) ? row.results.length : 0,
+            totalRetries: row.totalRetries,
+            completedAt: row.completedAt ? new Date(row.completedAt).toISOString() : null,
+            durationMs: row.durationMs,
+          },
+        };
+      });
 
       res.json({ traces });
     } catch (err) {
