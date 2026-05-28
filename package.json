@@ -30,6 +30,7 @@
     "jarvis:oauth:gateway:uninstall-startup": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-jarvis-oauth-gateway-startup.ps1",
     "jarvis:qa:endpoints": "node scripts/deployed-jarvis-endpoint-qa.mjs",
     "jarvis:qa:composio": "node scripts/composio-production-smoke.mjs",
+    "jarvis:qa:agent-sdk-hitl": "tsx scripts/agent-sdk-hitl-smoke.ts",
     "jarvis:qa:cleanup": "node scripts/deployed-jarvis-qa-cleanup.mjs",
     "jarvis:check": "npm run jarvis:doctor && npm test",
     "test": "node scripts/run-agent-tests.mjs"
@@ -44,6 +45,7 @@
     "@inferencesh/sdk": "^0.5.16",
     "@microsoft/microsoft-graph-client": "^3.0.7",
     "@napi-rs/canvas": "^0.1.99",
+    "@openrouter/agent": "^0.7.0",
     "@playwright/mcp": "^0.0.70",
     "@playwright/test": "^1.59.1",
     "@react-native-async-storage/async-storage": "2.2.0",

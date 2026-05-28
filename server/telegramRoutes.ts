@@ -554,6 +554,23 @@ async function handleCallbackQuery(callbackQuery: any): Promise<void> {
       return;
     }
 
+    const { isAgentSdkApprovalGate, resumeAgentSdkRunFromApprovalGate } = await import("../src/agent/agentRunner");
+    if (isAgentSdkApprovalGate(gate)) {
+      if (approvalCallback.decision === "approve") {
+        await answerCallbackQuery(queryId, "Approved. Jarvis will continue.");
+        await sendMessage(chatId, `Approved ${gate.toolName}. Resuming the Agent SDK email workflow.`);
+      } else {
+        await answerCallbackQuery(queryId, "Declined. Jarvis will not send it.");
+        await sendMessage(chatId, `Declined ${gate.toolName}. I will not send that email.`);
+      }
+      await resumeAgentSdkRunFromApprovalGate({
+        gate,
+        approved: approvalCallback.decision === "approve",
+        originChannelId: chatId,
+      }).catch((err) => console.error("[AgentSDK/HITL] resume failed:", err));
+      return;
+    }
+
     if (approvalCallback.decision === "approve") {
       await answerCallbackQuery(queryId, "Approved. Jarvis will continue.");
       await sendMessage(chatId, `✅ Approved ${gate.toolName}. Jarvis will continue.`);
@@ -1632,6 +1649,18 @@ async function processUpdate(update: any): Promise<void> {
         } catch (needsErr) {
           console.error("[Telegram] needsAttention routing error:", needsErr);
         }
+      }
+
+      const { runAgentSdkEmailWorkflow } = await import("../src/agent/agentRunner");
+      const agentSdkResult = await runAgentSdkEmailWorkflow({
+        userId,
+        userText: rawUserText,
+        originChannel: "telegram",
+        originChannelId: chatId,
+      });
+      if (agentSdkResult.handled) {
+        await sendMessage(chatId, agentSdkResult.reply);
+        return;
       }
 
       enqueueTelegramCoachMessageBatch(
