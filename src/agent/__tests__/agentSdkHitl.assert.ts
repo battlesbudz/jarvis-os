@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   isAgentSdkRunnerEnabled,
+  matchesAgentSdkEmailDraftOnlyWorkflow,
   matchesAgentSdkEmailWorkflow,
   resumeAgentSdkEmailWorkflowRun,
   resumeAgentSdkRunFromApprovalGate,
@@ -22,6 +23,10 @@ assert.equal(matchesAgentSdkEmailWorkflow("can you draft/send an email to Sam?")
 assert.equal(matchesAgentSdkEmailWorkflow("write an email draft but do not send it"), false);
 assert.equal(matchesAgentSdkEmailWorkflow("check my inbox"), false);
 assert.equal(matchesAgentSdkEmailWorkflow("send a calendar invite"), false);
+assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("Draft a reply to this email."), true);
+assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("write an email draft but do not send it"), true);
+assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("draft and send an email to sam@example.com"), false);
+assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("check my inbox"), false);
 
 process.env.ENABLE_AGENT_SDK_RUNNER = "false";
 assert.equal(isAgentSdkRunnerEnabled(), false);
@@ -77,6 +82,14 @@ try {
   });
   assert.equal(tools.length, 3);
   assert.ok(tools.some((tool: any) => tool.function?.name === "send_email"));
+  const draftOnlyTools = createAgentSdkTools({
+    userId: "user_1",
+    runId: "run_tools",
+    store,
+    includeSendEmailTool: false,
+  });
+  assert.equal(draftOnlyTools.length, 2);
+  assert.equal(draftOnlyTools.some((tool: any) => tool.function?.name === "send_email"), false);
   const draftTool: any = tools.find((tool: any) => tool.function?.name === "draft_email");
   const draftResult = await draftTool.function.execute({
     to: "sam@example.com",
@@ -237,6 +250,46 @@ try {
   assert.ok(longHorizonMessages.some((message) => /read_context/.test(message)));
   assert.ok(longHorizonMessages.some((message) => /completed/i.test(message)));
   assert.equal((await store.load(longHorizonResult.runId))?.meta.status, "complete");
+
+  const draftOnlyRequests: any[] = [];
+  const draftOnlyResult = await runAgentSdkEmailWorkflow(
+    {
+      userId: "user_1",
+      userText: "Draft a reply to this email but do not send it.",
+      conversationContext: "customer@example.com wrote: Can you send the proposal today?",
+      originChannel: "app",
+    },
+    {
+      store,
+      callModel: async (request) => {
+        draftOnlyRequests.push(request);
+        const draftEmailTool: any = (request.tools as any[]).find((tool) => tool.function?.name === "draft_email");
+        await draftEmailTool.function.execute({
+          to: "customer@example.com",
+          subject: "Re: Proposal",
+          body: "Yes, I can send the proposal today.",
+        });
+        return {
+          requiresApproval: async () => false,
+          getText: async () => "Draft ready. I did not send anything.",
+          getResponse: async () => ({
+            state: {
+              id: "state_draft_only",
+              status: "complete",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messages: [],
+            },
+          }),
+        };
+      },
+    },
+  );
+  assert.equal(draftOnlyResult.status, "complete");
+  assert.equal(draftOnlyRequests[0].tools.some((tool: any) => tool.function?.name === "send_email"), false);
+  assert.match(draftOnlyRequests[0].input, /Relevant conversation context/);
+  assert.equal((await store.load(draftOnlyResult.runId))?.meta.workflow, "email_draft_only");
+  assert.equal((await store.load(draftOnlyResult.runId))?.meta.draft?.to, "customer@example.com");
 
   await store.save({
     meta: {

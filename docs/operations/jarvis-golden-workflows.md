@@ -149,13 +149,13 @@ The scorecard reports:
 Current SDK v1 coverage:
 
 - Full supported workflow: none of the ten golden workflows are fully SDK-owned yet.
-- Partial supported workflow: workflow 2, through the adjacent explicit draft/send email HITL path.
+- Partial supported workflow: workflow 2, through draft-only email with provided context and the adjacent explicit draft/send email HITL path.
 - Existing Jarvis-owned workflows: 1, 3, 4, 5, 6, 7, 8, 10.
 - Unsupported by SDK v1: 9 until memory lookup includes provenance, confidence, and source metadata.
 
 Next implementation order:
 
-1. Add draft-only email reply as its own SDK route.
+1. Add provider email-thread read support so draft replies can use real source messages.
 2. Add internal reminder creation with no external calendar write.
 3. Add read-only meeting prep with calendar/email/memory read tools.
 4. Add provenance-aware memory lookup.

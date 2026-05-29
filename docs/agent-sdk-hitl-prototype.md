@@ -113,7 +113,7 @@ Current status:
 | Workflow | SDK status | Notes |
 | --- | --- | --- |
 | Plan my day around my calendar | `current_jarvis_owned` | Keep on Daily Command until calendar/plan draft tools are wrapped. |
-| Draft a reply to an email | `sdk_partial_mocked` | SDK proves adjacent email HITL send; draft-only reply route is next. |
+| Draft a reply to an email | `sdk_partial_mocked` | SDK now proves draft-only with provided conversation context and adjacent email HITL send. It is still partial until provider email-thread reads exist. |
 | Remind me to follow up | `current_jarvis_owned` | Existing scheduled task/reminder system remains owner. |
 | Research a topic and save a report | `current_jarvis_owned` | Existing research/job/deliverable path remains owner. |
 | Turn a goal into a project tree | `current_jarvis_owned` | Existing goal decomposition remains owner. |
@@ -123,9 +123,9 @@ Current status:
 | Find what I said before | `unsupported_by_sdk_v1` | Needs provenance-aware memory search/read, not just `read_context`. |
 | Diagnose why a feature failed | `current_jarvis_owned` | Existing diagnostics/Mind Trace/job observability remain owner. |
 
-The next SDK expansion should be one workflow at a time, starting with:
+The next SDK expansion should be one workflow at a time:
 
-1. Draft-only email reply.
+1. Provider email-thread read support for draft replies.
 2. Internal reminder creation.
 3. Read-only meeting prep.
 
@@ -167,7 +167,8 @@ The project direction is:
 
 ```txt
 experimental email HITL
--> draft-only email reply
+-> draft-only email reply with provided context
+-> provider email-thread reads for reply drafts
 -> internal reminders
 -> read-only meeting prep
 -> provenance-aware memory lookup

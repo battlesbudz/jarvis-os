@@ -6,6 +6,7 @@ export interface AgentSdkToolDeps {
   userId: string;
   runId: string;
   store: AgentSdkRunStore;
+  includeSendEmailTool?: boolean;
   readContext?: (query: string) => Promise<string>;
   sendEmail?: (args: {
     to: string;
@@ -74,6 +75,10 @@ export function createAgentSdkTools(deps: AgentSdkToolDeps) {
         : { sent: false, error: result.error || "Email send failed" };
     },
   });
+
+  if (deps.includeSendEmailTool === false) {
+    return [readContext, draftEmail] as const;
+  }
 
   return [readContext, draftEmail, sendEmail] as const;
 }

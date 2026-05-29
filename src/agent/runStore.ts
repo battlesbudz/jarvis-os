@@ -15,6 +15,7 @@ export interface AgentSdkRunMeta {
   userId: string;
   originChannel: "app" | "telegram" | string;
   originChannelId?: string;
+  workflow?: "email_send_approval" | "email_draft_only";
   status: AgentSdkRunStatus;
   draft?: { to: string; subject: string; body: string };
   pendingToolCallId?: string;

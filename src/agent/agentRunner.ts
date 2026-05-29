@@ -17,6 +17,7 @@ export type AgentSdkRunnerResult =
 export interface RunAgentSdkEmailWorkflowInput {
   userId: string;
   userText: string;
+  conversationContext?: string;
   originChannel: "app" | "telegram" | string;
   originChannelId?: string;
 }
@@ -71,6 +72,7 @@ const DEFAULT_MODEL = "openai/gpt-4o-mini";
 const DEFAULT_MAX_COST_USD = 0.25;
 const DEFAULT_MAX_STEPS = 20;
 const DEFAULT_PROGRESS_TEXT_CHUNK_CHARS = 80;
+type AgentSdkEmailWorkflowMode = "email_send_approval" | "email_draft_only";
 
 export function isAgentSdkRunnerEnabled(env = process.env): boolean {
   return String(env.ENABLE_AGENT_SDK_RUNNER || "").toLowerCase() === "true";
@@ -83,6 +85,22 @@ export function matchesAgentSdkEmailWorkflow(message: string): boolean {
   if (!/\b(draft|write|compose)\b/.test(text)) return false;
   if (/\b(do not send|don't send|dont send|draft only|just draft)\b/.test(text)) return false;
   return true;
+}
+
+export function matchesAgentSdkEmailDraftOnlyWorkflow(message: string): boolean {
+  const text = String(message || "").toLowerCase();
+  if (!/\b(email|reply)\b/.test(text)) return false;
+  if (!/\b(draft|write|compose|reply)\b/.test(text)) return false;
+  if (/\b(send|sent)\b/.test(text) && !/\b(do not send|don't send|dont send|draft only|just draft)\b/.test(text)) {
+    return false;
+  }
+  return true;
+}
+
+function getAgentSdkEmailWorkflowMode(message: string): AgentSdkEmailWorkflowMode | null {
+  if (matchesAgentSdkEmailWorkflow(message)) return "email_send_approval";
+  if (matchesAgentSdkEmailDraftOnlyWorkflow(message)) return "email_draft_only";
+  return null;
 }
 
 function createRunId(): string {
@@ -172,16 +190,27 @@ function buildRequest(
   tools: readonly Tool[],
   state: ReturnType<AgentSdkRunStore["createStateAccessor"]>,
   options: { maxCostUsd: number; maxSteps: number },
+  mode: AgentSdkEmailWorkflowMode = "email_send_approval",
   decisions?: { approveToolCalls?: string[]; rejectToolCalls?: string[] },
 ): Record<string, unknown> {
-  return {
-    model: process.env.OPENROUTER_AGENT_SDK_MODEL || DEFAULT_MODEL,
-    instructions: [
-      "You are Jarvis running a small experimental Agent SDK email workflow.",
+  const workflowInstruction = mode === "email_draft_only"
+    ? [
+      "Handle only this task: create an internal email draft preview or reply draft.",
+      "Call read_context only when useful, then call draft_email.",
+      "No send_email tool is available in this mode. Do not imply the email was sent.",
+      "Return the draft clearly with recipient, subject, and body when known.",
+    ].join("\n")
+    : [
       "Handle only this task: draft an email, then request the send_email tool.",
       "Always call draft_email before send_email.",
       "Never claim the email was sent unless send_email executes successfully.",
       "Keep final user-facing text short.",
+    ].join("\n");
+  return {
+    model: process.env.OPENROUTER_AGENT_SDK_MODEL || DEFAULT_MODEL,
+    instructions: [
+      "You are Jarvis running a small experimental Agent SDK email workflow.",
+      workflowInstruction,
     ].join("\n"),
     input: Array.isArray(userText) || decisions ? [] : userText,
     tools,
@@ -270,7 +299,8 @@ export async function runAgentSdkEmailWorkflow(
   deps: AgentSdkRunnerDeps = {},
 ): Promise<AgentSdkRunnerResult> {
   if (!isAgentSdkRunnerEnabled()) return { handled: false };
-  if (!matchesAgentSdkEmailWorkflow(input.userText)) return { handled: false };
+  const workflowMode = getAgentSdkEmailWorkflowMode(input.userText);
+  if (!workflowMode) return { handled: false };
 
   const store = deps.store ?? createFileAgentSdkRunStore();
   const callModel = deps.callModel ?? defaultCallModel;
@@ -285,8 +315,12 @@ export async function runAgentSdkEmailWorkflow(
     store,
     readContext: (query) => readContext(input.userId, query),
     sendEmail: (args) => sendEmail(input.userId, args),
+    includeSendEmailTool: workflowMode === "email_send_approval",
   });
   const stateAccessor = store.createStateAccessor(runId);
+  const userInput = input.conversationContext
+    ? `${input.userText}\n\nRelevant conversation context:\n${input.conversationContext}`
+    : input.userText;
 
   await store.save({
     meta: {
@@ -294,6 +328,7 @@ export async function runAgentSdkEmailWorkflow(
       userId: input.userId,
       originChannel: input.originChannel,
       originChannelId: input.originChannelId,
+      workflow: workflowMode,
       status: "running",
       createdAt: now,
       updatedAt: now,
@@ -304,7 +339,7 @@ export async function runAgentSdkEmailWorkflow(
   });
 
   try {
-    const result = await callModel(buildRequest(input.userText, tools, stateAccessor, longHorizon));
+    const result = await callModel(buildRequest(userInput, tools, stateAccessor, longHorizon, workflowMode));
     const progressPromise = sendTelegramProgress(result, deps, input.originChannelId);
     const state = await result.getState?.();
     if (state) {
@@ -317,6 +352,9 @@ export async function runAgentSdkEmailWorkflow(
     }
 
     if (await result.requiresApproval?.()) {
+      if (workflowMode === "email_draft_only") {
+        throw new Error("Draft-only Agent SDK workflow unexpectedly requested approval");
+      }
       await progressPromise;
       const pendingCalls = (await result.getPendingToolCalls?.()) ?? [];
       const pending = pendingCalls.find((call) => call.name === "send_email") ?? pendingCalls[0];
@@ -350,7 +388,9 @@ export async function runAgentSdkEmailWorkflow(
 
     const response = await result.getResponse?.();
     await progressPromise;
-    const reply = await safeText(result, "Agent SDK email workflow finished.");
+    const reply = await safeText(result, workflowMode === "email_draft_only"
+      ? "Draft is ready. I did not send anything."
+      : "Agent SDK email workflow finished.");
     await saveResponseState(store, runId, response, "complete");
     await sendTelegramCompletion(deps, input.originChannelId, reply, "complete");
     return {
@@ -431,11 +471,12 @@ export async function resumeAgentSdkRunFromApprovalGate(
     store,
     readContext: (query) => readContext(record.meta.userId, query),
     sendEmail: (args) => sendEmail(record.meta.userId, args),
+    includeSendEmailTool: record.meta.workflow !== "email_draft_only",
   });
   const stateAccessor = store.createStateAccessor(runId);
 
   try {
-    const result = await callModel(buildRequest("", tools, stateAccessor, longHorizon, input.approved
+    const result = await callModel(buildRequest("", tools, stateAccessor, longHorizon, record.meta.workflow ?? "email_send_approval", input.approved
       ? { approveToolCalls: [toolCallId] }
       : { rejectToolCalls: [toolCallId] }));
     const progressPromise = sendTelegramProgress(result, deps, input.originChannelId || record.meta.originChannelId);
@@ -505,6 +546,7 @@ export async function resumeAgentSdkEmailWorkflowRun(
     store,
     readContext: (query) => readContext(record.meta.userId, query),
     sendEmail: (args) => sendEmail(record.meta.userId, args),
+    includeSendEmailTool: record.meta.workflow !== "email_draft_only",
   });
   const stateAccessor = store.createStateAccessor(input.runId);
   const now = new Date().toISOString();
@@ -517,7 +559,7 @@ export async function resumeAgentSdkEmailWorkflowRun(
 
   try {
     const chatId = input.originChannelId || record.meta.originChannelId;
-    const result = await callModel(buildRequest([], tools, stateAccessor, longHorizon));
+    const result = await callModel(buildRequest([], tools, stateAccessor, longHorizon, record.meta.workflow ?? "email_send_approval"));
     const progressPromise = sendTelegramProgress(result, deps, chatId);
     if (await result.requiresApproval?.()) {
       await progressPromise;

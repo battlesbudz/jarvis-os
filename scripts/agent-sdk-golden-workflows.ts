@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createFileAgentSdkRunStore } from "../src/agent/runStore";
 import {
+  matchesAgentSdkEmailDraftOnlyWorkflow,
   matchesAgentSdkEmailWorkflow,
   resumeAgentSdkRunFromApprovalGate,
   runAgentSdkEmailWorkflow,
@@ -50,7 +51,7 @@ const goldenWorkflows: GoldenWorkflowSpec[] = [
     expectedContext: ["always_on_kernel", "email_context", "memory_context"],
     approvalRequirement: "No approval to draft; approval before sending or provider-side draft creation when policy requires it.",
     sdkV1Disposition: "sdk_partial_mocked",
-    nextSdkStep: "Split the email SDK path into draft-only and send-with-approval variants.",
+    nextSdkStep: "Add provider email-thread reads before claiming full support for reply drafts.",
   },
   {
     id: 3,
@@ -261,6 +262,67 @@ async function proveEmailHitlSdkSlice(): Promise<string[]> {
   }
 }
 
+async function proveEmailDraftOnlySdkSlice(): Promise<string[]> {
+  process.env.ENABLE_AGENT_SDK_RUNNER = "true";
+  const tmp = await mkdtemp(path.join(tmpdir(), "agent-sdk-golden-draft-"));
+  try {
+    const store = createFileAgentSdkRunStore(tmp);
+    let sendCount = 0;
+    const result = await runAgentSdkEmailWorkflow(
+      {
+        userId: "golden_user",
+        userText: "Draft a reply to this email but do not send it.",
+        conversationContext: "client@example.com wrote: Can you confirm the meeting time?",
+        originChannel: "app",
+      },
+      {
+        store,
+        callModel: async (request: any) => {
+          assert.equal(request.tools.some((tool: any) => tool.function.name === "send_email"), false);
+          const draftTool: any = request.tools.find((tool: any) => tool.function.name === "draft_email");
+          await draftTool.function.execute({
+            to: "client@example.com",
+            subject: "Re: Meeting time",
+            body: "Confirmed. The meeting time still works for me.",
+          });
+          return {
+            requiresApproval: async () => false,
+            getText: async () => "Draft ready. I did not send anything.",
+            getResponse: async () => ({
+              state: {
+                id: "golden_draft_state",
+                status: "complete",
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                messages: [],
+              },
+            }),
+          };
+        },
+        sendEmail: async () => {
+          sendCount += 1;
+          return { ok: true, messageId: "should_not_send" };
+        },
+      },
+    );
+
+    assert.equal(result.status, "complete");
+    assert.equal(sendCount, 0);
+    assert.equal((await store.load(result.runId))?.meta.workflow, "email_draft_only");
+    assert.equal((await store.load(result.runId))?.meta.draft?.to, "client@example.com");
+
+    return [
+      "matched explicit draft-only email workflow",
+      "loaded provided conversation context",
+      "excluded send_email from available tools",
+      "persisted internal draft preview",
+      "completed without approval or sending",
+    ];
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
 function evaluateStaticWorkflow(spec: GoldenWorkflowSpec): GoldenWorkflowResult {
   const evidence = [
     `expected route: ${spec.expectedRoute}`,
@@ -270,7 +332,7 @@ function evaluateStaticWorkflow(spec: GoldenWorkflowSpec): GoldenWorkflowResult 
   ];
 
   if (spec.sdkV1Disposition === "sdk_partial_mocked") {
-    evidence.push("SDK v1 only supports the adjacent explicit draft/send email HITL subcase today.");
+    evidence.push("SDK v1 supports draft-only when source context is provided, plus the adjacent explicit draft/send email HITL subcase.");
   } else if (spec.sdkV1Disposition === "current_jarvis_owned") {
     evidence.push("not routed through the SDK runner yet; existing Jarvis path remains the owner.");
   } else {
@@ -286,12 +348,15 @@ async function main() {
   for (const spec of goldenWorkflows) {
     if (spec.id === 2) {
       const sdkEvidence = await proveEmailHitlSdkSlice();
+      const draftEvidence = await proveEmailDraftOnlySdkSlice();
       results.push({
         ...spec,
         passed: true,
         evidence: [
+          ...draftEvidence,
+          "send-with-approval adjacent path:",
           ...sdkEvidence,
-          "golden workflow 2 remains partial: draft-only email reply is not yet its own SDK route.",
+          "golden workflow 2 remains partial: SDK v1 does not read provider email threads yet.",
         ],
       });
       continue;
@@ -301,7 +366,11 @@ async function main() {
 
   assert.equal(results.length, 10);
   assert.equal(results.every((result) => result.passed), true);
-  assert.equal(matchesAgentSdkEmailWorkflow(goldenWorkflows[2].input), false);
+  const draftReplyWorkflow = goldenWorkflows.find((workflow) => workflow.id === 2);
+  assert.ok(draftReplyWorkflow);
+  assert.equal(matchesAgentSdkEmailWorkflow(draftReplyWorkflow.input), false);
+  assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow(draftReplyWorkflow.input), true);
+  assert.equal(matchesAgentSdkEmailWorkflow(goldenWorkflows.find((workflow) => workflow.id === 3)!.input), false);
 
   const summary = results.map((result) => ({
     id: result.id,

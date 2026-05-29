@@ -2079,9 +2079,14 @@ Answer (yes/no):`,
       if (userId) {
         const latestUserMessage = [...messages].reverse().find((m: any) => m?.role === "user")?.content ?? "";
         const { runAgentSdkEmailWorkflow } = await import("../src/agent/agentRunner");
+        const recentConversationContext = messages
+          .slice(-8)
+          .map((m: any) => `${m?.role || "message"}: ${String(m?.content || "").slice(0, 2000)}`)
+          .join("\n");
         const agentSdkResult = await runAgentSdkEmailWorkflow({
           userId,
           userText: String(latestUserMessage),
+          conversationContext: recentConversationContext,
           originChannel,
         });
         if (agentSdkResult.handled) {
