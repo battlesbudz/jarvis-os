@@ -50,6 +50,10 @@ export interface AgentSdkRunnerDeps {
   maxCostUsd?: number;
   maxSteps?: number;
   progressTextChunkChars?: number;
+  createInternalReminder?: (
+    userId: string,
+    args: { title: string; description?: string; scheduledAt: string; recurrence?: string },
+  ) => Promise<{ ok: boolean; id?: string; scheduledAt?: string; recurrence?: string | null; deduped?: boolean; error?: string }>;
 }
 
 export interface ResumeAgentSdkEmailWorkflowRunInput {
@@ -72,7 +76,7 @@ const DEFAULT_MODEL = "openai/gpt-4o-mini";
 const DEFAULT_MAX_COST_USD = 0.25;
 const DEFAULT_MAX_STEPS = 20;
 const DEFAULT_PROGRESS_TEXT_CHUNK_CHARS = 80;
-type AgentSdkEmailWorkflowMode = "email_send_approval" | "email_draft_only";
+type AgentSdkWorkflowMode = "email_send_approval" | "email_draft_only" | "internal_reminder";
 
 export function isAgentSdkRunnerEnabled(env = process.env): boolean {
   return String(env.ENABLE_AGENT_SDK_RUNNER || "").toLowerCase() === "true";
@@ -97,10 +101,20 @@ export function matchesAgentSdkEmailDraftOnlyWorkflow(message: string): boolean 
   return true;
 }
 
-function getAgentSdkEmailWorkflowMode(message: string): AgentSdkEmailWorkflowMode | null {
+function getAgentSdkEmailWorkflowMode(message: string): AgentSdkWorkflowMode | null {
   if (matchesAgentSdkEmailWorkflow(message)) return "email_send_approval";
   if (matchesAgentSdkEmailDraftOnlyWorkflow(message)) return "email_draft_only";
   return null;
+}
+
+export function matchesAgentSdkReminderWorkflow(message: string): boolean {
+  const text = String(message || "").toLowerCase();
+  if (!/\b(remind\s+me|set\s+(a\s+)?reminder|reminder)\b/.test(text)) return false;
+  if (!/\b(in|at|on|tomorrow|today|tonight|morning|afternoon|evening|hour|hours|minute|minutes|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(text)) {
+    return false;
+  }
+  if (/\b(calendar|meeting|event|invite|shell|script|command|daemon|device)\b/.test(text)) return false;
+  return true;
 }
 
 function createRunId(): string {
@@ -170,6 +184,40 @@ async function defaultSendEmail(
     : { ok: false, error: result.content || result.detail || "Email send failed" };
 }
 
+async function defaultCreateInternalReminder(
+  userId: string,
+  args: { title: string; description?: string; scheduledAt: string; recurrence?: string },
+): Promise<{ ok: boolean; id?: string; scheduledAt?: string; recurrence?: string | null; deduped?: boolean; error?: string }> {
+  const [{ createJarvisScheduledTask }, { parseNaturalTime, parseRecurringExpr }] = await Promise.all([
+    import("../../server/jarvisScheduledTasks"),
+    import("../../server/agent/tools/cronTools"),
+  ]);
+  const title = String(args.title || "").trim();
+  const scheduledAtText = String(args.scheduledAt || "").trim();
+  if (!title) return { ok: false, error: "title is required" };
+  if (!scheduledAtText) return { ok: false, error: "scheduledAt is required" };
+  const recurring = parseRecurringExpr(scheduledAtText);
+  const scheduledAt = recurring?.scheduledAt ?? parseNaturalTime(scheduledAtText) ?? new Date(scheduledAtText);
+  const recurrence = args.recurrence ? String(args.recurrence).trim() : recurring?.recurrence ?? null;
+  if (isNaN(scheduledAt.getTime())) {
+    return { ok: false, error: `Invalid scheduledAt: "${scheduledAtText}"` };
+  }
+  const { task, deduped } = await createJarvisScheduledTask({
+    userId,
+    title,
+    description: args.description ? String(args.description).trim() : null,
+    scheduledAt,
+    recurrence,
+  });
+  return {
+    ok: true,
+    id: String(task.id),
+    scheduledAt: task.scheduledAt instanceof Date ? task.scheduledAt.toISOString() : new Date(task.scheduledAt).toISOString(),
+    recurrence: task.recurrence ?? recurrence,
+    deduped,
+  };
+}
+
 async function defaultRequestApproval(input: Parameters<HitlApprovalDeps["requestApproval"]>[0]) {
   const { requestApproval } = await import("../../server/agent/agentApproval");
   return requestApproval(input);
@@ -190,10 +238,18 @@ function buildRequest(
   tools: readonly Tool[],
   state: ReturnType<AgentSdkRunStore["createStateAccessor"]>,
   options: { maxCostUsd: number; maxSteps: number },
-  mode: AgentSdkEmailWorkflowMode = "email_send_approval",
+  mode: AgentSdkWorkflowMode = "email_send_approval",
   decisions?: { approveToolCalls?: string[]; rejectToolCalls?: string[] },
 ): Record<string, unknown> {
-  const workflowInstruction = mode === "email_draft_only"
+  const workflowInstruction = mode === "internal_reminder"
+    ? [
+      "Handle only this task: create an internal Jarvis reminder.",
+      "If the reminder title or time is missing or ambiguous, ask one short follow-up and do not call a tool.",
+      "Call create_internal_reminder only for an explicit internal reminder with clear reminder text and time.",
+      "Do not create calendar events, send messages, run shell commands, or control devices.",
+      "Keep final user-facing text short and include the scheduled time returned by the tool.",
+    ].join("\n")
+    : mode === "email_draft_only"
     ? [
       "Handle only this task: create an internal email draft preview or reply draft.",
       "Call read_context only when useful, then call draft_email.",
@@ -209,7 +265,7 @@ function buildRequest(
   return {
     model: process.env.OPENROUTER_AGENT_SDK_MODEL || DEFAULT_MODEL,
     instructions: [
-      "You are Jarvis running a small experimental Agent SDK email workflow.",
+      "You are Jarvis running a small experimental Agent SDK workflow.",
       workflowInstruction,
     ].join("\n"),
     input: Array.isArray(userText) || decisions ? [] : userText,
@@ -262,10 +318,10 @@ async function sendTelegramCompletion(
 ): Promise<void> {
   if (!chatId) return;
   const prefix = status === "complete"
-    ? "Agent SDK email workflow completed."
+    ? "Agent SDK workflow completed."
     : status === "rejected"
-      ? "Agent SDK email workflow finished without sending."
-      : "Agent SDK email workflow failed.";
+      ? "Agent SDK workflow finished without sending."
+      : "Agent SDK workflow failed.";
   await (deps.sendTelegramMessage ?? defaultSendTelegramMessage)(chatId, `${prefix}\n\n${text}`.trim());
 }
 
@@ -408,6 +464,88 @@ export async function runAgentSdkEmailWorkflow(
       status: "failed",
       runId,
       reply: `Agent SDK email prototype failed: ${message}`,
+      error: message,
+    };
+  }
+}
+
+export async function runAgentSdkReminderWorkflow(
+  input: RunAgentSdkEmailWorkflowInput,
+  deps: AgentSdkRunnerDeps = {},
+): Promise<AgentSdkRunnerResult> {
+  if (!isAgentSdkRunnerEnabled()) return { handled: false };
+  if (!matchesAgentSdkReminderWorkflow(input.userText)) return { handled: false };
+
+  const store = deps.store ?? createFileAgentSdkRunStore();
+  const callModel = deps.callModel ?? defaultCallModel;
+  const readContext = deps.readContext ?? defaultReadContext;
+  const createInternalReminder = deps.createInternalReminder ?? defaultCreateInternalReminder;
+  const longHorizon = resolveLongHorizonOptions(deps);
+  const runId = createRunId();
+  const now = new Date().toISOString();
+  const tools = createAgentSdkTools({
+    userId: input.userId,
+    runId,
+    store,
+    includeDraftEmailTool: false,
+    includeSendEmailTool: false,
+    includeReminderTool: true,
+    readContext: (query) => readContext(input.userId, query),
+    createInternalReminder: (args) => createInternalReminder(input.userId, args),
+  });
+  const stateAccessor = store.createStateAccessor(runId);
+
+  await store.save({
+    meta: {
+      runId,
+      userId: input.userId,
+      originChannel: input.originChannel,
+      originChannelId: input.originChannelId,
+      workflow: "internal_reminder",
+      status: "running",
+      createdAt: now,
+      updatedAt: now,
+      maxCostUsd: longHorizon.maxCostUsd,
+      maxSteps: longHorizon.maxSteps,
+    },
+    state: createInitialState(runId),
+  });
+
+  try {
+    const result = await callModel(buildRequest(input.userText, tools, stateAccessor, longHorizon, "internal_reminder"));
+    const progressPromise = sendTelegramProgress(result, deps, input.originChannelId);
+    const state = await result.getState?.();
+    if (state) {
+      const record = await store.load(runId);
+      if (record) {
+        record.state = state;
+        record.meta.updatedAt = new Date().toISOString();
+        await store.save(record);
+      }
+    }
+    if (await result.requiresApproval?.()) {
+      throw new Error("Internal reminder workflow unexpectedly requested approval");
+    }
+    const response = await result.getResponse?.();
+    await progressPromise;
+    const reply = await safeText(result, "Reminder scheduled.");
+    await saveResponseState(store, runId, response, "complete");
+    await sendTelegramCompletion(deps, input.originChannelId, reply, "complete");
+    return {
+      handled: true,
+      status: "complete",
+      runId,
+      reply,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await saveResponseState(store, runId, undefined, "failed", message);
+    await sendTelegramCompletion(deps, input.originChannelId, `Agent SDK reminder prototype failed: ${message}`, "failed");
+    return {
+      handled: true,
+      status: "failed",
+      runId,
+      reply: `Agent SDK reminder prototype failed: ${message}`,
       error: message,
     };
   }

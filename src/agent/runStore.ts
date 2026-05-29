@@ -15,9 +15,10 @@ export interface AgentSdkRunMeta {
   userId: string;
   originChannel: "app" | "telegram" | string;
   originChannelId?: string;
-  workflow?: "email_send_approval" | "email_draft_only";
+  workflow?: "email_send_approval" | "email_draft_only" | "internal_reminder";
   status: AgentSdkRunStatus;
   draft?: { to: string; subject: string; body: string };
+  reminder?: { id?: string; title: string; scheduledAt: string; recurrence?: string | null; deduped?: boolean };
   pendingToolCallId?: string;
   gateId?: string;
   createdAt: string;

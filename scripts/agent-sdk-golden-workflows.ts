@@ -6,8 +6,10 @@ import { createFileAgentSdkRunStore } from "../src/agent/runStore";
 import {
   matchesAgentSdkEmailDraftOnlyWorkflow,
   matchesAgentSdkEmailWorkflow,
+  matchesAgentSdkReminderWorkflow,
   resumeAgentSdkRunFromApprovalGate,
   runAgentSdkEmailWorkflow,
+  runAgentSdkReminderWorkflow,
 } from "../src/agent/agentRunner";
 
 type WorkflowStatus =
@@ -60,8 +62,8 @@ const goldenWorkflows: GoldenWorkflowSpec[] = [
     expectedRoute: "planning",
     expectedContext: ["always_on_kernel", "daily_planning_context"],
     approvalRequirement: "Internal reminders can be created from explicit user request; external calendar/task writes need approval.",
-    sdkV1Disposition: "current_jarvis_owned",
-    nextSdkStep: "Wrap the existing scheduled-task/reminder tool as a low-risk SDK tool.",
+    sdkV1Disposition: "sdk_partial_mocked",
+    nextSdkStep: "Add DB-backed smoke coverage proving the SDK wrapper creates real Jarvis scheduled tasks through existing persistence.",
   },
   {
     id: 4,
@@ -323,6 +325,74 @@ async function proveEmailDraftOnlySdkSlice(): Promise<string[]> {
   }
 }
 
+async function proveInternalReminderSdkSlice(): Promise<string[]> {
+  process.env.ENABLE_AGENT_SDK_RUNNER = "true";
+  const tmp = await mkdtemp(path.join(tmpdir(), "agent-sdk-golden-reminder-"));
+  try {
+    const store = createFileAgentSdkRunStore(tmp);
+    let createCount = 0;
+    const result = await runAgentSdkReminderWorkflow(
+      {
+        userId: "golden_user",
+        userText: "Remind me in an hour to call the company.",
+        originChannel: "telegram",
+        originChannelId: "123",
+      },
+      {
+        store,
+        callModel: async (request: any) => {
+          assert.equal(request.tools.some((tool: any) => tool.function.name === "send_email"), false);
+          assert.equal(request.tools.some((tool: any) => tool.function.name === "draft_email"), false);
+          const reminderTool: any = request.tools.find((tool: any) => tool.function.name === "create_internal_reminder");
+          await reminderTool.function.execute({
+            title: "Call the company",
+            description: "User asked Jarvis for a reminder.",
+            scheduledAt: "in an hour",
+          });
+          return {
+            requiresApproval: async () => false,
+            getText: async () => "Reminder scheduled for in an hour.",
+            getResponse: async () => ({
+              state: {
+                id: "golden_reminder_state",
+                status: "complete",
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                messages: [],
+              },
+            }),
+          };
+        },
+        createInternalReminder: async (_userId, args) => {
+          createCount += 1;
+          return {
+            ok: true,
+            id: "golden_task",
+            scheduledAt: args.scheduledAt,
+            recurrence: null,
+            deduped: false,
+          };
+        },
+      },
+    );
+
+    assert.equal(result.status, "complete");
+    assert.equal(createCount, 1);
+    assert.equal((await store.load(result.runId))?.meta.workflow, "internal_reminder");
+    assert.equal((await store.load(result.runId))?.meta.reminder?.id, "golden_task");
+
+    return [
+      "matched explicit internal reminder workflow",
+      "excluded email send/draft tools",
+      "called create_internal_reminder once",
+      "persisted reminder metadata on the SDK run",
+      "left durable scheduling ownership to the Jarvis reminder adapter",
+    ];
+  } finally {
+    await rm(tmp, { recursive: true, force: true });
+  }
+}
+
 function evaluateStaticWorkflow(spec: GoldenWorkflowSpec): GoldenWorkflowResult {
   const evidence = [
     `expected route: ${spec.expectedRoute}`,
@@ -332,7 +402,7 @@ function evaluateStaticWorkflow(spec: GoldenWorkflowSpec): GoldenWorkflowResult 
   ];
 
   if (spec.sdkV1Disposition === "sdk_partial_mocked") {
-    evidence.push("SDK v1 supports draft-only when source context is provided, plus the adjacent explicit draft/send email HITL subcase.");
+    evidence.push("SDK v1 supports a narrow mocked subcase; see workflow-specific evidence.");
   } else if (spec.sdkV1Disposition === "current_jarvis_owned") {
     evidence.push("not routed through the SDK runner yet; existing Jarvis path remains the owner.");
   } else {
@@ -361,6 +431,17 @@ async function main() {
       });
       continue;
     }
+    if (spec.id === 3) {
+      results.push({
+        ...spec,
+        passed: true,
+        evidence: [
+          ...(await proveInternalReminderSdkSlice()),
+          "golden workflow 3 remains partial until DB-backed smoke proves real Jarvis scheduled-task persistence.",
+        ],
+      });
+      continue;
+    }
     results.push(evaluateStaticWorkflow(spec));
   }
 
@@ -370,7 +451,10 @@ async function main() {
   assert.ok(draftReplyWorkflow);
   assert.equal(matchesAgentSdkEmailWorkflow(draftReplyWorkflow.input), false);
   assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow(draftReplyWorkflow.input), true);
-  assert.equal(matchesAgentSdkEmailWorkflow(goldenWorkflows.find((workflow) => workflow.id === 3)!.input), false);
+  const reminderWorkflow = goldenWorkflows.find((workflow) => workflow.id === 3);
+  assert.ok(reminderWorkflow);
+  assert.equal(matchesAgentSdkEmailWorkflow(reminderWorkflow.input), false);
+  assert.equal(matchesAgentSdkReminderWorkflow(reminderWorkflow.input), true);
 
   const summary = results.map((result) => ({
     id: result.id,

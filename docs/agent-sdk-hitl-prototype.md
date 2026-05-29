@@ -114,7 +114,7 @@ Current status:
 | --- | --- | --- |
 | Plan my day around my calendar | `current_jarvis_owned` | Keep on Daily Command until calendar/plan draft tools are wrapped. |
 | Draft a reply to an email | `sdk_partial_mocked` | SDK now proves draft-only with provided conversation context and adjacent email HITL send. It is still partial until provider email-thread reads exist. |
-| Remind me to follow up | `current_jarvis_owned` | Existing scheduled task/reminder system remains owner. |
+| Remind me to follow up | `sdk_partial_mocked` | SDK now proves explicit internal reminders through `create_internal_reminder`; existing scheduled tasks remain the durable owner. |
 | Research a topic and save a report | `current_jarvis_owned` | Existing research/job/deliverable path remains owner. |
 | Turn a goal into a project tree | `current_jarvis_owned` | Existing goal decomposition remains owner. |
 | Move a goal task into today's plan | `current_jarvis_owned` | Existing goal handoff and daily plan merge remain owner. |
@@ -126,7 +126,7 @@ Current status:
 The next SDK expansion should be one workflow at a time:
 
 1. Provider email-thread read support for draft replies.
-2. Internal reminder creation.
+2. DB-backed internal reminder smoke proving real scheduled-task persistence.
 3. Read-only meeting prep.
 
 Do not expand to broad autonomous tool conversion until these three have mocked and real-tool smoke coverage.
@@ -169,7 +169,8 @@ The project direction is:
 experimental email HITL
 -> draft-only email reply with provided context
 -> provider email-thread reads for reply drafts
--> internal reminders
+-> internal reminders through existing scheduled tasks
+-> DB-backed reminder smoke
 -> read-only meeting prep
 -> provenance-aware memory lookup
 -> research/deliverable workflows

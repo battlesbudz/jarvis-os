@@ -6,9 +6,11 @@ import {
   isAgentSdkRunnerEnabled,
   matchesAgentSdkEmailDraftOnlyWorkflow,
   matchesAgentSdkEmailWorkflow,
+  matchesAgentSdkReminderWorkflow,
   resumeAgentSdkEmailWorkflowRun,
   resumeAgentSdkRunFromApprovalGate,
   runAgentSdkEmailWorkflow,
+  runAgentSdkReminderWorkflow,
 } from "../agentRunner";
 import { requestTelegramApprovalForPendingCall } from "../hitlApproval";
 import { createFileAgentSdkRunStore } from "../runStore";
@@ -27,6 +29,10 @@ assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("Draft a reply to this email.
 assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("write an email draft but do not send it"), true);
 assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("draft and send an email to sam@example.com"), false);
 assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("check my inbox"), false);
+assert.equal(matchesAgentSdkReminderWorkflow("Remind me in an hour to call the company."), true);
+assert.equal(matchesAgentSdkReminderWorkflow("Set a reminder tomorrow morning to follow up with Bill."), true);
+assert.equal(matchesAgentSdkReminderWorkflow("Remind me to call the company."), false);
+assert.equal(matchesAgentSdkReminderWorkflow("Schedule a calendar event tomorrow."), false);
 
 process.env.ENABLE_AGENT_SDK_RUNNER = "false";
 assert.equal(isAgentSdkRunnerEnabled(), false);
@@ -90,6 +96,32 @@ try {
   });
   assert.equal(draftOnlyTools.length, 2);
   assert.equal(draftOnlyTools.some((tool: any) => tool.function?.name === "send_email"), false);
+  const reminderTools = createAgentSdkTools({
+    userId: "user_1",
+    runId: "run_tools",
+    store,
+    includeDraftEmailTool: false,
+    includeSendEmailTool: false,
+    includeReminderTool: true,
+    createInternalReminder: async ({ title, scheduledAt }) => ({
+      ok: true,
+      id: "task_123",
+      scheduledAt,
+      recurrence: null,
+      deduped: false,
+    }),
+  });
+  assert.equal(reminderTools.length, 2);
+  assert.equal(reminderTools.some((tool: any) => tool.function?.name === "create_internal_reminder"), true);
+  assert.equal(reminderTools.some((tool: any) => tool.function?.name === "send_email"), false);
+  assert.equal(reminderTools.some((tool: any) => tool.function?.name === "draft_email"), false);
+  const reminderTool: any = reminderTools.find((tool: any) => tool.function?.name === "create_internal_reminder");
+  const reminderToolResult = await reminderTool.function.execute({
+    title: "Call the company",
+    scheduledAt: "2026-05-28T15:00:00.000Z",
+  });
+  assert.equal(reminderToolResult.created, true);
+  assert.equal((await store.load("run_tools"))?.meta.reminder?.id, "task_123");
   const draftTool: any = tools.find((tool: any) => tool.function?.name === "draft_email");
   const draftResult = await draftTool.function.execute({
     to: "sam@example.com",
@@ -290,6 +322,59 @@ try {
   assert.match(draftOnlyRequests[0].input, /Relevant conversation context/);
   assert.equal((await store.load(draftOnlyResult.runId))?.meta.workflow, "email_draft_only");
   assert.equal((await store.load(draftOnlyResult.runId))?.meta.draft?.to, "customer@example.com");
+
+  const reminderRequests: any[] = [];
+  let reminderCreateCount = 0;
+  const reminderResult = await runAgentSdkReminderWorkflow(
+    {
+      userId: "user_1",
+      userText: "Remind me in an hour to call the company.",
+      originChannel: "telegram",
+      originChannelId: "123",
+    },
+    {
+      store,
+      callModel: async (request) => {
+        reminderRequests.push(request);
+        const createReminderTool: any = (request.tools as any[]).find((tool) => tool.function?.name === "create_internal_reminder");
+        await createReminderTool.function.execute({
+          title: "Call the company",
+          description: "User asked Jarvis to remind them to call the company.",
+          scheduledAt: "in an hour",
+        });
+        return {
+          requiresApproval: async () => false,
+          getText: async () => "Reminder scheduled for in an hour.",
+          getResponse: async () => ({
+            state: {
+              id: "state_reminder",
+              status: "complete",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messages: [],
+            },
+          }),
+        };
+      },
+      createInternalReminder: async (_userId, args) => {
+        reminderCreateCount += 1;
+        return {
+          ok: true,
+          id: "task_agent_sdk",
+          scheduledAt: args.scheduledAt,
+          recurrence: null,
+          deduped: false,
+        };
+      },
+      sendTelegramMessage: async () => {},
+    },
+  );
+  assert.equal(reminderResult.status, "complete");
+  assert.equal(reminderCreateCount, 1);
+  assert.equal(reminderRequests[0].tools.some((tool: any) => tool.function?.name === "create_internal_reminder"), true);
+  assert.equal(reminderRequests[0].tools.some((tool: any) => tool.function?.name === "send_email"), false);
+  assert.equal((await store.load(reminderResult.runId))?.meta.workflow, "internal_reminder");
+  assert.equal((await store.load(reminderResult.runId))?.meta.reminder?.id, "task_agent_sdk");
 
   await store.save({
     meta: {

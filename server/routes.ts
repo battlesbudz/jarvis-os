@@ -2078,11 +2078,31 @@ Answer (yes/no):`,
 
       if (userId) {
         const latestUserMessage = [...messages].reverse().find((m: any) => m?.role === "user")?.content ?? "";
-        const { runAgentSdkEmailWorkflow } = await import("../src/agent/agentRunner");
+        const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
         const recentConversationContext = messages
           .slice(-8)
           .map((m: any) => `${m?.role || "message"}: ${String(m?.content || "").slice(0, 2000)}`)
           .join("\n");
+        const agentSdkReminderResult = await runAgentSdkReminderWorkflow({
+          userId,
+          userText: String(latestUserMessage),
+          originChannel,
+        });
+        if (agentSdkReminderResult.handled) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({
+            content: agentSdkReminderResult.reply,
+            agentSdkRunId: agentSdkReminderResult.runId,
+            status: agentSdkReminderResult.status,
+          })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
         const agentSdkResult = await runAgentSdkEmailWorkflow({
           userId,
           userText: String(latestUserMessage),

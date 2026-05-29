@@ -1651,7 +1651,19 @@ async function processUpdate(update: any): Promise<void> {
         }
       }
 
-      const { runAgentSdkEmailWorkflow } = await import("../src/agent/agentRunner");
+      const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
+      const agentSdkReminderResult = await runAgentSdkReminderWorkflow({
+        userId,
+        userText: rawUserText,
+        originChannel: "telegram",
+        originChannelId: chatId,
+      });
+      if (agentSdkReminderResult.handled) {
+        if (agentSdkReminderResult.status !== "complete" && agentSdkReminderResult.status !== "failed") {
+          await sendMessage(chatId, agentSdkReminderResult.reply);
+        }
+        return;
+      }
       const agentSdkResult = await runAgentSdkEmailWorkflow({
         userId,
         userText: rawUserText,

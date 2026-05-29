@@ -6,7 +6,9 @@ export interface AgentSdkToolDeps {
   userId: string;
   runId: string;
   store: AgentSdkRunStore;
+  includeDraftEmailTool?: boolean;
   includeSendEmailTool?: boolean;
+  includeReminderTool?: boolean;
   readContext?: (query: string) => Promise<string>;
   sendEmail?: (args: {
     to: string;
@@ -14,6 +16,12 @@ export interface AgentSdkToolDeps {
     body: string;
     provider?: "google" | "microsoft";
   }) => Promise<{ ok: boolean; messageId?: string; error?: string }>;
+  createInternalReminder?: (args: {
+    title: string;
+    description?: string;
+    scheduledAt: string;
+    recurrence?: string;
+  }) => Promise<{ ok: boolean; id?: string; scheduledAt?: string; recurrence?: string | null; deduped?: boolean; error?: string }>;
 }
 
 export function createAgentSdkTools(deps: AgentSdkToolDeps) {
@@ -76,9 +84,66 @@ export function createAgentSdkTools(deps: AgentSdkToolDeps) {
     },
   });
 
+  const createInternalReminder = tool({
+    name: "create_internal_reminder",
+    description: "Create an internal Jarvis reminder through the existing scheduled-task system. This does not create an external calendar event, send a message, run a shell command, or control a device.",
+    inputSchema: z.object({
+      title: z.string().min(1),
+      description: z.string().optional(),
+      scheduledAt: z.string().min(1),
+      recurrence: z.string().optional(),
+    }),
+    outputSchema: z.object({
+      created: z.boolean(),
+      id: z.string().optional(),
+      title: z.string(),
+      scheduledAt: z.string().optional(),
+      recurrence: z.string().nullable().optional(),
+      deduped: z.boolean().optional(),
+      error: z.string().optional(),
+    }),
+    execute: async ({ title, description, scheduledAt, recurrence }) => {
+      if (!deps.createInternalReminder) {
+        return { created: false, title, error: "createInternalReminder adapter missing" };
+      }
+      const result = await deps.createInternalReminder({ title, description, scheduledAt, recurrence });
+      if (result.ok) {
+        const record = await deps.store.load(deps.runId);
+        if (record) {
+          record.meta.reminder = {
+            id: result.id,
+            title,
+            scheduledAt: result.scheduledAt || scheduledAt,
+            recurrence: result.recurrence ?? recurrence ?? null,
+            deduped: result.deduped,
+          };
+          record.meta.updatedAt = new Date().toISOString();
+          await deps.store.save(record);
+        }
+      }
+      return {
+        created: result.ok,
+        id: result.id,
+        title,
+        scheduledAt: result.scheduledAt,
+        recurrence: result.recurrence ?? null,
+        deduped: result.deduped,
+        error: result.error,
+      };
+    },
+  });
+
+  const tools = [readContext];
+
+  if (deps.includeDraftEmailTool !== false) {
+    tools.push(draftEmail);
+  }
   if (deps.includeSendEmailTool === false) {
-    return [readContext, draftEmail] as const;
+    if (deps.includeReminderTool === true) tools.push(createInternalReminder);
+    return tools;
   }
 
-  return [readContext, draftEmail, sendEmail] as const;
+  tools.push(sendEmail);
+  if (deps.includeReminderTool === true) tools.push(createInternalReminder);
+  return tools;
 }

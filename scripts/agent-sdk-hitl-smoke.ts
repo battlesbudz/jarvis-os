@@ -8,6 +8,7 @@ import {
   resumeAgentSdkEmailWorkflowRun,
   resumeAgentSdkRunFromApprovalGate,
   runAgentSdkEmailWorkflow,
+  runAgentSdkReminderWorkflow,
 } from "../src/agent/agentRunner";
 
 async function main() {
@@ -206,6 +207,57 @@ async function main() {
     assert.ok(progressMessages.some((message) => /read_context/.test(message)));
     console.log("OK: restart resume uses persisted state");
     console.log("OK: Telegram progress updates sent");
+
+    let reminderCreateCount = 0;
+    const reminderResult = await runAgentSdkReminderWorkflow(
+      {
+        userId: "user_smoke",
+        userText: "Remind me in an hour to call the company.",
+        originChannel: "telegram",
+        originChannelId: "123",
+      },
+      {
+        store,
+        callModel: async (request: any) => {
+          assert.equal(request.tools.some((tool: any) => tool.function.name === "send_email"), false);
+          assert.equal(request.tools.some((tool: any) => tool.function.name === "draft_email"), false);
+          const reminderTool: any = request.tools.find((tool: any) => tool.function.name === "create_internal_reminder");
+          await reminderTool.function.execute({
+            title: "Call the company",
+            description: "User asked Jarvis for a reminder.",
+            scheduledAt: "in an hour",
+          });
+          return {
+            requiresApproval: async () => false,
+            getText: async () => "Reminder scheduled for in an hour.",
+            getResponse: async () => ({
+              state: {
+                id: "state_reminder",
+                status: "complete",
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                messages: [],
+              },
+            }),
+          };
+        },
+        createInternalReminder: async (_userId, args) => {
+          reminderCreateCount += 1;
+          return {
+            ok: true,
+            id: "task_smoke",
+            scheduledAt: args.scheduledAt,
+            recurrence: null,
+            deduped: false,
+          };
+        },
+        sendTelegramMessage: async () => undefined,
+      },
+    );
+    assert.equal(reminderResult.status, "complete");
+    assert.equal(reminderCreateCount, 1);
+    assert.equal((await store.load(reminderResult.runId))?.meta.reminder?.id, "task_smoke");
+    console.log("OK: internal reminder wrapper creates Jarvis scheduled-task request");
 
     await store.save({
       meta: {
