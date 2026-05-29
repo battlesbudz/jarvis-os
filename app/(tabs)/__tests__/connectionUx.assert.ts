@@ -30,6 +30,23 @@ assert.equal(status.apps.slack.connected, false);
 assert.deepEqual(status.nextSteps, ["Reconnect Outlook Mail"]);
 console.log("OK: status normalization tolerates platform/app/appId shapes and fills missing tiles");
 
+const composioStatus = normalizeConnectionsStatus({
+  connections: [
+    { toolkit: "gmail", status: "ACTIVE", accountEmail: "battlesbudz@gmail.com" },
+  ],
+  platforms: [
+    { platform: "gmail", toolkit: "gmail", ready: true, state: "active" },
+    { platform: "google-calendar", toolkit: "googlecalendar", ready: false, state: "unconfigured" },
+  ],
+  nextSteps: ["Jarvis can access 1 connected account through Composio."],
+});
+
+assert.equal(composioStatus.apps.gmail.connected, true);
+assert.equal(composioStatus.apps.gmail.accountLabel, "battlesbudz@gmail.com");
+assert.equal(getConnectionStatusLabel(composioStatus.apps.gmail), "Disconnect");
+assert.equal(composioStatus.apps["google-calendar"].connected, false);
+console.log("OK: Composio connection and platform arrays merge into connected app tiles");
+
 const nestedStatus = normalizeConnectionsStatus({
   apps: {
     googleCalendar: { connected: true, email: "calendar@example.com" },

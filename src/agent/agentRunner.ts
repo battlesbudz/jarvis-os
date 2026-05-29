@@ -77,6 +77,7 @@ const DEFAULT_MAX_COST_USD = 0.25;
 const DEFAULT_MAX_STEPS = 20;
 const DEFAULT_PROGRESS_TEXT_CHUNK_CHARS = 80;
 type AgentSdkWorkflowMode = "email_send_approval" | "email_draft_only" | "internal_reminder";
+type AgentSdkModelProvider = "jarvis" | "openrouter";
 
 export function isAgentSdkRunnerEnabled(env = process.env): boolean {
   return String(env.ENABLE_AGENT_SDK_RUNNER || "").toLowerCase() === "true";
@@ -140,6 +141,26 @@ function resolveLongHorizonOptions(deps: AgentSdkRunnerDeps = {}) {
   };
 }
 
+async function resolveAgentSdkModel(userText: string | string[], mode: AgentSdkWorkflowMode): Promise<string> {
+  const explicit = process.env.OPENROUTER_AGENT_SDK_MODEL?.trim();
+  if (explicit) return explicit;
+  const text = Array.isArray(userText) ? userText.join("\n") : userText;
+  try {
+    const { classifyTaskComplexity, classifyTaskPrivacy } = await import("../../server/agent/modelRouter");
+    const complexity = classifyTaskComplexity(text);
+    const privacy = classifyTaskPrivacy(text);
+    if (privacy === "sensitive" || complexity === "hard") {
+      return process.env.OPENROUTER_AGENT_SDK_SMART_MODEL || DEFAULT_MODEL;
+    }
+    if (mode === "internal_reminder") {
+      return process.env.OPENROUTER_AGENT_SDK_CHEAP_MODEL || DEFAULT_MODEL;
+    }
+    return process.env.OPENROUTER_AGENT_SDK_BALANCED_MODEL || DEFAULT_MODEL;
+  } catch {
+    return DEFAULT_MODEL;
+  }
+}
+
 async function safeText(result: AgentSdkModelResultLike, fallback: string): Promise<string> {
   try {
     const text = await result.getText?.();
@@ -149,11 +170,208 @@ async function safeText(result: AgentSdkModelResultLike, fallback: string): Prom
   }
 }
 
+function getAgentSdkModelProvider(env = process.env): AgentSdkModelProvider {
+  const value = String(env.AGENT_SDK_MODEL_PROVIDER || env.OPENROUTER_AGENT_SDK_PROVIDER || "jarvis").trim().toLowerCase();
+  return value === "openrouter" ? "openrouter" : "jarvis";
+}
+
+function toolName(tool: unknown): string {
+  const record = tool as any;
+  return String(record?.function?.name || record?.name || "");
+}
+
+function toolDescription(tool: unknown): string {
+  const record = tool as any;
+  return String(record?.function?.description || record?.description || "");
+}
+
+function toolParameters(tool: unknown): Record<string, unknown> {
+  const record = tool as any;
+  return (record?.function?.parameters || record?.inputSchema || record?.schema || { type: "object", properties: {} }) as Record<string, unknown>;
+}
+
+function toolRequiresApproval(tool: unknown): boolean {
+  const record = tool as any;
+  return record?.function?.requireApproval === true
+    || record?.requireApproval === true
+    || record?.requiresApproval === true
+    || toolName(tool) === "send_email";
+}
+
+async function executeAgentSdkTool(tool: unknown, args: Record<string, unknown>): Promise<unknown> {
+  const record = tool as any;
+  const fn = record?.function?.execute || record?.execute;
+  if (typeof fn !== "function") throw new Error(`Tool ${toolName(tool) || "unknown"} has no executable adapter.`);
+  return fn(args);
+}
+
+function toOpenAiTools(tools: readonly Tool[] | undefined): any[] | undefined {
+  if (!tools?.length) return undefined;
+  return tools
+    .map((tool) => {
+      const name = toolName(tool);
+      if (!name) return null;
+      return {
+        type: "function",
+        function: {
+          name,
+          description: toolDescription(tool),
+          parameters: toolParameters(tool),
+        },
+      };
+    })
+    .filter(Boolean) as any[];
+}
+
+function parseToolArgs(value: string | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function createAdapterResult(params: {
+  text: string;
+  state: ConversationState<any>;
+  pendingToolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+  usage?: unknown;
+}): AgentSdkModelResultLike {
+  return {
+    requiresApproval: async () => Boolean(params.pendingToolCalls?.length),
+    getPendingToolCalls: async () => params.pendingToolCalls ?? [],
+    getState: async () => params.state,
+    getText: async () => params.text,
+    getResponse: async () => ({ state: params.state, usage: params.usage }),
+    getTextStream: async function* () {
+      if (params.text) yield params.text;
+    },
+    getToolCallsStream: async function* () {
+      for (const call of params.pendingToolCalls ?? []) yield call;
+    },
+  };
+}
+
+async function callJarvisModelAdapter(request: Record<string, unknown>): Promise<AgentSdkModelResultLike> {
+  const { routeModelTurn } = await import("../../server/agent/modelRouter");
+  const tools = (request.tools as readonly Tool[] | undefined) ?? [];
+  const stateAccessor = request.state as { load?: () => Promise<ConversationState<any> | null>; save?: (state: ConversationState<any>) => Promise<void> } | undefined;
+  const previousState = await stateAccessor?.load?.().catch(() => null) ?? null;
+  const now = Date.now();
+  const workflow = String((request.metadata as any)?.workflow || "agent_sdk");
+  const instructions = String(request.instructions || "");
+  const input = Array.isArray(request.input) ? "" : String(request.input || "");
+  const maxSteps = Array.isArray(request.stopWhen) ? 20 : 20;
+  const messages: any[] = Array.isArray((previousState as any)?.messages) ? [...(previousState as any).messages] : [];
+
+  const approveToolCalls = Array.isArray((request as any).approveToolCalls) ? (request as any).approveToolCalls.map(String) : [];
+  const rejectToolCalls = Array.isArray((request as any).rejectToolCalls) ? (request as any).rejectToolCalls.map(String) : [];
+  const pendingFromState = Array.isArray((previousState as any)?.pendingToolCalls) ? (previousState as any).pendingToolCalls : [];
+
+  if (approveToolCalls.length || rejectToolCalls.length) {
+    const approvedIds = new Set(approveToolCalls);
+    const rejectedIds = new Set(rejectToolCalls);
+    const approvedCalls = pendingFromState.filter((call: any) => approvedIds.has(String(call.id)));
+    const rejectedCalls = pendingFromState.filter((call: any) => rejectedIds.has(String(call.id)));
+    const toolResults: unknown[] = [];
+    for (const call of approvedCalls) {
+      const tool = tools.find((candidate) => toolName(candidate) === String(call.name));
+      if (!tool) throw new Error(`Approved tool ${String(call.name)} is not available.`);
+      toolResults.push(await executeAgentSdkTool(tool, call.arguments || {}));
+    }
+    const text = rejectedCalls.length
+      ? "Approval rejected. I did not send or execute the blocked action."
+      : approvedCalls.length
+        ? "Approval accepted. I resumed the workflow and executed the approved action."
+        : "No matching pending approval was found for this run.";
+    const nextState = {
+      ...(previousState || { id: String((previousState as any)?.id || "jarvis-agent-sdk"), createdAt: now }),
+      status: rejectedCalls.length ? "rejected" : "complete",
+      updatedAt: now,
+      messages: [
+        ...messages,
+        { role: "assistant", content: text, toolResults },
+      ],
+      pendingToolCalls: pendingFromState.filter((call: any) => !approvedIds.has(String(call.id)) && !rejectedIds.has(String(call.id))),
+    } as ConversationState<any>;
+    await stateAccessor?.save?.(nextState);
+    return createAdapterResult({ text, state: nextState });
+  }
+
+  const conversation = [
+    ...(instructions ? [{ role: "system", content: instructions }] : []),
+    ...messages.filter((message) => message?.role && message?.content),
+    ...(input ? [{ role: "user", content: input }] : []),
+  ];
+
+  let finalText = "";
+  let latestMessages = [...conversation];
+  let pendingToolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
+
+  for (let step = 0; step < maxSteps; step += 1) {
+    const turn = await routeModelTurn({
+      tier: workflow === "internal_reminder" ? "cheap" : "balanced",
+      messages: latestMessages,
+      tools: toOpenAiTools(tools),
+      toolChoice: tools.length ? "auto" : "none",
+      maxCompletionTokens: 1200,
+      stream: false,
+      logPrefix: "[AgentSDK/JarvisAdapter]",
+    });
+    finalText = turn.textContent || finalText;
+    const toolCalls = turn.toolCallList ?? [];
+    if (!toolCalls.length) break;
+
+    latestMessages.push({
+      role: "assistant",
+      content: turn.textContent || "",
+      tool_calls: toolCalls,
+    });
+
+    for (const call of toolCalls) {
+      const name = call.function.name;
+      const args = parseToolArgs(call.function.arguments);
+      const tool = tools.find((candidate) => toolName(candidate) === name);
+      if (!tool) {
+        latestMessages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify({ error: `Unknown tool ${name}` }) });
+        continue;
+      }
+      if (toolRequiresApproval(tool)) {
+        pendingToolCalls.push({ id: call.id, name, arguments: args });
+        continue;
+      }
+      const output = await executeAgentSdkTool(tool, args);
+      latestMessages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(output) });
+    }
+
+    if (pendingToolCalls.length) break;
+  }
+
+  const nextState = {
+    ...(previousState || { id: String((previousState as any)?.id || `jarvis_agent_sdk_${now}`), createdAt: now }),
+    status: pendingToolCalls.length ? "awaiting_approval" : "complete",
+    updatedAt: now,
+    messages: latestMessages,
+    pendingToolCalls,
+  } as ConversationState<any>;
+  await stateAccessor?.save?.(nextState);
+  return createAdapterResult({
+    text: finalText || (pendingToolCalls.length ? "Draft is ready. I need approval before continuing." : "Agent SDK workflow finished."),
+    state: nextState,
+    pendingToolCalls,
+  });
+}
+
 async function defaultCallModel(request: Record<string, unknown>): Promise<AgentSdkModelResultLike> {
+  if (getAgentSdkModelProvider() !== "openrouter") {
+    return callJarvisModelAdapter(request);
+  }
   const [{ OpenRouter }] = await Promise.all([import("@openrouter/agent")]);
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY is required when ENABLE_AGENT_SDK_RUNNER=true");
+    throw new Error("OPENROUTER_API_KEY is required when AGENT_SDK_MODEL_PROVIDER=openrouter");
   }
   const client = new OpenRouter({ apiKey });
   return client.callModel(request as CallModelInput<readonly Tool[]>);
@@ -240,6 +458,7 @@ function buildRequest(
   options: { maxCostUsd: number; maxSteps: number },
   mode: AgentSdkWorkflowMode = "email_send_approval",
   decisions?: { approveToolCalls?: string[]; rejectToolCalls?: string[] },
+  model = DEFAULT_MODEL,
 ): Record<string, unknown> {
   const workflowInstruction = mode === "internal_reminder"
     ? [
@@ -263,7 +482,7 @@ function buildRequest(
       "Keep final user-facing text short.",
     ].join("\n");
   return {
-    model: process.env.OPENROUTER_AGENT_SDK_MODEL || DEFAULT_MODEL,
+    model,
     instructions: [
       "You are Jarvis running a small experimental Agent SDK workflow.",
       workflowInstruction,
@@ -271,6 +490,12 @@ function buildRequest(
     input: Array.isArray(userText) || decisions ? [] : userText,
     tools,
     state,
+    metadata: {
+      jarvisRuntime: "openrouter_agent_sdk_prototype",
+      workflow: mode,
+      loop: "think_tool_observe_continue_hitl",
+      approvalRequiredTools: mode === "email_send_approval" ? ["send_email"] : [],
+    },
     stopWhen: [stepCountIs(options.maxSteps), maxCost(options.maxCostUsd)],
     ...decisions,
   };
@@ -377,6 +602,7 @@ export async function runAgentSdkEmailWorkflow(
   const userInput = input.conversationContext
     ? `${input.userText}\n\nRelevant conversation context:\n${input.conversationContext}`
     : input.userText;
+  const model = await resolveAgentSdkModel(userInput, workflowMode);
 
   await store.save({
     meta: {
@@ -390,12 +616,13 @@ export async function runAgentSdkEmailWorkflow(
       updatedAt: now,
       maxCostUsd: longHorizon.maxCostUsd,
       maxSteps: longHorizon.maxSteps,
+      model,
     },
     state: createInitialState(runId),
   });
 
   try {
-    const result = await callModel(buildRequest(userInput, tools, stateAccessor, longHorizon, workflowMode));
+    const result = await callModel(buildRequest(userInput, tools, stateAccessor, longHorizon, workflowMode, undefined, model));
     const progressPromise = sendTelegramProgress(result, deps, input.originChannelId);
     const state = await result.getState?.();
     if (state) {
@@ -494,6 +721,7 @@ export async function runAgentSdkReminderWorkflow(
     createInternalReminder: (args) => createInternalReminder(input.userId, args),
   });
   const stateAccessor = store.createStateAccessor(runId);
+  const model = await resolveAgentSdkModel(input.userText, "internal_reminder");
 
   await store.save({
     meta: {
@@ -507,12 +735,13 @@ export async function runAgentSdkReminderWorkflow(
       updatedAt: now,
       maxCostUsd: longHorizon.maxCostUsd,
       maxSteps: longHorizon.maxSteps,
+      model,
     },
     state: createInitialState(runId),
   });
 
   try {
-    const result = await callModel(buildRequest(input.userText, tools, stateAccessor, longHorizon, "internal_reminder"));
+    const result = await callModel(buildRequest(input.userText, tools, stateAccessor, longHorizon, "internal_reminder", undefined, model));
     const progressPromise = sendTelegramProgress(result, deps, input.originChannelId);
     const state = await result.getState?.();
     if (state) {
@@ -612,11 +841,12 @@ export async function resumeAgentSdkRunFromApprovalGate(
     includeSendEmailTool: record.meta.workflow !== "email_draft_only",
   });
   const stateAccessor = store.createStateAccessor(runId);
+  const model = await resolveAgentSdkModel("", record.meta.workflow ?? "email_send_approval");
 
   try {
     const result = await callModel(buildRequest("", tools, stateAccessor, longHorizon, record.meta.workflow ?? "email_send_approval", input.approved
       ? { approveToolCalls: [toolCallId] }
-      : { rejectToolCalls: [toolCallId] }));
+      : { rejectToolCalls: [toolCallId] }, model));
     const progressPromise = sendTelegramProgress(result, deps, input.originChannelId || record.meta.originChannelId);
     const text = await safeText(result, input.approved ? "Email send approved and resumed." : "Email send declined. I did not send it.");
     const response = await result.getResponse?.();
@@ -687,6 +917,7 @@ export async function resumeAgentSdkEmailWorkflowRun(
     includeSendEmailTool: record.meta.workflow !== "email_draft_only",
   });
   const stateAccessor = store.createStateAccessor(input.runId);
+  const model = await resolveAgentSdkModel([], record.meta.workflow ?? "email_send_approval");
   const now = new Date().toISOString();
   record.meta.status = "running";
   record.meta.resumedAt = now;
@@ -697,7 +928,7 @@ export async function resumeAgentSdkEmailWorkflowRun(
 
   try {
     const chatId = input.originChannelId || record.meta.originChannelId;
-    const result = await callModel(buildRequest([], tools, stateAccessor, longHorizon, record.meta.workflow ?? "email_send_approval"));
+    const result = await callModel(buildRequest([], tools, stateAccessor, longHorizon, record.meta.workflow ?? "email_send_approval", undefined, model));
     const progressPromise = sendTelegramProgress(result, deps, chatId);
     if (await result.requiresApproval?.()) {
       await progressPromise;

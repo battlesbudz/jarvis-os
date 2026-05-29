@@ -1651,30 +1651,46 @@ async function processUpdate(update: any): Promise<void> {
         }
       }
 
-      const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
-      const agentSdkReminderResult = await runAgentSdkReminderWorkflow({
+      const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
+      const primeResult = await handlePrimeInput({
         userId,
-        userText: rawUserText,
-        originChannel: "telegram",
-        originChannelId: chatId,
+        channel: "telegram",
+        message: rawUserText,
+        metadata: { originChannelId: chatId },
       });
-      if (agentSdkReminderResult.handled) {
-        if (agentSdkReminderResult.status !== "complete" && agentSdkReminderResult.status !== "failed") {
-          await sendMessage(chatId, agentSdkReminderResult.reply);
+      if (primeResult.handled) {
+        if (primeResult.status !== "complete" && primeResult.status !== "failed" && primeResult.reply) {
+          await sendMessage(chatId, primeResult.reply);
         }
         return;
       }
-      const agentSdkResult = await runAgentSdkEmailWorkflow({
-        userId,
-        userText: rawUserText,
-        originChannel: "telegram",
-        originChannelId: chatId,
-      });
-      if (agentSdkResult.handled) {
-        if (agentSdkResult.status !== "complete" && agentSdkResult.status !== "failed") {
-          await sendMessage(chatId, agentSdkResult.reply);
+
+      if (!isPrimeRuntimeEnabled()) {
+        const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
+        const agentSdkReminderResult = await runAgentSdkReminderWorkflow({
+          userId,
+          userText: rawUserText,
+          originChannel: "telegram",
+          originChannelId: chatId,
+        });
+        if (agentSdkReminderResult.handled) {
+          if (agentSdkReminderResult.status !== "complete" && agentSdkReminderResult.status !== "failed") {
+            await sendMessage(chatId, agentSdkReminderResult.reply);
+          }
+          return;
         }
-        return;
+        const agentSdkResult = await runAgentSdkEmailWorkflow({
+          userId,
+          userText: rawUserText,
+          originChannel: "telegram",
+          originChannelId: chatId,
+        });
+        if (agentSdkResult.handled) {
+          if (agentSdkResult.status !== "complete" && agentSdkResult.status !== "failed") {
+            await sendMessage(chatId, agentSdkResult.reply);
+          }
+          return;
+        }
       }
 
       enqueueTelegramCoachMessageBatch(

@@ -62,15 +62,31 @@ function Start-GatewaySupervisor {
   Write-WatchdogLog "Started Jarvis OAuth gateway supervisor."
 }
 
+function Reset-UnsupervisedGatewayListener {
+  param($Listener)
+  if (!$Listener -or !$Listener.OwningProcess) {
+    return
+  }
+
+  try {
+    $Process = Get-CimInstance Win32_Process -Filter "ProcessId = $($Listener.OwningProcess)" -ErrorAction Stop
+    Write-WatchdogLog "Stopping unsupervised gateway listener pid=$($Listener.OwningProcess) command=$($Process.CommandLine)"
+    Stop-Process -Id $Listener.OwningProcess -Force -ErrorAction Stop
+  } catch {
+    Write-WatchdogLog "Could not stop unsupervised gateway listener pid=$($Listener.OwningProcess): $($_.Exception.Message)"
+  }
+}
+
 function Ensure-TailscaleFunnel {
   try {
     $Status = & $TailscaleExe serve status 2>&1 | Out-String
     $Expected = "/               proxy http://127.0.0.1:$Port"
-    if ($Status -like "*$Expected*") {
+    if ($Status -like "*$Expected*" -or $Status -like "*http://127.0.0.1:$Port*") {
       return
     }
-    Write-WatchdogLog "Tailscale root route missing; republishing Funnel to http://127.0.0.1:$Port."
-    & $TailscaleExe funnel --bg "http://127.0.0.1:$Port" | Out-Null
+    Write-WatchdogLog "Tailscale root route missing; republishing Serve/Funnel to http://127.0.0.1:$Port."
+    & $TailscaleExe serve --bg "$Port" | Out-Null
+    & $TailscaleExe funnel --bg "$Port" | Out-Null
   } catch {
     Write-WatchdogLog "Could not verify or republish Tailscale Funnel: $($_.Exception.Message)"
   }
@@ -107,7 +123,9 @@ while ($true) {
           $LastDegradedLogAt = Get-Date
         }
         if ($UnsupervisedCount -ge $MissingThreshold) {
-          Write-WatchdogLog "Gateway listener is healthy but unsupervised. Leaving it running to avoid unnecessary restarts."
+          Write-WatchdogLog "Gateway listener is healthy but unsupervised. Resetting listener so the current supervisor owns it."
+          Reset-UnsupervisedGatewayListener -Listener $Listener
+          Start-GatewaySupervisor
           $UnsupervisedCount = 0
         }
       } else {
@@ -119,15 +137,11 @@ while ($true) {
       Write-WatchdogLog "Gateway listener missing on port $Port ($MissingCount/$MissingThreshold). Supervisor processes: $($Supervisors.Count)."
 
       if ($MissingCount -ge $MissingThreshold) {
-        foreach ($Supervisor in $Supervisors) {
-          try {
-            Stop-Process -Id $Supervisor.ProcessId -Force -ErrorAction Stop
-            Write-WatchdogLog "Stopped stale supervisor process $($Supervisor.ProcessId)."
-          } catch {
-            Write-WatchdogLog "Could not stop supervisor process $($Supervisor.ProcessId): $($_.Exception.Message)"
-          }
+        if ($Supervisors.Count -gt 0) {
+          Write-WatchdogLog "Supervisor is already running; leaving startup/restart decisions to the supervisor."
+        } else {
+          Start-GatewaySupervisor
         }
-        Start-GatewaySupervisor
         $MissingCount = 0
       }
     }

@@ -2078,6 +2078,68 @@ Answer (yes/no):`,
 
       if (userId) {
         const latestUserMessage = [...messages].reverse().find((m: any) => m?.role === "user")?.content ?? "";
+        const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
+        const primeRuntimeEnabled = isPrimeRuntimeEnabled();
+        const coreRuntimeResult = await handlePrimeInput({
+          userId,
+          channel: originChannel,
+          message: String(latestUserMessage),
+          metadata: {
+            messages,
+            originChannelId: incomingAppSessionId,
+          },
+        }, {
+          appAutonomyDeps: {
+            saveChatHistory: async ({ userId: historyUserId, data }: any) => {
+              await db.insert(schema.chatHistory)
+                .values({ userId: historyUserId, data })
+                .onConflictDoUpdate({
+                  target: schema.chatHistory.userId,
+                  set: { data, updatedAt: new Date() },
+                });
+            },
+            logInteraction: async ({ userId: interactionUserId, channel, direction, text }: any) => {
+              await logInteraction(interactionUserId, channel, direction, text);
+            },
+          },
+        });
+        if (coreRuntimeResult.handled) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({
+            content: coreRuntimeResult.reply,
+            agentSdkRunId: coreRuntimeResult.sdkRunId,
+            status: coreRuntimeResult.status,
+            route: coreRuntimeResult.decision.routeChosen,
+          })}\n\n`);
+          if (coreRuntimeResult.toolAction) {
+            res.write(`data: ${JSON.stringify({
+              type: "actions",
+              executedActions: [{
+                tool: coreRuntimeResult.toolAction.tool,
+                result: coreRuntimeResult.toolAction.result,
+                label: coreRuntimeResult.toolAction.label,
+                code: coreRuntimeResult.toolAction.detail,
+              }],
+            })}\n\n`);
+          }
+          if (coreRuntimeResult.backgroundJob) {
+            res.write(`data: ${JSON.stringify({
+              type: "background_job",
+              jobId: coreRuntimeResult.backgroundJob.jobId,
+              agentType: coreRuntimeResult.backgroundJob.agentType,
+            })}\n\n`);
+          }
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+
+        if (!primeRuntimeEnabled) {
+
         const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
         const recentConversationContext = messages
           .slice(-8)
@@ -2109,7 +2171,10 @@ Answer (yes/no):`,
           conversationContext: recentConversationContext,
           originChannel,
         });
-        if (agentSdkResult.handled) {
+        const agentSdkSetupFailure = agentSdkResult.handled
+          && agentSdkResult.status === "failed"
+          && /OPENROUTER_API_KEY|provider|configured/i.test(agentSdkResult.error || agentSdkResult.reply || "");
+        if (agentSdkResult.handled && !agentSdkSetupFailure) {
           res.setHeader('Content-Type', 'text/event-stream');
           res.setHeader('Cache-Control', 'no-cache, no-transform');
           res.setHeader('X-Accel-Buffering', 'no');
@@ -2123,6 +2188,58 @@ Answer (yes/no):`,
           res.write('data: [DONE]\n\n');
           res.end();
           return;
+        }
+
+        const { handleDirectEmailApprovalRequest } = await import("./agent/directEmailApprovalRoute");
+        const directEmailApprovalResult = await handleDirectEmailApprovalRequest({
+          userId,
+          text: String(latestUserMessage),
+          channel: originChannel,
+        });
+        if (directEmailApprovalResult.handled) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({
+            content: directEmailApprovalResult.reply,
+            status: "awaiting_approval",
+            approvalGateId: directEmailApprovalResult.gateId,
+          })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+
+        const { handleDirectReminderRequest } = await import("./agent/reminderDirectRoute");
+        const directReminderResult = await handleDirectReminderRequest({
+          userId,
+          text: String(latestUserMessage),
+          channel: originChannel,
+        });
+        if (directReminderResult.handled) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({ content: directReminderResult.reply })}\n\n`);
+          if (directReminderResult.toolResult) {
+            res.write(`data: ${JSON.stringify({
+              type: "actions",
+              executedActions: [{
+                tool: "schedule_jarvis_task",
+                result: directReminderResult.toolResult.ok ? "success" : "error",
+                label: directReminderResult.toolResult.label,
+                code: directReminderResult.toolResult.detail,
+              }],
+            })}\n\n`);
+          }
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
         }
       }
 

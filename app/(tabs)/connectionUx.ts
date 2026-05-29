@@ -132,12 +132,25 @@ function normalizeEntry(rawValue: unknown, fallbackId?: ConnectionAppId): Connec
 }
 
 function collectRawEntries(raw: Record<string, any>): [ConnectionAppId | undefined, unknown][] {
-  const list = raw.connections ?? raw.platforms ?? raw.apps ?? raw.statuses ?? raw.items ?? raw.data?.connections ?? raw.data?.platforms ?? raw.data?.apps;
-  if (Array.isArray(list)) return list.map((entry) => [undefined, entry]);
-  if (list && typeof list === 'object') {
-    return Object.entries(list).map(([key, value]) => [normalizeConnectionAppId(key) ?? undefined, value]);
+  const entries: [ConnectionAppId | undefined, unknown][] = [];
+  const sources = [
+    raw.connections,
+    raw.platforms,
+    raw.apps,
+    raw.statuses,
+    raw.items,
+    raw.data?.connections,
+    raw.data?.platforms,
+    raw.data?.apps,
+  ];
+  for (const list of sources) {
+    if (Array.isArray(list)) {
+      entries.push(...list.map((entry) => [undefined, entry] as [ConnectionAppId | undefined, unknown]));
+    } else if (list && typeof list === 'object') {
+      entries.push(...Object.entries(list).map(([key, value]) => [normalizeConnectionAppId(key) ?? undefined, value] as [ConnectionAppId | undefined, unknown]));
+    }
   }
-  return [];
+  return entries;
 }
 
 export function normalizeConnectionsStatus(value: unknown): ConnectionsStatus {
@@ -149,7 +162,18 @@ export function normalizeConnectionsStatus(value: unknown): ConnectionsStatus {
 
   for (const [fallbackId, entry] of collectRawEntries(raw)) {
     const normalized = normalizeEntry(entry, fallbackId);
-    if (normalized) apps[normalized.id] = normalized;
+    if (normalized) {
+      const current = apps[normalized.id];
+      apps[normalized.id] = {
+        ...current,
+        ...normalized,
+        connected: current.connected || normalized.connected,
+        state: normalized.connected || !current.connected ? normalized.state : current.state,
+        accountLabel: normalized.accountLabel || current.accountLabel,
+        error: normalized.error || current.error,
+        updatedAt: normalized.updatedAt || current.updatedAt,
+      };
+    }
   }
 
   const nextSteps = Array.isArray(raw.nextSteps) ? raw.nextSteps.filter((step): step is string => typeof step === 'string') : [];

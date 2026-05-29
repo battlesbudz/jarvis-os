@@ -1,8 +1,16 @@
-# OpenRouter Agent SDK HITL Prototype
+# Agent SDK HITL Prototype
 
-This is a small experimental proof of concept for an OpenRouter Agent SDK human-in-the-loop email flow.
+This is a small experimental proof of concept for an Agent SDK-style human-in-the-loop email flow.
 
 It is disabled by default and does not replace the current Jarvis model router, harness, email tools, approval system, or channel flows.
+
+The prototype is now intended to run under the feature-flagged PRIME runtime seam when that runtime is enabled:
+
+```txt
+server/agent/autonomyRuntime.ts
+```
+
+See `docs/jarvis-core-runtime-prime-router.md` for the final channel-routing architecture.
 
 ## Feature Flag
 
@@ -10,8 +18,22 @@ Enable only for local/dev testing:
 
 ```powershell
 $env:ENABLE_AGENT_SDK_RUNNER="true"
-$env:OPENROUTER_API_KEY="<set locally>"
 npm.cmd run server:dev
+```
+
+The default model provider is Jarvis, not OpenRouter hosted models:
+
+```powershell
+$env:AGENT_SDK_MODEL_PROVIDER="jarvis"
+```
+
+That means the experimental runner uses the SDK-style loop, state, tool, and HITL mechanics, but model calls go through the existing Jarvis model router/Codex gateway path. No `OPENROUTER_API_KEY` is required for that default mode.
+
+Use OpenRouter hosted model routing only when explicitly testing that provider:
+
+```powershell
+$env:AGENT_SDK_MODEL_PROVIDER="openrouter"
+$env:OPENROUTER_API_KEY="<set locally>"
 ```
 
 Optional long-horizon ceilings:
@@ -19,6 +41,13 @@ Optional long-horizon ceilings:
 ```powershell
 $env:OPENROUTER_AGENT_SDK_MAX_STEPS="20"
 $env:OPENROUTER_AGENT_SDK_MAX_COST="0.25"
+```
+
+Optional Core Runtime proof flag:
+
+```powershell
+$env:ENABLE_PRIME_RUNTIME="true"
+$env:ENABLE_JARVIS_CORE_RUNTIME="true"
 ```
 
 The prototype only routes explicit requests that ask Jarvis to draft/write/compose and send an email.
@@ -36,8 +65,9 @@ Everything else continues through the normal Jarvis path.
 
 ```txt
 User asks to draft and send an email
--> OpenRouter Agent SDK runner starts
+-> Agent SDK runner starts
 -> step count and cost ceilings are attached to the run
+-> default model calls go through Jarvis model routing / Codex gateway
 -> read_context may load small Jarvis context
 -> draft_email creates an internal preview only
 -> send_email is requested with requireApproval=true
@@ -45,6 +75,7 @@ User asks to draft and send an email
 -> Telegram receives progress updates for tool calls / long-running output
 -> Jarvis approval gate is created
 -> Telegram approval card is sent, with in-app fallback
+-> approval resume can enter through PRIME runtime when enabled
 -> Approve resumes and sends through existing sendEmailTool
 -> Decline resumes/reports without sending
 -> Telegram receives a completion/failure notification
@@ -62,13 +93,13 @@ User asks to draft and send an email
 
 The prototype persists `ConversationState` and local metadata for each run. A server process can resume an interrupted experimental email run by calling `resumeAgentSdkEmailWorkflowRun({ runId })`.
 
-That resume path calls OpenRouter with:
+That resume path calls the configured model adapter with:
 
 ```ts
 input: []
 ```
 
-and the same file-backed `StateAccessor`, so the SDK continues from the saved checkpoint instead of starting a new conversation.
+and the same file-backed `StateAccessor`, so the runner continues from the saved checkpoint instead of starting a new conversation. In `AGENT_SDK_MODEL_PROVIDER=jarvis` mode, approval resume executes the approved pending tool through Jarvis's local tool adapter without requiring OpenRouter.
 
 ## Mocked Smoke
 

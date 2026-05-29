@@ -92,12 +92,17 @@ async function republishPublicFunnel() {
   const tailscale = process.env.TAILSCALE_EXE || "tailscale.exe";
   const target = `http://127.0.0.1:${port}`;
   try {
-    await execFileAsync(tailscale, ["funnel", "--bg", target], {
+    await execFileAsync(tailscale, ["serve", "--bg", String(port)], {
       cwd: repoRoot,
       timeout: 30_000,
       windowsHide: true,
     });
-    log(`republished Tailscale Funnel root route to ${target}`);
+    await execFileAsync(tailscale, ["funnel", "--bg", String(port)], {
+      cwd: repoRoot,
+      timeout: 30_000,
+      windowsHide: true,
+    });
+    log(`republished Tailscale Serve/Funnel root route to ${target}`);
     return true;
   } catch (error) {
     log(`failed to republish Tailscale Funnel root route: ${error instanceof Error ? error.message : String(error)}`);

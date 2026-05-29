@@ -27,6 +27,7 @@ export interface AgentSdkRunMeta {
   completedAt?: string;
   maxCostUsd?: number;
   maxSteps?: number;
+  model?: string;
   usage?: unknown;
   error?: string;
 }

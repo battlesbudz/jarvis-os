@@ -13,6 +13,42 @@ if (!(Test-Path $WatchdogPath)) {
   throw "Gateway watchdog not found: $WatchdogPath"
 }
 
+function Stop-ExistingGatewayRuntime {
+  try {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  } catch {
+    Write-Host "Could not stop existing scheduled task: $($_.Exception.Message)"
+  }
+
+  $Patterns = @(
+    "watch-jarvis-oauth-gateway.ps1",
+    "start-jarvis-oauth-gateway-supervisor.ps1",
+    "jarvis-oauth-gateway-supervisor.mjs",
+    "jarvis-local-oauth-gateway.mjs",
+    "jarvis-codex-gateway-server.mjs"
+  )
+
+  $Processes = Get-CimInstance Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe' OR Name = 'node.exe'" |
+    Where-Object {
+      $CommandLine = $_.CommandLine
+      $CommandLine -and ($Patterns | Where-Object { $CommandLine -like "*$_*" })
+    }
+
+  foreach ($Process in $Processes) {
+    if ($Process.ProcessId -eq $PID) {
+      continue
+    }
+    try {
+      Stop-Process -Id $Process.ProcessId -Force -ErrorAction Stop
+      Write-Host "Stopped existing gateway process $($Process.ProcessId)."
+    } catch {
+      Write-Host "Could not stop gateway process $($Process.ProcessId): $($_.Exception.Message)"
+    }
+  }
+}
+
+Stop-ExistingGatewayRuntime
+
 $Action = New-ScheduledTaskAction `
   -Execute "powershell.exe" `
   -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$WatchdogPath`"" `

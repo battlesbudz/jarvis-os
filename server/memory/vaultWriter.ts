@@ -200,7 +200,7 @@ const PAGE_SPECS: PageSpec[] = [
     title: "About You",
     buildPrompt: async (userId) => {
       const source = await buildAboutYouSource(userId);
-      return `You are Jarvis, an AI assistant maintaining a personal wiki about this user. 
+      return `You are Jarvis, an AI assistant maintaining a personal wiki about this user.
 Write the "About You" wiki page as a clear, insightful markdown document.
 Cover: who they are, their personality & communication style, core values, and key preferences.
 Write in third person from Jarvis's perspective. Be specific, not generic. Max 600 words.
