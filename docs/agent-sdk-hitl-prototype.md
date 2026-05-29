@@ -91,6 +91,46 @@ OK: Telegram progress updates sent
 OK: rejection prevents sending
 ```
 
+## Golden Workflow Scorecard
+
+Run the ten-workflow Agent SDK scorecard:
+
+```powershell
+npm.cmd run jarvis:qa:agent-sdk-golden
+```
+
+This script is intentionally conservative.
+
+It does not claim that the SDK owns all ten golden workflows yet. It checks all ten workflows and reports one of:
+
+- `sdk_passed_mocked`
+- `sdk_partial_mocked`
+- `current_jarvis_owned`
+- `unsupported_by_sdk_v1`
+
+Current status:
+
+| Workflow | SDK status | Notes |
+| --- | --- | --- |
+| Plan my day around my calendar | `current_jarvis_owned` | Keep on Daily Command until calendar/plan draft tools are wrapped. |
+| Draft a reply to an email | `sdk_partial_mocked` | SDK proves adjacent email HITL send; draft-only reply route is next. |
+| Remind me to follow up | `current_jarvis_owned` | Existing scheduled task/reminder system remains owner. |
+| Research a topic and save a report | `current_jarvis_owned` | Existing research/job/deliverable path remains owner. |
+| Turn a goal into a project tree | `current_jarvis_owned` | Existing goal decomposition remains owner. |
+| Move a goal task into today's plan | `current_jarvis_owned` | Existing goal handoff and daily plan merge remain owner. |
+| Prepare a weekly review | `current_jarvis_owned` | Existing planning/memory surfaces remain owner. |
+| Prepare me for my next meeting | `current_jarvis_owned` | Calendar/email read-only wrappers needed before SDK ownership. |
+| Find what I said before | `unsupported_by_sdk_v1` | Needs provenance-aware memory search/read, not just `read_context`. |
+| Diagnose why a feature failed | `current_jarvis_owned` | Existing diagnostics/Mind Trace/job observability remain owner. |
+
+The next SDK expansion should be one workflow at a time, starting with:
+
+1. Draft-only email reply.
+2. Internal reminder creation.
+3. Read-only meeting prep.
+
+Do not expand to broad autonomous tool conversion until these three have mocked and real-tool smoke coverage.
+
 ## Real Local Smoke
 
 1. Enable the feature flag and OpenRouter key.
@@ -109,3 +149,30 @@ Expected:
 - Decline does not send.
 
 Use a safe test recipient and account. This prototype is intentionally narrow.
+
+## Where To Pick Up
+
+Start here:
+
+- Runner: `src/agent/agentRunner.ts`
+- Tools: `src/agent/toolRegistry.ts`
+- HITL bridge: `src/agent/hitlApproval.ts`
+- File state: `src/agent/runStore.ts`
+- Focused assertions: `src/agent/__tests__/agentSdkHitl.assert.ts`
+- Mocked HITL smoke: `scripts/agent-sdk-hitl-smoke.ts`
+- Ten-workflow scorecard: `scripts/agent-sdk-golden-workflows.ts`
+- Golden workflow definitions: `docs/operations/jarvis-golden-workflows.md`
+
+The project direction is:
+
+```txt
+experimental email HITL
+-> draft-only email reply
+-> internal reminders
+-> read-only meeting prep
+-> provenance-aware memory lookup
+-> research/deliverable workflows
+-> broader tool conversion only after evals prove stability
+```
+
+The rule of thumb: if a workflow can change the outside world, it needs an approval gate before the tool executes. If a workflow is not explicitly supported by the SDK runner, it must fall back to the existing Jarvis brain.

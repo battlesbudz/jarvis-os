@@ -340,6 +340,32 @@ Track:
 - Failures produce actionable traces.
 - Improvements can be measured over time.
 
+### Current Agent SDK Status
+
+Phase 7 starts with a mocked OpenRouter Agent SDK scorecard, not a full migration.
+
+Run:
+
+```powershell
+npm.cmd run jarvis:qa:agent-sdk-golden
+```
+
+Current status:
+
+- SDK v1 proves the narrow email HITL send-approval slice in mocked mode.
+- The broader "draft a reply to an email" golden workflow is only partially covered because SDK v1 does not yet read a source email thread or create a draft-only reply route.
+- Daily planning, reminders, research, goal handoff, weekly review, meeting prep, and diagnostics remain owned by the existing Jarvis architecture.
+- Memory lookup is unsupported by SDK v1 until the SDK path returns provenance, confidence, and source metadata.
+
+Next implementation order:
+
+1. Draft-only email reply.
+2. Internal reminder creation.
+3. Read-only meeting prep.
+4. Provenance-aware memory lookup.
+
+Do not broaden Agent SDK ownership without mocked evals, safe real-tool smoke coverage, approval checks, restart-resume behavior, and clear status reporting.
+
 ## Phase 8: Daily Command Reliability
 
 ### Goal

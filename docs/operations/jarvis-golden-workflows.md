@@ -128,3 +128,37 @@ For setup/readiness-sensitive changes, also run:
 ```powershell
 npm.cmd run jarvis:doctor
 ```
+
+## Agent SDK Scorecard
+
+The experimental OpenRouter Agent SDK runner is not the owner of all golden workflows yet.
+
+Use this scorecard to check current SDK coverage without confusing it with the main Jarvis brain:
+
+```powershell
+npm.cmd run jarvis:qa:agent-sdk-golden
+```
+
+The scorecard reports:
+
+- `sdk_passed_mocked`: the SDK workflow is proven in mocked mode.
+- `sdk_partial_mocked`: the SDK proves a narrow subcase, but the full golden workflow is not owned yet.
+- `current_jarvis_owned`: the existing Jarvis architecture remains the correct route.
+- `unsupported_by_sdk_v1`: do not route this through the SDK yet.
+
+Current SDK v1 coverage:
+
+- Full supported workflow: none of the ten golden workflows are fully SDK-owned yet.
+- Partial supported workflow: workflow 2, through the adjacent explicit draft/send email HITL path.
+- Existing Jarvis-owned workflows: 1, 3, 4, 5, 6, 7, 8, 10.
+- Unsupported by SDK v1: 9 until memory lookup includes provenance, confidence, and source metadata.
+
+Next implementation order:
+
+1. Add draft-only email reply as its own SDK route.
+2. Add internal reminder creation with no external calendar write.
+3. Add read-only meeting prep with calendar/email/memory read tools.
+4. Add provenance-aware memory lookup.
+5. Only then consider research/deliverable and diagnostics workflows.
+
+Do not convert all tools at once. Each workflow needs mocked evals, real-tool smoke where safe, approval checks, restart-resume behavior, and clear status reporting before it becomes SDK-owned.

@@ -49,6 +49,7 @@ const tests = [
   { file: "server/agent/__tests__/composioRouteContract.assert.ts" },
   { file: "app/(tabs)/__tests__/connectionUx.assert.ts" },
   { file: "src/agent/__tests__/agentSdkHitl.assert.ts" },
+  { file: "scripts/agent-sdk-golden-workflows.ts" },
   { file: "server/agent/__tests__/inboxTriageConfig.assert.ts" },
   { file: "server/agent/__tests__/contextRegistryRouting.assert.ts" },
   { file: "server/agent/__tests__/mindTraceContextPacks.test.ts" },
