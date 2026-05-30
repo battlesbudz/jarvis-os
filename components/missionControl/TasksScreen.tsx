@@ -68,6 +68,11 @@ interface ReviewItem {
   jobId: string | null;
 }
 
+interface QueuePanelData {
+  reviewItems: ReviewItem[];
+  activeJobs: AgentJob[];
+}
+
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 function formatRelative(dt: string): string {
@@ -158,10 +163,7 @@ function ReviewItemCard({ item }: { item: ReviewItem }) {
       const res = await apiRequest('POST', `/api/deliverables/${item.id}/${action}`, {});
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?status=pending_approval'] });
-      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/mission-control/queue-panel'] }),
     onError: () => Alert.alert('Review failed', 'Jarvis could not update this item. Please try again.'),
     onSettled: () => setBusyAction(null),
   });
@@ -229,10 +231,10 @@ function WorkerJobCard({ job }: { job: AgentJob }) {
 
   const cancelMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest('POST', `/api/agent-jobs/${job.id}/cancel`, {});
+      const res = await apiRequest('POST', `/api/mission-control/agent-jobs/${job.id}/cancel`, {});
       return res.json();
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/mission-control/queue-panel'] }),
     onError: () => Alert.alert('Cancel failed', 'Jarvis could not cancel this worker job.'),
   });
 
@@ -380,12 +382,8 @@ export default function TasksScreen() {
     queryKey: ['/api/jarvis/scheduled-tasks'],
     refetchInterval: 30000,
   });
-  const { data: reviewItems = [], isLoading: reviewLoading } = useQuery<ReviewItem[]>({
-    queryKey: ['/api/deliverables?status=pending_approval'],
-    refetchInterval: 30000,
-  });
-  const { data: activeJobs = [], isLoading: jobsLoading } = useQuery<AgentJob[]>({
-    queryKey: ['/api/agent-jobs/active'],
+  const { data: queuePanel, isLoading: queuePanelLoading } = useQuery<QueuePanelData>({
+    queryKey: ['/api/mission-control/queue-panel'],
     refetchInterval: 15000,
   });
 
@@ -407,6 +405,8 @@ export default function TasksScreen() {
   }
 
   const sevenDaysAgo = Date.now() - SEVEN_DAYS_MS;
+  const reviewItems = queuePanel?.reviewItems ?? [];
+  const activeJobs = queuePanel?.activeJobs ?? [];
 
   const needsYou: ScheduledTask[] = [];
   const inProgress: ScheduledTask[] = [];
@@ -454,7 +454,7 @@ export default function TasksScreen() {
             <Text style={[styles.sectionCountText, { color: Colors.warning }]}>{reviewItems.length}</Text>
           </View>
         </View>
-        {reviewLoading ? (
+        {queuePanelLoading ? (
           <View style={styles.emptySection}><ActivityIndicator color={Colors.warning} /></View>
         ) : reviewItems.length === 0 ? (
           <View style={styles.emptySection}>
@@ -472,7 +472,7 @@ export default function TasksScreen() {
             <Text style={[styles.sectionCountText, { color: Colors.green }]}>{activeJobs.length}</Text>
           </View>
         </View>
-        {jobsLoading ? (
+        {queuePanelLoading ? (
           <View style={styles.emptySection}><ActivityIndicator color={Colors.green} /></View>
         ) : activeJobs.length === 0 ? (
           <View style={styles.emptySection}>

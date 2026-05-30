@@ -96,6 +96,9 @@ async function run(): Promise<void> {
       rejectedGateIds.push(gateId);
     },
     getGate: async (gateId) => gateId === topLevelGate.id ? topLevelGate : undefined,
+    handleJarvisApprovalDecision: async () => ({ handled: false }),
+    isAgentSdkApprovalGate: async () => false,
+    resumeAgentSdkRunFromApprovalGate: async () => undefined,
     continueTopLevelApproval: async (gate) => ({
       continued: true,
       reason: `continued ${gate.id}`,

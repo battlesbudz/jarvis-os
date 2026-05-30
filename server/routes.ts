@@ -56,6 +56,7 @@ import { registerPlanGenerationRoutes } from "./routes/planGenerationRoutes";
 import { registerInboxRoutes } from "./routes/inboxRoutes";
 import { registerDailyCommandRoutes } from "./dailyCommand/routes";
 import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
+import { registerMissionControlQueueRoutes } from "./routes/missionControlQueueRoutes";
 import { registerConnectionsRoutes, registerPublicConnectionsCallbackRoutes } from "./routes/connectionsRoutes";
 import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
@@ -442,6 +443,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerDataRoutes(app);
   registerDailyCommandRoutes(app);
   registerMindTraceRoutes(app);
+  registerMissionControlQueueRoutes(app, { db });
   registerConnectionsRoutes(app);
 
   // ── GET /api/goals — return goals for the authenticated user ───────────────

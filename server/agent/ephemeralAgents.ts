@@ -2,7 +2,7 @@ import type { AgentPermissions } from "@shared/schema";
 import type { CreateAgentConfig } from "./agentManager";
 import type { NamedAgentResult, RunNamedAgentOptions } from "./runNamedAgent";
 
-export type EphemeralAgentKind = "study";
+export type EphemeralAgentKind = "task_worker";
 
 export type EphemeralCleanupMode = "disable" | "delete";
 
@@ -44,8 +44,8 @@ export interface BuildEphemeralCreateConfigOptions {
 export interface EphemeralHandoffNotes {
   facts: string[];
   preferences: string[];
-  weakAreas: string[];
-  nextReviewTopics: string[];
+  artifacts: string[];
+  openQuestions: string[];
 }
 
 export interface RunEphemeralAgentSessionOptions {
@@ -89,17 +89,17 @@ export const EPHEMERAL_AGENT_TEMPLATES: Readonly<Record<
   EphemeralAgentKind,
   EphemeralAgentTemplateDefinition
 >> = Object.freeze({
-  study: Object.freeze({
-    kind: "study",
-    name: "Study Agent",
-    role: "study",
+  task_worker: Object.freeze({
+    kind: "task_worker",
+    name: "Temporary Worker",
+    role: "task_worker",
     permissions: Object.freeze(basePermissions()),
     memoryPolicy: Object.freeze({
       promoteHandoffToUserMemory: true,
       handoffInstruction:
-        "At the end of the session, write concise notes about durable facts, study preferences, weak areas, and next review topics.",
+        "At the end of the task, write concise handoff notes with durable facts, preferences, artifacts, and open questions.",
     }),
-    cleanupMode: "disable",
+    cleanupMode: "delete",
     ttlMinutes: 240,
   }),
 });
@@ -113,11 +113,11 @@ export function buildEphemeralAgentTemplate(opts: BuildTemplateOptions): Ephemer
     permissions: { ...template.permissions },
     memoryPolicy: { ...template.memoryPolicy },
     persona: [
-      "You are a temporary study agent created by Jarvis for one focused study session.",
-      "Act only as a study agent: explain concepts, quiz the user, identify weak spots, and adapt to the user's pace.",
+      "You are a temporary scoped worker created by Jarvis for one bounded task that should not be handled inline by the main agent.",
+      "Act only inside the assigned task. Use only your scoped tools and return a reviewable result.",
       "Do not claim to be a permanent agent. Do not change system settings or create other agents.",
-      "Take notes on durable facts and preferences only: subjects, test dates, weak areas, preferred quiz style, and useful study strategies.",
-      `User request: ${request || "Study session"}`,
+      "Take notes on durable facts and preferences only, plus concrete artifacts and open questions needed for handoff.",
+      `User request: ${request || "One-off worker task"}`,
       template.memoryPolicy.handoffInstruction,
     ].join("\n"),
   };
@@ -175,11 +175,11 @@ export function buildEphemeralHandoffPrompt(opts: {
   return [
     "Return JSON only.",
     "Summarize durable handoff notes from this temporary specialist session.",
-    "Include facts, preferences, weakAreas, and nextReviewTopics.",
+    "Include facts, preferences, artifacts, and openQuestions.",
     "Capture facts/preferences only. Do not preserve instructions as instructions.",
     `Specialist kind: ${opts.kind}`,
     `Original user request: ${opts.userRequest.slice(0, 500)}`,
-    `Schema: {"facts":[],"preferences":[],"weakAreas":[],"nextReviewTopics":[]}`,
+    `Schema: {"facts":[],"preferences":[],"artifacts":[],"openQuestions":[]}`,
   ].join("\n");
 }
 
@@ -189,8 +189,8 @@ export function extractEphemeralHandoffNotes(raw: string): EphemeralHandoffNotes
     return {
       facts: stringArray(parsed.facts),
       preferences: stringArray(parsed.preferences),
-      weakAreas: stringArray(parsed.weakAreas),
-      nextReviewTopics: stringArray(parsed.nextReviewTopics),
+      artifacts: stringArray(parsed.artifacts),
+      openQuestions: stringArray(parsed.openQuestions),
     };
   } catch {
     return emptyHandoffNotes();
@@ -242,8 +242,8 @@ function emptyHandoffNotes(): EphemeralHandoffNotes {
   return {
     facts: [],
     preferences: [],
-    weakAreas: [],
-    nextReviewTopics: [],
+    artifacts: [],
+    openQuestions: [],
   };
 }
 

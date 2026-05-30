@@ -13,9 +13,9 @@ export function buildQueueBackgroundJobInput(
   if (agentType === "ephemeral_agent_task") {
     jobInput.workerType = "goal_task";
     jobInput.ephemeralAgent = {
-      kind: "study",
-      template: "study",
-      cleanupMode: "disable",
+      kind: "task_worker",
+      template: "task_worker",
+      cleanupMode: "delete",
     };
   }
 

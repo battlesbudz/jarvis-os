@@ -1,6 +1,6 @@
 import type { AgentTool } from "../types";
 import { submitAgentJob, type AgentJobType } from "../jobQueue";
-import { SUB_AGENT_TYPES, type SubAgentType } from "../subagents";
+import { SUB_AGENT_TYPES } from "../subagents";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
 
@@ -171,7 +171,7 @@ IMPORTANT — one job per user message: Do NOT call this tool more than once per
 
 Before calling this tool, use sessions_list (filter: status=queued or status=running) to check whether a recent job already exists for this topic and agent_type. If a matching job is already active, tell the user their request is already in progress rather than queuing a duplicate.
 
-Choose agent_type based on the request. Use "ephemeral_agent_task" for temporary Study Agent sessions: study help, test prep, tutoring, or quiz-style practice. The temporary agent is scoped to one task, records durable facts/preferences as handoff notes, then is disabled after the task:
+Choose agent_type based on the request. Use "ephemeral_agent_task" only for a one-off scoped worker: a specialized temporary worker clone for a bounded task that the main agent should not do inline, runs once with scoped tools, returns a reviewable result, records durable facts/preferences as handoff notes, then is deleted after the task. Do not use it for normal tutoring, quick coaching, simple answers, or work the main agent can do directly:
 - "research"       — single focused topic; results don't depend on each other (e.g. "latest news on OpenAI", "what is the current ETH price")
 - "deep_research"  — complex request where understanding one thing is REQUIRED before properly researching another, OR multiple related topics that should be synthesised into one coherent report (e.g. "compare these two investment theses", "research this startup and its market", "analyse multiple companies in the same space")
 - "writing"        — drafting memos, notes, blog posts, documents, reports
@@ -390,7 +390,7 @@ function deriveTitle(agentType: AgentJobType, prompt: string): string {
     writing: "Draft:",
     planning: "Plan:",
     email: "Email:",
-    ephemeral_agent_task: "Study:",
+    ephemeral_agent_task: "Worker:",
   };
   const prefix = prefixes[agentType] ?? "Task:";
   const snippet = prompt.slice(0, 60).replace(/\s+/g, " ").trim();

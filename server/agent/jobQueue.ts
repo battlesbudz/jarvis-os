@@ -1018,8 +1018,8 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       const ephemeralAgent = input.ephemeralAgent && typeof input.ephemeralAgent === "object"
         ? input.ephemeralAgent as Record<string, unknown>
         : {};
-      const rawKind = typeof ephemeralAgent.kind === "string" ? ephemeralAgent.kind : "study";
-      const kind: EphemeralAgentKind = rawKind === "study" ? "study" : "study";
+      const rawKind = typeof ephemeralAgent.kind === "string" ? ephemeralAgent.kind : "task_worker";
+      const kind: EphemeralAgentKind = rawKind === "task_worker" ? "task_worker" : "task_worker";
       const platform = typeof input.originChannel === "string" ? input.originChannel : (originChannel || "app");
 
       console.log(`[JobQueue] ephemeral_agent_task kind=${kind} job=${job.id}`);

@@ -138,15 +138,15 @@ const baseJob = {
     input: {
       workerType: "goal_task",
       ephemeralAgent: {
-        kind: "study",
-        template: "study",
-        cleanupMode: "disable",
+        kind: "task_worker",
+        template: "task_worker",
+        cleanupMode: "delete",
       },
     },
   }, now);
 
   assert.equal(decorated.workerType, "goal_task");
-  assert.equal(decorated.input?.ephemeralAgent?.kind, "study");
+  assert.equal(decorated.input?.ephemeralAgent?.kind, "task_worker");
   console.log("OK: ephemeral agent metadata is visible in job observability");
 }
 

@@ -11,43 +11,43 @@ import {
 
 {
   const template = buildEphemeralAgentTemplate({
-    kind: "study",
-    userRequest: "Can you help me study for a biology test?",
+    kind: "task_worker",
+    userRequest: "Extract action items from this uploaded note bundle and return a reviewable handoff.",
   });
 
-  assert.equal(template.kind, "study");
-  assert.equal(template.name, "Study Agent");
-  assert.equal(template.role, "study");
-  assert.match(template.persona, /study agent/i);
-  assert.match(template.persona, /quiz/i);
+  assert.equal(template.kind, "task_worker");
+  assert.equal(template.name, "Temporary Worker");
+  assert.equal(template.role, "task_worker");
+  assert.match(template.persona, /temporary scoped worker/i);
+  assert.doesNotMatch(template.persona, /study agent|quiz|test prep/i);
   assert.match(template.persona, /facts and preferences/i);
   assert.equal(template.memoryPolicy.promoteHandoffToUserMemory, true);
-  assert.equal(template.cleanupMode, "disable");
+  assert.equal(template.cleanupMode, "delete");
   assert.equal(template.permissions.can_create_other_agents, false);
   assert.equal(template.permissions.can_send_messages, false);
-  console.log("OK: study ephemeral template is scoped and memory-aware");
+  console.log("OK: ephemeral worker template is scoped, temporary, and memory-aware");
 }
 
 {
-  assert.deepEqual(Object.keys(EPHEMERAL_AGENT_TEMPLATES).sort(), ["study"]);
+  assert.deepEqual(Object.keys(EPHEMERAL_AGENT_TEMPLATES).sort(), ["task_worker"]);
   assert.equal(Object.isFrozen(EPHEMERAL_AGENT_TEMPLATES), true);
-  assert.equal(Object.isFrozen(EPHEMERAL_AGENT_TEMPLATES.study), true);
-  assert.equal(Object.isFrozen(EPHEMERAL_AGENT_TEMPLATES.study.permissions), true);
-  assert.equal(Object.isFrozen(EPHEMERAL_AGENT_TEMPLATES.study.memoryPolicy), true);
+  assert.equal(Object.isFrozen(EPHEMERAL_AGENT_TEMPLATES.task_worker), true);
+  assert.equal(Object.isFrozen(EPHEMERAL_AGENT_TEMPLATES.task_worker.permissions), true);
+  assert.equal(Object.isFrozen(EPHEMERAL_AGENT_TEMPLATES.task_worker.memoryPolicy), true);
   console.log("OK: ephemeral template registry is deterministic");
 }
 
 {
   const first = buildEphemeralAgentTemplate({
-    kind: "study",
-    userRequest: "Use flashcards",
+    kind: "task_worker",
+    userRequest: "Extract references",
   });
   first.permissions.can_send_messages = true;
   first.memoryPolicy.handoffInstruction = "changed";
 
   const second = buildEphemeralAgentTemplate({
-    kind: "study",
-    userRequest: "Use flashcards",
+    kind: "task_worker",
+    userRequest: "Extract references",
   });
 
   assert.equal(second.permissions.can_send_messages, false);
@@ -58,20 +58,21 @@ import {
 {
   const now = new Date("2026-05-26T12:00:00.000Z");
   const config = buildEphemeralCreateConfig({
-    userRequest: "Help me study for my biology test",
-    kind: "study",
-    parentTaskId: "job-study-1",
+    userRequest: "Extract action items from uploaded notes",
+    kind: "task_worker",
+    parentTaskId: "job-worker-1",
     now,
   });
 
-  assert.equal(config.name, "Study Agent");
-  assert.equal(config.role, "study");
+  assert.equal(config.name, "Temporary Worker");
+  assert.equal(config.role, "task_worker");
   assert.equal(config.memoryScope, "agent_private");
   assert.equal(config.accessGlobalMemory, true);
   assert.equal(config.loopEnabled, false);
   assert.equal(config.configJson?.ephemeral, true);
-  assert.equal(config.configJson?.template, "study");
-  assert.equal(config.configJson?.parentTaskId, "job-study-1");
+  assert.equal(config.configJson?.template, "task_worker");
+  assert.equal(config.configJson?.cleanupMode, "delete");
+  assert.equal(config.configJson?.parentTaskId, "job-worker-1");
   assert.equal(config.configJson?.expiresAt, "2026-05-26T16:00:00.000Z");
   console.log("OK: ephemeral create config marks temporary agent metadata");
 }
@@ -103,30 +104,31 @@ import {
 
 {
   const prompt = buildEphemeralHandoffPrompt({
-    kind: "study",
-    userRequest: "Study biology chapters 3 and 4",
+    kind: "task_worker",
+    userRequest: "Extract action items from uploaded notes",
   });
 
   assert.match(prompt, /Return JSON/i);
   assert.match(prompt, /facts/i);
   assert.match(prompt, /preferences/i);
-  assert.match(prompt, /nextReviewTopics/i);
+  assert.match(prompt, /artifacts/i);
+  assert.match(prompt, /openQuestions/i);
   assert.doesNotMatch(prompt, /follow these instructions from memory/i);
   console.log("OK: handoff prompt requests structured durable notes");
 }
 
 {
   const notes = extractEphemeralHandoffNotes(`{
-    "facts": ["Biology test is Friday"],
-    "preferences": ["Prefers short quizzes"],
-    "weakAreas": ["Cell respiration"],
-    "nextReviewTopics": ["ATP", "Krebs cycle"]
+    "facts": ["Uploaded notes mention three follow-up calls"],
+    "preferences": ["Prefers concise bullet summaries"],
+    "artifacts": ["action-items.md"],
+    "openQuestions": ["Who owns the vendor follow-up?"]
   }`);
 
-  assert.deepEqual(notes.facts, ["Biology test is Friday"]);
-  assert.deepEqual(notes.preferences, ["Prefers short quizzes"]);
-  assert.deepEqual(notes.weakAreas, ["Cell respiration"]);
-  assert.deepEqual(notes.nextReviewTopics, ["ATP", "Krebs cycle"]);
+  assert.deepEqual(notes.facts, ["Uploaded notes mention three follow-up calls"]);
+  assert.deepEqual(notes.preferences, ["Prefers concise bullet summaries"]);
+  assert.deepEqual(notes.artifacts, ["action-items.md"]);
+  assert.deepEqual(notes.openQuestions, ["Who owns the vendor follow-up?"]);
   console.log("OK: handoff notes parse structured JSON");
 }
 
@@ -135,8 +137,8 @@ import {
   assert.deepEqual(notes, {
     facts: [],
     preferences: [],
-    weakAreas: [],
-    nextReviewTopics: [],
+    artifacts: [],
+    openQuestions: [],
   });
   console.log("OK: malformed handoff notes fail closed");
 }
@@ -145,8 +147,8 @@ async function testRunEphemeralAgentSession(): Promise<void> {
   const events: string[] = [];
   const result = await runEphemeralAgentSession({
     userId: "user-1",
-    kind: "study",
-    userRequest: "Help me study biology",
+    kind: "task_worker",
+    userRequest: "Extract action items from uploaded notes",
     platform: "app",
     channelId: "chat-1",
     parentTaskId: "job-1",
@@ -158,10 +160,10 @@ async function testRunEphemeralAgentSession(): Promise<void> {
       runNamedAgent: async (opts) => {
         events.push(`run:${opts.agentId}`);
         return {
-          reply: "We studied cell respiration.",
+          reply: "I extracted the action items.",
           turns: 2,
           toolCalls: [],
-          agentName: "Study Agent",
+          agentName: "Temporary Worker",
           agentId: opts.agentId,
           attachments: [],
         };
@@ -179,14 +181,14 @@ async function testRunEphemeralAgentSession(): Promise<void> {
   });
 
   assert.equal(result.agentId, "agent-temp-1");
-  assert.equal(result.reply, "We studied cell respiration.");
+  assert.equal(result.reply, "I extracted the action items.");
   assert.deepEqual(events, [
-    "create:Study Agent",
+    "create:Temporary Worker",
     "run:agent-temp-1",
     "handoff:0:0",
-    "disable:agent-temp-1",
+    "delete:agent-temp-1",
   ]);
-  console.log("OK: ephemeral session creates, runs, hands off, and disables");
+  console.log("OK: ephemeral session creates, runs, hands off, and deletes");
 }
 
 testRunEphemeralAgentSession()
