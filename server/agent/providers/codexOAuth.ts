@@ -119,6 +119,14 @@ function getCodexGatewayUrl(): string | null {
   return raw.replace(/\/+$/, "");
 }
 
+export function missingCodexGatewayMessage(): string {
+  return [
+    "Codex OAuth provider is configured for gateway-only mode, but JARVIS_CODEX_GATEWAY_URL is not set.",
+    "Jarvis server chat must use the Battles-PC Tailscale Codex gateway; it should not spawn local codex from the server process.",
+    "Set JARVIS_CODEX_GATEWAY_URL and JARVIS_CODEX_GATEWAY_TOKEN, then verify with npm.cmd run jarvis:oauth:gateway -- --check.",
+  ].join(" ");
+}
+
 function getCodexGatewayToken(): string | null {
   return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
 }
@@ -373,9 +381,8 @@ export class CodexOAuthProvider extends BaseProvider {
   async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
     const prompt = buildCodexOAuthProviderPrompt(params);
     const gatewayUrl = getCodexGatewayUrl();
-    const answer = gatewayUrl
-      ? await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal)
-      : await runCodexOAuthPrompt(getCodexOAuthCommand(), prompt, params.signal);
+    if (!gatewayUrl) throw new Error(missingCodexGatewayMessage());
+    const answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
     const parsed = parseCodexOAuthOrchestratorOutput(answer);
 
     if (parsed.type === "tool_calls") {

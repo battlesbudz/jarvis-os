@@ -648,6 +648,13 @@ function getCodexGatewayUrl() {
   if (!raw) return null;
   return raw.replace(/\/+$/, "");
 }
+function missingCodexGatewayMessage() {
+  return [
+    "Codex OAuth provider is configured for gateway-only mode, but JARVIS_CODEX_GATEWAY_URL is not set.",
+    "Jarvis server chat must use the Battles-PC Tailscale Codex gateway; it should not spawn local codex from the server process.",
+    "Set JARVIS_CODEX_GATEWAY_URL and JARVIS_CODEX_GATEWAY_TOKEN, then verify with npm.cmd run jarvis:oauth:gateway -- --check."
+  ].join(" ");
+}
 function getCodexGatewayToken() {
   return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
 }
@@ -856,7 +863,6 @@ var init_codexOAuth = __esm({
     "use strict";
     init_base();
     init_codexCommand();
-    init_env();
     init_codexGatewayFetch();
     CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 3e5);
     CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 12e4);
@@ -870,7 +876,8 @@ var init_codexOAuth = __esm({
       async *query(params) {
         const prompt = buildCodexOAuthProviderPrompt(params);
         const gatewayUrl = getCodexGatewayUrl();
-        const answer = gatewayUrl ? await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal) : await runCodexOAuthPrompt(getCodexOAuthCommand(), prompt, params.signal);
+        if (!gatewayUrl) throw new Error(missingCodexGatewayMessage());
+        const answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
         const parsed = parseCodexOAuthOrchestratorOutput(answer);
         if (parsed.type === "tool_calls") {
           if (parsed.toolCalls.length === 0) {

@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import { buildCodexSpawnCommand } from "../providers/codexCommand";
 import {
   buildCodexOAuthProviderPrompt,
+  CodexOAuthProvider,
   codexGatewayFailureMessage,
+  missingCodexGatewayMessage,
   parseCodexOAuthOrchestratorOutput,
 } from "../providers/codexOAuth";
 
+async function main() {
 {
   const previousComSpec = process.env.ComSpec;
   process.env.ComSpec = "C:\\Windows\\System32\\cmd.exe";
@@ -101,4 +104,34 @@ import {
   console.log("OK: Codex OAuth gateway failures include actionable host/recovery guidance");
 }
 
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  delete process.env.JARVIS_CODEX_GATEWAY_URL;
+  try {
+    const provider = new CodexOAuthProvider();
+    await assert.rejects(
+      async () => {
+        for await (const _chunk of provider.query({
+          model: "chatgpt-codex-oauth/auto",
+          messages: [{ role: "user", content: "Hello" }],
+        })) {
+          // exhaust generator
+        }
+      },
+      /gateway-only mode/,
+    );
+    assert.match(missingCodexGatewayMessage(), /Tailscale Codex gateway/);
+  } finally {
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+  }
+  console.log("OK: Codex OAuth provider refuses local spawn when gateway URL is missing");
+}
+
 console.log("\nAll Codex OAuth provider assertions passed.");
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
