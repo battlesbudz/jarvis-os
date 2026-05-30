@@ -1,11 +1,22 @@
 import { randomUUID } from "node:crypto";
-import type { CallModelInput, ConversationState, Tool } from "@openrouter/agent";
-import { createInitialState, maxCost, stepCountIs } from "@openrouter/agent";
+import { createRequire } from "node:module";
 import { AGENT_SDK_HITL_AGENT_ID, requestTelegramApprovalForPendingCall } from "./hitlApproval";
 import type { AgentSdkPendingApproval, HitlApprovalDeps } from "./hitlApproval";
 import { createFileAgentSdkRunStore } from "./runStore";
 import type { AgentSdkRunStore } from "./runStore";
 import { createAgentSdkTools } from "./toolRegistry";
+
+type CallModelInput<TTools> = Record<string, unknown> & { tools?: TTools };
+type ConversationState<TTools = unknown> = Record<string, unknown> & {
+  id?: string;
+  status?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  messages?: unknown[];
+  pendingToolCalls?: unknown[];
+  tools?: TTools;
+};
+type Tool = Record<string, unknown>;
 
 export type AgentSdkRunnerResult =
   | { handled: false }
@@ -24,7 +35,7 @@ export interface RunAgentSdkEmailWorkflowInput {
 
 export interface AgentSdkModelResultLike {
   requiresApproval?: () => Promise<boolean>;
-  getPendingToolCalls?: () => Promise<Array<{ id: string; name: string; arguments: Record<string, unknown> }>>;
+  getPendingToolCalls?: () => Promise<{ id: string; name: string; arguments: Record<string, unknown> }[]>;
   getState?: () => Promise<ConversationState<any>>;
   getText?: () => Promise<string>;
   getResponse?: () => Promise<{ state?: ConversationState<any>; usage?: unknown }>;
@@ -78,6 +89,27 @@ const DEFAULT_MAX_STEPS = 20;
 const DEFAULT_PROGRESS_TEXT_CHUNK_CHARS = 80;
 type AgentSdkWorkflowMode = "email_send_approval" | "email_draft_only" | "internal_reminder";
 type AgentSdkModelProvider = "jarvis" | "openrouter";
+
+const requireOpenRouterAgent = createRequire(import.meta.url);
+
+function createInitialState(id: string): ConversationState<any> {
+  const now = Date.now();
+  return {
+    id,
+    status: "in_progress",
+    createdAt: now,
+    updatedAt: now,
+    messages: [],
+  };
+}
+
+function stepCountIs(maxSteps: number): Record<string, unknown> {
+  return { type: "step_count", maxSteps };
+}
+
+function maxCost(maxCostUsd: number): Record<string, unknown> {
+  return { type: "max_cost", maxCostUsd };
+}
 
 export function isAgentSdkRunnerEnabled(env = process.env): boolean {
   return String(env.ENABLE_AGENT_SDK_RUNNER || "").toLowerCase() === "true";
@@ -236,7 +268,7 @@ function parseToolArgs(value: string | undefined): Record<string, unknown> {
 function createAdapterResult(params: {
   text: string;
   state: ConversationState<any>;
-  pendingToolCalls?: Array<{ id: string; name: string; arguments: Record<string, unknown> }>;
+  pendingToolCalls?: { id: string; name: string; arguments: Record<string, unknown> }[];
   usage?: unknown;
 }): AgentSdkModelResultLike {
   return {
@@ -308,7 +340,7 @@ async function callJarvisModelAdapter(request: Record<string, unknown>): Promise
 
   let finalText = "";
   let latestMessages = [...conversation];
-  let pendingToolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }> = [];
+  let pendingToolCalls: { id: string; name: string; arguments: Record<string, unknown> }[] = [];
 
   for (let step = 0; step < maxSteps; step += 1) {
     const turn = await routeModelTurn({
@@ -368,7 +400,13 @@ async function defaultCallModel(request: Record<string, unknown>): Promise<Agent
   if (getAgentSdkModelProvider() !== "openrouter") {
     return callJarvisModelAdapter(request);
   }
-  const [{ OpenRouter }] = await Promise.all([import("@openrouter/agent")]);
+  let OpenRouter: any;
+  try {
+    ({ OpenRouter } = requireOpenRouterAgent("@openrouter/agent"));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`OpenRouter Agent SDK is unavailable. Install dependencies or add @openrouter/agent. Details: ${message}`);
+  }
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     throw new Error("OPENROUTER_API_KEY is required when AGENT_SDK_MODEL_PROVIDER=openrouter");

@@ -1,6 +1,19 @@
-import { tool } from "@openrouter/agent";
 import { z } from "zod/v4";
 import type { AgentSdkRunStore } from "./runStore";
+
+function tool<TDefinition extends Record<string, unknown>>(definition: TDefinition): TDefinition {
+  return {
+    ...definition,
+    type: "function",
+    function: {
+      name: definition.name,
+      description: definition.description,
+      parameters: definition.inputSchema,
+      requireApproval: definition.requireApproval,
+      execute: definition.execute,
+    },
+  };
+}
 
 export interface AgentSdkToolDeps {
   userId: string;

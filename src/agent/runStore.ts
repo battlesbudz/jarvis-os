@@ -1,6 +1,22 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { ConversationState, StateAccessor, Tool } from "@openrouter/agent";
+
+export type ConversationState<TTools = unknown> = Record<string, unknown> & {
+  id?: string;
+  status?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  messages?: unknown[];
+  pendingToolCalls?: unknown[];
+  tools?: TTools;
+};
+
+export type Tool = Record<string, unknown>;
+
+export interface StateAccessor<TTools extends readonly Tool[] = readonly Tool[]> {
+  load(): Promise<ConversationState<TTools> | null>;
+  save(state: ConversationState<TTools>): Promise<void>;
+}
 
 export type AgentSdkRunStatus =
   | "running"

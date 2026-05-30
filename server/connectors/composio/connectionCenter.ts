@@ -1,5 +1,5 @@
-import { Composio } from "@composio/core";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { createRequire } from "node:module";
 import { sql } from "drizzle-orm";
 
 export const COMPOSIO_CONNECTION_PLATFORMS = [
@@ -31,14 +31,14 @@ export type ComposioConnectionStatus = {
   ready: boolean;
   dashboardUrl: string;
   connections: ComposioConnection[];
-  platforms: Array<{
+  platforms: {
     platform: ComposioConnectionPlatform;
     toolkit: string;
     label: string;
     ready: boolean;
     connectionId: string | null;
     state: string;
-  }>;
+  }[];
   nextSteps: string[];
   error: string | null;
 };
@@ -108,6 +108,9 @@ const PLATFORM_META: Record<ComposioConnectionPlatform, { toolkit: string; label
 };
 
 type ComposioEnv = Record<string, string | undefined>;
+type ComposioConstructor = new (config: Record<string, unknown>) => unknown;
+
+const requireComposio = createRequire(import.meta.url);
 
 function callbackSecret(env: ComposioEnv = process.env): string {
   return env.COMPOSIO_CALLBACK_STATE_SECRET || env.JWT_SECRET || env.COMPOSIO_API_KEY || "jarvis-composio-callback-dev";
@@ -219,6 +222,22 @@ export function isComposioConfigured(): boolean {
 }
 
 export function createComposioClient(): ComposioClientLike {
+  let Composio: ComposioConstructor;
+  try {
+    const sdk = requireComposio("@composio/core") as {
+      Composio?: ComposioConstructor;
+      default?: ComposioConstructor | { Composio?: ComposioConstructor };
+    };
+    const defaultExport = sdk.default;
+    Composio = sdk.Composio
+      ?? (typeof defaultExport === "function" ? defaultExport : defaultExport?.Composio);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Composio SDK is unavailable. Install dependencies or add @composio/core. Details: ${message}`);
+  }
+  if (!Composio) {
+    throw new Error("Composio SDK is unavailable. @composio/core did not export a Composio client.");
+  }
   return new Composio({
     apiKey: process.env.COMPOSIO_API_KEY,
     allowTracking: false,
