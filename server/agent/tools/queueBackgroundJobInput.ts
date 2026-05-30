@@ -1,0 +1,23 @@
+import { getModelForJobType, type AgentJobType } from "../jobClient";
+import type { ToolContext } from "../types";
+
+export function buildQueueBackgroundJobInput(
+  agentType: AgentJobType,
+  ctx: Pick<ToolContext, "channel" | "discordChannelId">,
+): Record<string, unknown> {
+  const routedModel = getModelForJobType(agentType);
+  const jobInput: Record<string, unknown> = routedModel ? { model: routedModel } : {};
+  if (ctx.channel) jobInput.originChannel = ctx.channel;
+  if (ctx.discordChannelId) jobInput.originDiscordChannelId = ctx.discordChannelId;
+
+  if (agentType === "ephemeral_agent_task") {
+    jobInput.workerType = "goal_task";
+    jobInput.ephemeralAgent = {
+      kind: "study",
+      template: "study",
+      cleanupMode: "disable",
+    };
+  }
+
+  return jobInput;
+}
