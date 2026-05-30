@@ -38,6 +38,36 @@ interface ScheduledTask {
   attentionQuestion: string | null;
 }
 
+interface AgentJob {
+  id: string;
+  title: string;
+  agentType: string;
+  status: string;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  error: string | null;
+  input?: {
+    workerType?: string;
+    workerRuntime?: {
+      progress?: {
+        currentStep?: string;
+        percent?: number;
+      };
+    };
+  } | null;
+}
+
+interface ReviewItem {
+  id: string;
+  title: string;
+  type: string;
+  summary: string | null;
+  body: string;
+  createdAt: string;
+  jobId: string | null;
+}
+
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 function formatRelative(dt: string): string {
@@ -114,6 +144,131 @@ function NeedsYouCard({ task }: { task: ScheduledTask }) {
           <Text style={styles.sendBtnText}>Send Answer</Text>
         )}
       </Pressable>
+    </View>
+  );
+}
+
+function ReviewItemCard({ item }: { item: ReviewItem }) {
+  const queryClient = useQueryClient();
+  const [busyAction, setBusyAction] = useState<'approve' | 'reject' | null>(null);
+
+  const reviewMutation = useMutation({
+    mutationFn: async (action: 'approve' | 'reject') => {
+      setBusyAction(action);
+      const res = await apiRequest('POST', `/api/deliverables/${item.id}/${action}`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?status=pending_approval'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+    },
+    onError: () => Alert.alert('Review failed', 'Jarvis could not update this item. Please try again.'),
+    onSettled: () => setBusyAction(null),
+  });
+
+  const reviewLabel = item.type === 'approval_gate' ? 'Approval request' : 'Review item';
+  const preview = item.summary || item.body;
+
+  return (
+    <View style={styles.reviewCard}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardTitleRow}>
+          <Ionicons name="shield-checkmark-outline" size={14} color={Colors.warning} style={{ marginTop: 2 }} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle} numberOfLines={2}>{item.title}</Text>
+            <Text style={styles.reviewMeta}>{reviewLabel} - {formatRelative(item.createdAt)}</Text>
+          </View>
+        </View>
+      </View>
+      {preview ? (
+        <Text style={styles.reviewPreview} numberOfLines={3}>{preview}</Text>
+      ) : null}
+      <View style={styles.reviewActions}>
+        <Pressable
+          style={[styles.reviewBtn, styles.rejectBtn]}
+          onPress={() => reviewMutation.mutate('reject')}
+          disabled={reviewMutation.isPending}
+        >
+          {busyAction === 'reject' ? (
+            <ActivityIndicator size="small" color={Colors.error} />
+          ) : (
+            <>
+              <Ionicons name="close" size={14} color={Colors.error} />
+              <Text style={[styles.reviewBtnText, { color: Colors.error }]}>Reject</Text>
+            </>
+          )}
+        </Pressable>
+        <Pressable
+          style={[styles.reviewBtn, styles.approveBtn]}
+          onPress={() => reviewMutation.mutate('approve')}
+          disabled={reviewMutation.isPending}
+        >
+          {busyAction === 'approve' ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <>
+              <Ionicons name="checkmark" size={14} color="#fff" />
+              <Text style={[styles.reviewBtnText, { color: '#fff' }]}>Approve</Text>
+            </>
+          )}
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function WorkerJobCard({ job }: { job: AgentJob }) {
+  const queryClient = useQueryClient();
+  const progress = job.input?.workerRuntime?.progress;
+  const workerType = job.input?.workerType || job.agentType;
+  const isRunning = job.status === 'running';
+  const color = isRunning ? Colors.green : job.status === 'queued' ? Colors.warning : Colors.textTertiary;
+  const percent = typeof progress?.percent === 'number'
+    ? Math.max(0, Math.min(100, progress.percent))
+    : null;
+
+  const cancelMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', `/api/agent-jobs/${job.id}/cancel`, {});
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] }),
+    onError: () => Alert.alert('Cancel failed', 'Jarvis could not cancel this worker job.'),
+  });
+
+  return (
+    <View style={styles.workerCard}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardTitleRow}>
+          <View style={[styles.statusDot, { backgroundColor: color }]} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cardTitle} numberOfLines={2}>{job.title}</Text>
+            <Text style={styles.workerMeta}>
+              {workerType.replace(/_/g, ' ')} - {job.status} - {formatRelative(job.createdAt)}
+            </Text>
+          </View>
+        </View>
+        <Pressable
+          style={styles.cancelBtn}
+          onPress={() => cancelMutation.mutate()}
+          disabled={cancelMutation.isPending}
+        >
+          {cancelMutation.isPending ? (
+            <ActivityIndicator size="small" color={Colors.textSecondary} />
+          ) : (
+            <Ionicons name="stop-circle-outline" size={18} color={Colors.textSecondary} />
+          )}
+        </Pressable>
+      </View>
+      {progress?.currentStep ? (
+        <Text style={styles.workerStep} numberOfLines={1}>{progress.currentStep}</Text>
+      ) : null}
+      {percent !== null && (
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${percent}%`, backgroundColor: color }]} />
+        </View>
+      )}
+      {job.error ? <Text style={styles.workerError} numberOfLines={2}>{job.error}</Text> : null}
     </View>
   );
 }
@@ -225,6 +380,14 @@ export default function TasksScreen() {
     queryKey: ['/api/jarvis/scheduled-tasks'],
     refetchInterval: 30000,
   });
+  const { data: reviewItems = [], isLoading: reviewLoading } = useQuery<ReviewItem[]>({
+    queryKey: ['/api/deliverables?status=pending_approval'],
+    refetchInterval: 30000,
+  });
+  const { data: activeJobs = [], isLoading: jobsLoading } = useQuery<AgentJob[]>({
+    queryKey: ['/api/agent-jobs/active'],
+    refetchInterval: 15000,
+  });
 
   if (isLoading) {
     return (
@@ -283,6 +446,42 @@ export default function TasksScreen() {
         tasks={needsYou}
         emptyText="No tasks waiting on you"
       />
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <View style={[styles.sectionDot, { backgroundColor: Colors.warning }]} />
+          <Text style={[styles.sectionLabel, { color: Colors.warning }]}>Needs Review</Text>
+          <View style={[styles.sectionCount, { backgroundColor: Colors.warning + '22' }]}>
+            <Text style={[styles.sectionCountText, { color: Colors.warning }]}>{reviewItems.length}</Text>
+          </View>
+        </View>
+        {reviewLoading ? (
+          <View style={styles.emptySection}><ActivityIndicator color={Colors.warning} /></View>
+        ) : reviewItems.length === 0 ? (
+          <View style={styles.emptySection}>
+            <Text style={styles.emptySectionText}>No queued approvals or deliverables</Text>
+          </View>
+        ) : (
+          reviewItems.slice(0, 5).map(item => <ReviewItemCard key={item.id} item={item} />)
+        )}
+      </View>
+      <View style={styles.section}>
+        <View style={styles.sectionHeader}>
+          <View style={[styles.sectionDot, { backgroundColor: Colors.green }]} />
+          <Text style={[styles.sectionLabel, { color: Colors.green }]}>Worker Queue</Text>
+          <View style={[styles.sectionCount, { backgroundColor: Colors.green + '22' }]}>
+            <Text style={[styles.sectionCountText, { color: Colors.green }]}>{activeJobs.length}</Text>
+          </View>
+        </View>
+        {jobsLoading ? (
+          <View style={styles.emptySection}><ActivityIndicator color={Colors.green} /></View>
+        ) : activeJobs.length === 0 ? (
+          <View style={styles.emptySection}>
+            <Text style={styles.emptySectionText}>No background workers running</Text>
+          </View>
+        ) : (
+          activeJobs.map(job => <WorkerJobCard key={job.id} job={job} />)
+        )}
+      </View>
       <Section
         label="In Progress"
         color={Colors.green}
@@ -369,6 +568,53 @@ const styles = StyleSheet.create({
   },
   sendBtnDisabled: { opacity: 0.4 },
   sendBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  reviewCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.warning + '55',
+    gap: 8,
+  },
+  reviewMeta: { color: Colors.textTertiary, fontSize: 11, marginTop: 2 },
+  reviewPreview: { color: Colors.textSecondary, fontSize: 13, lineHeight: 18 },
+  reviewActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
+  reviewBtn: {
+    minWidth: 86,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  rejectBtn: { backgroundColor: Colors.error + '12', borderWidth: 1, borderColor: Colors.error + '55' },
+  approveBtn: { backgroundColor: Colors.green },
+  reviewBtnText: { fontSize: 12, fontWeight: '700' },
+  workerCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 8,
+  },
+  workerMeta: { color: Colors.textTertiary, fontSize: 11, marginTop: 2, textTransform: 'capitalize' },
+  workerStep: { color: Colors.textSecondary, fontSize: 12 },
+  workerError: { color: Colors.error, fontSize: 12, lineHeight: 16 },
+  cancelBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.background,
+  },
+  progressTrack: { height: 4, borderRadius: 2, overflow: 'hidden', backgroundColor: Colors.border },
+  progressFill: { height: 4, borderRadius: 2 },
   card: {
     backgroundColor: Colors.surface,
     borderRadius: 10,
