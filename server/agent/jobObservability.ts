@@ -1,4 +1,4 @@
-import { getWorkerRuntimeFromInput, type CloudWorkerType, type WorkerApprovalCheckpoint, type WorkerProgressState } from "./workerRuntime";
+import { getWorkerRuntimeFromInput, resolveWorkerType, type CloudWorkerType, type WorkerApprovalCheckpoint, type WorkerProgressState } from "./workerRuntime";
 
 type Jsonish = unknown;
 
@@ -35,6 +35,7 @@ export interface DecoratedObservableJob {
   agentType: string;
   workerType: CloudWorkerType | null;
   title: string;
+  input: Record<string, unknown> | null;
   status: string;
   createdAt: string;
   startedAt: string | null;
@@ -125,8 +126,9 @@ export function decorateJobForObservability(job: ObservableJobRow, now = new Dat
   return {
     id: job.id,
     agentType: job.agentType,
-    workerType: workerRuntime?.workerType ?? null,
+    workerType: workerRuntime?.workerType ?? resolveWorkerType({ agentType: job.agentType, input: job.input }),
     title: job.title,
+    input: job.input ?? null,
     status: job.status,
     createdAt: createdAt.toISOString(),
     startedAt: startedAt ? startedAt.toISOString() : null,

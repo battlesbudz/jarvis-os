@@ -5,6 +5,7 @@ import type { SubAgentType } from "./subagents";
 import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
 import { runGoalDecomposition } from "./goalDecomposer";
 import { runNamedAgent } from "./runNamedAgent";
+import { runEphemeralAgentSession, type EphemeralAgentKind } from "./ephemeralAgents";
 import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
@@ -1012,6 +1013,57 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
     }
 
     // ── Custom user-defined agent ──────────────────────────────────────────────
+    if (job.agentType === "ephemeral_agent_task") {
+      const input = (job.input as Record<string, unknown>) ?? {};
+      const ephemeralAgent = input.ephemeralAgent && typeof input.ephemeralAgent === "object"
+        ? input.ephemeralAgent as Record<string, unknown>
+        : {};
+      const rawKind = typeof ephemeralAgent.kind === "string" ? ephemeralAgent.kind : "study";
+      const kind: EphemeralAgentKind = rawKind === "study" ? "study" : "study";
+      const platform = typeof input.originChannel === "string" ? input.originChannel : (originChannel || "app");
+
+      console.log(`[JobQueue] ephemeral_agent_task kind=${kind} job=${job.id}`);
+
+      const result = await runEphemeralAgentSession({
+        userId: job.userId,
+        kind,
+        userRequest: job.prompt || job.title,
+        platform,
+        channelId: originDiscordChannelId,
+        parentTaskId: job.id,
+      });
+
+      await completeJob(job.id, {
+        result: {
+          output: result.reply,
+          ephemeralAgentId: result.agentId,
+          kind,
+        },
+        turns: result.turns,
+        toolCallsCount: result.toolCalls?.length ?? 0,
+      });
+
+      console.log(
+        `[JobQueue] ephemeral_agent_task complete: kind=${kind} job=${job.id} turns=${result.turns}`,
+      );
+
+      await notifyJobComplete(
+        job.userId,
+        "ephemeral_agent_task",
+        job.title,
+        result.reply,
+        originChannel,
+        originDiscordChannelId,
+      );
+
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, result.reply.slice(0, 1200)).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
+      return;
+    }
+
     if (job.agentType === "custom_agent") {
       const input = (job.input as Record<string, unknown>) ?? {};
       const customAgentId = String(input.customAgentId ?? "");

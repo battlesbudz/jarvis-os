@@ -129,6 +129,7 @@ export function resolveWorkerType(opts: {
     case "finance":
       return "finance";
     case "goal_decompose":
+    case "ephemeral_agent_task":
     case "goal_task":
     case "planning":
       return "goal_task";

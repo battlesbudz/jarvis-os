@@ -10,7 +10,7 @@ import type { SubAgentType } from "./subagents";
 import { findDuplicateJob } from "./tools/jobDuplicateGuard";
 import { buildInitialWorkerRuntime } from "./workerRuntime";
 
-export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research" | "app_project";
+export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "ephemeral_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research" | "app_project";
 
 export interface SubmitJobInput {
   userId: string;

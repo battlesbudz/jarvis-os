@@ -131,4 +131,23 @@ const baseJob = {
   console.log("OK: exhausted job failure is classified as permanent failure");
 }
 
+{
+  const decorated = decorateJobForObservability({
+    ...baseJob,
+    agentType: "ephemeral_agent_task",
+    input: {
+      workerType: "goal_task",
+      ephemeralAgent: {
+        kind: "study",
+        template: "study",
+        cleanupMode: "disable",
+      },
+    },
+  }, now);
+
+  assert.equal(decorated.workerType, "goal_task");
+  assert.equal(decorated.input?.ephemeralAgent?.kind, "study");
+  console.log("OK: ephemeral agent metadata is visible in job observability");
+}
+
 console.log("\nAll job observability assertions passed.");
