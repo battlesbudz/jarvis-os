@@ -913,6 +913,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
           onToken,
           onProgressMessage,
+          originChannelId: discordChannelId,
           discordGuildId,
           discordChannelId,
           sdkSessionId: storedSessionId,
@@ -942,6 +943,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           userId,
           userText: fullUserText,
           channelName: namedAgent ? `Discord #${namedAgent.name.toLowerCase()}` : channelLabel,
+          originChannelId: discordChannelId,
           discordGuildId,
           discordChannelId,
           sdkSessionId: storedSessionId,
@@ -1483,6 +1485,90 @@ export async function sendToDiscordUserGetId(
   }
 }
 
+async function registerAgentApprovalReactionCard(opts: {
+  userId: string;
+  messageId: string;
+  channelId: string;
+  guildId?: string | null;
+  content: string;
+  gateId: string;
+}): Promise<void> {
+  await db.insert(discordPendingApprovals).values({
+    messageId: opts.messageId,
+    userId: opts.userId,
+    channelId: opts.channelId,
+    guildId: opts.guildId ?? undefined,
+    type: "agent_approval_gate",
+    content: opts.content,
+    onApprove: {
+      type: "agent_approval_gate",
+      gateId: opts.gateId,
+      decision: "approve",
+      channelId: opts.channelId,
+    },
+    onReject: {
+      type: "agent_approval_gate",
+      gateId: opts.gateId,
+      decision: "reject",
+      channelId: opts.channelId,
+    },
+    status: "pending",
+  }).onConflictDoNothing();
+}
+
+async function addApprovalReactions(message: Message): Promise<void> {
+  await message.react("✅").catch(() => {});
+  await message.react("❌").catch(() => {});
+}
+
+export async function postApprovalRequestToDiscordDm(
+  userId: string,
+  text: string,
+  gateId: string,
+): Promise<boolean> {
+  const client = getClientForUser(userId);
+  if (!client || !client.isReady()) return false;
+
+  const link = await lookupLink(userId);
+  if (!link) return false;
+
+  let dmChannelId = link.meta.dmChannelId;
+  const discordUserId = link.address;
+
+  try {
+    if (!dmChannelId) {
+      const discordUser = await client.users.fetch(discordUserId);
+      const dm = await discordUser.createDM();
+      dmChannelId = dm.id;
+      await db
+        .update(channelLinks)
+        .set({ metadata: { ...link.meta, dmChannelId } })
+        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "discord")));
+    }
+
+    const channel = await client.channels.fetch(dmChannelId) as DMChannel | null;
+    if (!channel) return false;
+
+    const chunks = splitIntoChunks(text, 1900);
+    const firstMsg = await (channel as SendableChannels).send(chunks[0]);
+    await registerAgentApprovalReactionCard({
+      userId,
+      messageId: firstMsg.id,
+      channelId: firstMsg.channelId,
+      content: text,
+      gateId,
+    });
+    await addApprovalReactions(firstMsg as Message);
+    for (let i = 1; i < chunks.length; i++) {
+      await (channel as SendableChannels).send(chunks[i]).catch(() => {});
+    }
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] postApprovalRequestToDiscordDm failed for ${userId}:`, err);
+    return false;
+  }
+}
+
 /**
  * Send a file attachment to a Discord user via their DM channel.
  * Returns true when the message was sent successfully.
@@ -1802,6 +1888,41 @@ export async function postToDiscordChannelById(
     return true;
   } catch (err) {
     console.error(`[DiscordManager] postToDiscordChannelById failed for channel ${channelId}:`, err);
+    return false;
+  }
+}
+
+export async function postApprovalRequestToDiscordChannel(
+  userId: string,
+  channelId: string,
+  text: string,
+  gateId: string,
+): Promise<boolean> {
+  const client = getClientForUser(userId);
+  if (!client || !client.isReady()) return false;
+
+  try {
+    const channel = await client.channels.fetch(channelId);
+    if (!channel || !channel.isTextBased()) return false;
+
+    const chunks = splitIntoChunks(text, 1900);
+    const firstMsg = await (channel as SendableChannels).send(chunks[0]);
+    await registerAgentApprovalReactionCard({
+      userId,
+      messageId: firstMsg.id,
+      channelId: firstMsg.channelId,
+      guildId: "guildId" in firstMsg ? String(firstMsg.guildId ?? "") || null : null,
+      content: text,
+      gateId,
+    });
+    await addApprovalReactions(firstMsg as Message);
+
+    for (let i = 1; i < chunks.length; i++) {
+      await (channel as SendableChannels).send(chunks[i]).catch(() => {});
+    }
+    return true;
+  } catch (err) {
+    console.error(`[DiscordManager] postApprovalRequestToDiscordChannel failed for channel ${channelId}:`, err);
     return false;
   }
 }

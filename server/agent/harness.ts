@@ -8,6 +8,7 @@ import type { ProviderName, FallbackChainEntry } from "./providers";
 import { resolveRuntimeAgentModel } from "./runtimeModel";
 import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
 import { estimateModelUsage, recordModelUsage } from "./modelUsage";
+import { persistHarnessMindTrace } from "./mindTraceRecorder";
 
 /**
  * Resolve the provider name from a model string.
@@ -275,6 +276,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const model = resolveRuntimeAgentModel(modelOpt ?? (await getModel(context.userId, "chat")));
 
   const channel = context.channel || "Agent";
+  const harnessStartedAt = Date.now();
+  const harnessContextLoaded = new Set<string>(["always_on_kernel"]);
 
   // ── Inject workspace context into system prompt ────────────────────────────
   // Load SOUL.md, AGENTS.md, and MEMORY.md from ~/.jarvis/workspace/ and
@@ -302,6 +305,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
         return m;
       });
+      harnessContextLoaded.add("workspace_context");
       console.log(`[${channel}/Harness] workspace context injected`);
     }
   } catch {
@@ -328,6 +332,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
           return m;
         });
+        harnessContextLoaded.add("user_skill_files");
       }
     } catch {
       // skills are best-effort — never block an agent run
@@ -357,6 +362,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
           return m;
         });
+        harnessContextLoaded.add("db_user_skills");
         console.log(`[${channel}/Harness] injected ${activeSkills.length} user skill(s)`);
       }
     } catch {
@@ -401,6 +407,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
           return m;
         });
+        harnessContextLoaded.add("behavior_packs");
         console.log(`[${channel}/Harness] injected ${packs.length} behaviour pack(s)`);
 
         // Aggregate tool-group preferences from all active packs for use
@@ -472,6 +479,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
           return m;
         });
+        harnessContextLoaded.add("activation_context");
       }
     } catch {
       // activation plan injection is best-effort — never block an agent run
@@ -629,6 +637,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             ? { ...m, content: (m.content ?? "") + unavailableNote }
             : m,
         );
+        harnessContextLoaded.add("integration_status_context");
         console.log(`[${channel}/Harness] integration alert (broken): ${allBroken.join(", ")}`);
       }
 
@@ -643,6 +652,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             ? { ...m, content: (m.content ?? "") + expiryNote }
             : m,
         );
+        harnessContextLoaded.add("integration_status_context");
       }
     } catch {
       // Best-effort — never block an agent run
@@ -906,6 +916,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Inject the active tool set so surface-scoped tools (e.g. test_tool)
   // can verify they are not being used to escape per-surface restrictions.
   context.allowedToolNames = new Set(tools.map((t) => t.name));
+  if (tools.length > 0) harnessContextLoaded.add("tool_manifest");
 
   // Resolve the provider once per run based on the runtime model.
   const primaryProviderName = resolveProviderName(model);
@@ -1057,6 +1068,25 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // delivered, so emitting a second streaming pass would produce duplicate /
   // overlapping text in live-edit UIs (e.g. Discord).
   let suppressNextStream = false;
+
+  const finalizeRun = async (result: AgentRunResult): Promise<AgentRunResult> => {
+    if (context.userId && inlineUserMessageText.trim()) {
+      await persistHarnessMindTrace({
+        userId: context.userId,
+        userRequest: inlineUserMessageText,
+        channel,
+        model,
+        turns: result.turns,
+        finishReason: result.finishReason,
+        reply: result.reply,
+        toolCalls: result.toolCalls,
+        durationMs: Date.now() - harnessStartedAt,
+        messages: result.messages,
+        contextLoaded: [...harnessContextLoaded],
+      });
+    }
+    return result;
+  };
 
   for (let turn = 0; turn < effectiveMaxTurns; turn++) {
     // ── Abort check — honour caller cancellation before each turn ───────
@@ -1509,13 +1539,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       }
     }
 
-    return {
+    return finalizeRun({
       reply,
       turns: turn + 1,
       toolCalls,
       finishReason: hadToolError ? "tool_error" : lastFinish,
       messages: conversationMessages,
-    };
+    });
   }
 
   // Hit max turns. Force a final answer with tools disabled.
@@ -1542,11 +1572,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     console.error(`[${channel}/Agent] final-answer call failed:`, err);
   }
 
-  return {
+  return finalizeRun({
     reply,
     turns: effectiveMaxTurns,
     toolCalls,
     finishReason: hadToolError ? "tool_error" : lastFinish,
     messages: conversationMessages,
-  };
+  });
 }

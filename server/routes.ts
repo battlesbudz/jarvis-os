@@ -33,7 +33,7 @@ import {
   sendGmailEmail,
 } from "./integrations/gmail";
 import { getSlackMessages } from "./integrations/slack";
-import { authRouter, authMiddleware, generateToken } from "./auth";
+import { authRouter, authMiddleware } from "./auth";
 import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
@@ -54,11 +54,15 @@ import { registerIntegrationRoutes } from "./routes/integrationRoutes";
 import { registerProfileMemoryRoutes } from "./routes/profileMemoryRoutes";
 import { registerPlanGenerationRoutes } from "./routes/planGenerationRoutes";
 import { registerInboxRoutes } from "./routes/inboxRoutes";
+import { registerDailyCommandRoutes } from "./dailyCommand/routes";
+import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
+import { registerConnectionsRoutes, registerPublicConnectionsCallbackRoutes } from "./routes/connectionsRoutes";
 import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
 import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
 import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
 import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryRoutes";
+import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./routes/platformRoutes";
 import {
   registerAuthenticatedCoachRuntimeRoutes,
   registerPublicCoachRuntimeRoutes,
@@ -84,6 +88,7 @@ import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
+import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
 import { registerSubscriber, removeSubscriberIfCurrent } from "./webchatSSE";
 import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
@@ -101,21 +106,7 @@ import {
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
-import { getOneCliSetupStatus } from "./oneCliConnection";
-import {
-  createOneApiClient,
-  deleteOneApiKey,
-  getOneApiStatus,
-  maskOneApiKey,
-  saveOneApiKey,
-} from "./oneApiConnection";
-import {
-  buildOneConnectIntent,
-  buildOneStatusResponse,
-  buildOneTestResponse,
-  classifyOneActionPermission,
-  isOneConnectionPlatform,
-} from "./oneConnectionCenter";
+import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import {
   buildCoachSystemPrompt,
@@ -162,108 +153,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/oauth", oauthCallbackRouter);
   registerDownloadRoutes(app);
 
-  // Dev-only: return a valid JWT for the first user — used by automated e2e tests
-  if (process.env.NODE_ENV !== "production") {
-    app.get("/api/dev-token", async (_req: Request, res: Response) => {
-      const [firstUser] = await db.select({ id: schema.users.id }).from(schema.users).limit(1);
-      if (!firstUser) return res.status(404).json({ error: "No users in DB" });
-      const token = generateToken(firstUser.id);
-      res.json({ token, userId: firstUser.id });
-    });
-  }
-
-  // Dev-only: force a project to "complete" status — used by e2e tests
-  if (process.env.NODE_ENV !== "production") {
-    app.patch("/api/dev/projects/:id/complete", async (req: Request, res: Response) => {
-      try {
-        await db
-          .update(schema.jarvisProjects)
-          .set({ status: "complete" })
-          .where(eq(schema.jarvisProjects.id, req.params.id));
-        res.json({ ok: true });
-      } catch (err) {
-        res.status(500).json({ error: String(err) });
-      }
-    });
-  }
-
-  // Health-check — unauthenticated, used by the UI to detect when the server has
-  // come back up after a self-applied code-proposal restart.
-  app.get("/api/ping", (_req: Request, res: Response) => {
-    res.json({ ok: true, ts: Date.now() });
-  });
-
-  // Owner-only: trigger a graceful backend restart (writes nothing to disk).
-  // Used by the UI as a one-tap "Restart Backend" button when auto-restart is
-  // not available. authMiddleware applied inline since this route is mounted
-  // before the global app.use(authMiddleware).
-  app.post("/api/admin/restart-backend", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const ok = await isIntegrationOwner(userId);
-    if (!ok) return res.status(403).json({ error: "Forbidden" });
-    res.json({ ok: true, message: "Backend is restarting…" });
-    setTimeout(() => {
-      console.log("[Admin] Graceful restart triggered by owner.");
-      process.exit(0);
-    }, 300);
-  });
-
+  registerPlatformRoutes(app);
   registerPublicCoachRuntimeRoutes(app);
-
-  /**
-   * GET /go/voice-call — public deep-link redirect page
-   *
-   * Opened when the user taps the "🎙 Voice call" inline keyboard button in Telegram.
-   * On mobile with the native app installed the OS intercepts jarvis://voice-realtime
-   * and opens the app directly. If the app is not installed (or on desktop) the page
-   * falls back to the HTTPS web version of the voice-realtime screen after 1.5 s.
-   */
-  app.get("/go/voice-call", (req: Request, res: Response) => {
-    const baseUrl = getPublicBaseUrl(req);
-    const webVoiceUrl = `${baseUrl}/voice-realtime`;
-    const appVoiceUrl = "jarvis://voice-realtime";
-    const androidIntentUrl =
-      `intent://voice-realtime#Intent;scheme=jarvis;package=com.gameplan;` +
-      `S.browser_fallback_url=${encodeURIComponent(webVoiceUrl)};end`;
-
-    res.setHeader("Content-Type", "text/html; charset=utf-8");
-    res.setHeader("Cache-Control", "no-cache");
-    res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Opening Jarvis Voice Call…</title>
-  <style>
-    body { margin: 0; display: flex; flex-direction: column; align-items: center;
-           justify-content: center; min-height: 100vh; font-family: system-ui, sans-serif;
-           background: #0F0F0F; color: #e5e5e5; text-align: center; padding: 1rem; }
-    .actions { display: grid; gap: 0.75rem; width: min(100%, 320px); margin-top: 1rem; }
-    a { color: inherit; }
-    .button { display: block; padding: 0.85rem 1rem; border-radius: 10px; text-decoration: none;
-              background: #6366F1; color: white; font-weight: 700; }
-    .secondary { background: #1f2937; }
-    .note { color: #a3a3a3; font-size: 0.92rem; max-width: 380px; line-height: 1.4; }
-  </style>
-</head>
-<body>
-  <h1>Jarvis voice call</h1>
-  <p class="note">Open the Jarvis app for the best voice session, or continue in the browser.</p>
-  <div class="actions">
-    <a id="open-app" class="button" href="${appVoiceUrl}">Open Jarvis app</a>
-    <a class="button secondary" href="${webVoiceUrl}">Continue in browser</a>
-  </div>
-  <script>
-    const appLink = document.getElementById('open-app');
-    const androidIntentUrl = ${JSON.stringify(androidIntentUrl)};
-    if (/Android/i.test(navigator.userAgent)) {
-      appLink.setAttribute('href', androidIntentUrl);
-    }
-  </script>
-</body>
-</html>`);
-  });
+  registerVoiceRedirectRoute(app);
 
   /**
    * POST /api/discord/interactions — public (Ed25519-verified, no JWT needed)
@@ -519,6 +411,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerPublicWebchatInviteRoutes(app);
   registerCodexGatewayRoutes(app);
   registerAppUpdateRoutes(app);
+  registerPublicConnectionsCallbackRoutes(app);
 
   app.use(authMiddleware);
 
@@ -547,6 +440,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/oauth", oauthRouter);
 
   registerDataRoutes(app);
+  registerDailyCommandRoutes(app);
+  registerMindTraceRoutes(app);
+  registerConnectionsRoutes(app);
 
   // ── GET /api/goals — return goals for the authenticated user ───────────────
   app.get("/api/goals", async (req: Request, res: Response) => {
@@ -1040,13 +936,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function" as const,
       function: {
         name: "schedule_jarvis_task",
-        description: "Schedule a future task for Jarvis to act on at a specific time. Use when the user says 'remind me to...', 'schedule...', 'do X at Y time', or asks Jarvis to take an action later. Always confirm the scheduled time before calling.",
+        description: "Schedule a future task/reminder for Jarvis to act on at a specific time. Use when the user says 'remind me in an hour to...', 'schedule...', 'do X at Y time', or asks Jarvis to take an action later. If the user gives a clear relative or absolute time, call this immediately; ask a follow-up only when the time or reminder content is missing or ambiguous.",
         parameters: {
           type: "object",
           properties: {
             title: { type: "string", description: "Short title for the scheduled task (e.g. 'Review inbox', 'Send weekly update')" },
             description: { type: "string", description: "Optional details about what Jarvis should do when the time arrives" },
-            scheduledAt: { type: "string", description: "ISO 8601 datetime when to execute the task (e.g. '2025-04-23T09:00:00Z')" },
+            scheduledAt: { type: "string", description: "When to execute the task. Accepts ISO 8601 or common natural language like 'in an hour', 'tomorrow at 9am', or 'next Monday at 10am'." },
             recurrence: { type: "string", description: "Optional recurrence pattern: 'daily', 'weekly', 'weekdays', 'every Monday', 'every Sunday', etc. Omit for one-time tasks." },
           },
           required: ["title", "scheduledAt"],
@@ -1996,20 +1892,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (!args.title || !args.scheduledAt) {
             return { result: 'error', label: 'Missing required fields', detail: 'title and scheduledAt are required' };
           }
-          const scheduledDate = new Date(args.scheduledAt);
+          const scheduledAtText = String(args.scheduledAt);
+          const recurring = parseRecurringExpr(scheduledAtText);
+          const scheduledDate = recurring?.scheduledAt ?? parseNaturalTime(scheduledAtText) ?? new Date(scheduledAtText);
+          const recurrence = args.recurrence ? String(args.recurrence) : recurring?.recurrence ?? null;
           if (isNaN(scheduledDate.getTime())) {
-            return { result: 'error', label: 'Invalid date', detail: `scheduledAt "${args.scheduledAt}" is not a valid ISO 8601 datetime` };
+            return { result: 'error', label: 'Invalid date', detail: `scheduledAt "${args.scheduledAt}" is not a valid date or natural time like "in an hour"` };
           }
-          await db.insert(schema.jarvisScheduledTasks).values({
+          const { task, deduped } = await createJarvisScheduledTask({
             userId,
             title: String(args.title),
             description: args.description ? String(args.description) : null,
             scheduledAt: scheduledDate,
-            recurrence: args.recurrence ? String(args.recurrence) : null,
+            recurrence,
           });
           const timeLabel = scheduledDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-          const recurrenceLabel = args.recurrence ? ` (${args.recurrence})` : '';
-          return { result: 'success', label: 'Task scheduled', detail: `"${args.title}" scheduled for ${timeLabel}${recurrenceLabel}` };
+          const recurrenceLabel = recurrence ? ` (${recurrence})` : '';
+          return {
+            result: 'success',
+            label: deduped ? 'Already scheduled' : 'Task scheduled',
+            detail: `"${task.title}" scheduled for ${timeLabel}${recurrenceLabel}`,
+          };
         }
         case 'image_generate': {
           const prompt = String(args.prompt || '').trim();
@@ -2171,6 +2074,173 @@ Answer (yes/no):`,
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
+      }
+
+      if (userId) {
+        const latestUserMessage = [...messages].reverse().find((m: any) => m?.role === "user")?.content ?? "";
+        const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
+        const primeRuntimeEnabled = isPrimeRuntimeEnabled();
+        const coreRuntimeResult = await handlePrimeInput({
+          userId,
+          channel: originChannel,
+          message: String(latestUserMessage),
+          metadata: {
+            messages,
+            originChannelId: incomingAppSessionId,
+          },
+        }, {
+          appAutonomyDeps: {
+            saveChatHistory: async ({ userId: historyUserId, data }: any) => {
+              await db.insert(schema.chatHistory)
+                .values({ userId: historyUserId, data })
+                .onConflictDoUpdate({
+                  target: schema.chatHistory.userId,
+                  set: { data, updatedAt: new Date() },
+                });
+            },
+            logInteraction: async ({ userId: interactionUserId, channel, direction, text }: any) => {
+              await logInteraction(interactionUserId, channel, direction, text);
+            },
+          },
+        });
+        if (coreRuntimeResult.handled) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({
+            content: coreRuntimeResult.reply,
+            agentSdkRunId: coreRuntimeResult.sdkRunId,
+            status: coreRuntimeResult.status,
+            route: coreRuntimeResult.decision.routeChosen,
+          })}\n\n`);
+          if (coreRuntimeResult.toolAction) {
+            res.write(`data: ${JSON.stringify({
+              type: "actions",
+              executedActions: [{
+                tool: coreRuntimeResult.toolAction.tool,
+                result: coreRuntimeResult.toolAction.result,
+                label: coreRuntimeResult.toolAction.label,
+                code: coreRuntimeResult.toolAction.detail,
+              }],
+            })}\n\n`);
+          }
+          if (coreRuntimeResult.backgroundJob) {
+            res.write(`data: ${JSON.stringify({
+              type: "background_job",
+              jobId: coreRuntimeResult.backgroundJob.jobId,
+              agentType: coreRuntimeResult.backgroundJob.agentType,
+            })}\n\n`);
+          }
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+
+        if (!primeRuntimeEnabled) {
+
+        const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
+        const recentConversationContext = messages
+          .slice(-8)
+          .map((m: any) => `${m?.role || "message"}: ${String(m?.content || "").slice(0, 2000)}`)
+          .join("\n");
+        const agentSdkReminderResult = await runAgentSdkReminderWorkflow({
+          userId,
+          userText: String(latestUserMessage),
+          originChannel,
+        });
+        if (agentSdkReminderResult.handled) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({
+            content: agentSdkReminderResult.reply,
+            agentSdkRunId: agentSdkReminderResult.runId,
+            status: agentSdkReminderResult.status,
+          })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        const agentSdkResult = await runAgentSdkEmailWorkflow({
+          userId,
+          userText: String(latestUserMessage),
+          conversationContext: recentConversationContext,
+          originChannel,
+        });
+        const agentSdkSetupFailure = agentSdkResult.handled
+          && agentSdkResult.status === "failed"
+          && /OPENROUTER_API_KEY|provider|configured/i.test(agentSdkResult.error || agentSdkResult.reply || "");
+        if (agentSdkResult.handled && !agentSdkSetupFailure) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({
+            content: agentSdkResult.reply,
+            agentSdkRunId: agentSdkResult.runId,
+            status: agentSdkResult.status,
+          })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+
+        const { handleDirectEmailApprovalRequest } = await import("./agent/directEmailApprovalRoute");
+        const directEmailApprovalResult = await handleDirectEmailApprovalRequest({
+          userId,
+          text: String(latestUserMessage),
+          channel: originChannel,
+        });
+        if (directEmailApprovalResult.handled) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({
+            content: directEmailApprovalResult.reply,
+            status: "awaiting_approval",
+            approvalGateId: directEmailApprovalResult.gateId,
+          })}\n\n`);
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+
+        const { handleDirectReminderRequest } = await import("./agent/reminderDirectRoute");
+        const directReminderResult = await handleDirectReminderRequest({
+          userId,
+          text: String(latestUserMessage),
+          channel: originChannel,
+        });
+        if (directReminderResult.handled) {
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.flushHeaders();
+          res.write(`data: ${JSON.stringify({ content: directReminderResult.reply })}\n\n`);
+          if (directReminderResult.toolResult) {
+            res.write(`data: ${JSON.stringify({
+              type: "actions",
+              executedActions: [{
+                tool: "schedule_jarvis_task",
+                result: directReminderResult.toolResult.ok ? "success" : "error",
+                label: directReminderResult.toolResult.label,
+                code: directReminderResult.toolResult.detail,
+              }],
+            })}\n\n`);
+          }
+          res.write('data: [DONE]\n\n');
+          res.end();
+          return;
+        }
+        }
       }
 
       const autonomyResult = await routeAppCoachChatAutonomy(
@@ -2819,11 +2889,15 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             let args: any = {};
             try { args = JSON.parse(tc.function.arguments); } catch {}
 
-            const onePermission = tc.function.name === 'one_execute_action'
-              ? classifyOneActionPermission(String(args.platform || ''), String(args.action_id || args.actionId || ''))
+            const connectedAccountPermission = tc.function.name === 'connected_accounts_execute'
+              ? classifyComposioActionPermission(
+                  String(args.platform || ''),
+                  String(args.tool_slug || args.toolSlug || ''),
+                  JSON.stringify(args.arguments || args.input || {}).slice(0, 1000),
+                )
               : null;
             const isHighStakes = tc.function.name === 'send_email' ||
-              (tc.function.name === 'one_execute_action' && onePermission?.approvalRequired === true && args.dry_run !== true) ||
+              (tc.function.name === 'connected_accounts_execute' && connectedAccountPermission?.approvalRequired === true && args.dry_run !== true) ||
               (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || '')));
 
             if (isHighStakes) {
@@ -2840,13 +2914,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.subject = String(args.subject || '');
                 preview.body = String(args.body || '');
                 preview.provider = String(args.provider || 'google');
-              } else if (tc.function.name === 'one_execute_action') {
+              } else if (tc.function.name === 'connected_accounts_execute') {
                 preview.platform = String(args.platform || '');
-                preview.action = String(args.action_id || args.actionId || '');
-                preview.connection = String(args.connection_key || args.connectionKey || '');
-                preview.reason = onePermission?.reason || 'This One action can change an external account.';
-                if (args.data) preview.data = typeof args.data === 'string' ? args.data : JSON.stringify(args.data).slice(0, 500);
-                if (args.query_params) preview.query = typeof args.query_params === 'string' ? args.query_params : JSON.stringify(args.query_params).slice(0, 500);
+                preview.action = String(args.tool_slug || args.toolSlug || '');
+                preview.connection = String(args.account || args.connected_account_id || args.connectedAccountId || '');
+                preview.reason = connectedAccountPermission?.reason || 'This Composio action can change an external account.';
+                if (args.arguments) preview.data = typeof args.arguments === 'string' ? args.arguments : JSON.stringify(args.arguments).slice(0, 500);
               } else {
                 preview.action = String(args.action || '');
                 if (args.cmd) preview.cmd = String(args.cmd);
@@ -3475,18 +3548,18 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
       pendingConfirmations.delete(token);
       let execResult: { result: 'success' | 'error'; label: string; detail: string };
-      if (pending.tool === 'one_execute_action') {
-        const oneTool = getTool('one_execute_action');
-        if (!oneTool) {
-          execResult = { result: 'error', label: 'One action unavailable', detail: 'The One action tool is not registered.' };
+      if (pending.tool === 'connected_accounts_execute') {
+        const connectedAccountsTool = getTool('connected_accounts_execute');
+        if (!connectedAccountsTool) {
+          execResult = { result: 'error', label: 'Connected account action unavailable', detail: 'The connected account action tool is not registered.' };
         } else {
-          const toolResult = await oneTool.execute(
+          const toolResult = await connectedAccountsTool.execute(
             { ...pending.args, approved: true, confirmed: true },
             { userId, channel: 'appchat', state: { pendingAttachments: [] } } as ToolContext,
           );
           execResult = {
             result: toolResult.ok ? 'success' : 'error',
-            label: toolResult.label ?? 'One action',
+            label: toolResult.label ?? 'Connected account action',
             detail: toolResult.content ?? toolResult.detail ?? '',
           };
         }
@@ -3513,15 +3586,15 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           tool = pending.tool;
           const a = pending.args;
           if (tool === 'send_email') preview = { to: a.to || '', subject: a.subject || '' };
-          else if (tool === 'one_execute_action') preview = { action: a.action_id || a.actionId || '', platform: a.platform || '' };
+          else if (tool === 'connected_accounts_execute') preview = { action: a.tool_slug || a.toolSlug || '', platform: a.platform || '' };
           else preview = { action: a.action || '', cmd: a.cmd || '', path: a.path || '' };
           pendingConfirmations.delete(token);
         }
       }
       const toolLabel = tool === 'send_email'
         ? `sending an email to ${preview.to || 'the recipient'}`
-        : tool === 'one_execute_action'
-          ? `running the One ${preview.platform || 'connector'} action ${preview.action || ''}`.trim()
+        : tool === 'connected_accounts_execute'
+          ? `running the Composio ${preview.platform || 'connected account'} action ${preview.action || ''}`.trim()
         : `running a terminal command (${preview.cmd || preview.action || 'shell'})`;
       const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence — do not re-propose the action. Stay in your coaching persona.`;
       const resp = await openai.chat.completions.create({
@@ -3537,14 +3610,64 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     }
   });
 
+  function titleCaseAction(raw: string): string {
+    const trimmed = raw
+      .replace(/[?.!]+$/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    return trimmed ? trimmed.charAt(0).toUpperCase() + trimmed.slice(1) : "Follow up";
+  }
+
+  function extractReminderSuggestion(text: unknown): {
+    type: "reminder";
+    title: string;
+    category: string;
+    priority: "medium";
+    description: string;
+    scheduledAt: string;
+  } | null {
+    if (typeof text !== "string") return null;
+    const source = text.trim();
+    if (!/\b(remind\s+me|set\s+(a\s+)?reminder|reminder)\b/i.test(source)) return null;
+
+    const timeMatch = source.match(/\bin\s+(\d+(?:\.\d+)?|an?|one)\s+(minute|minutes|hour|hours|day|days|week|weeks)\b/i)
+      ?? source.match(/\btomorrow(?:\s+at\s+[^?.!,]+)?\b/i)
+      ?? source.match(/\btoday\s+at\s+[^?.!,]+\b/i)
+      ?? source.match(/\bnext\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)(?:\s+at\s+[^?.!,]+)?\b/i)
+      ?? source.match(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i);
+    if (!timeMatch) return null;
+
+    const afterTo = source.match(/\b(?:remind\s+me|set\s+(?:a\s+)?reminder)\b[\s\S]*?\bto\s+(.+)$/i)?.[1];
+    const taskText = (afterTo || source)
+      .replace(timeMatch[0], "")
+      .replace(/\b(can you|could you|please|set\s+(?:a\s+)?reminder|remind\s+me|reminder)\b/ig, "")
+      .replace(/\b(to|for)\b\s*$/i, "")
+      .trim();
+    const title = titleCaseAction(taskText || "Follow up");
+
+    return {
+      type: "reminder",
+      title,
+      category: "personal",
+      priority: "medium",
+      description: `Reminder requested from coach chat: ${source}`,
+      scheduledAt: timeMatch[0].trim(),
+    };
+  }
+
   app.post("/api/coach/suggestions", async (req: Request, res: Response) => {
+    let deterministicReminder: ReturnType<typeof extractReminderSuggestion> = null;
     try {
-      const { lastAssistantMessage, goals, coachingMode } = req.body;
+      const { lastAssistantMessage, lastUserMessage, goals, coachingMode } = req.body;
       if (!lastAssistantMessage) {
         return res.json({ actions: [], followups: [] });
       }
+      deterministicReminder = extractReminderSuggestion(lastUserMessage);
 
       const prompt = `Analyze this coaching message and extract structured suggestions.
+
+User's latest message:
+"${typeof lastUserMessage === "string" ? lastUserMessage : ""}"
 
 Coaching message:
 "${lastAssistantMessage}"
@@ -3553,9 +3676,10 @@ User's active goals:
 ${(goals || []).map((g: any) => `- ${g.title} (${g.category})`).join('\n') || 'None set'}
 
 Return a JSON object with:
-1. "actions": array of 0-2 actionable suggestions. Three action types are supported:
+1. "actions": array of 0-2 actionable suggestions. Four action types are supported:
    - { "type": "task", "title": string (verb phrase), "category": "fitness"/"finance"/"career"/"personal"/"social", "priority": "high"/"medium"/"low", "description": one-line context }
    - { "type": "goal", "title": string, "category": "fitness"/"finance"/"career"/"personal"/"social", "description": one-line context }
+   - { "type": "reminder", "title": string, "category": "personal", "priority": "medium", "description": one-line context, "scheduledAt": string, "recurrence": optional string } - Use when the user asked for a reminder or future follow-up. scheduledAt may be natural language like "in an hour", "tomorrow at 9am", or "next Monday at 10am" if that is exactly what the user said.
    - { "type": "link", "title": string, "buttonLabel": string (short CTA ≤4 words), "url": string (use "profile://connections" to open connection settings, or a full https:// URL), "category": "personal" } — Use ONLY when the message explicitly suggests connecting/reconnecting Google, Microsoft, Outlook, or Gmail.
    Only include actions that are specific and actionable. Return empty array for purely conversational messages.
 2. "followups": array of exactly 3 short follow-up questions (max 7 words each) the user would naturally ask next.
@@ -3572,12 +3696,19 @@ Return ONLY the JSON object.`;
       const content = response.textContent || '{"actions":[],"followups":[]}';
       try {
         const parsed = JSON.parse(content);
+        const parsedActions = Array.isArray(parsed.actions) ? parsed.actions.slice(0, 2) : [];
+        const actions = deterministicReminder
+          ? [
+              deterministicReminder,
+              ...parsedActions.filter((action: any) => action?.type !== "reminder").slice(0, 1),
+            ]
+          : parsedActions;
         res.json({
-          actions: Array.isArray(parsed.actions) ? parsed.actions.slice(0, 2) : [],
+          actions,
           followups: Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [],
         });
       } catch {
-        res.json({ actions: [], followups: [] });
+        res.json({ actions: deterministicReminder ? [deterministicReminder] : [], followups: [] });
       }
     } catch (error) {
       if (isRetriableProviderError(error)) {
@@ -3586,7 +3717,7 @@ Return ONLY the JSON object.`;
       } else {
         console.error("Error generating suggestions:", error);
       }
-      res.json({ actions: [], followups: [] });
+      res.json({ actions: deterministicReminder ? [deterministicReminder] : [], followups: [] });
     }
   });
 
@@ -4480,14 +4611,18 @@ Return ONLY the JSON object.`;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const { title, description, scheduledAt, recurrence } = req.body;
       if (!title || !scheduledAt) return res.status(400).json({ error: "title and scheduledAt are required" });
-      const scheduledDate = new Date(scheduledAt);
-      if (isNaN(scheduledDate.getTime())) return res.status(400).json({ error: "scheduledAt must be a valid date" });
+      const scheduledAtText = String(scheduledAt);
+      const recurring = parseRecurringExpr(scheduledAtText);
+      const scheduledDate = recurring?.scheduledAt ?? parseNaturalTime(scheduledAtText) ?? new Date(scheduledAtText);
+      if (isNaN(scheduledDate.getTime())) {
+        return res.status(400).json({ error: 'scheduledAt must be a valid date or natural time like "in an hour"' });
+      }
       const { task, deduped } = await createJarvisScheduledTask({
         userId,
         title: String(title),
         description: description ? String(description) : null,
         scheduledAt: scheduledDate,
-        recurrence: recurrence ? String(recurrence) : null,
+        recurrence: recurrence ? String(recurrence) : recurring?.recurrence ?? null,
       });
       res.json({ ...task, deduped });
     } catch (err) {
@@ -6088,104 +6223,6 @@ Extract up to 8 memories per batch.`;
   };
   app.patch("/api/skills/candidates/:id/review", skillCandidatesReviewHandler);
   app.patch("/api/skill-candidates/:id/review", skillCandidatesReviewHandler);
-
-  app.get("/api/one/status", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.json({
-        apiKeyConfigured: false,
-        apiKeyPreview: null,
-        installed: false,
-        authenticated: false,
-        ready: false,
-        command: "one",
-        dashboardUrl: "https://app.withone.ai",
-        accountEmail: null,
-        accountName: null,
-        connections: [],
-        nextSteps: ["Open Connection Center again in a moment, then paste your One API key."],
-        error: message,
-      });
-    }
-  });
-
-  app.post("/api/one/api-key", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const apiKey = String(req.body?.apiKey || "").trim();
-      if (!apiKey) {
-        return res.status(400).json({
-          error: "missing_api_key",
-          message: "Paste a One API key from One API Keys.",
-        });
-      }
-
-      const verification = await createOneApiClient(apiKey).listConnections();
-      if (!verification.ok) {
-        return res.status(400).json({
-          error: "one_api_key_invalid",
-          message: verification.error || "Jarvis could not verify this One API key.",
-          apiKeyPreview: maskOneApiKey(apiKey),
-        });
-      }
-
-      await saveOneApiKey(userId, apiKey);
-      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: "one_api_key_save_failed", message });
-    }
-  });
-
-  app.delete("/api/one/api-key", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      await deleteOneApiKey(userId);
-      res.json(buildOneStatusResponse(await getOneApiStatus(userId)));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: "one_api_key_delete_failed", message });
-    }
-  });
-
-  app.post("/api/one/connect-intent", async (req: Request, res: Response) => {
-    try {
-      const platform = String(req.body?.platform || "").trim().toLowerCase();
-      if (!isOneConnectionPlatform(platform)) {
-        return res.status(400).json({
-          error: "unsupported_platform",
-          message: "Choose Gmail, Google Calendar, Outlook Mail, Outlook Calendar, Slack, Discord, or WhatsApp.",
-        });
-      }
-      res.json(buildOneConnectIntent(platform, getOneCliSetupStatus()));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.status(500).json({ error: "one_connect_intent_failed", message });
-    }
-  });
-
-  app.post("/api/one/test", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      res.json(buildOneTestResponse(buildOneStatusResponse(await getOneApiStatus(userId))));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      res.json({
-        ok: false,
-        summary: "Jarvis could not test One connected accounts right now.",
-        results: [],
-        nextSteps: ["Refresh Connection Center, then verify your One API key again."],
-        error: message,
-      });
-    }
-  });
 
   // ── Integration pre-flight status ────────────────────────────────────────
   // Returns a map of { integration → { status, errorMessage, expiresAt, lastCheckedAt } }

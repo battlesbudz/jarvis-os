@@ -47,6 +47,14 @@ import { getApiUrl, apiRequest } from '@/lib/query-client';
 import { useAuth, authFetch } from '@/lib/auth-context';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
+import {
+  CONNECTION_APPS,
+  getConnectionStatusLabel,
+  normalizeConnectionsStatus,
+  normalizeConnectionTestResult,
+  type ConnectionAppId,
+  type ConnectionsStatus,
+} from './connectionUx';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -74,23 +82,6 @@ interface TelegramStatus {
   username: string | null;
   configured: boolean;
   botUsername?: string | null;
-}
-
-interface OneSetupStatus {
-  apiKeyConfigured: boolean;
-  apiKeyPreview: string | null;
-  installed: boolean;
-  authenticated: boolean;
-  ready: boolean;
-  command: string;
-  dashboardUrl: string;
-  accountEmail: string | null;
-  accountName: string | null;
-  configScope: string | null;
-  apiBase: string | null;
-  connections: { platform: string; state: string; keyPreview: string }[];
-  nextSteps: string[];
-  error: string | null;
 }
 
 interface McpServerInfo {
@@ -148,8 +139,6 @@ function StatusDot({ status }: { status: HealthStatus }) {
     }} />
   );
 }
-
-const ONE_API_KEYS_URL = 'https://app.withone.ai/settings/api-keys';
 
 const sectionStyles = StyleSheet.create({
   header: {
@@ -297,10 +286,9 @@ export default function SettingsScreen() {
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
-  const [oneStatus, setOneStatus] = useState<OneSetupStatus | null>(null);
-  const [oneApiKeyInput, setOneApiKeyInput] = useState('');
-  const [oneBusy, setOneBusy] = useState<'save' | 'delete' | 'test' | null>(null);
-  const [oneTestSummary, setOneTestSummary] = useState<string | null>(null);
+  const [connectionsStatus, setConnectionsStatus] = useState<ConnectionsStatus | null>(null);
+  const [connectionBusyApp, setConnectionBusyApp] = useState<string | null>(null);
+  const [connectionTestSummary, setConnectionTestSummary] = useState<string | null>(null);
 
   // ── Per-section error states ──
   const [connectionsError, setConnectionsError] = useState(false);
@@ -1078,20 +1066,20 @@ export default function SettingsScreen() {
     setLoadingStatus(true);
     // Each call is independent — a failure on one doesn't block others.
     // We track per-call results to detect when required data is unavailable.
-    const [telegramResult, integrationResult, channelsResult, oneResult] = await Promise.allSettled([
+    const [telegramResult, integrationResult, channelsResult, connectionsResult] = await Promise.allSettled([
       apiRequest('GET', '/api/telegram/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/integrations/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/channels').then(r => r.ok ? r.json() : Promise.reject(r.status)),
-      apiRequest('GET', '/api/one/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/connections/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
     ]);
 
     const telegramRes = telegramResult.status === 'fulfilled' ? telegramResult.value : null;
     const integrationRes = integrationResult.status === 'fulfilled' ? integrationResult.value : null;
     const channelsRes = channelsResult.status === 'fulfilled' ? channelsResult.value : null;
-    const oneRes = oneResult.status === 'fulfilled' ? oneResult.value as OneSetupStatus : null;
+    const connectionsRes = connectionsResult.status === 'fulfilled' ? connectionsResult.value : null;
 
     // Show error row when any connections endpoint fails.
-    const anyConnectionFailed = [telegramResult, integrationResult, channelsResult, oneResult]
+    const anyConnectionFailed = [telegramResult, integrationResult, channelsResult, connectionsResult]
       .some(r => r.status === 'rejected');
     setConnectionsError(anyConnectionFailed);
 
@@ -1104,7 +1092,7 @@ export default function SettingsScreen() {
     setAndroidDaemonConnected(
       channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false
     );
-    if (oneRes) setOneStatus(oneRes);
+    if (connectionsRes) setConnectionsStatus(normalizeConnectionsStatus(connectionsRes));
     if (integrationRes && typeof integrationRes === 'object') {
       const health: Record<string, string> = {};
       const errors: Record<string, string | null> = {};
@@ -1503,67 +1491,81 @@ export default function SettingsScreen() {
     await saveWakeSettings({ wakeWords: next });
   }, [wakeWords, saveWakeSettings]);
 
-  const openOneApiKeys = useCallback(async () => {
+  const openHostedConnectionLink = useCallback(async (url: string) => {
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      window.location.assign(ONE_API_KEYS_URL);
+      window.location.assign(url);
       return;
     }
-    await WebBrowser.openBrowserAsync(ONE_API_KEYS_URL, {
+    await WebBrowser.openBrowserAsync(url, {
       presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
     }).catch(() => {
-      void Linking.openURL(ONE_API_KEYS_URL);
+      void Linking.openURL(url);
     });
   }, []);
 
-  const saveOneApiKey = useCallback(async () => {
-    const apiKey = oneApiKeyInput.trim();
-    if (!apiKey) {
-      Alert.alert('One API Key', 'Paste the API key you created in One first.');
-      return;
-    }
-    setOneBusy('save');
+  const connectExternalApp = useCallback(async (appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    setConnectionBusyApp(`connect:${appId}`);
     try {
-      const res = await apiRequest('POST', '/api/one/api-key', { apiKey });
+      const res = await apiRequest('POST', '/api/connections/connect-link', { appId, app: appId });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Jarvis could not save that One API key.');
-      setOneStatus(data);
-      setOneApiKeyInput('');
-      setOneTestSummary(data.ready ? 'One API key verified. Jarvis can see the apps connected in One.' : data.nextSteps?.[0] || 'One API key saved.');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const url = data?.url ?? data?.connectUrl ?? data?.connectLink ?? data?.oauthUrl ?? data?.authUrl ?? data?.link;
+      if (typeof url !== 'string' || !url) {
+        throw new Error('Jarvis could not create a hosted connection link.');
+      }
+      await openHostedConnectionLink(url);
+      setConnectionTestSummary(`${app?.label ?? 'App'} connection opened in your browser.`);
+      await loadConnections();
     } catch (error: any) {
-      Alert.alert('One API Key', error?.message || 'Jarvis could not verify that One API key.');
+      Alert.alert('Connect app', error?.message || `Jarvis could not start ${app?.label ?? 'that app'} connection.`);
     } finally {
-      setOneBusy(null);
+      setConnectionBusyApp(null);
     }
-  }, [oneApiKeyInput]);
+  }, [loadConnections, openHostedConnectionLink]);
 
-  const deleteOneApiKey = useCallback(async () => {
-    setOneBusy('delete');
-    try {
-      const res = await apiRequest('DELETE', '/api/one/api-key');
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || 'Jarvis could not remove the saved One API key.');
-      setOneStatus(data);
-      setOneTestSummary('One API key removed from Jarvis.');
-    } catch (error: any) {
-      Alert.alert('One API Key', error?.message || 'Jarvis could not remove the saved One API key.');
-    } finally {
-      setOneBusy(null);
-    }
-  }, []);
+  const disconnectExternalApp = useCallback((appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    Alert.alert('Disconnect app', `Disconnect ${app?.label ?? 'this app'} from Jarvis?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          setConnectionBusyApp(`disconnect:${appId}`);
+          try {
+            await apiRequest('POST', '/api/connections/disconnect', { appId, app: appId });
+            setConnectionTestSummary(`${app?.label ?? 'App'} disconnected.`);
+            await loadConnections();
+          } catch (error: any) {
+            Alert.alert('Disconnect app', error?.message || `Jarvis could not disconnect ${app?.label ?? 'that app'}.`);
+          } finally {
+            setConnectionBusyApp(null);
+          }
+        },
+      },
+    ]);
+  }, [loadConnections]);
 
-  const testOneConnection = useCallback(async () => {
-    setOneBusy('test');
+  const testExternalApp = useCallback(async (appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    setConnectionBusyApp(`test:${appId}`);
     try {
-      const res = await apiRequest('POST', '/api/one/test');
+      const res = await apiRequest('POST', '/api/connections/test', { appId, app: appId });
       const data = await res.json();
-      setOneTestSummary(data.summary || (res.ok ? 'One connection test finished.' : 'One connection test failed.'));
+      const result = normalizeConnectionTestResult(data);
+      setConnectionTestSummary(`${app?.label ?? 'App'}: ${result.summary}`);
+      if (data?.connections || data?.apps || data?.statuses) {
+        setConnectionsStatus(normalizeConnectionsStatus(data));
+      } else {
+        await loadConnections();
+      }
+      if (result.ok) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {
-      setOneTestSummary('Jarvis could not test One right now.');
+      setConnectionTestSummary(`Jarvis could not test ${app?.label ?? 'that app'} right now.`);
     } finally {
-      setOneBusy(null);
+      setConnectionBusyApp(null);
     }
-  }, []);
+  }, [loadConnections]);
 
   // ── Reward claim ──
   const handleClaimReward = useCallback(async (reward: Reward) => {
@@ -1612,123 +1614,96 @@ export default function SettingsScreen() {
           )}
           <View style={styles.connRow}>
             <View style={[styles.connIconWrap, { backgroundColor: '#6366F120' }]}>
-              <Ionicons name="key-outline" size={18} color="#6366F1" />
+              <Ionicons name="git-network-outline" size={18} color="#6366F1" />
             </View>
             <View style={styles.connInfo}>
-              <Text style={styles.connName}>One Connector</Text>
+              <Text style={styles.connName}>App Connections</Text>
               <Text style={styles.connSub}>
-                Connect apps in One, then paste the One API key here so Jarvis can use those connected accounts.
+                Use hosted sign-in links for mail, calendars, team chat, files, and tasks. No secrets to paste.
               </Text>
-              <Text style={styles.connSub}>
-                Jarvis uses One as the OAuth bridge. Telegram, Desktop, and Android stay native.
-              </Text>
-              {oneStatus && (
-                <View style={{ marginTop: 8, gap: 6 }}>
-                  <Text style={[styles.connSub, { color: oneStatus.ready ? Colors.success : Colors.warning }]}>
-                    {oneStatus.apiKeyConfigured
-                      ? oneStatus.ready
-                      ? `${oneStatus.connections.length} One connection${oneStatus.connections.length === 1 ? '' : 's'} ready${oneStatus.accountEmail ? ` for ${oneStatus.accountEmail}` : ''}`
-                      : 'One API key saved, but Jarvis cannot see operational connected apps yet.'
-                      : oneStatus.authenticated
-                        ? 'One is signed in, but no operational accounts are visible to Jarvis yet.'
-                        : oneStatus.installed
-                          ? 'One CLI is installed, but this Jarvis session is not signed in yet.'
-                          : 'Add a One API key from the One dashboard to connect apps.'}
-                  </Text>
-                  {oneStatus.apiKeyPreview && (
-                    <Text style={styles.oneKeyPreview}>Saved key {oneStatus.apiKeyPreview}</Text>
-                  )}
-                  {oneStatus.connections.length > 0 && (
-                    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                      {oneStatus.connections.map((connection) => (
-                        <View key={`${connection.platform}-${connection.keyPreview}`} style={styles.onePill}>
-                          <Text style={styles.onePillText}>{connection.platform}</Text>
-                        </View>
-                      ))}
-                    </View>
-                  )}
-                </View>
-              )}
+              {connectionsStatus?.error ? (
+                <Text style={[styles.connSub, { color: Colors.warning }]}>{connectionsStatus.error}</Text>
+              ) : null}
             </View>
             <Pressable
               style={[styles.connBtn, styles.connBtnDisconnected, { borderColor: '#6366F1' }]}
-              onPress={oneStatus?.ready ? loadConnections : openOneApiKeys}
+              onPress={loadConnections}
             >
-              <Text style={[styles.connBtnText, { color: '#6366F1' }]}>
-                {oneStatus?.ready ? 'Refresh' : 'API Keys'}
-              </Text>
+              <Text style={[styles.connBtnText, { color: '#6366F1' }]}>Refresh</Text>
             </Pressable>
           </View>
-          <View style={[styles.oneApiKeyPanel, styles.connRowBorder]}>
-            <View style={styles.oneSetupSteps}>
-              <Text style={styles.oneSetupTitle}>Setup flow</Text>
-              <Text style={styles.oneSetupText}>1. Connect Gmail, Outlook, Slack, or other apps inside One.</Text>
-              <Text style={styles.oneSetupText}>2. Create an API key on One&apos;s API Keys page.</Text>
-              <Text style={styles.oneSetupText}>3. Paste that key into Jarvis below and save it.</Text>
-            </View>
-            {!oneStatus?.apiKeyConfigured ? (
-              <>
-                <Text style={styles.oneInputLabel}>One API key for Jarvis</Text>
-                <TextInput
-                  value={oneApiKeyInput}
-                  onChangeText={setOneApiKeyInput}
-                  placeholder="Paste One API key"
-                  placeholderTextColor={Colors.textTertiary}
-                  secureTextEntry
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={styles.oneApiKeyInput}
-                />
-                <View style={styles.oneApiActionsRow}>
-                  <Pressable style={styles.oneSecondaryButton} onPress={openOneApiKeys}>
-                    <Ionicons name="open-outline" size={15} color={Colors.textSecondary} />
-                    <Text style={styles.oneSecondaryButtonText}>Open One API Keys</Text>
-                  </Pressable>
-                  <Pressable
-                    style={[styles.connBtn, { borderColor: '#6366F1', opacity: oneBusy === 'save' ? 0.65 : 1 }]}
-                    onPress={saveOneApiKey}
-                    disabled={oneBusy === 'save'}
-                  >
-                    <Text style={[styles.connBtnText, { color: '#6366F1' }]}>
-                      {oneBusy === 'save' ? 'Verifying' : 'Verify & Save'}
-                    </Text>
-                  </Pressable>
+
+          {CONNECTION_APPS.map((app) => {
+            const appStatus = connectionsStatus?.apps[app.id];
+            const connected = appStatus?.connected ?? false;
+            const statusLabel = appStatus ? getConnectionStatusLabel(appStatus) : 'Connect';
+            const connectBusy = connectionBusyApp === `connect:${app.id}`;
+            const disconnectBusy = connectionBusyApp === `disconnect:${app.id}`;
+            const testBusy = connectionBusyApp === `test:${app.id}`;
+            const statusText = connected
+              ? appStatus?.accountLabel || 'Connected'
+              : appStatus?.error || (statusLabel === 'Reconnect' ? 'Needs reconnect' : app.description);
+            return (
+              <View key={app.id} style={[styles.connRow, styles.connRowBorder]}>
+                <View style={[styles.connIconWrap, { backgroundColor: app.color + '20' }]}>
+                  <Ionicons name={app.icon as keyof typeof Ionicons.glyphMap} size={18} color={app.color} />
                 </View>
-              </>
-            ) : (
-              <View style={styles.oneApiActionsRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.connName}>One API key saved</Text>
-                  <Text style={styles.connSub}>Jarvis will use One for Gmail, Outlook, calendars, Slack, Discord, and WhatsApp.</Text>
-                </View>
-                <Pressable style={styles.connBtn} onPress={deleteOneApiKey} disabled={oneBusy === 'delete'}>
-                  <Text style={styles.connBtnText}>{oneBusy === 'delete' ? 'Removing' : 'Remove'}</Text>
-                </Pressable>
-              </View>
-            )}
-            <View style={styles.oneApiActionsRow}>
-              <Pressable style={styles.oneSecondaryButton} onPress={testOneConnection} disabled={oneBusy === 'test'}>
-                {oneBusy === 'test' ? (
-                  <ActivityIndicator size="small" color={Colors.textSecondary} />
-                ) : (
-                  <Ionicons name="pulse-outline" size={15} color={Colors.textSecondary} />
-                )}
-                <Text style={styles.oneSecondaryButtonText}>Test One</Text>
-              </Pressable>
-              <Text style={styles.oneApiHint}>Connect apps on One first, then refresh Jarvis.</Text>
-            </View>
-            {oneTestSummary ? <Text style={styles.oneTestText}>{oneTestSummary}</Text> : null}
-            {oneStatus?.nextSteps?.length ? (
-              <View style={styles.oneSteps}>
-                {oneStatus.nextSteps.slice(0, 3).map((step, idx) => (
-                  <View key={`${step}-${idx}`} style={styles.oneStepRow}>
-                    <Text style={styles.oneStepNumber}>{idx + 1}</Text>
-                    <Text style={styles.oneStepText}>{step}</Text>
+                <View style={styles.connInfo}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text style={styles.connName}>{app.label}</Text>
+                    <StatusDot status={connected ? 'healthy' : statusLabel === 'Reconnect' ? 'broken' : 'unconfigured'} />
                   </View>
-                ))}
+                  <Text style={[styles.connSub, appStatus?.error && { color: Colors.warning }]}>{statusText}</Text>
+                  <View style={styles.connectionActionsRow}>
+                    <Pressable
+                      style={[styles.connBtn, { borderColor: app.color, opacity: connectBusy ? 0.65 : 1 }]}
+                      onPress={() => connectExternalApp(app.id)}
+                      disabled={connectBusy || disconnectBusy || testBusy}
+                    >
+                      <Text style={[styles.connBtnText, { color: app.color }]}>
+                        {connectBusy ? 'Opening' : connected ? 'Reconnect' : statusLabel}
+                      </Text>
+                    </Pressable>
+                    {connected ? (
+                      <Pressable
+                        style={[styles.connBtn, { borderColor: Colors.border, opacity: disconnectBusy ? 0.65 : 1 }]}
+                        onPress={() => disconnectExternalApp(app.id)}
+                        disabled={connectBusy || disconnectBusy || testBusy}
+                      >
+                        <Text style={[styles.connBtnText, { color: Colors.textTertiary }]}>
+                          {disconnectBusy ? 'Disconnecting' : 'Disconnect'}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      style={[styles.connectionSecondaryButton, { opacity: testBusy ? 0.65 : 1 }]}
+                      onPress={() => testExternalApp(app.id)}
+                      disabled={connectBusy || disconnectBusy || testBusy}
+                    >
+                      {testBusy ? (
+                        <ActivityIndicator size="small" color={Colors.textSecondary} />
+                      ) : (
+                        <Ionicons name="pulse-outline" size={15} color={Colors.textSecondary} />
+                      )}
+                      <Text style={styles.connectionSecondaryButtonText}>{testBusy ? 'Testing' : 'Test'}</Text>
+                    </Pressable>
+                  </View>
+                </View>
               </View>
-            ) : null}
-          </View>
+            );
+          })}
+
+          {connectionTestSummary ? <Text style={styles.connectionTestText}>{connectionTestSummary}</Text> : null}
+          {connectionsStatus?.nextSteps?.length ? (
+            <View style={styles.connectionSteps}>
+              {connectionsStatus.nextSteps.slice(0, 3).map((step, idx) => (
+                <View key={`${step}-${idx}`} style={styles.connectionStepRow}>
+                  <Text style={styles.connectionStepNumber}>{idx + 1}</Text>
+                  <Text style={styles.connectionStepText}>{step}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
 
 
           {/* Telegram */}
@@ -4038,7 +4013,7 @@ const styles = StyleSheet.create({
   connBtnTextConnected: {
     color: Colors.success,
   },
-  onePill: {
+  connectionPill: {
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 999,
@@ -4046,21 +4021,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#6366F150',
   },
-  onePillText: {
+  connectionPillText: {
     fontSize: 10,
     fontFamily: 'Inter_600SemiBold',
     color: '#A5B4FC',
   },
-  oneKeyPreview: {
+  connectionKeyPreview: {
     fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.success,
   },
-  oneApiKeyPanel: {
+  connectionPanel: {
     padding: 14,
     gap: 10,
   },
-  oneSetupSteps: {
+  connectionSetupSteps: {
     backgroundColor: '#6366F112',
     borderWidth: 1,
     borderColor: '#6366F135',
@@ -4068,25 +4043,25 @@ const styles = StyleSheet.create({
     padding: 10,
     gap: 4,
   },
-  oneSetupTitle: {
+  connectionSetupTitle: {
     fontSize: 11,
     fontFamily: 'Inter_700Bold',
     color: '#C7D2FE',
     textTransform: 'uppercase',
     marginBottom: 2,
   },
-  oneSetupText: {
+  connectionSetupText: {
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
     lineHeight: 17,
   },
-  oneInputLabel: {
+  connectionInputLabel: {
     fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.textSecondary,
   },
-  oneApiKeyInput: {
+  connectionInput: {
     backgroundColor: Colors.surfaceAlt,
     borderRadius: 10,
     paddingHorizontal: 12,
@@ -4097,45 +4072,52 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  oneApiActionsRow: {
+  connectionActionsPanelRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
   },
-  oneSecondaryButton: {
+  connectionActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 10,
+  },
+  connectionSecondaryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingVertical: 8,
   },
-  oneSecondaryButtonText: {
+  connectionSecondaryButtonText: {
     fontSize: 12,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.textSecondary,
   },
-  oneApiHint: {
+  connectionHint: {
     flex: 1,
     textAlign: 'right',
     fontSize: 11,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
   },
-  oneTestText: {
+  connectionTestText: {
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
   },
-  oneSteps: {
+  connectionSteps: {
     gap: 5,
     marginTop: 2,
   },
-  oneStepRow: {
+  connectionStepRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
   },
-  oneStepNumber: {
+  connectionStepNumber: {
     width: 18,
     height: 18,
     borderRadius: 9,
@@ -4146,7 +4128,7 @@ const styles = StyleSheet.create({
     color: '#C7D2FE',
     backgroundColor: '#6366F120',
   },
-  oneStepText: {
+  connectionStepText: {
     flex: 1,
     fontSize: 11,
     fontFamily: 'Inter_400Regular',

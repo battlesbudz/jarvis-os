@@ -250,6 +250,34 @@ async function run() {
     );
   }
 
+  // TH-18: Receipt-approved connected account execution receives an explicit approval marker
+  {
+    const reg = new ToolCallHookRegistry();
+    reg.register(() => ({ requireApproval: { title: "Approve", description: "Connected account write" } }));
+    const result = await reg.run(makeCtx({
+      toolName: "connected_accounts_execute",
+      userId: "user-test",
+      params: {
+        platform: "gmail",
+        tool_slug: "GMAIL_CREATE_DRAFT",
+        arguments: { to: "sam@example.com" },
+      },
+      approvalReceipt: {
+        gateId: "gate_connected_account_receipt",
+        userId: "user-test",
+        toolName: "connected_accounts_execute",
+        scope: "top_level_action",
+        originalUserText: "Create the Gmail draft",
+        createdAt: new Date().toISOString(),
+      },
+    }));
+    assert(result.allowed === true, "TH-18: matching receipt allows connected_accounts_execute");
+    assert(
+      (result.params as Record<string, unknown>)?.approved === true,
+      "TH-18: receipt-approved connected_accounts_execute params include approved=true",
+    );
+  }
+
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

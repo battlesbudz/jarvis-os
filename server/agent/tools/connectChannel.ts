@@ -3,27 +3,35 @@ import { db } from "../../db";
 import { telegramLinkCodes } from "../../../shared/schema";
 import { getTelegramBotUsername, isTelegramConfigured } from "../../integrations/telegram";
 import {
-  getOneCliConnectionHint,
-  getOneCliConnectUrl,
-  getOneCliSetupStatus,
-  isOneCliConnection,
-  ONECLI_CONNECTIONS,
-  type OneCliConnection,
-} from "../../oneCliConnection";
+  buildComposioConnectIntent,
+  isComposioConnectionPlatform,
+} from "../../connectors/composio/connectionCenter";
 
-const SUPPORTED_CONNECTIONS = ["telegram", ...ONECLI_CONNECTIONS] as const;
+const CHANNEL_TO_PLATFORM: Record<string, string> = {
+  google: "gmail",
+  microsoft: "outlook-mail",
+  gmail: "gmail",
+  "google-calendar": "google-calendar",
+  "outlook-mail": "outlook-mail",
+  "outlook-calendar": "outlook-calendar",
+  slack: "slack",
+  "google-drive": "google-drive",
+  "google-tasks": "google-tasks",
+};
+
+const SUPPORTED_CONNECTIONS = ["telegram", ...Object.keys(CHANNEL_TO_PLATFORM)] as const;
 
 export const connectChannelTool: AgentTool = {
   name: "connect_channel",
   description:
-    "Connect Telegram directly through Jarvis, or hand off WhatsApp, Slack, Discord, Google/Gmail/Calendar, and Microsoft/Outlook/Calendar to the One Connector.",
+    "Connect Telegram directly through Jarvis, or create a Composio Connect Link for external accounts such as Gmail, Google Calendar, Outlook, Slack, Drive, or Tasks.",
   parameters: {
     type: "object",
     properties: {
       channel: {
         type: "string",
         enum: SUPPORTED_CONNECTIONS,
-        description: "Connection to set up. Telegram is Jarvis-owned; all other values use the One Connector.",
+        description: "Connection to set up. Telegram is Jarvis-owned; external accounts use Composio Connect Links.",
       },
     },
     required: ["channel"],
@@ -61,7 +69,8 @@ export const connectChannelTool: AgentTool = {
       };
     }
 
-    if (!isOneCliConnection(channel)) {
+    const platform = CHANNEL_TO_PLATFORM[channel];
+    if (!platform || !isComposioConnectionPlatform(platform)) {
       return {
         ok: false,
         content: `Unknown connection "${channel}". Supported: ${SUPPORTED_CONNECTIONS.join(", ")}.`,
@@ -69,22 +78,12 @@ export const connectChannelTool: AgentTool = {
       };
     }
 
-    const connection = channel as OneCliConnection;
-    const url = getOneCliConnectUrl(connection);
-    const one = getOneCliSetupStatus();
-    const payload = {
-      connection,
-      buttonLabel: url ? `Set up ${connection} in One` : "Open One setup",
-      url,
-      one,
-      instructions: getOneCliConnectionHint(connection),
-    };
-
+    const intent = await buildComposioConnectIntent(ctx.userId, platform);
     return {
-      ok: true,
-      content: JSON.stringify(payload),
-      label: payload.buttonLabel,
-      detail: JSON.stringify(payload),
+      ok: !intent.error,
+      content: JSON.stringify(intent),
+      label: intent.buttonLabel,
+      detail: JSON.stringify(intent),
     };
   },
 };

@@ -35,6 +35,10 @@ function findInstalledCodexCommand() {
 
   const candidates = [];
   if (isWindows) {
+    if (process.env.APPDATA) {
+      candidates.push(join(process.env.APPDATA, "npm", "codex.cmd"));
+      candidates.push(join(process.env.APPDATA, "npm", "codex.exe"));
+    }
     if (process.env.LOCALAPPDATA) {
       candidates.push(join(process.env.LOCALAPPDATA, "OpenAI", "Codex", "bin", "codex.exe"));
       candidates.push(join(process.env.LOCALAPPDATA, "Microsoft", "WindowsApps", "codex.exe"));
@@ -122,7 +126,7 @@ async function runCodexOAuthPrompt(command, prompt, cwd = process.cwd()) {
 loadEnvFile(".env");
 loadEnvFile(".env.local", { override: true });
 
-process.env.JARVIS_CODEX_COMMAND ||= findInstalledCodexCommand();
+process.env.JARVIS_CODEX_COMMAND = findInstalledCodexCommand();
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));

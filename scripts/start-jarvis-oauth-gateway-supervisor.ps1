@@ -16,6 +16,12 @@ if (!$env:JARVIS_CODEX_COMMAND) {
     "C:\Program Files\WindowsApps\OpenAI.Codex_26.506.3741.0_x64__2p2nqsd0c76g0\app\resources\codex.exe"
   )
 
+  $NestedCodex = Get-ChildItem -LiteralPath (Join-Path $env:LOCALAPPDATA "OpenAI\Codex\bin") -Recurse -Filter codex.exe -ErrorAction SilentlyContinue |
+    Select-Object -First 1 -ExpandProperty FullName
+  if ($NestedCodex) {
+    $CodexCandidates = @($NestedCodex) + $CodexCandidates
+  }
+
   foreach ($Candidate in $CodexCandidates) {
     if ($Candidate -and (Test-Path $Candidate)) {
       $env:JARVIS_CODEX_COMMAND = $Candidate
@@ -24,5 +30,12 @@ if (!$env:JARVIS_CODEX_COMMAND) {
   }
 }
 
-& node.exe "scripts\jarvis-oauth-gateway-supervisor.mjs"
+$NodeCandidates = @(
+  (Join-Path (Split-Path -Parent $RepoRoot) ".tools\node-v22.22.3-win-x64\node.exe"),
+  (Join-Path $RepoRoot ".tools\node-v22.22.3-win-x64\node.exe"),
+  "node.exe"
+)
+
+$NodeExe = $NodeCandidates | Where-Object { $_ -eq "node.exe" -or (Test-Path $_) } | Select-Object -First 1
+& $NodeExe "scripts\jarvis-oauth-gateway-supervisor.mjs"
 exit $LASTEXITCODE

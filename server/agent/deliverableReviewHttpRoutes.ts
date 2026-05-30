@@ -16,6 +16,9 @@ export interface DeliverableReviewRoutesDeps {
   rejectGate?: (gateId: string, userId: string) => Promise<void>;
   getGate?: (gateId: string) => Promise<ApprovalGate | undefined>;
   continueTopLevelApproval?: (gate: ApprovalGate) => Promise<ContinueTopLevelApprovalResult>;
+  handleJarvisApprovalDecision?: (input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }) => Promise<{ handled: boolean; continuation?: unknown }>;
+  isAgentSdkApprovalGate?: (gate: ApprovalGate) => boolean | Promise<boolean>;
+  resumeAgentSdkRunFromApprovalGate?: (input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }) => Promise<unknown>;
   submitAgentJob?: (input: SubmitJobInput) => Promise<SubmitJobResult>;
 }
 
@@ -41,9 +44,31 @@ async function defaultContinueTopLevelApproval(gate: ApprovalGate): Promise<Cont
   return continueTopLevelApproval(gate);
 }
 
+async function defaultHandleJarvisApprovalDecision(input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }): Promise<{ handled: boolean; continuation?: unknown }> {
+  const { handlePrimeApprovalDecision } = await import("./autonomyRuntime");
+  return handlePrimeApprovalDecision(input);
+}
+
+async function defaultIsAgentSdkApprovalGate(gate: ApprovalGate): Promise<boolean> {
+  const { isAgentSdkApprovalGate } = await import("../../src/agent/agentRunner");
+  return isAgentSdkApprovalGate(gate);
+}
+
+async function defaultResumeAgentSdkRunFromApprovalGate(input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }): Promise<unknown> {
+  const { resumeAgentSdkRunFromApprovalGate } = await import("../../src/agent/agentRunner");
+  return resumeAgentSdkRunFromApprovalGate(input);
+}
+
 async function defaultSubmitAgentJob(input: SubmitJobInput): Promise<SubmitJobResult> {
   const { submitAgentJob } = await import("./jobQueue");
   return submitAgentJob(input);
+}
+
+async function resumeDirectEmailApprovalIfOwned(gate: ApprovalGate, approved: boolean): Promise<{ handled: boolean; continuation?: unknown }> {
+  const { isDirectEmailApprovalGate, resumeDirectEmailApprovalGate } = await import("./directEmailApprovalRoute");
+  if (!isDirectEmailApprovalGate(gate)) return { handled: false };
+  const continuation = await resumeDirectEmailApprovalGate(gate, approved);
+  return { handled: true, continuation };
 }
 
 export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableReviewRoutesDeps): void {
@@ -52,6 +77,9 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
   const rejectGate = deps.rejectGate ?? defaultRejectGate;
   const getGate = deps.getGate ?? defaultGetGate;
   const continueTopLevelApproval = deps.continueTopLevelApproval ?? defaultContinueTopLevelApproval;
+  const handleJarvisApprovalDecision = deps.handleJarvisApprovalDecision ?? defaultHandleJarvisApprovalDecision;
+  const isAgentSdkApprovalGate = deps.isAgentSdkApprovalGate ?? defaultIsAgentSdkApprovalGate;
+  const resumeAgentSdkRunFromApprovalGate = deps.resumeAgentSdkRunFromApprovalGate ?? defaultResumeAgentSdkRunFromApprovalGate;
   const submitAgentJob = deps.submitAgentJob ?? defaultSubmitAgentJob;
 
   app.post("/api/deliverables/:id/approve", async (req: Request, res: Response) => {
@@ -69,17 +97,36 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         const meta = (d.meta as { gateId?: string }) || {};
         const gate = meta.gateId ? await getGate(meta.gateId) : undefined;
         if (meta.gateId) await approveGate(meta.gateId, userId);
-        const continuation = gate
-          ? await continueTopLevelApproval(gate).catch((err) => {
-              console.error("[deliverables] top-level approval continuation failed:", err);
-              return { continued: false, reason: "Continuation failed after approval." };
-            })
-          : { continued: false, reason: "Approval gate not found." };
+        const coreRuntimeApproval = gate ? await handleJarvisApprovalDecision({ gate, approved: true }).catch((err) => {
+          console.error("[deliverables] Jarvis Core Runtime approval resume failed:", err);
+          return { handled: false, continuation: undefined };
+        }) : { handled: false, continuation: undefined };
+        let continuation: unknown = coreRuntimeApproval.handled ? coreRuntimeApproval.continuation : undefined;
+        if (!coreRuntimeApproval.handled && gate) {
+          const directEmail = await resumeDirectEmailApprovalIfOwned(gate, true).catch((err) => {
+            console.error("[deliverables] direct email approval resume failed:", err);
+            return { handled: false, continuation: undefined };
+          });
+          if (directEmail.handled) continuation = directEmail.continuation;
+        }
+        const fallbackContinuation = continuation !== undefined
+          ? continuation
+          : gate && await isAgentSdkApprovalGate(gate)
+            ? await resumeAgentSdkRunFromApprovalGate({ gate, approved: true }).catch((err) => {
+                console.error("[deliverables] Agent SDK approval resume failed:", err);
+                return { continued: false, reason: "Agent SDK resume failed after approval." };
+              })
+            : gate
+              ? await continueTopLevelApproval(gate).catch((err) => {
+                  console.error("[deliverables] top-level approval continuation failed:", err);
+                  return { continued: false, reason: "Continuation failed after approval." };
+                })
+              : { continued: false, reason: "Approval gate not found." };
         await db
           .update(schema.deliverables)
           .set({ status: "approved", actedAt: new Date() })
           .where(eq(schema.deliverables.id, id));
-        return res.json({ ok: true, continuation });
+        return res.json({ ok: true, continuation: fallbackContinuation });
       }
 
       if (d.type === "email_draft") {
@@ -132,15 +179,41 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       const reviewAction = await loadDeliverableForReviewAction(db, userId, id, "reject");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
+      let continuation: unknown = undefined;
       if (d.type === "approval_gate") {
         const meta = (d.meta as { gateId?: string }) || {};
+        const gate = meta.gateId ? await getGate(meta.gateId) : undefined;
         if (meta.gateId) await rejectGate(meta.gateId, userId);
+        const coreRuntimeApproval = gate ? await handleJarvisApprovalDecision({ gate, approved: false }).catch((err) => {
+          console.error("[deliverables] Jarvis Core Runtime rejection resume failed:", err);
+          return { handled: false, continuation: undefined };
+        }) : { handled: false, continuation: undefined };
+        if (coreRuntimeApproval.handled) {
+          continuation = coreRuntimeApproval.continuation;
+        } else if (gate) {
+          const directEmail = await resumeDirectEmailApprovalIfOwned(gate, false).catch((err) => {
+            console.error("[deliverables] direct email rejection resume failed:", err);
+            return { handled: false, continuation: undefined };
+          });
+          if (directEmail.handled) continuation = directEmail.continuation;
+          else if (await isAgentSdkApprovalGate(gate)) {
+            continuation = await resumeAgentSdkRunFromApprovalGate({ gate, approved: false }).catch((err) => {
+              console.error("[deliverables] Agent SDK rejection resume failed:", err);
+              return { continued: false, reason: "Agent SDK resume failed after rejection." };
+            });
+          }
+        } else if (gate && await isAgentSdkApprovalGate(gate)) {
+          continuation = await resumeAgentSdkRunFromApprovalGate({ gate, approved: false }).catch((err) => {
+            console.error("[deliverables] Agent SDK rejection resume failed:", err);
+            return { continued: false, reason: "Agent SDK resume failed after rejection." };
+          });
+        }
       }
       await db
         .update(schema.deliverables)
         .set({ status: "rejected", actedAt: new Date() })
         .where(eq(schema.deliverables.id, id));
-      res.json({ ok: true });
+      res.json({ ok: true, continuation });
     } catch (err) {
       console.error("Error rejecting deliverable:", err);
       res.status(500).json({ error: "Failed to reject deliverable" });

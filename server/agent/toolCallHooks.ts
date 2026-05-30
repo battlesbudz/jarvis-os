@@ -21,6 +21,7 @@
 
 import type { ApprovalReceipt } from "./approvalReceipt";
 import { approvalReceiptCoversToolCall } from "./approvalReceipt";
+import { withApprovalMarkerForTool } from "./approvalMarkers";
 
 export type ToolCallHookContext = {
   toolName: string;
@@ -171,12 +172,12 @@ export class ToolCallHookRegistry {
         const approvalCtx = rewrittenParams !== ctx.params
           ? { ...ctx, params: rewrittenParams }
           : ctx;
-        const allowed = await runApprovalFlow(approvalCtx, result.requireApproval);
+        const allowed = await runApprovalFlowWithOriginNotification(approvalCtx, result.requireApproval);
         return {
           allowed,
           reason: allowed ? undefined : "User did not approve this action",
           // Propagate rewritten params even when going through approval
-          params: allowed ? rewrittenParams : undefined,
+          params: allowed ? withApprovalMarkerForTool(ctx.toolName, rewrittenParams) : undefined,
         };
       }
 
@@ -198,6 +199,98 @@ export class ToolCallHookRegistry {
  * (agentApproval.ts imports toolCallHooks.ts; toolCallHooks.ts imports
  * agentApproval.ts only at runtime here).
  */
+async function runApprovalFlowWithOriginNotification(
+  ctx: ToolCallHookContext,
+  approval: NonNullable<ToolCallHookResult["requireApproval"]>,
+): Promise<boolean> {
+  if (approvalReceiptCoversToolCall(ctx.approvalReceipt, { userId: ctx.userId, toolName: ctx.toolName })) {
+    console.log(
+      `[ToolCallHooks] approval receipt accepted: gate=${ctx.approvalReceipt?.gateId} tool=${ctx.toolName}`,
+    );
+    approval.onResolution?.("allow");
+    return true;
+  }
+
+  const { requestApproval, awaitApproval } = await import("./agentApproval");
+  const { logAgentEvent } = await import("./agentLogger");
+
+  if (!ctx.userId) {
+    console.warn(`[ToolCallHooks] requireApproval: no userId in context for tool=${ctx.toolName} - denying`);
+    approval.onResolution?.("deny");
+    return false;
+  }
+
+  const userId = ctx.userId;
+  const agentName = ctx.agentName ?? ctx.agentId;
+
+  try {
+    const gate = await requestApproval({
+      agentId: ctx.agentId,
+      userId,
+      toolName: ctx.toolName,
+      toolArgs: ctx.params,
+      description: approval.description,
+      ttlMs: approval.timeoutMs,
+      initiatedBy: ctx.initiatedBy,
+    });
+
+    if (gate.status === "approved") {
+      logAgentEvent({
+        event: "tool_approved",
+        agentId: ctx.agentId,
+        userId,
+        toolName: ctx.toolName,
+        detail: `gate=${gate.id} auto-approved`,
+      });
+      approval.onResolution?.("allow");
+      return true;
+    }
+
+    try {
+      const { notifyApprovalRequest } = await import("./approvalNotifications");
+      await notifyApprovalRequest({
+        gateId: gate.id,
+        agentId: ctx.agentId,
+        agentName,
+        userId,
+        toolName: ctx.toolName,
+        description: approval.description,
+        originChannel: ctx.platform,
+        originChannelId: ctx.channelId,
+      });
+    } catch {
+      /* non-blocking: gate still exists even if notification fails */
+    }
+
+    logAgentEvent({
+      event: "tool_blocked",
+      agentId: ctx.agentId,
+      userId,
+      toolName: ctx.toolName,
+      detail: `gate=${gate.id} awaiting user approval`,
+    });
+
+    const approved = await awaitApproval(gate.id, approval.timeoutMs, ctx.signal);
+    approval.onResolution?.(approved ? "allow" : "deny");
+
+    if (approved) {
+      logAgentEvent({
+        event: "tool_approved",
+        agentId: ctx.agentId,
+        userId: ctx.userId,
+        toolName: ctx.toolName,
+        detail: `gate=${gate.id} approved by user`,
+      });
+    }
+
+    return approved;
+  } catch (err) {
+    console.error(`[ToolCallHooks] approval gate error for ${ctx.toolName}:`, err);
+    approval.onResolution?.("deny");
+    return false;
+  }
+}
+
 async function runApprovalFlow(
   ctx: ToolCallHookContext,
   approval: NonNullable<ToolCallHookResult["requireApproval"]>,
@@ -246,10 +339,24 @@ async function runApprovalFlow(
       return true;
     }
 
-    // Notify user in-app
+    // Notify the origin channel plus the canonical in-app approval surface.
     try {
-      const { inAppChannel } = await import("../channels/inAppChannel");
-      await inAppChannel.sendMessage(
+      const approvalNotifier = {
+        sendMessage: async () => {
+          const { notifyApprovalRequest } = await import("./approvalNotifications");
+          await notifyApprovalRequest({
+            gateId: gate.id,
+            agentId: ctx.agentId,
+            agentName,
+            userId,
+            toolName: ctx.toolName,
+            description: approval.description,
+            originChannel: ctx.platform,
+            originChannelId: ctx.channelId,
+          });
+        },
+      };
+      await approvalNotifier.sendMessage(
         userId,
         `🔐 **Approval Required**\nAgent **${agentName}** wants to run **${ctx.toolName}**.\nTap **Review →** below to approve or decline in your inbox.\n\nGate ID: \`${gate.id}\``,
         { notificationType: "approval_request", gateId: gate.id },

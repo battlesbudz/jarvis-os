@@ -7,6 +7,7 @@ import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildCodexSpawnCommand } from "./codexCommand";
 import { getCodexOAuthCommand } from "./env";
+import { fetchCodexGateway } from "../codexGatewayFetch";
 
 const CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 300_000);
 const CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 120_000);
@@ -116,6 +117,14 @@ function getCodexGatewayUrl(): string | null {
   const raw = process.env.JARVIS_CODEX_GATEWAY_URL?.trim();
   if (!raw) return null;
   return raw.replace(/\/+$/, "");
+}
+
+export function missingCodexGatewayMessage(): string {
+  return [
+    "Codex OAuth provider is configured for gateway-only mode, but JARVIS_CODEX_GATEWAY_URL is not set.",
+    "Jarvis server chat must use the Battles-PC Tailscale Codex gateway; it should not spawn local codex from the server process.",
+    "Set JARVIS_CODEX_GATEWAY_URL and JARVIS_CODEX_GATEWAY_TOKEN, then verify with npm.cmd run jarvis:oauth:gateway -- --check.",
+  ].join(" ");
 }
 
 function getCodexGatewayToken(): string | null {
@@ -306,7 +315,7 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl: string, prompt: string, sig
     let response: Response;
     let raw: string;
     try {
-      response = await fetch(`${gatewayUrl}/api/codex/provider-turn`, {
+      response = await fetchCodexGateway(`${gatewayUrl}/api/codex/provider-turn`, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -372,9 +381,8 @@ export class CodexOAuthProvider extends BaseProvider {
   async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
     const prompt = buildCodexOAuthProviderPrompt(params);
     const gatewayUrl = getCodexGatewayUrl();
-    const answer = gatewayUrl
-      ? await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal)
-      : await runCodexOAuthPrompt(getCodexOAuthCommand(), prompt, params.signal);
+    if (!gatewayUrl) throw new Error(missingCodexGatewayMessage());
+    const answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
     const parsed = parseCodexOAuthOrchestratorOutput(answer);
 
     if (parsed.type === "tool_calls") {

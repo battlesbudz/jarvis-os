@@ -120,11 +120,14 @@ console.log(`Codex command: ${process.env.JARVIS_CODEX_COMMAND}`);
 console.log(`URL: http://${process.env.HOST}:${process.env.PORT || "5000"}`);
 
 const localTsx = join("node_modules", ".bin", isWindows ? "tsx.cmd" : "tsx");
-const configuredEntry = process.env.JARVIS_OAUTH_GATEWAY_ENTRY?.trim();
-const serverEntry = !configuredEntry || configuredEntry === "server_dist/index.js"
+const supervisedLightweightOnly =
+  process.env.JARVIS_OAUTH_GATEWAY_SUPERVISED === "true" &&
+  process.env.JARVIS_OAUTH_GATEWAY_ALLOW_FULL_SERVER !== "true";
+const configuredEntry = supervisedLightweightOnly ? "" : process.env.JARVIS_OAUTH_GATEWAY_ENTRY?.trim();
+const serverEntry = !configuredEntry
   ? "scripts/jarvis-codex-gateway-server.mjs"
   : configuredEntry;
-const serverCommand = serverEntry ? (isWindows ? "node.exe" : "node") : isWindows ? "cmd.exe" : localTsx;
+const serverCommand = serverEntry ? process.execPath : isWindows ? "cmd.exe" : localTsx;
 const serverArgs = serverEntry
   ? [serverEntry]
   : isWindows

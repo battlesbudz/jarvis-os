@@ -13,6 +13,7 @@ import { getSoul, regenerateSoul, setManualOverride, setSoulContent } from "../m
 import { markSoulStale } from "../memory/soul";
 import { deletePerson, listPeople } from "../memory/people";
 import { processLivingContextUpdate } from "../workspace/livingContextRouter";
+import { buildMemoryTrustSummary, normalizeMemoryTrustRecord } from "../memory/trust";
 
 const openai = new OpenAI(getOpenAIClientConfig());
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
@@ -63,10 +64,35 @@ export function registerProfileMemoryRoutes(app: Express): void {
         .from(userMemories)
         .where(eq(userMemories.userId, userId))
         .orderBy(desc(userMemories.extractedAt));
-      res.json({ memories: rows });
+      res.json({
+        memories: rows.map((row) => {
+          const trust = normalizeMemoryTrustRecord(row);
+          return {
+            ...row,
+            trustStatus: trust.status,
+            whyJarvisLearnedIt: trust.whyJarvisLearnedIt,
+          };
+        }),
+      });
     } catch (error) {
       console.error("Error fetching memories:", error);
       res.status(500).json({ error: "Failed to fetch memories" });
+    }
+  });
+
+  app.get("/api/memory/trust", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const rows = await db.select()
+        .from(userMemories)
+        .where(eq(userMemories.userId, userId))
+        .orderBy(desc(userMemories.extractedAt))
+        .limit(200);
+      res.json(buildMemoryTrustSummary(rows));
+    } catch (error) {
+      console.error("Error fetching memory trust summary:", error);
+      res.status(500).json({ error: "Failed to fetch memory trust summary" });
     }
   });
 
@@ -76,9 +102,13 @@ export function registerProfileMemoryRoutes(app: Express): void {
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const rows = await db.execute<{
         id: string; content: string; category: string; memory_type: string;
-        tier: string; confidence: number; extracted_at: string;
+        tier: string; confidence: number; relevance_score: number;
+        source_type: string; source_ref: string | null; pending_review: boolean;
+        review_status: string; extracted_at: string; last_referenced_at: string | null;
       }>(sql`
-        SELECT id, content, category, memory_type, tier, confidence, extracted_at
+        SELECT id, content, category, memory_type, tier, confidence,
+               relevance_score, source_type, source_ref, pending_review,
+               review_status, extracted_at, last_referenced_at
         FROM user_memories
         WHERE user_id = ${userId}
           AND pending_review = TRUE
@@ -86,7 +116,16 @@ export function registerProfileMemoryRoutes(app: Express): void {
         ORDER BY extracted_at DESC
         LIMIT 50
       `);
-      res.json({ memories: rows.rows ?? [] });
+      res.json({
+        memories: (rows.rows ?? []).map((row) => {
+          const trust = normalizeMemoryTrustRecord(row);
+          return {
+            ...row,
+            trust_status: trust.status,
+            why_jarvis_learned_it: trust.whyJarvisLearnedIt,
+          };
+        }),
+      });
     } catch (error) {
       console.error("Error fetching pending-review memories:", error);
       res.status(500).json({ error: "Failed to fetch pending memories" });

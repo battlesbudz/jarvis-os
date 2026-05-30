@@ -37,13 +37,19 @@ const probes = [
   { name: "provider.health", method: "GET", path: "/api/jarvis/provider-health", okStatuses: [200, 207] },
   { name: "usage.today", method: "GET", path: "/api/jarvis/model-usage?days=1" },
   { name: "scheduled.tasks", method: "GET", path: "/api/jarvis/scheduled-tasks" },
+  { name: "daily.command", method: "GET", path: "/api/daily-command/today" },
+  { name: "mind.trace.recent", method: "GET", path: "/api/mind-trace/recent?limit=5" },
   { name: "inbox.items", method: "GET", path: "/api/inbox/items" },
   { name: "deliverables", method: "GET", path: "/api/deliverables" },
   { name: "agent.jobs", method: "GET", path: "/api/agent-jobs" },
   { name: "agent.jobs.active", method: "GET", path: "/api/agent-jobs/active" },
+  { name: "agent.jobs.failed", method: "GET", path: "/api/agent-jobs?status=failed&limit=10" },
+  { name: "agent.approvals", method: "GET", path: "/api/agents/approvals" },
   { name: "agents", method: "GET", path: "/api/agents" },
   { name: "projects", method: "GET", path: "/api/projects" },
   { name: "memories", method: "GET", path: "/api/memories" },
+  { name: "memory.trust", method: "GET", path: "/api/memory/trust" },
+  { name: "memory.pending", method: "GET", path: "/api/memory/pending-review" },
   { name: "commitments", method: "GET", path: "/api/commitments" },
 ];
 
@@ -59,6 +65,26 @@ function summarizePayload(name, payload) {
   }
   if (name === "usage.today" && payload.totals) {
     return `calls=${payload.totals.calls ?? 0} tokens=${payload.totals.totalTokens ?? 0}`;
+  }
+  if (name === "daily.command") {
+    return `date=${payload.date ?? "?"} status=${payload.status ?? "?"} approvals=${payload.approvals?.pendingCount ?? 0} failed=${payload.jobs?.failed?.length ?? 0}`;
+  }
+  if (name === "mind.trace.recent") {
+    return `traces=${Array.isArray(payload.traces) ? payload.traces.length : 0}`;
+  }
+  if (name === "agent.jobs.failed" && Array.isArray(payload)) {
+    const retryable = payload.filter((job) => job?.review?.canRetry === true).length;
+    return `failed=${payload.length} retryable=${retryable}`;
+  }
+  if (name === "agent.approvals") {
+    return `pending=${Array.isArray(payload.gates) ? payload.gates.length : 0}`;
+  }
+  if (name === "memory.trust" && payload.counts) {
+    const counts = payload.counts;
+    return `pending=${counts.pending ?? 0} active=${counts.active ?? 0} edited=${counts.edited ?? 0} rejected=${counts.rejected ?? 0}`;
+  }
+  if (name === "memory.pending" && Array.isArray(payload.memories)) {
+    return `pending=${payload.memories.length}`;
   }
   if (name === "integrations.status") {
     const entries = Object.values(payload);

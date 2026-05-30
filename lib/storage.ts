@@ -273,13 +273,15 @@ export interface LifeContext {
 }
 
 export interface CoachAction {
-  type: 'task' | 'goal' | 'link';
+  type: 'task' | 'goal' | 'link' | 'reminder';
   title: string;
   category: string;
   priority?: 'high' | 'medium' | 'low';
   description?: string;
   url?: string;
   buttonLabel?: string;
+  scheduledAt?: string;
+  recurrence?: string;
 }
 
 /**

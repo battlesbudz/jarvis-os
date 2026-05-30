@@ -9,13 +9,15 @@ import { runSchedule } from "./schedules";
 import { submitAgentJob } from "../agent/jobQueue";
 
 export interface ApprovalAction {
-  type: "run_prompt" | "run_schedule" | "spawn_subagent" | "notify_only";
+  type: "run_prompt" | "run_schedule" | "spawn_subagent" | "agent_approval_gate" | "notify_only";
   prompt?: string;
   scheduleId?: string;
   agentType?: string;
   title?: string;
   channelId?: string;
   channelName?: string;
+  gateId?: string;
+  decision?: "approve" | "reject";
 }
 
 export async function executeApprovalAction(
@@ -36,6 +38,8 @@ export async function executeApprovalAction(
           userId,
           userText: prompt,
           channelName: "Discord Approval",
+          originChannelId: channelId,
+          discordChannelId: channelId,
         });
         result = agentResult.reply || "";
       } catch (err) {
@@ -65,6 +69,24 @@ export async function executeApprovalAction(
         title: action.title || "Discord approval task",
         prompt,
       });
+      break;
+    }
+
+    case "agent_approval_gate": {
+      if (!action.gateId || !action.decision) return;
+      const { approveGate, rejectGate } = await import("../agent/agentApproval");
+      const ok = action.decision === "approve"
+        ? await approveGate(action.gateId, userId)
+        : await rejectGate(action.gateId, userId);
+      const label = action.decision === "approve" ? "approved" : "declined";
+      await postToDiscordChannel(
+        userId,
+        action.channelName || "",
+        action.channelId || channelId,
+        ok
+          ? `Approval ${label}: ${action.gateId}`
+          : `Approval was already resolved or unavailable: ${action.gateId}`,
+      );
       break;
     }
 

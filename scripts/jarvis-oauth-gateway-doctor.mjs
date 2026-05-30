@@ -64,6 +64,31 @@ export async function probe(url, headers = {}) {
 export async function scheduledTaskStatus() {
   if (process.platform !== "win32") return { checked: false, note: "Scheduled Task check is Windows-only." };
   try {
+    const ps = [
+      "$task = Get-ScheduledTask -TaskName 'Jarvis Codex OAuth Gateway' -ErrorAction Stop",
+      "$info = Get-ScheduledTaskInfo -TaskName 'Jarvis Codex OAuth Gateway' -ErrorAction Stop",
+      "$action = @($task.Actions)[0]",
+      "[pscustomobject]@{",
+      "  installed = $true",
+      "  status = [string]$task.State",
+      "  execute = [string]$action.Execute",
+      "  arguments = [string]$action.Arguments",
+      "  workingDirectory = [string]$action.WorkingDirectory",
+      "  lastRunTime = [string]$info.LastRunTime",
+      "  lastTaskResult = [int]$info.LastTaskResult",
+      "} | ConvertTo-Json -Compress",
+    ].join("\n");
+    const psResult = await execFileAsync("powershell.exe", ["-NoProfile", "-Command", ps], {
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    const parsed = JSON.parse(psResult.stdout.trim());
+    return { checked: true, ...parsed };
+  } catch {
+    // Fall back to schtasks for older Windows shells or constrained contexts.
+  }
+
+  try {
     const result = await execFileAsync("schtasks.exe", ["/Query", "/TN", "Jarvis Codex OAuth Gateway", "/FO", "LIST"], {
       timeout: 10_000,
       windowsHide: true,
@@ -76,6 +101,42 @@ export async function scheduledTaskStatus() {
     return {
       checked: true,
       installed: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export async function tailscaleStatus() {
+  if (process.platform !== "win32") return { checked: false, note: "Tailscale CLI check is Windows-only here." };
+  const command = process.env.TAILSCALE_EXE || "C:\\Program Files\\Tailscale\\tailscale.exe";
+  try {
+    const [status, serve, funnel] = await Promise.all([
+      execFileAsync(command, ["status"], { timeout: 15_000, windowsHide: true }).catch((error) => error),
+      execFileAsync(command, ["serve", "status"], { timeout: 15_000, windowsHide: true }).catch((error) => error),
+      execFileAsync(command, ["funnel", "status"], { timeout: 15_000, windowsHide: true }).catch((error) => error),
+    ]);
+    const read = (result) => {
+      if (result instanceof Error) {
+        return {
+          ok: false,
+          output: `${result.stdout || ""}${result.stderr || ""}${result.message || ""}`.trim(),
+        };
+      }
+      return { ok: true, output: `${result.stdout || ""}${result.stderr || ""}`.trim() };
+    };
+    const statusResult = read(status);
+    return {
+      checked: true,
+      command,
+      status: statusResult,
+      serve: read(serve),
+      funnel: read(funnel),
+      loggedOut: /logged out|NoState|unexpected state:\s*NoState/i.test(statusResult.output),
+    };
+  } catch (error) {
+    return {
+      checked: true,
+      ok: false,
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -258,6 +319,7 @@ export async function buildSummary() {
   const publicProbe = publicUrl ? await probe(publicUrl, publicHeaders) : null;
   const publicIngress = publicUrl ? await probePublicIngress(publicUrl, publicHeaders) : null;
   const task = await scheduledTaskStatus();
+  const tailscale = await tailscaleStatus();
   const lastSupervisorStatus = existsSync(statusPath)
     ? JSON.parse(readFileSync(statusPath, "utf8"))
     : null;
@@ -268,12 +330,25 @@ export async function buildSummary() {
     public: publicUrl ? { url: publicUrl, ...publicProbe } : null,
     publicIngress: publicUrl ? { url: publicUrl, ...publicIngress } : null,
     scheduledTask: task,
+    tailscale,
     lastSupervisorStatus,
     recommendations: [],
   };
 
   if (!task.installed) {
     summary.recommendations.push("Install the keepalive task: npm.cmd run jarvis:oauth:gateway:install-startup");
+  }
+  if (task.installed && task.workingDirectory && resolve(task.workingDirectory) !== repoRoot) {
+    summary.recommendations.push(`The keepalive task points at a different checkout (${task.workingDirectory}). Reinstall it from this repo: npm.cmd run jarvis:oauth:gateway:install-startup`);
+  }
+  if (tailscale.loggedOut) {
+    summary.recommendations.push("Tailscale is running but logged out or in NoState. Open Tailscale and sign in, or run `tailscale up --unattended` from an elevated/user session, then rerun the gateway doctor.");
+  }
+  if (lastSupervisorStatus?.checkedAt) {
+    const statusAgeMs = Date.now() - Date.parse(lastSupervisorStatus.checkedAt);
+    if (Number.isFinite(statusAgeMs) && statusAgeMs > 2 * 60 * 1000) {
+      summary.recommendations.push("The supervisor heartbeat/status file is stale. Restart the keepalive task so the watchdog and supervisor are attached to the current gateway process.");
+    }
   }
   if (!local.ok) {
     if (task.status === "Running") {
@@ -286,7 +361,7 @@ export async function buildSummary() {
     summary.recommendations.push("The local gateway is alive but the public URL is not. Restart/re-enable the tunnel and update Railway JARVIS_CODEX_GATEWAY_URL if the URL changed.");
   }
   if (local.ok && publicIngress?.checked && !publicIngress.ok) {
-    summary.recommendations.push("The local/private gateway path answers, but the strict public ingress path failed. Run `tailscale down`, `tailscale up --accept-dns=true`, then re-publish Funnel with `tailscale funnel --bg http://127.0.0.1:5000`.");
+    summary.recommendations.push("The local/private gateway path answers, but the strict public ingress path failed. Reconnect Tailscale, then re-publish Funnel with `tailscale serve --bg 5000` and `tailscale funnel --bg 5000`.");
   }
   if (local.ok && (!publicProbe || publicProbe.ok) && (!publicIngress?.checked || publicIngress.ok)) {
     summary.recommendations.push("Gateway checks are healthy. If chat still fails, verify Railway has the same gateway URL and token.");

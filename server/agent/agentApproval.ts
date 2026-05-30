@@ -20,6 +20,8 @@ import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
 import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
 import { evaluatePolicyForTool } from "./agentPolicyManager";
+import { requiresApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "./approvalToolRisk";
+export { requiresApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "./approvalToolRisk";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -62,61 +64,6 @@ export interface ApprovalRequest {
 //   FILESYSTEM     — creating/uploading/deleting files or Drive documents
 //   AGENT MGMT     — creating new sub-agents or assigning channels
 //   DAEMON         — any OS-level system action via the daemon bridge
-
-const HIGH_RISK_TOOLS = new Set([
-  // Email
-  "send_email",
-  "gmail_action",
-  "gmail_draft",
-  // Public posting / messaging
-  "discord_post",
-  "connect_channel",
-  "sessions_send",
-  "one_execute_action",
-  // Voice / call user
-  "speak",
-  // Memory clear (permanent, irreversible)
-  "clear_memory",
-  "agent_memory_clear",
-  // Browser control
-  "browser_navigate",
-  "browser_click",
-  "browser_type",
-  "browser_select",
-  "browser_clear_session",
-  // File / cloud storage
-  "create_document",
-  "drive_create_file",
-  // Agent management (creating new agents)
-  "setup_named_agent",
-  // OS / system actions via daemon
-  "daemon_action",
-  // Delegating to Codex may transitively reach local MCP/CLI capabilities.
-  "delegate_to_codex",
-]);
-
-/** Return true if this tool requires an approval gate before running. */
-export function requiresApproval(toolName: string): boolean {
-  return HIGH_RISK_TOOLS.has(toolName);
-}
-
-/**
- * Tools that must ALWAYS wait for human approval, even when Jarvis is the
- * initiator.  Everything else in HIGH_RISK_TOOLS can be auto-approved when
- * `initiatedBy === 'jarvis'`.
- *
- * Criteria: external side-effects that cannot be undone (sending messages /
- * emails to other people, OS-level actions, live voice calls).
- */
-export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
-  "send_email",
-  "gmail_action",
-  "daemon_action",
-  "discord_post",
-  "speak",
-  "sessions_send",
-  "one_execute_action",
-]);
 
 // ── In-memory EventEmitter (for awaitApproval) ────────────────────────────────
 

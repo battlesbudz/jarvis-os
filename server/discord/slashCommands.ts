@@ -530,6 +530,7 @@ async function handleChat(
       userId,
       userText: message,
       channelName: "Discord",
+      originChannelId: interaction.channel_id as string | undefined,
       discordGuildId: guildId,
     });
     await editInteractionReply(

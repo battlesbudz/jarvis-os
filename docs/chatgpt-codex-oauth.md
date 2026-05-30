@@ -54,7 +54,9 @@ On the Windows desktop that owns the Codex/ChatGPT login, install the gateway as
 npm.cmd run jarvis:oauth:gateway:install-startup
 ```
 
-This creates a Scheduled Task named `Jarvis Codex OAuth Gateway` that starts at Windows login. The task runs `node.exe scripts/jarvis-oauth-gateway-supervisor.mjs` in the repo root. The supervisor starts the lightweight Codex-only gateway, restarts it if the process exits, and health-checks the local gateway plus the optional public tunnel URL.
+This creates a Scheduled Task named `Jarvis Codex OAuth Gateway` that starts at Windows login. The task runs the watchdog from the repo root. Reinstalling the task from this repo stops stale gateway/watchdog processes first, so the task cannot silently keep running from an older checkout.
+
+The supervisor starts the lightweight Codex-only gateway, restarts it if the process exits, and health-checks the local gateway plus the optional public tunnel URL. In supervised mode, `JARVIS_OAUTH_GATEWAY_ENTRY` is ignored by default so a local `.env.local` cannot accidentally make the keepalive task boot the full Jarvis server. Set `JARVIS_OAUTH_GATEWAY_ALLOW_FULL_SERVER=true` only when you intentionally want that heavier behavior.
 
 By default, a public tunnel failure is reported but does not restart the local gateway. Set `JARVIS_OAUTH_GATEWAY_RESTART_ON_PUBLIC_FAILURE=true` only if the public tunnel is managed by the same process and a local restart is known to fix it.
 
@@ -89,8 +91,8 @@ Keep Tailscale running and keep the PC awake. The scheduled task starts the gate
 Use Tailscale Funnel for the public gateway URL instead of temporary Cloudflare tunnels. On the desktop gateway host, Funnel should point the machine's stable Tailscale HTTPS name at the local gateway:
 
 ```powershell
-tailscale serve --bg https / http://127.0.0.1:5000
-tailscale funnel 443 on
+tailscale serve --bg 5000
+tailscale funnel --bg 5000
 tailscale funnel status
 ```
 
