@@ -101,12 +101,6 @@ function isLocalWebPreview(): boolean {
   return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 }
 
-function isTelegramWebView(): boolean {
-  if (Platform.OS !== "web" || typeof window === "undefined") return false;
-  const ua = window.navigator?.userAgent || "";
-  return /\bTelegram(?:Bot)?\b/i.test(ua) || typeof (window as any).Telegram?.WebApp !== "undefined";
-}
-
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
@@ -388,10 +382,6 @@ export default function LoginScreen() {
     if (Platform.OS === "web") {
       setLoading(true);
       try {
-        if (isTelegramWebView()) {
-          handleWebGoogleRedirectSignIn();
-          return;
-        }
         await handleWebGoogleTokenSignIn();
       } catch (e: any) {
         console.warn("[GoogleAuth] Browser popup sign-in failed; trying redirect fallback:", e);
