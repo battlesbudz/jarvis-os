@@ -18,6 +18,13 @@ import { Ionicons } from "@expo/vector-icons";
 
 declare global {
   interface Window {
+    Telegram?: {
+      WebApp?: {
+        initData?: string;
+        ready?: () => void;
+        expand?: () => void;
+      };
+    };
     google?: {
       accounts: {
         oauth2?: {
@@ -101,6 +108,27 @@ function isLocalWebPreview(): boolean {
   return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 }
 
+function loadTelegramWebAppScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") return reject(new Error("Not in browser"));
+    if (window.Telegram?.WebApp) return resolve();
+
+    const existing = document.querySelector('script[src*="telegram.org/js/telegram-web-app.js"]');
+    if (existing) {
+      existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Failed to load Telegram Web App")));
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://telegram.org/js/telegram-web-app.js";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load Telegram Web App"));
+    document.head.appendChild(script);
+  });
+}
+
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
@@ -119,6 +147,45 @@ export default function LoginScreen() {
       console.warn("[GoogleAuth] Could not preload Google sign-in:", err);
     });
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined" || isAuthenticated) return;
+    let cancelled = false;
+
+    async function tryTelegramWebAppLogin() {
+      try {
+        await loadTelegramWebAppScript();
+        if (cancelled) return;
+
+        const webApp = window.Telegram?.WebApp;
+        webApp?.ready?.();
+        webApp?.expand?.();
+        const initData = webApp?.initData;
+        if (!initData) return;
+
+        setLoading(true);
+        const baseUrl = getApiUrl();
+        const res = await fetch(new URL("/api/auth/telegram-webapp", baseUrl).toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData }),
+        });
+        if (!res.ok) {
+          setLoading(false);
+          return;
+        }
+        const data = await res.json() as { token?: string };
+        if (data.token) await loginWithToken(data.token);
+      } catch (err) {
+        console.warn("[TelegramAuth] Web App login unavailable:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    tryTelegramWebAppLogin();
+    return () => { cancelled = true; };
+  }, [isAuthenticated, loginWithToken]);
 
   // Detect whether a previous account was signed in (token or email exists in storage)
   useEffect(() => {

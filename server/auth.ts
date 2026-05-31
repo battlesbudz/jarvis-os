@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { db } from "./db";
-import { users } from "@shared/schema";
+import { telegramLinks, users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 import crypto from "crypto";
@@ -82,6 +82,49 @@ function isLocalDashboardRequest(req: Request): boolean {
 
 export const authRouter = Router();
 
+export function verifyTelegramWebAppInitData(
+  initData: string,
+  botToken: string,
+  nowMs = Date.now(),
+): { telegramUserId: string } | null {
+  const params = new URLSearchParams(initData);
+  const receivedHash = params.get("hash");
+  if (!receivedHash) return null;
+
+  const authDateRaw = params.get("auth_date");
+  const authDate = authDateRaw ? Number(authDateRaw) : NaN;
+  if (!Number.isFinite(authDate)) return null;
+  if (Math.abs(nowMs / 1000 - authDate) > 24 * 60 * 60) return null;
+
+  const pairs: string[] = [];
+  params.forEach((value, key) => {
+    if (key !== "hash") pairs.push(`${key}=${value}`);
+  });
+  pairs.sort();
+
+  const secret = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
+  const computedHash = crypto
+    .createHmac("sha256", secret)
+    .update(pairs.join("\n"))
+    .digest("hex");
+
+  const received = Buffer.from(receivedHash, "hex");
+  const computed = Buffer.from(computedHash, "hex");
+  if (received.length !== computed.length || !crypto.timingSafeEqual(received, computed)) {
+    return null;
+  }
+
+  const userRaw = params.get("user");
+  if (!userRaw) return null;
+  try {
+    const parsed = JSON.parse(userRaw) as { id?: number | string };
+    if (parsed.id === undefined || parsed.id === null) return null;
+    return { telegramUserId: String(parsed.id) };
+  } catch {
+    return null;
+  }
+}
+
 authRouter.post("/register", async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body;
@@ -155,6 +198,56 @@ authRouter.post("/login", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Failed to log in" });
+  }
+});
+
+authRouter.post("/telegram-webapp", async (req: Request, res: Response) => {
+  try {
+    const initData = typeof req.body?.initData === "string" ? req.body.initData : "";
+    if (!initData) {
+      return res.status(400).json({ error: "Telegram init data is required" });
+    }
+
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (!botToken) {
+      return res.status(500).json({ error: "Telegram bot is not configured" });
+    }
+
+    const verified = verifyTelegramWebAppInitData(initData, botToken);
+    if (!verified) {
+      return res.status(401).json({ error: "Invalid Telegram login data" });
+    }
+
+    const [link] = await db.select({ userId: telegramLinks.userId })
+      .from(telegramLinks)
+      .where(eq(telegramLinks.chatId, verified.telegramUserId))
+      .limit(1);
+
+    if (!link) {
+      return res.status(401).json({ error: "Telegram account is not linked to Jarvis" });
+    }
+
+    const [user] = await db.select({
+      id: users.id,
+      username: users.username,
+      displayName: users.displayName,
+      email: users.email,
+    }).from(users).where(eq(users.id, link.userId)).limit(1);
+
+    if (!user) {
+      return res.status(401).json({ error: "Linked Jarvis user was not found" });
+    }
+
+    const token = generateToken(user.id);
+    res.json({
+      token,
+      userId: user.id,
+      username: user.displayName || user.username,
+      email: user.email || null,
+    });
+  } catch (error) {
+    console.error("Telegram web app auth error:", error);
+    res.status(500).json({ error: "Failed to authenticate with Telegram" });
   }
 });
 
