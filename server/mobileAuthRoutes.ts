@@ -236,8 +236,10 @@ mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
     state: oauthState,
     access_type: "offline",
     prompt: "select_account",
-    max_age: "0",
   });
+  if (returnTarget === "native") {
+    params.set("max_age", "0");
+  }
 
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
