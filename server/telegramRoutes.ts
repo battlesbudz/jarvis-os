@@ -975,7 +975,7 @@ async function processUpdate(update: any): Promise<void> {
       // ── Stop-intent detection ──────────────────────────────────────────
       // If the user sends a stop/cancel intent while a task is running, abort it
       // immediately instead of queuing the message as a normal chat turn.
-      if (text && /^(stop|cancel|abort|enough|quit|nevermind|stop it|please stop)\.?$/i.test(text.trim())) {
+      if (text && /^(?:\S+\s*)?(stop|cancel|abort|enough|quit|nevermind|stop it|please stop)\.?$/i.test(text.trim())) {
         const linkedUserId = link[0].userId;
         const pendingBatchCount = cancelTelegramCoachMessageBatches(linkedUserId, chatId);
         const activeRuns = Array.from(activeCoachRuns.entries())
@@ -1594,7 +1594,7 @@ async function processUpdate(update: any): Promise<void> {
       const VOICE_CALL_CMD_RE = /^\/call(?:@\S+)?(\s|$)/i;
       const VOICE_TRIGGER_RE = /\b(voice\s+call|call\s+me|let['']?s\s+talk)\b/i;
       if (VOICE_CALL_CMD_RE.test(text) || VOICE_TRIGGER_RE.test(text)) {
-        // /call and trigger phrases: single button only (no "💬 Text reply" — we're already in text)
+        // /call and trigger phrases: single voice action only.
         const keyboard = buildVoiceCallKeyboard();
         if (keyboard) {
           await sendMessage(

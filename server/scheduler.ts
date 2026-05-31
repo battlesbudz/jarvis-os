@@ -451,7 +451,7 @@ async function appendVoiceCallKeyboardOnTelegram(
     const links = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.userId, userId)).limit(1);
     const chatId = links[0]?.chatId;
     if (!chatId) return;
-    const keyboard = buildVoiceCallKeyboard({ includeTextReplyButton: true });
+    const keyboard = buildVoiceCallKeyboard();
     if (keyboard) {
       await tgSend(chatId, '📞 Want to talk it through?', keyboard);
     }

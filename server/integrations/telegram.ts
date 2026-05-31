@@ -90,10 +90,18 @@ export interface InlineKeyboardButton {
   text: string;
   callback_data?: string;
   url?: string;
+  web_app?: { url: string };
 }
 
 export interface InlineKeyboardMarkup {
   inline_keyboard: InlineKeyboardButton[][];
+}
+
+export interface ReplyKeyboardMarkup {
+  keyboard: { text: string }[][];
+  resize_keyboard?: boolean;
+  is_persistent?: boolean;
+  input_field_placeholder?: string;
 }
 
 /**
@@ -106,6 +114,21 @@ export function getExpectedVoiceCallUrl(): string {
   return `${getPublicBaseUrl()}/go/voice-call`;
 }
 
+export function getExpectedVoiceMiniAppUrl(): string {
+  return `${getExpectedMiniAppUrl()}/voice-realtime`;
+}
+
+export function buildTelegramQuickActionKeyboard(): ReplyKeyboardMarkup {
+  return {
+    keyboard: [
+      [{ text: "Add to triage" }, { text: "Stop" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+    input_field_placeholder: "Tap a quick action...",
+  };
+}
+
 /**
  * Builds an inline keyboard with a "🎙 Voice call" URL button.
  * When tapped the button opens /go/voice-call which:
@@ -116,21 +139,20 @@ export function getExpectedVoiceCallUrl(): string {
 export function buildVoiceCallKeyboard(opts?: {
   includeTextReplyButton?: boolean;
 }): InlineKeyboardMarkup | null {
-  const url = getExpectedVoiceCallUrl();
+  void opts;
+  const url = getExpectedVoiceMiniAppUrl();
   if (!url) return null;
-  const row: InlineKeyboardButton[] = [
-    { text: '🎙 Open voice call', url },
-  ];
-  if (opts?.includeTextReplyButton) {
-    row.push({ text: '💬 Text reply', callback_data: 'voice_dismiss' });
-  }
-  return { inline_keyboard: [row] };
+  return {
+    inline_keyboard: [[
+      { text: "Open voice call", web_app: { url } },
+    ]],
+  };
 }
 
 export async function sendMessage(
   chatId: string,
   text: string,
-  replyMarkupOrOpts?: InlineKeyboardMarkup | { parse_mode?: string }
+  replyMarkupOrOpts?: InlineKeyboardMarkup | ReplyKeyboardMarkup | { parse_mode?: string }
 ): Promise<void> {
   if (!BOT_TOKEN) return;
   if (devSendBlocked) return;
@@ -138,9 +160,13 @@ export async function sendMessage(
   if (replyMarkupOrOpts) {
     if ("inline_keyboard" in replyMarkupOrOpts) {
       body.reply_markup = replyMarkupOrOpts;
+    } else if ("keyboard" in replyMarkupOrOpts) {
+      body.reply_markup = replyMarkupOrOpts;
     } else if ("parse_mode" in replyMarkupOrOpts && replyMarkupOrOpts.parse_mode) {
       body.parse_mode = replyMarkupOrOpts.parse_mode;
     }
+  } else if (process.env.TELEGRAM_QUICK_ACTIONS_ENABLED !== "0") {
+    body.reply_markup = buildTelegramQuickActionKeyboard();
   }
   const res = await fetch(`${BASE}/sendMessage`, {
     method: 'POST',
