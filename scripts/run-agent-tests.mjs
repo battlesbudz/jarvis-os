@@ -33,6 +33,7 @@ const tests = [
   { file: "server/agent/__tests__/localWorkerQueue.assert.ts" },
   { file: "server/agent/__tests__/ephemeralAgents.test.ts" },
   { file: "server/agent/__tests__/queueBackgroundJob.test.ts" },
+  { file: "server/agent/__tests__/ephemeralWorkerDeliverable.test.ts" },
   { file: "server/agent/__tests__/jobObservability.test.ts" },
   { file: "server/agent/__tests__/workerRuntime.test.ts" },
   { file: "server/agent/__tests__/osSmoke.test.ts" },

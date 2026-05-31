@@ -6,6 +6,7 @@ import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
 import { runGoalDecomposition } from "./goalDecomposer";
 import { runNamedAgent } from "./runNamedAgent";
 import { runEphemeralAgentSession, type EphemeralAgentKind } from "./ephemeralAgents";
+import { buildEphemeralWorkerResultDeliverable } from "./ephemeralWorkerDeliverable";
 import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
@@ -1033,9 +1034,16 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         parentTaskId: job.id,
       });
 
+      const [deliverable] = await db
+        .insert(schema.deliverables)
+        .values(buildEphemeralWorkerResultDeliverable(job, result, kind))
+        .returning({ id: schema.deliverables.id });
+      const deliverableId = deliverable?.id || "";
+
       await completeJob(job.id, {
         result: {
           output: result.reply,
+          deliverableId,
           ephemeralAgentId: result.agentId,
           kind,
         },
@@ -1044,7 +1052,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       });
 
       console.log(
-        `[JobQueue] ephemeral_agent_task complete: kind=${kind} job=${job.id} turns=${result.turns}`,
+        `[JobQueue] ephemeral_agent_task complete: kind=${kind} job=${job.id} deliverable=${deliverableId} turns=${result.turns}`,
       );
 
       await notifyJobComplete(
