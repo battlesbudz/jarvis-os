@@ -686,6 +686,54 @@ export async function runAgentSdkEmailWorkflow(
       };
     }
 
+    if (workflowMode === "email_send_approval") {
+      const record = await store.load(runId);
+      const draft = record?.meta.draft;
+      if (draft) {
+        await progressPromise;
+        const pending = {
+          id: `send_email_from_draft_${runId}`,
+          name: "send_email",
+          arguments: draft,
+        };
+        if (record) {
+          record.meta.status = "awaiting_approval";
+          record.meta.pendingToolCallId = pending.id;
+          record.meta.updatedAt = new Date().toISOString();
+          record.state = {
+            ...(record.state || createInitialState(runId)),
+            status: "awaiting_approval",
+            updatedAt: Date.now(),
+            pendingToolCalls: [pending],
+          };
+          await store.save(record);
+        }
+        const gateId = await (deps.requestApprovalForPendingCall ?? requestTelegramApprovalForPendingCall)(
+          {
+            runId,
+            userId: input.userId,
+            originChannel: input.originChannel,
+            originChannelId: input.originChannelId,
+            toolCallId: pending.id,
+            toolName: pending.name,
+            arguments: pending.arguments,
+          },
+          {
+            store,
+            requestApproval: deps.requestApproval ?? defaultRequestApproval,
+            notifyApprovalRequest: deps.notifyApprovalRequest ?? defaultNotifyApprovalRequest,
+          },
+        );
+        return {
+          handled: true,
+          status: "awaiting_approval",
+          runId,
+          gateId,
+          reply: await safeText(result, "Draft is ready. I sent you an approval request before sending."),
+        };
+      }
+    }
+
     const response = await result.getResponse?.();
     await progressPromise;
     const reply = await safeText(result, workflowMode === "email_draft_only"

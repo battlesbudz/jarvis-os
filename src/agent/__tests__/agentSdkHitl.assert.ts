@@ -240,6 +240,104 @@ try {
   assert.equal(sent, false);
   assert.equal((await store.load(runnerResult.runId))?.meta.status, "awaiting_approval");
 
+  const draftFallbackApprovals: any[] = [];
+  const draftFallbackResult = await runAgentSdkEmailWorkflow(
+    {
+      userId: "user_1",
+      userText: "Draft and send an email to sam@example.com saying the proposal is ready",
+      originChannel: "telegram",
+      originChannelId: "123",
+    },
+    {
+      store,
+      callModel: async (request) => {
+        const draftEmailTool: any = (request.tools as any[]).find((tool) => tool.function?.name === "draft_email");
+        await draftEmailTool.function.execute({
+          to: "sam@example.com",
+          subject: "Proposal ready",
+          body: "The proposal is ready for review.",
+        });
+        return {
+          requiresApproval: async () => false,
+          getText: async () => "Draft ready.",
+          getResponse: async () => ({
+            state: {
+              id: "state_draft_fallback",
+              status: "complete",
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+              messages: [],
+            },
+          }),
+        };
+      },
+      requestApprovalForPendingCall: async (pending, deps) => {
+        draftFallbackApprovals.push(pending);
+        await deps.store.save({
+          meta: {
+            runId: pending.runId,
+            userId: pending.userId,
+            originChannel: pending.originChannel,
+            originChannelId: pending.originChannelId,
+            status: "awaiting_approval",
+            pendingToolCallId: pending.toolCallId,
+            gateId: "gate_draft_fallback",
+            createdAt: baseNow,
+            updatedAt: baseNow,
+          },
+          state: (await deps.store.load(pending.runId))?.state ?? null,
+        });
+        return "gate_draft_fallback";
+      },
+      sendEmail: async () => {
+        sent = true;
+        return { ok: true, messageId: "msg_should_not_send_from_draft_fallback" };
+      },
+    },
+  );
+  assert.equal(draftFallbackResult.status, "awaiting_approval");
+  assert.equal(draftFallbackResult.gateId, "gate_draft_fallback");
+  assert.equal(draftFallbackApprovals.length, 1);
+  assert.equal(draftFallbackApprovals[0].toolName, "send_email");
+  assert.equal(draftFallbackApprovals[0].arguments.subject, "Proposal ready");
+  assert.equal(sent, false);
+
+  const fallbackResumeMessages: string[] = [];
+  const fallbackResumeResult = await resumeAgentSdkRunFromApprovalGate(
+    {
+      gate: {
+        id: "gate_draft_fallback",
+        userId: "user_1",
+        toolName: "send_email",
+        toolArgs: {
+          __agentSdkRunId: draftFallbackResult.runId,
+          __agentSdkToolCallId: draftFallbackApprovals[0].toolCallId,
+        },
+      },
+      approved: true,
+      originChannelId: "123",
+    },
+    {
+      store,
+      sendTelegramMessage: async (_chatId, text) => {
+        fallbackResumeMessages.push(text);
+      },
+      sendEmail: async (_userId, args) => {
+        sent = true;
+        assert.equal(args.to, "sam@example.com");
+        assert.equal(args.subject, "Proposal ready");
+        assert.equal(args.body, "The proposal is ready for review.");
+        return { ok: true, messageId: "msg_draft_fallback_sent" };
+      },
+    },
+  );
+  assert.equal(fallbackResumeResult.status, "complete");
+  assert.equal(sent, true);
+  assert.equal((await store.load(draftFallbackResult.runId))?.meta.status, "complete");
+  assert.ok(fallbackResumeMessages.some((message) => /approved/i.test(message)));
+
+  sent = false;
+
   const longHorizonRequests: any[] = [];
   const longHorizonMessages: string[] = [];
   const longHorizonResult = await runAgentSdkEmailWorkflow(
