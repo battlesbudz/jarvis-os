@@ -3,6 +3,7 @@ import type { Request, Response } from 'express';
 import { saveUserToken, deleteUserToken, getUserOAuthStatus } from './userTokenStore';
 import { getPublicBaseUrl } from './publicUrl';
 import { handleMobileAuthCallback, isMobileAuthState } from './mobileAuthRoutes';
+import { createMobileAuthImplicitCallbackHtml } from './auth/mobileAuthHtml';
 
 export const oauthRouter = Router();
 export const oauthCallbackRouter = Router();
@@ -112,6 +113,11 @@ oauthRouter.get('/google/authorize', (req: Request, res: Response) => {
 
 oauthCallbackRouter.get('/google/callback', async (req: Request, res: Response) => {
   const { code, state: userId, error } = req.query as Record<string, string>;
+
+  if (!code && !userId && !error) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(createMobileAuthImplicitCallbackHtml());
+  }
 
   if (isMobileAuthState(userId)) {
     return handleMobileAuthCallback(req, res);

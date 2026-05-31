@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createMobileAuthSuccessHtml } from "../mobileAuthHtml";
+import { createMobileAuthImplicitCallbackHtml, createMobileAuthSuccessHtml } from "../mobileAuthHtml";
 
 function run() {
   const token = "jwt.token.value";
@@ -13,6 +13,11 @@ function run() {
   assert.match(nativeHtml, /gameplan:\/\/auth\/complete/);
   assert.match(nativeHtml, /window\.opener\.postMessage/);
   assert.match(nativeHtml, /\/login\?auth_complete=1#auth_token=jwt\.token\.value/);
+
+  const implicitHtml = createMobileAuthImplicitCallbackHtml();
+  assert.match(implicitHtml, /access_token/);
+  assert.match(implicitHtml, /\/api\/auth\/mobile\/implicit-complete/);
+  assert.match(implicitHtml, /Return to Jarvis to continue/);
 
   console.log("mobileAuthRedirectHtml tests passed");
 }

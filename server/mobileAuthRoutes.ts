@@ -5,7 +5,11 @@ import { db } from "./db";
 import { users, mobileAuthSessions } from "@shared/schema";
 import { eq, lt } from "drizzle-orm";
 import { generateToken } from "./auth";
-import { createMobileAuthSuccessHtml, type MobileAuthReturnTarget } from "./auth/mobileAuthHtml";
+import {
+  createMobileAuthImplicitCallbackHtml,
+  createMobileAuthSuccessHtml,
+  type MobileAuthReturnTarget,
+} from "./auth/mobileAuthHtml";
 
 export const mobileAuthRouter = Router();
 
@@ -191,7 +195,7 @@ function errorHtml(message: string): string {
 }
 
 mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
-  const { session_id, poll_secret, return_to } = req.query as Record<string, string>;
+  const { session_id, poll_secret, return_to, flow } = req.query as Record<string, string>;
   if (!session_id) return res.status(400).json({ error: "session_id required" });
   if (!isValidSessionId(session_id)) return res.status(400).json({ error: "invalid session_id" });
   const returnTarget: MobileAuthReturnTarget = return_to === "web" || isTelegramWebView(req) ? "web" : "native";
@@ -231,12 +235,17 @@ mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: callbackUrl,
-    response_type: "code",
+    response_type: flow === "implicit" ? "token" : "code",
     scope: "openid email profile",
     state: oauthState,
-    access_type: "offline",
     prompt: "select_account",
   });
+  if (flow !== "implicit") {
+    params.set("access_type", "offline");
+  }
+  if (flow === "implicit") {
+    params.set("include_granted_scopes", "true");
+  }
   if (returnTarget === "native") {
     params.set("max_age", "0");
   }
@@ -354,6 +363,81 @@ export async function handleMobileAuthCallback(req: Request, res: Response) {
 }
 
 mobileAuthRouter.get("/callback", handleMobileAuthCallback);
+
+mobileAuthRouter.get("/implicit-callback", (_req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.send(createMobileAuthImplicitCallbackHtml());
+});
+
+mobileAuthRouter.post("/implicit-complete", async (req: Request, res: Response) => {
+  const accessToken = typeof req.body?.accessToken === "string" ? req.body.accessToken : "";
+  const state = typeof req.body?.state === "string" ? req.body.state : "";
+  if (!accessToken || !state) return res.status(400).json({ error: "Missing Google sign-in token." });
+
+  const parsedState = parseOauthState(state);
+  if (!parsedState) return res.status(400).json({ error: "Invalid sign-in state." });
+
+  try {
+    await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, new Date()));
+
+    const pendingRows = await db.select().from(mobileAuthSessions)
+      .where(eq(mobileAuthSessions.sessionId, parsedState.sessionId)).limit(1);
+    const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
+    if (!pending || !timingSafeEqual(pending.stateHash, sha256(state))) {
+      return res.status(400).json({ error: "Sign-in session expired. Return to Jarvis and try again." });
+    }
+
+    const infoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!infoRes.ok) return res.status(401).json({ error: "Google sign-in token was rejected." });
+
+    const googleUser = await infoRes.json() as { id?: string; name?: string; email?: string };
+    if (!googleUser.id) return res.status(401).json({ error: "Could not retrieve Google user info." });
+
+    const existing = await db.select().from(users)
+      .where(eq(users.googleId, googleUser.id)).limit(1);
+
+    let user;
+    if (existing.length > 0) {
+      user = existing[0];
+      const updates: Record<string, string> = {};
+      if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
+      if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
+      if (Object.keys(updates).length > 0) {
+        await db.update(users).set(updates).where(eq(users.id, user.id));
+        user = { ...user, ...updates };
+      }
+    } else {
+      const base = googleUser.email
+        ? googleUser.email.split("@")[0]
+        : `google_${googleUser.id.slice(0, 8)}`;
+      let uniqueUsername = base;
+      const existingUsername = await db.select().from(users)
+        .where(eq(users.username, base)).limit(1);
+      if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
+
+      const [newUser] = await db.insert(users).values({
+        username: uniqueUsername,
+        googleId: googleUser.id,
+        displayName: googleUser.name || uniqueUsername,
+        email: googleUser.email || null,
+      }).returning();
+      user = newUser;
+    }
+
+    const token = generateToken(user.id);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await db.update(mobileAuthSessions)
+      .set({ token: completeTokenValue(pending.pollHash, NATIVE_BIND_HASH, token), expiresAt })
+      .where(eq(mobileAuthSessions.sessionId, parsedState.sessionId));
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("Mobile implicit auth completion error:", err);
+    return res.status(500).json({ error: "Jarvis could not finish sign-in." });
+  }
+});
 
 mobileAuthRouter.get("/poll", async (req: Request, res: Response) => {
   const { session_id, poll_secret } = req.query as Record<string, string>;

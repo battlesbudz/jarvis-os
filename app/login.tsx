@@ -333,6 +333,7 @@ export default function LoginScreen() {
     const { sessionId, startUrl, pollUrl } = buildMobileAuthUrls(baseUrl);
     const webStartUrl = new URL(startUrl);
     webStartUrl.searchParams.set("return_to", "web");
+    webStartUrl.searchParams.set("flow", "implicit");
 
     let pollInterval: ReturnType<typeof setInterval> | null = null;
     let attemptNum = 0;
