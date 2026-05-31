@@ -304,6 +304,8 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
         agentName: `${opts.agentType} sub-agent`,
         userId: opts.context.userId,
         platform: opts.context.channel,
+        channelId: opts.context.originChannelId ?? opts.context.discordChannelId,
+        workerJobId: opts.context.jobId,
         initiatedBy: "jarvis",
         signal: opts.context.signal,
         approvalReceipt: opts.approvalReceipt,

@@ -81,6 +81,9 @@ export function buildApprovalNotificationText(payload: ApprovalNotificationPaylo
   const originLine = origin === "telegram" || origin === "discord"
     ? `This request started in ${payload.originChannel ?? "this channel"}, so I am notifying you here.`
     : "This request is waiting in Jarvis.";
+  const actionLine = origin === "telegram"
+    ? "Use the buttons below to approve or decline. The same request is also available in the Jarvis app Inbox."
+    : "Approve or decline in the Jarvis app Inbox. The in-app approval gate is the canonical control for this action.";
 
   return [
     "Approval required",
@@ -92,7 +95,7 @@ export function buildApprovalNotificationText(payload: ApprovalNotificationPaylo
     "",
     payload.description,
     "",
-    "Approve or decline in the Jarvis app Inbox. The in-app approval gate is the canonical control for this action.",
+    actionLine,
   ].join("\n");
 }
 
@@ -119,6 +122,10 @@ async function defaultSendTelegramUser(userId: string, text: string, gateId: str
   await telegramChannel.sendMessage(userId, text, {
     notificationType: "approval_request",
     gateId,
+    buttons: buildTelegramApprovalKeyboard(gateId).map((button) => ({
+      text: button.text,
+      callbackData: button.callback_data,
+    })),
   });
 }
 

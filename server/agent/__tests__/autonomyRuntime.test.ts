@@ -10,6 +10,7 @@ async function main(): Promise<void> {
         userId: "user_1",
         userText: "Research the best CRM for my cannabis microbusiness and make a report",
         channelName: "Gateway",
+        originChannelId: "telegram-chat-1",
         readiness: "ready",
       },
       {
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
     assert.equal(submitted.length, 1);
     assert.equal(submitted[0].agentType, "deep_research");
     assert.equal(submitted[0].input?.originChannel, "Gateway");
+    assert.equal(submitted[0].input?.originChannelId, "telegram-chat-1");
     assert.equal(submitted[0].input?.autonomyPolicy, true);
     assert.deepEqual(observations, [
       {
@@ -60,6 +62,7 @@ async function main(): Promise<void> {
         userId: "user_1",
         userText: "Send this email to the regulator",
         channelName: "Gateway",
+        originChannelId: "telegram-chat-2",
         readiness: "ready",
       },
       {
@@ -92,10 +95,12 @@ async function main(): Promise<void> {
     assert.equal(approvalRequests[0].toolArgs.topLevelAutonomy, true);
     assert.equal(approvalRequests[0].toolArgs.userText, "Send this email to the regulator");
     assert.equal(approvalRequests[0].toolArgs.channelName, "Gateway");
+    assert.equal(approvalRequests[0].toolArgs.originChannelId, "telegram-chat-2");
     assert.equal(approvalRequests[0].initiatedBy, "user");
     assert.equal(notifications.length, 1);
     assert.equal(notifications[0].gateId, "gate_123");
     assert.equal(notifications[0].originChannel, "Gateway");
+    assert.equal(notifications[0].originChannelId, "telegram-chat-2");
     assert.equal(notifications[0].toolName, "send_email");
     assert.deepEqual(observations, [
       {

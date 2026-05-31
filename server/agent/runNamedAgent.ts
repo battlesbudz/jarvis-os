@@ -189,6 +189,8 @@ export interface RunNamedAgentOptions {
   isRevisionPass?: boolean;
   /** Scoped receipt from a previously-approved top-level action. */
   approvalReceipt?: ApprovalReceipt;
+  /** Background worker job ID when this named-agent run belongs to agent_jobs. */
+  jobId?: string;
 }
 
 export interface NamedAgentResult {
@@ -483,6 +485,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
         userId,
         platform,
         channelId: opts.channelId,
+        workerJobId: opts.jobId,
         initiatedBy,
         signal,
         approvalReceipt: opts.approvalReceipt,

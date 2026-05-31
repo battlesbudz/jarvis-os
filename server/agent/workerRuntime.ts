@@ -277,3 +277,39 @@ export function withWorkerRuntimeEvent(input: Record<string, unknown>, event: Wo
       );
   return { ...input, workerRuntime: runtime, workerType: runtime.workerType };
 }
+
+export function withWorkerApprovalCheckpoint(
+  input: Record<string, unknown>,
+  opts: {
+    agentType: string;
+    title: string;
+    gateId: string;
+    toolName: string;
+    reason: string;
+    now?: Date;
+  },
+): Record<string, unknown> {
+  const workerType = resolveWorkerType({ agentType: opts.agentType, input });
+  return withWorkerRuntimeEvent(
+    input,
+    buildWorkerRuntimeEvent({
+      type: "approval_required",
+      workerType,
+      message: `Approval required for ${opts.toolName}`,
+      now: opts.now,
+      userVisible: true,
+      progress: { currentStep: "Waiting for approval" },
+      checkpoint: {
+        id: opts.gateId,
+        gateId: opts.gateId,
+        reason: opts.reason,
+        requiredFor: opts.toolName,
+      },
+      metadata: {
+        gateId: opts.gateId,
+        toolName: opts.toolName,
+        title: opts.title,
+      },
+    }),
+  );
+}

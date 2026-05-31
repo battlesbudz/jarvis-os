@@ -52,6 +52,10 @@ export interface ToolContext {
   state: AgentState;
   /** Optional logger label, e.g. "Telegram" or "AppChat" */
   channel?: string;
+  /** Origin channel ID for callback-capable channels, e.g. Telegram chat ID. */
+  originChannelId?: string;
+  /** Background worker job ID, when this tool run belongs to an agent_jobs worker. */
+  jobId?: string;
   /** AbortSignal that fires when the user presses Stop. Tools should propagate it to long-running operations. */
   signal?: AbortSignal;
   /** Discord guild (server) ID — set when the message originates from a Discord guild channel */

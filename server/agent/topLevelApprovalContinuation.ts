@@ -69,6 +69,7 @@ export async function continueTopLevelApproval(
   const args = getToolArgs(gate);
   const userText = String(args.userText || "").trim();
   const channelName = typeof args.channelName === "string" ? args.channelName : "unknown";
+  const originChannelId = typeof args.originChannelId === "string" ? args.originChannelId : undefined;
   if (!userText) {
     return { continued: false, reason: "Gate is missing original user text." };
   }
@@ -84,6 +85,7 @@ export async function continueTopLevelApproval(
       originApprovalGateId: gate.id,
       approvedTopLevelAction: true,
       originChannel: channelName,
+      ...(originChannelId ? { originChannelId } : {}),
       approvedToolName: gate.toolName,
       approvalReceipt: createApprovalReceipt({
         gateId: gate.id,

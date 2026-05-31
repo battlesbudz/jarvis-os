@@ -13,6 +13,7 @@ function makeGate(overrides: Partial<ApprovalGate> = {}): ApprovalGate {
       topLevelAutonomy: true,
       userText: "Send this email to the regulator",
       channelName: "Gateway",
+      originChannelId: "telegram-chat-2",
     },
     description: "Approval needed",
     status: "approved",
@@ -51,6 +52,7 @@ async function main(): Promise<void> {
     assert.equal(jobs[0].input?.originApprovalGateId, "gate_123");
     assert.equal(jobs[0].input?.approvedTopLevelAction, true);
     assert.equal(jobs[0].input?.originChannel, "Gateway");
+    assert.equal(jobs[0].input?.originChannelId, "telegram-chat-2");
     const receipt = jobs[0].input?.approvalReceipt as Record<string, unknown> | undefined;
     assert.equal(receipt?.gateId, "gate_123");
     assert.equal(receipt?.userId, "user_1");

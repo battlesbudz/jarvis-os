@@ -14,8 +14,8 @@
  *   4. Original tool was blocking on awaitApproval() — event fires, tool continues
  */
 import { db } from "../db";
-import { agentApprovalGates } from "@shared/schema";
-import { eq, and, lt } from "drizzle-orm";
+import { agentApprovalGates, deliverables } from "@shared/schema";
+import { eq, and, lt, sql } from "drizzle-orm";
 import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
 import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
@@ -51,6 +51,8 @@ export interface ApprovalRequest {
   ttlMs?: number;
   /** Whether this action was initiated by the user or by Jarvis autonomously */
   initiatedBy?: 'user' | 'jarvis';
+  /** Background worker job that should surface this gate as a runtime checkpoint. */
+  workerJobId?: string;
 }
 
 // ── Tools that always require approval ────────────────────────────────────────
@@ -68,6 +70,17 @@ export interface ApprovalRequest {
 // ── In-memory EventEmitter (for awaitApproval) ────────────────────────────────
 
 const gateEmitter = new EventEmitter();
+
+async function markApprovalDeliverableReviewed(gateId: string, status: "approved" | "rejected"): Promise<void> {
+  await db
+    .update(deliverables)
+    .set({
+      status,
+      actedAt: new Date(),
+      triageStatus: "auto_handled",
+    })
+    .where(sql`${deliverables.meta}->>'gateId' = ${gateId}`);
+}
 gateEmitter.setMaxListeners(200);
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -189,6 +202,19 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
       // Non-fatal: gate still exists and is visible via /api/agents/approvals
       console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
     }
+    if (req.workerJobId) {
+      try {
+        const { appendWorkerApprovalCheckpointToJob } = await import("./workerRuntimeJobEvents");
+        await appendWorkerApprovalCheckpointToJob({
+          jobId: req.workerJobId,
+          gateId: id,
+          toolName: req.toolName,
+          reason: req.description,
+        });
+      } catch (err) {
+        console.warn("[AgentApproval] failed to append worker approval checkpoint:", err);
+      }
+    }
   }
 
   if (autoApprove) {
@@ -290,6 +316,9 @@ export async function approveGate(gateId: string, resolvedBy: string): Promise<b
       // Gate not found or already resolved — no event emitted
       return false;
     }
+    markApprovalDeliverableReviewed(gateId, "approved").catch((err) =>
+      console.warn("[AgentApproval] failed to mark approval deliverable approved:", err),
+    );
     // Only emit AFTER successful DB write
     gateEmitter.emit(gateId, { approved: true });
     logAgentEvent({ event: "tool_approved", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId}` });
@@ -325,6 +354,9 @@ export async function rejectGate(gateId: string, resolvedBy: string): Promise<bo
     if (rows === 0) {
       return false;
     }
+    markApprovalDeliverableReviewed(gateId, "rejected").catch((err) =>
+      console.warn("[AgentApproval] failed to mark approval deliverable rejected:", err),
+    );
     // Only emit AFTER successful DB write
     gateEmitter.emit(gateId, { approved: false, reason: "rejected" });
     logAgentEvent({ event: "tool_blocked", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId} rejected` });

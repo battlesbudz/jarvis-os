@@ -21,11 +21,13 @@ async function main() {
   {
     const input = buildQueueBackgroundJobInput("ephemeral_agent_task", {
       channel: "telegram",
+      originChannelId: "telegram-chat-1",
       discordChannelId: "discord-channel-1",
     });
 
     assert.equal(input.workerType, "goal_task");
     assert.equal(input.originChannel, "telegram");
+    assert.equal(input.originChannelId, "telegram-chat-1");
     assert.equal(input.originDiscordChannelId, "discord-channel-1");
     assert.deepEqual(input.ephemeralAgent, {
       kind: "task_worker",
@@ -39,6 +41,7 @@ async function main() {
   {
     const input = buildQueueBackgroundJobInput("research", {
       channel: "app",
+      originChannelId: undefined,
       discordChannelId: undefined,
     });
 

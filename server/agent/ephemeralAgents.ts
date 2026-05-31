@@ -222,6 +222,7 @@ export async function runEphemeralAgentSession(
       platform: opts.platform,
       channelId: opts.channelId,
       initiatedBy: "jarvis",
+      jobId: opts.parentTaskId,
     });
 
     await promoteHandoff(extractEphemeralHandoffNotes(""));

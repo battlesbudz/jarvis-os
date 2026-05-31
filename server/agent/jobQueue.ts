@@ -909,6 +909,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       return jobInput;
     });
     const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
+    const originChannelId = typeof jobInput.originChannelId === "string" ? jobInput.originChannelId : undefined;
     const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
     const approvalReceipt = normalizeApprovalReceipt(jobInput.approvalReceipt);
     if (typeof jobInput.approvalGateId === "string") {
@@ -999,6 +1000,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         initiatedBy: "jarvis",
         model: namedAgentModel,
         approvalReceipt,
+        jobId: job.id,
       });
 
       await completeJob(job.id, {
@@ -1172,8 +1174,11 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       const ctx: ToolContext = {
         userId: job.userId,
         googleAccessToken,
-        channel: `JobQueue/custom_agent`,
+        channel: originChannel || `JobQueue/custom_agent`,
+        originChannelId,
+        jobId: job.id,
         state: { pendingAttachments: [] },
+        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
 
       const modelOverride = typeof input.model === "string"
@@ -1399,8 +1404,11 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       const generalCtx: ToolContext = {
         userId: job.userId,
         googleAccessToken: null,
-        channel: `JobQueue/general`,
+        channel: originChannel || `JobQueue/general`,
+        originChannelId,
+        jobId: job.id,
         state: { pendingAttachments: [] },
+        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
 
       const debugTools = [
@@ -1456,8 +1464,11 @@ writing a clear inbox message explaining what is broken and what the user should
       const briefCtx: ToolContext = {
         userId: job.userId,
         googleAccessToken: briefGoogleToken,
-        channel: `JobQueue/morning_brief`,
+        channel: originChannel || `JobQueue/morning_brief`,
+        originChannelId,
+        jobId: job.id,
         state: { pendingAttachments: [] },
+        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
       const briefTools = briefGoogleToken ? [fetchCalendarTool] : [];
       const briefModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
@@ -1526,8 +1537,11 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const buildCtx: ToolContext = {
         userId: job.userId,
         googleAccessToken: null,
-        channel: `JobQueue/build_feature`,
+        channel: originChannel || `JobQueue/build_feature`,
+        originChannelId,
+        jobId: job.id,
         state: { pendingAttachments: [] },
+        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
 
       /** Persist progress state into agent_jobs.input (merge, not replace). */
@@ -2336,8 +2350,11 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     const ctx: ToolContext = {
       userId: job.userId,
       googleAccessToken,
-      channel: `JobQueue/${job.agentType}`,
+      channel: originChannel || `JobQueue/${job.agentType}`,
+      originChannelId,
+      jobId: job.id,
       state: { pendingAttachments: [] },
+      ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
     };
 
     // Per-type model routing is handled at orchestrator-controlled spawn points

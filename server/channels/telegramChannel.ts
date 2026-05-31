@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { telegramLinks } from "@shared/schema";
-import { sendLongMessage, sendTelegramDocument, sendPhoto, isTelegramConfigured } from "../integrations/telegram";
+import { sendLongMessage, sendTelegramDocument, sendPhoto, isTelegramConfigured, sendMessageWithButtons } from "../integrations/telegram";
 import type { Channel, ChannelSendOpts, ChannelSendResult } from "./types";
 import { attachmentToBuffer, collectMarkdownExtras } from "./attachmentHelpers";
 
@@ -44,7 +44,16 @@ export const telegramChannel: Channel = {
       const markdownExtra = collectMarkdownExtras(attachments);
       const fullText = markdownExtra ? (text ? `${text}\n\n${markdownExtra}` : markdownExtra) : text;
 
-      if (fullText && fullText.trim()) await sendLongMessage(chatId, fullText);
+      if (fullText && fullText.trim()) {
+        const buttons = (opts.buttons || [])
+          .filter((button) => button.text && button.callbackData)
+          .map((button) => ({ text: button.text, callback_data: button.callbackData }));
+        if (buttons.length > 0) {
+          await sendMessageWithButtons(chatId, fullText, buttons);
+        } else {
+          await sendLongMessage(chatId, fullText);
+        }
+      }
 
       for (const att of attachments) {
         if (att.kind === "document") {

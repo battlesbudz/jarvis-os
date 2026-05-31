@@ -41,6 +41,7 @@ export interface SystemApprovalGateOptions {
   userId?: string;
   platform?: string;
   channelId?: string;
+  workerJobId?: string;
   initiatedBy?: "user" | "jarvis";
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -106,6 +107,7 @@ export function createSystemApprovalOnBeforeTool(opts: SystemApprovalGateOptions
         description: `Agent "${opts.agentName}" wants to run tool: ${toolName}`,
         ttlMs: opts.timeoutMs,
         initiatedBy: opts.initiatedBy ?? "user",
+        workerJobId: opts.workerJobId,
       });
 
       if (gate.status === "approved") {

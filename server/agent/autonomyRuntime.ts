@@ -455,6 +455,7 @@ export async function routeAutonomyRequest(
       prompt: userText,
       input: {
         originChannel: input.channelName,
+        ...(input.originChannelId ? { originChannelId: input.originChannelId } : {}),
         autonomyPolicy: true,
       },
     });

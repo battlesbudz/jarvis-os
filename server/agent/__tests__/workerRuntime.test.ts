@@ -6,6 +6,7 @@ import {
   buildWorkerRuntimeTaskView,
   getRetryPolicyForWorker,
   resolveWorkerType,
+  withWorkerApprovalCheckpoint,
   type WorkerRuntimeState,
 } from "../workerRuntime";
 
@@ -174,6 +175,37 @@ import {
   assert.equal(view.userVisibleEventCount, 5);
   assert.equal(runtime.events.at(-1)?.metadata?.deliverableId, "deliverable-1");
   console.log("OK: ephemeral worker progress events preserve live Mission Control status");
+}
+
+{
+  const input = withWorkerApprovalCheckpoint(
+    {
+      workerType: "outreach",
+      workerRuntime: buildInitialWorkerRuntime({
+        agentType: "email",
+        title: "Draft outbound message",
+        now: new Date("2026-05-26T12:00:00.000Z"),
+      }),
+    },
+    {
+      agentType: "email",
+      title: "Draft outbound message",
+      gateId: "gate_worker_1",
+      toolName: "send_email",
+      reason: "Worker needs approval before sending email",
+      now: new Date("2026-05-26T12:05:00.000Z"),
+    },
+  );
+  const runtime = input.workerRuntime as WorkerRuntimeState;
+  const view = buildWorkerRuntimeTaskView(input);
+
+  assert.equal(runtime.status, "approval_required");
+  assert.equal(view.lastWorkerEvent?.type, "approval_required");
+  assert.equal(view.progress?.currentStep, "Waiting for approval");
+  assert.equal(runtime.approvalCheckpoints[0]?.id, "gate_worker_1");
+  assert.equal(runtime.approvalCheckpoints[0]?.gateId, "gate_worker_1");
+  assert.equal(runtime.approvalCheckpoints[0]?.requiredFor, "send_email");
+  console.log("OK: worker approval checkpoints are represented in runtime context");
 }
 
 console.log("\nAll worker runtime assertions passed.");

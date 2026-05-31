@@ -559,6 +559,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const agentCtx: import("../agent/types").ToolContext = {
     userId,
     channel: channelName,
+    originChannelId: originChannelId ?? discordChannelId,
     googleAccessToken: googleAccessToken || undefined,
     discordGuildId: discordGuildId || undefined,
     discordChannelId: discordChannelId || undefined,
@@ -666,6 +667,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         userText,
         channelName,
         chatMessages,
+        originChannelId: originChannelId ?? discordChannelId,
         discordChannelId,
       });
       if (buildResult.handled && buildResult.reply) {

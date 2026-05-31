@@ -33,6 +33,7 @@ export type ToolCallHookContext = {
   userId?: string;
   platform?: string;
   channelId?: string;
+  workerJobId?: string;
   /** Who initiated the agent run — used for auto-approval of Jarvis-to-Jarvis calls. */
   initiatedBy?: "user" | "jarvis";
   /** AbortSignal from the parent run — approval waiter respects cancellation. */
@@ -232,6 +233,7 @@ async function runApprovalFlowWithOriginNotification(
       description: approval.description,
       ttlMs: approval.timeoutMs,
       initiatedBy: ctx.initiatedBy,
+      workerJobId: ctx.workerJobId,
     });
 
     if (gate.status === "approved") {
@@ -324,6 +326,7 @@ async function runApprovalFlow(
       description: approval.description,
       ttlMs: approval.timeoutMs,
       initiatedBy: ctx.initiatedBy,
+      workerJobId: ctx.workerJobId,
     });
 
     // Auto-approved (Jarvis-initiated, non-irreversible tool)

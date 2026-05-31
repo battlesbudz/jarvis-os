@@ -578,6 +578,31 @@ async function handleCallbackQuery(callbackQuery: any): Promise<void> {
       await answerCallbackQuery(queryId, "Declined. Jarvis will stop that action.");
       await sendMessage(chatId, `❌ Declined ${gate.toolName}. Jarvis will stop that action.`);
     }
+    try {
+      const approved = approvalCallback.decision === "approve";
+      const { isDirectEmailApprovalGate, resumeDirectEmailApprovalGate } = await import("./agent/directEmailApprovalRoute");
+      if (isDirectEmailApprovalGate(gate)) {
+        const continuation = await resumeDirectEmailApprovalGate(gate, approved);
+        await sendMessage(chatId, continuation.reason);
+        return;
+      }
+
+      if (approved) {
+        const { continueTopLevelApproval } = await import("./agent/topLevelApprovalContinuation");
+        const continuation = await continueTopLevelApproval(gate);
+        if (continuation.continued) {
+          await sendMessage(
+            chatId,
+            continuation.jobId
+              ? `Queued the approved follow-up as ${continuation.agentType} job ${continuation.jobId}.`
+              : continuation.reason,
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[Telegram approval callback] continuation failed:", err);
+      await sendMessage(chatId, "Approval was recorded, but Jarvis could not continue the follow-up automatically. You can still review it in the app.");
+    }
     return;
   }
 

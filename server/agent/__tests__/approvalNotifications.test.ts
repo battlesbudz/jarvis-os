@@ -45,6 +45,15 @@ function makeDeps(sent: Sent[]) {
         buttons: buildTelegramApprovalKeyboard(gateId),
       });
     },
+    sendTelegramUser: async (userId: string, text: string, gateId: string) => {
+      sent.push({
+        target: "telegram_user_approval_card",
+        userId,
+        text,
+        gateId,
+        buttons: buildTelegramApprovalKeyboard(gateId),
+      });
+    },
     sendDiscordChannel: async (userId: string, channelId: string, text: string) => {
       sent.push({ target: "discord_channel", userId, channelId, text });
       return true;
@@ -75,6 +84,23 @@ async function main(): Promise<void> {
     assert.deepEqual(sent.map((entry) => entry.target), ["telegram_approval_card", "in_app"]);
     assert.equal(sent[0].channelId, "12345");
     assert.match(sent[0].text, /gate_123/);
+    assert.match(sent[0].text, /Use the buttons below to approve or decline/i);
+    assert.deepEqual(sent[0].buttons, [
+      { text: "Approve", callback_data: "ag:ok:gate_123" },
+      { text: "Decline", callback_data: "ag:no:gate_123" },
+    ]);
+    assert.equal(sent[1].gateId, "gate_123");
+  }
+
+  {
+    const sent: Sent[] = [];
+    await notifyApprovalRequest(
+      makePayload({ originChannel: "Telegram" }),
+      makeDeps(sent),
+    );
+
+    assert.deepEqual(sent.map((entry) => entry.target), ["telegram_user_approval_card", "in_app"]);
+    assert.equal(sent[0].userId, "user_1");
     assert.deepEqual(sent[0].buttons, [
       { text: "Approve", callback_data: "ag:ok:gate_123" },
       { text: "Decline", callback_data: "ag:no:gate_123" },
