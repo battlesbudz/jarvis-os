@@ -31,6 +31,8 @@ const tests = [
   { file: "server/agent/__tests__/deliverableReviewActions.test.ts" },
   { file: "server/agent/__tests__/deliverableReviewHttpRoutes.test.ts" },
   { file: "server/agent/__tests__/localWorkerQueue.assert.ts" },
+  { file: "server/agent/__tests__/localWorkerSetup.assert.ts" },
+  { file: "server/agent/__tests__/telegramVoiceTranscription.assert.ts" },
   { file: "server/agent/__tests__/ephemeralAgents.test.ts" },
   { file: "server/agent/__tests__/queueBackgroundJob.test.ts" },
   { file: "server/agent/__tests__/ephemeralWorkerDeliverable.test.ts" },

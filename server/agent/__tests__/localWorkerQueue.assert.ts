@@ -4,6 +4,7 @@ import {
   claimNextJob,
   completeJob,
   getOrCreateWorkerToken,
+  getWorkerStatus,
   heartbeat,
   isWorkerOnline,
   queueAudioTranscriptionJob,
@@ -17,6 +18,13 @@ async function main(): Promise<void> {
   const token = getOrCreateWorkerToken(userId);
 
   assert.equal(isWorkerOnline(userId), false);
+  assert.deepEqual(getWorkerStatus(userId), {
+    registered: true,
+    online: false,
+    audioOnline: false,
+    lastSeen: null,
+    capabilities: ["url-transcript"],
+  });
   assert.equal(heartbeat(token), true);
   assert.equal(isWorkerOnline(userId), true);
   assert.equal(isWorkerOnline(userId, "audio-transcription"), false);
@@ -36,6 +44,7 @@ async function main(): Promise<void> {
   assert.equal(claimNextJob(token), null);
   assert.equal(heartbeat(token, ["url-transcript", "audio-transcription"]), true);
   assert.equal(isWorkerOnline(userId, "audio-transcription"), true);
+  assert.equal(getWorkerStatus(userId).audioOnline, true);
 
   const audioJob = claimNextJob(token);
   assert.equal(audioJob?.type, "audio-transcription");

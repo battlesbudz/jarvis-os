@@ -35,6 +35,14 @@ interface WorkerRegistration {
   capabilities: Set<LocalWorkerCapability>;
 }
 
+export interface LocalWorkerStatus {
+  registered: boolean;
+  online: boolean;
+  audioOnline: boolean;
+  lastSeen: number | null;
+  capabilities: LocalWorkerCapability[];
+}
+
 interface LocalJob {
   id: string;
   userId: string;
@@ -91,6 +99,29 @@ export function isWorkerOnline(userId: string, capability: LocalWorkerCapability
   if (!reg) return false;
   if (!reg.capabilities.has(capability)) return false;
   return Date.now() - reg.lastSeen < WORKER_ONLINE_WINDOW_MS;
+}
+
+export function getWorkerStatus(userId: string): LocalWorkerStatus {
+  const token = userTokenMap.get(userId);
+  const reg = token ? tokenRegistry.get(token) : null;
+  if (!reg) {
+    return {
+      registered: false,
+      online: false,
+      audioOnline: false,
+      lastSeen: null,
+      capabilities: [],
+    };
+  }
+
+  const online = Date.now() - reg.lastSeen < WORKER_ONLINE_WINDOW_MS;
+  return {
+    registered: true,
+    online,
+    audioOnline: online && reg.capabilities.has("audio-transcription"),
+    lastSeen: reg.lastSeen || null,
+    capabilities: Array.from(reg.capabilities),
+  };
 }
 
 export function queueTranscriptJob(

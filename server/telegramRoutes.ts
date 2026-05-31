@@ -29,7 +29,7 @@ import { completePairing as completeDiscordPairing } from "./discord/manager";
 import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
 import { getTelegramNeedsAttentionDecision } from "./channels/telegramNeedsAttention";
 import OpenAI from "openai";
-import { getOpenAIClientConfig, isDirectOpenAIDisabled } from "./agent/providers/env";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { resolveScheduledTaskAttention } from "./lib/taskResolver";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
@@ -798,7 +798,7 @@ async function processUpdate(update: any): Promise<void> {
         }
         const { detectAudioFormat } = await import('./replit_integrations/audio/client');
         const format = detectAudioFormat(file.buffer);
-        let transcript = "";
+        let linkedUserId: string | null = null;
 
         if (chatType !== 'group' && chatType !== 'supergroup') {
           const [link] = await db
@@ -811,29 +811,19 @@ async function processUpdate(update: any): Promise<void> {
             await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
             return;
           }
-
-          const { isWorkerOnline, queueAudioTranscriptionJob } = await import("./lib/localWorkerQueue");
-          if (isWorkerOnline(link.userId, "audio-transcription")) {
-            await sendChatAction(chatId, "upload_voice").catch(() => {});
-            const segments = await queueAudioTranscriptionJob(
-              link.userId,
-              file.buffer.toString("base64"),
-              format === 'unknown' ? 'ogg' : format,
-            );
-            transcript = segments.map((segment) => segment.text).join(" ").trim();
-          }
+          linkedUserId = link.userId;
         }
 
-        if (!transcript) {
-          if (isDirectOpenAIDisabled()) {
-            await sendMessage(chatId, "Voice transcription needs your Jarvis local worker running with local Whisper installed. Start the worker, then send the voice message again.");
+        await sendChatAction(chatId, "upload_voice").catch(() => {});
+        const { transcribeTelegramAudio } = await import("./telegramVoiceTranscription");
+        const transcription = await transcribeTelegramAudio({ audioBuffer: file.buffer, format, userId: linkedUserId });
+        const transcript = transcription.text;
+        if (!transcript || !transcript.trim()) {
+          if (transcription.failure === "local_worker_required") {
+            await sendMessage(chatId, "Voice transcription needs cloud STT configured or your Jarvis local worker online with audio transcription enabled. Send /local_worker here for the exact startup command, then send the voice message again.");
             return;
           }
-          const { speechToText } = await import('./replit_integrations/audio/client');
-          transcript = await speechToText(file.buffer, format);
-        }
-        if (!transcript || !transcript.trim()) {
-          await sendMessage(chatId, "Sorry, I couldn't make out what you said. Could you try again or type it out?");
+          await sendMessage(chatId, "Sorry, I couldn't transcribe that voice message right now. Could you try again or type it out?");
           return;
         }
         text = transcript.trim();
@@ -1091,6 +1081,19 @@ async function processUpdate(update: any): Promise<void> {
             `Voice mode: ${prefs.enabled ? "ON" : "OFF"} | Voice: ${voiceLabel}\n\nCommands:\n/tts on — enable voice replies\n/tts off — disable voice replies\n/tts voice <name> — change voice\n\nOpenAI voices: ${openaiList}\nElevenLabs voices: ${elevenList}`,
           );
         }
+        return;
+      }
+
+      // Local worker setup/status for Telegram voice-note transcription.
+      if (/^\/(?:local_?worker|worker)(?:\s|$)/i.test(text) || /^show me my local worker token$/i.test(text.trim())) {
+        const userId = link[0].userId;
+        if (chatType === "group" || chatType === "supergroup") {
+          await sendMessage(chatId, "For safety, ask me for /local_worker in a private chat so I don't post your worker token in a group.");
+          return;
+        }
+        const { getPublicBaseUrl } = await import("./publicUrl");
+        const { buildLocalWorkerTelegramSetupMessage } = await import("./localWorkerSetup");
+        await sendMessage(chatId, buildLocalWorkerTelegramSetupMessage(userId, getPublicBaseUrl()));
         return;
       }
 
