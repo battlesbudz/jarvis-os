@@ -21,6 +21,7 @@ import { runMigrations, isOnboardingComplete } from "@/lib/storage";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { WakeWordProvider } from "@/lib/wake-word-context";
 import { useAndroidApkUpdateCheck } from "@/lib/app-update";
+import { captureTelegramInitData } from "@/lib/telegram-webapp";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -183,6 +184,13 @@ function useExpoPushTokenRegistration() {
 }
 
 function AppNavigator() {
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    captureTelegramInitData().catch(() => {
+      // Telegram init data is only present inside a real Telegram Mini App.
+    });
+  }, []);
+
   const { isLoading } = useProtectedRoute();
   useDeepLinkAuth();
   useDeepLinkNavigation();

@@ -15,16 +15,10 @@ import { useAuth, clearAuthStorage } from "@/lib/auth-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiUrl } from "@/lib/query-client";
 import { Ionicons } from "@expo/vector-icons";
+import { captureTelegramInitData } from "@/lib/telegram-webapp";
 
 declare global {
   interface Window {
-    Telegram?: {
-      WebApp?: {
-        initData?: string;
-        ready?: () => void;
-        expand?: () => void;
-      };
-    };
     google?: {
       accounts: {
         oauth2?: {
@@ -108,27 +102,6 @@ function isLocalWebPreview(): boolean {
   return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 }
 
-function loadTelegramWebAppScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (typeof window === "undefined") return reject(new Error("Not in browser"));
-    if (window.Telegram?.WebApp) return resolve();
-
-    const existing = document.querySelector('script[src*="telegram.org/js/telegram-web-app.js"]');
-    if (existing) {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () => reject(new Error("Failed to load Telegram Web App")));
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = "https://telegram.org/js/telegram-web-app.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Telegram Web App"));
-    document.head.appendChild(script);
-  });
-}
-
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
@@ -154,13 +127,9 @@ export default function LoginScreen() {
 
     async function tryTelegramWebAppLogin() {
       try {
-        await loadTelegramWebAppScript();
+        const initData = await captureTelegramInitData();
         if (cancelled) return;
 
-        const webApp = window.Telegram?.WebApp;
-        webApp?.ready?.();
-        webApp?.expand?.();
-        const initData = webApp?.initData;
         if (!initData) return;
 
         setLoading(true);
