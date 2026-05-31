@@ -1,6 +1,6 @@
 import type { AgentSdkRunStore } from "./runStore";
 
-export const AGENT_SDK_HITL_AGENT_ID = "openrouter-agent-sdk-hitl-prototype";
+export const AGENT_SDK_HITL_AGENT_ID = "jarvis-agent-sdk-hitl";
 
 export interface AgentSdkPendingApproval {
   runId: string;
@@ -63,6 +63,7 @@ export async function requestTelegramApprovalForPendingCall(
       ...args,
       __agentSdkRunId: pending.runId,
       __agentSdkToolCallId: pending.toolCallId,
+      __jarvisAgentSdkRun: true,
       __agentSdkPrototype: true,
     },
     description,
@@ -81,7 +82,7 @@ export async function requestTelegramApprovalForPendingCall(
   await deps.notifyApprovalRequest({
     gateId: gate.id,
     agentId: AGENT_SDK_HITL_AGENT_ID,
-    agentName: "OpenRouter Agent SDK Prototype",
+    agentName: "Jarvis Agent SDK",
     userId: pending.userId,
     toolName: pending.toolName,
     description,

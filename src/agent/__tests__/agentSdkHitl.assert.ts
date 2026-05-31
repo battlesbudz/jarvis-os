@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   isAgentSdkRunnerEnabled,
+  getAgentSdkModelProvider,
   matchesAgentSdkEmailDraftOnlyWorkflow,
   matchesAgentSdkEmailWorkflow,
   matchesAgentSdkReminderWorkflow,
@@ -17,9 +18,12 @@ import { createFileAgentSdkRunStore } from "../runStore";
 import { createAgentSdkTools } from "../toolRegistry";
 
 async function main() {
-  process.env.ENABLE_AGENT_SDK_RUNNER = "true";
+process.env.ENABLE_AGENT_SDK_RUNNER = "true";
+process.env.AGENT_SDK_MODEL_PROVIDER = "openrouter";
+process.env.OPENROUTER_API_KEY = "should-not-be-used";
 
 assert.equal(isAgentSdkRunnerEnabled(), true);
+assert.equal(getAgentSdkModelProvider(), "jarvis");
 assert.equal(matchesAgentSdkEmailWorkflow("draft and send an email to sam@example.com"), true);
 assert.equal(matchesAgentSdkEmailWorkflow("can you draft/send an email to Sam?"), true);
 assert.equal(matchesAgentSdkEmailWorkflow("write an email draft but do not send it"), false);

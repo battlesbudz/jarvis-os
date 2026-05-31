@@ -41,8 +41,8 @@ async function main() {
   assert.equal(sdkEmail.handled, true);
   assert.equal(sdkEmail.kind, "approval_request");
   assert.equal(sdkEmail.approvalRequest?.gateId, "gate_1");
-  assert.equal(sdkEmail.decision.routeChosen, "openrouter_agent_sdk_email");
-  assert.equal(sdkEmail.decision.modelRouting, "openrouter_agent_sdk");
+  assert.equal(sdkEmail.decision.routeChosen, "jarvis_agent_sdk_email");
+  assert.equal(sdkEmail.decision.modelRouting, "codex_oauth_gateway");
 
   const sdkSetupFallback = await handleJarvisInput(
     {
@@ -57,8 +57,8 @@ async function main() {
         handled: true,
         status: "failed",
         runId: "run_setup_missing",
-        reply: "Agent SDK email prototype failed: OPENROUTER_API_KEY is required when ENABLE_AGENT_SDK_RUNNER=true",
-        error: "OPENROUTER_API_KEY is required when ENABLE_AGENT_SDK_RUNNER=true",
+        reply: "Agent SDK email workflow failed: model provider is not configured",
+        error: "model provider is not configured",
       }),
       handleDirectEmailApprovalRequest: async () => ({
         handled: true,
@@ -119,9 +119,9 @@ async function main() {
   const gate: ApprovalGate = {
     id: "gate_1",
     userId: "user_1",
-    agentId: "openrouter-agent-sdk-hitl-prototype",
+    agentId: "jarvis-agent-sdk-hitl",
     toolName: "send_email",
-    toolArgs: { __agentSdkPrototype: true },
+    toolArgs: { __jarvisAgentSdkRun: true },
     description: "Approve send.",
     status: "pending",
     createdAt: new Date(),
@@ -135,7 +135,8 @@ async function main() {
     },
   );
   assert.equal(approval.handled, true);
-  assert.equal(approval.decision.routeChosen, "openrouter_agent_sdk_approval_resume");
+  assert.equal(approval.decision.routeChosen, "jarvis_agent_sdk_approval_resume");
+  assert.equal(approval.decision.modelRouting, "codex_oauth_gateway");
 
   console.log("jarvisCoreRuntime assertions passed");
 }

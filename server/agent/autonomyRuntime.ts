@@ -151,7 +151,7 @@ export interface PrimeRuntimeDecision {
   routeChosen: string;
   riskLevel: "low" | "medium" | "high";
   approvalRequired: boolean;
-  modelRouting: "existing_jarvis" | "openrouter_agent_sdk" | "none";
+  modelRouting: "existing_jarvis" | "codex_oauth_gateway" | "none";
   bypassesPrime: boolean;
   reason: string;
 }
@@ -565,7 +565,7 @@ function sdkResultToPrime(
   taskTypeDetected: string,
 ): PrimeRuntimeResult {
   const awaitingApproval = result.status === "awaiting_approval";
-  const failedSetup = result.status === "failed" && /OPENROUTER_API_KEY|provider|configured/i.test(result.error || result.reply || "");
+  const failedSetup = result.status === "failed" && /provider|configured/i.test(result.error || result.reply || "");
   return {
     handled: true,
     kind: failedSetup ? "blocked_setup" : awaitingApproval ? "approval_request" : "direct_response",
@@ -576,15 +576,15 @@ function sdkResultToPrime(
       ? { gateId: result.gateId, runId: result.runId }
       : undefined,
     blockedSetup: failedSetup
-      ? { missing: "OPENROUTER_API_KEY", reason: result.error || result.reply || "Agent SDK model provider is not configured." }
+      ? { missing: "agent_sdk_model_provider", reason: result.error || result.reply || "Agent SDK model provider is not configured." }
       : undefined,
     decision: primeDecision({
       taskTypeDetected,
       routeChosen,
       riskLevel: awaitingApproval ? "high" : "medium",
       approvalRequired: awaitingApproval,
-      modelRouting: "openrouter_agent_sdk",
-      reason: "Feature-flagged PRIME runtime routed this explicit workflow through the Agent SDK worker.",
+      modelRouting: "codex_oauth_gateway",
+      reason: "Feature-flagged PRIME runtime routed this explicit workflow through the Jarvis Agent SDK worker using the Codex OAuth gateway.",
     }),
   };
 }
@@ -592,7 +592,7 @@ function sdkResultToPrime(
 function isAgentSdkSetupFailure(result: AgentSdkRunnerResult): boolean {
   return result.handled === true
     && result.status === "failed"
-    && /OPENROUTER_API_KEY|provider|configured/i.test(result.error || result.reply || "");
+    && /provider|configured/i.test(result.error || result.reply || "");
 }
 
 export async function handlePrimeInput(
@@ -635,7 +635,7 @@ export async function handlePrimeInput(
     originChannelId,
   });
   if (reminderSdk.handled) {
-    return sdkResultToPrime(reminderSdk, "openrouter_agent_sdk_reminder", "reminder");
+    return sdkResultToPrime(reminderSdk, "jarvis_agent_sdk_reminder", "reminder");
   }
 
   const runEmail = deps.runAgentSdkEmailWorkflow ?? defaultRunAgentSdkEmailWorkflow;
@@ -647,7 +647,7 @@ export async function handlePrimeInput(
     originChannelId,
   });
   if (emailSdk.handled && !isAgentSdkSetupFailure(emailSdk)) {
-    return sdkResultToPrime(emailSdk, "openrouter_agent_sdk_email", "email");
+    return sdkResultToPrime(emailSdk, "jarvis_agent_sdk_email", "email");
   }
 
   const directEmailApproval = await (deps.handleDirectEmailApprovalRequest ?? defaultHandleDirectEmailApprovalRequest)({
@@ -760,7 +760,7 @@ export async function handlePrimeApprovalDecision(
       handled: false,
       decision: primeDecision({
         routeChosen: "legacy_approval_resume",
-        reason: "Approval gate is not owned by the experimental Agent SDK worker.",
+        reason: "Approval gate is not owned by the Jarvis Agent SDK worker.",
       }),
     };
   }
@@ -776,10 +776,10 @@ export async function handlePrimeApprovalDecision(
     continuation,
     decision: primeDecision({
       taskTypeDetected: "approval_resume",
-      routeChosen: "openrouter_agent_sdk_approval_resume",
+      routeChosen: "jarvis_agent_sdk_approval_resume",
       riskLevel: "high",
       approvalRequired: true,
-      modelRouting: "openrouter_agent_sdk",
+      modelRouting: "codex_oauth_gateway",
       reason: "PRIME runtime resumed an Agent SDK run from the canonical Jarvis approval gate.",
     }),
   };

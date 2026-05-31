@@ -1,12 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { createRequire } from "node:module";
 import { AGENT_SDK_HITL_AGENT_ID, requestTelegramApprovalForPendingCall } from "./hitlApproval";
 import type { AgentSdkPendingApproval, HitlApprovalDeps } from "./hitlApproval";
 import { createFileAgentSdkRunStore } from "./runStore";
 import type { AgentSdkRunStore } from "./runStore";
 import { createAgentSdkTools } from "./toolRegistry";
 
-type CallModelInput<TTools> = Record<string, unknown> & { tools?: TTools };
 type ConversationState<TTools = unknown> = Record<string, unknown> & {
   id?: string;
   status?: string;
@@ -83,14 +81,11 @@ export interface ResumeAgentSdkRunInput {
   originChannelId?: string;
 }
 
-const DEFAULT_MODEL = "openai/gpt-4o-mini";
+const DEFAULT_MODEL = "chatgpt-codex-oauth/auto";
 const DEFAULT_MAX_COST_USD = 0.25;
 const DEFAULT_MAX_STEPS = 20;
 const DEFAULT_PROGRESS_TEXT_CHUNK_CHARS = 80;
 type AgentSdkWorkflowMode = "email_send_approval" | "email_draft_only" | "internal_reminder";
-type AgentSdkModelProvider = "jarvis" | "openrouter";
-
-const requireOpenRouterAgent = createRequire(import.meta.url);
 
 function createInitialState(id: string): ConversationState<any> {
   const now = Date.now();
@@ -161,10 +156,10 @@ function parsePositiveNumber(value: unknown, fallback: number): number {
 
 function resolveLongHorizonOptions(deps: AgentSdkRunnerDeps = {}) {
   return {
-    maxCostUsd: parsePositiveNumber(deps.maxCostUsd ?? process.env.OPENROUTER_AGENT_SDK_MAX_COST, DEFAULT_MAX_COST_USD),
+    maxCostUsd: parsePositiveNumber(deps.maxCostUsd ?? process.env.AGENT_SDK_MAX_COST, DEFAULT_MAX_COST_USD),
     maxSteps: Math.max(
       1,
-      Math.floor(parsePositiveNumber(deps.maxSteps ?? process.env.OPENROUTER_AGENT_SDK_MAX_STEPS, DEFAULT_MAX_STEPS)),
+      Math.floor(parsePositiveNumber(deps.maxSteps ?? process.env.AGENT_SDK_MAX_STEPS, DEFAULT_MAX_STEPS)),
     ),
     progressTextChunkChars: Math.max(
       20,
@@ -174,7 +169,7 @@ function resolveLongHorizonOptions(deps: AgentSdkRunnerDeps = {}) {
 }
 
 async function resolveAgentSdkModel(userText: string | string[], mode: AgentSdkWorkflowMode): Promise<string> {
-  const explicit = process.env.OPENROUTER_AGENT_SDK_MODEL?.trim();
+  const explicit = process.env.AGENT_SDK_MODEL?.trim();
   if (explicit) return explicit;
   const text = Array.isArray(userText) ? userText.join("\n") : userText;
   try {
@@ -182,12 +177,12 @@ async function resolveAgentSdkModel(userText: string | string[], mode: AgentSdkW
     const complexity = classifyTaskComplexity(text);
     const privacy = classifyTaskPrivacy(text);
     if (privacy === "sensitive" || complexity === "hard") {
-      return process.env.OPENROUTER_AGENT_SDK_SMART_MODEL || DEFAULT_MODEL;
+      return process.env.AGENT_SDK_SMART_MODEL || DEFAULT_MODEL;
     }
     if (mode === "internal_reminder") {
-      return process.env.OPENROUTER_AGENT_SDK_CHEAP_MODEL || DEFAULT_MODEL;
+      return process.env.AGENT_SDK_CHEAP_MODEL || DEFAULT_MODEL;
     }
-    return process.env.OPENROUTER_AGENT_SDK_BALANCED_MODEL || DEFAULT_MODEL;
+    return process.env.AGENT_SDK_BALANCED_MODEL || DEFAULT_MODEL;
   } catch {
     return DEFAULT_MODEL;
   }
@@ -202,9 +197,8 @@ async function safeText(result: AgentSdkModelResultLike, fallback: string): Prom
   }
 }
 
-function getAgentSdkModelProvider(env = process.env): AgentSdkModelProvider {
-  const value = String(env.AGENT_SDK_MODEL_PROVIDER || env.OPENROUTER_AGENT_SDK_PROVIDER || "jarvis").trim().toLowerCase();
-  return value === "openrouter" ? "openrouter" : "jarvis";
+export function getAgentSdkModelProvider(_env = process.env): "jarvis" {
+  return "jarvis";
 }
 
 function toolName(tool: unknown): string {
@@ -397,22 +391,7 @@ async function callJarvisModelAdapter(request: Record<string, unknown>): Promise
 }
 
 async function defaultCallModel(request: Record<string, unknown>): Promise<AgentSdkModelResultLike> {
-  if (getAgentSdkModelProvider() !== "openrouter") {
-    return callJarvisModelAdapter(request);
-  }
-  let OpenRouter: any;
-  try {
-    ({ OpenRouter } = requireOpenRouterAgent("@openrouter/agent"));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`OpenRouter Agent SDK is unavailable. Install dependencies or add @openrouter/agent. Details: ${message}`);
-  }
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    throw new Error("OPENROUTER_API_KEY is required when AGENT_SDK_MODEL_PROVIDER=openrouter");
-  }
-  const client = new OpenRouter({ apiKey });
-  return client.callModel(request as CallModelInput<readonly Tool[]>);
+  return callJarvisModelAdapter(request);
 }
 
 async function defaultReadContext(userId: string, query: string): Promise<string> {
@@ -522,14 +501,14 @@ function buildRequest(
   return {
     model,
     instructions: [
-      "You are Jarvis running a small experimental Agent SDK workflow.",
+      "You are Jarvis running a focused Agent SDK workflow through the Codex OAuth gateway.",
       workflowInstruction,
     ].join("\n"),
     input: Array.isArray(userText) || decisions ? [] : userText,
     tools,
     state,
     metadata: {
-      jarvisRuntime: "openrouter_agent_sdk_prototype",
+      jarvisRuntime: "jarvis_agent_sdk_codex_oauth",
       workflow: mode,
       loop: "think_tool_observe_continue_hitl",
       approvalRequiredTools: mode === "email_send_approval" ? ["send_email"] : [],
@@ -723,12 +702,12 @@ export async function runAgentSdkEmailWorkflow(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await saveResponseState(store, runId, undefined, "failed", message);
-    await sendTelegramCompletion(deps, input.originChannelId, `Agent SDK email prototype failed: ${message}`, "failed");
+    await sendTelegramCompletion(deps, input.originChannelId, `Agent SDK email workflow failed: ${message}`, "failed");
     return {
       handled: true,
       status: "failed",
       runId,
-      reply: `Agent SDK email prototype failed: ${message}`,
+      reply: `Agent SDK email workflow failed: ${message}`,
       error: message,
     };
   }
@@ -807,12 +786,12 @@ export async function runAgentSdkReminderWorkflow(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await saveResponseState(store, runId, undefined, "failed", message);
-    await sendTelegramCompletion(deps, input.originChannelId, `Agent SDK reminder prototype failed: ${message}`, "failed");
+    await sendTelegramCompletion(deps, input.originChannelId, `Agent SDK reminder workflow failed: ${message}`, "failed");
     return {
       handled: true,
       status: "failed",
       runId,
-      reply: `Agent SDK reminder prototype failed: ${message}`,
+      reply: `Agent SDK reminder workflow failed: ${message}`,
       error: message,
     };
   }
@@ -913,7 +892,8 @@ export async function resumeAgentSdkRunFromApprovalGate(
 }
 
 export function isAgentSdkApprovalGate(gate: { agentId?: string; toolArgs?: Record<string, unknown> } | null | undefined): boolean {
-  return gate?.agentId === AGENT_SDK_HITL_AGENT_ID && gate.toolArgs?.__agentSdkPrototype === true;
+  return gate?.agentId === AGENT_SDK_HITL_AGENT_ID
+    && (gate.toolArgs?.__jarvisAgentSdkRun === true || gate.toolArgs?.__agentSdkPrototype === true);
 }
 
 export async function resumeAgentSdkEmailWorkflowRun(
