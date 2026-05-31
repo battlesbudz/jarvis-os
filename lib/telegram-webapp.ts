@@ -8,6 +8,7 @@ declare global {
         initData?: string;
         ready?: () => void;
         expand?: () => void;
+        openLink?: (url: string, options?: Record<string, unknown>) => void;
       };
     };
   }

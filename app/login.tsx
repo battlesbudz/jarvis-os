@@ -107,6 +107,15 @@ function isTelegramWebViewBrowser(): boolean {
   return /\bTelegram(?:Bot)?\b/i.test(navigator.userAgent || "");
 }
 
+function openTelegramOAuthLink(url: string): void {
+  const webApp = typeof window !== "undefined" ? window.Telegram?.WebApp : undefined;
+  if (webApp?.openLink) {
+    webApp.openLink(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
@@ -317,6 +326,71 @@ export default function LoginScreen() {
     }
   }
 
+  async function handleTelegramGoogleSignIn() {
+    await clearAuthStorage();
+
+    const baseUrl = getApiUrl();
+    const { sessionId, startUrl, pollUrl } = buildMobileAuthUrls(baseUrl);
+    const webStartUrl = new URL(startUrl);
+    webStartUrl.searchParams.set("return_to", "web");
+
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let attemptNum = 0;
+    const startedAt = Date.now();
+    const timeoutMs = 2 * 60 * 1000;
+
+    const cleanup = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    };
+
+    const doPoll = async (): Promise<boolean> => {
+      attemptNum++;
+      try {
+        console.log(`[GoogleAuth/Telegram] Poll #${attemptNum} session=${sessionId}`);
+        const res = await fetch(pollUrl, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ready && data.token) {
+            cleanup();
+            await loginWithToken(data.token);
+            setLoading(false);
+            return true;
+          }
+        }
+      } catch (err) {
+        console.log(`[GoogleAuth/Telegram] Poll #${attemptNum} error:`, err);
+      }
+      return false;
+    };
+
+    try {
+      pollInterval = setInterval(() => { doPoll(); }, 2000);
+      openTelegramOAuthLink(webStartUrl.toString());
+
+      while (Date.now() - startedAt < timeoutMs) {
+        if (isAuthenticatedRef.current) {
+          setLoading(false);
+          return;
+        }
+        const found = await doPoll();
+        if (found) return;
+        await delay(1000);
+      }
+
+      if (!isAuthenticatedRef.current) {
+        setError("Google sign-in timed out. Complete the browser sign-in, then return to Jarvis and try again.");
+      }
+    } catch (e: any) {
+      setError(e.message || "Could not open Google sign-in.");
+    } finally {
+      cleanup();
+      setLoading(false);
+    }
+  }
+
   async function handleWebGoogleTokenSignIn() {
     if (typeof window === "undefined") {
       throw new Error("Google sign-in is only available in a browser.");
@@ -424,7 +498,7 @@ export default function LoginScreen() {
       setLoading(true);
       try {
         if (isTelegramWebViewBrowser()) {
-          handleWebGoogleRedirectSignIn();
+          await handleTelegramGoogleSignIn();
           return;
         }
         await handleWebGoogleTokenSignIn();
