@@ -12,6 +12,7 @@ loadEnvFiles(projectRoot);
 const tests = [
   { file: "scripts/__tests__/testEnv.test.mjs" },
   { file: "scripts/__tests__/oauthGatewayDoctor.test.mjs" },
+  { file: "server/auth/__tests__/mobileAuthRedirectHtml.test.ts" },
   { file: "server/diagnostics/__tests__/osReadiness.test.ts" },
   { file: "server/agent/__tests__/autonomyPolicy.test.ts" },
   { file: "server/agent/__tests__/autonomyRuntime.test.ts" },

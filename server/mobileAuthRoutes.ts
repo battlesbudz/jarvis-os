@@ -5,6 +5,7 @@ import { db } from "./db";
 import { users, mobileAuthSessions } from "@shared/schema";
 import { eq, lt } from "drizzle-orm";
 import { generateToken } from "./auth";
+import { createMobileAuthSuccessHtml, type MobileAuthReturnTarget } from "./auth/mobileAuthHtml";
 
 export const mobileAuthRouter = Router();
 
@@ -43,16 +44,18 @@ function isValidPollSecret(value: string): boolean {
   return /^[A-Za-z0-9_-]{32,256}$/.test(value);
 }
 
-function createOauthState(sessionId: string): string {
+function createOauthState(sessionId: string, returnTarget: MobileAuthReturnTarget = "native"): string {
   const nonce = crypto.randomBytes(POLL_SECRET_BYTES).toString("base64url");
-  return `${sessionId}.${nonce}`;
+  return returnTarget === "web" ? `${sessionId}.${nonce}.web` : `${sessionId}.${nonce}`;
 }
 
-function parseOauthState(state: string): { sessionId: string; nonce: string } | null {
+function parseOauthState(state: string): { sessionId: string; nonce: string; returnTarget: MobileAuthReturnTarget } | null {
   const [sessionId, nonce, ...extra] = state.split(".");
-  if (!sessionId || !nonce || extra.length > 0) return null;
+  if (!sessionId || !nonce || extra.length > 1) return null;
+  const returnTarget = extra[0] === "web" ? "web" : "native";
+  if (extra.length === 1 && extra[0] !== "web") return null;
   if (!isValidSessionId(sessionId) || !isValidSessionId(nonce)) return null;
-  return { sessionId, nonce };
+  return { sessionId, nonce, returnTarget };
 }
 
 function pendingTokenValue(oauthState: string, pollSecret: string, bindNonce: string): string {
@@ -183,14 +186,15 @@ function errorHtml(message: string): string {
 }
 
 mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
-  const { session_id, poll_secret } = req.query as Record<string, string>;
+  const { session_id, poll_secret, return_to } = req.query as Record<string, string>;
   if (!session_id) return res.status(400).json({ error: "session_id required" });
   if (!isValidSessionId(session_id)) return res.status(400).json({ error: "invalid session_id" });
+  const returnTarget: MobileAuthReturnTarget = return_to === "web" ? "web" : "native";
 
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
 
-  const oauthState = createOauthState(session_id);
+  const oauthState = createOauthState(session_id, returnTarget);
   const bindNonce = crypto.randomBytes(POLL_SECRET_BYTES).toString("base64url");
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -243,7 +247,7 @@ export async function handleMobileAuthCallback(req: Request, res: Response) {
   if (!parsedState) {
     return res.send(errorHtml("Invalid sign-in state. Please try again."));
   }
-  const { sessionId } = parsedState;
+  const { sessionId, returnTarget } = parsedState;
 
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -332,7 +336,7 @@ export async function handleMobileAuthCallback(req: Request, res: Response) {
         .where(eq(mobileAuthSessions.sessionId, sessionId));
     }
 
-    return res.send(successHtml(token));
+    return res.send(createMobileAuthSuccessHtml(token, { returnTarget }));
   } catch (err) {
     console.error("Mobile auth callback error:", err);
     return res.send(errorHtml("An unexpected error occurred. Please try again."));

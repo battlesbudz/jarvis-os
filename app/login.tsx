@@ -361,10 +361,12 @@ export default function LoginScreen() {
 
     const baseUrl = getApiUrl();
     const { startUrl } = buildMobileAuthUrls(baseUrl);
+    const webStartUrl = new URL(startUrl);
+    webStartUrl.searchParams.set("return_to", "web");
     clearAuthStorage().catch((err) => {
       console.warn("[GoogleAuth] Could not clear stale auth before redirect:", err);
     });
-    window.location.href = startUrl;
+    window.location.href = webStartUrl.toString();
   }
 
   function googleConfigHelp(errorMessage?: string) {
