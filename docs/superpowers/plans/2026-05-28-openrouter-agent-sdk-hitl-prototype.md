@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Current Status
+
+This plan is historical. The implementation has been corrected so the Agent SDK-style runtime defaults to Jarvis/Codex OAuth gateway model routing. OpenRouter hosted models are not the normal worker model path. Treat references below to OpenRouter model calls as prototype history unless a task explicitly asks to test OpenRouter as an alternate provider.
+
 **Goal:** Build a small feature-flagged OpenRouter Agent SDK proof of concept where Jarvis drafts an email, pauses before sending, requests Telegram approval, resumes if approved, and refuses to send if rejected.
 
 **Architecture:** Add an isolated experimental runner under `src/agent/` and route only explicit "draft/send an email" test requests through it when `ENABLE_AGENT_SDK_RUNNER=true`. Keep the existing Jarvis model router, harness, Gmail/Calendar behavior, and approval architecture intact; the prototype wraps existing utilities and uses OpenRouter Agent SDK state persistence only for this one workflow.

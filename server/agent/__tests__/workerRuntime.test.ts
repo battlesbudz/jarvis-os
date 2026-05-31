@@ -125,4 +125,55 @@ import {
   console.log("OK: worker runtime task view exposes compact user-visible progress metadata");
 }
 
+{
+  let runtime = buildInitialWorkerRuntime({
+    agentType: "ephemeral_agent_task",
+    title: "Run a one-off worker",
+    now: new Date("2026-05-26T12:00:00.000Z"),
+  });
+  runtime = appendWorkerRuntimeEvent(runtime, buildWorkerRuntimeEvent({
+    type: "started",
+    workerType: "goal_task",
+    message: "Started Run a one-off worker",
+    progress: { currentStep: "Running", percent: 5 },
+    now: new Date("2026-05-26T12:01:00.000Z"),
+    userVisible: true,
+  }));
+  runtime = appendWorkerRuntimeEvent(runtime, buildWorkerRuntimeEvent({
+    type: "progress",
+    workerType: "goal_task",
+    message: "Preparing temporary worker",
+    progress: { currentStep: "Preparing temporary worker", percent: 20 },
+    now: new Date("2026-05-26T12:02:00.000Z"),
+    userVisible: true,
+  }));
+  runtime = appendWorkerRuntimeEvent(runtime, buildWorkerRuntimeEvent({
+    type: "progress",
+    workerType: "goal_task",
+    message: "Running temporary worker",
+    progress: { currentStep: "Running temporary worker", percent: 55 },
+    now: new Date("2026-05-26T12:03:00.000Z"),
+    userVisible: true,
+  }));
+  runtime = appendWorkerRuntimeEvent(runtime, buildWorkerRuntimeEvent({
+    type: "progress",
+    workerType: "goal_task",
+    message: "Review deliverable ready",
+    progress: { currentStep: "Review deliverable ready", percent: 95 },
+    metadata: { deliverableId: "deliverable-1" },
+    now: new Date("2026-05-26T12:04:00.000Z"),
+    userVisible: true,
+  }));
+
+  const view = buildWorkerRuntimeTaskView({ workerRuntime: runtime });
+
+  assert.equal(runtime.workerType, "goal_task");
+  assert.equal(view.progress?.currentStep, "Review deliverable ready");
+  assert.equal(view.progress?.percent, 95);
+  assert.equal(view.lastWorkerEvent?.message, "Review deliverable ready");
+  assert.equal(view.userVisibleEventCount, 5);
+  assert.equal(runtime.events.at(-1)?.metadata?.deliverableId, "deliverable-1");
+  console.log("OK: ephemeral worker progress events preserve live Mission Control status");
+}
+
 console.log("\nAll worker runtime assertions passed.");

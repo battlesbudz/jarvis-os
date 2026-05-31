@@ -688,6 +688,28 @@ async function appendWorkerEventToJob(opts: {
   return nextInput;
 }
 
+async function appendWorkerProgressToJob(opts: {
+  jobId: string;
+  agentType: string;
+  title: string;
+  input: Record<string, unknown>;
+  currentStep: string;
+  percent: number;
+  metadata?: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  return appendWorkerEventToJob({
+    jobId: opts.jobId,
+    agentType: opts.agentType,
+    title: opts.title,
+    input: opts.input,
+    type: "progress",
+    message: opts.currentStep,
+    userVisible: true,
+    progress: { currentStep: opts.currentStep, percent: opts.percent },
+    metadata: opts.metadata,
+  });
+}
+
 async function appendWorkerEventById(opts: {
   jobId: string;
   type: "completed" | "failed" | "cancelled";
@@ -1015,15 +1037,40 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
 
     // ── Custom user-defined agent ──────────────────────────────────────────────
     if (job.agentType === "ephemeral_agent_task") {
-      const input = (job.input as Record<string, unknown>) ?? {};
-      const ephemeralAgent = input.ephemeralAgent && typeof input.ephemeralAgent === "object"
-        ? input.ephemeralAgent as Record<string, unknown>
+      const ephemeralAgent = jobInput.ephemeralAgent && typeof jobInput.ephemeralAgent === "object"
+        ? jobInput.ephemeralAgent as Record<string, unknown>
         : {};
       const rawKind = typeof ephemeralAgent.kind === "string" ? ephemeralAgent.kind : "task_worker";
       const kind: EphemeralAgentKind = rawKind === "task_worker" ? "task_worker" : "task_worker";
-      const platform = typeof input.originChannel === "string" ? input.originChannel : (originChannel || "app");
+      const platform = typeof jobInput.originChannel === "string" ? jobInput.originChannel : (originChannel || "app");
 
       console.log(`[JobQueue] ephemeral_agent_task kind=${kind} job=${job.id}`);
+
+      jobInput = await appendWorkerProgressToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        currentStep: "Preparing temporary worker",
+        percent: 20,
+        metadata: { kind },
+      }).catch((err) => {
+        console.warn(`[JobQueue] ephemeral_agent_task progress append failed for ${job.id}:`, err);
+        return jobInput;
+      });
+
+      jobInput = await appendWorkerProgressToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        currentStep: "Running temporary worker",
+        percent: 55,
+        metadata: { kind },
+      }).catch((err) => {
+        console.warn(`[JobQueue] ephemeral_agent_task running progress append failed for ${job.id}:`, err);
+        return jobInput;
+      });
 
       const result = await runEphemeralAgentSession({
         userId: job.userId,
@@ -1034,11 +1081,41 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         parentTaskId: job.id,
       });
 
+      jobInput = await appendWorkerProgressToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        currentStep: "Preparing review deliverable",
+        percent: 85,
+        metadata: {
+          ephemeralAgentId: result.agentId,
+          turns: result.turns,
+          toolCalls: result.toolCalls?.length ?? 0,
+        },
+      }).catch((err) => {
+        console.warn(`[JobQueue] ephemeral_agent_task deliverable progress append failed for ${job.id}:`, err);
+        return jobInput;
+      });
+
       const [deliverable] = await db
         .insert(schema.deliverables)
         .values(buildEphemeralWorkerResultDeliverable(job, result, kind))
         .returning({ id: schema.deliverables.id });
       const deliverableId = deliverable?.id || "";
+
+      jobInput = await appendWorkerProgressToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        currentStep: "Review deliverable ready",
+        percent: 95,
+        metadata: { deliverableId },
+      }).catch((err) => {
+        console.warn(`[JobQueue] ephemeral_agent_task review progress append failed for ${job.id}:`, err);
+        return jobInput;
+      });
 
       await completeJob(job.id, {
         result: {

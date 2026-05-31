@@ -1,7 +1,7 @@
 # Jarvis Autonomous Agent Roadmap
 
 > Living document - updated as features are built and shipped.
-> Last updated: May 18, 2026
+> Last updated: May 30, 2026
 
 ---
 
@@ -38,6 +38,7 @@ Transform Jarvis from a reactive coaching app into a fully autonomous AI agent t
 - Validate WhatsApp and Slack as full two-way channels in production, including slash commands, channel preferences, pairing, and fallback behavior.
 - Finish daemon safety hardening: per-action approvals, audit trails, sandbox defaults, timeout handling, and recovery from disconnected desktop/Android nodes.
 - Add stronger observability dashboards for autonomy decisions, job queue health, channel delivery, tool failures, memory extraction, and approval-gate outcomes.
+- Continue the Cloud Workforce queue: broaden live worker progress events beyond ephemeral workers and connect every approval gate to a visible worker checkpoint.
 - Keep expanding tests from unit/assertion coverage into realistic integration tests that fake DB/job/channel dependencies and prove user workflows.
 
 ---
@@ -190,9 +191,14 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Job worker claims queued jobs, recovers stale running jobs, and handles cancellation
 - [x] Jobs support research, deep research, writing, planning, email, weekly pattern, goal decomposition, named-agent tasks, and build-feature work
 - [x] Job status is visible in the Inbox tab
+- [x] Mission Control has a real queue/review panel backed by `agent_jobs`, approval gates, and deliverables
 - [x] Retry and cancel flows exist for jobs
+- [x] Worker runtime metadata records worker type, retry policy, user-visible progress events, and approval checkpoints
+- [x] Ephemeral worker jobs emit visible progress while preparing the temporary worker, running it, preparing the review deliverable, and making the deliverable ready for review
 - [x] Add richer job observability and admin/debug screens with `/api/agent-jobs/observability` and a compact Settings health panel
 - [x] Add stronger recovery/partial-failure coverage for retry decoration and permanent-failure classification
+- [ ] Broaden live worker progress events across research, coding, outreach, browser, form-fill, finance, and goal-task jobs
+- [ ] Wire all approval-gate creation paths into worker runtime `approval_required` checkpoints
 - [ ] Expand DB-backed worker restart recovery tests when a test database is available
 
 ### 3.3 - Sub-Agent Spawning

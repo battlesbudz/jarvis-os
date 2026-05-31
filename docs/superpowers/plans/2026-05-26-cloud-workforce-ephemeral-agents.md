@@ -8,6 +8,19 @@
 
 **Tech Stack:** TypeScript, Express route/tool layer, Drizzle/Postgres schema already in `shared/schema.ts`, existing `createAgent()`, `deleteAgent()`, `disableAgent()`, `runNamedAgent()`, `agentMemory`, and `agentJobs`.
 
+## Current Implementation Status
+
+- [x] One-off `ephemeral_agent_task` jobs now create temporary `task_worker` agents, run them once, create reviewable `worker_result` deliverables, and delete the temporary worker afterward.
+- [x] Mission Control's queue/review panel is backed by real `agent_jobs`, approval gates, and deliverables instead of mock queue state.
+- [x] Agent SDK-style execution defaults to Jarvis/Codex OAuth gateway model routing, not OpenRouter hosted models.
+- [x] Worker runtime state records queued, started, progress, approval-required, completed, failed, cancelled, retry policy, and user-visible progress metadata.
+- [x] The ephemeral worker path now emits visible progress updates while preparing the temporary worker, running it, preparing the review deliverable, and making that deliverable ready for review.
+- [ ] Broaden progress events across non-ephemeral worker job types.
+- [ ] Wire every approval gate creation path into `approval_required` worker runtime checkpoints.
+- [ ] Add richer Mission Control controls for retry/cancel/review once the backend event model is stable.
+
+Note: older task examples below mention a `study` template. That was superseded by the product decision that ephemeral agents are one-off scoped workers, not normal tutoring/study sessions.
+
 ---
 
 ## File Structure
