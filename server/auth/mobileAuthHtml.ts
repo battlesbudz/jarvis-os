@@ -7,7 +7,7 @@ export function createMobileAuthSuccessHtml(
   const returnTarget = options.returnTarget ?? "native";
   const encodedToken = encodeURIComponent(token);
   const tokenJson = JSON.stringify(token);
-  const originFallback = `/login#auth_token=${encodedToken}`;
+  const originFallback = `/login?auth_complete=1#auth_token=${encodedToken}`;
   const nativeScript = returnTarget === "native"
     ? `
     try {

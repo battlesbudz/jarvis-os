@@ -93,6 +93,11 @@ function getRequestOrigin(req: Request): string {
   return `${proto}://${host}`;
 }
 
+function isTelegramWebView(req: Request): boolean {
+  const ua = req.get("user-agent") || "";
+  return /\bTelegram(?:Bot)?\b/i.test(ua);
+}
+
 export function getMobileAuthCallbackUrl(req: Request): string {
   return `${getRequestOrigin(req)}/api/oauth/google/callback`;
 }
@@ -189,7 +194,7 @@ mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
   const { session_id, poll_secret, return_to } = req.query as Record<string, string>;
   if (!session_id) return res.status(400).json({ error: "session_id required" });
   if (!isValidSessionId(session_id)) return res.status(400).json({ error: "invalid session_id" });
-  const returnTarget: MobileAuthReturnTarget = return_to === "web" ? "web" : "native";
+  const returnTarget: MobileAuthReturnTarget = return_to === "web" || isTelegramWebView(req) ? "web" : "native";
 
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
@@ -221,6 +226,7 @@ mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
     path: "/",
   });
 
+  res.setHeader("Cache-Control", "no-store");
   const callbackUrl = getMobileAuthCallbackUrl(req);
   const params = new URLSearchParams({
     client_id: clientId,
@@ -248,6 +254,7 @@ export async function handleMobileAuthCallback(req: Request, res: Response) {
     return res.send(errorHtml("Invalid sign-in state. Please try again."));
   }
   const { sessionId, returnTarget } = parsedState;
+  const effectiveReturnTarget: MobileAuthReturnTarget = returnTarget === "web" || isTelegramWebView(req) ? "web" : "native";
 
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -336,7 +343,8 @@ export async function handleMobileAuthCallback(req: Request, res: Response) {
         .where(eq(mobileAuthSessions.sessionId, sessionId));
     }
 
-    return res.send(createMobileAuthSuccessHtml(token, { returnTarget }));
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(createMobileAuthSuccessHtml(token, { returnTarget: effectiveReturnTarget }));
   } catch (err) {
     console.error("Mobile auth callback error:", err);
     return res.send(errorHtml("An unexpected error occurred. Please try again."));
