@@ -1,0 +1,162 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, "../..");
+const connectorRoot = path.join(repoRoot, "desktop-connector");
+
+function readText(relativePath) {
+  return fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
+}
+
+function readJson(relativePath) {
+  return JSON.parse(readText(relativePath));
+}
+
+function assertExists(relativePath) {
+  assert.equal(fs.existsSync(path.join(repoRoot, relativePath)), true, `${relativePath} should exist`);
+}
+
+for (const file of [
+  "desktop-connector/package.json",
+  "desktop-connector/index.html",
+  "desktop-connector/vite.config.ts",
+  "desktop-connector/tsconfig.json",
+  "desktop-connector/src/main.tsx",
+  "desktop-connector/src/App.tsx",
+  "desktop-connector/src/connectorApi.ts",
+  "desktop-connector/src/styles.css",
+  "desktop-connector/src-tauri/Cargo.toml",
+  "desktop-connector/src-tauri/build.rs",
+  "desktop-connector/src-tauri/tauri.conf.json",
+  "desktop-connector/src-tauri/capabilities/default.json",
+  "desktop-connector/src-tauri/src/main.rs",
+  "desktop-connector/src-tauri/src/lib.rs",
+  "desktop-connector/sidecar/package.json",
+  "desktop-connector/sidecar/index.js",
+  "desktop-connector/sidecar/rename-sidecar.mjs",
+  "desktop-connector/sidecar/prepare-daemon.mjs",
+  "desktop-connector/scripts/assert-config.mjs",
+]) {
+  assertExists(file);
+}
+
+const rootPackage = readJson("package.json");
+assert.equal(
+  rootPackage.scripts["jarvis:desktop-connector:test-config"],
+  "node scripts/__tests__/desktopConnectorTauriConfig.test.mjs",
+  "root package should expose the desktop connector config test",
+);
+assert.equal(
+  rootPackage.scripts["jarvis:desktop-connector:build"],
+  "npm --prefix desktop-connector install && npm --prefix desktop-connector run build",
+  "root package should expose the desktop connector build",
+);
+
+const connectorPackage = readJson("desktop-connector/package.json");
+assert.equal(connectorPackage.scripts.build, "npm run sidecar:build && vite build && tauri build");
+assert.match(connectorPackage.scripts["sidecar:prepare"], /prepare-daemon\.mjs/);
+assert.match(connectorPackage.scripts["sidecar:rename"], /rename-sidecar\.mjs/);
+assert.match(connectorPackage.scripts["test:config"], /assert-config\.mjs/);
+assert.ok(connectorPackage.dependencies["@tauri-apps/plugin-shell"], "shell plugin should be listed");
+assert.ok(connectorPackage.dependencies["@tauri-apps/plugin-autostart"], "autostart plugin should be listed");
+assert.ok(connectorPackage.dependencies["@tauri-apps/plugin-opener"], "opener plugin should be listed");
+
+const tauriConfig = readJson("desktop-connector/src-tauri/tauri.conf.json");
+assert.equal(tauriConfig.productName, "Jarvis Desktop Connector", "Tauri product name should be Jarvis Desktop Connector");
+assert.deepEqual(tauriConfig.bundle.targets, ["nsis"], "Windows bundle target should be NSIS");
+assert.deepEqual(
+  tauriConfig.bundle.externalBin,
+  ["binaries/jarvis-desktop-daemon"],
+  "Tauri should register the daemon sidecar with bundle.externalBin",
+);
+assert.equal(
+  tauriConfig.bundle.resources["../../scripts/jarvis-desktop-connector-awaken.ps1"],
+  "jarvis-desktop-connector-awaken.ps1",
+  "Tauri bundle should include the awakening ceremony script for installed verification",
+);
+assert.equal(tauriConfig.app.windows.length, 1, "connector should have one quiet status window");
+assert.equal(tauriConfig.app.windows[0].visible, false, "status window should start hidden for quiet autostart");
+assert.equal(tauriConfig.app.windows[0].title, "Jarvis Desktop Connector");
+assert.equal(tauriConfig.app.security.csp, null, "connector should not depend on remote UI assets");
+assert.equal(tauriConfig.bundle.icon, undefined, "scaffold should not reference missing icon assets");
+
+const capability = readJson("desktop-connector/src-tauri/capabilities/default.json");
+for (const permission of [
+  "core:default",
+  "opener:default",
+  "shell:allow-spawn",
+  "autostart:allow-enable",
+  "autostart:allow-disable",
+  "autostart:allow-is-enabled",
+]) {
+  assert.ok(capability.permissions.includes(permission), `capability should include ${permission}`);
+}
+assert.equal(capability.permissions.includes("shell:allow-execute"), false, "spawn-only sidecar flow should not request execute permission");
+
+const libRs = readText("desktop-connector/src-tauri/src/lib.rs");
+for (const label of ["Open Jarvis", "Check connection", "Reconnect", "Run verification again", "Quit"]) {
+  assert.match(libRs, new RegExp(label), `tray menu should include ${label}`);
+}
+assert.match(libRs, /TrayIconBuilder/, "tray should use TrayIconBuilder");
+assert.match(libRs, /tauri_plugin_autostart/, "Rust app should initialize the autostart plugin");
+assert.match(libRs, /tauri_plugin_shell/, "Rust app should initialize the shell plugin");
+assert.match(libRs, /tauri_plugin_opener/, "Rust app should initialize the opener plugin");
+assert.match(libRs, /\.opener\(\)\s*[\s\S]*\.open_url\("https:\/\/gameplanjarvisai\.up\.railway\.app"/, "Open Jarvis should use the Tauri opener plugin");
+assert.match(libRs, /\.shell\(\)[\s\S]*\.sidecar\("jarvis-desktop-daemon"\)/, "Rust app should launch the registered sidecar");
+assert.match(libRs, /\.spawn\(\)/, "Rust app should spawn the sidecar");
+assert.match(libRs, /reconnect_daemon/, "Rust app should expose reconnect control");
+assert.match(libRs, /run_verification_again/, "Rust app should expose verification control");
+assert.match(libRs, /jarvis:desktop-connector:awaken/, "verification action should launch the awakening ceremony");
+assert.match(libRs, /BaseDirectory::Resource/, "verification action should use the bundled awakening resource");
+assert.match(libRs, /--window-style[\s\S]*normal/i, "verification action should open a visible PowerShell window");
+
+const appTsx = readText("desktop-connector/src/App.tsx");
+for (const text of ["Jarvis Desktop Connector", "Reconnect", "Run verification again", "Open Jarvis", "Quiet startup"]) {
+  assert.match(appTsx, new RegExp(text), `status UI should include ${text}`);
+}
+assert.doesNotMatch(appTsx, /npm install|PowerShell|command line|\bCLI\b/i, "tray UI should not show setup commands");
+
+const connectorApi = readText("desktop-connector/src/connectorApi.ts");
+for (const command of ["get_status", "reconnect_daemon", "run_verification_again", "open_jarvis"]) {
+  assert.match(connectorApi, new RegExp(command), `connector API should invoke ${command}`);
+}
+
+const sidecarPackage = readJson("desktop-connector/sidecar/package.json");
+assert.equal(sidecarPackage.bin["jarvis-desktop-daemon"], "index.js", "sidecar package should expose the daemon launcher binary");
+assert.match(sidecarPackage.scripts.prepareDaemon, /prepare-daemon\.mjs/);
+assert.match(sidecarPackage.scripts.rename, /rename-sidecar\.mjs/);
+
+const sidecarIndex = readText("desktop-connector/sidecar/index.js");
+assert.match(sidecarIndex, /bundled-daemon[\\/]jarvis-daemon\.js/, "sidecar should require the bundled daemon copy");
+assert.match(sidecarIndex, /JARVIS_DAEMON_PLATFORM/, "sidecar should set desktop daemon platform env");
+assert.match(sidecarIndex, /\.connect\(\)/, "sidecar launcher should call the daemon connect export");
+assert.doesNotMatch(sidecarIndex, /..[\\/]..[\\/]daemon[\\/]jarvis-daemon\.js/, "sidecar should not run daemon from a source repo checkout");
+
+const prepareDaemon = readText("desktop-connector/sidecar/prepare-daemon.mjs");
+assert.match(prepareDaemon, /daemon[\\/]jarvis-daemon\.js/, "prepare step should copy the existing daemon source");
+assert.match(prepareDaemon, /bundled-daemon/, "prepare step should copy into the sidecar package");
+
+const renameSidecar = readText("desktop-connector/sidecar/rename-sidecar.mjs");
+assert.match(renameSidecar, /src-tauri[\\/]binaries/, "rename script should place the sidecar under Tauri binaries");
+assert.match(renameSidecar, /jarvis-desktop-daemon-\$\{targetTriple\}/, "rename script should append the target triple");
+assert.match(renameSidecar, /pc-windows-msvc/, "rename script should default to the Windows target triple");
+
+const daemon = readText("daemon/jarvis-daemon.js");
+assert.match(daemon, /module\.exports\s*=\s*\{[\s\S]*connect,/, "daemon should export connect for the packaged sidecar wrapper");
+
+const assertConfig = readText("desktop-connector/scripts/assert-config.mjs");
+assert.match(assertConfig, /desktopConnectorTauriConfig\.test\.mjs/, "connector config script should delegate to the root static assertions");
+
+const allConnectorFiles = fs
+  .readdirSync(connectorRoot, { recursive: true, withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map((entry) => path.join(entry.parentPath || entry.path, entry.name));
+for (const file of allConnectorFiles) {
+  const text = fs.readFileSync(file, "utf8");
+  assert.doesNotMatch(text, /icon\.(ico|png|icns)|app-icon/i, `${path.relative(repoRoot, file)} should not reference missing icon assets`);
+}
+
+console.log("desktop connector Tauri scaffold assertions passed");

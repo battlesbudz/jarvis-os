@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Jarvis Desktop Connector",
+  "version": "0.1.0",
+  "identifier": "ai.gameplan.jarvis.desktop-connector",
+  "build": {
+    "beforeDevCommand": "npm run sidecar:build && vite --host 127.0.0.1",
+    "beforeBuildCommand": "npm run sidecar:build && vite build",
+    "devUrl": "http://127.0.0.1:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Jarvis Desktop Connector",
+        "width": 560,
+        "height": 390,
+        "resizable": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "externalBin": ["binaries/jarvis-desktop-daemon"],
+    "resources": {
+      "../../scripts/jarvis-desktop-connector-awaken.ps1": "jarvis-desktop-connector-awaken.ps1"
+    }
+  }
+}

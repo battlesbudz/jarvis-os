@@ -32,6 +32,8 @@
     "jarvis:desktop-daemon:install-watchdog": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/install-jarvis-desktop-daemon-watchdog.ps1",
     "jarvis:desktop-daemon:uninstall-watchdog": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/uninstall-jarvis-desktop-daemon-watchdog.ps1",
     "jarvis:desktop-connector:awaken": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/jarvis-desktop-connector-awaken.ps1",
+    "jarvis:desktop-connector:test-config": "node scripts/__tests__/desktopConnectorTauriConfig.test.mjs",
+    "jarvis:desktop-connector:build": "npm --prefix desktop-connector install && npm --prefix desktop-connector run build",
     "jarvis:qa:endpoints": "node scripts/deployed-jarvis-endpoint-qa.mjs",
     "jarvis:qa:composio": "node scripts/composio-production-smoke.mjs",
     "jarvis:qa:agent-sdk-hitl": "tsx scripts/agent-sdk-hitl-smoke.ts",

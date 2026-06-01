@@ -729,6 +729,7 @@ if (require.main === module) {
   connect();
 } else {
   module.exports = {
+    connect,
     handleOp,
     runCodexOAuthPrompt,
     buildCodexSpawnCommand,

@@ -1,0 +1,31 @@
+{
+  "name": "jarvis-desktop-connector",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run sidecar:build && vite build && tauri build",
+    "sidecar:prepare": "node sidecar/prepare-daemon.mjs",
+    "sidecar:rename": "node sidecar/rename-sidecar.mjs",
+    "sidecar:build": "npm run sidecar:prepare && npm --prefix sidecar install && npm --prefix sidecar run build && npm run sidecar:rename",
+    "test:config": "node scripts/assert-config.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-autostart": "^2.0.0",
+    "@tauri-apps/plugin-opener": "^2.0.0",
+    "@tauri-apps/plugin-shell": "^2.0.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "^5.9.2",
+    "vite": "^7.0.0"
+  }
+}

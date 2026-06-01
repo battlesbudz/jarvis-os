@@ -1,0 +1,24 @@
+{
+  "name": "jarvis-desktop-daemon-sidecar",
+  "version": "0.1.0",
+  "private": true,
+  "bin": {
+    "jarvis-desktop-daemon": "index.js"
+  },
+  "scripts": {
+    "prepareDaemon": "node prepare-daemon.mjs",
+    "build": "npm run prepareDaemon && npx --yes @yao-pkg/pkg index.js --targets node22-win-x64 --output dist/jarvis-desktop-daemon.exe",
+    "rename": "node rename-sidecar.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.0.0"
+  },
+  "pkg": {
+    "assets": [
+      "bundled-daemon/jarvis-daemon.js"
+    ]
+  }
+}
