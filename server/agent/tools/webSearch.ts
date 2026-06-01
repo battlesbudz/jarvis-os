@@ -6,6 +6,8 @@ import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/prote
 import {
   buildBrowserSearchFallbackUrls,
   isBrowserSearchChallengeText,
+  isNewsLikeSearchQuery,
+  newsRssSearchFallback,
 } from "./webSearchFallback";
 
 type TavilyLikeResult = Awaited<ReturnType<typeof tavilySearch>>;
@@ -133,6 +135,24 @@ export const webSearchTool: AgentTool = {
         return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
       }
       const query = String(args.query || "");
+      if (isNewsLikeSearchQuery(query)) {
+        try {
+          const newsResults = await newsRssSearchFallback(query);
+          console.log(`[${ctx.channel || "Agent"}] search_web news RSS fallback "${query}"`);
+          return {
+            ok: true,
+            content: newsResults,
+            label: `News search: ${query}`,
+            detail: "Search API not configured; used news RSS fallback.",
+          };
+        } catch (err) {
+          console.warn(
+            `[${ctx.channel || "Agent"}] search_web news RSS fallback failed for "${query}": ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
       try {
         const browserResults = await browserSearchFallback(query, ctx.userId);
         console.log(`[${ctx.channel || "Agent"}] search_web browser fallback "${query}"`);
@@ -232,6 +252,15 @@ export const researchTopicTool: AgentTool = {
       try {
         const sections: string[] = [];
         for (const query of queries.slice(0, 2)) {
+          if (isNewsLikeSearchQuery(query)) {
+            try {
+              const newsResults = await newsRssSearchFallback(query);
+              sections.push(`### Query: ${query}\n${newsResults.slice(0, BROWSER_RESEARCH_TEXT_LIMIT)}`);
+              continue;
+            } catch {
+              // Fall through to browser fallback.
+            }
+          }
           const browserResults = await browserSearchFallback(query, ctx.userId);
           sections.push(`### Query: ${query}\n${browserResults.slice(0, BROWSER_RESEARCH_TEXT_LIMIT)}`);
         }
