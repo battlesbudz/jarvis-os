@@ -49,6 +49,7 @@ import { useAuth, authFetch } from '@/lib/auth-context';
 import * as WebBrowser from 'expo-web-browser';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
+import { ConnectedWindowsPcCard } from '@/components/desktopConnector/ConnectedWindowsPcCard';
 import { checkAndroidApkUpdate } from '@/lib/app-update';
 import {
   CONNECTION_APPS,
@@ -312,7 +313,6 @@ export default function ProfileScreen() {
     desktop_daemon_connected?: boolean;
     android_daemon_connected?: boolean;
   } | null>(null);
-  const [daemonCode, setDaemonCode] = useState<string | null>(null);
   const [daemonPerms, setDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [daemonPermsBusy, setDaemonPermsBusy] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
@@ -1418,20 +1418,37 @@ export default function ProfileScreen() {
     }
   }, [stopTelegramPolling]);
 
+  const handleStartWindowsConnectorSetup = useCallback(() => {
+    router.push('/desktop-connector-setup' as any);
+  }, [router]);
 
+  const handleCheckWindowsConnector = useCallback(() => {
+    loadChannels();
+  }, [loadChannels]);
 
-  const handleGenerateDaemonCode = useCallback(async () => {
+  const handleReconnectWindowsConnector = useCallback(async () => {
     setChannelBusy('desktop-daemon');
     try {
-      const res = await apiRequest('POST', '/api/channels/daemon/code');
-      const data = await res.json();
-      setDaemonCode(data.code);
+      await apiRequest('POST', '/api/desktop-connector/setup-session', {});
+      await loadChannels();
     } catch (err) {
-      console.error('[daemon] code error:', err);
+      console.error('[desktop-connector] reconnect failed:', err);
     } finally {
       setChannelBusy(null);
     }
-  }, []);
+  }, [loadChannels]);
+
+  const handleVerifyWindowsConnector = useCallback(async () => {
+    setChannelBusy('desktop-daemon');
+    try {
+      await apiRequest('POST', '/api/desktop-connector/verify', {});
+      await loadChannels();
+    } catch (err) {
+      console.error('[desktop-connector] verification failed:', err);
+    } finally {
+      setChannelBusy(null);
+    }
+  }, [loadChannels]);
 
   const loadDaemonPerms = useCallback(async () => {
     try {
@@ -1578,8 +1595,7 @@ export default function ProfileScreen() {
     setChannelBusy(channel);
     try {
       await apiRequest('DELETE', `/api/channels/${channel}`);
-      if (channel === 'daemon') { setDaemonCode(null); setAndroidDaemonCode(null); }
-      if (channel === 'desktop-daemon') { setDaemonCode(null); }
+      if (channel === 'daemon') { setAndroidDaemonCode(null); }
       if (channel === 'android-daemon') { setAndroidDaemonCode(null); }
       await loadChannels();
     } catch (err) {
@@ -3282,51 +3298,19 @@ export default function ProfileScreen() {
               </Text>
             </View>
 
-            {/* Desktop Daemon */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#6B72FF18' }]}>
-                <Ionicons name="desktop-outline" size={20} color="#6B72FF" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>Desktop Daemon</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.desktop_daemon_connected
-                    ? `Connected${channelData.meta?.desktop_daemon?.hostname ? ` • ${channelData.meta.desktop_daemon.hostname}` : ''}`
-                    : 'Run the daemon and let the agent control your computer'}
-                </Text>
-              </View>
-              {channelBusy === 'desktop-daemon' ? (
-                <ActivityIndicator size="small" color="#6B72FF" />
-              ) : channelData?.desktop_daemon_connected ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('desktop-daemon')}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={styles.disconnectBtnText}>Unpair</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  style={[styles.connectBtn, { borderColor: '#6B72FF' }]}
-                  onPress={handleGenerateDaemonCode}
-                >
-                  <Text style={[styles.connectBtnText, { color: '#6B72FF' }]}>Pair</Text>
-                </Pressable>
-              )}
-            </View>
-            {daemonCode && (
-              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
-                  Pairing code (valid 15 min):
-                </Text>
-                <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#6B72FF', marginBottom: 8 }}>
-                  {daemonCode}
-                </Text>
-                <Text selectable style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18 }}>
-                  On your computer, install the daemon (`cd daemon && npm install`) then run:
-                </Text>
-                <Text selectable style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.text, backgroundColor: Colors.background, padding: 8, marginTop: 6, borderRadius: 6 }}>
-                  JARVIS_SERVER={'<your-app-url>'} JARVIS_PAIR_CODE={daemonCode} node jarvis-daemon.js
-                </Text>
-              </View>
-            )}
+            {/* Desktop connector */}
+            <ConnectedWindowsPcCard
+              connected={!!channelData?.desktop_daemon_connected}
+              computerName={channelData?.meta?.desktop_daemon?.hostname ?? null}
+              lastSeenAt={channelData?.meta?.desktop_daemon?.lastSeenAt ?? null}
+              busy={channelBusy === 'desktop-daemon'}
+              onStartSetup={handleStartWindowsConnectorSetup}
+              onCheckConnection={handleCheckWindowsConnector}
+              onReconnect={handleReconnectWindowsConnector}
+              onVerify={handleVerifyWindowsConnector}
+              onTroubleshoot={loadDaemonPerms}
+              onUninstall={() => handleUnlinkChannel('desktop-daemon')}
+            />
 
             {/* Daemon per-action permissions — gates what the agent can do on the user's machine */}
             {daemonPerms && (
