@@ -1119,6 +1119,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       toolChoice,
       maxCompletionTokens,
       stream: !!onToken,
+      userId: context.userId,
       signal,
     });
 
@@ -1558,6 +1559,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       toolChoice: "none",
       maxCompletionTokens,
       stream: !!onToken,
+      userId: context.userId,
       signal,
     });
     reply = finalResult.textContent;

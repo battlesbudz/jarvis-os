@@ -60,6 +60,7 @@ export interface RoutedModelTurnParams {
   toolChoice?: "auto" | "required" | "none";
   maxCompletionTokens: number;
   stream?: boolean;
+  userId?: string;
   signal?: AbortSignal;
   logPrefix?: string;
 }
@@ -520,6 +521,7 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
       toolChoice: routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),
       maxCompletionTokens: params.maxCompletionTokens,
       stream: params.stream ?? false,
+      userId: params.userId,
       signal: params.signal,
     },
     logPrefix,

@@ -48,6 +48,7 @@ export async function planResearch(
       maxCompletionTokens: 512,
       stream: false,
       toolChoice: "none",
+      userId,
       logPrefix: "[DeepResearchPlanner]",
       messages: [
         {

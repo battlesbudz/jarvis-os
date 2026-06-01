@@ -100,6 +100,7 @@ async function judgeOutputs(opts: {
   task: string;
   outputs: TournamentOutput[];
   criteria: string;
+  userId?: string;
 }): Promise<{ scores: TournamentScore[]; winnerIndex: number }> {
   // Build output block preserving original agentIndex values.
   const outputBlock = opts.outputs
@@ -116,6 +117,7 @@ async function judgeOutputs(opts: {
     maxCompletionTokens: 1024,
     stream: false,
     toolChoice: "none",
+    userId: opts.userId,
     logPrefix: "[TournamentJudge]",
     messages: [
       {
@@ -226,7 +228,7 @@ export async function runTournament(opts: TournamentOptions): Promise<Tournament
   let winnerIndex = 0;
 
   try {
-    const judgment = await judgeOutputs({ task: opts.task, outputs, criteria });
+    const judgment = await judgeOutputs({ task: opts.task, outputs, criteria, userId: opts.context.userId });
     scores = judgment.scores;
     winnerIndex = judgment.winnerIndex;
   } catch (err) {

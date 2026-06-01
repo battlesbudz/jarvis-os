@@ -217,6 +217,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
         { role: "user", content: prompt },
       ],
       maxCompletionTokens: 250,
+      userId: input.userId,
       logPrefix: "[MemoryExtract]",
     });
 

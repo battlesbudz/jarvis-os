@@ -16,6 +16,7 @@ interface NotificationEventMsg { type: "notification_event"; notification: Phone
 export type DaemonOp =
   | { type: "ping" }
   | { type: "shell"; cmd: string; cwd?: string; timeoutMs?: number; allowOutsideRoot?: boolean }
+  | { type: "codex_oauth_prompt"; prompt: string; command?: string; timeoutMs?: number }
   | { type: "notify"; title: string; body: string }
   | { type: "file_read"; path: string }
   | { type: "file_write"; path: string; content: string }
@@ -222,6 +223,10 @@ function nextOpId(): string {
 
 function socketKey(userId: string, platform: string): string {
   return `${userId}:${platform}`;
+}
+
+function normalizeDaemonPlatform(platform: unknown): "desktop" | "android" {
+  return String(platform || "").toLowerCase() === "android" ? "android" : "desktop";
 }
 
 export function isUserPaired(userId: string): boolean {
@@ -538,6 +543,15 @@ export async function sendDaemonOp(
   // ── Bridge-level Android permission gate ──────────────────────────────────
   // Enforce permission checks at the bridge layer so no code path can bypass
   // the user's permission settings, even if the tool layer check is skipped.
+  if (!isAndroidOp && !isPlatformNeutral && op.type === "codex_oauth_prompt") {
+    const allowed = await isDaemonActionAllowed(userId, "shell");
+    if (!allowed) {
+      const msg = "Desktop daemon Shell Execution is disabled. Enable it in Profile -> Connected Channels -> Desktop Daemon before using Codex OAuth through the daemon.";
+      console.log(`[daemon] op BLOCKED (bridge-level permission) userId=${userId} op=${op.type} perm=shell`);
+      return { ok: false, error: msg };
+    }
+  }
+
   if (isAndroidOp) {
     const OP_PERM_MAP: Partial<Record<string, AndroidDaemonAction>> = {
       android_camera_snap:    "android_camera",
@@ -638,14 +652,18 @@ async function consumePairingCode(code: string): Promise<string | null> {
 
 async function recordDaemonLink(userId: string, daemonId: string, meta: Record<string, unknown>): Promise<void> {
   try {
-    const platform = (meta.platform as string | undefined) || "desktop";
+    const rawPlatform = meta.platform as string | undefined;
+    const platform = normalizeDaemonPlatform(rawPlatform);
     // Find existing rows and preserve permissions from the same-platform row.
     const existing = await db.select().from(channelLinks)
       .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, "daemon")));
-    const mergedMeta: Record<string, unknown> = { ...meta };
+    const mergedMeta: Record<string, unknown> = { ...meta, platform };
+    if (rawPlatform && rawPlatform !== platform && !mergedMeta.osPlatform) {
+      mergedMeta.osPlatform = rawPlatform;
+    }
     for (const row of existing) {
       const prior = (row.metadata as Record<string, unknown> | null) || {};
-      const priorPlatform = (prior.platform as string | undefined) || "desktop";
+      const priorPlatform = normalizeDaemonPlatform(prior.platform);
       if (priorPlatform === platform) {
         // Preserve existing permissions for this platform
         if (prior.permissions && !mergedMeta.permissions) {
@@ -659,7 +677,7 @@ async function recordDaemonLink(userId: string, daemonId: string, meta: Record<s
     // Delete only the existing row for this platform (preserve the other platform's row)
     for (const row of existing) {
       const priorMeta = (row.metadata as Record<string, unknown> | null) || {};
-      const priorPlatform = (priorMeta.platform as string | undefined) || "desktop";
+      const priorPlatform = normalizeDaemonPlatform(priorMeta.platform);
       if (priorPlatform === platform) {
         await db.delete(channelLinks).where(eq(channelLinks.id, row.id));
       }
@@ -746,11 +764,17 @@ export function startDaemonBridge(server: HttpServer): void {
           if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
           // Update metadata with fresh hostname/platform if provided
           if (rm.hostname) storedMeta.hostname = rm.hostname;
-          if (rm.platform) storedMeta.platform = rm.platform;
+          if (rm.platform) {
+            const rawPlatform = rm.platform;
+            const normalizedPlatform = normalizeDaemonPlatform(rawPlatform);
+            storedMeta.platform = normalizedPlatform;
+            if (rawPlatform !== normalizedPlatform && !storedMeta.osPlatform) storedMeta.osPlatform = rawPlatform;
+          }
+          const reconnPlatform = normalizeDaemonPlatform(storedMeta.platform);
+          storedMeta.platform = reconnPlatform;
           await db.update(channelLinks)
             .set({ metadata: storedMeta, lastSeenAt: new Date() })
             .where(eq(channelLinks.id, row.id));
-          const reconnPlatform = (storedMeta.platform as string | undefined) || "desktop";
           pairedPlatform = reconnPlatform;
           const reconnKey = socketKey(pairedUserId, reconnPlatform);
           const prior = userSockets.get(reconnKey);
@@ -783,11 +807,13 @@ export function startDaemonBridge(server: HttpServer): void {
         const daemonId = randomBytes(16).toString("hex");
         const reconnectSecret = randomBytes(32).toString("hex");
         const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
-        const pairPlatform = m.platform || "desktop";
+        const rawPairPlatform = m.platform || "desktop";
+        const pairPlatform = normalizeDaemonPlatform(rawPairPlatform);
         pairedPlatform = pairPlatform;
         await recordDaemonLink(userId, daemonId, {
           hostname: m.hostname || "unknown",
           platform: pairPlatform,
+          ...(rawPairPlatform !== pairPlatform ? { osPlatform: rawPairPlatform } : {}),
           reconnectSecretHash,
         });
         // Replace any prior socket for the same platform only

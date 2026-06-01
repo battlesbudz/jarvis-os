@@ -453,6 +453,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
       toolChoice: "none",
       maxCompletionTokens: 8,
       stream: false,
+      userId,
       logPrefix: "[DiagnosticsProviderProbe]",
     });
     openAiLatencyMs = Date.now() - openAiProbeStart;
@@ -762,6 +763,7 @@ Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not
       toolChoice: "none",
       maxCompletionTokens: 400,
       stream: false,
+      userId,
       logPrefix: "[DiagnosticsDiagnosis]",
     });
     const diagnosis = resp.textContent?.trim();

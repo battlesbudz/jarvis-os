@@ -13,10 +13,44 @@ const CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ??
 const CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 120_000);
 const CODEX_GATEWAY_RETRY_COUNT = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_COUNT ?? 2));
 const CODEX_GATEWAY_RETRY_BASE_DELAY_MS = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_BASE_DELAY_MS ?? 1500));
+const CODEX_DAEMON_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_DAEMON_TIMEOUT_MS ?? CODEX_EXEC_TIMEOUT_MS + 15_000);
 
 export type CodexOAuthOrchestratorOutput =
   | { type: "final"; content: string }
   | { type: "tool_calls"; toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] };
+
+export interface CodexOAuthDaemonBridge {
+  isDesktopDaemonActive(userId: string): boolean;
+  listPairedUsers?: () => string[];
+  isDaemonActionAllowed(userId: string, action: "shell"): Promise<boolean>;
+  sendDaemonOp(
+    userId: string,
+    op: {
+      type: "codex_oauth_prompt";
+      prompt: string;
+      command?: string;
+      timeoutMs?: number;
+    },
+    timeoutMs?: number,
+  ): Promise<{ ok: boolean; data?: unknown; error?: string }>;
+}
+
+let daemonBridgeForTesting: CodexOAuthDaemonBridge | null = null;
+
+export function _setCodexOAuthDaemonBridgeForTesting(bridge: CodexOAuthDaemonBridge | null): void {
+  daemonBridgeForTesting = bridge;
+}
+
+async function getCodexOAuthDaemonBridge(): Promise<CodexOAuthDaemonBridge> {
+  if (daemonBridgeForTesting) return daemonBridgeForTesting;
+  const bridge = await import("../../daemon/bridge");
+  return {
+    isDesktopDaemonActive: bridge.isDesktopDaemonActive,
+    listPairedUsers: bridge.listPairedUsers,
+    isDaemonActionAllowed: (userId, action) => bridge.isDaemonActionAllowed(userId, action),
+    sendDaemonOp: bridge.sendDaemonOp,
+  };
+}
 
 function textFromContent(content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"]): string {
   if (typeof content === "string") return content;
@@ -121,14 +155,36 @@ function getCodexGatewayUrl(): string | null {
 
 export function missingCodexGatewayMessage(): string {
   return [
-    "Codex OAuth provider is configured for gateway-only mode, but JARVIS_CODEX_GATEWAY_URL is not set.",
-    "Jarvis server chat must use the Battles-PC Tailscale Codex gateway; it should not spawn local codex from the server process.",
-    "Set JARVIS_CODEX_GATEWAY_URL and JARVIS_CODEX_GATEWAY_TOKEN, then verify with npm.cmd run jarvis:oauth:gateway -- --check.",
+    "Codex OAuth provider has no available runtime.",
+    "Set JARVIS_CODEX_RUNTIME=daemon and connect the Desktop Daemon on the machine where Codex is logged in, or set JARVIS_CODEX_RUNTIME=gateway with JARVIS_CODEX_GATEWAY_URL and JARVIS_CODEX_GATEWAY_TOKEN.",
+    "Jarvis will not charge an OpenAI API key for this route; it runs Codex OAuth through the configured gateway or paired desktop daemon.",
   ].join(" ");
 }
 
 function getCodexGatewayToken(): string | null {
   return process.env.JARVIS_CODEX_GATEWAY_TOKEN?.trim() || null;
+}
+
+function isCodexDaemonRuntimeEnabled(): boolean {
+  const raw = process.env.JARVIS_CODEX_DAEMON_ENABLED?.trim().toLowerCase();
+  return raw !== "false" && raw !== "0";
+}
+
+function getCodexRuntimePreference(): "auto" | "gateway" | "daemon" {
+  const raw = process.env.JARVIS_CODEX_RUNTIME?.trim().toLowerCase();
+  if (raw === "daemon" || raw === "desktop-daemon" || raw === "desktop_daemon") return "daemon";
+  if (raw === "gateway" || raw === "tailscale-gateway" || raw === "tailscale_gateway") return "gateway";
+  return "auto";
+}
+
+function missingCodexDaemonMessage(userId?: string): string {
+  const userScope = userId
+    ? "No active Desktop Daemon with Shell Execution is available for this user."
+    : "No userId was supplied, so Jarvis cannot select a user-scoped Desktop Daemon.";
+  return [
+    userScope,
+    "Connect the Desktop Daemon on the machine where `codex login` is active, enable Shell Execution in Connected Channels, or configure JARVIS_CODEX_GATEWAY_URL instead.",
+  ].join(" ");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -214,11 +270,14 @@ export function buildCodexOAuthProviderPrompt(params: ProviderQueryParams): stri
           : "Use tools only when they are necessary to satisfy the user's request.",
         "Available tools:",
         JSON.stringify(
-          params.tools?.map((tool) => ({
-            name: tool.function.name,
-            description: tool.function.description,
-            parameters: tool.function.parameters,
-          })) ?? [],
+          params.tools?.flatMap((tool) => {
+            if (tool.type !== "function") return [];
+            return [{
+              name: tool.function.name,
+              description: tool.function.description,
+              parameters: tool.function.parameters,
+            }];
+          }) ?? [],
           null,
           2,
         ),
@@ -369,6 +428,81 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl: string, prompt: string, sig
   throw new Error(codexGatewayFailureMessage(gatewayUrl, lastError, maxAttempts), { cause: lastError });
 }
 
+function abortableDaemonResult<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new DOMException("Codex OAuth provider aborted", "AbortError"));
+
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(new DOMException("Codex OAuth provider aborted", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", abort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", abort);
+        reject(error);
+      },
+    );
+  });
+}
+
+function contentFromDaemonResult(data: unknown): string {
+  if (typeof data === "string") return data.trim();
+  if (!data || typeof data !== "object") return "";
+  const record = data as Record<string, unknown>;
+  const content = record.content ?? record.stdout ?? record.output;
+  return typeof content === "string" ? content.trim() : "";
+}
+
+export async function runDaemonCodexOAuthPrompt(userId: string | undefined, prompt: string, signal?: AbortSignal): Promise<string> {
+  if (!isCodexDaemonRuntimeEnabled()) {
+    throw new Error("Desktop daemon Codex OAuth runtime is disabled by JARVIS_CODEX_DAEMON_ENABLED.");
+  }
+  const bridge = await getCodexOAuthDaemonBridge();
+  if (!userId && bridge.listPairedUsers) {
+    const activeDesktopUsers = bridge.listPairedUsers().filter((candidateUserId) =>
+      bridge.isDesktopDaemonActive(candidateUserId),
+    );
+    if (activeDesktopUsers.length === 1) {
+      userId = activeDesktopUsers[0];
+      console.warn("[CodexOAuth] No userId supplied; using the single active desktop daemon user.");
+    }
+  }
+  if (!userId) throw new Error(missingCodexDaemonMessage(userId));
+
+  if (!bridge.isDesktopDaemonActive(userId)) throw new Error(missingCodexDaemonMessage(userId));
+
+  const shellAllowed = await bridge.isDaemonActionAllowed(userId, "shell").catch(() => false);
+  if (!shellAllowed) throw new Error(missingCodexDaemonMessage(userId));
+
+  const result = await abortableDaemonResult(
+    bridge.sendDaemonOp(
+      userId,
+      {
+        type: "codex_oauth_prompt",
+        prompt,
+        command: getCodexOAuthCommand(),
+        timeoutMs: CODEX_EXEC_TIMEOUT_MS,
+      },
+      CODEX_DAEMON_TIMEOUT_MS,
+    ),
+    signal,
+  );
+
+  if (!result.ok) {
+    throw new Error(`Desktop daemon Codex OAuth failed: ${result.error || "unknown daemon error"}`);
+  }
+
+  const content = contentFromDaemonResult(result.data);
+  if (!content) {
+    throw new Error("Desktop daemon Codex OAuth returned no content.");
+  }
+
+  return content;
+}
+
 export class CodexOAuthProvider extends BaseProvider {
   async initialize(): Promise<void> {
     // Codex is launched per request so it can use the host's current OAuth login.
@@ -381,8 +515,30 @@ export class CodexOAuthProvider extends BaseProvider {
   async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
     const prompt = buildCodexOAuthProviderPrompt(params);
     const gatewayUrl = getCodexGatewayUrl();
-    if (!gatewayUrl) throw new Error(missingCodexGatewayMessage());
-    const answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
+    const runtime = getCodexRuntimePreference();
+    let answer: string;
+    if (runtime === "daemon") {
+      try {
+        answer = await runDaemonCodexOAuthPrompt(params.userId, prompt, params.signal);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${missingCodexGatewayMessage()} ${detail}`, { cause: error });
+      }
+    } else if (runtime === "gateway") {
+      if (!gatewayUrl) throw new Error("JARVIS_CODEX_RUNTIME=gateway requires JARVIS_CODEX_GATEWAY_URL.");
+      answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
+    } else if (gatewayUrl) {
+      answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
+    } else if (isCodexDaemonRuntimeEnabled()) {
+      try {
+        answer = await runDaemonCodexOAuthPrompt(params.userId, prompt, params.signal);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(`${missingCodexGatewayMessage()} ${detail}`, { cause: error });
+      }
+    } else {
+      throw new Error(missingCodexGatewayMessage());
+    }
     const parsed = parseCodexOAuthOrchestratorOutput(answer);
 
     if (parsed.type === "tool_calls") {

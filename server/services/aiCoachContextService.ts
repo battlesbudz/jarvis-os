@@ -39,6 +39,7 @@ export async function runCoachModelTurn(
     toolChoice: "auto" | "required" | "none";
     maxCompletionTokens: number;
     signal?: AbortSignal;
+    userId?: string;
     logPrefix: string;
   },
 ): Promise<ProviderTurnResult> {
@@ -48,6 +49,7 @@ export async function runCoachModelTurn(
     tools: params.tools,
     toolChoice: params.toolChoice,
     maxCompletionTokens: params.maxCompletionTokens,
+    userId: params.userId,
     signal: params.signal,
     logPrefix: params.logPrefix,
   });

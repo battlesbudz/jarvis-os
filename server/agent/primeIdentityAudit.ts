@@ -201,6 +201,7 @@ Output JSON only.`;
         maxCompletionTokens: 2048,
         stream: false,
         toolChoice: "none",
+        userId,
         logPrefix: "[PrimeAudit]",
         messages: [
           { role: "system", content: systemPrompt },

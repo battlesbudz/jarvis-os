@@ -37,6 +37,7 @@ async function routeOrchestratorText(opts: {
   system?: string;
   user: string;
   maxCompletionTokens: number;
+  userId?: string;
 }): Promise<string> {
   const messages = opts.system
     ? [
@@ -51,6 +52,7 @@ async function routeOrchestratorText(opts: {
     toolChoice: "none",
     maxCompletionTokens: opts.maxCompletionTokens,
     stream: false,
+    userId: opts.userId,
     logPrefix: `[orchestrator/${opts.label}]`,
   });
 
@@ -168,6 +170,7 @@ async function decomposeRequest(
   const text = await routeOrchestratorText({
     label: "decompose",
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
+    userId,
     system: `You are PRIME, an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
 2. Have a short label (5-8 words)
@@ -212,12 +215,14 @@ Keep sub-tasks minimal — only decompose when there are genuinely independent p
 async function verifyResult(
   task: SubTask,
   result: string,
+  userId: string,
   correctionContext?: string,
 ): Promise<{ passed: boolean; reason: string }> {
   try {
     const text = await routeOrchestratorText({
       label: "verify",
       maxCompletionTokens: 512,
+      userId,
       system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only — no other text: {"passed": true/false, "reason": "brief explanation"}`,
       user: [
         `Sub-task: ${task.label}`,
@@ -254,6 +259,7 @@ async function synthesizeFinalAnswer(
   userRequest: string,
   systemContext: string,
   results: SubTaskResult[],
+  userId: string,
 ): Promise<string> {
   const resultsSummary = results
     .map((r) => `### ${r.label}\n${r.result}`)
@@ -262,6 +268,7 @@ async function synthesizeFinalAnswer(
   const text = await routeOrchestratorText({
     label: "synthesize",
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
+    userId,
     system: `You are Jarvis, an intelligent personal assistant. You have received results from multiple specialized sub-agents. Synthesize their findings into a single, coherent, helpful response addressed directly to the user. Be concise but complete. Use the system context to match the appropriate tone and format.
 
 ${systemContext}`,
@@ -494,7 +501,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       }
 
       // Strict verification — fail-safe on errors
-      const verification = await verifyResult(task, taskResult, correctionContext);
+      const verification = await verifyResult(task, taskResult, userId, correctionContext);
       verificationReason = verification.reason;
 
       if (verification.passed) {
@@ -559,7 +566,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   // Step 3: Synthesize final answer via Claude (always — no single-task bypass)
   let finalAnswer: string;
   try {
-    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults);
+    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, userId);
   } catch (err) {
     console.error("[orchestrator] synthesis failed:", err);
     finalAnswer = allResults.map((r) => r.result).join("\n\n");
@@ -640,6 +647,7 @@ export async function verifyJobOutput(opts: {
   originalPrompt: string;
   result: string;
   orchestratorModel: string;
+  userId?: string;
   correctionContext?: string;
 }): Promise<{ passed: boolean | null; reason: string }> {
   const VERIFY_TIMEOUT_MS = 8000;
@@ -653,6 +661,7 @@ export async function verifyJobOutput(opts: {
       maxCompletionTokens: 512,
       stream: false,
       toolChoice: "none",
+      userId: opts.userId,
       logPrefix: "[JobVerifier]",
       messages: [
         {

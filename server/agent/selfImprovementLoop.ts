@@ -370,6 +370,7 @@ async function _runCycleInner(
         maxCompletionTokens: 2048,
         stream: false,
         toolChoice: 'none',
+        userId,
         signal,
         logPrefix: '[SelfImprovement]',
         messages: [

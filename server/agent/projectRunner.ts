@@ -296,6 +296,7 @@ export async function runProjectSession(
           originalPrompt: `Phase: ${step.phase}\nLabel: ${step.label}\nAcceptance criteria: ${step.acceptance_criteria || "step completed successfully"}`,
           result: reply,
           orchestratorModel: orchModel,
+          userId: project.userId,
           correctionContext,
         });
 

@@ -223,6 +223,7 @@ async function callInnerLLM(
   errorLogs: string,
   files: Array<{ path: string; content: string }>,
   previousTypeCheckOutput: string | null,
+  userId?: string,
 ): Promise<InnerFixPlan> {
   const filesSection =
     files.length > 0
@@ -244,6 +245,7 @@ async function callInnerLLM(
     maxCompletionTokens: INNER_MAX_TOKENS,
     stream: false,
     toolChoice: "none",
+    userId,
     logPrefix: "[SelfHealInner]",
     messages: [
       { role: "system", content: INNER_SYSTEM_PROMPT },
@@ -415,7 +417,7 @@ export const selfHealTool: AgentTool = {
       sendProgress(`[${iterLabel}] Generating fix plan (analysing ${relevantFiles.length} file(s))…`);
       let plan: InnerFixPlan;
       try {
-        plan = await callInnerLLM(description, errorLogs, relevantFiles, lastTypeCheckOutput);
+        plan = await callInnerLLM(description, errorLogs, relevantFiles, lastTypeCheckOutput, ctx.userId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         sendProgress(`[${iterLabel}] Inner LLM error: ${errMsg}`);
@@ -760,6 +762,7 @@ export const selfHealTool: AgentTool = {
           originalPrompt: `Problem: ${description}\n\nDiff applied:\n${changeSummary}`,
           result: `Type-check: PASSED\nTests: PASSED${allToolNames.length > 0 ? `\nSmoke-tests: PASSED (${allToolNames.join(", ")})` : ""}\n\nSummary of changes:\n${changeSummary}`,
           orchestratorModel: orchModel,
+          userId: ctx.userId,
         });
         aiReviewPassed = aiReview.passed;
         aiReviewReason = aiReview.reason;

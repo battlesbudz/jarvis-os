@@ -1035,6 +1035,7 @@ Use project_shell for ALL file system operations and commands. Never touch Jarvi
           originalPrompt: `Phase: ${step.phase}\nLabel: ${step.label}\nAcceptance criteria: ${acceptanceCriteria}`,
           result: reply,
           orchestratorModel: orchModel,
+          userId: project.userId,
           correctionContext,
         });
 

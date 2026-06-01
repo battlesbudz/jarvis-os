@@ -1210,6 +1210,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
             originalPrompt: job.prompt,
             result: customSub.body,
             orchestratorModel: orchModel,
+            userId: job.userId,
             correctionContext,
           });
 
@@ -1638,6 +1639,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
           maxCompletionTokens: 8192,
           stream: false,
           toolChoice: "none",
+          userId: job.userId,
           logPrefix: "[BuildFeaturePlan]",
           messages: [
             {
@@ -1808,6 +1810,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             originalPrompt: `Step: ${step.label}\nAcceptance criteria: ${step.acceptance_criteria}`,
             result: verifyInput,
             orchestratorModel: orchModel,
+            userId: job.userId,
             correctionContext,
           });
 
@@ -1922,6 +1925,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           maxCompletionTokens: 600,
           stream: false,
           toolChoice: "none",
+          userId: job.userId,
           logPrefix: "[BuildFeatureSynthesis]",
           messages: [
             {
@@ -2400,6 +2404,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           originalPrompt: job.prompt,
           result: sub.body,
           orchestratorModel: orchModel,
+          userId: job.userId,
           correctionContext,
         });
 

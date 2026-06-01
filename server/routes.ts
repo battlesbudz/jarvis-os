@@ -33,7 +33,7 @@ import {
   sendGmailEmail,
 } from "./integrations/gmail";
 import { getSlackMessages } from "./integrations/slack";
-import { authRouter, authMiddleware } from "./auth";
+import { authRouter, authMiddleware, getUserIdFromRequest } from "./auth";
 import { mobileAuthRouter } from "./mobileAuthRoutes";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
@@ -2074,7 +2074,7 @@ Answer (yes/no):`,
     try {
       const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId, originChannel: rawOriginChannel } = req.body;
       const originChannel: string = (typeof rawOriginChannel === "string" && rawOriginChannel.trim()) ? rawOriginChannel.trim().toLowerCase() : "appchat";
-      userId = req.userId;
+      userId = req.userId ?? await getUserIdFromRequest(req);
 
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
@@ -2748,6 +2748,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             toolChoice: (turn === 0 && (isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest || toolAwareRoute.shouldPreferTool)) ? "required" : "auto",
             maxCompletionTokens: 2048,
             signal,
+            userId: userId ?? undefined,
             logPrefix: "[CoachChat]",
           });
 
@@ -3713,6 +3714,7 @@ Return ONLY the JSON object.`;
         tier: "cheap",
         messages: [{ role: "user", content: prompt }],
         maxCompletionTokens: 600,
+        userId: req.userId ?? undefined,
         logPrefix: "[CoachSuggestions]",
       });
 

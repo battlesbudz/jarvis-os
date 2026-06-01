@@ -26,12 +26,74 @@ function arg(name) {
   return idx >= 0 ? process.argv[idx + 1] : undefined;
 }
 
-const SERVER = arg("server") || process.env.JARVIS_SERVER;
-const CODE = arg("code") || process.env.JARVIS_PAIR_CODE;
-const ROOT = path.resolve(arg("root") || process.env.JARVIS_DAEMON_ROOT || path.join(os.homedir(), "jarvis-workspace"));
+function normalizeDaemonPlatform(platform) {
+  return String(platform || "").toLowerCase() === "android" ? "android" : "desktop";
+}
 
-if (!SERVER || !CODE) {
+function defaultDaemonStatePath() {
+  if (process.env.JARVIS_DAEMON_STATE_PATH) return process.env.JARVIS_DAEMON_STATE_PATH;
+  const base = process.env.APPDATA || path.join(os.homedir(), ".jarvis");
+  return path.join(base, "Jarvis", "desktop-daemon-state.json");
+}
+
+function loadDaemonReconnectState(statePath) {
+  try {
+    if (!statePath || !fs.existsSync(statePath)) return null;
+    const parsed = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.daemonId !== "string" || typeof parsed.reconnectSecret !== "string") return null;
+    return {
+      daemonId: parsed.daemonId,
+      reconnectSecret: parsed.reconnectSecret,
+      server: typeof parsed.server === "string" ? parsed.server : undefined,
+      root: typeof parsed.root === "string" ? parsed.root : undefined,
+      platform: normalizeDaemonPlatform(parsed.platform),
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function saveDaemonReconnectState(statePath, state) {
+  if (!statePath || !state?.daemonId || !state?.reconnectSecret) return;
+  const dir = path.dirname(statePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const payload = {
+    daemonId: String(state.daemonId),
+    reconnectSecret: String(state.reconnectSecret),
+    server: state.server ? String(state.server) : undefined,
+    root: state.root ? String(state.root) : undefined,
+    platform: normalizeDaemonPlatform(state.platform),
+  };
+  const tmp = `${statePath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(tmp, statePath);
+}
+
+function clearDaemonReconnectState(statePath) {
+  try {
+    if (statePath && fs.existsSync(statePath)) fs.unlinkSync(statePath);
+  } catch (_) {
+    // Best-effort cleanup; a later successful pair will overwrite the state.
+  }
+}
+
+function sameServer(a, b) {
+  if (!a || !b) return true;
+  return String(a).replace(/\/+$/, "") === String(b).replace(/\/+$/, "");
+}
+
+const STATE_PATH = path.resolve(arg("state") || defaultDaemonStatePath());
+const LOADED_STATE = loadDaemonReconnectState(STATE_PATH);
+const SERVER = arg("server") || process.env.JARVIS_SERVER || LOADED_STATE?.server;
+const CODE = arg("code") || process.env.JARVIS_PAIR_CODE;
+const ACTIVE_STATE = LOADED_STATE && sameServer(LOADED_STATE.server, SERVER) ? LOADED_STATE : null;
+const ROOT = path.resolve(arg("root") || process.env.JARVIS_DAEMON_ROOT || ACTIVE_STATE?.root || path.join(os.homedir(), "jarvis-workspace"));
+const DAEMON_PLATFORM = normalizeDaemonPlatform(process.env.JARVIS_DAEMON_PLATFORM || ACTIVE_STATE?.platform || "desktop");
+
+if (require.main === module && (!SERVER || (!CODE && !ACTIVE_STATE?.daemonId))) {
   console.error("Usage: JARVIS_SERVER=<url> JARVIS_PAIR_CODE=<code> node jarvis-daemon.js");
+  console.error(`Or reconnect with saved state at: ${STATE_PATH}`);
   process.exit(1);
 }
 
@@ -194,6 +256,101 @@ function runShell(cmd, cwd, timeoutMs) {
   });
 }
 
+function buildCodexSpawnCommand(command, args) {
+  const rawCommand = String(command || "").trim() || "codex";
+  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(rawCommand)) {
+    return {
+      command: process.env.ComSpec || "cmd.exe",
+      args: ["/d", "/s", "/c", rawCommand, ...args],
+    };
+  }
+  return { command: rawCommand, args };
+}
+
+function findInstalledCodexCommand(command) {
+  const configured = String(command || process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND || "").trim();
+  if (configured && configured !== "codex") return configured;
+
+  const candidates = [];
+  if (process.platform === "win32") {
+    if (process.env.APPDATA) {
+      candidates.push(path.join(process.env.APPDATA, "npm", "codex.cmd"));
+      candidates.push(path.join(process.env.APPDATA, "npm", "codex.exe"));
+    }
+    if (process.env.LOCALAPPDATA) {
+      candidates.push(path.join(process.env.LOCALAPPDATA, "OpenAI", "Codex", "bin", "codex.exe"));
+      candidates.push(path.join(process.env.LOCALAPPDATA, "Microsoft", "WindowsApps", "codex.exe"));
+    }
+  }
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch (_) {
+      // ignore inaccessible candidates
+    }
+  }
+
+  return configured || "codex";
+}
+
+async function runCodexOAuthPrompt(command, prompt, timeoutMs) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "jarvis-codex-oauth-"));
+  const outputPath = path.join(dir, "answer.txt");
+  const codexCommand = findInstalledCodexCommand(command);
+
+  try {
+    await new Promise((resolve, reject) => {
+      const codex = buildCodexSpawnCommand(codexCommand, [
+        "exec",
+        "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "--output-last-message",
+        outputPath,
+        "-",
+      ]);
+      const child = spawn(codex.command, codex.args, {
+        cwd: ROOT,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+
+      let stderr = "";
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        try { child.kill(); } catch (_) { /* noop */ }
+        reject(new Error("Codex OAuth provider timed out."));
+      }, timeoutMs || Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS || 300000));
+
+      const finish = (fn) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        fn();
+      };
+
+      child.stderr.on("data", (chunk) => {
+        stderr += String(chunk);
+      });
+      child.on("error", (error) => finish(() => reject(error)));
+      child.on("close", (code) => {
+        finish(() => {
+          if (code === 0) resolve();
+          else reject(new Error(stderr || `Codex OAuth provider exited with ${code}.`));
+        });
+      });
+      child.stdin.end(String(prompt || ""));
+    });
+
+    return fs.readFileSync(outputPath, "utf8").trim();
+  } finally {
+    try { fs.rmSync(dir, { force: true, recursive: true }); } catch (_) { /* noop */ }
+  }
+}
+
 async function handleOp(op) {
   try {
     if (op.type === "notify") {
@@ -211,6 +368,12 @@ async function handleOp(op) {
         };
       }
       return await runShell(String(op.cmd), op.cwd, op.timeoutMs);
+    }
+    if (op.type === "codex_oauth_prompt") {
+      const prompt = String(op.prompt || "").trim();
+      if (!prompt) return { ok: false, error: "prompt is required" };
+      const content = await runCodexOAuthPrompt(op.command, prompt, op.timeoutMs);
+      return { ok: true, content };
     }
     if (op.type === "file_read") {
       const p = safePath(op.path);
@@ -468,10 +631,10 @@ const MAX_BACKOFF = 60000;
 
 // Credentials stored after first successful pair for reconnect auth.
 // daemonId and reconnectSecret are server-generated and persisted for the
-// lifetime of this process; on Wi-Fi drop / server restart the daemon
+// lifetime of this process and on disk; on Wi-Fi drop / server restart the daemon
 // reconnects with reconnectSecret proof-of-possession instead of code.
-let storedDaemonId = null;
-let storedReconnectSecret = null;
+let storedDaemonId = ACTIVE_STATE?.daemonId || null;
+let storedReconnectSecret = ACTIVE_STATE?.reconnectSecret || null;
 
 function connect() {
   const url = wsUrl(SERVER);
@@ -489,14 +652,14 @@ function connect() {
         daemonId: storedDaemonId,
         reconnectSecret: storedReconnectSecret,
         hostname: os.hostname(),
-        platform: process.platform,
+        platform: DAEMON_PLATFORM,
       }));
     } else {
       ws.send(JSON.stringify({
         type: "pair",
         code: CODE,
         hostname: os.hostname(),
-        platform: process.platform,
+        platform: DAEMON_PLATFORM,
       }));
     }
   });
@@ -511,6 +674,7 @@ function connect() {
         if (msg.error && (msg.error.includes("invalid reconnect secret") || msg.error.includes("re-pair") || msg.error.includes("legacy"))) {
           storedDaemonId = null;
           storedReconnectSecret = null;
+          clearDaemonReconnectState(STATE_PATH);
         }
         try { ws.close(); } catch (_) { /* noop */ }
         process.exit(2);
@@ -521,6 +685,13 @@ function connect() {
       if (msg.daemonId && msg.reconnectSecret) {
         storedDaemonId = msg.daemonId;
         storedReconnectSecret = msg.reconnectSecret;
+        saveDaemonReconnectState(STATE_PATH, {
+          daemonId: storedDaemonId,
+          reconnectSecret: storedReconnectSecret,
+          server: SERVER,
+          root: ROOT,
+          platform: DAEMON_PLATFORM,
+        });
         console.log(`[daemon] credentials stored (daemonId=${storedDaemonId.slice(0, 8)}…)`);
       }
       console.log(`[daemon] paired as user ${msg.userId}; workspace=${ROOT}`);
@@ -554,4 +725,17 @@ function connect() {
   });
 }
 
-connect();
+if (require.main === module) {
+  connect();
+} else {
+  module.exports = {
+    handleOp,
+    runCodexOAuthPrompt,
+    buildCodexSpawnCommand,
+    findInstalledCodexCommand,
+    normalizeDaemonPlatform,
+    loadDaemonReconnectState,
+    saveDaemonReconnectState,
+    clearDaemonReconnectState,
+  };
+}

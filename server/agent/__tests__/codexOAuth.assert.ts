@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { buildCodexSpawnCommand } from "../providers/codexCommand";
 import {
+  _setCodexOAuthDaemonBridgeForTesting,
   buildCodexOAuthProviderPrompt,
   CodexOAuthProvider,
   codexGatewayFailureMessage,
@@ -84,6 +85,8 @@ async function main() {
       },
     ],
     toolChoice: "auto",
+    maxCompletionTokens: 600,
+    stream: false,
   });
   assert.match(prompt, /main brain orchestrator/);
   assert.match(prompt, /"type":"tool_calls"/);
@@ -106,7 +109,9 @@ async function main() {
 
 {
   const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
   delete process.env.JARVIS_CODEX_GATEWAY_URL;
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "false";
   try {
     const provider = new CodexOAuthProvider();
     await assert.rejects(
@@ -114,18 +119,131 @@ async function main() {
         for await (const _chunk of provider.query({
           model: "chatgpt-codex-oauth/auto",
           messages: [{ role: "user", content: "Hello" }],
+          toolChoice: "none",
+          maxCompletionTokens: 64,
+          stream: false,
         })) {
           // exhaust generator
         }
       },
-      /gateway-only mode/,
+      /no available runtime/,
     );
-    assert.match(missingCodexGatewayMessage(), /Tailscale Codex gateway/);
+    assert.match(missingCodexGatewayMessage(), /Desktop Daemon/);
   } finally {
     if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
     else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
   }
-  console.log("OK: Codex OAuth provider refuses local spawn when gateway URL is missing");
+  console.log("OK: Codex OAuth provider reports missing runtime when gateway and daemon are unavailable");
+}
+
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
+  const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  const previousCommand = process.env.JARVIS_CODEX_COMMAND;
+  const previousLegacyCommand = process.env.CODEX_COMMAND;
+  process.env.JARVIS_CODEX_GATEWAY_URL = "https://gateway.example.test";
+  process.env.JARVIS_CODEX_RUNTIME = "daemon";
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  process.env.JARVIS_CODEX_COMMAND = "codex";
+  delete process.env.CODEX_COMMAND;
+  try {
+    let observedPrompt = "";
+    _setCodexOAuthDaemonBridgeForTesting({
+      isDesktopDaemonActive: (userId) => userId === "user-1",
+      isDaemonActionAllowed: async (userId, action) => userId === "user-1" && action === "shell",
+      sendDaemonOp: async (userId, op) => {
+        assert.equal(userId, "user-1");
+        assert.equal(op.type, "codex_oauth_prompt");
+        assert.equal(op.command, "codex");
+        observedPrompt = op.prompt;
+        return { ok: true, data: { content: `{"type":"final","content":"Daemon pong."}` } };
+      },
+    });
+
+    const provider = new CodexOAuthProvider();
+    const chunks = [];
+    for await (const chunk of provider.query({
+      model: "chatgpt-codex-oauth/auto",
+      messages: [{ role: "user", content: "Hello from daemon" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      stream: false,
+      userId: "user-1",
+    })) {
+      chunks.push(chunk);
+    }
+
+    assert.match(observedPrompt, /Hello from daemon/);
+    assert.deepEqual(chunks, [
+      { type: "text", delta: "Daemon pong." },
+      { type: "finish", reason: "stop" },
+    ]);
+  } finally {
+    _setCodexOAuthDaemonBridgeForTesting(null);
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousRuntime == null) delete process.env.JARVIS_CODEX_RUNTIME;
+    else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+    if (previousCommand == null) delete process.env.JARVIS_CODEX_COMMAND;
+    else process.env.JARVIS_CODEX_COMMAND = previousCommand;
+    if (previousLegacyCommand == null) delete process.env.CODEX_COMMAND;
+    else process.env.CODEX_COMMAND = previousLegacyCommand;
+  }
+  console.log("OK: Codex OAuth provider can force the user-scoped desktop daemon runtime");
+}
+
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
+  const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  process.env.JARVIS_CODEX_GATEWAY_URL = "https://gateway.example.test";
+  process.env.JARVIS_CODEX_RUNTIME = "daemon";
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  try {
+    let selectedUserId = "";
+    _setCodexOAuthDaemonBridgeForTesting({
+      listPairedUsers: () => ["user-1", "user-2"],
+      isDesktopDaemonActive: (userId) => userId === "user-1",
+      isDaemonActionAllowed: async (userId, action) => userId === "user-1" && action === "shell",
+      sendDaemonOp: async (userId, op) => {
+        selectedUserId = userId;
+        assert.equal(op.type, "codex_oauth_prompt");
+        return { ok: true, data: { content: `{"type":"final","content":"Singleton daemon pong."}` } };
+      },
+    });
+
+    const provider = new CodexOAuthProvider();
+    const chunks = [];
+    for await (const chunk of provider.query({
+      model: "chatgpt-codex-oauth/auto",
+      messages: [{ role: "user", content: "Hello without user id" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      stream: false,
+    })) {
+      chunks.push(chunk);
+    }
+
+    assert.equal(selectedUserId, "user-1");
+    assert.deepEqual(chunks, [
+      { type: "text", delta: "Singleton daemon pong." },
+      { type: "finish", reason: "stop" },
+    ]);
+  } finally {
+    _setCodexOAuthDaemonBridgeForTesting(null);
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousRuntime == null) delete process.env.JARVIS_CODEX_RUNTIME;
+    else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+  }
+  console.log("OK: Codex OAuth provider uses the single active desktop daemon when route userId is absent");
 }
 
 console.log("\nAll Codex OAuth provider assertions passed.");

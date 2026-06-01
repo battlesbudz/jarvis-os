@@ -35,6 +35,7 @@ export async function preThink(
   userMessage: string,
   briefContext: string,
   orchestratorModel: string,
+  userId?: string,
 ): Promise<string> {
   const run = async (): Promise<string> => {
     const response = await routeModelTurn({
@@ -42,6 +43,7 @@ export async function preThink(
       maxCompletionTokens: MAX_TOKENS,
       stream: false,
       toolChoice: "none",
+      userId,
       logPrefix: "[QualityLoop/preThink]",
       messages: [
         {
@@ -77,6 +79,7 @@ export async function postCheck(
   userMessage: string,
   agentReply: string,
   orchestratorModel: string,
+  userId?: string,
 ): Promise<PostCheckResult> {
   const run = async (): Promise<PostCheckResult> => {
     const response = await routeModelTurn({
@@ -84,6 +87,7 @@ export async function postCheck(
       maxCompletionTokens: MAX_TOKENS,
       stream: false,
       toolChoice: "none",
+      userId,
       logPrefix: "[QualityLoop/postCheck]",
       messages: [
         {

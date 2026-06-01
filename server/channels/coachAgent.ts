@@ -165,7 +165,7 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   // parallel with the other DB queries below (zero net latency on the hot path).
   const _orchestratorModelPromise = getModel(userId, "orchestrator");
   const _preThinkPromise = _orchestratorModelPromise.then((m) =>
-    preThink(userText || "", channelName + " " + _quickDateStr, m),
+    preThink(userText || "", channelName + " " + _quickDateStr, m, userId),
   );
 
   // ── Fire Google token lookup immediately so Gmail/Calendar API calls can
@@ -832,7 +832,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   if (rawReply) {
     const checkUserText = userText || "[image-only message]";
     try {
-      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel);
+      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel, userId);
       postCheckPassed = checkResult.passed;
       if (!checkResult.passed) {
         const correctionFeedback = checkResult.feedback ||

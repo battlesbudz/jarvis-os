@@ -507,6 +507,7 @@ async function buildScreenMapElements(userId: string, ctx?: object): Promise<Bui
       maxCompletionTokens: 2048,
       stream: false,
       toolChoice: "none",
+      userId,
       logPrefix: "[ScreenMap]",
       messages: [
         {

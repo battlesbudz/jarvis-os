@@ -227,6 +227,7 @@ async function _runAnalysisInner(userId: string): Promise<{ submitted: number; q
       maxCompletionTokens: 2048,
       stream: false,
       toolChoice: 'none',
+      userId,
       logPrefix: '[CapabilityGap]',
       messages: [
         {
