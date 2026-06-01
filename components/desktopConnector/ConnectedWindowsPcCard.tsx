@@ -8,12 +8,16 @@ type Props = {
   computerName?: string | null;
   lastSeenAt?: string | null;
   busy?: boolean;
+  message?: {
+    kind: "success" | "error";
+    text: string;
+  } | null;
   onStartSetup: () => void;
   onCheckConnection: () => void;
   onReconnect: () => void;
   onVerify: () => void;
   onTroubleshoot: () => void;
-  onUninstall: () => void;
+  onDisconnect: () => void;
 };
 
 type IconName = React.ComponentProps<typeof Ionicons>["name"];
@@ -74,17 +78,19 @@ export function ConnectedWindowsPcCard({
   computerName,
   lastSeenAt,
   busy = false,
+  message,
   onStartSetup,
   onCheckConnection,
   onReconnect,
   onVerify,
   onTroubleshoot,
-  onUninstall,
+  onDisconnect,
 }: Props) {
   const lastSeen = formatLastSeen(lastSeenAt);
   const statusTitle = connected
     ? `Connected${computerName ? ` to ${computerName}` : ""}`
     : "Not connected yet";
+  const messageColor = message?.kind === "error" ? Colors.error : Colors.success;
 
   return (
     <View style={styles.card}>
@@ -113,6 +119,17 @@ export function ConnectedWindowsPcCard({
         </View>
       </View>
 
+      {message ? (
+        <View style={[styles.messageBox, message.kind === "error" ? styles.errorMessage : styles.successMessage]}>
+          <Ionicons
+            name={message.kind === "error" ? "warning-outline" : "checkmark-circle-outline"}
+            size={17}
+            color={messageColor}
+          />
+          <Text style={[styles.messageText, { color: messageColor }]}>{message.text}</Text>
+        </View>
+      ) : null}
+
       {connected ? (
         <View style={styles.actions}>
           <ActionButton
@@ -140,9 +157,9 @@ export function ConnectedWindowsPcCard({
             disabled={busy}
           />
           <ActionButton
-            label="Uninstall connector"
+            label="Disconnect connector"
             icon="trash-outline"
-            onPress={onUninstall}
+            onPress={onDisconnect}
             disabled={busy}
             variant="danger"
           />
@@ -232,6 +249,28 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: "Inter_400Regular",
     color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  messageBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 11,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  successMessage: {
+    backgroundColor: Colors.successDim,
+    borderColor: Colors.borderGlow,
+  },
+  errorMessage: {
+    backgroundColor: Colors.errorDim,
+    borderColor: `${Colors.error}55`,
+  },
+  messageText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: "Inter_500Medium",
     lineHeight: 17,
   },
   body: {

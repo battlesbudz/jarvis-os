@@ -88,6 +88,20 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function getDesktopConnectorErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : '';
+  if (!raw) return fallback;
+
+  const withoutStatus = raw.replace(/^\d+:\s*/, '').trim();
+  try {
+    const parsed = JSON.parse(withoutStatus);
+    if (typeof parsed?.message === 'string') return parsed.message;
+    if (typeof parsed?.error === 'string') return parsed.error;
+  } catch {}
+
+  return withoutStatus || fallback;
+}
+
 interface Memory {
   id: string;
   content: string;
@@ -312,6 +326,10 @@ export default function ProfileScreen() {
     preferences: Record<string, string[]>;
     desktop_daemon_connected?: boolean;
     android_daemon_connected?: boolean;
+  } | null>(null);
+  const [desktopConnectorMessage, setDesktopConnectorMessage] = useState<{
+    kind: 'success' | 'error';
+    text: string;
   } | null>(null);
   const [daemonPerms, setDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [daemonPermsBusy, setDaemonPermsBusy] = useState<string | null>(null);
@@ -574,8 +592,10 @@ export default function ProfileScreen() {
       const res = await apiRequest('GET', '/api/channels');
       const data = await res.json();
       setChannelData(data);
+      return true;
     } catch (err) {
       console.error('[channels] load failed:', err);
+      return false;
     }
   }, []);
 
@@ -1419,32 +1439,62 @@ export default function ProfileScreen() {
   }, [stopTelegramPolling]);
 
   const handleStartWindowsConnectorSetup = useCallback(() => {
+    setDesktopConnectorMessage(null);
     router.push('/desktop-connector-setup' as any);
   }, [router]);
 
-  const handleCheckWindowsConnector = useCallback(() => {
-    loadChannels();
+  const handleCheckWindowsConnector = useCallback(async () => {
+    setDesktopConnectorMessage(null);
+    setChannelBusy('desktop-daemon');
+    try {
+      const refreshed = await loadChannels();
+      setDesktopConnectorMessage({
+        kind: refreshed ? 'success' : 'error',
+        text: refreshed ? 'Connection status refreshed.' : 'Jarvis could not check the desktop connector.',
+      });
+    } finally {
+      setChannelBusy(null);
+    }
   }, [loadChannels]);
 
   const handleReconnectWindowsConnector = useCallback(async () => {
+    setDesktopConnectorMessage(null);
     setChannelBusy('desktop-daemon');
     try {
       await apiRequest('POST', '/api/desktop-connector/setup-session', {});
       await loadChannels();
+      setDesktopConnectorMessage({
+        kind: 'success',
+        text: 'Jarvis created a fresh connector setup session.',
+      });
     } catch (err) {
       console.error('[desktop-connector] reconnect failed:', err);
+      setDesktopConnectorMessage({
+        kind: 'error',
+        text: getDesktopConnectorErrorMessage(err, 'Jarvis could not reconnect the desktop connector.'),
+      });
     } finally {
       setChannelBusy(null);
     }
   }, [loadChannels]);
 
   const handleVerifyWindowsConnector = useCallback(async () => {
+    setDesktopConnectorMessage(null);
     setChannelBusy('desktop-daemon');
     try {
-      await apiRequest('POST', '/api/desktop-connector/verify', {});
+      const res = await apiRequest('POST', '/api/desktop-connector/verify', {});
+      const data = await res.json().catch(() => null);
       await loadChannels();
+      setDesktopConnectorMessage({
+        kind: 'success',
+        text: data?.ok === true ? 'Desktop connector verified.' : 'Desktop connector verification started.',
+      });
     } catch (err) {
       console.error('[desktop-connector] verification failed:', err);
+      setDesktopConnectorMessage({
+        kind: 'error',
+        text: getDesktopConnectorErrorMessage(err, 'Jarvis could not verify the desktop connector.'),
+      });
     } finally {
       setChannelBusy(null);
     }
@@ -1455,10 +1505,21 @@ export default function ProfileScreen() {
       const res = await apiRequest('GET', '/api/channels/daemon/permissions');
       const data = await res.json();
       setDaemonPerms(data.permissions || null);
+      return true;
     } catch (err) {
       console.error('[daemon] permissions load error:', err);
+      return false;
     }
   }, []);
+
+  const handleOpenDesktopConnectorTroubleshooting = useCallback(async () => {
+    setDesktopConnectorMessage(null);
+    const loaded = await loadDaemonPerms();
+    setDesktopConnectorMessage({
+      kind: loaded ? 'success' : 'error',
+      text: loaded ? 'Advanced troubleshooting is open below.' : 'Jarvis could not open advanced troubleshooting.',
+    });
+  }, [loadDaemonPerms]);
 
   const handleToggleDaemonPerm = useCallback(async (action: string) => {
     if (!daemonPerms) return;
@@ -3294,7 +3355,7 @@ export default function ProfileScreen() {
           <View style={styles.platformsList}>
             <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
               <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
-                Choose where Jarvis reaches you for each kind of nudge — and pair a desktop daemon so the agent can run shell commands, edit files, and pop native notifications on your computer.
+                Choose where Jarvis reaches you for each kind of nudge, connect this Windows PC for ChatGPT-powered desktop work, and pair your Android device when you want phone control.
               </Text>
             </View>
 
@@ -3304,12 +3365,13 @@ export default function ProfileScreen() {
               computerName={channelData?.meta?.desktop_daemon?.hostname ?? null}
               lastSeenAt={channelData?.meta?.desktop_daemon?.lastSeenAt ?? null}
               busy={channelBusy === 'desktop-daemon'}
+              message={desktopConnectorMessage}
               onStartSetup={handleStartWindowsConnectorSetup}
               onCheckConnection={handleCheckWindowsConnector}
               onReconnect={handleReconnectWindowsConnector}
               onVerify={handleVerifyWindowsConnector}
-              onTroubleshoot={loadDaemonPerms}
-              onUninstall={() => handleUnlinkChannel('desktop-daemon')}
+              onTroubleshoot={handleOpenDesktopConnectorTroubleshooting}
+              onDisconnect={() => handleUnlinkChannel('desktop-daemon')}
             />
 
             {/* Daemon per-action permissions — gates what the agent can do on the user's machine */}
