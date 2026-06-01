@@ -1485,6 +1485,15 @@ export default function ProfileScreen() {
       const res = await apiRequest('POST', '/api/desktop-connector/verify', {});
       const data = await res.json().catch(() => null);
       await loadChannels();
+      if (data?.ok === false) {
+        setDesktopConnectorMessage({
+          kind: 'error',
+          text: typeof data?.result?.error === 'string'
+            ? data.result.error
+            : 'Desktop connector verification failed.',
+        });
+        return;
+      }
       setDesktopConnectorMessage({
         kind: 'success',
         text: data?.ok === true ? 'Desktop connector verified.' : 'Desktop connector verification started.',
@@ -1659,12 +1668,23 @@ export default function ProfileScreen() {
       if (channel === 'daemon') { setAndroidDaemonCode(null); }
       if (channel === 'android-daemon') { setAndroidDaemonCode(null); }
       await loadChannels();
+      return true;
     } catch (err) {
       console.error('[channels] unlink error:', err);
+      return false;
     } finally {
       setChannelBusy(null);
     }
   }, [loadChannels]);
+
+  const handleDisconnectWindowsConnector = useCallback(async () => {
+    setDesktopConnectorMessage(null);
+    const disconnected = await handleUnlinkChannel('desktop-daemon');
+    setDesktopConnectorMessage({
+      kind: disconnected ? 'success' : 'error',
+      text: disconnected ? 'Desktop connector disconnected.' : 'Jarvis could not disconnect the desktop connector.',
+    });
+  }, [handleUnlinkChannel]);
 
 
 
@@ -3371,7 +3391,7 @@ export default function ProfileScreen() {
               onReconnect={handleReconnectWindowsConnector}
               onVerify={handleVerifyWindowsConnector}
               onTroubleshoot={handleOpenDesktopConnectorTroubleshooting}
-              onDisconnect={() => handleUnlinkChannel('desktop-daemon')}
+              onDisconnect={handleDisconnectWindowsConnector}
             />
 
             {/* Daemon per-action permissions — gates what the agent can do on the user's machine */}

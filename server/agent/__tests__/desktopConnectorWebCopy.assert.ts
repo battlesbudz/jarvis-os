@@ -60,6 +60,10 @@ assert.match(profile, /connect this Windows PC for ChatGPT-powered desktop work/
 assert.match(profile, /Jarvis created a fresh connector setup session\./);
 assert.match(profile, /Desktop connector verification started\./);
 assert.match(profile, /Desktop connector verified\./);
+assert.match(profile, /data\?\.ok === false/);
+assert.match(profile, /data\?\.result\?\.error/);
+assert.match(profile, /Desktop connector verification failed\./);
+assert.match(profile, /Desktop connector disconnected\./);
 assert.match(profile, /Advanced troubleshooting is open below\./);
 assert.doesNotMatch(profile, /desktop daemon/i);
 assert.doesNotMatch(profile, /pair a desktop daemon/i);
