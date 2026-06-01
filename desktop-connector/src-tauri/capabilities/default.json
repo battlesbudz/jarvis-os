@@ -6,7 +6,30 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "shell:allow-spawn",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/jarvis-desktop-daemon",
+          "sidecar": true,
+          "args": true
+        },
+        {
+          "name": "powershell.exe",
+          "cmd": "powershell.exe",
+          "sidecar": false,
+          "args": [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            {
+              "validator": "^Start-Process -FilePath powershell\\.exe -WindowStyle Normal -ArgumentList @\\('-NoProfile','-ExecutionPolicy','Bypass','-File','[^']*(?:''[^']*)*'\\)$"
+            }
+          ]
+        }
+      ]
+    },
     "autostart:allow-enable",
     "autostart:allow-disable",
     "autostart:allow-is-enabled"

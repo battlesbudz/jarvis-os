@@ -3,7 +3,7 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::ShellExt;
 
@@ -37,6 +37,19 @@ fn update_status(state: &State<ConnectorState>, daemon: &str, detail: &str) -> C
     status.daemon = daemon.into();
     status.detail = detail.into();
     status.clone()
+}
+
+fn append_status_detail(state: &State<ConnectorState>, detail: &str) {
+    let mut status = state.status.lock().expect("connector status lock poisoned");
+    status.detail = if status.detail.is_empty() {
+        detail.into()
+    } else {
+        format!("{} {}", status.detail, detail)
+    };
+}
+
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn spawn_daemon(app: &AppHandle, state: &State<ConnectorState>) -> Result<ConnectorStatus, String> {
@@ -76,6 +89,10 @@ fn run_verification_again(app: AppHandle, state: State<ConnectorState>) -> Resul
         .path()
         .resolve("jarvis-desktop-connector-awaken.ps1", BaseDirectory::Resource)
         .map_err(|err| err.to_string())?;
+    let launch_command = format!(
+        "Start-Process -FilePath powershell.exe -WindowStyle Normal -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',{})",
+        powershell_single_quote(&script.to_string_lossy()),
+    );
 
     app.shell()
         .command("powershell.exe")
@@ -83,17 +100,8 @@ fn run_verification_again(app: AppHandle, state: State<ConnectorState>) -> Resul
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
-            "-NoExit",
             "-Command",
-            "Start-Process",
-            "powershell.exe",
-            "-ArgumentList",
-            &format!(
-                "'-NoProfile -ExecutionPolicy Bypass -WindowStyle Normal -File \"{}\"'",
-                script.display()
-            ),
-            "--window-style",
-            "normal",
+            launch_command.as_str(),
         ])
         .spawn()
         .map_err(|err| err.to_string())?;
@@ -161,6 +169,15 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+fn enable_autostart(app: &AppHandle, state: &State<ConnectorState>) {
+    if let Err(err) = app.autolaunch().enable() {
+        append_status_detail(
+            state,
+            &format!("Autostart could not be enabled yet: {}.", err),
+        );
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -177,6 +194,7 @@ pub fn run() {
             build_tray(app.handle())?;
             let state = app.state::<ConnectorState>();
             let _ = spawn_daemon(app.handle(), &state);
+            enable_autostart(app.handle(), &state);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

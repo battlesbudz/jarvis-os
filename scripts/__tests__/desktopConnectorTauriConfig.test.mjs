@@ -87,14 +87,28 @@ const capability = readJson("desktop-connector/src-tauri/capabilities/default.js
 for (const permission of [
   "core:default",
   "opener:default",
-  "shell:allow-spawn",
   "autostart:allow-enable",
   "autostart:allow-disable",
   "autostart:allow-is-enabled",
 ]) {
   assert.ok(capability.permissions.includes(permission), `capability should include ${permission}`);
 }
+assert.equal(capability.permissions.includes("shell:allow-spawn"), false, "shell spawn permission should be scoped, not bare broad allow-spawn");
 assert.equal(capability.permissions.includes("shell:allow-execute"), false, "spawn-only sidecar flow should not request execute permission");
+const shellSpawnPermission = capability.permissions.find(
+  (permission) => permission && typeof permission === "object" && permission.identifier === "shell:allow-spawn",
+);
+assert.ok(shellSpawnPermission, "capability should include a scoped shell:allow-spawn permission object");
+assert.ok(Array.isArray(shellSpawnPermission.allow), "scoped shell spawn permission should include an allow array");
+const sidecarPermission = shellSpawnPermission.allow.find((entry) => entry.name === "binaries/jarvis-desktop-daemon");
+assert.ok(sidecarPermission, "sidecar spawn permission should name the registered externalBin");
+assert.equal(sidecarPermission.sidecar, true, "sidecar spawn permission should mark the daemon as a sidecar");
+assert.equal(sidecarPermission.args, true, "sidecar spawn permission should allow sidecar args for future reconnect flags");
+const powershellPermission = shellSpawnPermission.allow.find((entry) => entry.name === "powershell.exe");
+assert.ok(powershellPermission, "PowerShell launch permission should be scoped");
+assert.equal(powershellPermission.cmd, "powershell.exe", "PowerShell permission should run powershell.exe only");
+assert.equal(powershellPermission.sidecar, false, "PowerShell permission should not be marked as a sidecar");
+assert.ok(Array.isArray(powershellPermission.args), "PowerShell permission should restrict allowed argument positions");
 
 const libRs = readText("desktop-connector/src-tauri/src/lib.rs");
 for (const label of ["Open Jarvis", "Check connection", "Reconnect", "Run verification again", "Quit"]) {
@@ -102,6 +116,8 @@ for (const label of ["Open Jarvis", "Check connection", "Reconnect", "Run verifi
 }
 assert.match(libRs, /TrayIconBuilder/, "tray should use TrayIconBuilder");
 assert.match(libRs, /tauri_plugin_autostart/, "Rust app should initialize the autostart plugin");
+assert.match(libRs, /use\s+tauri_plugin_autostart::[\s\S]*ManagerExt/, "Rust app should import autostart ManagerExt");
+assert.match(libRs, /\.autolaunch\(\)\.enable\(\)/, "setup should enable autostart");
 assert.match(libRs, /tauri_plugin_shell/, "Rust app should initialize the shell plugin");
 assert.match(libRs, /tauri_plugin_opener/, "Rust app should initialize the opener plugin");
 assert.match(libRs, /\.opener\(\)\s*[\s\S]*\.open_url\("https:\/\/gameplanjarvisai\.up\.railway\.app"/, "Open Jarvis should use the Tauri opener plugin");
@@ -111,7 +127,9 @@ assert.match(libRs, /reconnect_daemon/, "Rust app should expose reconnect contro
 assert.match(libRs, /run_verification_again/, "Rust app should expose verification control");
 assert.match(libRs, /jarvis:desktop-connector:awaken/, "verification action should launch the awakening ceremony");
 assert.match(libRs, /BaseDirectory::Resource/, "verification action should use the bundled awakening resource");
-assert.match(libRs, /--window-style[\s\S]*normal/i, "verification action should open a visible PowerShell window");
+assert.doesNotMatch(libRs, /--window-style/i, "verification action should not pass invalid --window-style to PowerShell");
+assert.match(libRs, /-WindowStyle[\s\S]*Normal/, "verification action should open a visible PowerShell window");
+assert.match(libRs, /Start-Process[\s\S]*-FilePath[\s\S]*powershell\.exe[\s\S]*-ArgumentList/, "verification action should use valid Start-Process PowerShell semantics");
 
 const appTsx = readText("desktop-connector/src/App.tsx");
 for (const text of ["Jarvis Desktop Connector", "Reconnect", "Run verification again", "Open Jarvis", "Quiet startup"]) {
