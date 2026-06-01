@@ -28,6 +28,24 @@ for (const phrase of [
   assert.match(scriptContent, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `script should show '${phrase}'`);
 }
 
+assert.match(scriptContent, /codex\.cmd/, "script should prefer codex.cmd on Windows");
+assert.match(scriptContent, /Get-Command codex\.cmd/, "script should resolve the cmd shim before bare codex");
+assert.match(scriptContent, /codex exec/, "script should run an actual codex exec probe");
+assert.match(scriptContent, /JARVIS_AWAKE_OK/, "script should require a deterministic response marker");
+assert.match(scriptContent, /--ephemeral/, "codex exec should use an ephemeral session");
+assert.match(scriptContent, /--sandbox[\s\S]*read-only/, "codex exec should be read-only");
+assert.match(scriptContent, /--ask-for-approval[\s\S]*never/, "codex exec should not ask for approvals");
+assert.match(scriptContent, /--ask-for-approval[\s\S]*never[\s\S]*"exec"/, "approval policy should be passed before exec for this Codex CLI");
+assert.match(scriptContent, /--output-last-message/, "codex exec should write a bounded last-message proof");
+assert.match(scriptContent, /WaitForExit\(\d+\)/, "codex exec should be bounded by a timeout");
+assert.match(scriptContent, /ExitCode\s+-eq\s+0[\s\S]*ExpectedMarker[\s\S]*Codex \/ ChatGPT sign-in verified/, "success phrase should be guarded by exit code and marker output");
+assert.match(scriptContent, /ExitCode\s+-eq\s+0[\s\S]*ExpectedMarker[\s\S]*Test response received from Codex/, "response phrase should be guarded by exit code and marker output");
+assert.match(scriptContent, /Codex probe not completed/, "failed or unavailable probes should warn instead of claiming success");
+assert.match(scriptContent, /Probe skipped; Codex verification was not claimed/, "skip mode should avoid false verification language");
+assert.doesNotMatch(scriptContent, /--version[\s\S]*Codex \/ ChatGPT sign-in verified/, "codex --version should not prove sign-in");
+assert.equal((scriptContent.match(/Codex \/ ChatGPT sign-in verified/g) ?? []).length, 1, "sign-in success phrase should only appear in the real proof branch");
+assert.equal((scriptContent.match(/Test response received from Codex/g) ?? []).length, 1, "response success phrase should only appear in the real proof branch");
+
 assert.match(scriptContent, /\[Console\]::ReadKey\(\$true\)/, "script should leave the terminal open until a keypress");
 assert.doesNotMatch(scriptContent, /Invoke-Expression/i, "script should not use Invoke-Expression");
 assert.doesNotMatch(scriptContent, /Remove-Item\s+.*-Recurse/is, "script should not recursively delete anything");
