@@ -24,6 +24,7 @@ import { DIGEST_CHANNEL_KEY } from './discord/workspace';
 import { getUserDriveSettings } from './driveRoutes';
 import { createDriveTextFile } from './integrations/googleDrive';
 import { runBackfillEmbeddings } from './jobs/backfillEmbeddings';
+import { shouldExecuteScheduledTask } from './jarvisScheduledTaskSemantics';
 
 // ---------------------------------------------------------------------------
 // Retention windows — edit these constants to tune how long high-growth logs
@@ -405,6 +406,7 @@ async function runDueScheduledTasks(now: Date): Promise<void> {
           lte(schema.jarvisScheduledTasks.scheduledAt, now),
           isNull(schema.jarvisScheduledTasks.completedAt),
           eq(schema.jarvisScheduledTasks.active, true),
+          eq(schema.jarvisScheduledTasks.taskKind, 'jarvis_action'),
           eq(schema.jarvisScheduledTasks.needsAttention, false),
           or(
             isNull(schema.jarvisScheduledTasks.inProgressAt),
@@ -465,6 +467,14 @@ async function handleDueTask(
   firedAt: Date,
 ): Promise<void> {
   console.log(`[Scheduler] Firing scheduled task id=${task.id} title="${task.title}" shell=${!!task.shellCommand}`);
+
+  if (!shouldExecuteScheduledTask(task)) {
+    await db.update(schema.jarvisScheduledTasks)
+      .set({ inProgressAt: null })
+      .where(eq(schema.jarvisScheduledTasks.id, task.id));
+    console.log(`[Scheduler] Skipping non-executable user task id=${task.id} title="${task.title}"`);
+    return;
+  }
 
   const isRecurring = !!task.recurrence;
 

@@ -323,7 +323,7 @@ export const cronCreateTool: AgentTool = {
     try {
       const [task] = await db
         .insert(schema.jarvisScheduledTasks)
-        .values({ userId: ctx.userId, title, description, scheduledAt, recurrence, shellCommand })
+        .values({ userId: ctx.userId, title, description, scheduledAt, recurrence, shellCommand, taskKind: "jarvis_action" })
         .returning();
 
       const when = formatWhen(scheduledAt);

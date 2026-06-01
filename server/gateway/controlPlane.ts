@@ -244,6 +244,7 @@ async function cronCreate(userId: string, params: RpcParams) {
     scheduledAt,
     recurrence,
     shellCommand,
+    taskKind: "jarvis_action",
   }).returning();
   recordGatewayEvent({
     userId,

@@ -22,4 +22,8 @@ assert.equal(noTime, null);
 const notReminder = parseDirectReminderIntent("Can you draft an email tomorrow?");
 assert.equal(notReminder, null);
 
+const dailyTask = parseDirectReminderIntent('Can you add "Make $140 on DoorDash" as a recurring task every day?');
+assert.equal(dailyTask?.title, "Make $140 on DoorDash");
+assert.equal(dailyTask?.scheduledAt, "daily");
+
 console.log("OK: direct reminder route parses clear natural-language reminders and rejects ambiguous prompts");

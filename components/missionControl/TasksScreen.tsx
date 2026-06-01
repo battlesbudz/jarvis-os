@@ -28,6 +28,7 @@ interface ScheduledTask {
   description: string | null;
   scheduledAt: string;
   recurrence: string | null;
+  taskKind?: 'user_task' | 'jarvis_action' | null;
   completedAt: string | null;
   createdAt: string;
   shellCommand: string | null;
@@ -409,6 +410,7 @@ export default function TasksScreen() {
   const activeJobs = queuePanel?.activeJobs ?? [];
 
   const needsYou: ScheduledTask[] = [];
+  const myTasks: ScheduledTask[] = [];
   const inProgress: ScheduledTask[] = [];
   const scheduled: ScheduledTask[] = [];
   const done: ScheduledTask[] = [];
@@ -420,6 +422,8 @@ export default function TasksScreen() {
       if (new Date(t.completedAt).getTime() >= sevenDaysAgo) {
         done.push(t);
       }
+    } else if ((t.taskKind ?? 'user_task') === 'user_task') {
+      myTasks.push(t);
     } else if (t.inProgressAt) {
       inProgress.push(t);
     } else if (t.active) {
@@ -427,6 +431,7 @@ export default function TasksScreen() {
     }
   }
 
+  myTasks.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
   scheduled.sort((a, b) => new Date(a.scheduledAt).getTime() - new Date(b.scheduledAt).getTime());
   done.sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime());
 
@@ -483,16 +488,22 @@ export default function TasksScreen() {
         )}
       </View>
       <Section
-        label="In Progress"
+        label="My Tasks"
+        color={Colors.green}
+        tasks={myTasks}
+        emptyText="No personal tasks scheduled"
+      />
+      <Section
+        label="Jarvis Running"
         color={Colors.green}
         tasks={inProgress}
         emptyText="Nothing running right now"
       />
       <Section
-        label="Scheduled"
+        label="Scheduled Jarvis Actions"
         color={Colors.textSecondary}
         tasks={scheduled}
-        emptyText="No upcoming tasks"
+        emptyText="No autonomous actions scheduled"
       />
       <Section
         label="Done (last 7 days)"

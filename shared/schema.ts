@@ -489,6 +489,7 @@ export const jarvisScheduledTasks = pgTable("jarvis_scheduled_tasks", {
   description: text("description"),
   scheduledAt: timestamp("scheduled_at").notNull(),
   recurrence: varchar("recurrence"),
+  taskKind: varchar("task_kind").notNull().default("user_task"),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   shellCommand: text("shell_command"),

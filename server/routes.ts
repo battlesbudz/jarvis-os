@@ -938,14 +938,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       type: "function" as const,
       function: {
         name: "schedule_jarvis_task",
-        description: "Schedule a future task/reminder for Jarvis to act on at a specific time. Use when the user says 'remind me in an hour to...', 'schedule...', 'do X at Y time', or asks Jarvis to take an action later. If the user gives a clear relative or absolute time, call this immediately; ask a follow-up only when the time or reminder content is missing or ambiguous.",
+        description: "Schedule a future item for the user's own to-do list or reminder list. Use for human tasks, habits, errands, chores, and tasks Jarvis cannot physically do, such as DoorDash work or calls the user must personally make. These are non-executable user tasks by default. Do not use this for autonomous Jarvis work like checking inboxes, sending reports, running scripts, or operating connected apps later; use explicit cron/job tools for those.",
         parameters: {
           type: "object",
           properties: {
             title: { type: "string", description: "Short title for the scheduled task (e.g. 'Review inbox', 'Send weekly update')" },
-            description: { type: "string", description: "Optional details about what Jarvis should do when the time arrives" },
-            scheduledAt: { type: "string", description: "When to execute the task. Accepts ISO 8601 or common natural language like 'in an hour', 'tomorrow at 9am', or 'next Monday at 10am'." },
+            description: { type: "string", description: "Optional details for the user's task/reminder." },
+            scheduledAt: { type: "string", description: "When the task should appear or remind the user. Accepts ISO 8601 or common natural language like 'in an hour', 'tomorrow at 9am', 'daily', or 'next Monday at 10am'." },
             recurrence: { type: "string", description: "Optional recurrence pattern: 'daily', 'weekly', 'weekdays', 'every Monday', 'every Sunday', etc. Omit for one-time tasks." },
+            taskKind: { type: "string", enum: ["user_task", "jarvis_action"], description: "Defaults to user_task. Only use jarvis_action when Jarvis can actually perform the scheduled action with tools." },
           },
           required: ["title", "scheduledAt"],
         },
@@ -1907,6 +1908,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             description: args.description ? String(args.description) : null,
             scheduledAt: scheduledDate,
             recurrence,
+            taskKind: args.taskKind ? String(args.taskKind) : "user_task",
           });
           const timeLabel = scheduledDate.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
           const recurrenceLabel = recurrence ? ` (${recurrence})` : '';
@@ -2510,6 +2512,14 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work. If the user explicitly asks for the change to be permanent, pushed, published, deployed, or on GitHub, delegate that commit/push/publish requirement to Codex too and set allow_external_side_effects=true only for that exact requested action. If the user did not explicitly ask for commit/push/deploy, keep the work local and say that it still needs approval to be pushed."
         : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
       const toolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
+      if (toolAwareRoute.shouldPreferTool) {
+        console.info("[Coach/ActionOntology]", {
+          actionType: toolAwareRoute.actionType,
+          actor: toolAwareRoute.actor,
+          approvalRequired: toolAwareRoute.approvalRequired,
+          reason: toolAwareRoute.actionReason,
+        });
+      }
       const toolAwareInstruction = toolAwareRoute.shouldPreferTool
         ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
         : "";
@@ -2555,7 +2565,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           ]
         : chatMessages;
 
-      const actionResults: { tool: string; result: 'success' | 'error'; label: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
+      const actionResults: { tool: string; result: 'success' | 'error'; label: string; actionType?: string; actor?: string; approvalRequired?: boolean; actionReason?: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
       // Accumulates MCP rich attachments across all tool calls in this request.
       // Emitted alongside executedActions in the type:'actions' SSE event to
       // mirror the CoachReplyResult { executedActions, attachments } contract.
@@ -2694,8 +2704,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         if (isDiagnosticsRequest) {
           focusedToolNames.add("jarvis_self_diagnose");
         }
+        toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
         const modelRequestTools =
-          focusedToolNames.size > 0
+          toolAwareRoute.shouldPreferTool
             ? requestTools.filter((tool) => focusedToolNames.has(tool.function.name))
             : requestTools;
 
@@ -3209,7 +3220,17 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 if (parsed.caption) linkData.videoCaption = parsed.caption;
               } catch {}
             }
-            actionResults.push({ tool: tc.function.name, result: execResult.result, label: execResult.label, ...linkData, ...(plainMcpServerName ? { mcpServerName: plainMcpServerName } : {}) });
+            actionResults.push({
+              tool: tc.function.name,
+              result: execResult.result,
+              label: execResult.label,
+              actionType: toolAwareRoute.actionType,
+              actor: toolAwareRoute.actor,
+              approvalRequired: toolAwareRoute.approvalRequired,
+              actionReason: toolAwareRoute.actionReason,
+              ...linkData,
+              ...(plainMcpServerName ? { mcpServerName: plainMcpServerName } : {}),
+            });
             let toolResultContent: string;
             if (tc.function.name === 'daemon_action' && execResult.result === 'error') {
               toolResultContent = `⛔ DAEMON ACTION FAILED — THE PHONE DID NOT EXECUTE THIS COMMAND.\nAction attempted: ${String(args.action || 'unknown')}\nError: ${execResult.detail || execResult.label}\n\nYou MUST tell the user this specific action FAILED. Do NOT describe it as successful. Do NOT invent what the phone showed or did.`;
@@ -4611,7 +4632,7 @@ Return ONLY the JSON object.`;
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { title, description, scheduledAt, recurrence } = req.body;
+      const { title, description, scheduledAt, recurrence, taskKind } = req.body;
       if (!title || !scheduledAt) return res.status(400).json({ error: "title and scheduledAt are required" });
       const scheduledAtText = String(scheduledAt);
       const recurring = parseRecurringExpr(scheduledAtText);
@@ -4625,6 +4646,7 @@ Return ONLY the JSON object.`;
         description: description ? String(description) : null,
         scheduledAt: scheduledDate,
         recurrence: recurrence ? String(recurrence) : recurring?.recurrence ?? null,
+        taskKind: taskKind ? String(taskKind) : "user_task",
       });
       res.json({ ...task, deduped });
     } catch (err) {

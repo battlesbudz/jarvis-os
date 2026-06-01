@@ -7,12 +7,13 @@ interface ScheduleJarvisTaskArgs {
   description?: string;
   scheduledAt?: string;
   recurrence?: string;
+  taskKind?: string;
 }
 
 export const scheduleJarvisTaskTool: AgentTool = {
   name: "schedule_jarvis_task",
   description:
-    "Schedule a recurring or one-off task/reminder for Jarvis to perform automatically. Use this when the user asks you to 'remind me in an hour to call...', 'remind me every Monday to...', 'check my inbox every morning', 'do X at Y time', or any request to schedule a future autonomous action. If the user gives a clear relative or absolute time, call this tool immediately; ask a follow-up only when the time or reminder content is missing or genuinely ambiguous. These tasks appear in the user's Mission Control calendar so they can verify Jarvis is actually scheduled to do what they asked.",
+    "Schedule a recurring or one-off task/reminder for the user's own to-do list. Use this for human tasks like 'remind me to call...', 'add Make $140 on DoorDash as a daily task', habits, errands, chores, and anything Jarvis cannot personally do because it requires the user's body, car, money, physical presence, or real-world action. These are non-executable user tasks by default. Do not use this tool for autonomous work Jarvis should perform later, such as checking inboxes, running scripts, sending reports, or operating connected apps; use the explicit cron/job tools for those.",
   parameters: {
     type: "object",
     properties: {
@@ -31,6 +32,11 @@ export const scheduleJarvisTaskTool: AgentTool = {
       recurrence: {
         type: "string",
         description: "Optional recurrence rule in plain English (e.g. 'daily', 'every Monday', 'weekdays at 9am', 'every Sunday at 8pm'). Omit for one-off tasks.",
+      },
+      taskKind: {
+        type: "string",
+        enum: ["user_task", "jarvis_action"],
+        description: "Defaults to user_task. Only use jarvis_action when Jarvis can actually perform the future action with tools; never use jarvis_action for physical or user-owned tasks.",
       },
     },
     required: ["title", "scheduledAt"],
@@ -61,6 +67,7 @@ export const scheduleJarvisTaskTool: AgentTool = {
         description: a.description ? String(a.description).trim() : null,
         scheduledAt,
         recurrence,
+        taskKind: a.taskKind,
       });
 
       const when = scheduledAt.toLocaleDateString("en-US", {

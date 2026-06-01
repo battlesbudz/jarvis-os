@@ -56,6 +56,22 @@ assertRoute(
   ["schedule_jarvis_task"],
 );
 {
+  const plan = classifyToolAwareRoute('Can you add "Make $140 on DoorDash" as a recurring task every day?');
+  assert(plan.shouldPreferTool, "human task ontology: prefers tool use for user task recording");
+  assert(plan.actionType === "user_task", "human task ontology: actionType=user_task");
+  assert(plan.actor === "user", "human task ontology: actor=user");
+  assert(plan.approvalRequired === false, "human task ontology: no approval required");
+  assert(plan.priorityToolNames.includes("schedule_jarvis_task"), "human task ontology: uses schedule_jarvis_task");
+  assert(plan.actionReason.includes("user") || plan.actionReason.includes("human"), "human task ontology: reason explains ownership");
+}
+{
+  const plan = classifyToolAwareRoute("Drive to Walmart and buy printer paper");
+  assert(plan.shouldPreferTool, "blocked physical: uses focused no-tool route");
+  assert(plan.actionType === "blocked_physical_action", "blocked physical: actionType");
+  assert(plan.blockedToolNames.includes("daemon_action"), "blocked physical: daemon blocked");
+  assert(plan.priorityToolNames.length === 0, "blocked physical: no priority tools");
+}
+{
   const plan = classifyToolAwareRoute("draft an email in Gmail to wickedclown.jb@gmail.com");
   const legacyTools = ["fetch_emails", "gmail_action", "create_gmail_draft", "send_email"];
   assert(plan.intents.includes("email"), "email gateway: intent detected");
@@ -118,6 +134,8 @@ assertRoute(
   assert(plan.shouldPreferTool, "code push: prefers tool use");
   assert(plan.guidance.includes("allow external side effects"), "code push: guidance mentions side-effect approval");
   assert(plan.guidance.includes("commit/push/publish"), "code push: guidance carries commit/push requirement");
+  assert(plan.actionType === "jarvis_code_apply", "code push: ontology marks code apply");
+  assert(plan.approvalRequired === true, "code push: ontology requires approval");
 }
 assertRoute(
   "what's wrong?",

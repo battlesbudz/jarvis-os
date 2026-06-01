@@ -16,7 +16,7 @@ export interface DirectReminderResult {
 export interface ParsedReminderIntent {
   title: string;
   scheduledAt: string;
-  temporal: ReturnType<typeof resolveTemporalExpression>;
+  temporal: ReturnType<typeof resolveTemporalExpression> | null;
 }
 
 function cleanReminderTitle(value: string): string {
@@ -38,6 +38,17 @@ function stripTime(text: string, matchedText: string): string {
 
 export function parseDirectReminderIntent(text: string): ParsedReminderIntent | null {
   const original = text.trim();
+  const recurringTask = original.match(/\b(?:add|create|put)\s+["“]?(.+?)["”]?\s+(?:as\s+)?(?:a\s+)?(?:recurring\s+|daily\s+)?(?:task|to-?do|todo|habit)\s+every\s+day\b/i);
+  if (recurringTask) {
+    const title = cleanReminderTitle(recurringTask[1]);
+    if (!title || title.length < 3) return null;
+    return {
+      title: title[0].toUpperCase() + title.slice(1),
+      scheduledAt: "daily",
+      temporal: null,
+    };
+  }
+
   if (!/\b(remind\s+me|set\s+(?:a\s+)?reminder|reminder)\b/i.test(original)) return null;
 
   const temporal = resolveTemporalExpression({ text: original });
@@ -78,6 +89,7 @@ export async function handleDirectReminderRequest(input: DirectReminderRequest):
       title: parsed.title,
       description: input.text,
       scheduledAt: parsed.scheduledAt,
+      taskKind: "user_task",
     },
     {
       userId: input.userId,

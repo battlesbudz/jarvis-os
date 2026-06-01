@@ -1,4 +1,10 @@
 import type { ToolGroup } from "./tools/index";
+import {
+  classifyActionOntology,
+  type ActionActor,
+  type ActionType,
+} from "./actionOntology";
+import { resolveToolsForAction } from "./toolResolver";
 
 export type ToolAwareIntent =
   | "weather"
@@ -19,8 +25,13 @@ export interface ToolAwareRoutePlan {
   capabilityIds: string[];
   toolGroups: ToolGroup[];
   priorityToolNames: string[];
+  blockedToolNames: string[];
   guidance: string;
   shouldPreferTool: boolean;
+  actionType: ActionType;
+  actor: ActionActor;
+  approvalRequired: boolean;
+  actionReason: string;
 }
 
 interface ToolAwareRule {
@@ -77,7 +88,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     capabilityIds: ["coaching"],
     toolGroups: ["coaching", "scheduling"],
     priorityToolNames: ["schedule_jarvis_task"],
-    guidance: "For reminders or future follow-ups, call schedule_jarvis_task when the user gives a clear time such as 'in an hour', 'tomorrow morning', or a specific date/time. Ask a follow-up only when the time or reminder content is missing or genuinely ambiguous.",
+    guidance: "For reminders, personal to-dos, habits, or future follow-ups the user must do themselves, call schedule_jarvis_task as a non-executable user_task when the user gives a clear time or recurrence. Do not schedule physical or user-owned work as a Jarvis autonomous action. For future work Jarvis can actually perform with tools, use explicit cron/job tooling instead.",
   },
   {
     intent: "memory",
@@ -176,8 +187,13 @@ const EMPTY_PLAN: ToolAwareRoutePlan = {
   capabilityIds: [],
   toolGroups: [],
   priorityToolNames: [],
+  blockedToolNames: [],
   guidance: "",
   shouldPreferTool: false,
+  actionType: "unknown",
+  actor: "jarvis",
+  approvalRequired: false,
+  actionReason: "No tool-aware route matched.",
 };
 
 function unique<T>(values: T[]): T[] {
@@ -187,18 +203,47 @@ function unique<T>(values: T[]): T[] {
 export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   const query = text.trim();
   if (!query) return EMPTY_PLAN;
+  const ontology = classifyActionOntology(query);
+  const toolResolution = resolveToolsForAction(ontology);
 
   const matched = TOOL_AWARE_RULES.filter((rule) =>
     rule.patterns.some((pattern) => pattern.test(query)),
   );
-  if (matched.length === 0) return EMPTY_PLAN;
+  if (matched.length === 0) {
+    return {
+      intents: [],
+      capabilityIds: [],
+      toolGroups: ontology.allowedToolGroups,
+      priorityToolNames: [...toolResolution.requiredToolNames, ...toolResolution.optionalToolNames],
+      blockedToolNames: toolResolution.blockedToolNames,
+      guidance: ontology.actionType === "unknown" ? "" : `- ${ontology.reason}\n- Tool resolver: ${toolResolution.reason}`,
+      shouldPreferTool: toolResolution.requiredToolNames.length > 0 || toolResolution.optionalToolNames.length > 0 || ontology.actionType === "blocked_physical_action",
+      actionType: ontology.actionType,
+      actor: ontology.actor,
+      approvalRequired: toolResolution.approvalRequired,
+      actionReason: ontology.reason,
+    };
+  }
 
   return {
     intents: matched.map((rule) => rule.intent),
     capabilityIds: unique(matched.flatMap((rule) => rule.capabilityIds)),
-    toolGroups: unique(matched.flatMap((rule) => rule.toolGroups)),
-    priorityToolNames: unique(matched.flatMap((rule) => rule.priorityToolNames)),
-    guidance: matched.map((rule) => `- ${rule.guidance}`).join("\n"),
+    toolGroups: unique([...matched.flatMap((rule) => rule.toolGroups), ...ontology.allowedToolGroups]),
+    priorityToolNames: unique([
+      ...matched.flatMap((rule) => rule.priorityToolNames),
+      ...toolResolution.requiredToolNames,
+      ...toolResolution.optionalToolNames,
+    ]),
+    blockedToolNames: toolResolution.blockedToolNames,
+    guidance: [
+      ...matched.map((rule) => `- ${rule.guidance}`),
+      `- Action ownership: ${ontology.reason}`,
+      `- Tool resolver: ${toolResolution.reason}`,
+    ].join("\n"),
     shouldPreferTool: true,
+    actionType: ontology.actionType,
+    actor: ontology.actor,
+    approvalRequired: toolResolution.approvalRequired,
+    actionReason: ontology.reason,
   };
 }
