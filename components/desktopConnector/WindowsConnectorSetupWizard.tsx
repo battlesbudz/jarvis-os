@@ -23,8 +23,13 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
   const [status, setStatus] = useState<DesktopConnectorStatusResponse | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [installerNotice, setInstallerNotice] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
+  const cancelledRef = useRef(false);
   const connectedNotifiedRef = useRef(false);
+
+  const canContinue = useCallback(() => mountedRef.current && !cancelledRef.current, []);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -33,59 +38,129 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
     }
   }, []);
 
-  const handleConnected = useCallback(() => {
-    if (connectedNotifiedRef.current) return;
-    connectedNotifiedRef.current = true;
+  const cancelFlow = useCallback(() => {
+    cancelledRef.current = true;
     stopPolling();
+  }, [stopPolling]);
+
+  const handleConnected = useCallback(() => {
+    if (!canContinue() || connectedNotifiedRef.current) return;
+    connectedNotifiedRef.current = true;
+    cancelFlow();
     onConnected?.();
-  }, [onConnected, stopPolling]);
+  }, [canContinue, cancelFlow, onConnected]);
 
   const checkStatus = useCallback(async (setupId: string) => {
     try {
       const next = await getDesktopConnectorSetupStatus(setupId);
+      if (!canContinue()) return;
       setStatus(next);
       setError(null);
       if (next.connected) handleConnected();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Jarvis could not check the connector yet.");
+      if (canContinue()) {
+        setError(err instanceof Error ? err.message : "Jarvis could not check the connector yet.");
+      }
     }
-  }, [handleConnected]);
+  }, [canContinue, handleConnected]);
 
   const poll = useCallback((setupId: string) => {
+    if (!canContinue()) return;
     stopPolling();
     void checkStatus(setupId);
     pollRef.current = setInterval(() => {
+      if (!canContinue()) return;
       void checkStatus(setupId);
     }, POLL_INTERVAL_MS);
-  }, [checkStatus, stopPolling]);
+  }, [canContinue, checkStatus, stopPolling]);
 
-  useEffect(() => stopPolling, [stopPolling]);
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      cancelledRef.current = true;
+      stopPolling();
+    };
+  }, [stopPolling]);
+
+  const openInstaller = useCallback(async (url: string) => {
+    if (!canContinue()) return false;
+
+    try {
+      if (Platform.OS === "web") {
+        if (typeof window === "undefined") {
+          if (canContinue()) {
+            setInstallerNotice("Use Open installer again to continue setup.");
+          }
+          return false;
+        }
+
+        const opened = window.open(url, "_blank");
+        if (!opened) {
+          if (canContinue()) {
+            setInstallerNotice("Your browser blocked the installer window. Use Open installer again to continue.");
+          }
+          return false;
+        }
+
+        try {
+          opened.opener = null;
+        } catch {
+          // Some browsers may prevent mutating opener after the new window is created.
+        }
+        if (canContinue()) setInstallerNotice(null);
+        return true;
+      }
+
+      await Linking.openURL(url);
+      if (canContinue()) setInstallerNotice(null);
+      return true;
+    } catch (err) {
+      if (canContinue()) {
+        setError(err instanceof Error ? err.message : "Jarvis could not open the installer.");
+        setInstallerNotice("Use Open installer again to continue setup.");
+      }
+      return false;
+    }
+  }, [canContinue]);
 
   const start = useCallback(async () => {
+    cancelledRef.current = false;
     setBusy(true);
     setError(null);
+    setInstallerNotice(null);
     connectedNotifiedRef.current = false;
 
     try {
       const next = await startDesktopConnectorSetup();
+      if (!canContinue()) return;
       setSetup(next);
       setStatus(null);
 
-      if (Platform.OS === "web") {
-        if (typeof window !== "undefined") {
-          window.open(next.installer.url, "_blank", "noopener,noreferrer");
-        }
-      } else {
-        await Linking.openURL(next.installer.url);
-      }
+      await openInstaller(next.installer.url);
 
+      if (!canContinue()) return;
       poll(next.setupId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Jarvis could not start Windows setup.");
+      if (canContinue()) {
+        setError(err instanceof Error ? err.message : "Jarvis could not start Windows setup.");
+      }
     } finally {
-      setBusy(false);
+      if (canContinue()) setBusy(false);
     }
-  }, [poll]);
+  }, [canContinue, openInstaller, poll]);
+
+  const openInstallerAgain = useCallback(() => {
+    if (!setup || !canContinue()) return;
+    setError(null);
+    void openInstaller(setup.installer.url);
+  }, [canContinue, openInstaller, setup]);
+
+  const handleSkip = useCallback(() => {
+    cancelFlow();
+    onSkip?.();
+  }, [cancelFlow, onSkip]);
 
   const connected = status?.connected === true;
   const waiting = setup !== null && !connected;
@@ -125,10 +200,23 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
             </>
           )}
         </Pressable>
-        <Pressable style={styles.secondary} onPress={onSkip}>
+        {setup ? (
+          <Pressable style={styles.secondary} onPress={openInstallerAgain}>
+            <Ionicons name="open-outline" size={16} color={Colors.text} />
+            <Text style={styles.secondaryText}>Open installer again</Text>
+          </Pressable>
+        ) : null}
+        <Pressable style={styles.secondary} onPress={handleSkip}>
           <Text style={styles.secondaryText}>Skip desktop connector</Text>
         </Pressable>
       </View>
+
+      {installerNotice ? (
+        <View style={styles.noticeBox}>
+          <Ionicons name="information-circle-outline" size={16} color={Colors.warningLight} />
+          <Text style={styles.noticeText}>{installerNotice}</Text>
+        </View>
+      ) : null}
 
       {waiting ? (
         <View style={styles.statusBox}>
@@ -236,6 +324,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     alignItems: "center",
     justifyContent: "center",
+    flexDirection: "row",
+    gap: 8,
     backgroundColor: Colors.surfaceAlt,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -244,6 +334,23 @@ const styles = StyleSheet.create({
     color: Colors.text,
     fontSize: 14,
     fontFamily: "Inter_600SemiBold",
+  },
+  noticeBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: Colors.warningDim,
+    borderWidth: 1,
+    borderColor: `${Colors.warning}55`,
+  },
+  noticeText: {
+    flex: 1,
+    fontSize: 13,
+    fontFamily: "Inter_500Medium",
+    color: Colors.warningLight,
+    lineHeight: 19,
   },
   statusBox: {
     flexDirection: "row",
