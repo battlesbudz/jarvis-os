@@ -39,6 +39,7 @@ async function main() {
   process.env.JWT_SECRET = SECRET;
   process.env.JARVIS_WINDOWS_CONNECTOR_DOWNLOAD_URL = "https://downloads.example.test/JarvisSetup.exe";
   process.env.JARVIS_WINDOWS_CONNECTOR_VERSION = "0.1.0";
+  delete process.env.JARVIS_WINDOWS_CONNECTOR_SHA256;
 
   const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
     const raw = req.header("Authorization")?.replace(/^Bearer\s+/i, "");
@@ -149,6 +150,9 @@ async function main() {
 
     const metadata = await request(port, "GET", "/api/desktop-connector/installer", undefined, token);
     assert.equal(metadata.status, 200);
+    assert.equal(metadata.json.sha256, undefined);
+    assert.equal(metadata.json.version, "0.1.0");
+    assert.match(metadata.json.url, /^https:\/\//);
     const parsedMetadata = desktopConnectorInstallerSchema.parse(metadata.json);
     assert.equal(parsedMetadata.url, "https://downloads.example.test/JarvisSetup.exe");
     assert.equal(parsedMetadata.version, "0.1.0");
