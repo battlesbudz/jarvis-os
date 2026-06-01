@@ -17,6 +17,9 @@
     "@yao-pkg/pkg": "^6.0.0"
   },
   "pkg": {
+    "scripts": [
+      "bundled-daemon/jarvis-daemon.js"
+    ],
     "assets": [
       "bundled-daemon/jarvis-daemon.js"
     ]

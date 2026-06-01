@@ -2,10 +2,10 @@ use std::sync::Mutex;
 use tauri::menu::{Menu, MenuItem};
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_opener::OpenerExt;
-use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::{process::CommandEvent, ShellExt};
 
 const AWAKENING_SCRIPT_NAME: &str = "jarvis:desktop-connector:awaken";
 
@@ -20,6 +20,7 @@ struct ConnectorStatus {
 
 struct ConnectorState {
     daemon_child: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
+    daemon_generation: Mutex<u64>,
     status: Mutex<ConnectorStatus>,
 }
 
@@ -52,12 +53,85 @@ fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+fn next_daemon_generation(state: &State<ConnectorState>) -> u64 {
+    let mut generation = state.daemon_generation.lock().expect("daemon generation lock poisoned");
+    *generation += 1;
+    *generation
+}
+
+fn update_status_for_generation(app: &AppHandle, generation: u64, daemon: &str, detail: &str, clear_child: bool) {
+    let state = app.state::<ConnectorState>();
+    let current_generation = *state
+        .daemon_generation
+        .lock()
+        .expect("daemon generation lock poisoned");
+    if current_generation != generation {
+        return;
+    }
+
+    let mut status = state.status.lock().expect("connector status lock poisoned");
+    status.daemon = daemon.into();
+    status.detail = detail.into();
+    drop(status);
+
+    if clear_child {
+        *state.daemon_child.lock().expect("daemon child lock poisoned") = None;
+    }
+}
+
+fn monitor_sidecar_events(app: AppHandle, generation: u64, mut rx: tauri::async_runtime::Receiver<CommandEvent>) {
+    tauri::async_runtime::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Terminated(payload) => {
+                    update_status_for_generation(
+                        &app,
+                        generation,
+                        "attention",
+                        &format!(
+                            "Jarvis desktop daemon stopped (code {:?}, signal {:?}). Use Reconnect to start it again.",
+                            payload.code, payload.signal
+                        ),
+                        true,
+                    );
+                    break;
+                }
+                CommandEvent::Stderr(line) => {
+                    let stderr = String::from_utf8_lossy(&line);
+                    if stderr.to_ascii_lowercase().contains("error") {
+                        update_status_for_generation(
+                            &app,
+                            generation,
+                            "attention",
+                            "Jarvis desktop daemon reported an error. Use Reconnect to try again.",
+                            false,
+                        );
+                    }
+                }
+                CommandEvent::Error(error) => {
+                    update_status_for_generation(
+                        &app,
+                        generation,
+                        "attention",
+                        &format!("Jarvis desktop daemon event stream failed: {error}. Use Reconnect to try again."),
+                        true,
+                    );
+                    break;
+                }
+                _ => {}
+            }
+        }
+    });
+}
+
 fn spawn_daemon(app: &AppHandle, state: &State<ConnectorState>) -> Result<ConnectorStatus, String> {
+    let generation = next_daemon_generation(state);
+
     if let Some(mut child) = state.daemon_child.lock().expect("daemon child lock poisoned").take() {
         let _ = child.kill();
     }
 
-    let (_rx, child) = app
+    let (mut rx, child) = app
         .shell()
         .sidecar("jarvis-desktop-daemon")
         .map_err(|err| err.to_string())?
@@ -65,10 +139,12 @@ fn spawn_daemon(app: &AppHandle, state: &State<ConnectorState>) -> Result<Connec
         .map_err(|err| err.to_string())?;
 
     *state.daemon_child.lock().expect("daemon child lock poisoned") = Some(child);
+    monitor_sidecar_events(app.clone(), generation, rx);
+
     Ok(update_status(
         state,
         "connected",
-        "Jarvis is connected to this Windows desktop.",
+        "Jarvis desktop daemon is running in the background.",
     ))
 }
 
@@ -188,6 +264,7 @@ pub fn run() {
         ))
         .manage(ConnectorState {
             daemon_child: Mutex::new(None),
+            daemon_generation: Mutex::new(0),
             status: Mutex::new(default_status()),
         })
         .setup(|app| {
@@ -203,6 +280,14 @@ pub fn run() {
             run_verification_again,
             open_jarvis
         ])
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .run(tauri::generate_context!())
         .expect("error while running Jarvis Desktop Connector");
 }

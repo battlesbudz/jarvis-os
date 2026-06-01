@@ -17,17 +17,26 @@ function statusLabel(status: ConnectorStatus["daemon"]) {
 export default function App() {
   const [status, setStatus] = useState<ConnectorStatus>(fallbackStatus);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   async function refresh() {
-    setStatus(await getStatus());
+    try {
+      setStatus(await getStatus());
+      setErrorMessage(null);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    }
   }
 
   async function runAction(name: string, action: () => Promise<ConnectorStatus | void>) {
     setBusyAction(name);
+    setErrorMessage(null);
     try {
       const result = await action();
       if (result) setStatus(result);
       else await refresh();
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
     } finally {
       setBusyAction(null);
     }
@@ -76,6 +85,12 @@ export default function App() {
             Open Jarvis
           </button>
         </div>
+
+        {errorMessage ? (
+          <p className="error-message" role="alert">
+            {errorMessage}
+          </p>
+        ) : null}
       </section>
     </main>
   );

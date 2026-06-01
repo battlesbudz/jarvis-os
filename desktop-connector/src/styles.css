@@ -133,6 +133,17 @@ strong {
   gap: 8px;
 }
 
+.error-message {
+  background: #fff1f0;
+  border: 1px solid #e5b8b3;
+  border-radius: 8px;
+  color: #8e2f2a;
+  font-size: 12px;
+  font-weight: 700;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+}
+
 @media (max-width: 460px) {
   .status-grid {
     grid-template-columns: 1fr;

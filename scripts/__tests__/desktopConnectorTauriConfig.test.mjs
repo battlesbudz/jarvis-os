@@ -123,6 +123,13 @@ assert.match(libRs, /tauri_plugin_opener/, "Rust app should initialize the opene
 assert.match(libRs, /\.opener\(\)\s*[\s\S]*\.open_url\("https:\/\/gameplanjarvisai\.up\.railway\.app"/, "Open Jarvis should use the Tauri opener plugin");
 assert.match(libRs, /\.shell\(\)[\s\S]*\.sidecar\("jarvis-desktop-daemon"\)/, "Rust app should launch the registered sidecar");
 assert.match(libRs, /\.spawn\(\)/, "Rust app should spawn the sidecar");
+assert.match(libRs, /process::CommandEvent/, "Rust app should import CommandEvent for sidecar lifecycle monitoring");
+assert.match(libRs, /let\s+\(mut rx,\s*child\)/, "Rust app should keep the sidecar event receiver");
+assert.match(libRs, /tauri::async_runtime::spawn/, "Rust app should consume sidecar events without blocking setup");
+assert.match(libRs, /while let Some\(event\)\s*=\s*rx\.recv\(\)\.await/, "Rust app should continuously drain sidecar events");
+assert.match(libRs, /CommandEvent::Terminated/, "Rust app should handle sidecar termination");
+assert.match(libRs, /CommandEvent::Stderr/, "Rust app should observe sidecar stderr");
+assert.match(libRs, /"attention"[\s\S]*daemon stopped/i, "sidecar termination should update status to attention with a stopped-daemon detail");
 assert.match(libRs, /reconnect_daemon/, "Rust app should expose reconnect control");
 assert.match(libRs, /run_verification_again/, "Rust app should expose verification control");
 assert.match(libRs, /jarvis:desktop-connector:awaken/, "verification action should launch the awakening ceremony");
@@ -130,12 +137,19 @@ assert.match(libRs, /BaseDirectory::Resource/, "verification action should use t
 assert.doesNotMatch(libRs, /--window-style/i, "verification action should not pass invalid --window-style to PowerShell");
 assert.match(libRs, /-WindowStyle[\s\S]*Normal/, "verification action should open a visible PowerShell window");
 assert.match(libRs, /Start-Process[\s\S]*-FilePath[\s\S]*powershell\.exe[\s\S]*-ArgumentList/, "verification action should use valid Start-Process PowerShell semantics");
+assert.match(libRs, /\.on_window_event\(/, "window close should be handled by the tray wrapper");
+assert.match(libRs, /WindowEvent::CloseRequested/, "main window close requests should be intercepted");
+assert.match(libRs, /api\.prevent_close\(\)/, "main window close should be prevented");
+assert.match(libRs, /\.hide\(\)/, "main window close should hide to tray instead of quitting");
 
 const appTsx = readText("desktop-connector/src/App.tsx");
 for (const text of ["Jarvis Desktop Connector", "Reconnect", "Run verification again", "Open Jarvis", "Quiet startup"]) {
   assert.match(appTsx, new RegExp(text), `status UI should include ${text}`);
 }
 assert.doesNotMatch(appTsx, /npm install|PowerShell|command line|\bCLI\b/i, "tray UI should not show setup commands");
+assert.match(appTsx, /const \[errorMessage, setErrorMessage\]/, "status UI should track frontend command errors");
+assert.match(appTsx, /catch\s*\([^)]*err[^)]*\)/, "status UI should catch command errors");
+assert.match(appTsx, /role="alert"/, "status UI should surface command errors accessibly");
 
 const connectorApi = readText("desktop-connector/src/connectorApi.ts");
 for (const command of ["get_status", "reconnect_daemon", "run_verification_again", "open_jarvis"]) {
@@ -146,6 +160,15 @@ const sidecarPackage = readJson("desktop-connector/sidecar/package.json");
 assert.equal(sidecarPackage.bin["jarvis-desktop-daemon"], "index.js", "sidecar package should expose the daemon launcher binary");
 assert.match(sidecarPackage.scripts.prepareDaemon, /prepare-daemon\.mjs/);
 assert.match(sidecarPackage.scripts.rename, /rename-sidecar\.mjs/);
+assert.ok(Array.isArray(sidecarPackage.pkg.scripts), "sidecar package should compile bundled daemon scripts into the pkg snapshot");
+assert.ok(
+  sidecarPackage.pkg.scripts.includes("bundled-daemon/jarvis-daemon.js"),
+  "bundled daemon should be a pkg.scripts input so pkg statically traverses daemon require() calls such as ws",
+);
+assert.ok(
+  sidecarPackage.pkg.assets.includes("bundled-daemon/jarvis-daemon.js"),
+  "bundled daemon may also remain a pkg asset for readable stack traces and debugging",
+);
 
 const sidecarIndex = readText("desktop-connector/sidecar/index.js");
 assert.match(sidecarIndex, /bundled-daemon[\\/]jarvis-daemon\.js/, "sidecar should require the bundled daemon copy");
