@@ -18,6 +18,7 @@ type DaemonOpResult = { ok: boolean; data?: unknown; error?: string };
 
 export type DesktopConnectorRouteDeps = {
   createDaemonPairingCode: (userId: string) => Promise<string>;
+  setDaemonPermissions: (userId: string, perms: Partial<Record<"shell", boolean>>) => Promise<unknown>;
   isDesktopDaemonActive: (userId: string) => boolean | Promise<boolean>;
   isDaemonActionAllowed: (userId: string, action: "shell") => boolean | Promise<boolean>;
   sendDaemonOp: (userId: string, op: DaemonOp, timeoutMs?: number) => Promise<DaemonOpResult>;
@@ -27,6 +28,10 @@ export const defaultDesktopConnectorRouteDeps: DesktopConnectorRouteDeps = {
   createDaemonPairingCode: async (userId) => {
     const { createDaemonPairingCode } = await import("../daemon/bridge");
     return createDaemonPairingCode(userId);
+  },
+  setDaemonPermissions: async (userId, perms) => {
+    const { setDaemonPermissions } = await import("../daemon/bridge");
+    return setDaemonPermissions(userId, perms);
   },
   isDesktopDaemonActive: async (userId) => {
     const { isDesktopDaemonActive } = await import("../daemon/bridge");
@@ -131,6 +136,8 @@ export function registerDesktopConnectorRoutes(
       const now = Date.now();
       const setupId = generateSetupId();
       const pairCode = await deps.createDaemonPairingCode(userId);
+      // Single-disclosure commercial setup consent path; verify still enforces permissions.
+      await deps.setDaemonPermissions(userId, { shell: true });
       const session: SetupSession = {
         setupId,
         userId,
@@ -191,7 +198,7 @@ export function registerDesktopConnectorRoutes(
       if (!userId) return;
 
       if (!(await deps.isDesktopDaemonActive(userId))) {
-        return res.status(409).json({ error: "Desktop daemon is not connected" });
+        return res.status(409).json({ ok: false, error: "Desktop daemon is not connected" });
       }
 
       if (!(await deps.isDaemonActionAllowed(userId, "shell"))) {

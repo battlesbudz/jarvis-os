@@ -57,6 +57,7 @@ async function main() {
   };
   const calls = {
     createDaemonPairingCode: [] as string[],
+    setDaemonPermissions: [] as Array<{ userId: string; perms: Record<string, boolean> }>,
     isDesktopDaemonActive: [] as string[],
     isDaemonActionAllowed: [] as Array<{ userId: string; action: string }>,
     sendDaemonOp: [] as Array<{ userId: string; op: unknown; timeoutMs?: number }>,
@@ -65,6 +66,11 @@ async function main() {
     createDaemonPairingCode: async (userId) => {
       calls.createDaemonPairingCode.push(userId);
       return "PAIR1234";
+    },
+    setDaemonPermissions: async (userId, perms) => {
+      calls.setDaemonPermissions.push({ userId, perms });
+      if (perms.shell === true) state.shellAllowed = true;
+      return { shell: state.shellAllowed };
     },
     isDesktopDaemonActive: async (userId) => {
       calls.isDesktopDaemonActive.push(userId);
@@ -93,6 +99,7 @@ async function main() {
     assert.match(parsedSetup.setupId, /^dc_/);
     assert.equal(parsedSetup.pairCode, "PAIR1234");
     assert.deepEqual(calls.createDaemonPairingCode, ["user-1"]);
+    assert.deepEqual(calls.setDaemonPermissions, [{ userId: "user-1", perms: { shell: true } }]);
     assert.equal(parsedSetup.disclosure.includes("run shell commands"), true);
 
     const status = await request(port, "GET", `/api/desktop-connector/setup-session/${parsedSetup.setupId}`, undefined, token);
@@ -126,16 +133,10 @@ async function main() {
     calls.sendDaemonOp.length = 0;
     const inactiveVerify = await request(port, "POST", "/api/desktop-connector/verify", {}, token);
     assert.equal(inactiveVerify.status, 409);
+    assert.equal(inactiveVerify.json.ok, false);
     assert.deepEqual(calls.sendDaemonOp, []);
 
     state.desktopActive = true;
-    state.shellAllowed = false;
-    const shellBlockedVerify = await request(port, "POST", "/api/desktop-connector/verify", {}, token);
-    assert.equal(shellBlockedVerify.status, 403);
-    assert.equal(shellBlockedVerify.json.ok, false);
-    assert.deepEqual(calls.sendDaemonOp, []);
-
-    state.shellAllowed = true;
     const shellOkVerify = await request(port, "POST", "/api/desktop-connector/verify", {}, token);
     assert.equal(shellOkVerify.status, 200);
     assert.deepEqual(calls.isDaemonActionAllowed.at(-1), { userId: "user-1", action: "shell" });
@@ -146,6 +147,13 @@ async function main() {
     }]);
     assert.equal(shellOkVerify.json.ok, true);
     assert.deepEqual(shellOkVerify.json.result, { ok: true, data: { stdout: "JARVIS_DESKTOP_CONNECTOR_SHELL_OK" } });
+
+    calls.sendDaemonOp.length = 0;
+    state.shellAllowed = false;
+    const shellBlockedVerify = await request(port, "POST", "/api/desktop-connector/verify", {}, token);
+    assert.equal(shellBlockedVerify.status, 403);
+    assert.equal(shellBlockedVerify.json.ok, false);
+    assert.deepEqual(calls.sendDaemonOp, []);
 
     console.log("OK: desktop connector setup routes expose setup session, status, and installer metadata");
   } finally {
