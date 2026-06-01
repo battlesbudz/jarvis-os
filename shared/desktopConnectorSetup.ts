@@ -18,8 +18,10 @@ export const desktopConnectorInstallerSchema = z.object({
   sha256: z.string().optional(),
 });
 
+const desktopConnectorSetupIdSchema = z.string().regex(/^dc_/);
+
 export const desktopConnectorSetupResponseSchema = z.object({
-  setupId: z.string().min(1),
+  setupId: desktopConnectorSetupIdSchema,
   platform: z.literal("windows"),
   pairCode: z.string().min(4),
   expiresInSec: z.number().int().positive(),
@@ -29,7 +31,7 @@ export const desktopConnectorSetupResponseSchema = z.object({
 });
 
 export const desktopConnectorStatusResponseSchema = z.object({
-  setupId: z.string().min(1),
+  setupId: desktopConnectorSetupIdSchema,
   stage: desktopConnectorStageSchema,
   connected: z.boolean(),
   computerName: z.string().nullable(),

@@ -19,6 +19,7 @@ type DaemonOpResult = { ok: boolean; data?: unknown; error?: string };
 export type DesktopConnectorRouteDeps = {
   createDaemonPairingCode: (userId: string) => Promise<string>;
   isDesktopDaemonActive: (userId: string) => boolean | Promise<boolean>;
+  isDaemonActionAllowed: (userId: string, action: "shell") => boolean | Promise<boolean>;
   sendDaemonOp: (userId: string, op: DaemonOp, timeoutMs?: number) => Promise<DaemonOpResult>;
 };
 
@@ -30,6 +31,10 @@ export const defaultDesktopConnectorRouteDeps: DesktopConnectorRouteDeps = {
   isDesktopDaemonActive: async (userId) => {
     const { isDesktopDaemonActive } = await import("../daemon/bridge");
     return isDesktopDaemonActive(userId);
+  },
+  isDaemonActionAllowed: async (userId, action) => {
+    const { isDaemonActionAllowed } = await import("../daemon/bridge");
+    return isDaemonActionAllowed(userId, action);
   },
   sendDaemonOp: async (userId, op, timeoutMs) => {
     const { sendDaemonOp } = await import("../daemon/bridge");
@@ -75,18 +80,26 @@ function generateSetupId(): string {
 }
 
 function buildStatusResponse(session: SetupSession, connected: boolean): DesktopConnectorStatusResponse {
+  let stage = session.stage;
   if (connected) {
-    session.stage = "connected";
+    stage = "connected";
     session.lastSeenAt = new Date().toISOString();
     session.codexReady = true;
     session.watchdogReady = true;
-  } else if (session.stage === "created") {
-    session.stage = "waiting_for_connector";
+  } else {
+    if (session.stage === "connected") {
+      stage = "needs_attention";
+    } else if (session.stage === "created") {
+      stage = "waiting_for_connector";
+    }
+    session.codexReady = false;
+    session.watchdogReady = false;
   }
+  session.stage = stage;
 
   return {
     setupId: session.setupId,
-    stage: session.stage,
+    stage,
     connected,
     computerName: session.computerName,
     lastSeenAt: session.lastSeenAt,
@@ -94,7 +107,9 @@ function buildStatusResponse(session: SetupSession, connected: boolean): Desktop
     watchdogReady: session.watchdogReady,
     message: connected
       ? "Desktop connector is connected."
-      : "Waiting for the Windows desktop connector to pair.",
+      : stage === "needs_attention"
+        ? "Desktop connector was connected but is now offline."
+        : "Waiting for the Windows desktop connector to pair.",
   };
 }
 
@@ -179,9 +194,22 @@ export function registerDesktopConnectorRoutes(
         return res.status(409).json({ error: "Desktop daemon is not connected" });
       }
 
+      if (!(await deps.isDaemonActionAllowed(userId, "shell"))) {
+        return res.status(403).json({
+          ok: false,
+          error: "Desktop daemon shell permission is disabled",
+        });
+      }
+
+      const op = {
+        type: "shell",
+        cmd: "Write-Output 'JARVIS_DESKTOP_CONNECTOR_SHELL_OK'",
+        timeoutMs: 15000,
+      } satisfies DaemonOp;
+
       const result = await deps.sendDaemonOp(
         userId,
-        { type: "shell", cmd: "Write-Output 'JARVIS_DESKTOP_CONNECTOR_SHELL_OK'", timeoutMs: 15000 } as any,
+        op,
         20000,
       );
 

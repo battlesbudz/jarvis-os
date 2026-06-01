@@ -51,9 +51,15 @@ async function main() {
   const app = express();
   app.use(express.json());
   app.use(authMiddleware);
+  const state = {
+    desktopActive: false,
+    shellAllowed: false,
+  };
   const calls = {
     createDaemonPairingCode: [] as string[],
     isDesktopDaemonActive: [] as string[],
+    isDaemonActionAllowed: [] as Array<{ userId: string; action: string }>,
+    sendDaemonOp: [] as Array<{ userId: string; op: unknown; timeoutMs?: number }>,
   };
   registerDesktopConnectorRoutes(app, {
     createDaemonPairingCode: async (userId) => {
@@ -62,10 +68,15 @@ async function main() {
     },
     isDesktopDaemonActive: async (userId) => {
       calls.isDesktopDaemonActive.push(userId);
-      return false;
+      return state.desktopActive;
     },
-    sendDaemonOp: async () => {
-      throw new Error("sendDaemonOp should not be called by this setup test");
+    isDaemonActionAllowed: async (userId, action) => {
+      calls.isDaemonActionAllowed.push({ userId, action });
+      return state.shellAllowed;
+    },
+    sendDaemonOp: async (userId, op, timeoutMs) => {
+      calls.sendDaemonOp.push({ userId, op, timeoutMs });
+      return { ok: true, data: { stdout: "JARVIS_DESKTOP_CONNECTOR_SHELL_OK" } };
     },
   });
   const server = app.listen(0);
@@ -92,11 +103,49 @@ async function main() {
     assert.equal(parsedStatus.stage, "waiting_for_connector");
     assert.deepEqual(calls.isDesktopDaemonActive, ["user-1"]);
 
+    state.desktopActive = true;
+    const connectedStatus = await request(port, "GET", `/api/desktop-connector/setup-session/${parsedSetup.setupId}`, undefined, token);
+    assert.equal(connectedStatus.status, 200);
+    const parsedConnectedStatus = desktopConnectorStatusResponseSchema.parse(connectedStatus.json);
+    assert.equal(parsedConnectedStatus.connected, true);
+    assert.equal(parsedConnectedStatus.stage, "connected");
+
+    state.desktopActive = false;
+    const disconnectedStatus = await request(port, "GET", `/api/desktop-connector/setup-session/${parsedSetup.setupId}`, undefined, token);
+    assert.equal(disconnectedStatus.status, 200);
+    const parsedDisconnectedStatus = desktopConnectorStatusResponseSchema.parse(disconnectedStatus.json);
+    assert.equal(parsedDisconnectedStatus.connected, false);
+    assert.equal(parsedDisconnectedStatus.stage, "needs_attention");
+
     const metadata = await request(port, "GET", "/api/desktop-connector/installer", undefined, token);
     assert.equal(metadata.status, 200);
     const parsedMetadata = desktopConnectorInstallerSchema.parse(metadata.json);
     assert.equal(parsedMetadata.url, "https://downloads.example.test/JarvisSetup.exe");
     assert.equal(parsedMetadata.version, "0.1.0");
+
+    calls.sendDaemonOp.length = 0;
+    const inactiveVerify = await request(port, "POST", "/api/desktop-connector/verify", {}, token);
+    assert.equal(inactiveVerify.status, 409);
+    assert.deepEqual(calls.sendDaemonOp, []);
+
+    state.desktopActive = true;
+    state.shellAllowed = false;
+    const shellBlockedVerify = await request(port, "POST", "/api/desktop-connector/verify", {}, token);
+    assert.equal(shellBlockedVerify.status, 403);
+    assert.equal(shellBlockedVerify.json.ok, false);
+    assert.deepEqual(calls.sendDaemonOp, []);
+
+    state.shellAllowed = true;
+    const shellOkVerify = await request(port, "POST", "/api/desktop-connector/verify", {}, token);
+    assert.equal(shellOkVerify.status, 200);
+    assert.deepEqual(calls.isDaemonActionAllowed.at(-1), { userId: "user-1", action: "shell" });
+    assert.deepEqual(calls.sendDaemonOp, [{
+      userId: "user-1",
+      op: { type: "shell", cmd: "Write-Output 'JARVIS_DESKTOP_CONNECTOR_SHELL_OK'", timeoutMs: 15000 },
+      timeoutMs: 20000,
+    }]);
+    assert.equal(shellOkVerify.json.ok, true);
+    assert.deepEqual(shellOkVerify.json.result, { ok: true, data: { stdout: "JARVIS_DESKTOP_CONNECTOR_SHELL_OK" } });
 
     console.log("OK: desktop connector setup routes expose setup session, status, and installer metadata");
   } finally {
