@@ -55,8 +55,20 @@ async function main() {
     desktopActive: false,
     shellAllowed: false,
   };
+  const currentPermissions = {
+    shell: false,
+    file_write: false,
+    notify: true,
+    file_read: false,
+    file_list: true,
+    desktop_screenshot: false,
+    desktop_read_screen: true,
+    browser_local: false,
+    allow_outside_root: false,
+  };
   const calls = {
     createDaemonPairingCode: [] as string[],
+    getDaemonPermissions: [] as string[],
     setDaemonPermissions: [] as Array<{ userId: string; perms: Record<string, boolean> }>,
     isDesktopDaemonActive: [] as string[],
     isDaemonActionAllowed: [] as Array<{ userId: string; action: string }>,
@@ -66,6 +78,10 @@ async function main() {
     createDaemonPairingCode: async (userId) => {
       calls.createDaemonPairingCode.push(userId);
       return "PAIR1234";
+    },
+    getDaemonPermissions: async (userId) => {
+      calls.getDaemonPermissions.push(userId);
+      return { ...currentPermissions };
     },
     setDaemonPermissions: async (userId, perms) => {
       calls.setDaemonPermissions.push({ userId, perms });
@@ -99,7 +115,14 @@ async function main() {
     assert.match(parsedSetup.setupId, /^dc_/);
     assert.equal(parsedSetup.pairCode, "PAIR1234");
     assert.deepEqual(calls.createDaemonPairingCode, ["user-1"]);
-    assert.deepEqual(calls.setDaemonPermissions, [{ userId: "user-1", perms: { shell: true } }]);
+    assert.deepEqual(calls.getDaemonPermissions, ["user-1"]);
+    assert.deepEqual(calls.setDaemonPermissions, [{
+      userId: "user-1",
+      perms: {
+        ...currentPermissions,
+        shell: true,
+      },
+    }]);
     assert.equal(parsedSetup.disclosure.includes("run shell commands"), true);
 
     const status = await request(port, "GET", `/api/desktop-connector/setup-session/${parsedSetup.setupId}`, undefined, token);
