@@ -178,6 +178,7 @@ assert.ok(
 
 const sidecarIndex = readText("desktop-connector/sidecar/index.js");
 assert.match(sidecarIndex, /bundled-daemon[\\/]jarvis-daemon\.js/, "sidecar should require the bundled daemon copy");
+assert.match(sidecarIndex, /require\("\.\/bundled-daemon\/jarvis-daemon\.js"\)/, "sidecar should use a literal daemon require so pkg can bundle dependencies");
 assert.match(sidecarIndex, /JARVIS_DAEMON_PLATFORM/, "sidecar should set desktop daemon platform env");
 assert.match(sidecarIndex, /\.connect\(\)/, "sidecar launcher should call the daemon connect export");
 assert.doesNotMatch(sidecarIndex, /..[\\/]..[\\/]daemon[\\/]jarvis-daemon\.js/, "sidecar should not run daemon from a source repo checkout");
@@ -185,6 +186,7 @@ assert.doesNotMatch(sidecarIndex, /..[\\/]..[\\/]daemon[\\/]jarvis-daemon\.js/, 
 const prepareDaemon = readText("desktop-connector/sidecar/prepare-daemon.mjs");
 assert.match(prepareDaemon, /daemon[\\/]jarvis-daemon\.js/, "prepare step should copy the existing daemon source");
 assert.match(prepareDaemon, /bundled-daemon/, "prepare step should copy into the sidecar package");
+assert.match(prepareDaemon, /path\.resolve\(__dirname,\s*"\.\.\/\.\."\)/, "prepare step should resolve the repo root from desktop-connector/sidecar");
 
 const renameSidecar = readText("desktop-connector/sidecar/rename-sidecar.mjs");
 assert.match(renameSidecar, /src-tauri[\\/]binaries/, "rename script should place the sidecar under Tauri binaries");
@@ -197,11 +199,20 @@ assert.match(daemon, /module\.exports\s*=\s*\{[\s\S]*connect,/, "daemon should e
 const assertConfig = readText("desktop-connector/scripts/assert-config.mjs");
 assert.match(assertConfig, /desktopConnectorTauriConfig\.test\.mjs/, "connector config script should delegate to the root static assertions");
 
-const allConnectorFiles = fs
+const connectorSourceFiles = fs
   .readdirSync(connectorRoot, { recursive: true, withFileTypes: true })
   .filter((entry) => entry.isFile())
-  .map((entry) => path.join(entry.parentPath || entry.path, entry.name));
-for (const file of allConnectorFiles) {
+  .map((entry) => path.join(entry.parentPath || entry.path, entry.name))
+  .filter((file) => {
+    const relative = path.relative(connectorRoot, file).replace(/\\/g, "/");
+    return !relative.startsWith("node_modules/")
+      && !relative.startsWith("dist/")
+      && !relative.startsWith("sidecar/dist/")
+      && !relative.startsWith("sidecar/bundled-daemon/")
+      && !relative.startsWith("src-tauri/target/")
+      && !relative.startsWith("src-tauri/binaries/");
+  });
+for (const file of connectorSourceFiles) {
   const text = fs.readFileSync(file, "utf8");
   assert.doesNotMatch(text, /icon\.(ico|png|icns)|app-icon/i, `${path.relative(repoRoot, file)} should not reference missing icon assets`);
 }
