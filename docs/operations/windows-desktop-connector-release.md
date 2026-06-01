@@ -5,7 +5,6 @@
 1. Run `npm.cmd run jarvis:desktop-connector:test-config`.
 2. Run `npm.cmd run jarvis:desktop-connector:build` on a Windows build machine with Rust/Tauri prerequisites installed.
 3. Find the NSIS setup executable under `desktop-connector/src-tauri/target/release/bundle/nsis/`.
-4. Compute the SHA-256 hash with `Get-FileHash -Algorithm SHA256 <installer.exe>`.
 
 Rust/Tauri prerequisites are needed only on build machines, not end-user machines.
 
@@ -13,9 +12,10 @@ Rust/Tauri prerequisites are needed only on build machines, not end-user machine
 
 1. Sign the installer with the Jarvis Windows code-signing certificate.
 2. Verify the signature with Explorer or `Get-AuthenticodeSignature <installer.exe>`.
-3. Upload the signed installer to the release bucket/static downloads host.
+3. Compute the production SHA-256 hash from the signed installer with `Get-FileHash -Algorithm SHA256 <installer.exe>`.
+4. Upload the signed installer to the release bucket/static downloads host.
 
-The installer should be signed before setting the production download URL.
+The installer should be signed before setting the production download URL. `JARVIS_WINDOWS_CONNECTOR_SHA256` must match the exact signed installer bytes served at `JARVIS_WINDOWS_CONNECTOR_DOWNLOAD_URL`.
 
 ## Production Variables
 
