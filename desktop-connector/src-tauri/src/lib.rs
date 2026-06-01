@@ -53,6 +53,14 @@ fn powershell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+fn attention_for_spawn_error(state: &State<ConnectorState>, error: &str) -> ConnectorStatus {
+    update_status(
+        state,
+        "attention",
+        &format!("Jarvis desktop daemon sidecar spawn failed: {error}. Use Reconnect to try again."),
+    )
+}
+
 fn next_daemon_generation(state: &State<ConnectorState>) -> u64 {
     let mut generation = state.daemon_generation.lock().expect("daemon generation lock poisoned");
     *generation += 1;
@@ -131,12 +139,22 @@ fn spawn_daemon(app: &AppHandle, state: &State<ConnectorState>) -> Result<Connec
         let _ = child.kill();
     }
 
-    let (mut rx, child) = app
+    let sidecar = app
         .shell()
         .sidecar("jarvis-desktop-daemon")
-        .map_err(|err| err.to_string())?
+        .map_err(|err| {
+            let error = err.to_string();
+            attention_for_spawn_error(state, &error);
+            error
+        })?;
+
+    let (mut rx, child) = sidecar
         .spawn()
-        .map_err(|err| err.to_string())?;
+        .map_err(|err| {
+            let error = err.to_string();
+            attention_for_spawn_error(state, &error);
+            error
+        })?;
 
     *state.daemon_child.lock().expect("daemon child lock poisoned") = Some(child);
     monitor_sidecar_events(app.clone(), generation, rx);
@@ -270,7 +288,9 @@ pub fn run() {
         .setup(|app| {
             build_tray(app.handle())?;
             let state = app.state::<ConnectorState>();
-            let _ = spawn_daemon(app.handle(), &state);
+            if let Err(err) = spawn_daemon(app.handle(), &state) {
+                attention_for_spawn_error(&state, &err);
+            }
             enable_autostart(app.handle(), &state);
             Ok(())
         })

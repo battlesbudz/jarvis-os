@@ -130,6 +130,12 @@ assert.match(libRs, /while let Some\(event\)\s*=\s*rx\.recv\(\)\.await/, "Rust a
 assert.match(libRs, /CommandEvent::Terminated/, "Rust app should handle sidecar termination");
 assert.match(libRs, /CommandEvent::Stderr/, "Rust app should observe sidecar stderr");
 assert.match(libRs, /"attention"[\s\S]*daemon stopped/i, "sidecar termination should update status to attention with a stopped-daemon detail");
+assert.match(libRs, /fn attention_for_spawn_error/, "Rust app should have a shared sidecar spawn failure status helper");
+assert.match(libRs, /sidecar spawn failed/i, "sidecar lookup or spawn errors should be reflected in status detail");
+assert.match(libRs, /Use Reconnect to try again/i, "spawn failure detail should include a reconnect hint");
+assert.doesNotMatch(libRs, /\.sidecar\("jarvis-desktop-daemon"\)[\s\S]{0,120}\.map_err\(\|err\| err\.to_string\(\)\)\?[\s\S]{0,120}\.spawn\(\)[\s\S]{0,120}\.map_err\(\|err\| err\.to_string\(\)\)\?/, "spawn_daemon should not early-return on sidecar/spawn errors before updating status");
+assert.doesNotMatch(libRs, /let _ = spawn_daemon\(app\.handle\(\), &state\);/, "setup should not ignore daemon spawn failure");
+assert.match(libRs, /if let Err\(err\) = spawn_daemon\(app\.handle\(\), &state\)/, "setup should explicitly handle daemon spawn failure");
 assert.match(libRs, /reconnect_daemon/, "Rust app should expose reconnect control");
 assert.match(libRs, /run_verification_again/, "Rust app should expose verification control");
 assert.match(libRs, /jarvis:desktop-connector:awaken/, "verification action should launch the awakening ceremony");
