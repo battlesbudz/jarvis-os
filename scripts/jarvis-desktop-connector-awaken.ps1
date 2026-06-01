@@ -35,6 +35,20 @@ function Show-ProgressStage {
   Write-Host " ready" -ForegroundColor Green
 }
 
+function Show-ProgressStart {
+  param(
+    [string]$Label,
+    [ConsoleColor]$Color = [ConsoleColor]::Cyan
+  )
+
+  Write-Host -NoNewline ("  {0} " -f $Label) -ForegroundColor $Color
+  foreach ($step in 1..18) {
+    Write-Host -NoNewline "."
+    Start-Sleep -Milliseconds 45
+  }
+  Write-Host ""
+}
+
 function Show-Banner {
   Clear-Host
   Write-Host ''
@@ -137,7 +151,11 @@ function Invoke-CodexAwakeProbe {
 
     $completed = $process.WaitForExit(60000)
     if (-not $completed) {
-      $process.Kill()
+      try {
+        $process.Kill($true)
+      } catch {
+        $process.Kill()
+      }
       $process.WaitForExit()
       return [pscustomobject]@{
         ExitCode = -1
@@ -164,13 +182,13 @@ function Test-Codex {
 
   if ($SkipProbe) {
     Write-CeremonyLine '  [codex] Probe skipped; Codex verification was not claimed.' Yellow
-    return
+    return $false
   }
 
   $codexCommand = Resolve-CodexCommand
   if ([string]::IsNullOrWhiteSpace($codexCommand)) {
     Write-CeremonyLine '  [codex] Codex probe not completed; codex.cmd was not available.' Yellow
-    return
+    return $false
   }
 
   $ExpectedMarker = 'JARVIS_AWAKE_OK'
@@ -180,14 +198,15 @@ function Test-Codex {
     if ($probe.ExitCode -eq 0 -and $probe.Output -match [regex]::Escape($ExpectedMarker)) {
       Write-CeremonyLine '  [ok] Codex / ChatGPT sign-in verified.' Green
       Write-CeremonyLine '  [ok] Test response received from Codex.' Green
-      return
+      return $true
     }
   } catch {
     Write-CeremonyLine ("  [codex] Codex probe not completed; {0}" -f $_.Exception.Message) Yellow
-    return
+    return $false
   }
 
   Write-CeremonyLine '  [codex] Codex probe not completed; expected marker was not returned.' Yellow
+  return $false
 }
 
 Show-Banner
@@ -196,6 +215,7 @@ Start-CeremonyPause
 
 Show-ProgressStage 'Local shell'
 Write-CeremonyLine '  [ok] Local shell verified' Green
+$localShellVerified = $true
 Start-CeremonyPause
 
 Show-ProgressStage 'Jarvis server'
@@ -205,13 +225,17 @@ if (-not [string]::IsNullOrWhiteSpace($SetupId)) {
 }
 Start-CeremonyPause
 
-Show-ProgressStage 'Codex channel'
-Test-Codex -SkipProbe:$SkipCodexProbe
+Show-ProgressStart 'Codex channel'
+$codexVerified = Test-Codex -SkipProbe:$SkipCodexProbe
 Start-CeremonyPause
 
 Write-Host ''
 Write-CeremonyLine '  ------------------------------------------------' DarkCyan
-Write-CeremonyLine '  JARVIS: Hello, world. I am awake.' Green
+if ($localShellVerified -and $codexVerified) {
+  Write-CeremonyLine '  JARVIS: Hello, world. I am awake.' Green
+} else {
+  Write-CeremonyLine '  JARVIS: Local shell is awake. Codex needs attention.' Yellow
+}
 Write-CeremonyLine '  ------------------------------------------------' DarkCyan
 Write-Host ''
 Write-CeremonyLine 'Press any key to close this window.' White

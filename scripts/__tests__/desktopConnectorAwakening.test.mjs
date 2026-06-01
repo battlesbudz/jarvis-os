@@ -42,6 +42,15 @@ assert.match(scriptContent, /ExitCode\s+-eq\s+0[\s\S]*ExpectedMarker[\s\S]*Codex
 assert.match(scriptContent, /ExitCode\s+-eq\s+0[\s\S]*ExpectedMarker[\s\S]*Test response received from Codex/, "response phrase should be guarded by exit code and marker output");
 assert.match(scriptContent, /Codex probe not completed/, "failed or unavailable probes should warn instead of claiming success");
 assert.match(scriptContent, /Probe skipped; Codex verification was not claimed/, "skip mode should avoid false verification language");
+assert.match(scriptContent, /return\s+\$true/, "successful Codex proof should return a boolean success status");
+assert.match(scriptContent, /return\s+\$false/, "skipped or failed Codex proof should return a boolean failure status");
+assert.match(scriptContent, /\$codexVerified\s*=\s*Test-Codex/, "main ceremony should store the Codex verification status");
+assert.match(scriptContent, /if\s*\(\$localShellVerified\s+-and\s+\$codexVerified\)[\s\S]*JARVIS: Hello, world\. I am awake\./, "final awake line should be gated by local shell and Codex proof");
+assert.match(scriptContent, /else\s*\{[\s\S]*JARVIS: Local shell is awake\. Codex needs attention\./, "degraded final wording should be used when Codex proof is missing");
+assert.doesNotMatch(scriptContent, /Show-ProgressStage 'Codex channel'[\s\S]*Test-Codex/, "Codex channel should not be marked ready before the probe runs");
+assert.doesNotMatch(scriptContent, /Start-CeremonyPause\s*\r?\n\s*Write-Host ''\s*\r?\n\s*Write-CeremonyLine '  ------------------------------------------------' DarkCyan\s*\r?\n\s*Write-CeremonyLine '  JARVIS: Hello, world\. I am awake\.' Green/, "old unconditional final awake path should not remain");
+assert.match(scriptContent, /\.Kill\(\$true\)/, "timeout cleanup should try to kill the process tree");
+assert.match(scriptContent, /\.Kill\(\)/, "timeout cleanup should fall back to killing the immediate process");
 assert.doesNotMatch(scriptContent, /--version[\s\S]*Codex \/ ChatGPT sign-in verified/, "codex --version should not prove sign-in");
 assert.equal((scriptContent.match(/Codex \/ ChatGPT sign-in verified/g) ?? []).length, 1, "sign-in success phrase should only appear in the real proof branch");
 assert.equal((scriptContent.match(/Test response received from Codex/g) ?? []).length, 1, "response success phrase should only appear in the real proof branch");
