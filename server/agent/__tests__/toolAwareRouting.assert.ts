@@ -94,6 +94,12 @@ assertRoute(
   ["memory_search", "memory_get"],
 );
 assertRoute(
+  "What's my name?",
+  "memory",
+  ["memory"],
+  ["memory_search", "memory_get"],
+);
+assertRoute(
   "open github.com in the browser",
   "browser",
   ["browser"],
