@@ -46,6 +46,7 @@ const tests = [
   { file: "server/agent/__tests__/cronTools.assert.ts" },
   { file: "server/agent/__tests__/actionOntology.assert.ts" },
   { file: "server/agent/__tests__/toolResolver.assert.ts" },
+  { file: "server/agent/__tests__/webSearchFallback.assert.ts" },
   { file: "server/agent/__tests__/reminderDirectRoute.assert.ts" },
   { file: "server/agent/__tests__/scheduledTaskSemantics.assert.ts" },
   { file: "server/agent/__tests__/toolAwareRouting.assert.ts" },

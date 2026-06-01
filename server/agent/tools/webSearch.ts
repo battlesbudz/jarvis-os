@@ -3,6 +3,10 @@ import { tavilySearch, formatSearchResults } from "../../integrations/search";
 import type { SearchResult } from "../../integrations/search";
 import { callBrowserTool } from "../mcp/playwrightMcpClient";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
+import {
+  buildBrowserSearchFallbackUrls,
+  isBrowserSearchChallengeText,
+} from "./webSearchFallback";
 
 type TavilyLikeResult = Awaited<ReturnType<typeof tavilySearch>>;
 function emptyTavilyResult(answer: string): TavilyLikeResult {
@@ -45,24 +49,35 @@ function mcpText(content: { type: string; text?: string }[] | undefined): string
 }
 
 async function browserSearchFallback(query: string, userId: string): Promise<string> {
-  const searchUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
-  const navResult = await callBrowserTool(userId, "browser_navigate", { url: searchUrl });
-  if (navResult.isError) {
-    throw new Error(mcpText(navResult.content) || "browser navigation failed");
+  const attempts: string[] = [];
+  for (const searchUrl of buildBrowserSearchFallbackUrls(query)) {
+    const navResult = await callBrowserTool(userId, "browser_navigate", { url: searchUrl });
+    if (navResult.isError) {
+      attempts.push(`${new URL(searchUrl).hostname}: ${mcpText(navResult.content) || "browser navigation failed"}`);
+      continue;
+    }
+
+    const snapResult = await callBrowserTool(userId, "browser_snapshot", {});
+    if (snapResult.isError) {
+      attempts.push(`${new URL(searchUrl).hostname}: ${mcpText(snapResult.content) || "browser snapshot failed"}`);
+      continue;
+    }
+
+    const visibleText = mcpText(snapResult.content);
+    if (isBrowserSearchChallengeText(visibleText)) {
+      attempts.push(`${new URL(searchUrl).hostname}: challenge page`);
+      continue;
+    }
+
+    return [
+      `Browser search results for: ${query}`,
+      `Search URL: ${searchUrl}`,
+      "",
+      visibleText.slice(0, BROWSER_SEARCH_TEXT_LIMIT) || "(No visible result text found.)",
+    ].join("\n");
   }
 
-  const snapResult = await callBrowserTool(userId, "browser_snapshot", {});
-  if (snapResult.isError) {
-    throw new Error(mcpText(snapResult.content) || "browser snapshot failed");
-  }
-
-  const visibleText = mcpText(snapResult.content);
-  return [
-    `Browser search results for: ${query}`,
-    `Search URL: ${searchUrl}`,
-    "",
-    visibleText.slice(0, BROWSER_SEARCH_TEXT_LIMIT) || "(No visible result text found.)",
-  ].join("\n");
+  throw new Error(`browser search fallback failed across providers: ${attempts.join("; ") || "no result text"}`);
 }
 
 /**
