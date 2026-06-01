@@ -44,6 +44,60 @@ const WEATHER_CODE_LABELS: Record<number, string> = {
   99: "severe thunderstorms with hail",
 };
 
+const US_STATE_NAMES: Record<string, string> = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+  DC: "District of Columbia",
+};
+
 function labelWeather(code: number | undefined): string {
   if (code == null) return "conditions unavailable";
   return WEATHER_CODE_LABELS[code] ?? `weather code ${code}`;
@@ -63,6 +117,7 @@ function chooseForecastIndex(times: string[] | undefined, requestedDate: string 
 function normalizeLocationCandidates(location: string): string[] {
   const normalized = location.trim().toLowerCase().replace(/\s+/g, " ");
   const withoutCountry = normalized.replace(/,\s*(usa|us|united states|united states of america)$/i, "").trim();
+  const cityState = parseCityState(location);
   const aliases: Record<string, string[]> = {
     "nyc": ["New York"],
     "new york city": ["New York"],
@@ -76,14 +131,26 @@ function normalizeLocationCandidates(location: string): string[] {
     "staten island, ny": ["Staten Island", "New York"],
   };
 
-  const candidates = [location.trim(), ...(aliases[withoutCountry] ?? [])].filter(Boolean);
+  const candidates = [location.trim(), ...(aliases[withoutCountry] ?? []), cityState?.city].filter(Boolean);
   return [...new Set(candidates)];
+}
+
+function parseCityState(location: string): { city: string; stateName: string } | undefined {
+  const withoutCountry = location.trim().replace(/,\s*(usa|us|united states|united states of america)$/i, "").trim();
+  const match = withoutCountry.match(/^(.+?)(?:,\s*|\s+)([A-Za-z]{2})$/);
+  if (!match) return undefined;
+  const stateName = US_STATE_NAMES[match[2].toUpperCase()];
+  if (!stateName) return undefined;
+  const city = match[1].trim();
+  return city ? { city, stateName } : undefined;
 }
 
 function scoreGeocodeResult(place: GeocodeResult, requestedLocation: string): number {
   const text = requestedLocation.toLowerCase();
+  const requestedState = parseCityState(requestedLocation)?.stateName;
   let score = 0;
   if (place.country === "United States") score += 2;
+  if (requestedState && place.country === "United States" && place.admin1 === requestedState) score += 10;
   if (/\bny\b|new york|nyc|manhattan|brooklyn|queens|bronx|staten island/.test(text)) {
     if (place.admin1 === "New York") score += 6;
     if (place.name === "New York") score += 4;
@@ -93,6 +160,7 @@ function scoreGeocodeResult(place: GeocodeResult, requestedLocation: string): nu
 }
 
 async function geocodeLocation(location: string, signal?: AbortSignal): Promise<GeocodeResult | undefined> {
+  const requestedState = parseCityState(location)?.stateName;
   for (const candidate of normalizeLocationCandidates(location)) {
     const geocodeUrl = new URL("https://geocoding-api.open-meteo.com/v1/search");
     geocodeUrl.searchParams.set("name", candidate);
@@ -105,7 +173,11 @@ async function geocodeLocation(location: string, signal?: AbortSignal): Promise<
     const geocodeJson = await geocodeRes.json() as { results?: GeocodeResult[] };
     const places = geocodeJson.results ?? [];
     if (places.length === 0) continue;
-    return [...places].sort((a, b) => scoreGeocodeResult(b, location) - scoreGeocodeResult(a, location))[0];
+    const eligiblePlaces = requestedState
+      ? places.filter((place) => place.country === "United States" && place.admin1 === requestedState)
+      : places;
+    if (eligiblePlaces.length === 0) continue;
+    return [...eligiblePlaces].sort((a, b) => scoreGeocodeResult(b, location) - scoreGeocodeResult(a, location))[0];
   }
   return undefined;
 }

@@ -1,7 +1,9 @@
-import type { AgentTool } from "../types";
+import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
 import { retrieveRelevantMemories, batchIncrementAccessCount } from "../../memory/retrieve";
+import type { RetrievedMemory } from "../../memory/retrieve";
 import { db } from "../../db";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import { users } from "@shared/schema";
 
 interface MemoryRow {
   id: string;
@@ -14,6 +16,146 @@ interface MemoryRow {
   access_count: number;
 }
 
+interface MemorySearchDeps {
+  retrieveMemories: (
+    userId: string,
+    query: string,
+    limit: number,
+    skipAccessUpdate: boolean,
+  ) => Promise<RetrievedMemory[]>;
+  incrementAccessCount: (ids: string[]) => void;
+  fetchProfileIdentity: (userId: string) => Promise<string | null>;
+}
+
+function isIdentityFallbackQuery(query: string): boolean {
+  const normalized = query.toLowerCase();
+  return (
+    /\b(what|which)\s+(name|nickname)\b/.test(normalized) ||
+    /\b(name|nickname)\s+(you\s+should\s+)?call\s+me\b/.test(normalized) ||
+    /\bwhat\s+to\s+call\s+me\b/.test(normalized) ||
+    /\bpreferred\s+name\b/.test(normalized)
+  );
+}
+
+function appendProfileIdentityFallback(content: string, identity: string | null): string {
+  if (!identity) return content;
+  return [
+    content,
+    "",
+    `Profile identity fallback: ${identity}`,
+    "This comes from the user's account/profile identity, not a retrieved memory or stated preference. Use it only as a fallback if no memory states a preferred name or nickname.",
+  ].join("\n");
+}
+
+async function fetchProfileIdentity(userId: string): Promise<string | null> {
+  const [user] = await db
+    .select({
+      displayName: users.displayName,
+      username: users.username,
+      email: users.email,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const identity = user?.displayName || user?.username || user?.email || null;
+  return identity?.trim() || null;
+}
+
+async function executeMemorySearch(
+  args: ToolArgs,
+  ctx: ToolContext,
+  deps: MemorySearchDeps,
+): Promise<ToolResult> {
+  const query = String(args.query || "").trim();
+  if (!query) {
+    return { ok: false, content: "No query provided.", label: "Memory search failed" };
+  }
+
+  const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
+  const category = args.category ? String(args.category).trim() : null;
+  const tierFilter = args.tier ? String(args.tier).trim() : null;
+  const shouldIncludeProfileFallback = isIdentityFallbackQuery(query);
+
+  try {
+    let memories = await deps.retrieveMemories(ctx.userId, query, limit * 2, true);
+
+    if (category) {
+      memories = memories.filter(
+        (m) => m.category.toLowerCase() === category.toLowerCase(),
+      );
+    }
+
+    if (tierFilter) {
+      memories = memories.filter(
+        (m) => m.tier.toLowerCase() === tierFilter.toLowerCase(),
+      );
+    }
+
+    const top = memories.slice(0, limit);
+    const profileIdentity = shouldIncludeProfileFallback
+      ? await deps.fetchProfileIdentity(ctx.userId)
+      : null;
+
+    deps.incrementAccessCount(top.map((m) => m.id));
+
+    if (top.length === 0) {
+      return {
+        ok: true,
+        content: appendProfileIdentityFallback(
+          `No memories found for query: "${query}"${category ? ` (category: ${category})` : ""}${tierFilter ? ` (tier: ${tierFilter})` : ""}.`,
+          profileIdentity,
+        ),
+        label: "Memory search: no results",
+      };
+    }
+
+    const formatted = top
+      .map((m, i: number) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
+      .join("\n");
+
+    const content = appendProfileIdentityFallback(
+      [
+        `Memory search returned ${top.length} actual retrieved memor${top.length === 1 ? "y" : "ies"} for: "${query}"`,
+        "These are real memory entries from the user's memory store. In your final answer, summarize the entries below and do not claim there were no results.",
+        "",
+        "Format: [tier/type] (category, confidence%)",
+        "",
+        formatted,
+      ].join("\n"),
+      profileIdentity,
+    );
+
+    console.log(
+      `[${ctx.channel || "Agent"}] memory_search "${query}" -> ${top.length} result(s)`,
+    );
+
+    return {
+      ok: true,
+      content,
+      label: `Memory search: ${query}`,
+      detail: `${top.length} memories retrieved`,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, content: `Memory search failed: ${msg}`, label: "Memory search error" };
+  }
+}
+
+export function executeMemorySearchForTest(
+  args: ToolArgs,
+  ctx: ToolContext,
+  deps: MemorySearchDeps,
+): Promise<ToolResult> {
+  return executeMemorySearch(args, ctx, deps);
+}
+
+const defaultMemorySearchDeps: MemorySearchDeps = {
+  retrieveMemories: retrieveRelevantMemories,
+  incrementAccessCount: batchIncrementAccessCount,
+  fetchProfileIdentity,
+};
+
 export const memorySearchTool: AgentTool = {
   name: "memory_search",
   description:
@@ -23,17 +165,17 @@ export const memorySearchTool: AgentTool = {
     properties: {
       query: {
         type: "string",
-        description: "What you want to recall — a question or topic phrase",
+        description: "What you want to recall - a question or topic phrase",
       },
       category: {
         type: "string",
         description:
-          "Optional — filter to a specific category: work_patterns, values, blockers, goals, relationships, preferences, health, communication_style, or any other label",
+          "Optional - filter to a specific category: work_patterns, values, blockers, goals, relationships, preferences, health, communication_style, or any other label",
       },
       tier: {
         type: "string",
         description:
-          "Optional — filter by memory tier: 'working' (minutes-fresh), 'short_term' (hours/days), or 'long_term' (permanent facts)",
+          "Optional - filter by memory tier: 'working' (minutes-fresh), 'short_term' (hours/days), or 'long_term' (permanent facts)",
       },
       limit: {
         type: "number",
@@ -43,71 +185,7 @@ export const memorySearchTool: AgentTool = {
     required: ["query"],
   },
   async execute(args, ctx) {
-    const query = String(args.query || "").trim();
-    if (!query) {
-      return { ok: false, content: "No query provided.", label: "Memory search failed" };
-    }
-
-    const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
-    const category = args.category ? String(args.category).trim() : null;
-    const tierFilter = args.tier ? String(args.tier).trim() : null;
-
-    try {
-      // skipAccessUpdate=true so we only count accesses for the final filtered set.
-      let memories = await retrieveRelevantMemories(ctx.userId, query, limit * 2, true);
-
-      if (category) {
-        memories = memories.filter(
-          (m) => m.category.toLowerCase() === category.toLowerCase(),
-        );
-      }
-
-      if (tierFilter) {
-        memories = memories.filter(
-          (m) => m.tier.toLowerCase() === tierFilter.toLowerCase(),
-        );
-      }
-
-      const top = memories.slice(0, limit);
-
-      // Increment access_count only for memories actually returned to the agent.
-      batchIncrementAccessCount(top.map((m) => m.id));
-
-      if (top.length === 0) {
-        return {
-          ok: true,
-          content: `No memories found for query: "${query}"${category ? ` (category: ${category})` : ""}${tierFilter ? ` (tier: ${tierFilter})` : ""}.`,
-          label: "Memory search: no results",
-        };
-      }
-
-      const formatted = top
-        .map((m, i: number) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
-        .join("\n");
-
-      const content = [
-        `Memory search returned ${top.length} actual retrieved memor${top.length === 1 ? "y" : "ies"} for: "${query}"`,
-        "These are real memory entries from the user's memory store. In your final answer, summarize the entries below and do not claim there were no results.",
-        "",
-        "Format: [tier/type] (category, confidence%)",
-        "",
-        formatted,
-      ].join("\n");
-
-      console.log(
-        `[${ctx.channel || "Agent"}] memory_search "${query}" → ${top.length} result(s)`,
-      );
-
-      return {
-        ok: true,
-        content,
-        label: `Memory search: ${query}`,
-        detail: `${top.length} memories retrieved`,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, content: `Memory search failed: ${msg}`, label: "Memory search error" };
-    }
+    return executeMemorySearch(args, ctx, defaultMemorySearchDeps);
   },
 };
 
@@ -160,7 +238,6 @@ export const memoryGetTool: AgentTool = {
         };
       }
 
-      // Increment access_count and last_referenced_at for all returned rows.
       const ids = memories.map((m) => m.id);
       db.execute(sql`
         UPDATE user_memories
@@ -176,7 +253,7 @@ export const memoryGetTool: AgentTool = {
       const content = `${memories.length} memories in category "${category}":\n\n${formatted}`;
 
       console.log(
-        `[${ctx.channel || "Agent"}] memory_get category="${category}" → ${memories.length} row(s)`,
+        `[${ctx.channel || "Agent"}] memory_get category="${category}" -> ${memories.length} row(s)`,
       );
 
       return {

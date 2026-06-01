@@ -9,14 +9,24 @@ async function run() {
     const url = new URL(String(input));
     calls.push(url.toString());
     if (url.hostname === "geocoding-api.open-meteo.com") {
-      if (url.searchParams.get("name") !== "New York") {
-        return new Response(JSON.stringify({ results: [] }), { status: 200, headers: { "content-type": "application/json" } });
-      }
-      return new Response(JSON.stringify({
-        results: [
+      const name = url.searchParams.get("name");
+      const locations: Record<string, Array<Record<string, unknown>>> = {
+        "New York": [
           { name: "New York", latitude: 40.7128, longitude: -74.006, country: "United States", admin1: "New York" },
         ],
-      }), { status: 200, headers: { "content-type": "application/json" } });
+        "Watertown": [
+          { name: "Watertown", latitude: 42.3709, longitude: -71.1828, country: "United States", admin1: "Massachusetts" },
+          { name: "Watertown", latitude: 43.9748, longitude: -75.9108, country: "United States", admin1: "New York" },
+        ],
+        "Syracuse": [
+          { name: "Syracuse", latitude: 37.0755, longitude: 15.2866, country: "Italy", admin1: "Sicily" },
+          { name: "Syracuse", latitude: 43.0481, longitude: -76.1474, country: "United States", admin1: "New York" },
+        ],
+      };
+      if (!name || !locations[name]) {
+        return new Response(JSON.stringify({ results: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ results: locations[name] }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (url.hostname === "api.open-meteo.com") {
       return new Response(JSON.stringify({
@@ -43,6 +53,23 @@ async function run() {
     assert.match(result.content, /rain/i);
     assert.ok(calls.some((url) => url.includes("name=New+York")), "NYC alias should geocode as New York");
     console.log("weather lookup NYC alias assertions passed");
+
+    const watertown = await weatherLookupTool.execute(
+      { location: "Watertown, NY", date: "2026-05-16" },
+      { userId: "test-user", channel: "test", state: {}, signal: undefined } as any,
+    );
+    assert.equal(watertown.ok, true);
+    assert.match(watertown.content, /Forecast for Watertown, New York, United States/);
+    assert.ok(calls.some((url) => url.includes("name=Watertown")), "Watertown, NY should retry geocoding as Watertown");
+
+    const syracuse = await weatherLookupTool.execute(
+      { location: "Syracuse, NY", date: "2026-05-16" },
+      { userId: "test-user", channel: "test", state: {}, signal: undefined } as any,
+    );
+    assert.equal(syracuse.ok, true);
+    assert.match(syracuse.content, /Forecast for Syracuse, New York, United States/);
+    assert.ok(calls.some((url) => url.includes("name=Syracuse")), "Syracuse, NY should retry geocoding as Syracuse");
+    console.log("weather lookup city/state assertions passed");
   } finally {
     globalThis.fetch = originalFetch;
   }

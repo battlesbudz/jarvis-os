@@ -47,6 +47,8 @@ They are not a separate product surface. They should be tested through the exist
 - Expected output: cited deliverable in Inbox with source links and limitations.
 - Failure behavior: partial report with source-failure notes or failed job marked retryable.
 - Smoke check: job moves through queued/running/deliverable states and failed jobs show retry controls.
+- Deterministic regression: the Agent SDK scorecard protects the no-`TAVILY_API_KEY` news-like search fallback by checking provider order, challenge-page detection, and RSS/source-backed formatting without loading live public search pages.
+- Optional deployed smoke: a full-app smoke may validate logs/UI for real research jobs and source links, but live Bing/CAPTCHA or browser challenge pages must not be required for the golden gate.
 
 ## 5. Turn A Goal Into A Project Tree
 
@@ -150,7 +152,7 @@ Current SDK v1 coverage:
 
 - Full supported workflow: none of the ten golden workflows are fully SDK-owned yet.
 - Partial supported workflows: workflow 2 through draft-only email with provided context and the adjacent explicit draft/send email HITL path; workflow 3 through explicit internal reminders using the existing Jarvis scheduled-task adapter.
-- Existing Jarvis-owned workflows: 1, 4, 5, 6, 7, 8, 10.
+- Existing Jarvis-owned workflows: 1, 4, 5, 6, 7, 8, 10. Workflow 4 also carries deterministic no-Tavily search fallback evidence for news-like current-information research via RSS/source-backed formatting; deployed full-app smoke can separately validate logs/UI.
 - Unsupported by SDK v1: 9 until memory lookup includes provenance, confidence, and source metadata.
 
 Next implementation order:
