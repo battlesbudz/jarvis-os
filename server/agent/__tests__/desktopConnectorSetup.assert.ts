@@ -4,6 +4,7 @@ import http from "node:http";
 import jwt from "jsonwebtoken";
 import { registerDesktopConnectorRoutes } from "../../routes/desktopConnectorRoutes";
 import {
+  desktopConnectorInstallerSchema,
   desktopConnectorSetupResponseSchema,
   desktopConnectorStatusResponseSchema,
 } from "../../../shared/desktopConnectorSetup";
@@ -50,7 +51,23 @@ async function main() {
   const app = express();
   app.use(express.json());
   app.use(authMiddleware);
-  registerDesktopConnectorRoutes(app);
+  const calls = {
+    createDaemonPairingCode: [] as string[],
+    isDesktopDaemonActive: [] as string[],
+  };
+  registerDesktopConnectorRoutes(app, {
+    createDaemonPairingCode: async (userId) => {
+      calls.createDaemonPairingCode.push(userId);
+      return "PAIR1234";
+    },
+    isDesktopDaemonActive: async (userId) => {
+      calls.isDesktopDaemonActive.push(userId);
+      return false;
+    },
+    sendDaemonOp: async () => {
+      throw new Error("sendDaemonOp should not be called by this setup test");
+    },
+  });
   const server = app.listen(0);
   const port = (server.address() as any).port as number;
 
@@ -63,7 +80,8 @@ async function main() {
     assert.equal(parsedSetup.platform, "windows");
     assert.equal(parsedSetup.installer.url, "https://downloads.example.test/JarvisSetup.exe");
     assert.match(parsedSetup.setupId, /^dc_/);
-    assert.equal(typeof parsedSetup.pairCode, "string");
+    assert.equal(parsedSetup.pairCode, "PAIR1234");
+    assert.deepEqual(calls.createDaemonPairingCode, ["user-1"]);
     assert.equal(parsedSetup.disclosure.includes("run shell commands"), true);
 
     const status = await request(port, "GET", `/api/desktop-connector/setup-session/${parsedSetup.setupId}`, undefined, token);
@@ -72,11 +90,13 @@ async function main() {
     assert.equal(parsedStatus.setupId, parsedSetup.setupId);
     assert.equal(parsedStatus.connected, false);
     assert.equal(parsedStatus.stage, "waiting_for_connector");
+    assert.deepEqual(calls.isDesktopDaemonActive, ["user-1"]);
 
     const metadata = await request(port, "GET", "/api/desktop-connector/installer", undefined, token);
     assert.equal(metadata.status, 200);
-    assert.equal(metadata.json.url, "https://downloads.example.test/JarvisSetup.exe");
-    assert.equal(metadata.json.version, "0.1.0");
+    const parsedMetadata = desktopConnectorInstallerSchema.parse(metadata.json);
+    assert.equal(parsedMetadata.url, "https://downloads.example.test/JarvisSetup.exe");
+    assert.equal(parsedMetadata.version, "0.1.0");
 
     console.log("OK: desktop connector setup routes expose setup session, status, and installer metadata");
   } finally {

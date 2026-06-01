@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Express, Request, Response } from "express";
+import type { DaemonOp } from "../daemon/bridge";
 
 import {
   DESKTOP_CONNECTOR_DISCLOSURE,
@@ -13,7 +14,28 @@ const SETUP_SESSION_TTL_SEC = 900;
 const DEFAULT_INSTALLER_URL = "https://gameplanjarvisai.up.railway.app/downloads/JarvisSetup.exe";
 const DEFAULT_INSTALLER_VERSION = "0.1.0";
 
-type DaemonBridge = typeof import("../daemon/bridge");
+type DaemonOpResult = { ok: boolean; data?: unknown; error?: string };
+
+export type DesktopConnectorRouteDeps = {
+  createDaemonPairingCode: (userId: string) => Promise<string>;
+  isDesktopDaemonActive: (userId: string) => boolean | Promise<boolean>;
+  sendDaemonOp: (userId: string, op: DaemonOp, timeoutMs?: number) => Promise<DaemonOpResult>;
+};
+
+export const defaultDesktopConnectorRouteDeps: DesktopConnectorRouteDeps = {
+  createDaemonPairingCode: async (userId) => {
+    const { createDaemonPairingCode } = await import("../daemon/bridge");
+    return createDaemonPairingCode(userId);
+  },
+  isDesktopDaemonActive: async (userId) => {
+    const { isDesktopDaemonActive } = await import("../daemon/bridge");
+    return isDesktopDaemonActive(userId);
+  },
+  sendDaemonOp: async (userId, op, timeoutMs) => {
+    const { sendDaemonOp } = await import("../daemon/bridge");
+    return sendDaemonOp(userId, op, timeoutMs);
+  },
+};
 
 type SetupSession = {
   setupId: string;
@@ -52,36 +74,6 @@ function generateSetupId(): string {
   return `dc_${randomBytes(16).toString("hex")}`;
 }
 
-function generateLocalPairingCode(): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let code = "";
-  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
-  return code;
-}
-
-async function loadDaemonBridge(): Promise<DaemonBridge | null> {
-  try {
-    // Lazy-load so route contract tests can mount this module without booting DB-backed daemon state.
-    return await import("../daemon/bridge");
-  } catch (error) {
-    if (!process.env.DATABASE_URL && error instanceof Error && error.message.includes("DATABASE_URL is not set")) {
-      return null;
-    }
-    throw error;
-  }
-}
-
-async function createSetupPairingCode(userId: string): Promise<string> {
-  const bridge = await loadDaemonBridge();
-  if (!bridge) return generateLocalPairingCode();
-  return bridge.createDaemonPairingCode(userId);
-}
-
-async function isSetupDaemonActive(userId: string): Promise<boolean> {
-  const bridge = await loadDaemonBridge();
-  return bridge?.isDesktopDaemonActive(userId) ?? false;
-}
-
 function buildStatusResponse(session: SetupSession, connected: boolean): DesktopConnectorStatusResponse {
   if (connected) {
     session.stage = "connected";
@@ -106,7 +98,10 @@ function buildStatusResponse(session: SetupSession, connected: boolean): Desktop
   };
 }
 
-export function registerDesktopConnectorRoutes(app: Express): void {
+export function registerDesktopConnectorRoutes(
+  app: Express,
+  deps: DesktopConnectorRouteDeps = defaultDesktopConnectorRouteDeps,
+): void {
   app.get("/api/desktop-connector/installer", (req: Request, res: Response) => {
     const userId = getUserId(req, res);
     if (!userId) return;
@@ -120,7 +115,7 @@ export function registerDesktopConnectorRoutes(app: Express): void {
 
       const now = Date.now();
       const setupId = generateSetupId();
-      const pairCode = await createSetupPairingCode(userId);
+      const pairCode = await deps.createDaemonPairingCode(userId);
       const session: SetupSession = {
         setupId,
         userId,
@@ -167,7 +162,7 @@ export function registerDesktopConnectorRoutes(app: Express): void {
         return res.status(410).json({ error: "Setup session expired" });
       }
 
-      const connected = await isSetupDaemonActive(userId);
+      const connected = await deps.isDesktopDaemonActive(userId);
       res.json(buildStatusResponse(session, connected));
     } catch (error) {
       console.error("[DesktopConnector] setup-session status failed:", error);
@@ -180,12 +175,11 @@ export function registerDesktopConnectorRoutes(app: Express): void {
       const userId = getUserId(req, res);
       if (!userId) return;
 
-      const bridge = await loadDaemonBridge();
-      if (!bridge?.isDesktopDaemonActive(userId)) {
+      if (!(await deps.isDesktopDaemonActive(userId))) {
         return res.status(409).json({ error: "Desktop daemon is not connected" });
       }
 
-      const result = await bridge.sendDaemonOp(
+      const result = await deps.sendDaemonOp(
         userId,
         { type: "shell", cmd: "Write-Output 'JARVIS_DESKTOP_CONNECTOR_SHELL_OK'", timeoutMs: 15000 } as any,
         20000,
