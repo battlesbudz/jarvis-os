@@ -1,0 +1,90 @@
+import assert from "node:assert/strict";
+import express from "express";
+import http from "node:http";
+import jwt from "jsonwebtoken";
+import { registerDesktopConnectorRoutes } from "../../routes/desktopConnectorRoutes";
+import {
+  desktopConnectorSetupResponseSchema,
+  desktopConnectorStatusResponseSchema,
+} from "../../../shared/desktopConnectorSetup";
+
+const SECRET = "desktop-connector-test-secret";
+
+function request(port: number, method: string, path: string, body?: unknown, token?: string): Promise<{ status: number; json: any }> {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : "";
+    const req = http.request({
+      hostname: "127.0.0.1",
+      port,
+      path,
+      method,
+      headers: {
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(payload),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    }, (res) => {
+      let raw = "";
+      res.on("data", (chunk) => { raw += chunk; });
+      res.on("end", () => resolve({ status: res.statusCode ?? 0, json: raw ? JSON.parse(raw) : null }));
+    });
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+async function main() {
+  process.env.JWT_SECRET = SECRET;
+  process.env.JARVIS_WINDOWS_CONNECTOR_DOWNLOAD_URL = "https://downloads.example.test/JarvisSetup.exe";
+  process.env.JARVIS_WINDOWS_CONNECTOR_VERSION = "0.1.0";
+
+  const authMiddleware = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const raw = req.header("Authorization")?.replace(/^Bearer\s+/i, "");
+    if (!raw) return res.status(401).json({ error: "missing token" });
+    const payload = jwt.verify(raw, SECRET) as { userId: string };
+    req.userId = payload.userId;
+    next();
+  };
+
+  const app = express();
+  app.use(express.json());
+  app.use(authMiddleware);
+  registerDesktopConnectorRoutes(app);
+  const server = app.listen(0);
+  const port = (server.address() as any).port as number;
+
+  try {
+    const token = jwt.sign({ userId: "user-1", scope: "user" }, SECRET);
+
+    const setup = await request(port, "POST", "/api/desktop-connector/setup-session", {}, token);
+    assert.equal(setup.status, 200);
+    const parsedSetup = desktopConnectorSetupResponseSchema.parse(setup.json);
+    assert.equal(parsedSetup.platform, "windows");
+    assert.equal(parsedSetup.installer.url, "https://downloads.example.test/JarvisSetup.exe");
+    assert.match(parsedSetup.setupId, /^dc_/);
+    assert.equal(typeof parsedSetup.pairCode, "string");
+    assert.equal(parsedSetup.disclosure.includes("run shell commands"), true);
+
+    const status = await request(port, "GET", `/api/desktop-connector/setup-session/${parsedSetup.setupId}`, undefined, token);
+    assert.equal(status.status, 200);
+    const parsedStatus = desktopConnectorStatusResponseSchema.parse(status.json);
+    assert.equal(parsedStatus.setupId, parsedSetup.setupId);
+    assert.equal(parsedStatus.connected, false);
+    assert.equal(parsedStatus.stage, "waiting_for_connector");
+
+    const metadata = await request(port, "GET", "/api/desktop-connector/installer", undefined, token);
+    assert.equal(metadata.status, 200);
+    assert.equal(metadata.json.url, "https://downloads.example.test/JarvisSetup.exe");
+    assert.equal(metadata.json.version, "0.1.0");
+
+    console.log("OK: desktop connector setup routes expose setup session, status, and installer metadata");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+}
+
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

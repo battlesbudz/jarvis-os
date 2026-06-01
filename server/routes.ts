@@ -60,6 +60,7 @@ import { registerMissionControlQueueRoutes } from "./routes/missionControlQueueR
 import { registerConnectionsRoutes, registerPublicConnectionsCallbackRoutes } from "./routes/connectionsRoutes";
 import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
+import { registerDesktopConnectorRoutes } from "./routes/desktopConnectorRoutes";
 import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
 import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
 import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryRoutes";
@@ -445,6 +446,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerMindTraceRoutes(app);
   registerMissionControlQueueRoutes(app, { db });
   registerConnectionsRoutes(app);
+  registerDesktopConnectorRoutes(app);
 
   // ── GET /api/goals — return goals for the authenticated user ───────────────
   app.get("/api/goals", async (req: Request, res: Response) => {
