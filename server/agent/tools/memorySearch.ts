@@ -31,7 +31,9 @@ function isIdentityFallbackQuery(query: string): boolean {
   const normalized = query.toLowerCase();
   return (
     /\b(what|which)\s+(name|nickname)\b/.test(normalized) ||
+    /\bwhat\s+(is|['’]?s)\s+my\s+(name|nickname)\b/.test(normalized) ||
     /\b(name|nickname)\s+(you\s+should\s+)?call\s+me\b/.test(normalized) ||
+    /\b(user\s+)?(name|nickname|identity)\b.*\bwhat\s+is\s+my\s+name\b/.test(normalized) ||
     /\bwhat\s+to\s+call\s+me\b/.test(normalized) ||
     /\bpreferred\s+name\b/.test(normalized)
   );
@@ -40,10 +42,10 @@ function isIdentityFallbackQuery(query: string): boolean {
 function appendProfileIdentityFallback(content: string, identity: string | null): string {
   if (!identity) return content;
   return [
-    content,
-    "",
     `Profile identity fallback: ${identity}`,
-    "This comes from the user's account/profile identity, not a retrieved memory or stated preference. Use it only as a fallback if no memory states a preferred name or nickname.",
+    "This comes from the user's account/profile identity, not a retrieved memory or stated preference. If no memory explicitly states a preferred name or nickname, answer with this fallback identity and say where it came from.",
+    "",
+    content,
   ].join("\n");
 }
 
