@@ -304,6 +304,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         sdkSessionId: storedSessionId,
         onToken,
         onProgressMessage,
+        signal: runGuard.signal,
       }),
     );
 

@@ -25,6 +25,19 @@ const ORCHESTRATOR_MAX_TOKENS = 8192;
 /** Default maximum retries per sub-task when not overridden by caller or env. */
 const DEFAULT_MAX_RETRIES = 3;
 
+function abortError(message: string): Error {
+  const err = new Error(message);
+  err.name = "AbortError";
+  return err;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const reason = signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw abortError("Orchestrator aborted by caller");
+}
+
 /** Read configurable retry limit from environment (ORCHESTRATOR_MAX_RETRIES), default 3. */
 function resolveMaxRetries(override?: number): number {
   if (override !== undefined && override >= 0) return override;
@@ -38,7 +51,9 @@ async function routeOrchestratorText(opts: {
   user: string;
   maxCompletionTokens: number;
   userId?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
+  throwIfAborted(opts.signal);
   const messages = opts.system
     ? [
         { role: "system" as const, content: opts.system },
@@ -53,6 +68,7 @@ async function routeOrchestratorText(opts: {
     maxCompletionTokens: opts.maxCompletionTokens,
     stream: false,
     userId: opts.userId,
+    signal: opts.signal,
     logPrefix: `[orchestrator/${opts.label}]`,
   });
 
@@ -77,6 +93,8 @@ export interface OrchestratorInput {
    *  onwards) so callers can surface "Still working…" messages to the user without
    *  blocking the execution loop. */
   onProgressMessage?: (message: string) => void;
+  /** Optional caller abort signal. Used by Telegram to enforce its reply SLA. */
+  signal?: AbortSignal;
 }
 
 export interface OrchestratorResult {
@@ -154,7 +172,9 @@ async function decomposeRequest(
   userRequest: string,
   systemContext: string,
   userId: string,
+  signal?: AbortSignal,
 ): Promise<SubTask[]> {
+  throwIfAborted(signal);
   // Load crew manifest from DB (falls back to static if DB unavailable)
   let crewManifest = "";
   try {
@@ -171,6 +191,7 @@ async function decomposeRequest(
     label: "decompose",
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     userId,
+    signal,
     system: `You are PRIME, an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
 2. Have a short label (5-8 words)
@@ -217,12 +238,15 @@ async function verifyResult(
   result: string,
   userId: string,
   correctionContext?: string,
+  signal?: AbortSignal,
 ): Promise<{ passed: boolean; reason: string }> {
   try {
+    throwIfAborted(signal);
     const text = await routeOrchestratorText({
       label: "verify",
       maxCompletionTokens: 512,
       userId,
+      signal,
       system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only — no other text: {"passed": true/false, "reason": "brief explanation"}`,
       user: [
         `Sub-task: ${task.label}`,
@@ -245,6 +269,7 @@ async function verifyResult(
     };
   } catch (err) {
     // Verifier error — fail-safe: treat as not passed
+    if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
     return {
       passed: true,
       reason: `Verifier unavailable; accepted without retry: ${err instanceof Error ? err.message : String(err)}`,
@@ -260,7 +285,9 @@ async function synthesizeFinalAnswer(
   systemContext: string,
   results: SubTaskResult[],
   userId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  throwIfAborted(signal);
   const resultsSummary = results
     .map((r) => `### ${r.label}\n${r.result}`)
     .join("\n\n");
@@ -269,6 +296,7 @@ async function synthesizeFinalAnswer(
     label: "synthesize",
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     userId,
+    signal,
     system: `You are Jarvis, an intelligent personal assistant. You have received results from multiple specialized sub-agents. Synthesize their findings into a single, coherent, helpful response addressed directly to the user. Be concise but complete. Use the system context to match the appropriate tone and format.
 
 ${systemContext}`,
@@ -292,7 +320,9 @@ async function executeSubTask(
   correctionContext?: string,
   maxCompletionTokens?: number,
   onProgressMessage?: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
+  throwIfAborted(signal);
   const depContext = dependencyResults.length > 0
     ? "\n\nContext from prior sub-tasks:\n" +
       dependencyResults.map((r) => `${r.label}: ${r.result}`).join("\n")
@@ -317,6 +347,7 @@ async function executeSubTask(
           initiatedBy: "jarvis",
           onProgressMessage,
         });
+        throwIfAborted(signal);
         return result.reply || "(no result)";
       }
     } catch (err) {
@@ -335,6 +366,7 @@ async function executeSubTask(
     maxTurns: 4,
     maxCompletionTokens: maxCompletionTokens ?? 1500,
     onProgressMessage,
+    signal,
     onBeforeTool: createSystemApprovalOnBeforeTool({
       agentId: getCoachAppAgentId(toolContext.userId),
       agentName: "Jarvis Orchestrator",
@@ -404,8 +436,9 @@ function isRunnersUpRequest(text: string): boolean {
 }
 
 export async function runOrchestrator(input: OrchestratorInput): Promise<OrchestratorResult> {
-  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage } = input;
+  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage, signal } = input;
   const MAX_RETRIES = resolveMaxRetries(maxRetriesOverride);
+  throwIfAborted(signal);
 
   const traceId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date();
@@ -419,6 +452,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     try {
       const { getTournamentRunners } = await import("./tournamentRunner");
       const { found, run } = await getTournamentRunners(userId);
+      throwIfAborted(signal);
       if (found && run) {
         const outputs = (run.outputs as Array<{ agentIndex: number; approach: string; body: string }>) || [];
         const scores = (run.scores as Array<{ agentIndex: number; score: number; reasoning: string }>) || [];
@@ -448,13 +482,15 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
 
   // Resolve orchestrator model from user preferences
   const orchestratorModel = await getModel(userId, "orchestrator");
+  throwIfAborted(signal);
   console.log(`[orchestrator] ${traceId} — model=${orchestratorModel}`);
 
   // Step 1: Decompose (crew manifest injected into prompt for specialist routing)
   let rawSubTasks: SubTask[];
   try {
-    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId);
+    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId, signal);
   } catch (err) {
+    if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
     console.error("[orchestrator] decomposition failed:", err);
     // Fall back to single task
     rawSubTasks = [{
@@ -475,6 +511,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   const failedTaskLabels: string[] = [];
 
   for (const task of subTasks) {
+    throwIfAborted(signal);
     // Gather resolved dependency results (unresolved deps already warned above)
     const depResults = task.dependsOn
       .map((depId) => completedResults.get(depId))
@@ -494,14 +531,16 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     let correctionContext: string | undefined;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      throwIfAborted(signal);
       try {
-        taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens, onProgressMessage);
+        taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens, onProgressMessage, signal);
       } catch (err) {
+        if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
         taskResult = `Execution error: ${err instanceof Error ? err.message : String(err)}`;
       }
 
       // Strict verification — fail-safe on errors
-      const verification = await verifyResult(task, taskResult, userId, correctionContext);
+      const verification = await verifyResult(task, taskResult, userId, correctionContext, signal);
       verificationReason = verification.reason;
 
       if (verification.passed) {
@@ -566,8 +605,9 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   // Step 3: Synthesize final answer via Claude (always — no single-task bypass)
   let finalAnswer: string;
   try {
-    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, userId);
+    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, userId, signal);
   } catch (err) {
+    if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
     console.error("[orchestrator] synthesis failed:", err);
     finalAnswer = allResults.map((r) => r.result).join("\n\n");
   }

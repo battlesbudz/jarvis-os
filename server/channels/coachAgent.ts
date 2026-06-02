@@ -65,6 +65,8 @@ export interface CoachReplyInput {
    * Merged into the channel's normal tool set before passing to the agent.
    */
   extraTools?: import("../agent/types").AgentTool[];
+  /** Optional caller abort signal. Used by Telegram to enforce a user-facing SLA. */
+  signal?: AbortSignal;
 }
 
 export interface CoachReplyResult {
@@ -111,7 +113,7 @@ function getMaxTokensForChannel(channelName: string): number {
 const COACH_AGENT_ID = "coach";
 
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
-  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId } = input;
+  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
   const channelLower = channelName.toLowerCase();
 
   // ── Native session resumption (mirrors runNamedAgent pattern) ────────────────
@@ -165,7 +167,7 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   // parallel with the other DB queries below (zero net latency on the hot path).
   const _orchestratorModelPromise = getModel(userId, "orchestrator");
   const _preThinkPromise = _orchestratorModelPromise.then((m) =>
-    preThink(userText || "", channelName + " " + _quickDateStr, m, userId),
+    preThink(userText || "", channelName + " " + _quickDateStr, m, userId, signal),
   );
 
   // ── Fire Google token lookup immediately so Gmail/Calendar API calls can
@@ -563,6 +565,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     googleAccessToken: googleAccessToken || undefined,
     discordGuildId: discordGuildId || undefined,
     discordChannelId: discordChannelId || undefined,
+    signal,
     state: {
       dateKey,
       todayPlan,
@@ -801,12 +804,14 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       toolContext: agentCtx,
       maxCompletionTokens: getMaxTokensForChannel(channelName),
       onProgressMessage,
+      signal,
     });
     rawReply = orchResult.finalAnswer;
     console.log(
       `[${channelName}] orchestrator done — tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`,
     );
   } catch (orchErr) {
+    if (signal?.aborted || (orchErr as Error)?.name === "AbortError") throw orchErr;
     console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
     const fallback = await runAgent({
       model: "gpt-4o-mini",
@@ -819,6 +824,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       onProgressMessage,
       activationPlan: channelActivationPlan,
       onBeforeTool: coachApprovalOnBeforeTool,
+      signal,
     });
     rawReply = fallback.reply;
   }
@@ -832,7 +838,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   if (rawReply) {
     const checkUserText = userText || "[image-only message]";
     try {
-      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel, userId);
+      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel, userId, signal);
       postCheckPassed = checkResult.passed;
       if (!checkResult.passed) {
         const correctionFeedback = checkResult.feedback ||
@@ -855,6 +861,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
             maxCompletionTokens: getMaxTokensForChannel(channelName),
             activationPlan: channelActivationPlan,
             onBeforeTool: coachApprovalOnBeforeTool,
+            signal,
           });
           if (correction.reply) {
             rawReply = correction.reply;

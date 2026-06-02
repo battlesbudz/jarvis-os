@@ -17,14 +17,37 @@ const MAX_TOKENS = 80;
 const TIMEOUT_MS = 4000;
 
 /**
- * Wrap a promise with a hard timeout.  Resolves to `fallback` when the timeout
- * fires — the original promise is not cancelled (fire-and-forget).
+ * Run with a linked AbortSignal. Resolves to `fallback` on timeout, abort, or
+ * provider error, while cancelling the underlying model request.
  */
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
-  ]);
+function abortError(message: string): Error {
+  const err = new Error(message);
+  err.name = "AbortError";
+  return err;
+}
+
+async function withAbortableTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  fallback: T,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  if (parentSignal?.aborted) return fallback;
+
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort(parentSignal?.reason ?? abortError("Quality loop aborted by caller"));
+  const timeout = setTimeout(() => controller.abort(abortError("Quality loop timed out")), ms);
+  timeout.unref?.();
+  parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+
+  try {
+    return await run(controller.signal);
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", onParentAbort);
+  }
 }
 
 /**
@@ -36,14 +59,16 @@ export async function preThink(
   briefContext: string,
   orchestratorModel: string,
   userId?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const run = async (): Promise<string> => {
+  const run = async (runSignal: AbortSignal): Promise<string> => {
     const response = await routeModelTurn({
       tier: "smart",
       maxCompletionTokens: MAX_TOKENS,
       stream: false,
       toolChoice: "none",
       userId,
+      signal: runSignal,
       logPrefix: "[QualityLoop/preThink]",
       messages: [
         {
@@ -58,11 +83,7 @@ export async function preThink(
     return (response.textContent ?? "").trim();
   };
 
-  try {
-    return await withTimeout(run(), TIMEOUT_MS, "");
-  } catch {
-    return "";
-  }
+  return withAbortableTimeout(run, TIMEOUT_MS, "", signal);
 }
 
 export interface PostCheckResult {
@@ -80,14 +101,16 @@ export async function postCheck(
   agentReply: string,
   orchestratorModel: string,
   userId?: string,
+  signal?: AbortSignal,
 ): Promise<PostCheckResult> {
-  const run = async (): Promise<PostCheckResult> => {
+  const run = async (runSignal: AbortSignal): Promise<PostCheckResult> => {
     const response = await routeModelTurn({
       tier: "smart",
       maxCompletionTokens: MAX_TOKENS,
       stream: false,
       toolChoice: "none",
       userId,
+      signal: runSignal,
       logPrefix: "[QualityLoop/postCheck]",
       messages: [
         {
@@ -109,9 +132,5 @@ export async function postCheck(
     return { passed: false, feedback };
   };
 
-  try {
-    return await withTimeout(run(), TIMEOUT_MS, { passed: true, feedback: "" });
-  } catch {
-    return { passed: true, feedback: "" };
-  }
+  return withAbortableTimeout(run, TIMEOUT_MS, { passed: true, feedback: "" }, signal);
 }

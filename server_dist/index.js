@@ -15805,12 +15805,24 @@ __export(orchestrator_exports, {
   runOrchestrator: () => runOrchestrator,
   verifyJobOutput: () => verifyJobOutput
 });
+function abortError(message) {
+  const err2 = new Error(message);
+  err2.name = "AbortError";
+  return err2;
+}
+function throwIfAborted(signal) {
+  if (!signal?.aborted) return;
+  const reason = signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw abortError("Orchestrator aborted by caller");
+}
 function resolveMaxRetries(override) {
   if (override !== void 0 && override >= 0) return override;
   const env = parseInt(process.env.ORCHESTRATOR_MAX_RETRIES ?? "", 10);
   return Number.isFinite(env) && env >= 0 ? env : DEFAULT_MAX_RETRIES;
 }
 async function routeOrchestratorText(opts) {
+  throwIfAborted(opts.signal);
   const messages2 = opts.system ? [
     { role: "system", content: opts.system },
     { role: "user", content: opts.user }
@@ -15822,6 +15834,7 @@ async function routeOrchestratorText(opts) {
     maxCompletionTokens: opts.maxCompletionTokens,
     stream: false,
     userId: opts.userId,
+    signal: opts.signal,
     logPrefix: `[orchestrator/${opts.label}]`
   });
   return response.textContent ?? "";
@@ -15854,7 +15867,8 @@ function parseSubTasks(text2) {
     }];
   }
 }
-async function decomposeRequest(userRequest, systemContext, userId) {
+async function decomposeRequest(userRequest, systemContext, userId, signal) {
+  throwIfAborted(signal);
   let crewManifest = "";
   try {
     crewManifest = await getCrewManifest(userId);
@@ -15869,6 +15883,7 @@ Include an optional "assignTo" field on each sub-task naming the best specialist
     label: "decompose",
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     userId,
+    signal,
     system: `You are PRIME, an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
 2. Have a short label (5-8 words)
@@ -15909,12 +15924,14 @@ ${systemContext}`
   });
   return parseSubTasks(text2);
 }
-async function verifyResult(task, result, userId, correctionContext) {
+async function verifyResult(task, result, userId, correctionContext, signal) {
   try {
+    throwIfAborted(signal);
     const text2 = await routeOrchestratorText({
       label: "verify",
       maxCompletionTokens: 512,
       userId,
+      signal,
       system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only \u2014 no other text: {"passed": true/false, "reason": "brief explanation"}`,
       user: [
         `Sub-task: ${task.label}`,
@@ -15936,19 +15953,22 @@ Previous correction context: ${correctionContext}` : ""
       reason: typeof parsed.reason === "string" ? parsed.reason : "No reason provided"
     };
   } catch (err2) {
+    if (signal?.aborted || err2?.name === "AbortError") throw err2;
     return {
       passed: true,
       reason: `Verifier unavailable; accepted without retry: ${err2 instanceof Error ? err2.message : String(err2)}`
     };
   }
 }
-async function synthesizeFinalAnswer(userRequest, systemContext, results, userId) {
+async function synthesizeFinalAnswer(userRequest, systemContext, results, userId, signal) {
+  throwIfAborted(signal);
   const resultsSummary = results.map((r) => `### ${r.label}
 ${r.result}`).join("\n\n");
   const text2 = await routeOrchestratorText({
     label: "synthesize",
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     userId,
+    signal,
     system: `You are Jarvis, an intelligent personal assistant. You have received results from multiple specialized sub-agents. Synthesize their findings into a single, coherent, helpful response addressed directly to the user. Be concise but complete. Use the system context to match the appropriate tone and format.
 
 ${systemContext}`,
@@ -15959,7 +15979,8 @@ ${resultsSummary}`
   });
   return text2 || "I was unable to synthesize the results.";
 }
-async function executeSubTask(task, tools, toolContext, dependencyResults, correctionContext, maxCompletionTokens, onProgressMessage) {
+async function executeSubTask(task, tools, toolContext, dependencyResults, correctionContext, maxCompletionTokens, onProgressMessage, signal) {
+  throwIfAborted(signal);
   const depContext = dependencyResults.length > 0 ? "\n\nContext from prior sub-tasks:\n" + dependencyResults.map((r) => `${r.label}: ${r.result}`).join("\n") : "";
   const instruction = correctionContext ? `${task.instruction}
 
@@ -15979,6 +16000,7 @@ Please try again with this feedback.${depContext}` : `${task.instruction}${depCo
           initiatedBy: "jarvis",
           onProgressMessage
         });
+        throwIfAborted(signal);
         return result2.reply || "(no result)";
       }
     } catch (err2) {
@@ -15995,6 +16017,7 @@ Please try again with this feedback.${depContext}` : `${task.instruction}${depCo
     maxTurns: 4,
     maxCompletionTokens: maxCompletionTokens ?? 1500,
     onProgressMessage,
+    signal,
     onBeforeTool: createSystemApprovalOnBeforeTool({
       agentId: getCoachAppAgentId(toolContext.userId),
       agentName: "Jarvis Orchestrator",
@@ -16039,8 +16062,9 @@ function isRunnersUpRequest(text2) {
   return RUNNERS_UP_PATTERNS.some((r) => r.test(text2));
 }
 async function runOrchestrator(input) {
-  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage } = input;
+  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage, signal } = input;
   const MAX_RETRIES = resolveMaxRetries(maxRetriesOverride);
+  throwIfAborted(signal);
   const traceId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = /* @__PURE__ */ new Date();
   let totalRetries = 0;
@@ -16048,6 +16072,7 @@ async function runOrchestrator(input) {
     try {
       const { getTournamentRunners: getTournamentRunners2 } = await Promise.resolve().then(() => (init_tournamentRunner(), tournamentRunner_exports));
       const { found, run } = await getTournamentRunners2(userId);
+      throwIfAborted(signal);
       if (found && run) {
         const outputs = run.outputs || [];
         const scores = run.scores || [];
@@ -16072,11 +16097,13 @@ async function runOrchestrator(input) {
     }
   }
   const orchestratorModel = await getModel(userId, "orchestrator");
+  throwIfAborted(signal);
   console.log(`[orchestrator] ${traceId} \u2014 model=${orchestratorModel}`);
   let rawSubTasks;
   try {
-    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId);
+    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId, signal);
   } catch (err2) {
+    if (signal?.aborted || err2?.name === "AbortError") throw err2;
     console.error("[orchestrator] decomposition failed:", err2);
     rawSubTasks = [{
       id: "task-1",
@@ -16091,6 +16118,7 @@ async function runOrchestrator(input) {
   const completedResults = /* @__PURE__ */ new Map();
   const failedTaskLabels = [];
   for (const task of subTasks) {
+    throwIfAborted(signal);
     const depResults = task.dependsOn.map((depId) => completedResults.get(depId)).filter((r) => r !== void 0);
     const stepIndex = completedResults.size + 1;
     if (stepIndex > 1 && onProgressMessage) {
@@ -16102,12 +16130,14 @@ async function runOrchestrator(input) {
     let verificationReason = "";
     let correctionContext;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      throwIfAborted(signal);
       try {
-        taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens, onProgressMessage);
+        taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens, onProgressMessage, signal);
       } catch (err2) {
+        if (signal?.aborted || err2?.name === "AbortError") throw err2;
         taskResult = `Execution error: ${err2 instanceof Error ? err2.message : String(err2)}`;
       }
-      const verification = await verifyResult(task, taskResult, userId, correctionContext);
+      const verification = await verifyResult(task, taskResult, userId, correctionContext, signal);
       verificationReason = verification.reason;
       if (verification.passed) {
         finalPassed = true;
@@ -16158,8 +16188,9 @@ async function runOrchestrator(input) {
   }
   let finalAnswer;
   try {
-    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, userId);
+    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, userId, signal);
   } catch (err2) {
+    if (signal?.aborted || err2?.name === "AbortError") throw err2;
     console.error("[orchestrator] synthesis failed:", err2);
     finalAnswer = allResults.map((r) => r.result).join("\n\n");
   }
@@ -19011,7 +19042,8 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
         imageUrl,
         sdkSessionId: storedSessionId,
         onToken,
-        onProgressMessage
+        onProgressMessage,
+        signal: runGuard.signal
       })
     );
     if (sdkSessionId) {
@@ -37903,7 +37935,7 @@ async function generateVideo(prompt, duration) {
   }
   const { inference } = await import("@inferencesh/sdk");
   const client = inference({ apiKey });
-  const withTimeout2 = (p) => Promise.race([
+  const withTimeout = (p) => Promise.race([
     p,
     new Promise(
       (_, reject) => setTimeout(
@@ -37922,7 +37954,7 @@ async function generateVideo(prompt, duration) {
       console.log(
         `[generate_video] Trying model=${app2} duration=${duration ?? "default"} prompt="${prompt.slice(0, 60)}..."`
       );
-      const result = await withTimeout2(
+      const result = await withTimeout(
         client.run({ app: app2, input: baseInput })
       );
       const url = extractVideoUrl(result.output);
@@ -42363,7 +42395,7 @@ function truncateForTool(content) {
   return `${content.slice(0, MAX_OUTPUT_CHARS)}
 ...[Codex output truncated]`;
 }
-function abortError() {
+function abortError2() {
   const err2 = new Error("Codex delegation aborted");
   err2.name = "AbortError";
   return err2;
@@ -42494,7 +42526,7 @@ async function runLocalCodexDelegation(request) {
       };
       const onAbort = () => {
         child.kill();
-        finish(() => reject(abortError()));
+        finish(() => reject(abortError2()));
       };
       const timer = setTimeout(() => {
         child.kill();
@@ -82850,20 +82882,36 @@ var init_activationPlanner = __esm({
 });
 
 // server/agent/qualityLoop.ts
-function withTimeout(promise, ms, fallback) {
-  return Promise.race([
-    promise,
-    new Promise((resolve10) => setTimeout(() => resolve10(fallback), ms))
-  ]);
+function abortError3(message) {
+  const err2 = new Error(message);
+  err2.name = "AbortError";
+  return err2;
 }
-async function preThink(userMessage, briefContext, orchestratorModel, userId) {
-  const run = async () => {
+async function withAbortableTimeout(run, ms, fallback, parentSignal) {
+  if (parentSignal?.aborted) return fallback;
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort(parentSignal?.reason ?? abortError3("Quality loop aborted by caller"));
+  const timeout = setTimeout(() => controller.abort(abortError3("Quality loop timed out")), ms);
+  timeout.unref?.();
+  parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+  try {
+    return await run(controller.signal);
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", onParentAbort);
+  }
+}
+async function preThink(userMessage, briefContext, orchestratorModel, userId, signal) {
+  const run = async (runSignal) => {
     const response = await routeModelTurn({
       tier: "smart",
       maxCompletionTokens: MAX_TOKENS,
       stream: false,
       toolChoice: "none",
       userId,
+      signal: runSignal,
       logPrefix: "[QualityLoop/preThink]",
       messages: [
         {
@@ -82878,20 +82926,17 @@ In 1-2 sentences, describe the best approach to answering this message. Be conci
     });
     return (response.textContent ?? "").trim();
   };
-  try {
-    return await withTimeout(run(), TIMEOUT_MS, "");
-  } catch {
-    return "";
-  }
+  return withAbortableTimeout(run, TIMEOUT_MS, "", signal);
 }
-async function postCheck(userMessage, agentReply, orchestratorModel, userId) {
-  const run = async () => {
+async function postCheck(userMessage, agentReply, orchestratorModel, userId, signal) {
+  const run = async (runSignal) => {
     const response = await routeModelTurn({
       tier: "smart",
       maxCompletionTokens: MAX_TOKENS,
       stream: false,
       toolChoice: "none",
       userId,
+      signal: runSignal,
       logPrefix: "[QualityLoop/postCheck]",
       messages: [
         {
@@ -82913,11 +82958,7 @@ Did the agent fully address the user's request? Reply with exactly one line: PAS
     const feedback = colonIdx !== -1 ? text2.slice(colonIdx + 1).trim() : text2;
     return { passed: false, feedback };
   };
-  try {
-    return await withTimeout(run(), TIMEOUT_MS, { passed: true, feedback: "" });
-  } catch {
-    return { passed: true, feedback: "" };
-  }
+  return withAbortableTimeout(run, TIMEOUT_MS, { passed: true, feedback: "" }, signal);
 }
 var MAX_TOKENS, TIMEOUT_MS;
 var init_qualityLoop = __esm({
@@ -82983,7 +83024,7 @@ function getMaxTokensForChannel(channelName) {
   return 2e3;
 }
 async function runCoachAgent(input) {
-  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId } = input;
+  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
   const channelLower = channelName.toLowerCase();
   let activeSessionId = input.sdkSessionId;
   let sessionResumed = false;
@@ -83023,7 +83064,7 @@ async function runCoachAgent(input) {
   const _quickDateStr = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   const _orchestratorModelPromise = getModel(userId, "orchestrator");
   const _preThinkPromise = _orchestratorModelPromise.then(
-    (m) => preThink(userText || "", channelName + " " + _quickDateStr, m, userId)
+    (m) => preThink(userText || "", channelName + " " + _quickDateStr, m, userId, signal)
   );
   const googleTokensPromise = getValidGoogleTokens(userId);
   const _nowUtc = /* @__PURE__ */ new Date();
@@ -83349,6 +83390,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
     googleAccessToken: googleAccessToken || void 0,
     discordGuildId: discordGuildId || void 0,
     discordChannelId: discordChannelId || void 0,
+    signal,
     state: {
       dateKey,
       todayPlan,
@@ -83513,13 +83555,15 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
       tools: scopedTools,
       toolContext: agentCtx,
       maxCompletionTokens: getMaxTokensForChannel(channelName),
-      onProgressMessage
+      onProgressMessage,
+      signal
     });
     rawReply = orchResult.finalAnswer;
     console.log(
       `[${channelName}] orchestrator done \u2014 tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`
     );
   } catch (orchErr) {
+    if (signal?.aborted || orchErr?.name === "AbortError") throw orchErr;
     console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
     const fallback = await runAgent({
       model: "gpt-4o-mini",
@@ -83531,7 +83575,8 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
       onToken,
       onProgressMessage,
       activationPlan: channelActivationPlan,
-      onBeforeTool: coachApprovalOnBeforeTool
+      onBeforeTool: coachApprovalOnBeforeTool,
+      signal
     });
     rawReply = fallback.reply;
   }
@@ -83540,7 +83585,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
   if (rawReply) {
     const checkUserText = userText || "[image-only message]";
     try {
-      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel, userId);
+      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel, userId, signal);
       postCheckPassed = checkResult.passed;
       if (!checkResult.passed) {
         const correctionFeedback = checkResult.feedback || "Answer did not fully address the request; provide a complete direct response.";
@@ -83561,7 +83606,8 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
             maxTurns: 4,
             maxCompletionTokens: getMaxTokensForChannel(channelName),
             activationPlan: channelActivationPlan,
-            onBeforeTool: coachApprovalOnBeforeTool
+            onBeforeTool: coachApprovalOnBeforeTool,
+            signal
           });
           if (correction.reply) {
             rawReply = correction.reply;
