@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -255,6 +255,100 @@ export const people = pgTable("people", {
 // Regenerated on a Sunday cadence (or on demand) from typed memories +
 // life context + people + weekly insights. Optional manualOverride text
 // lets the user pin extra context that survives regeneration.
+export const brainPages = pgTable("brain_pages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageType: varchar("page_type").notNull(),
+  slug: varchar("slug").notNull(),
+  title: text("title").notNull(),
+  compiledTruth: text("compiled_truth").notNull().default(""),
+  sourceKind: varchar("source_kind").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
+  reviewStatus: varchar("review_status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("brain_pages_user_slug_idx").on(table.userId, table.slug),
+  index("brain_pages_user_type_idx").on(table.userId, table.pageType),
+]);
+
+export const brainTimelineEntries = pgTable("brain_timeline_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageId: varchar("page_id").notNull().references(() => brainPages.id, { onDelete: "cascade" }),
+  occurredAt: timestamp("occurred_at"),
+  summary: text("summary").notNull(),
+  detail: text("detail"),
+  provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("brain_timeline_user_page_idx").on(table.userId, table.pageId),
+  index("brain_timeline_occurred_idx").on(table.occurredAt),
+]);
+
+export const brainContentChunks = pgTable("brain_content_chunks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageId: varchar("page_id").notNull().references(() => brainPages.id, { onDelete: "cascade" }),
+  chunkIndex: integer("chunk_index").notNull(),
+  content: text("content").notNull(),
+  embedding: jsonb("embedding").$type<number[] | null>(),
+  provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("brain_chunks_page_index_idx").on(table.pageId, table.chunkIndex),
+  index("brain_chunks_user_page_idx").on(table.userId, table.pageId),
+]);
+
+export const brainLinks = pgTable("brain_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  fromPageId: varchar("from_page_id").notNull().references(() => brainPages.id, { onDelete: "cascade" }),
+  toSlug: varchar("to_slug").notNull(),
+  verb: varchar("verb").notNull(),
+  confidence: integer("confidence").notNull().default(70),
+  provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("brain_links_unique_idx").on(table.userId, table.fromPageId, table.toSlug, table.verb),
+  index("brain_links_user_to_slug_idx").on(table.userId, table.toSlug),
+]);
+
+export const brainPageVersions = pgTable("brain_page_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageId: varchar("page_id").notNull().references(() => brainPages.id, { onDelete: "cascade" }),
+  compiledTruth: text("compiled_truth").notNull(),
+  provenance: jsonb("provenance").notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("brain_page_versions_page_idx").on(table.pageId),
+]);
+
+export const brainIngestLog = pgTable("brain_ingest_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  sourceKind: varchar("source_kind").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  contentHash: varchar("content_hash").notNull(),
+  status: varchar("status").notNull().default("processed"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("brain_ingest_log_source_hash_idx").on(table.userId, table.sourceKind, table.sourceId, table.contentHash),
+]);
+
+export const brainConfig = pgTable("brain_config", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  data: jsonb("data").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type BrainPage = typeof brainPages.$inferSelect;
+export type BrainContentChunk = typeof brainContentChunks.$inferSelect;
+export type BrainLink = typeof brainLinks.$inferSelect;
+
 export const jarvisSouls = pgTable("jarvis_souls", {
   userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
   content: text("content").notNull().default(""),

@@ -92,6 +92,11 @@ const tests = [
   { file: "server/agent/__tests__/telegramNeedsAttention.test.ts" },
   { file: "server/agent/__tests__/weatherLookup.test.ts" },
   { file: "server/agent/__tests__/sessionCompaction.test.ts" },
+  { file: "server/brain/__tests__/slug.test.ts" },
+  { file: "server/brain/__tests__/chunk.test.ts" },
+  { file: "server/brain/__tests__/links.test.ts" },
+  { file: "server/brain/__tests__/adapter.test.ts", requiresDatabase: true },
+  { file: "server/memory/__tests__/brainRetrievalFallback.test.ts" },
   { file: "server/memory/__tests__/contextBuilder.test.ts" },
 ];
 
