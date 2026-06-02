@@ -17,6 +17,7 @@ export type DaemonOp =
   | { type: "ping" }
   | { type: "shell"; cmd: string; cwd?: string; timeoutMs?: number; allowOutsideRoot?: boolean }
   | { type: "codex_oauth_prompt"; prompt: string; command?: string; timeoutMs?: number }
+  | { type: "codex_oauth_app_server_prompt"; prompt: string; command?: string; timeoutMs?: number }
   | { type: "codex_oauth_cancel" }
   | { type: "notify"; title: string; body: string }
   | { type: "file_read"; path: string }
@@ -544,7 +545,8 @@ export async function sendDaemonOp(
   // ── Bridge-level Android permission gate ──────────────────────────────────
   // Enforce permission checks at the bridge layer so no code path can bypass
   // the user's permission settings, even if the tool layer check is skipped.
-  if (!isAndroidOp && !isPlatformNeutral && op.type === "codex_oauth_prompt") {
+  const isCodexOAuthOp = op.type === "codex_oauth_prompt" || op.type === "codex_oauth_app_server_prompt";
+  if (!isAndroidOp && !isPlatformNeutral && isCodexOAuthOp) {
     const allowed = await isDaemonActionAllowed(userId, "shell");
     if (!allowed) {
       const msg = "Desktop daemon Shell Execution is disabled. Enable it in Profile -> Connected Channels -> Desktop Daemon before using Codex OAuth through the daemon.";
@@ -582,7 +584,7 @@ export async function sendDaemonOp(
       const map = pendingByUser.get(pendingKey);
       map?.delete(id);
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
-      if (op.type === "codex_oauth_prompt") {
+      if (isCodexOAuthOp) {
         try {
           sock.send(JSON.stringify({ type: "op", id: nextOpId(), op: { type: "codex_oauth_cancel" } }));
         } catch {

@@ -12,6 +12,7 @@ const daemon = require("../../../daemon/jarvis-daemon.js") as {
   saveDaemonReconnectState(statePath: string, state: Record<string, unknown>): void;
   clearDaemonReconnectState(statePath: string): void;
   normalizeDaemonPlatform(platform: string): string;
+  stopCodexAppServer(): void;
   chooseActiveReconnectState(
     loadedState: Record<string, unknown> | null,
     server: string | undefined,
@@ -155,6 +156,81 @@ async function createHangingFakeCodexLauncher(dir: string): Promise<string> {
   return launcher;
 }
 
+async function createFakeCodexAppServerLauncher(dir: string): Promise<string> {
+  const fakeCodexJs = join(dir, "fake-codex-app-server.js");
+  const statePath = join(dir, "app-server-state.json").replace(/\\/g, "\\\\");
+  await writeFile(
+    fakeCodexJs,
+    [
+      "const fs = require('fs');",
+      "const readline = require('readline');",
+      `const statePath = "${statePath}";`,
+      "function readState() {",
+      "  try { return JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { return { starts: 0, turns: 0, rollbacks: 0, args: process.argv.slice(2) }; }",
+      "}",
+      "function writeState(state) { fs.writeFileSync(statePath, JSON.stringify(state)); }",
+      "const state = readState();",
+      "state.starts += 1;",
+      "state.args = process.argv.slice(2);",
+      "writeState(state);",
+      "const rl = readline.createInterface({ input: process.stdin });",
+      "function send(msg) { process.stdout.write(JSON.stringify(msg) + '\\n'); }",
+      "rl.on('line', (line) => {",
+      "  let msg;",
+      "  try { msg = JSON.parse(line); } catch { return; }",
+      "  if (msg.method === 'initialize') {",
+      "    send({ id: msg.id, result: { userAgent: 'fake', codexHome: process.cwd(), platformFamily: 'windows', platformOs: 'windows' } });",
+      "    return;",
+      "  }",
+      "  if (msg.method === 'thread/start') {",
+      "    send({ id: msg.id, result: { thread: { id: 'thread-1' } } });",
+      "    return;",
+      "  }",
+      "  if (msg.method === 'turn/start') {",
+      "    const state = readState();",
+      "    state.turns += 1;",
+      "    writeState(state);",
+      "    const turnId = 'turn-' + state.turns;",
+      "    const input = msg.params.input?.[0]?.text || '';",
+      "    send({ id: msg.id, result: { turn: { id: turnId } } });",
+      "    setTimeout(() => {",
+      "      send({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', turnId, itemId: 'item-' + state.turns, delta: 'warm fake saw: ' + input.slice(0, 10) } });",
+      "      send({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: turnId, status: 'completed' } } });",
+      "    }, 20);",
+      "    return;",
+      "  }",
+      "  if (msg.method === 'thread/rollback') {",
+      "    const state = readState();",
+      "    state.rollbacks += 1;",
+      "    writeState(state);",
+      "    send({ id: msg.id, result: { thread: { id: 'thread-1' } } });",
+      "  }",
+      "});",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  if (process.platform === "win32") {
+    const launcher = join(dir, "fake-codex-app-server.cmd");
+    await writeFile(
+      launcher,
+      `@echo off\r\n"${process.execPath}" "%~dp0fake-codex-app-server.js" %*\r\n`,
+      "utf8",
+    );
+    return launcher;
+  }
+
+  const launcher = join(dir, "fake-codex-app-server");
+  await writeFile(
+    launcher,
+    `#!/usr/bin/env sh\n"${process.execPath}" "$(dirname "$0")/fake-codex-app-server.js" "$@"\n`,
+    "utf8",
+  );
+  await chmod(launcher, 0o755);
+  return launcher;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -262,6 +338,40 @@ async function main() {
       assert.equal(next.ok, true, "new Codex prompts should run after cancellation clears the stale operation");
       console.log("OK: Desktop daemon cancels active Codex OAuth prompt and accepts fresh work");
     } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
+  }
+
+  {
+    const dir = join(tmpdir(), `jarvis-daemon-codex-app-server-${Date.now()}`);
+    await mkdir(dir, { recursive: true });
+    try {
+      const launcher = await createFakeCodexAppServerLauncher(dir);
+      const first = await daemon.handleOp({
+        type: "codex_oauth_app_server_prompt",
+        command: launcher,
+        prompt: "first warm prompt",
+        timeoutMs: 30_000,
+      });
+      const second = await daemon.handleOp({
+        type: "codex_oauth_app_server_prompt",
+        command: launcher,
+        prompt: "second warm prompt",
+        timeoutMs: 30_000,
+      });
+      const state = JSON.parse(await readFile(join(dir, "app-server-state.json"), "utf8"));
+
+      assert.equal(first.ok, true);
+      assert.equal(first.content, "warm fake saw: first warm");
+      assert.equal(second.ok, true);
+      assert.equal(second.content, "warm fake saw: second war");
+      assert.equal(state.starts, 1, "warm app-server should be reused across daemon prompts");
+      assert.equal(state.turns, 2);
+      assert.equal(state.rollbacks, 2, "warm app-server turns should be rolled back after each prompt");
+      assert.ok(state.args.includes("app-server"));
+      console.log("OK: Desktop daemon reuses warm Codex app-server turns and rolls back history");
+    } finally {
+      daemon.stopCodexAppServer();
       await rm(dir, { force: true, recursive: true });
     }
   }

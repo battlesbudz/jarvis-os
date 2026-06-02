@@ -14,7 +14,8 @@ const CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT
 const CODEX_GATEWAY_RETRY_COUNT = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_COUNT ?? 2));
 const CODEX_GATEWAY_RETRY_BASE_DELAY_MS = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_BASE_DELAY_MS ?? 1500));
 const CODEX_DAEMON_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_DAEMON_TIMEOUT_MS ?? CODEX_EXEC_TIMEOUT_MS + 15_000);
-const CODEX_OAUTH_PROVIDER_BUILD = "daemon-runtime-2026-06-02";
+const CODEX_DAEMON_APP_SERVER_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_DAEMON_APP_SERVER_TIMEOUT_MS ?? CODEX_DAEMON_TIMEOUT_MS);
+const CODEX_OAUTH_PROVIDER_BUILD = "daemon-app-server-runtime-2026-06-02";
 
 console.log(`[CodexOAuth] provider build=${CODEX_OAUTH_PROVIDER_BUILD}`);
 
@@ -30,6 +31,11 @@ export interface CodexOAuthDaemonBridge {
     userId: string,
     op: {
       type: "codex_oauth_prompt";
+      prompt: string;
+      command?: string;
+      timeoutMs?: number;
+    } | {
+      type: "codex_oauth_app_server_prompt";
       prompt: string;
       command?: string;
       timeoutMs?: number;
@@ -173,6 +179,16 @@ function isCodexDaemonRuntimeEnabled(): boolean {
   return raw !== "false" && raw !== "0";
 }
 
+function isCodexDaemonAppServerEnabled(): boolean {
+  const raw = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED?.trim().toLowerCase();
+  return raw !== "false" && raw !== "0";
+}
+
+function isUnknownDaemonOpError(result: { ok: boolean; data?: unknown; error?: string }): boolean {
+  const message = String(result.error || "");
+  return /unknown op type codex_oauth_app_server_prompt/i.test(message);
+}
+
 function getCodexRuntimePreference(): "auto" | "gateway" | "daemon" {
   const raw = process.env.JARVIS_CODEX_RUNTIME?.trim().toLowerCase();
   if (raw === "daemon" || raw === "desktop-daemon" || raw === "desktop_daemon") return "daemon";
@@ -258,9 +274,11 @@ export function buildCodexOAuthProviderPrompt(params: ProviderQueryParams): stri
   });
 
   const hasTools = !!params.tools?.length && params.toolChoice !== "none";
+  const statelessInstruction = "This provider request is stateless. Ignore prior messages in this Codex runtime thread and answer only from the latest serialized conversation below.";
   const toolProtocol = hasTools
     ? [
         "You are Jarvis's main brain orchestrator using ChatGPT/Codex OAuth.",
+        statelessInstruction,
         "You may either answer directly or request Jarvis tool calls.",
         "You do not execute tools yourself. Jarvis executes tool calls after you request them.",
         "Tool result messages in the conversation are authoritative observations from Jarvis. Use them directly, and do not contradict a successful tool result.",
@@ -287,6 +305,7 @@ export function buildCodexOAuthProviderPrompt(params: ProviderQueryParams): stri
       ].join("\n")
     : [
         "You are Jarvis's ChatGPT/Codex OAuth provider bridge.",
+        statelessInstruction,
         "Answer the latest user request using the conversation below.",
       ].join("\n");
 
@@ -462,6 +481,27 @@ function contentFromDaemonResult(data: unknown): string {
   return typeof content === "string" ? content.trim() : "";
 }
 
+async function sendDaemonCodexPrompt(
+  bridge: CodexOAuthDaemonBridge,
+  userId: string,
+  op: {
+    type: "codex_oauth_prompt" | "codex_oauth_app_server_prompt";
+    prompt: string;
+    command?: string;
+    timeoutMs?: number;
+  },
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  return abortableDaemonResult(
+    bridge.sendDaemonOp(userId, op, timeoutMs),
+    signal,
+    () => {
+      bridge.sendDaemonOp(userId, { type: "codex_oauth_cancel" }, 5_000).catch(() => {});
+    },
+  );
+}
+
 export async function runDaemonCodexOAuthPrompt(userId: string | undefined, prompt: string, signal?: AbortSignal): Promise<string> {
   if (!isCodexDaemonRuntimeEnabled()) {
     throw new Error("Desktop daemon Codex OAuth runtime is disabled by JARVIS_CODEX_DAEMON_ENABLED.");
@@ -483,21 +523,44 @@ export async function runDaemonCodexOAuthPrompt(userId: string | undefined, prom
   const shellAllowed = await bridge.isDaemonActionAllowed(userId, "shell").catch(() => false);
   if (!shellAllowed) throw new Error(missingCodexDaemonMessage(userId));
 
-  const result = await abortableDaemonResult(
-    bridge.sendDaemonOp(
+  const command = getCodexOAuthCommand();
+  let result: { ok: boolean; data?: unknown; error?: string };
+  if (isCodexDaemonAppServerEnabled()) {
+    result = await sendDaemonCodexPrompt(
+      bridge,
       userId,
       {
-        type: "codex_oauth_prompt",
+        type: "codex_oauth_app_server_prompt",
         prompt,
-        command: getCodexOAuthCommand(),
+        command,
         timeoutMs: CODEX_EXEC_TIMEOUT_MS,
       },
-      CODEX_DAEMON_TIMEOUT_MS,
-    ),
-    signal,
-    () => {
-      bridge.sendDaemonOp(userId!, { type: "codex_oauth_cancel" }, 5_000).catch(() => {});
+      CODEX_DAEMON_APP_SERVER_TIMEOUT_MS,
+      signal,
+    );
+    if (!result.ok && !isUnknownDaemonOpError(result)) {
+      console.warn(`[CodexOAuth] warm desktop app-server failed; falling back to cold codex exec: ${result.error || "unknown daemon error"}`);
+    }
+    if (result.ok) {
+      const content = contentFromDaemonResult(result.data);
+      if (content) return content;
+      console.warn("[CodexOAuth] warm desktop app-server returned no content; falling back to cold codex exec.");
+    }
+  } else {
+    result = { ok: false, error: "warm app-server disabled" };
+  }
+
+  result = await sendDaemonCodexPrompt(
+    bridge,
+    userId,
+    {
+      type: "codex_oauth_prompt",
+      prompt,
+      command,
+      timeoutMs: CODEX_EXEC_TIMEOUT_MS,
     },
+    CODEX_DAEMON_TIMEOUT_MS,
+    signal,
   );
 
   if (!result.ok) {

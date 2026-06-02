@@ -144,9 +144,11 @@ async function main() {
   const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
   const previousCommand = process.env.JARVIS_CODEX_COMMAND;
   const previousLegacyCommand = process.env.CODEX_COMMAND;
+  const previousAppServerEnabled = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
   process.env.JARVIS_CODEX_GATEWAY_URL = "https://gateway.example.test";
   process.env.JARVIS_CODEX_RUNTIME = "daemon";
   process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED = "false";
   process.env.JARVIS_CODEX_COMMAND = "codex";
   delete process.env.CODEX_COMMAND;
   try {
@@ -193,6 +195,8 @@ async function main() {
     else process.env.JARVIS_CODEX_COMMAND = previousCommand;
     if (previousLegacyCommand == null) delete process.env.CODEX_COMMAND;
     else process.env.CODEX_COMMAND = previousLegacyCommand;
+    if (previousAppServerEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED = previousAppServerEnabled;
   }
   console.log("OK: Codex OAuth provider can force the user-scoped desktop daemon runtime");
 }
@@ -201,9 +205,65 @@ async function main() {
   const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
   const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
   const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  const previousAppServerEnabled = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
   process.env.JARVIS_CODEX_GATEWAY_URL = "https://gateway.example.test";
   process.env.JARVIS_CODEX_RUNTIME = "daemon";
   process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED = "true";
+  try {
+    let observedOpType = "";
+    _setCodexOAuthDaemonBridgeForTesting({
+      isDesktopDaemonActive: (userId) => userId === "user-1",
+      isDaemonActionAllowed: async (userId, action) => userId === "user-1" && action === "shell",
+      sendDaemonOp: async (userId, op) => {
+        assert.equal(userId, "user-1");
+        observedOpType = op.type;
+        assert.equal(op.type, "codex_oauth_app_server_prompt");
+        return { ok: true, data: { content: `{"type":"final","content":"Warm daemon pong."}` } };
+      },
+    });
+
+    const provider = new CodexOAuthProvider();
+    const chunks = [];
+    for await (const chunk of provider.query({
+      model: "chatgpt-codex-oauth/auto",
+      messages: [{ role: "user", content: "Hello from warm daemon" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      stream: false,
+      userId: "user-1",
+    })) {
+      chunks.push(chunk);
+    }
+
+    assert.equal(observedOpType, "codex_oauth_app_server_prompt");
+    assert.deepEqual(chunks, [
+      { type: "text", delta: "Warm daemon pong." },
+      { type: "finish", reason: "stop" },
+    ]);
+  } finally {
+    _setCodexOAuthDaemonBridgeForTesting(null);
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousRuntime == null) delete process.env.JARVIS_CODEX_RUNTIME;
+    else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+    if (previousAppServerEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED = previousAppServerEnabled;
+  }
+  console.log("OK: Codex OAuth provider prefers the warm desktop app-server daemon runtime");
+}
+
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
+  const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  const previousAppServerEnabled = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+  process.env.JARVIS_CODEX_GATEWAY_URL = "https://gateway.example.test";
+  process.env.JARVIS_CODEX_RUNTIME = "daemon";
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED = "false";
   try {
     let selectedUserId = "";
     _setCodexOAuthDaemonBridgeForTesting({
@@ -242,6 +302,8 @@ async function main() {
     else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
     if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
     else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+    if (previousAppServerEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED = previousAppServerEnabled;
   }
   console.log("OK: Codex OAuth provider uses the single active desktop daemon when route userId is absent");
 }

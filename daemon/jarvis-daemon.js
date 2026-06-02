@@ -24,6 +24,10 @@ const { exec, spawn } = require("child_process");
 let codexOAuthQueue = Promise.resolve();
 let codexOAuthCancelGeneration = 0;
 let activeCodexOAuthChild = null;
+let codexAppServerState = null;
+let codexAppServerInitPromise = null;
+let codexAppServerQueue = Promise.resolve();
+let codexAppServerWarmed = false;
 
 function arg(name) {
   const idx = process.argv.indexOf(`--${name}`);
@@ -293,6 +297,284 @@ function killProcessTree(child) {
   try { child.kill("SIGKILL"); } catch (_) { /* noop */ }
 }
 
+function isCodexAppServerEnabled() {
+  const raw = String(process.env.JARVIS_CODEX_APP_SERVER_ENABLED || "").trim().toLowerCase();
+  return raw !== "false" && raw !== "0";
+}
+
+function shouldPrewarmCodexAppServer() {
+  const raw = String(process.env.JARVIS_CODEX_APP_SERVER_PREWARM || "").trim().toLowerCase();
+  return raw !== "false" && raw !== "0";
+}
+
+function codexAppServerArgs() {
+  const configured = String(process.env.JARVIS_CODEX_APP_SERVER_ARGS || "").trim();
+  if (configured) return configured.split(/\s+/).filter(Boolean);
+  return [
+    "app-server",
+    "--listen",
+    "stdio://",
+    "--disable",
+    "plugins",
+    "--disable",
+    "apps",
+    "--disable",
+    "browser_use",
+    "--disable",
+    "browser_use_external",
+    "--disable",
+    "computer_use",
+    "--disable",
+    "image_generation",
+  ];
+}
+
+function rejectCodexAppServerState(state, error) {
+  for (const [, pending] of state.pending) {
+    clearTimeout(pending.timer);
+    pending.reject(error);
+  }
+  state.pending.clear();
+  if (state.activeTurn) {
+    clearTimeout(state.activeTurn.timer);
+    state.activeTurn.reject(error);
+    state.activeTurn = null;
+  }
+}
+
+function stopCodexAppServer() {
+  const state = codexAppServerState;
+  codexAppServerState = null;
+  codexAppServerInitPromise = null;
+  codexAppServerWarmed = false;
+  if (!state) return;
+  rejectCodexAppServerState(state, new Error("Codex app-server stopped."));
+  killProcessTree(state.child);
+}
+
+function handleCodexAppServerLine(state, line) {
+  let msg;
+  try {
+    msg = JSON.parse(line);
+  } catch (_) {
+    return;
+  }
+
+  if (msg.id) {
+    const pending = state.pending.get(msg.id);
+    if (!pending) return;
+    state.pending.delete(msg.id);
+    clearTimeout(pending.timer);
+    if (msg.error) pending.reject(new Error(msg.error.message || JSON.stringify(msg.error)));
+    else pending.resolve(msg.result);
+    return;
+  }
+
+  if (!msg.method) return;
+  if (msg.method === "item/agentMessage/delta" && state.activeTurn) {
+    const params = msg.params || {};
+    if (!state.activeTurn.turnId || params.turnId === state.activeTurn.turnId) {
+      state.activeTurn.content += String(params.delta || "");
+    }
+    return;
+  }
+
+  if (msg.method === "error" && state.activeTurn) {
+    const params = msg.params || {};
+    const detail = params.error?.message || params.message || JSON.stringify(params);
+    state.activeTurn.error = String(detail || "Codex app-server turn failed.");
+    return;
+  }
+
+  if (msg.method === "turn/completed" && state.activeTurn) {
+    const params = msg.params || {};
+    const turn = params.turn || {};
+    if (state.activeTurn.turnId && turn.id && turn.id !== state.activeTurn.turnId) return;
+    const active = state.activeTurn;
+    state.activeTurn = null;
+    clearTimeout(active.timer);
+    if (active.error) active.reject(new Error(active.error));
+    else active.resolve(active.content.trim());
+  }
+}
+
+function sendCodexAppServerRequest(state, method, params, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const id = ++state.requestCounter;
+    const timer = setTimeout(() => {
+      state.pending.delete(id);
+      reject(new Error(`Codex app-server request timed out: ${method}`));
+    }, timeoutMs || 30000);
+    state.pending.set(id, { resolve, reject, timer });
+    try {
+      state.child.stdin.write(JSON.stringify({ id, method, params }) + "\n");
+    } catch (err) {
+      clearTimeout(timer);
+      state.pending.delete(id);
+      reject(err);
+    }
+  });
+}
+
+async function ensureCodexAppServer(command) {
+  if (!isCodexAppServerEnabled()) {
+    throw new Error("Codex app-server runtime is disabled by JARVIS_CODEX_APP_SERVER_ENABLED.");
+  }
+  if (codexAppServerState?.ready) return codexAppServerState;
+  if (codexAppServerInitPromise) return codexAppServerInitPromise;
+
+  codexAppServerInitPromise = (async () => {
+    const codexCommand = findInstalledCodexCommand(command);
+    const built = buildCodexSpawnCommand(codexCommand, codexAppServerArgs());
+    const child = spawn(built.command, built.args, {
+      cwd: ROOT,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
+
+    const state = {
+      child,
+      pending: new Map(),
+      requestCounter: 0,
+      stdoutBuffer: "",
+      stderr: "",
+      threadId: null,
+      activeTurn: null,
+      ready: false,
+    };
+    codexAppServerState = state;
+
+    child.stdout.on("data", (chunk) => {
+      state.stdoutBuffer += String(chunk);
+      let idx;
+      while ((idx = state.stdoutBuffer.indexOf("\n")) >= 0) {
+        const line = state.stdoutBuffer.slice(0, idx).trim();
+        state.stdoutBuffer = state.stdoutBuffer.slice(idx + 1);
+        if (line) handleCodexAppServerLine(state, line);
+      }
+    });
+
+    child.stderr.on("data", (chunk) => {
+      state.stderr = (state.stderr + String(chunk)).slice(-8000);
+    });
+
+    child.on("error", (err) => {
+      rejectCodexAppServerState(state, err);
+      if (codexAppServerState === state) codexAppServerState = null;
+      codexAppServerInitPromise = null;
+      codexAppServerWarmed = false;
+    });
+
+    child.on("exit", () => {
+      rejectCodexAppServerState(state, new Error(state.stderr || "Codex app-server exited."));
+      if (codexAppServerState === state) codexAppServerState = null;
+      codexAppServerInitPromise = null;
+      codexAppServerWarmed = false;
+    });
+
+    await sendCodexAppServerRequest(state, "initialize", {
+      clientInfo: { name: "jarvis-desktop-daemon", version: "1.0.0" },
+      capabilities: { experimentalApi: true },
+    }, 30000);
+
+    const threadResult = await sendCodexAppServerRequest(state, "thread/start", {
+      cwd: ROOT,
+      approvalPolicy: "never",
+      sandbox: "read-only",
+      ephemeral: false,
+      serviceName: "Jarvis Desktop Link",
+      baseInstructions: [
+        "You are Jarvis's stripped desktop Codex runtime.",
+        "Answer only the latest Jarvis provider prompt.",
+        "Do not use tools.",
+        "Do not rely on prior turns; each prompt is intended to be stateless.",
+      ].join("\n"),
+      threadSource: "user",
+    }, 45000);
+
+    state.threadId = threadResult?.thread?.id;
+    if (!state.threadId) throw new Error("Codex app-server did not return a thread id.");
+    state.ready = true;
+    return state;
+  })();
+
+  try {
+    return await codexAppServerInitPromise;
+  } catch (err) {
+    stopCodexAppServer();
+    throw err;
+  }
+}
+
+async function runCodexAppServerTurn(state, prompt, timeoutMs) {
+  let turnStarted = false;
+  try {
+    const turnResult = await sendCodexAppServerRequest(state, "turn/start", {
+      threadId: state.threadId,
+      input: [{ type: "text", text: prompt, text_elements: [] }],
+      approvalPolicy: "never",
+      sandboxPolicy: { type: "readOnly", networkAccess: false },
+      serviceTier: process.env.JARVIS_CODEX_APP_SERVER_SERVICE_TIER || "priority",
+    }, 15000);
+    const turnId = turnResult?.turn?.id;
+    turnStarted = true;
+
+    const content = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (state.activeTurn?.turnId === turnId) state.activeTurn = null;
+        reject(new Error("Codex app-server turn timed out."));
+      }, timeoutMs || Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS || 300000));
+      state.activeTurn = { turnId, content: "", error: "", resolve, reject, timer };
+    });
+    return String(content || "").trim();
+  } finally {
+    if (turnStarted && state.threadId) {
+      try {
+        await sendCodexAppServerRequest(state, "thread/rollback", {
+          threadId: state.threadId,
+          numTurns: 1,
+        }, 15000);
+      } catch (err) {
+        console.warn("[daemon] Codex app-server rollback failed; restarting warm runtime:", String(err.message || err));
+        stopCodexAppServer();
+      }
+    }
+  }
+}
+
+function enqueueCodexAppServerPrompt(command, prompt, timeoutMs) {
+  const generation = codexOAuthCancelGeneration;
+  const run = async () => {
+    if (generation !== codexOAuthCancelGeneration) {
+      throw new Error("Codex OAuth provider cancelled.");
+    }
+    const state = await ensureCodexAppServer(command);
+    if (generation !== codexOAuthCancelGeneration) {
+      throw new Error("Codex OAuth provider cancelled.");
+    }
+    return runCodexAppServerTurn(state, prompt, timeoutMs);
+  };
+  const queued = codexAppServerQueue.then(run, run);
+  codexAppServerQueue = queued.catch(() => {});
+  return queued;
+}
+
+async function warmCodexAppServer(command) {
+  if (!shouldPrewarmCodexAppServer() || codexAppServerWarmed) return;
+  codexAppServerWarmed = true;
+  try {
+    await enqueueCodexAppServerPrompt(
+      command,
+      "Warm up Jarvis Desktop Link. Reply exactly: JARVIS_CODEX_APP_SERVER_READY",
+      Number(process.env.JARVIS_CODEX_APP_SERVER_WARMUP_TIMEOUT_MS || 60000),
+    );
+    console.log("[daemon] Codex app-server warmed");
+  } catch (err) {
+    codexAppServerWarmed = false;
+    console.warn("[daemon] Codex app-server warmup failed:", String(err.message || err));
+  }
+}
+
 function enqueueCodexOAuthPrompt(command, prompt, timeoutMs) {
   const generation = codexOAuthCancelGeneration;
   const run = () => {
@@ -311,6 +593,7 @@ function cancelCodexOAuthPrompts() {
   if (activeCodexOAuthChild) {
     killProcessTree(activeCodexOAuthChild);
   }
+  stopCodexAppServer();
   return { ok: true, cancelled: true };
 }
 
@@ -422,6 +705,12 @@ async function handleOp(op) {
       const prompt = String(op.prompt || "").trim();
       if (!prompt) return { ok: false, error: "prompt is required" };
       const content = await enqueueCodexOAuthPrompt(op.command, prompt, op.timeoutMs);
+      return { ok: true, content };
+    }
+    if (op.type === "codex_oauth_app_server_prompt") {
+      const prompt = String(op.prompt || "").trim();
+      if (!prompt) return { ok: false, error: "prompt is required" };
+      const content = await enqueueCodexAppServerPrompt(op.command, prompt, op.timeoutMs);
       return { ok: true, content };
     }
     if (op.type === "codex_oauth_cancel") {
@@ -747,6 +1036,11 @@ function connect() {
         console.log(`[daemon] credentials stored (daemonId=${storedDaemonId.slice(0, 8)}…)`);
       }
       console.log(`[daemon] paired as user ${msg.userId}; workspace=${ROOT}`);
+      if (shouldPrewarmCodexAppServer()) {
+        setTimeout(() => {
+          warmCodexAppServer(findInstalledCodexCommand()).catch(() => {});
+        }, Number(process.env.JARVIS_CODEX_APP_SERVER_PREWARM_DELAY_MS || 1500));
+      }
       pingTimer = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) {
           try { ws.send(JSON.stringify({ type: "ping" })); } catch (_) { /* noop */ }
@@ -785,6 +1079,8 @@ if (require.main === module) {
     handleOp,
     runCodexOAuthPrompt,
     enqueueCodexOAuthPrompt,
+    enqueueCodexAppServerPrompt,
+    stopCodexAppServer,
     killProcessTree,
     buildCodexSpawnCommand,
     findInstalledCodexCommand,

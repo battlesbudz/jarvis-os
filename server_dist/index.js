@@ -84661,7 +84661,8 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
     actualPlatform = isAndroidOp ? "android" : "desktop";
   }
   const pendingKey = socketKey(userId, actualPlatform);
-  if (!isAndroidOp && !isPlatformNeutral && op.type === "codex_oauth_prompt") {
+  const isCodexOAuthOp = op.type === "codex_oauth_prompt" || op.type === "codex_oauth_app_server_prompt";
+  if (!isAndroidOp && !isPlatformNeutral && isCodexOAuthOp) {
     const allowed = await isDaemonActionAllowed(userId, "shell");
     if (!allowed) {
       const msg = "Desktop daemon Shell Execution is disabled. Enable it in Profile -> Connected Channels -> Desktop Daemon before using Codex OAuth through the daemon.";
@@ -84697,7 +84698,7 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       const map = pendingByUser.get(pendingKey);
       map?.delete(id);
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
-      if (op.type === "codex_oauth_prompt") {
+      if (isCodexOAuthOp) {
         try {
           sock.send(JSON.stringify({ type: "op", id: nextOpId(), op: { type: "codex_oauth_cancel" } }));
         } catch {
@@ -85231,6 +85232,14 @@ function isCodexDaemonRuntimeEnabled() {
   const raw = process.env.JARVIS_CODEX_DAEMON_ENABLED?.trim().toLowerCase();
   return raw !== "false" && raw !== "0";
 }
+function isCodexDaemonAppServerEnabled() {
+  const raw = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED?.trim().toLowerCase();
+  return raw !== "false" && raw !== "0";
+}
+function isUnknownDaemonOpError(result) {
+  const message = String(result.error || "");
+  return /unknown op type codex_oauth_app_server_prompt/i.test(message);
+}
 function getCodexRuntimePreference() {
   const raw = process.env.JARVIS_CODEX_RUNTIME?.trim().toLowerCase();
   if (raw === "daemon" || raw === "desktop-daemon" || raw === "desktop_daemon") return "daemon";
@@ -85297,8 +85306,10 @@ function buildCodexOAuthProviderPrompt(params) {
 ${textFromContent(message.content)}`;
   });
   const hasTools = !!params.tools?.length && params.toolChoice !== "none";
+  const statelessInstruction = "This provider request is stateless. Ignore prior messages in this Codex runtime thread and answer only from the latest serialized conversation below.";
   const toolProtocol = hasTools ? [
     "You are Jarvis's main brain orchestrator using ChatGPT/Codex OAuth.",
+    statelessInstruction,
     "You may either answer directly or request Jarvis tool calls.",
     "You do not execute tools yourself. Jarvis executes tool calls after you request them.",
     "Tool result messages in the conversation are authoritative observations from Jarvis. Use them directly, and do not contradict a successful tool result.",
@@ -85322,6 +85333,7 @@ ${textFromContent(message.content)}`;
     )
   ].join("\n") : [
     "You are Jarvis's ChatGPT/Codex OAuth provider bridge.",
+    statelessInstruction,
     "Answer the latest user request using the conversation below."
   ].join("\n");
   return [
@@ -85477,6 +85489,16 @@ function contentFromDaemonResult(data) {
   const content = record.content ?? record.stdout ?? record.output;
   return typeof content === "string" ? content.trim() : "";
 }
+async function sendDaemonCodexPrompt(bridge, userId, op, timeoutMs, signal) {
+  return abortableDaemonResult(
+    bridge.sendDaemonOp(userId, op, timeoutMs),
+    signal,
+    () => {
+      bridge.sendDaemonOp(userId, { type: "codex_oauth_cancel" }, 5e3).catch(() => {
+      });
+    }
+  );
+}
 async function runDaemonCodexOAuthPrompt(userId, prompt, signal) {
   if (!isCodexDaemonRuntimeEnabled()) {
     throw new Error("Desktop daemon Codex OAuth runtime is disabled by JARVIS_CODEX_DAEMON_ENABLED.");
@@ -85495,22 +85517,43 @@ async function runDaemonCodexOAuthPrompt(userId, prompt, signal) {
   if (!bridge.isDesktopDaemonActive(userId)) throw new Error(missingCodexDaemonMessage(userId));
   const shellAllowed = await bridge.isDaemonActionAllowed(userId, "shell").catch(() => false);
   if (!shellAllowed) throw new Error(missingCodexDaemonMessage(userId));
-  const result = await abortableDaemonResult(
-    bridge.sendDaemonOp(
+  const command = getCodexOAuthCommand();
+  let result;
+  if (isCodexDaemonAppServerEnabled()) {
+    result = await sendDaemonCodexPrompt(
+      bridge,
       userId,
       {
-        type: "codex_oauth_prompt",
+        type: "codex_oauth_app_server_prompt",
         prompt,
-        command: getCodexOAuthCommand(),
+        command,
         timeoutMs: CODEX_EXEC_TIMEOUT_MS
       },
-      CODEX_DAEMON_TIMEOUT_MS
-    ),
-    signal,
-    () => {
-      bridge.sendDaemonOp(userId, { type: "codex_oauth_cancel" }, 5e3).catch(() => {
-      });
+      CODEX_DAEMON_APP_SERVER_TIMEOUT_MS,
+      signal
+    );
+    if (!result.ok && !isUnknownDaemonOpError(result)) {
+      console.warn(`[CodexOAuth] warm desktop app-server failed; falling back to cold codex exec: ${result.error || "unknown daemon error"}`);
     }
+    if (result.ok) {
+      const content2 = contentFromDaemonResult(result.data);
+      if (content2) return content2;
+      console.warn("[CodexOAuth] warm desktop app-server returned no content; falling back to cold codex exec.");
+    }
+  } else {
+    result = { ok: false, error: "warm app-server disabled" };
+  }
+  result = await sendDaemonCodexPrompt(
+    bridge,
+    userId,
+    {
+      type: "codex_oauth_prompt",
+      prompt,
+      command,
+      timeoutMs: CODEX_EXEC_TIMEOUT_MS
+    },
+    CODEX_DAEMON_TIMEOUT_MS,
+    signal
   );
   if (!result.ok) {
     throw new Error(`Desktop daemon Codex OAuth failed: ${result.error || "unknown daemon error"}`);
@@ -85521,7 +85564,7 @@ async function runDaemonCodexOAuthPrompt(userId, prompt, signal) {
   }
   return content;
 }
-var CODEX_EXEC_TIMEOUT_MS, CODEX_GATEWAY_TIMEOUT_MS, CODEX_GATEWAY_RETRY_COUNT, CODEX_GATEWAY_RETRY_BASE_DELAY_MS, CODEX_DAEMON_TIMEOUT_MS, CODEX_OAUTH_PROVIDER_BUILD, daemonBridgeForTesting, CodexOAuthProvider;
+var CODEX_EXEC_TIMEOUT_MS, CODEX_GATEWAY_TIMEOUT_MS, CODEX_GATEWAY_RETRY_COUNT, CODEX_GATEWAY_RETRY_BASE_DELAY_MS, CODEX_DAEMON_TIMEOUT_MS, CODEX_DAEMON_APP_SERVER_TIMEOUT_MS, CODEX_OAUTH_PROVIDER_BUILD, daemonBridgeForTesting, CodexOAuthProvider;
 var init_codexOAuth = __esm({
   "server/agent/providers/codexOAuth.ts"() {
     "use strict";
@@ -85534,7 +85577,8 @@ var init_codexOAuth = __esm({
     CODEX_GATEWAY_RETRY_COUNT = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_COUNT ?? 2));
     CODEX_GATEWAY_RETRY_BASE_DELAY_MS = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_BASE_DELAY_MS ?? 1500));
     CODEX_DAEMON_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_DAEMON_TIMEOUT_MS ?? CODEX_EXEC_TIMEOUT_MS + 15e3);
-    CODEX_OAUTH_PROVIDER_BUILD = "daemon-runtime-2026-06-02";
+    CODEX_DAEMON_APP_SERVER_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_DAEMON_APP_SERVER_TIMEOUT_MS ?? CODEX_DAEMON_TIMEOUT_MS);
+    CODEX_OAUTH_PROVIDER_BUILD = "daemon-app-server-runtime-2026-06-02";
     console.log(`[CodexOAuth] provider build=${CODEX_OAUTH_PROVIDER_BUILD}`);
     daemonBridgeForTesting = null;
     CodexOAuthProvider = class extends BaseProvider {
