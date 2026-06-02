@@ -32,6 +32,7 @@ for (const file of [
   "desktop-connector/src-tauri/build.rs",
   "desktop-connector/src-tauri/tauri.conf.json",
   "desktop-connector/src-tauri/capabilities/default.json",
+  "desktop-connector/src-tauri/icons/icon.ico",
   "desktop-connector/src-tauri/src/main.rs",
   "desktop-connector/src-tauri/src/lib.rs",
   "desktop-connector/sidecar/package.json",
@@ -82,7 +83,7 @@ assert.equal(tauriConfig.app.windows.length, 1, "connector should have one quiet
 assert.equal(tauriConfig.app.windows[0].visible, false, "status window should start hidden for quiet autostart");
 assert.equal(tauriConfig.app.windows[0].title, "Jarvis Desktop Connector");
 assert.equal(tauriConfig.app.security.csp, null, "connector should not depend on remote UI assets");
-assert.equal(tauriConfig.bundle.icon, undefined, "scaffold should not reference missing icon assets");
+assert.deepEqual(tauriConfig.bundle.icon, ["icons/icon.ico"], "Windows bundle should include the connector icon");
 assert.deepEqual(
   tauriConfig.plugins["deep-link"].desktop.schemes,
   ["jarvis"],
@@ -244,8 +245,9 @@ const connectorSourceFiles = fs
       && !relative.startsWith("src-tauri/binaries/");
   });
 for (const file of connectorSourceFiles) {
+  if (path.relative(repoRoot, file).replace(/\\/g, "/") === "desktop-connector/src-tauri/icons/icon.ico") continue;
   const text = fs.readFileSync(file, "utf8");
-  assert.doesNotMatch(text, /icon\.(ico|png|icns)|app-icon/i, `${path.relative(repoRoot, file)} should not reference missing icon assets`);
+  assert.doesNotMatch(text, /app-icon/i, `${path.relative(repoRoot, file)} should not reference missing app-icon assets`);
 }
 
 console.log("desktop connector Tauri scaffold assertions passed");

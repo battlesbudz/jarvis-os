@@ -26,6 +26,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
     "externalBin": ["binaries/jarvis-desktop-daemon"],
     "resources": {
       "../../scripts/jarvis-desktop-connector-awaken.ps1": "jarvis-desktop-connector-awaken.ps1"

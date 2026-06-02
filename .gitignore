@@ -51,3 +51,11 @@ yarn-error.*
 # Playwright test artifacts
 test-results/
 playwright-report/
+
+# Jarvis desktop connector build artifacts
+desktop-connector/dist/
+desktop-connector/sidecar/dist/
+desktop-connector/sidecar/bundled-daemon/
+desktop-connector/src-tauri/binaries/
+desktop-connector/src-tauri/gen/
+desktop-connector/src-tauri/target/
