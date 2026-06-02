@@ -38,6 +38,7 @@ import {
   createTelegramRunGuard,
   isTelegramRunAbortedError,
   isTelegramRunTimeoutError,
+  TELEGRAM_REPLY_TIMEOUT_MS,
 } from "./telegramRunGuard";
 import {
   cancelTelegramCoachMessageBatches,
@@ -416,6 +417,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     }
     if (isTelegramRunTimeoutError(error)) {
       const timeoutMessage = "I couldn't finish that within 10 seconds, so I stopped the turn instead of leaving you hanging.";
+      console.warn(`[Telegram] coach turn timed out after ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
           sendMessage(chatId, timeoutMessage).catch(() => {});
@@ -423,6 +425,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       } else {
         await sendMessage(chatId, timeoutMessage);
       }
+      logInteraction(userId, "telegram", "outbound", timeoutMessage).catch(() => {});
       return;
     }
     console.error("Error handling Telegram coach reply:", error);
