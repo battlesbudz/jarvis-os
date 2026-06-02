@@ -4,6 +4,7 @@ import { userMemories } from "@shared/schema";
 import OpenAI from "openai";
 import { getOpenAIClientConfig, isDirectOpenAIDisabled } from "../agent/providers/env";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import type { QueryBrainResult } from "../brain/types";
 
 const openai = new OpenAI(getOpenAIClientConfig());
 
@@ -108,6 +109,28 @@ function tierBoost(tier: string, extractedAt: string | null): number {
   return 0;
 }
 
+function clampRelevanceScore(score: number): number {
+  return Math.max(0, Math.min(100, Number(score) || 0));
+}
+
+export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chunks"]): RetrievedMemory[] {
+  return chunks.map((chunk, index) => {
+    const canonicalMemoryId = chunk.citations.find((citation) => citation.kind === "user_memory")?.id;
+
+    return {
+      id: canonicalMemoryId ?? `${chunk.pageSlug}:${index}`,
+      content: chunk.content,
+      category: "fact",
+      tier: "long_term",
+      memoryType: "semantic",
+      relevanceScore: clampRelevanceScore(chunk.score),
+      confidence: 80,
+      accessCount: 0,
+      score: chunk.score,
+    };
+  });
+}
+
 /**
  * Batch-increment access_count + last_referenced_at for a set of memory IDs.
  * Fire-and-forget (errors are logged but not re-thrown).
@@ -122,6 +145,15 @@ export function batchIncrementAccessCount(ids: string[]): void {
     })
     .where(inArray(userMemories.id, ids))
     .catch((err) => console.error("[MemoryRetrieve] access_count update failed:", err));
+}
+
+export function applyAccessUpdateForRetrievedMemories(
+  memories: Pick<RetrievedMemory, "id">[],
+  skipAccessUpdate: boolean,
+  increment: (ids: string[]) => void = batchIncrementAccessCount,
+): void {
+  if (skipAccessUpdate) return;
+  increment(memories.map((memory) => memory.id));
 }
 
 /**
@@ -140,6 +172,27 @@ export async function retrieveRelevantMemories(
 ): Promise<RetrievedMemory[]> {
   const q = query.trim();
   if (!q) return [];
+
+  if (process.env.JARVIS_BRAIN_RETRIEVAL === "1") {
+    try {
+      const { queryBrain } = await import("../brain/adapter");
+      const derived = await queryBrain({
+        userId,
+        actorId: "memory-retrieve",
+        query: q,
+        topK: limit,
+        approvalFilter: "approved_only",
+      });
+
+      const mapped = mapBrainChunksToRetrievedMemories(derived.chunks);
+      if (mapped.length > 0) {
+        applyAccessUpdateForRetrievedMemories(mapped, skipAccessUpdate);
+        return mapped;
+      }
+    } catch (err) {
+      console.warn("[MemoryRetrieve] derived brain retrieval failed; falling back to legacy retrieval:", err);
+    }
+  }
 
   const queryVec = await embedText(q);
 
@@ -210,9 +263,7 @@ export async function retrieveRelevantMemories(
 
   // Batch-update access_count and last_referenced_at for returned memories,
   // unless caller asked to skip (e.g. to do a filtered update after post-processing).
-  if (!skipAccessUpdate) {
-    batchIncrementAccessCount(top.map((m) => m.id));
-  }
+  applyAccessUpdateForRetrievedMemories(top, skipAccessUpdate);
 
   return top;
 }
