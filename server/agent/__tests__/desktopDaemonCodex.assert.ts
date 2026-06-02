@@ -12,6 +12,11 @@ const daemon = require("../../../daemon/jarvis-daemon.js") as {
   saveDaemonReconnectState(statePath: string, state: Record<string, unknown>): void;
   clearDaemonReconnectState(statePath: string): void;
   normalizeDaemonPlatform(platform: string): string;
+  chooseActiveReconnectState(
+    loadedState: Record<string, unknown> | null,
+    server: string | undefined,
+    pairCode: string | undefined,
+  ): Record<string, unknown> | null;
 };
 
 async function createFakeCodexLauncher(dir: string): Promise<string> {
@@ -132,6 +137,30 @@ async function main() {
     } finally {
       await rm(dir, { force: true, recursive: true });
     }
+  }
+
+  {
+    const loadedState = {
+      daemonId: "daemon-old",
+      reconnectSecret: "secret-old",
+      server: "https://gameplanjarvisai.up.railway.app",
+      root: "C:\\Users\\justi\\jarvis-workspace",
+      platform: "desktop",
+    };
+    assert.deepEqual(
+      daemon.chooseActiveReconnectState(loadedState, "https://gameplanjarvisai.up.railway.app", undefined),
+      loadedState,
+    );
+    assert.equal(
+      daemon.chooseActiveReconnectState(loadedState, "https://gameplanjarvisai.up.railway.app", "PAIR1234"),
+      null,
+      "explicit setup pair codes must ignore stale reconnect credentials",
+    );
+    assert.equal(
+      daemon.chooseActiveReconnectState(loadedState, "https://other.example.test", undefined),
+      null,
+    );
+    console.log("OK: Desktop daemon prefers fresh pair code over stale reconnect state");
   }
 }
 

@@ -83,11 +83,16 @@ function sameServer(a, b) {
   return String(a).replace(/\/+$/, "") === String(b).replace(/\/+$/, "");
 }
 
+function chooseActiveReconnectState(loadedState, server, pairCode) {
+  if (pairCode) return null;
+  return loadedState && sameServer(loadedState.server, server) ? loadedState : null;
+}
+
 const STATE_PATH = path.resolve(arg("state") || defaultDaemonStatePath());
 const LOADED_STATE = loadDaemonReconnectState(STATE_PATH);
-const SERVER = arg("server") || process.env.JARVIS_SERVER || LOADED_STATE?.server;
 const CODE = arg("code") || process.env.JARVIS_PAIR_CODE;
-const ACTIVE_STATE = LOADED_STATE && sameServer(LOADED_STATE.server, SERVER) ? LOADED_STATE : null;
+const SERVER = arg("server") || process.env.JARVIS_SERVER || (CODE ? undefined : LOADED_STATE?.server);
+const ACTIVE_STATE = chooseActiveReconnectState(LOADED_STATE, SERVER, CODE);
 const ROOT = path.resolve(arg("root") || process.env.JARVIS_DAEMON_ROOT || ACTIVE_STATE?.root || path.join(os.homedir(), "jarvis-workspace"));
 const DAEMON_PLATFORM = normalizeDaemonPlatform(process.env.JARVIS_DAEMON_PLATFORM || ACTIVE_STATE?.platform || "desktop");
 
@@ -735,6 +740,7 @@ if (require.main === module) {
     buildCodexSpawnCommand,
     findInstalledCodexCommand,
     normalizeDaemonPlatform,
+    chooseActiveReconnectState,
     loadDaemonReconnectState,
     saveDaemonReconnectState,
     clearDaemonReconnectState,
