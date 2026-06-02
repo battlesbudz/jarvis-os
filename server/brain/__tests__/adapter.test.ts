@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { eq, sql } from "drizzle-orm";
 import { pool } from "../../db";
 import { db } from "../../db";
-import { jarvisBrainAdapter } from "../adapter";
+import { jarvisBrainAdapter, queryBrainWithEmbedder, refreshIndexWithEmbedder } from "../adapter";
 import * as schema from "@shared/schema";
 
 const TEST_USER_ID = "adapter-test-user";
@@ -31,6 +31,46 @@ async function main(): Promise<void> {
     job: "compact",
   });
   assert.deepEqual(queued, { jobId: "not-queued-first-slice" });
+
+  const vectorPage = await jarvisBrainAdapter.upsertEvidence({
+    userId: TEST_USER_ID,
+    actorId: "adapter-test",
+    pageType: "memory",
+    slug: "memory/vector-refresh",
+    title: "Vector refresh memory",
+    compiledTruth: "The brain adapter should embed stale chunks during index refresh.",
+    sourceKind: "test",
+    sourceId: "vector-refresh",
+    provenance: [{ kind: "user_memory", id: "vector-refresh" }],
+  });
+
+  const vectorRefresh = await refreshIndexWithEmbedder(
+    {
+      userId: TEST_USER_ID,
+      actorId: "adapter-test",
+    },
+    async (content) => (content.includes("stale chunks") ? Array.from({ length: 1536 }, (_, index) => (index === 0 ? 0.25 : 0.75)) : null),
+  );
+  assert.deepEqual(vectorRefresh, { embedded: 1, linked: 0 });
+
+  const [embeddedChunk] = await db
+    .select({ embedding: schema.brainContentChunks.embedding })
+    .from(schema.brainContentChunks)
+    .where(eq(schema.brainContentChunks.pageId, vectorPage.pageId));
+  assert.equal(embeddedChunk.embedding?.length, 1536);
+  assert.equal(embeddedChunk.embedding?.[0], 0.25);
+  assert.equal(embeddedChunk.embedding?.[1], 0.75);
+
+  const semanticResult = await queryBrainWithEmbedder(
+    {
+      userId: TEST_USER_ID,
+      actorId: "adapter-test",
+      query: "no lexical overlap",
+      topK: 1,
+    },
+    async () => Array.from({ length: 1536 }, (_, index) => (index === 0 ? 0.25 : 0.75)),
+  );
+  assert.equal(semanticResult.chunks[0]?.pageSlug, "memory/vector-refresh");
 
   await assert.rejects(
     () =>
@@ -369,7 +409,7 @@ async function main(): Promise<void> {
     "edited projected memories remove stale outgoing links from the old slug",
   );
 
-  console.log("OK: brain adapter idempotency, retirement, orphan cleanup, first-slice stubs, and approval gate");
+  console.log("OK: brain adapter idempotency, retirement, vector refresh/query, orphan cleanup, first-slice stubs, and approval gate");
 }
 
 main()

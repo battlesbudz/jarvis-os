@@ -3,6 +3,7 @@ import { db } from "../db";
 import * as schema from "@shared/schema";
 import { chunkText } from "./chunk";
 import { memoryPageSlug } from "./slug";
+import { embedText } from "../memory/retrieve";
 import type {
   BrainLinkInput,
   BrainScope,
@@ -12,6 +13,7 @@ import type {
   QueryBrainResult,
   UpsertEvidenceInput,
 } from "./types";
+import { rankBrainChunkCandidates, type BrainChunkCandidate } from "./vector";
 
 function assertWritableApproval(input: Pick<UpsertEvidenceInput, "approvalMode">): void {
   if (input.approvalMode === "review_required") {
@@ -285,15 +287,64 @@ type QueryRow = {
   page_provenance: ProvenanceRef[];
   chunk_content: string;
   chunk_provenance: ProvenanceRef[];
+  chunk_embedding: number[] | null;
   score: number;
 };
 
-export async function queryBrain(input: QueryBrainInput): Promise<QueryBrainResult> {
+type BrainEmbedder = (content: string) => Promise<number[] | null>;
+
+function vectorLiteral(vector: number[]): string {
+  return `[${vector.map((value) => Number(value) || 0).join(",")}]`;
+}
+
+export async function queryBrainWithEmbedder(
+  input: QueryBrainInput,
+  queryEmbedder: BrainEmbedder,
+): Promise<QueryBrainResult> {
   const topK = Math.max(1, Math.min(input.topK ?? 10, 50));
   const approvalPredicate =
     input.approvalFilter === "include_pending"
       ? sql`AND ${schema.brainPages.reviewStatus} IN ('active', 'pending', 'kept', 'edited')`
       : sql`AND ${schema.brainPages.reviewStatus} IN ('active', 'kept', 'edited')`;
+  const queryEmbedding = await queryEmbedder(input.query);
+
+  if (queryEmbedding) {
+    const literal = vectorLiteral(queryEmbedding);
+    const vectorResult = await db.execute(sql`
+      SELECT
+        ${schema.brainPages.slug} AS page_slug,
+        ${schema.brainPages.title} AS page_title,
+        ${schema.brainPages.provenance} AS page_provenance,
+        ${schema.brainContentChunks.content} AS chunk_content,
+        ${schema.brainContentChunks.provenance} AS chunk_provenance,
+        ${schema.brainContentChunks.embedding} AS chunk_embedding,
+        ts_rank_cd(
+          to_tsvector('english', ${schema.brainContentChunks.content}),
+          websearch_to_tsquery('english', ${input.query})
+        ) AS score
+      FROM ${schema.brainContentChunks}
+      INNER JOIN ${schema.brainPages}
+        ON ${schema.brainPages.id} = ${schema.brainContentChunks.pageId}
+      WHERE ${schema.brainPages.userId} = ${input.userId}
+        ${approvalPredicate}
+        AND ${schema.brainContentChunks.embeddingVector} IS NOT NULL
+      ORDER BY ${schema.brainContentChunks.embeddingVector} <=> ${literal}::vector ASC,
+        score DESC,
+        ${schema.brainPages.updatedAt} DESC
+      LIMIT ${Math.min(topK * 3, 100)}
+    `);
+    const vectorRows = (vectorResult as unknown as { rows: QueryRow[] }).rows;
+    const candidates: BrainChunkCandidate[] = vectorRows.map((row) => ({
+      pageSlug: row.page_slug,
+      pageTitle: row.page_title,
+      content: row.chunk_content,
+      pageProvenance: row.page_provenance ?? [],
+      chunkProvenance: row.chunk_provenance ?? [],
+      ftsScore: Number(row.score),
+      embedding: row.chunk_embedding,
+    }));
+    return rankBrainChunkCandidates(candidates, queryEmbedding, topK);
+  }
 
   const result = await db.execute(sql`
     SELECT
@@ -302,6 +353,7 @@ export async function queryBrain(input: QueryBrainInput): Promise<QueryBrainResu
       ${schema.brainPages.provenance} AS page_provenance,
       ${schema.brainContentChunks.content} AS chunk_content,
       ${schema.brainContentChunks.provenance} AS chunk_provenance,
+      ${schema.brainContentChunks.embedding} AS chunk_embedding,
       ts_rank_cd(
         to_tsvector('english', ${schema.brainContentChunks.content}),
         websearch_to_tsquery('english', ${input.query})
@@ -342,10 +394,53 @@ export async function queryBrain(input: QueryBrainInput): Promise<QueryBrainResu
   return { pages: [...pagesBySlug.values()], chunks };
 }
 
-export async function refreshIndex(
-  _scope: BrainScope & { staleOnly?: boolean },
+export async function queryBrain(input: QueryBrainInput): Promise<QueryBrainResult> {
+  const queryEmbedder = process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL === "1" ? embedText : async () => null;
+  return queryBrainWithEmbedder(input, queryEmbedder);
+}
+
+export async function refreshIndexWithEmbedder(
+  scope: BrainScope & { staleOnly?: boolean; limit?: number },
+  embedder: BrainEmbedder,
 ): Promise<{ embedded: number; linked: number }> {
-  return { embedded: 0, linked: 0 };
+  const limit = Math.max(1, Math.min(scope.limit ?? 25, 100));
+  const staleOnly = scope.staleOnly ?? true;
+  const where = staleOnly
+    ? and(eq(schema.brainContentChunks.userId, scope.userId), sql`${schema.brainContentChunks.embedding} IS NULL`)
+    : eq(schema.brainContentChunks.userId, scope.userId);
+
+  const chunks = await db
+    .select({
+      id: schema.brainContentChunks.id,
+      content: schema.brainContentChunks.content,
+    })
+    .from(schema.brainContentChunks)
+    .where(where)
+    .limit(limit);
+
+  let embedded = 0;
+  for (const chunk of chunks) {
+    const embedding = await embedder(chunk.content);
+    if (!embedding) continue;
+
+    await db
+      .update(schema.brainContentChunks)
+      .set({
+        embedding,
+        embeddingVector: embedding,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.brainContentChunks.id, chunk.id));
+    embedded += 1;
+  }
+
+  return { embedded, linked: 0 };
+}
+
+export async function refreshIndex(
+  scope: BrainScope & { staleOnly?: boolean; limit?: number },
+): Promise<{ embedded: number; linked: number }> {
+  return refreshIndexWithEmbedder(scope, embedText);
 }
 
 export async function queueMaintenance(

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -22,6 +22,15 @@ export const insertUserSchema = createInsertSchema(users).pick({
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
+
+const vector1536 = customType<{ data: number[]; driverData: string }>({
+  dataType() {
+    return "vector(1536)";
+  },
+  toDriver(value: number[]): string {
+    return `[${value.join(",")}]`;
+  },
+});
 
 export const plans = pgTable("plans", {
   userId: varchar("user_id").notNull().references(() => users.id),
@@ -294,6 +303,7 @@ export const brainContentChunks = pgTable("brain_content_chunks", {
   chunkIndex: integer("chunk_index").notNull(),
   content: text("content").notNull(),
   embedding: jsonb("embedding").$type<number[] | null>(),
+  embeddingVector: vector1536("embedding_vector"),
   provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
