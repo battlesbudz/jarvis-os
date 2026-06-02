@@ -72,6 +72,29 @@ function hasPack(decision: ContextPackDecision, pack: string): boolean {
 }
 
 {
+  const previous = process.env.JARVIS_BRAIN_RETRIEVAL;
+  try {
+    process.env.JARVIS_BRAIN_RETRIEVAL = "1";
+    const decision = decideContextPacks({
+      userMessage: "Why did Jarvis remember this preference?",
+      channel: "app",
+    });
+
+    assert.ok(hasPack(decision, "memory_context"));
+    assert.ok(hasPack(decision, "brain_context"));
+    assert.ok(decision.reasons.includes("Derived brain retrieval is enabled."));
+  } finally {
+    if (previous === undefined) {
+      delete process.env.JARVIS_BRAIN_RETRIEVAL;
+    } else {
+      process.env.JARVIS_BRAIN_RETRIEVAL = previous;
+    }
+  }
+
+  console.log("OK: brain retrieval flag adds derived brain context to memory tasks");
+}
+
+{
   const redacted = redactTraceValue({
     token: "tok_live_secret",
     nested: {

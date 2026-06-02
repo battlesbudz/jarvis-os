@@ -2,6 +2,7 @@ export type ContextPackId =
   | "always_on_kernel"
   | "daily_planning_context"
   | "memory_context"
+  | "brain_context"
   | "email_context"
   | "calendar_context"
   | "code_work_context"
@@ -164,6 +165,10 @@ export function decideContextPacks(input: ContextPackDecisionInput): ContextPack
 
   if (memory) {
     packs.push("memory_context");
+    if (process.env.JARVIS_BRAIN_RETRIEVAL === "1") {
+      packs.push("brain_context");
+      reasons.push("Derived brain retrieval is enabled.");
+    }
     if (taskType === "general") {
       taskType = actionVerb ? "memory_work" : "memory_query";
       route = "memory";
