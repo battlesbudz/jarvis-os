@@ -1679,21 +1679,30 @@ async function processUpdate(update: any): Promise<void> {
         }
       }
 
+      const shouldTryAgentSdkWorkflow =
+        /\b(remind\s+me|set\s+(?:a\s+)?reminder|reminder)\b/i.test(rawUserText)
+        || (
+          /\b(email|reply)\b/i.test(rawUserText)
+          && /\b(send|sent|draft|write|compose|reply)\b/i.test(rawUserText)
+        );
+
       const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
-      const primeResult = await handlePrimeInput({
-        userId,
-        channel: "telegram",
-        message: rawUserText,
-        metadata: { originChannelId: chatId },
-      });
-      if (primeResult.handled) {
-        if (primeResult.status !== "complete" && primeResult.status !== "failed" && primeResult.reply) {
-          await sendMessage(chatId, primeResult.reply);
+      if (shouldTryAgentSdkWorkflow) {
+        const primeResult = await handlePrimeInput({
+          userId,
+          channel: "telegram",
+          message: rawUserText,
+          metadata: { originChannelId: chatId },
+        });
+        if (primeResult.handled) {
+          if (primeResult.status !== "complete" && primeResult.status !== "failed" && primeResult.reply) {
+            await sendMessage(chatId, primeResult.reply);
+          }
+          return;
         }
-        return;
       }
 
-      if (!isPrimeRuntimeEnabled()) {
+      if (shouldTryAgentSdkWorkflow && !isPrimeRuntimeEnabled()) {
         const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
         const agentSdkReminderResult = await runAgentSdkReminderWorkflow({
           userId,

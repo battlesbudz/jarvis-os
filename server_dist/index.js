@@ -20269,20 +20269,23 @@ Please reply directly to the specific task notification message so I know which 
           console.error("[Telegram] needsAttention routing error:", needsErr);
         }
       }
+      const shouldTryAgentSdkWorkflow = /\b(remind\s+me|set\s+(?:a\s+)?reminder|reminder)\b/i.test(rawUserText) || /\b(email|reply)\b/i.test(rawUserText) && /\b(send|sent|draft|write|compose|reply)\b/i.test(rawUserText);
       const { handlePrimeInput: handlePrimeInput2, isPrimeRuntimeEnabled: isPrimeRuntimeEnabled2 } = await Promise.resolve().then(() => (init_autonomyRuntime(), autonomyRuntime_exports));
-      const primeResult = await handlePrimeInput2({
-        userId,
-        channel: "telegram",
-        message: rawUserText,
-        metadata: { originChannelId: chatId }
-      });
-      if (primeResult.handled) {
-        if (primeResult.status !== "complete" && primeResult.status !== "failed" && primeResult.reply) {
-          await sendMessage(chatId, primeResult.reply);
+      if (shouldTryAgentSdkWorkflow) {
+        const primeResult = await handlePrimeInput2({
+          userId,
+          channel: "telegram",
+          message: rawUserText,
+          metadata: { originChannelId: chatId }
+        });
+        if (primeResult.handled) {
+          if (primeResult.status !== "complete" && primeResult.status !== "failed" && primeResult.reply) {
+            await sendMessage(chatId, primeResult.reply);
+          }
+          return;
         }
-        return;
       }
-      if (!isPrimeRuntimeEnabled2()) {
+      if (shouldTryAgentSdkWorkflow && !isPrimeRuntimeEnabled2()) {
         const { runAgentSdkEmailWorkflow: runAgentSdkEmailWorkflow2, runAgentSdkReminderWorkflow: runAgentSdkReminderWorkflow2 } = await Promise.resolve().then(() => (init_agentRunner(), agentRunner_exports));
         const agentSdkReminderResult = await runAgentSdkReminderWorkflow2({
           userId,
