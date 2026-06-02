@@ -315,6 +315,14 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
   if (stored.length > 0) {
     markSoulStale(userId).catch((err) => console.error("[Memory] markSoulStale:", err));
 
+    if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
+      import("../brain/adapter").then(({ projectApprovedMemories }) => {
+        projectApprovedMemories(userId, 25).catch((err) =>
+          console.error("[Memory] brain projection failed:", err),
+        );
+      }).catch((err) => console.error("[Memory] brain import failed:", err));
+    }
+
     // For rich source types use ingestSource (compounding wiki) instead of
     // the legacy TTL-gated maybeRegenerateVault.
     const richSourceTypes = ["chat", "telegram", "email", "transcript", "document", "voice"];
