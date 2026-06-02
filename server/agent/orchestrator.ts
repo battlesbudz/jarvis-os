@@ -24,6 +24,7 @@ const ORCHESTRATOR_MAX_TOKENS = 8192;
 
 /** Default maximum retries per sub-task when not overridden by caller or env. */
 const DEFAULT_MAX_RETRIES = 3;
+const FAST_REPLY_MAX_TOKENS = 360;
 
 function abortError(message: string): Error {
   const err = new Error(message);
@@ -43,6 +44,37 @@ function resolveMaxRetries(override?: number): number {
   if (override !== undefined && override >= 0) return override;
   const env = parseInt(process.env.ORCHESTRATOR_MAX_RETRIES ?? "", 10);
   return Number.isFinite(env) && env >= 0 ? env : DEFAULT_MAX_RETRIES;
+}
+
+export async function runFastOrchestratorReply(input: {
+  userId: string;
+  userRequest: string;
+  channelName: string;
+  signal?: AbortSignal;
+}): Promise<OrchestratorResult> {
+  throwIfAborted(input.signal);
+  const traceId = `orch-fast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const finalAnswer = (await routeOrchestratorText({
+    label: "fast-reply",
+    maxCompletionTokens: FAST_REPLY_MAX_TOKENS,
+    userId: input.userId,
+    signal: input.signal,
+    system: [
+      "You are Jarvis responding in a fast interactive chat lane.",
+      `Channel: ${input.channelName}.`,
+      "Answer the user's latest message directly, naturally, and briefly.",
+      "Do not use tools or claim to have checked private data.",
+      "If the request needs tools, current information, personal memory, device control, files, or deep work, say you need the full Jarvis workflow for that.",
+    ].join("\n"),
+    user: input.userRequest,
+  })).trim();
+
+  return {
+    finalAnswer: finalAnswer || "I'm here.",
+    subtaskCount: 0,
+    retryCount: 0,
+    traceId,
+  };
 }
 
 async function routeOrchestratorText(opts: {

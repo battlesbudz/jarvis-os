@@ -14,7 +14,8 @@ import { getSoulPromptBlock } from "../memory/soul";
 import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive, isDaemonActionAllowed } from "../daemon/bridge";
 import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
-import { runOrchestrator } from "../agent/orchestrator";
+import { runFastOrchestratorReply, runOrchestrator } from "../agent/orchestrator";
+import { isFastInteractiveRequest } from "../agent/fastInteractive";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
@@ -115,6 +116,33 @@ const COACH_AGENT_ID = "coach";
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
   const channelLower = channelName.toLowerCase();
+
+  if (
+    channelName === "Telegram" &&
+    !imageUrl &&
+    !input.extraTools?.length &&
+    isFastInteractiveRequest(userText || "")
+  ) {
+    logInteraction(userId, channelLower as any, "inbound", userText || "[image]").catch(() => {});
+    try {
+      console.log("[Telegram] routing through orchestrator fast lane");
+      const fastResult = await runFastOrchestratorReply({
+        userId,
+        userRequest: userText,
+        channelName,
+        signal,
+      });
+      return {
+        reply: fastResult.finalAnswer,
+        rawReply: fastResult.finalAnswer,
+        attachments: [],
+        sdkSessionId: input.sdkSessionId,
+      };
+    } catch (fastErr) {
+      if (signal?.aborted || (fastErr as Error)?.name === "AbortError") throw fastErr;
+      console.warn("[Telegram] orchestrator fast lane failed; falling back to full coach workflow:", fastErr);
+    }
+  }
 
   // ── Native session resumption (mirrors runNamedAgent pattern) ────────────────
   // When the caller provides a sdkSessionId, attempt to resume the cached
