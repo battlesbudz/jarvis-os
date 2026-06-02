@@ -58,7 +58,7 @@ import {
   normalizeConnectionTestResult,
   type ConnectionAppId,
   type ConnectionsStatus,
-} from './connectionUx';
+} from '@/lib/connectionUx';
 
 interface UserDocument {
   id: string;

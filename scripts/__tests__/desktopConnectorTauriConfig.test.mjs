@@ -169,8 +169,8 @@ assert.match(libRs, /run_verification_again/, "Rust app should expose verificati
 assert.match(libRs, /jarvis:desktop-connector:awaken/, "verification action should launch the awakening ceremony");
 assert.match(libRs, /BaseDirectory::Resource/, "verification action should use the bundled awakening resource");
 assert.doesNotMatch(libRs, /--window-style/i, "verification action should not pass invalid --window-style to PowerShell");
-assert.match(libRs, /-WindowStyle[\s\S]*Normal/, "verification action should open a visible PowerShell window");
-assert.match(libRs, /Start-Process[\s\S]*-FilePath[\s\S]*powershell\.exe[\s\S]*-ArgumentList/, "verification action should use valid Start-Process PowerShell semantics");
+assert.match(libRs, /\.command\("cmd\.exe"\)[\s\S]*"start"[\s\S]*"powershell\.exe"/, "verification action should open a visible PowerShell window through cmd start");
+assert.match(libRs, /Jarvis Awakening/, "verification action should set a stable terminal title");
 assert.match(libRs, /\.on_window_event\(/, "window close should be handled by the tray wrapper");
 assert.match(libRs, /WindowEvent::CloseRequested/, "main window close requests should be intercepted");
 assert.match(libRs, /api\.prevent_close\(\)/, "main window close should be prevented");

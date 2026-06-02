@@ -136,32 +136,28 @@ function Invoke-CodexAwakeProbe {
   try {
     Write-CeremonyLine '  [codex] Running codex exec proof prompt...' DarkCyan
 
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $CodexPath
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
+    $probeJob = Start-Job -ScriptBlock {
+      param(
+        [string]$JobCodexPath,
+        [object[]]$JobArguments
+      )
 
-    foreach ($argument in $arguments) {
-      [void]$startInfo.ArgumentList.Add($argument)
-    }
+      & $JobCodexPath @JobArguments *> $null
+      return $LASTEXITCODE
+    } -ArgumentList $CodexPath, $arguments
 
-    $process = [System.Diagnostics.Process]::new()
-    $process.StartInfo = $startInfo
-    [void]$process.Start()
-
-    $completed = $process.WaitForExit(60000)
-    if (-not $completed) {
-      try {
-        $process.Kill($true)
-      } catch {
-        $process.Kill()
-      }
-      $process.WaitForExit()
+    $completed = Wait-Job -Job $probeJob -Timeout 60
+    if ($null -eq $completed) {
+      Stop-Job -Job $probeJob -ErrorAction SilentlyContinue
+      Remove-Job -Job $probeJob -Force -ErrorAction SilentlyContinue
       return [pscustomobject]@{
         ExitCode = -1
         Output = 'Codex probe timed out.'
       }
     }
+
+    $exitCode = Receive-Job -Job $probeJob -ErrorAction SilentlyContinue | Select-Object -Last 1
+    Remove-Job -Job $probeJob -Force -ErrorAction SilentlyContinue
 
     $lastMessage = ''
     if (Test-Path -LiteralPath $lastMessageFile.FullName) {
@@ -169,7 +165,7 @@ function Invoke-CodexAwakeProbe {
     }
 
     return [pscustomobject]@{
-      ExitCode = $process.ExitCode
+      ExitCode = $exitCode
       Output = $lastMessage
     }
   } finally {
@@ -239,4 +235,6 @@ if ($localShellVerified -and $codexVerified) {
 Write-CeremonyLine '  ------------------------------------------------' DarkCyan
 Write-Host ''
 Write-CeremonyLine 'Press any key to close this window.' White
-[void][Console]::ReadKey($true)
+if (-not [Console]::IsInputRedirected) {
+  [void][Console]::ReadKey($true)
+}

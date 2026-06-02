@@ -64,10 +64,6 @@ fn append_status_detail(state: &State<ConnectorState>, detail: &str) {
     };
 }
 
-fn powershell_single_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 fn attention_for_spawn_error(state: &State<ConnectorState>, error: &str) -> ConnectorStatus {
     update_status(
         state,
@@ -351,19 +347,20 @@ fn run_verification_again(app: AppHandle, state: State<ConnectorState>) -> Resul
         .path()
         .resolve("jarvis-desktop-connector-awaken.ps1", BaseDirectory::Resource)
         .map_err(|err| err.to_string())?;
-    let launch_command = format!(
-        "Start-Process -FilePath powershell.exe -WindowStyle Normal -ArgumentList @('-NoProfile','-ExecutionPolicy','Bypass','-File',{})",
-        powershell_single_quote(&script.to_string_lossy()),
-    );
+    let script_arg = format!("\"{}\"", script.to_string_lossy());
 
     app.shell()
-        .command("powershell.exe")
+        .command("cmd.exe")
         .args([
+            "/c",
+            "start",
+            "\"Jarvis Awakening\"",
+            "powershell.exe",
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
-            "-Command",
-            launch_command.as_str(),
+            "-File",
+            script_arg.as_str(),
         ])
         .spawn()
         .map_err(|err| err.to_string())?;

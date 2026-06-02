@@ -4,7 +4,7 @@ import {
   getConnectionStatusLabel,
   normalizeConnectionsStatus,
   normalizeConnectionTestResult,
-} from "../connectionUx";
+} from "../../../lib/connectionUx";
 
 assert.deepEqual(
   CONNECTION_APPS.map((app) => app.id),

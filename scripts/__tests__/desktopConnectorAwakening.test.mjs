@@ -37,7 +37,7 @@ assert.match(scriptContent, /--sandbox[\s\S]*read-only/, "codex exec should be r
 assert.match(scriptContent, /--ask-for-approval[\s\S]*never/, "codex exec should not ask for approvals");
 assert.match(scriptContent, /--ask-for-approval[\s\S]*never[\s\S]*"exec"/, "approval policy should be passed before exec for this Codex CLI");
 assert.match(scriptContent, /--output-last-message/, "codex exec should write a bounded last-message proof");
-assert.match(scriptContent, /WaitForExit\(\d+\)/, "codex exec should be bounded by a timeout");
+assert.match(scriptContent, /Wait-Job[\s\S]*-Timeout\s+60/, "codex exec should be bounded by a timeout");
 assert.match(scriptContent, /ExitCode\s+-eq\s+0[\s\S]*ExpectedMarker[\s\S]*Codex \/ ChatGPT sign-in verified/, "success phrase should be guarded by exit code and marker output");
 assert.match(scriptContent, /ExitCode\s+-eq\s+0[\s\S]*ExpectedMarker[\s\S]*Test response received from Codex/, "response phrase should be guarded by exit code and marker output");
 assert.match(scriptContent, /Codex probe not completed/, "failed or unavailable probes should warn instead of claiming success");
@@ -49,8 +49,8 @@ assert.match(scriptContent, /if\s*\(\$localShellVerified\s+-and\s+\$codexVerifie
 assert.match(scriptContent, /else\s*\{[\s\S]*JARVIS: Local shell is awake\. Codex needs attention\./, "degraded final wording should be used when Codex proof is missing");
 assert.doesNotMatch(scriptContent, /Show-ProgressStage 'Codex channel'[\s\S]*Test-Codex/, "Codex channel should not be marked ready before the probe runs");
 assert.doesNotMatch(scriptContent, /Start-CeremonyPause\s*\r?\n\s*Write-Host ''\s*\r?\n\s*Write-CeremonyLine '  ------------------------------------------------' DarkCyan\s*\r?\n\s*Write-CeremonyLine '  JARVIS: Hello, world\. I am awake\.' Green/, "old unconditional final awake path should not remain");
-assert.match(scriptContent, /\.Kill\(\$true\)/, "timeout cleanup should try to kill the process tree");
-assert.match(scriptContent, /\.Kill\(\)/, "timeout cleanup should fall back to killing the immediate process");
+assert.match(scriptContent, /Stop-Job[\s\S]*\$probeJob/, "timeout cleanup should stop the Codex probe job");
+assert.match(scriptContent, /Remove-Job[\s\S]*\$probeJob/, "timeout cleanup should remove the Codex probe job");
 assert.doesNotMatch(scriptContent, /--version[\s\S]*Codex \/ ChatGPT sign-in verified/, "codex --version should not prove sign-in");
 assert.equal((scriptContent.match(/Codex \/ ChatGPT sign-in verified/g) ?? []).length, 1, "sign-in success phrase should only appear in the real proof branch");
 assert.equal((scriptContent.match(/Test response received from Codex/g) ?? []).length, 1, "response success phrase should only appear in the real proof branch");
