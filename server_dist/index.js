@@ -3780,6 +3780,9 @@ var init_db = __esm({
     pool = new pg.Pool({
       connectionString: process.env.DATABASE_URL
     });
+    pool.on("error", (error) => {
+      console.error("[db] idle PostgreSQL client error:", error);
+    });
     db = drizzle(pool, { schema: schema_exports });
   }
 });

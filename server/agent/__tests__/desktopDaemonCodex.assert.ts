@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,6 +60,63 @@ async function createFakeCodexLauncher(dir: string): Promise<string> {
   return launcher;
 }
 
+async function createSlowFakeCodexLauncher(dir: string): Promise<string> {
+  const fakeCodexJs = join(dir, "slow-fake-codex.js");
+  const statePath = join(dir, "slow-state.json").replace(/\\/g, "\\\\");
+  await writeFile(
+    fakeCodexJs,
+    [
+      "const fs = require('fs');",
+      `const statePath = "${statePath}";`,
+      "const args = process.argv.slice(2);",
+      "const outputIndex = args.indexOf('--output-last-message');",
+      "const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;",
+      "function readState() {",
+      "  try { return JSON.parse(fs.readFileSync(statePath, 'utf8')); } catch { return { active: 0, maxActive: 0, calls: 0 }; }",
+      "}",
+      "function writeState(state) { fs.writeFileSync(statePath, JSON.stringify(state)); }",
+      "let state = readState();",
+      "state.active += 1;",
+      "state.calls += 1;",
+      "state.maxActive = Math.max(state.maxActive, state.active);",
+      "writeState(state);",
+      "let stdin = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { stdin += chunk; });",
+      "process.stdin.on('end', () => {",
+      "  setTimeout(() => {",
+      "    const next = readState();",
+      "    next.active -= 1;",
+      "    writeState(next);",
+      "    if (!outputPath) { console.error('missing output path'); process.exit(2); }",
+      "    fs.writeFileSync(outputPath, 'slow fake codex saw: ' + stdin.slice(0, 8));",
+      "  }, 250);",
+      "});",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  if (process.platform === "win32") {
+    const launcher = join(dir, "slow-fake-codex.cmd");
+    await writeFile(
+      launcher,
+      `@echo off\r\n"${process.execPath}" "%~dp0slow-fake-codex.js" %*\r\n`,
+      "utf8",
+    );
+    return launcher;
+  }
+
+  const launcher = join(dir, "slow-fake-codex");
+  await writeFile(
+    launcher,
+    `#!/usr/bin/env sh\n"${process.execPath}" "$(dirname "$0")/slow-fake-codex.js" "$@"\n`,
+    "utf8",
+  );
+  await chmod(launcher, 0o755);
+  return launcher;
+}
+
 async function main() {
   {
     const command = daemon.buildCodexSpawnCommand("C:\\Users\\justi\\AppData\\Roaming\\npm\\codex.cmd", ["exec"]);
@@ -94,6 +151,37 @@ async function main() {
     console.log("OK: Desktop daemon codex_oauth_prompt runs codex exec-compatible command");
   } finally {
     await rm(dir, { force: true, recursive: true });
+  }
+
+  {
+    const dir = join(tmpdir(), `jarvis-daemon-codex-queue-${Date.now()}`);
+    await mkdir(dir, { recursive: true });
+    try {
+      const launcher = await createSlowFakeCodexLauncher(dir);
+      const [first, second] = await Promise.all([
+        daemon.handleOp({
+          type: "codex_oauth_prompt",
+          command: launcher,
+          prompt: "first queued prompt",
+          timeoutMs: 30_000,
+        }),
+        daemon.handleOp({
+          type: "codex_oauth_prompt",
+          command: launcher,
+          prompt: "second queued prompt",
+          timeoutMs: 30_000,
+        }),
+      ]);
+      const state = JSON.parse(await readFile(join(dir, "slow-state.json"), "utf8"));
+
+      assert.equal(first.ok, true);
+      assert.equal(second.ok, true);
+      assert.equal(state.calls, 2);
+      assert.equal(state.maxActive, 1, "daemon should serialize Codex OAuth prompts");
+      console.log("OK: Desktop daemon serializes concurrent codex_oauth_prompt operations");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   }
 
   {

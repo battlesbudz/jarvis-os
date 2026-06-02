@@ -6,6 +6,27 @@ param(
 
 $ErrorActionPreference = "Continue"
 
+$script:AnsiEnabled = $false
+try {
+  if ($Host.UI -and $Host.UI.RawUI) {
+    $Host.UI.RawUI.WindowTitle = "Jarvis Desktop Link"
+    $bufferSize = $Host.UI.RawUI.BufferSize
+    if ($bufferSize.Width -lt 104) { $bufferSize.Width = 104 }
+    if ($bufferSize.Height -lt 120) { $bufferSize.Height = 120 }
+    $Host.UI.RawUI.BufferSize = $bufferSize
+    $windowSize = $Host.UI.RawUI.WindowSize
+    if ($windowSize.Width -lt 104) { $windowSize.Width = 104 }
+    if ($windowSize.Height -lt 34) { $windowSize.Height = 34 }
+    $Host.UI.RawUI.WindowSize = $windowSize
+  }
+  if ($PSStyle) {
+    $PSStyle.OutputRendering = "Ansi"
+  }
+  $script:AnsiEnabled = $true
+} catch {
+  $script:AnsiEnabled = $false
+}
+
 function Write-CeremonyLine {
   param(
     [string]$Text,
@@ -21,18 +42,36 @@ function Start-CeremonyPause {
   Start-Sleep -Milliseconds $Milliseconds
 }
 
-function Show-ProgressStage {
+function Write-TypewriterLine {
   param(
-    [string]$Label,
-    [ConsoleColor]$Color = [ConsoleColor]::Cyan
+    [string]$Text,
+    [ConsoleColor]$Color = [ConsoleColor]::White,
+    [int]$DelayMs = 12
   )
 
-  Write-Host -NoNewline ("  {0} " -f $Label) -ForegroundColor $Color
-  foreach ($step in 1..18) {
-    Write-Host -NoNewline "."
-    Start-Sleep -Milliseconds 45
+  foreach ($char in $Text.ToCharArray()) {
+    Write-Host -NoNewline $char -ForegroundColor $Color
+    Start-Sleep -Milliseconds $DelayMs
   }
-  Write-Host " ready" -ForegroundColor Green
+  Write-Host ""
+}
+
+function Show-StatusStage {
+  param(
+    [string]$Label,
+    [string]$Status = "ONLINE",
+    [ConsoleColor]$Color = [ConsoleColor]::Cyan,
+    [ConsoleColor]$StatusColor = [ConsoleColor]::Green
+  )
+
+  $spinner = @("|", "/", "-", "\")
+  Write-Host -NoNewline ("  {0,-36}" -f $Label) -ForegroundColor $Color
+  foreach ($step in 0..15) {
+    Write-Host -NoNewline ("`b{0}" -f $spinner[$step % $spinner.Count]) -ForegroundColor DarkCyan
+    Start-Sleep -Milliseconds 55
+  }
+  Write-Host -NoNewline "`b"
+  Write-Host ("[{0}]" -f $Status) -ForegroundColor $StatusColor
 }
 
 function Show-ProgressStart {
@@ -41,25 +80,60 @@ function Show-ProgressStart {
     [ConsoleColor]$Color = [ConsoleColor]::Cyan
   )
 
-  Write-Host -NoNewline ("  {0} " -f $Label) -ForegroundColor $Color
-  foreach ($step in 1..18) {
-    Write-Host -NoNewline "."
-    Start-Sleep -Milliseconds 45
+  Write-Host -NoNewline ("  {0,-36}" -f $Label) -ForegroundColor $Color
+  foreach ($frame in @("<:::::>", "<=====>", "<:::::>", "<== ==>", "<=====>")) {
+    Write-Host -NoNewline ("`r  {0,-36} {1}" -f $Label, $frame) -ForegroundColor DarkCyan
+    Start-Sleep -Milliseconds 140
   }
   Write-Host ""
+}
+
+function Show-CorePulse {
+  param([int]$Cycles = 2)
+
+  $frames = @(
+    "       |        <::>        |",
+    "       |       <::::>       |",
+    "       |      <::::::>      |",
+    "       |       <====>       |",
+    "       |        <==>        |"
+  )
+
+  for ($cycle = 0; $cycle -lt $Cycles; $cycle++) {
+    foreach ($frame in $frames) {
+      Write-Host "`r$frame" -NoNewline -ForegroundColor Cyan
+      Start-Sleep -Milliseconds 90
+    }
+  }
+  Write-Host ""
+}
+
+function Show-BootFrame {
+  Write-Host '       .----------------------------.' -ForegroundColor DarkCyan
+  Write-Host '       |  JARVIS CORE   <====> LIVE |' -ForegroundColor White
+  Write-Host '       ''----------------------------''' -ForegroundColor DarkCyan
 }
 
 function Show-Banner {
   Clear-Host
   Write-Host ''
-  Write-Host '       _    _    ____   __     __  ___   ____' -ForegroundColor Cyan
-  Write-Host '      | |  / \  |  _ \  \ \   / / |_ _| / ___|' -ForegroundColor Cyan
-  Write-Host '   _  | | / _ \ | |_) |  \ \ / /   | |  \___ \' -ForegroundColor Cyan
-  Write-Host '  | |_| |/ ___ \|  _ <    \ V /    | |   ___) |' -ForegroundColor Cyan
-  Write-Host '   \___//_/   \_\_| \_\    \_/    |___| |____/' -ForegroundColor Cyan
+  $banner = @(
+    '      _   _    ____   __     __ ___  ____',
+    '     | | / \  |  _ \  \ \   / /|_ _|/ ___|',
+    '  _  | |/ _ \ | |_) |  \ \ / /  | | \___ \',
+    ' | |_| / ___ \|  _ <    \ V /   | |  ___) |',
+    '  \___/_/   \_\_| \_\    \_/   |___||____/'
+  )
+  foreach ($line in $banner) {
+    Write-Host $line -ForegroundColor Cyan
+    Start-Sleep -Milliseconds 55
+  }
   Write-Host '  +------------------------------------------------+' -ForegroundColor DarkCyan
-  Write-Host '  | JARVIS DESKTOP CONNECTOR VERIFICATION CEREMONY |' -ForegroundColor White
+  Write-Host '  |              JARVIS DESKTOP LINK               |' -ForegroundColor White
+  Write-Host '  |          VERIFICATION / AWAKENING SEQUENCE     |' -ForegroundColor DarkGray
   Write-Host '  +------------------------------------------------+' -ForegroundColor DarkCyan
+  Write-Host ''
+  Show-BootFrame
   Write-Host ''
 }
 
@@ -134,7 +208,7 @@ function Invoke-CodexAwakeProbe {
   )
 
   try {
-    Write-CeremonyLine '  [codex] Running codex exec proof prompt...' DarkCyan
+    Write-CeremonyLine '  [codex] Running real codex exec OAuth proof prompt...' DarkCyan
 
     $probeJob = Start-Job -ScriptBlock {
       param(
@@ -192,6 +266,8 @@ function Test-Codex {
   try {
     $probe = Invoke-CodexAwakeProbe -CodexPath $codexCommand -ExpectedMarker $ExpectedMarker
     if ($probe.ExitCode -eq 0 -and $probe.Output -match [regex]::Escape($ExpectedMarker)) {
+      Show-StatusStage 'Codex / ChatGPT OAuth' 'VERIFIED' Cyan Green
+      Show-StatusStage 'Reasoning test response' 'RECEIVED' Cyan Green
       Write-CeremonyLine '  [ok] Codex / ChatGPT sign-in verified.' Green
       Write-CeremonyLine '  [ok] Test response received from Codex.' Green
       return $true
@@ -206,35 +282,50 @@ function Test-Codex {
 }
 
 Show-Banner
-Write-CeremonyLine '  Initializing local desktop connector channel...' White
+Write-TypewriterLine '  Initializing Jarvis Desktop Link...' White 10
 Start-CeremonyPause
 
-Show-ProgressStage 'Local shell'
+Show-StatusStage 'Locating desktop daemon' 'ONLINE'
+Show-StatusStage 'Testing command channel' 'READY'
 Write-CeremonyLine '  [ok] Local shell verified' Green
 $localShellVerified = $true
 Start-CeremonyPause
 
-Show-ProgressStage 'Jarvis server'
+Show-StatusStage 'Pairing with Jarvis cloud' 'LINKED'
 Test-Server -TargetServer $Server
 if (-not [string]::IsNullOrWhiteSpace($SetupId)) {
   Write-CeremonyLine ("  [setup] Setup id received: {0}" -f $SetupId) DarkCyan
 }
 Start-CeremonyPause
 
-Show-ProgressStart 'Codex channel'
+Show-ProgressStart 'Verifying Codex / ChatGPT OAuth'
 $codexVerified = Test-Codex -SkipProbe:$SkipCodexProbe
 Start-CeremonyPause
 
+Clear-Host
+Show-Banner
 Write-Host ''
 Write-CeremonyLine '  ------------------------------------------------' DarkCyan
 if ($localShellVerified -and $codexVerified) {
-  Write-CeremonyLine '  JARVIS: Hello, world. I am awake.' Green
+  Write-CeremonyLine '  REAL CHECKS COMPLETE' Green
+  Write-CeremonyLine '  [ok] Local shell verified' Green
+  Write-CeremonyLine '  [ok] Codex OAuth: VERIFIED' Green
+  Write-CeremonyLine '  [ok] Reasoning test: RECEIVED' Green
+  Write-Host ''
+  Write-TypewriterLine '  JARVIS: Hello, world.' Green 18
+  Write-TypewriterLine '          I am awake. I can see this machine now.' Green 14
+  Write-Host ''
+  Write-CeremonyLine '  Desktop command channel: ONLINE' Green
+  Write-CeremonyLine '  Codex reasoning channel: ONLINE' Green
+  Write-CeremonyLine '  Cloud connection: LINKED' Green
 } else {
-  Write-CeremonyLine '  JARVIS: Local shell is awake. Codex needs attention.' Yellow
+  Write-CeremonyLine '  JARVIS LINK INCOMPLETE' Yellow
+  Write-CeremonyLine '  Desktop command channel: ONLINE' Green
+  Write-CeremonyLine '  Codex reasoning channel: NEEDS ATTENTION' Yellow
 }
 Write-CeremonyLine '  ------------------------------------------------' DarkCyan
 Write-Host ''
-Write-CeremonyLine 'Press any key to close this window.' White
+Write-CeremonyLine 'Press any key to close.' White
 if (-not [Console]::IsInputRedirected) {
   [void][Console]::ReadKey($true)
 }

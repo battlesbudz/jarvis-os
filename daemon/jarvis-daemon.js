@@ -21,6 +21,8 @@ const path = require("path");
 const os = require("os");
 const { exec, spawn } = require("child_process");
 
+let codexOAuthQueue = Promise.resolve();
+
 function arg(name) {
   const idx = process.argv.indexOf(`--${name}`);
   return idx >= 0 ? process.argv[idx + 1] : undefined;
@@ -272,6 +274,30 @@ function buildCodexSpawnCommand(command, args) {
   return { command: rawCommand, args };
 }
 
+function killProcessTree(child) {
+  if (!child || !child.pid) return;
+  if (process.platform === "win32") {
+    try {
+      spawn("taskkill.exe", ["/pid", String(child.pid), "/t", "/f"], {
+        windowsHide: true,
+        stdio: "ignore",
+      }).on("error", () => {});
+      return;
+    } catch (_) {
+      // Fall through to direct kill.
+    }
+  }
+
+  try { child.kill("SIGKILL"); } catch (_) { /* noop */ }
+}
+
+function enqueueCodexOAuthPrompt(command, prompt, timeoutMs) {
+  const run = () => runCodexOAuthPrompt(command, prompt, timeoutMs);
+  const queued = codexOAuthQueue.then(run, run);
+  codexOAuthQueue = queued.catch(() => {});
+  return queued;
+}
+
 function findInstalledCodexCommand(command) {
   const configured = String(command || process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND || "").trim();
   if (configured && configured !== "codex") return configured;
@@ -326,7 +352,7 @@ async function runCodexOAuthPrompt(command, prompt, timeoutMs) {
       const timer = setTimeout(() => {
         if (settled) return;
         settled = true;
-        try { child.kill(); } catch (_) { /* noop */ }
+        killProcessTree(child);
         reject(new Error("Codex OAuth provider timed out."));
       }, timeoutMs || Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS || 300000));
 
@@ -377,7 +403,7 @@ async function handleOp(op) {
     if (op.type === "codex_oauth_prompt") {
       const prompt = String(op.prompt || "").trim();
       if (!prompt) return { ok: false, error: "prompt is required" };
-      const content = await runCodexOAuthPrompt(op.command, prompt, op.timeoutMs);
+      const content = await enqueueCodexOAuthPrompt(op.command, prompt, op.timeoutMs);
       return { ok: true, content };
     }
     if (op.type === "file_read") {
@@ -737,6 +763,8 @@ if (require.main === module) {
     connect,
     handleOp,
     runCodexOAuthPrompt,
+    enqueueCodexOAuthPrompt,
+    killProcessTree,
     buildCodexSpawnCommand,
     findInstalledCodexCommand,
     normalizeDaemonPlatform,

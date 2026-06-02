@@ -19,11 +19,21 @@ assert.match(scriptContent, /\[string\]\$SetupId\s*=\s*""/, "script should accep
 assert.match(scriptContent, /\[switch\]\$SkipCodexProbe/, "script should allow skipping the Codex probe");
 
 for (const phrase of [
+  "JARVIS DESKTOP LINK",
+  "VERIFICATION / AWAKENING SEQUENCE",
+  "Initializing Jarvis Desktop Link",
+  "Locating desktop daemon",
+  "Pairing with Jarvis cloud",
+  "Verifying Codex / ChatGPT OAuth",
   "Local shell verified",
   "Codex / ChatGPT sign-in verified",
   "Test response received from Codex",
-  "JARVIS: Hello, world. I am awake.",
-  "Press any key to close this window.",
+  "JARVIS: Hello, world.",
+  "I am awake. I can see this machine now.",
+  "Desktop command channel: ONLINE",
+  "Codex reasoning channel: ONLINE",
+  "Cloud connection: LINKED",
+  "Press any key to close.",
 ]) {
   assert.match(scriptContent, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `script should show '${phrase}'`);
 }
@@ -45,8 +55,8 @@ assert.match(scriptContent, /Probe skipped; Codex verification was not claimed/,
 assert.match(scriptContent, /return\s+\$true/, "successful Codex proof should return a boolean success status");
 assert.match(scriptContent, /return\s+\$false/, "skipped or failed Codex proof should return a boolean failure status");
 assert.match(scriptContent, /\$codexVerified\s*=\s*Test-Codex/, "main ceremony should store the Codex verification status");
-assert.match(scriptContent, /if\s*\(\$localShellVerified\s+-and\s+\$codexVerified\)[\s\S]*JARVIS: Hello, world\. I am awake\./, "final awake line should be gated by local shell and Codex proof");
-assert.match(scriptContent, /else\s*\{[\s\S]*JARVIS: Local shell is awake\. Codex needs attention\./, "degraded final wording should be used when Codex proof is missing");
+assert.match(scriptContent, /if\s*\(\$localShellVerified\s+-and\s+\$codexVerified\)[\s\S]*JARVIS: Hello, world\.[\s\S]*I am awake\. I can see this machine now\./, "final awake line should be gated by local shell and Codex proof");
+assert.match(scriptContent, /else\s*\{[\s\S]*JARVIS LINK INCOMPLETE[\s\S]*Codex reasoning channel: NEEDS ATTENTION/, "degraded final wording should be used when Codex proof is missing");
 assert.doesNotMatch(scriptContent, /Show-ProgressStage 'Codex channel'[\s\S]*Test-Codex/, "Codex channel should not be marked ready before the probe runs");
 assert.doesNotMatch(scriptContent, /Start-CeremonyPause\s*\r?\n\s*Write-Host ''\s*\r?\n\s*Write-CeremonyLine '  ------------------------------------------------' DarkCyan\s*\r?\n\s*Write-CeremonyLine '  JARVIS: Hello, world\. I am awake\.' Green/, "old unconditional final awake path should not remain");
 assert.match(scriptContent, /Stop-Job[\s\S]*\$probeJob/, "timeout cleanup should stop the Codex probe job");
@@ -62,6 +72,9 @@ assert.doesNotMatch(scriptContent, /\brm\s+-r\b/i, "script should not use recurs
 
 assert.match(scriptContent, /Write-Host\s+'[^']*JARVIS[^']*'/, "script should include a visible JARVIS banner");
 assert.match(scriptContent, /Write-Host\s+'\s*[|+\\\/_-]{3,}/, "script should include ASCII art, not only plain text");
+assert.match(scriptContent, /Show-CorePulse/, "script should include an animated core visual");
+assert.match(scriptContent, /Write-TypewriterLine/, "script should include a typewriter-style final reveal");
+assert.match(scriptContent, /WindowTitle\s*=\s*"Jarvis Desktop Link"/, "script should brand the terminal title");
 assert.match(scriptContent, /Start-Sleep/, "script should stage the ceremony with visible timing");
 assert.match(scriptContent, /ForegroundColor/, "script should use colored status lines");
 
