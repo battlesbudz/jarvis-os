@@ -12,18 +12,22 @@ const wizardPath = "components/desktopConnector/WindowsConnectorSetupWizard.tsx"
 const routePath = "app/desktop-connector-setup.tsx";
 const cardPath = "components/desktopConnector/ConnectedWindowsPcCard.tsx";
 const profilePath = "app/(tabs)/profile.tsx";
+const setupClientPath = "lib/desktop-connector-setup.ts";
 
 const wizard = read(wizardPath);
 const route = read(routePath);
 const card = read(cardPath);
 const profile = read(profilePath);
+const setupClient = read(setupClientPath);
 
 assert.match(wizard, /Use your ChatGPT subscription with Jarvis/);
 assert.match(wizard, /Set it up for me/);
 assert.match(wizard, /Skip desktop connector/);
+assert.match(wizard, /Finish pairing/);
 assert.match(wizard, /Open installer again/);
 assert.match(wizard, /control your desktop/);
 assert.match(wizard, /run shell commands/);
+assert.match(wizard, /handoffUrl/);
 assert.match(wizard, /mountedRef/);
 assert.match(wizard, /cancelledRef/);
 assert.match(wizard, /cancelFlow/);
@@ -36,6 +40,7 @@ assert.doesNotMatch(wizard, /pairing code/i);
 assert.doesNotMatch(wizard, /JARVIS_PAIR_CODE/i);
 assert.doesNotMatch(wizard, /node jarvis-daemon\.js/i);
 assert.match(route, /WindowsConnectorSetupWizard/);
+assert.match(setupClient, /consentedToDesktopControl:\s*true/);
 
 assert.match(card, /Connected Windows PC/);
 assert.match(card, /Check connection/);
@@ -57,7 +62,8 @@ assert.doesNotMatch(profile, /cd daemon/i);
 assert.doesNotMatch(profile, /JARVIS_PAIR_CODE/i);
 assert.doesNotMatch(profile, /node jarvis-daemon\.js/i);
 assert.match(profile, /connect this Windows PC for ChatGPT-powered desktop work/);
-assert.match(profile, /Jarvis created a fresh connector setup session\./);
+assert.match(profile, /desktop-connector-setup\?source=settings/);
+assert.doesNotMatch(profile, /POST', '\/api\/desktop-connector\/setup-session'/);
 assert.match(profile, /Desktop connector verification started\./);
 assert.match(profile, /Desktop connector verified\./);
 assert.match(profile, /data\?\.ok === false/);

@@ -108,13 +108,28 @@ async function main() {
   try {
     const token = jwt.sign({ userId: "user-1", scope: "user" }, SECRET);
 
-    const setup = await request(port, "POST", "/api/desktop-connector/setup-session", {}, token);
+    const setupWithoutConsent = await request(port, "POST", "/api/desktop-connector/setup-session", {}, token);
+    assert.equal(setupWithoutConsent.status, 400);
+    assert.equal(setupWithoutConsent.json.error, "Desktop connector setup consent is required");
+    assert.deepEqual(calls.createDaemonPairingCode, []);
+    assert.deepEqual(calls.setDaemonPermissions, []);
+
+    const setup = await request(port, "POST", "/api/desktop-connector/setup-session", {
+      consentedToDesktopControl: true,
+    }, token);
     assert.equal(setup.status, 200);
     const parsedSetup = desktopConnectorSetupResponseSchema.parse(setup.json);
     assert.equal(parsedSetup.platform, "windows");
     assert.equal(parsedSetup.installer.url, "https://downloads.example.test/JarvisSetup.exe");
     assert.match(parsedSetup.setupId, /^dc_/);
     assert.equal(parsedSetup.pairCode, "PAIR1234");
+    const handoffUrl = new URL(parsedSetup.handoffUrl);
+    assert.equal(handoffUrl.protocol, "jarvis:");
+    assert.equal(handoffUrl.hostname, "desktop-connector");
+    assert.equal(handoffUrl.pathname, "/setup");
+    assert.equal(handoffUrl.searchParams.get("serverUrl"), parsedSetup.serverUrl);
+    assert.equal(handoffUrl.searchParams.get("setupId"), parsedSetup.setupId);
+    assert.equal(handoffUrl.searchParams.get("pairCode"), "PAIR1234");
     assert.deepEqual(calls.createDaemonPairingCode, ["user-1"]);
     assert.deepEqual(calls.getDaemonPermissions, ["user-1"]);
     assert.deepEqual(calls.setDaemonPermissions, [{
@@ -169,9 +184,11 @@ async function main() {
     assert.deepEqual(calls.isDaemonActionAllowed.at(-1), { userId: "user-1", action: "shell" });
     assert.deepEqual(calls.sendDaemonOp, [{
       userId: "user-1",
-      op: { type: "shell", cmd: "Write-Output 'JARVIS_DESKTOP_CONNECTOR_SHELL_OK'", timeoutMs: 15000 },
+      op: { type: "shell", cmd: "echo JARVIS_DESKTOP_CONNECTOR_SHELL_OK", timeoutMs: 15000 },
       timeoutMs: 20000,
     }]);
+    const verifyOp = calls.sendDaemonOp[0].op as { cmd: string };
+    assert.equal(verifyOp.cmd.includes("Write-Output"), false, "verify command must not rely on PowerShell-only Write-Output");
     assert.equal(shellOkVerify.json.ok, true);
     assert.deepEqual(shellOkVerify.json.result, { ok: true, data: { stdout: "JARVIS_DESKTOP_CONNECTOR_SHELL_OK" } });
 

@@ -26,8 +26,13 @@ export const desktopConnectorSetupResponseSchema = z.object({
   pairCode: z.string().min(4),
   expiresInSec: z.number().int().positive(),
   serverUrl: z.string().url(),
+  handoffUrl: z.string().regex(/^jarvis:\/\/desktop-connector\/setup\?/),
   installer: desktopConnectorInstallerSchema,
   disclosure: z.string().min(1),
+});
+
+export const desktopConnectorSetupRequestSchema = z.object({
+  consentedToDesktopControl: z.literal(true),
 });
 
 export const desktopConnectorStatusResponseSchema = z.object({
@@ -43,6 +48,7 @@ export const desktopConnectorStatusResponseSchema = z.object({
 
 export type DesktopConnectorStage = z.infer<typeof desktopConnectorStageSchema>;
 export type DesktopConnectorInstaller = z.infer<typeof desktopConnectorInstallerSchema>;
+export type DesktopConnectorSetupRequest = z.infer<typeof desktopConnectorSetupRequestSchema>;
 export type DesktopConnectorSetupResponse = z.infer<typeof desktopConnectorSetupResponseSchema>;
 export type DesktopConnectorStatusResponse = z.infer<typeof desktopConnectorStatusResponseSchema>;
 
@@ -51,3 +57,15 @@ export const DESKTOP_CONNECTOR_DISCLOSURE =
   "By continuing, you allow Jarvis to install and keep a desktop connector running on this computer. " +
   "This gives Jarvis the ability to use Codex locally, control your desktop, and run shell commands through the connector. " +
   "If you do not want that, skip this step and use Jarvis with another model provider instead.";
+
+export function buildDesktopConnectorHandoffUrl(input: {
+  serverUrl: string;
+  setupId: string;
+  pairCode: string;
+}): string {
+  const url = new URL("jarvis://desktop-connector/setup");
+  url.searchParams.set("serverUrl", input.serverUrl);
+  url.searchParams.set("setupId", input.setupId);
+  url.searchParams.set("pairCode", input.pairCode);
+  return url.toString();
+}

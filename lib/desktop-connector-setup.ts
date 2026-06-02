@@ -7,7 +7,9 @@ import {
 } from "@shared/desktopConnectorSetup";
 
 export async function startDesktopConnectorSetup(): Promise<DesktopConnectorSetupResponse> {
-  const res = await apiRequest("POST", "/api/desktop-connector/setup-session", {});
+  const res = await apiRequest("POST", "/api/desktop-connector/setup-session", {
+    consentedToDesktopControl: true,
+  });
   return desktopConnectorSetupResponseSchema.parse(await res.json());
 }
 

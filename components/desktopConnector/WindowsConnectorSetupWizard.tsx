@@ -125,6 +125,35 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
     }
   }, [canContinue]);
 
+  const openConnectorHandoff = useCallback(async (url: string) => {
+    if (!canContinue()) return false;
+
+    try {
+      if (Platform.OS === "web") {
+        if (typeof document === "undefined") return false;
+        const link = document.createElement("a");
+        link.href = url;
+        link.rel = "noopener noreferrer";
+        link.style.display = "none";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } else {
+        await Linking.openURL(url);
+      }
+
+      if (canContinue()) {
+        setInstallerNotice("If Windows asks, allow Jarvis Desktop Connector to open. After installation finishes, choose Finish pairing.");
+      }
+      return true;
+    } catch (err) {
+      if (canContinue()) {
+        setInstallerNotice("Install the connector, then choose Finish pairing to complete setup.");
+      }
+      return false;
+    }
+  }, [canContinue]);
+
   const start = useCallback(async () => {
     cancelledRef.current = false;
     setBusy(true);
@@ -138,8 +167,12 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
       setSetup(next);
       setStatus(null);
 
+      await openConnectorHandoff(next.handoffUrl);
       await openInstaller(next.installer.url);
 
+      if (canContinue()) {
+        setInstallerNotice("Jarvis opened the installer and sent this setup to the desktop connector. After installation finishes, choose Finish pairing.");
+      }
       if (!canContinue()) return;
       poll(next.setupId);
     } catch (err) {
@@ -149,13 +182,20 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
     } finally {
       if (canContinue()) setBusy(false);
     }
-  }, [canContinue, openInstaller, poll]);
+  }, [canContinue, openConnectorHandoff, openInstaller, poll]);
 
   const openInstallerAgain = useCallback(() => {
     if (!setup || !canContinue()) return;
     setError(null);
     void openInstaller(setup.installer.url);
   }, [canContinue, openInstaller, setup]);
+
+  const finishPairing = useCallback(() => {
+    if (!setup || !canContinue()) return;
+    setError(null);
+    void openConnectorHandoff(setup.handoffUrl);
+    poll(setup.setupId);
+  }, [canContinue, openConnectorHandoff, poll, setup]);
 
   const handleSkip = useCallback(() => {
     cancelFlow();
@@ -200,6 +240,12 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
             </>
           )}
         </Pressable>
+        {setup ? (
+          <Pressable style={styles.secondary} onPress={finishPairing}>
+            <Ionicons name="link-outline" size={16} color={Colors.text} />
+            <Text style={styles.secondaryText}>Finish pairing</Text>
+          </Pressable>
+        ) : null}
         {setup ? (
           <Pressable style={styles.secondary} onPress={openInstallerAgain}>
             <Ionicons name="open-outline" size={16} color={Colors.text} />

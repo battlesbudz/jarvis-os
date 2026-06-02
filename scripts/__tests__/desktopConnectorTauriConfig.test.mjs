@@ -65,6 +65,7 @@ assert.ok(connectorPackage.dependencies["@tauri-apps/plugin-autostart"], "autost
 assert.ok(connectorPackage.dependencies["@tauri-apps/plugin-opener"], "opener plugin should be listed");
 
 const tauriConfig = readJson("desktop-connector/src-tauri/tauri.conf.json");
+const cargoToml = readText("desktop-connector/src-tauri/Cargo.toml");
 assert.equal(tauriConfig.productName, "Jarvis Desktop Connector", "Tauri product name should be Jarvis Desktop Connector");
 assert.deepEqual(tauriConfig.bundle.targets, ["nsis"], "Windows bundle target should be NSIS");
 assert.deepEqual(
@@ -82,6 +83,16 @@ assert.equal(tauriConfig.app.windows[0].visible, false, "status window should st
 assert.equal(tauriConfig.app.windows[0].title, "Jarvis Desktop Connector");
 assert.equal(tauriConfig.app.security.csp, null, "connector should not depend on remote UI assets");
 assert.equal(tauriConfig.bundle.icon, undefined, "scaffold should not reference missing icon assets");
+assert.deepEqual(
+  tauriConfig.plugins["deep-link"].desktop.schemes,
+  ["jarvis"],
+  "installed connector should register the jarvis:// desktop handoff scheme",
+);
+
+assert.match(cargoToml, /tauri-plugin-deep-link\s*=\s*"2"/, "Rust app should depend on Tauri deep-link plugin");
+assert.match(cargoToml, /tauri-plugin-single-instance[\s\S]*features\s*=\s*\["deep-link"\]/, "Windows tray app should route repeated jarvis:// handoffs to the running instance");
+assert.match(cargoToml, /serde_json\s*=\s*"1"/, "Rust app should persist pending setup handoffs as JSON");
+assert.match(cargoToml, /url\s*=\s*"2"/, "Rust app should parse and validate setup handoff URLs");
 
 const capability = readJson("desktop-connector/src-tauri/capabilities/default.json");
 for (const permission of [
@@ -118,6 +129,22 @@ assert.match(libRs, /TrayIconBuilder/, "tray should use TrayIconBuilder");
 assert.match(libRs, /tauri_plugin_autostart/, "Rust app should initialize the autostart plugin");
 assert.match(libRs, /use\s+tauri_plugin_autostart::[\s\S]*ManagerExt/, "Rust app should import autostart ManagerExt");
 assert.match(libRs, /\.autolaunch\(\)\.enable\(\)/, "setup should enable autostart");
+assert.match(libRs, /tauri_plugin_deep_link::DeepLinkExt/, "Rust app should import deep-link helpers");
+assert.match(libRs, /tauri_plugin_single_instance::init/, "Rust app should install single-instance handling for repeated setup handoffs");
+assert.match(libRs, /tauri_plugin_single_instance::init[\s\S]*tauri_plugin_deep_link::init/, "single-instance plugin should be registered before deep-link plugin");
+assert.match(libRs, /tauri_plugin_deep_link::init\(\)/, "Rust app should initialize the deep-link plugin");
+assert.match(libRs, /app\.deep_link\(\)\.on_open_url/, "running tray app should receive jarvis:// setup handoffs");
+assert.match(libRs, /app\.deep_link\(\)\.get_current\(\)/, "tray app should read startup setup handoffs");
+assert.match(libRs, /parse_pending_setup_url/, "tray app should parse setup handoff URLs");
+assert.match(libRs, /url\.scheme\(\)\s*!=\s*"jarvis"/, "tray app should validate the jarvis URL scheme");
+assert.match(libRs, /host_str\(\)\s*!=\s*Some\("desktop-connector"\)/, "tray app should validate the setup handoff host");
+assert.match(libRs, /serverUrl/, "tray app should accept serverUrl from the setup handoff");
+assert.match(libRs, /setupId/, "tray app should accept setupId from the setup handoff");
+assert.match(libRs, /pairCode/, "tray app should accept pairCode from the setup handoff");
+assert.match(libRs, /pending-setup\.json/, "tray app should persist pending setup handoffs");
+assert.match(libRs, /serde_json::to_string_pretty/, "tray app should write pending setup handoff JSON");
+assert.match(libRs, /read_pending_setup/, "tray app should replay saved setup handoffs when starting the daemon");
+assert.match(libRs, /"--server"[\s\S]*setup\.server_url[\s\S]*"--code"[\s\S]*setup\.pair_code/, "tray app should pass pairing context to the sidecar");
 assert.match(libRs, /tauri_plugin_shell/, "Rust app should initialize the shell plugin");
 assert.match(libRs, /tauri_plugin_opener/, "Rust app should initialize the opener plugin");
 assert.match(libRs, /\.opener\(\)\s*[\s\S]*\.open_url\("https:\/\/gameplanjarvisai\.up\.railway\.app"/, "Open Jarvis should use the Tauri opener plugin");
@@ -179,6 +206,10 @@ assert.ok(
 const sidecarIndex = readText("desktop-connector/sidecar/index.js");
 assert.match(sidecarIndex, /bundled-daemon[\\/]jarvis-daemon\.js/, "sidecar should require the bundled daemon copy");
 assert.match(sidecarIndex, /require\("\.\/bundled-daemon\/jarvis-daemon\.js"\)/, "sidecar should use a literal daemon require so pkg can bundle dependencies");
+assert.match(sidecarIndex, /function arg\(name\)/, "sidecar should accept pairing context args from the tray wrapper");
+assert.match(sidecarIndex, /arg\("server"\)/, "sidecar should accept --server from a setup handoff");
+assert.match(sidecarIndex, /arg\("code"\)/, "sidecar should accept --code from a setup handoff");
+assert.match(sidecarIndex, /JARVIS_PAIR_CODE/, "sidecar should forward the handoff pair code to the daemon env");
 assert.match(sidecarIndex, /JARVIS_DAEMON_PLATFORM/, "sidecar should set desktop daemon platform env");
 assert.match(sidecarIndex, /\.connect\(\)/, "sidecar launcher should call the daemon connect export");
 assert.doesNotMatch(sidecarIndex, /..[\\/]..[\\/]daemon[\\/]jarvis-daemon\.js/, "sidecar should not run daemon from a source repo checkout");

@@ -1,13 +1,19 @@
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::menu::{Menu, MenuItem};
 use tauri::path::BaseDirectory;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_shell::{process::CommandEvent, ShellExt};
+use url::Url;
 
 const AWAKENING_SCRIPT_NAME: &str = "jarvis:desktop-connector:awaken";
+const PENDING_SETUP_FILE: &str = "pending-setup.json";
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,6 +22,15 @@ struct ConnectorStatus {
     detail: String,
     quiet_startup: bool,
     last_verification: Option<String>,
+}
+
+#[derive(Clone, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingSetup {
+    server_url: String,
+    setup_id: String,
+    pair_code: String,
+    saved_at_unix: u64,
 }
 
 struct ConnectorState {
@@ -65,6 +80,94 @@ fn next_daemon_generation(state: &State<ConnectorState>) -> u64 {
     let mut generation = state.daemon_generation.lock().expect("daemon generation lock poisoned");
     *generation += 1;
     *generation
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
+}
+
+fn pending_setup_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|err| err.to_string())?;
+    fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(dir.join(PENDING_SETUP_FILE))
+}
+
+fn parse_pending_setup_url(raw_url: &str) -> Result<PendingSetup, String> {
+    let url = Url::parse(raw_url).map_err(|err| format!("Invalid Jarvis setup link: {err}"))?;
+    if url.scheme() != "jarvis" || url.host_str() != Some("desktop-connector") || url.path() != "/setup" {
+        return Err("Jarvis setup link was not meant for this desktop connector.".into());
+    }
+
+    let mut server_url = None;
+    let mut setup_id = None;
+    let mut pair_code = None;
+    for (key, value) in url.query_pairs() {
+        match key.as_ref() {
+            "serverUrl" => server_url = Some(value.into_owned()),
+            "setupId" => setup_id = Some(value.into_owned()),
+            "pairCode" => pair_code = Some(value.into_owned()),
+            _ => {}
+        }
+    }
+
+    let server_url = server_url.ok_or_else(|| "Jarvis setup link is missing the server URL.".to_string())?;
+    let parsed_server = Url::parse(&server_url).map_err(|err| format!("Invalid Jarvis server URL: {err}"))?;
+    if !matches!(parsed_server.scheme(), "https" | "http") {
+        return Err("Jarvis server URL must use HTTPS or HTTP.".into());
+    }
+
+    let setup_id = setup_id.ok_or_else(|| "Jarvis setup link is missing the setup session.".to_string())?;
+    if !setup_id.starts_with("dc_") {
+        return Err("Jarvis setup session is not valid.".into());
+    }
+
+    let pair_code = pair_code.ok_or_else(|| "Jarvis setup link is missing the pairing secret.".to_string())?;
+    if pair_code.len() < 4 {
+        return Err("Jarvis pairing secret is not valid.".into());
+    }
+
+    Ok(PendingSetup {
+        server_url,
+        setup_id,
+        pair_code,
+        saved_at_unix: now_unix_secs(),
+    })
+}
+
+fn save_pending_setup(app: &AppHandle, setup: &PendingSetup) -> Result<(), String> {
+    let path = pending_setup_path(app)?;
+    let tmp = path.with_extension("json.tmp");
+    let payload = serde_json::to_string_pretty(setup).map_err(|err| err.to_string())?;
+    fs::write(&tmp, format!("{payload}\n")).map_err(|err| err.to_string())?;
+    fs::rename(&tmp, &path).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+fn read_pending_setup(app: &AppHandle) -> Result<Option<PendingSetup>, String> {
+    let path = pending_setup_path(app)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&path).map_err(|err| err.to_string())?;
+    serde_json::from_str(&raw)
+        .map(Some)
+        .map_err(|err| format!("Jarvis saved setup handoff could not be read: {err}"))
+}
+
+fn persist_setup_handoff(app: &AppHandle, raw_url: &str) -> Result<PendingSetup, String> {
+    let setup = parse_pending_setup_url(raw_url)?;
+    save_pending_setup(app, &setup)?;
+    let state = app.state::<ConnectorState>();
+    update_status(
+        &state,
+        "reconnecting",
+        "Jarvis received the desktop setup handoff and is finishing pairing.",
+    );
+    Ok(setup)
 }
 
 fn update_status_for_generation(app: &AppHandle, generation: u64, daemon: &str, detail: &str, clear_child: bool) {
@@ -139,7 +242,7 @@ fn spawn_daemon(app: &AppHandle, state: &State<ConnectorState>) -> Result<Connec
         let _ = child.kill();
     }
 
-    let sidecar = app
+    let mut sidecar = app
         .shell()
         .sidecar("jarvis-desktop-daemon")
         .map_err(|err| {
@@ -147,6 +250,19 @@ fn spawn_daemon(app: &AppHandle, state: &State<ConnectorState>) -> Result<Connec
             attention_for_spawn_error(state, &error);
             error
         })?;
+
+    let pending_setup = read_pending_setup(app).map_err(|err| {
+        update_status(state, "attention", &format!("{err} Use Reconnect after starting setup again."));
+        err
+    })?;
+    if let Some(setup) = pending_setup {
+        sidecar = sidecar.args(vec![
+            "--server".to_string(),
+            setup.server_url,
+            "--code".to_string(),
+            setup.pair_code,
+        ]);
+    }
 
     let (mut rx, child) = sidecar
         .spawn()
@@ -159,11 +275,63 @@ fn spawn_daemon(app: &AppHandle, state: &State<ConnectorState>) -> Result<Connec
     *state.daemon_child.lock().expect("daemon child lock poisoned") = Some(child);
     monitor_sidecar_events(app.clone(), generation, rx);
 
-    Ok(update_status(
-        state,
-        "connected",
-        "Jarvis desktop daemon is running in the background.",
-    ))
+    Ok(update_status(state, "connected", "Jarvis desktop daemon is running in the background."))
+}
+
+fn apply_setup_handoff(app: &AppHandle, raw_url: &str) {
+    match persist_setup_handoff(app, raw_url) {
+        Ok(_) => {
+            let state = app.state::<ConnectorState>();
+            if let Err(err) = spawn_daemon(app, &state) {
+                attention_for_spawn_error(&state, &err);
+            }
+            show_window(app);
+        }
+        Err(err) => {
+            let state = app.state::<ConnectorState>();
+            update_status(
+                &state,
+                "attention",
+                &format!("Jarvis could not use that desktop setup handoff: {err}"),
+            );
+            show_window(app);
+        }
+    }
+}
+
+fn register_deep_link_handlers(app: &AppHandle) {
+    let app_handle = app.clone();
+    app.deep_link().on_open_url(move |event| {
+        for url in event.urls() {
+            apply_setup_handoff(&app_handle, url.as_str());
+        }
+    });
+}
+
+fn persist_startup_deep_links(app: &AppHandle) {
+    match app.deep_link().get_current() {
+        Ok(Some(urls)) => {
+            for url in urls {
+                if let Err(err) = persist_setup_handoff(app, url.as_str()) {
+                    let state = app.state::<ConnectorState>();
+                    update_status(
+                        &state,
+                        "attention",
+                        &format!("Jarvis could not use the startup setup handoff: {err}"),
+                    );
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(err) => {
+            let state = app.state::<ConnectorState>();
+            update_status(
+                &state,
+                "attention",
+                &format!("Jarvis could not read startup setup handoffs: {err}"),
+            );
+        }
+    }
 }
 
 #[tauri::command]
@@ -273,9 +441,23 @@ fn enable_autostart(app: &AppHandle, state: &State<ConnectorState>) {
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            for arg in argv {
+                if arg.starts_with("jarvis://") {
+                    apply_setup_handoff(&app, &arg);
+                }
+            }
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--quiet"]),
@@ -288,6 +470,8 @@ pub fn run() {
         .setup(|app| {
             build_tray(app.handle())?;
             let state = app.state::<ConnectorState>();
+            register_deep_link_handlers(app.handle());
+            persist_startup_deep_links(app.handle());
             if let Err(err) = spawn_daemon(app.handle(), &state) {
                 attention_for_spawn_error(&state, &err);
             }

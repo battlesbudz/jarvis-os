@@ -1457,26 +1457,10 @@ export default function ProfileScreen() {
     }
   }, [loadChannels]);
 
-  const handleReconnectWindowsConnector = useCallback(async () => {
+  const handleReconnectWindowsConnector = useCallback(() => {
     setDesktopConnectorMessage(null);
-    setChannelBusy('desktop-daemon');
-    try {
-      await apiRequest('POST', '/api/desktop-connector/setup-session', {});
-      await loadChannels();
-      setDesktopConnectorMessage({
-        kind: 'success',
-        text: 'Jarvis created a fresh connector setup session.',
-      });
-    } catch (err) {
-      console.error('[desktop-connector] reconnect failed:', err);
-      setDesktopConnectorMessage({
-        kind: 'error',
-        text: getDesktopConnectorErrorMessage(err, 'Jarvis could not reconnect the desktop connector.'),
-      });
-    } finally {
-      setChannelBusy(null);
-    }
-  }, [loadChannels]);
+    router.push('/desktop-connector-setup?source=settings' as any);
+  }, [router]);
 
   const handleVerifyWindowsConnector = useCallback(async () => {
     setDesktopConnectorMessage(null);

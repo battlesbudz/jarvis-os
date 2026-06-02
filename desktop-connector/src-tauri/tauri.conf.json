@@ -30,5 +30,12 @@
     "resources": {
       "../../scripts/jarvis-desktop-connector-awaken.ps1": "jarvis-desktop-connector-awaken.ps1"
     }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["jarvis"]
+      }
+    }
   }
 }

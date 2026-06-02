@@ -3,7 +3,9 @@ import type { Express, Request, Response } from "express";
 import type { DaemonOp, DaemonPermissions } from "../daemon/bridge";
 
 import {
+  buildDesktopConnectorHandoffUrl,
   DESKTOP_CONNECTOR_DISCLOSURE,
+  desktopConnectorSetupRequestSchema,
   type DesktopConnectorInstaller,
   type DesktopConnectorStage,
   type DesktopConnectorStatusResponse,
@@ -138,9 +140,17 @@ export function registerDesktopConnectorRoutes(
       const userId = getUserId(req, res);
       if (!userId) return;
 
+      const parsedBody = desktopConnectorSetupRequestSchema.safeParse(req.body || {});
+      if (!parsedBody.success) {
+        return res.status(400).json({
+          error: "Desktop connector setup consent is required",
+        });
+      }
+
       const now = Date.now();
       const setupId = generateSetupId();
       const pairCode = await deps.createDaemonPairingCode(userId);
+      const serverUrl = getPublicBaseUrl(req);
       const currentPermissions = await deps.getDaemonPermissions(userId);
       // Single-disclosure commercial setup consent path; preserve unrelated user permission choices.
       await deps.setDaemonPermissions(userId, { ...currentPermissions, shell: true });
@@ -164,7 +174,8 @@ export function registerDesktopConnectorRoutes(
         platform: "windows",
         pairCode,
         expiresInSec: SETUP_SESSION_TTL_SEC,
-        serverUrl: getPublicBaseUrl(req),
+        serverUrl,
+        handoffUrl: buildDesktopConnectorHandoffUrl({ serverUrl, setupId, pairCode }),
         installer: getInstallerMetadata(),
         disclosure: DESKTOP_CONNECTOR_DISCLOSURE,
       });
@@ -216,7 +227,7 @@ export function registerDesktopConnectorRoutes(
 
       const op = {
         type: "shell",
-        cmd: "Write-Output 'JARVIS_DESKTOP_CONNECTOR_SHELL_OK'",
+        cmd: "echo JARVIS_DESKTOP_CONNECTOR_SHELL_OK",
         timeoutMs: 15000,
       } satisfies DaemonOp;
 
