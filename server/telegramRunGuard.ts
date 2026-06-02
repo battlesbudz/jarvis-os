@@ -63,7 +63,6 @@ export function createTelegramRunGuard(userId: string) {
         controller.abort(error);
         reject(error);
       }, timeoutMs);
-      timeout.unref?.();
 
       controller.signal.addEventListener("abort", onAbort, { once: true });
       promise.then(

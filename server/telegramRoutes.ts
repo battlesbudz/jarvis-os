@@ -295,6 +295,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     };
 
     const storedSessionId = await getCoachSession(userId, "Telegram");
+    console.log(`[Telegram] starting coach turn with timeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
     const { reply, attachments, sdkSessionId } = await runGuard.race(
       runCoachAgent({
         userId,
@@ -307,6 +308,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         onProgressMessage,
         signal: runGuard.signal,
       }),
+      TELEGRAM_REPLY_TIMEOUT_MS,
     );
 
     if (sdkSessionId) {

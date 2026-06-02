@@ -12694,7 +12694,6 @@ function createTelegramRunGuard(userId) {
         controller.abort(error);
         reject(error);
       }, timeoutMs);
-      timeout.unref?.();
       controller.signal.addEventListener("abort", onAbort, { once: true });
       promise.then(
         (value) => {
@@ -19033,6 +19032,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
       }
     };
     const storedSessionId = await getSession(userId, "Telegram");
+    console.log(`[Telegram] starting coach turn with timeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
     const { reply, attachments, sdkSessionId } = await runGuard.race(
       runCoachAgent({
         userId,
@@ -19044,7 +19044,8 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
         onToken,
         onProgressMessage,
         signal: runGuard.signal
-      })
+      }),
+      TELEGRAM_REPLY_TIMEOUT_MS
     );
     if (sdkSessionId) {
       setSession(userId, "Telegram", sdkSessionId);
