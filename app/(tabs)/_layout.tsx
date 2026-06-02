@@ -136,6 +136,7 @@ function ClassicTabLayout() {
         }}
       />
       <Tabs.Screen name="goals" options={{ href: null }} />
+      <Tabs.Screen name="connectionUx" options={{ href: null }} />
       <Tabs.Screen
         name="profile"
         options={{
