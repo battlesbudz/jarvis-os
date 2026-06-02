@@ -12722,7 +12722,7 @@ var init_telegramRunGuard = __esm({
   "server/telegramRunGuard.ts"() {
     "use strict";
     init_runRegistry();
-    TELEGRAM_REPLY_TIMEOUT_MS = Number(process.env.TELEGRAM_REPLY_TIMEOUT_MS || 18e4);
+    TELEGRAM_REPLY_TIMEOUT_MS = Number(process.env.TELEGRAM_REPLY_TIMEOUT_MS || 42e4);
     TelegramRunAbortedError = class extends Error {
       constructor(message = "Telegram turn was aborted.") {
         super(message);
@@ -82982,6 +82982,7 @@ function getMaxTokensForChannel(channelName) {
 async function runCoachAgent(input) {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId } = input;
   const channelLower = channelName.toLowerCase();
+  const isTelegramChannel = channelName === "Telegram";
   let activeSessionId = input.sdkSessionId;
   let sessionResumed = false;
   let cachedSessionMessages = [];
@@ -83019,7 +83020,7 @@ async function runCoachAgent(input) {
   const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1e3);
   const _quickDateStr = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
   const _orchestratorModelPromise = getModel(userId, "orchestrator");
-  const _preThinkPromise = _orchestratorModelPromise.then(
+  const _preThinkPromise = isTelegramChannel ? Promise.resolve("") : _orchestratorModelPromise.then(
     (m) => preThink(userText || "", channelName + " " + _quickDateStr, m, userId)
   );
   const googleTokensPromise = getValidGoogleTokens(userId);
@@ -83501,24 +83502,9 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
   }
   const switchingFromBuild = !!userText && isUnrelatedIntent(userText) && hasActiveBuildSession(chatMessages);
   let rawReply;
-  console.log(`[${channelName}] routing through orchestrator`);
-  try {
-    const orchResult = await runOrchestrator({
-      userId,
-      userRequest: enrichedUserText,
-      systemContext: effectiveSystemPrompt,
-      tools: scopedTools,
-      toolContext: agentCtx,
-      maxCompletionTokens: getMaxTokensForChannel(channelName),
-      onProgressMessage
-    });
-    rawReply = orchResult.finalAnswer;
-    console.log(
-      `[${channelName}] orchestrator done \u2014 tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`
-    );
-  } catch (orchErr) {
-    console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
-    const fallback = await runAgent({
+  if (isTelegramChannel) {
+    console.log(`[${channelName}] routing through direct harness`);
+    const direct = await runAgent({
       model: "gpt-4o-mini",
       messages: baseMessages,
       tools: scopedTools,
@@ -83530,11 +83516,43 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
       activationPlan: channelActivationPlan,
       onBeforeTool: coachApprovalOnBeforeTool
     });
-    rawReply = fallback.reply;
+    rawReply = direct.reply;
+  } else {
+    console.log(`[${channelName}] routing through orchestrator`);
+    try {
+      const orchResult = await runOrchestrator({
+        userId,
+        userRequest: enrichedUserText,
+        systemContext: effectiveSystemPrompt,
+        tools: scopedTools,
+        toolContext: agentCtx,
+        maxCompletionTokens: getMaxTokensForChannel(channelName),
+        onProgressMessage
+      });
+      rawReply = orchResult.finalAnswer;
+      console.log(
+        `[${channelName}] orchestrator done \u2014 tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`
+      );
+    } catch (orchErr) {
+      console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
+      const fallback = await runAgent({
+        model: "gpt-4o-mini",
+        messages: baseMessages,
+        tools: scopedTools,
+        context: agentCtx,
+        maxTurns: 6,
+        maxCompletionTokens: getMaxTokensForChannel(channelName),
+        onToken,
+        onProgressMessage,
+        activationPlan: channelActivationPlan,
+        onBeforeTool: coachApprovalOnBeforeTool
+      });
+      rawReply = fallback.reply;
+    }
   }
   let postCheckPassed = true;
   let retried = false;
-  if (rawReply) {
+  if (rawReply && !isTelegramChannel) {
     const checkUserText = userText || "[image-only message]";
     try {
       const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel, userId);

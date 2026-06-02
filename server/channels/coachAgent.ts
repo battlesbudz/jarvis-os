@@ -113,6 +113,7 @@ const COACH_AGENT_ID = "coach";
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId } = input;
   const channelLower = channelName.toLowerCase();
+  const isTelegramChannel = channelName === "Telegram";
 
   // ── Native session resumption (mirrors runNamedAgent pattern) ────────────────
   // When the caller provides a sdkSessionId, attempt to resume the cached
@@ -164,9 +165,11 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   // so it fires with the correct model as soon as the DB row lands — still fully
   // parallel with the other DB queries below (zero net latency on the hot path).
   const _orchestratorModelPromise = getModel(userId, "orchestrator");
-  const _preThinkPromise = _orchestratorModelPromise.then((m) =>
-    preThink(userText || "", channelName + " " + _quickDateStr, m, userId),
-  );
+  const _preThinkPromise = isTelegramChannel
+    ? Promise.resolve("")
+    : _orchestratorModelPromise.then((m) =>
+        preThink(userText || "", channelName + " " + _quickDateStr, m, userId),
+      );
 
   // ── Fire Google token lookup immediately so Gmail/Calendar API calls can
   // start in parallel with the main DB batch instead of waiting for it. ──
@@ -791,6 +794,22 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   // Always route through the orchestrator — it is the foundational execution
   // architecture. Falls back to direct harness on any orchestrator error.
   let rawReply: string;
+  if (isTelegramChannel) {
+    console.log(`[${channelName}] routing through direct harness`);
+    const direct = await runAgent({
+      model: "gpt-4o-mini",
+      messages: baseMessages,
+      tools: scopedTools,
+      context: agentCtx,
+      maxTurns: 6,
+      maxCompletionTokens: getMaxTokensForChannel(channelName),
+      onToken,
+      onProgressMessage,
+      activationPlan: channelActivationPlan,
+      onBeforeTool: coachApprovalOnBeforeTool,
+    });
+    rawReply = direct.reply;
+  } else {
   console.log(`[${channelName}] routing through orchestrator`);
   try {
     const orchResult = await runOrchestrator({
@@ -822,6 +841,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     });
     rawReply = fallback.reply;
   }
+  }
 
   // ── Post-check quality gate ────────────────────────────────────────────────
   // Ask the orchestrator model whether the reply adequately addressed the user's
@@ -829,7 +849,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   // failure reason injected.  Errors/timeouts are fail-open (never block reply).
   let postCheckPassed = true;
   let retried = false;
-  if (rawReply) {
+  if (rawReply && !isTelegramChannel) {
     const checkUserText = userText || "[image-only message]";
     try {
       const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel, userId);
