@@ -17,6 +17,7 @@ export type DaemonOp =
   | { type: "ping" }
   | { type: "shell"; cmd: string; cwd?: string; timeoutMs?: number; allowOutsideRoot?: boolean }
   | { type: "codex_oauth_prompt"; prompt: string; command?: string; timeoutMs?: number }
+  | { type: "codex_oauth_cancel" }
   | { type: "notify"; title: string; body: string }
   | { type: "file_read"; path: string }
   | { type: "file_write"; path: string; content: string }
@@ -581,6 +582,13 @@ export async function sendDaemonOp(
       const map = pendingByUser.get(pendingKey);
       map?.delete(id);
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
+      if (op.type === "codex_oauth_prompt") {
+        try {
+          sock.send(JSON.stringify({ type: "op", id: nextOpId(), op: { type: "codex_oauth_cancel" } }));
+        } catch {
+          // Best-effort cleanup only; the caller is already receiving a timeout.
+        }
+      }
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
       resolve({ ok: false, error: "daemon timeout" });

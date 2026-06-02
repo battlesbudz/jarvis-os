@@ -22,6 +22,8 @@ const os = require("os");
 const { exec, spawn } = require("child_process");
 
 let codexOAuthQueue = Promise.resolve();
+let codexOAuthCancelGeneration = 0;
+let activeCodexOAuthChild = null;
 
 function arg(name) {
   const idx = process.argv.indexOf(`--${name}`);
@@ -292,10 +294,24 @@ function killProcessTree(child) {
 }
 
 function enqueueCodexOAuthPrompt(command, prompt, timeoutMs) {
-  const run = () => runCodexOAuthPrompt(command, prompt, timeoutMs);
+  const generation = codexOAuthCancelGeneration;
+  const run = () => {
+    if (generation !== codexOAuthCancelGeneration) {
+      throw new Error("Codex OAuth provider cancelled.");
+    }
+    return runCodexOAuthPrompt(command, prompt, timeoutMs);
+  };
   const queued = codexOAuthQueue.then(run, run);
   codexOAuthQueue = queued.catch(() => {});
   return queued;
+}
+
+function cancelCodexOAuthPrompts() {
+  codexOAuthCancelGeneration += 1;
+  if (activeCodexOAuthChild) {
+    killProcessTree(activeCodexOAuthChild);
+  }
+  return { ok: true, cancelled: true };
 }
 
 function findInstalledCodexCommand(command) {
@@ -346,6 +362,7 @@ async function runCodexOAuthPrompt(command, prompt, timeoutMs) {
         stdio: ["pipe", "pipe", "pipe"],
         windowsHide: true,
       });
+      activeCodexOAuthChild = child;
 
       let stderr = "";
       let settled = false;
@@ -360,6 +377,7 @@ async function runCodexOAuthPrompt(command, prompt, timeoutMs) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (activeCodexOAuthChild === child) activeCodexOAuthChild = null;
         fn();
       };
 
@@ -405,6 +423,9 @@ async function handleOp(op) {
       if (!prompt) return { ok: false, error: "prompt is required" };
       const content = await enqueueCodexOAuthPrompt(op.command, prompt, op.timeoutMs);
       return { ok: true, content };
+    }
+    if (op.type === "codex_oauth_cancel") {
+      return cancelCodexOAuthPrompts();
     }
     if (op.type === "file_read") {
       const p = safePath(op.path);

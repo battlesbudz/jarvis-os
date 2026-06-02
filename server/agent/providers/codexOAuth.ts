@@ -33,7 +33,7 @@ export interface CodexOAuthDaemonBridge {
       prompt: string;
       command?: string;
       timeoutMs?: number;
-    },
+    } | { type: "codex_oauth_cancel" },
     timeoutMs?: number,
   ): Promise<{ ok: boolean; data?: unknown; error?: string }>;
 }
@@ -431,12 +431,15 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl: string, prompt: string, sig
   throw new Error(codexGatewayFailureMessage(gatewayUrl, lastError, maxAttempts), { cause: lastError });
 }
 
-function abortableDaemonResult<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+function abortableDaemonResult<T>(promise: Promise<T>, signal?: AbortSignal, onAbort?: () => void): Promise<T> {
   if (!signal) return promise;
   if (signal.aborted) return Promise.reject(new DOMException("Codex OAuth provider aborted", "AbortError"));
 
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(new DOMException("Codex OAuth provider aborted", "AbortError"));
+    const abort = () => {
+      try { onAbort?.(); } catch { /* best-effort cleanup */ }
+      reject(new DOMException("Codex OAuth provider aborted", "AbortError"));
+    };
     signal.addEventListener("abort", abort, { once: true });
     promise.then(
       (value) => {
@@ -492,6 +495,9 @@ export async function runDaemonCodexOAuthPrompt(userId: string | undefined, prom
       CODEX_DAEMON_TIMEOUT_MS,
     ),
     signal,
+    () => {
+      bridge.sendDaemonOp(userId!, { type: "codex_oauth_cancel" }, 5_000).catch(() => {});
+    },
   );
 
   if (!result.ok) {

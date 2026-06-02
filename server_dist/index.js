@@ -12722,7 +12722,7 @@ var init_telegramRunGuard = __esm({
   "server/telegramRunGuard.ts"() {
     "use strict";
     init_runRegistry();
-    TELEGRAM_REPLY_TIMEOUT_MS = Number(process.env.TELEGRAM_REPLY_TIMEOUT_MS || 42e4);
+    TELEGRAM_REPLY_TIMEOUT_MS = Number(process.env.TELEGRAM_REPLY_TIMEOUT_MS || 1e4);
     TelegramRunAbortedError = class extends Error {
       constructor(message = "Telegram turn was aborted.") {
         super(message);
@@ -19107,7 +19107,7 @@ ${markdownExtra}` : markdownExtra : reply;
       return;
     }
     if (isTelegramRunTimeoutError(error)) {
-      const timeoutMessage = "I got stuck processing that message, so I stopped the turn. Please send it again.";
+      const timeoutMessage = "I couldn't finish that within 10 seconds, so I stopped the turn instead of leaving you hanging.";
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
           sendMessage(chatId, timeoutMessage).catch(() => {
@@ -84102,6 +84102,12 @@ async function sendDaemonOp(userId, op, timeoutMs = 15e3) {
       const map = pendingByUser.get(pendingKey);
       map?.delete(id);
       console.log(`[daemon] op TIMEOUT userId=${userId} op=${op.type}`);
+      if (op.type === "codex_oauth_prompt") {
+        try {
+          sock.send(JSON.stringify({ type: "op", id: nextOpId(), op: { type: "codex_oauth_cancel" } }));
+        } catch {
+        }
+      }
       const durationMs = Date.now() - sentAt;
       recordAuditEntry(userId, { ts: sentAt, type: op.type, ok: false, error: "timeout", durationMs });
       resolve10({ ok: false, error: "daemon timeout" });
@@ -84845,11 +84851,17 @@ async function runRemoteCodexOAuthPrompt(gatewayUrl, prompt, signal) {
   }
   throw new Error(codexGatewayFailureMessage(gatewayUrl, lastError, maxAttempts), { cause: lastError });
 }
-function abortableDaemonResult(promise, signal) {
+function abortableDaemonResult(promise, signal, onAbort) {
   if (!signal) return promise;
   if (signal.aborted) return Promise.reject(new DOMException("Codex OAuth provider aborted", "AbortError"));
   return new Promise((resolve10, reject) => {
-    const abort = () => reject(new DOMException("Codex OAuth provider aborted", "AbortError"));
+    const abort = () => {
+      try {
+        onAbort?.();
+      } catch {
+      }
+      reject(new DOMException("Codex OAuth provider aborted", "AbortError"));
+    };
     signal.addEventListener("abort", abort, { once: true });
     promise.then(
       (value) => {
@@ -84899,7 +84911,11 @@ async function runDaemonCodexOAuthPrompt(userId, prompt, signal) {
       },
       CODEX_DAEMON_TIMEOUT_MS
     ),
-    signal
+    signal,
+    () => {
+      bridge.sendDaemonOp(userId, { type: "codex_oauth_cancel" }, 5e3).catch(() => {
+      });
+    }
   );
   if (!result.ok) {
     throw new Error(`Desktop daemon Codex OAuth failed: ${result.error || "unknown daemon error"}`);

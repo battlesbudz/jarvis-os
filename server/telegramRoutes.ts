@@ -414,7 +414,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       return;
     }
     if (isTelegramRunTimeoutError(error)) {
-      const timeoutMessage = "I got stuck processing that message, so I stopped the turn. Please send it again.";
+      const timeoutMessage = "I couldn't finish that within 10 seconds, so I stopped the turn instead of leaving you hanging.";
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
           sendMessage(chatId, timeoutMessage).catch(() => {});

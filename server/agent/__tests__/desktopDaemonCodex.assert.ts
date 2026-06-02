@@ -117,6 +117,48 @@ async function createSlowFakeCodexLauncher(dir: string): Promise<string> {
   return launcher;
 }
 
+async function createHangingFakeCodexLauncher(dir: string): Promise<string> {
+  const fakeCodexJs = join(dir, "hanging-fake-codex.js");
+  await writeFile(
+    fakeCodexJs,
+    [
+      "const fs = require('fs');",
+      "const args = process.argv.slice(2);",
+      "const outputIndex = args.indexOf('--output-last-message');",
+      "const outputPath = outputIndex >= 0 ? args[outputIndex + 1] : null;",
+      "process.stdin.resume();",
+      "setTimeout(() => {",
+      "  if (outputPath) fs.writeFileSync(outputPath, 'late fake codex output');",
+      "}, 60_000);",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  if (process.platform === "win32") {
+    const launcher = join(dir, "hanging-fake-codex.cmd");
+    await writeFile(
+      launcher,
+      `@echo off\r\n"${process.execPath}" "%~dp0hanging-fake-codex.js" %*\r\n`,
+      "utf8",
+    );
+    return launcher;
+  }
+
+  const launcher = join(dir, "hanging-fake-codex");
+  await writeFile(
+    launcher,
+    `#!/usr/bin/env sh\n"${process.execPath}" "$(dirname "$0")/hanging-fake-codex.js" "$@"\n`,
+    "utf8",
+  );
+  await chmod(launcher, 0o755);
+  return launcher;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function main() {
   {
     const command = daemon.buildCodexSpawnCommand("C:\\Users\\justi\\AppData\\Roaming\\npm\\codex.cmd", ["exec"]);
@@ -189,6 +231,39 @@ async function main() {
     assert.equal(result.ok, false);
     assert.match(String(result.error), /prompt is required/);
     console.log("OK: Desktop daemon codex_oauth_prompt validates prompt");
+  }
+
+  {
+    const dir = join(tmpdir(), `jarvis-daemon-codex-cancel-${Date.now()}`);
+    await mkdir(dir, { recursive: true });
+    try {
+      const hangingLauncher = await createHangingFakeCodexLauncher(dir);
+      const promptRun = daemon.handleOp({
+        type: "codex_oauth_prompt",
+        command: hangingLauncher,
+        prompt: "cancel this prompt",
+        timeoutMs: 30_000,
+      });
+      await sleep(250);
+      const cancel = await daemon.handleOp({ type: "codex_oauth_cancel" });
+      const cancelled = await promptRun;
+
+      assert.equal(cancel.ok, true);
+      assert.equal(cancel.cancelled, true);
+      assert.equal(cancelled.ok, false);
+
+      const launcher = await createFakeCodexLauncher(dir);
+      const next = await daemon.handleOp({
+        type: "codex_oauth_prompt",
+        command: launcher,
+        prompt: "fresh prompt after cancel",
+        timeoutMs: 30_000,
+      });
+      assert.equal(next.ok, true, "new Codex prompts should run after cancellation clears the stale operation");
+      console.log("OK: Desktop daemon cancels active Codex OAuth prompt and accepts fresh work");
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   }
 
   {
