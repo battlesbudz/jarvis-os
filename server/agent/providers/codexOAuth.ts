@@ -14,6 +14,9 @@ const CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT
 const CODEX_GATEWAY_RETRY_COUNT = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_COUNT ?? 2));
 const CODEX_GATEWAY_RETRY_BASE_DELAY_MS = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_BASE_DELAY_MS ?? 1500));
 const CODEX_DAEMON_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_DAEMON_TIMEOUT_MS ?? CODEX_EXEC_TIMEOUT_MS + 15_000);
+const CODEX_OAUTH_PROVIDER_BUILD = "daemon-runtime-2026-06-02";
+
+console.log(`[CodexOAuth] provider build=${CODEX_OAUTH_PROVIDER_BUILD}`);
 
 export type CodexOAuthOrchestratorOutput =
   | { type: "final"; content: string }

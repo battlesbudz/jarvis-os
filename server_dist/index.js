@@ -84907,7 +84907,7 @@ async function runDaemonCodexOAuthPrompt(userId, prompt, signal) {
   }
   return content;
 }
-var CODEX_EXEC_TIMEOUT_MS, CODEX_GATEWAY_TIMEOUT_MS, CODEX_GATEWAY_RETRY_COUNT, CODEX_GATEWAY_RETRY_BASE_DELAY_MS, CODEX_DAEMON_TIMEOUT_MS, daemonBridgeForTesting, CodexOAuthProvider;
+var CODEX_EXEC_TIMEOUT_MS, CODEX_GATEWAY_TIMEOUT_MS, CODEX_GATEWAY_RETRY_COUNT, CODEX_GATEWAY_RETRY_BASE_DELAY_MS, CODEX_DAEMON_TIMEOUT_MS, CODEX_OAUTH_PROVIDER_BUILD, daemonBridgeForTesting, CodexOAuthProvider;
 var init_codexOAuth = __esm({
   "server/agent/providers/codexOAuth.ts"() {
     "use strict";
@@ -84920,6 +84920,8 @@ var init_codexOAuth = __esm({
     CODEX_GATEWAY_RETRY_COUNT = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_COUNT ?? 2));
     CODEX_GATEWAY_RETRY_BASE_DELAY_MS = Math.max(0, Number(process.env.JARVIS_CODEX_GATEWAY_RETRY_BASE_DELAY_MS ?? 1500));
     CODEX_DAEMON_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_DAEMON_TIMEOUT_MS ?? CODEX_EXEC_TIMEOUT_MS + 15e3);
+    CODEX_OAUTH_PROVIDER_BUILD = "daemon-runtime-2026-06-02";
+    console.log(`[CodexOAuth] provider build=${CODEX_OAUTH_PROVIDER_BUILD}`);
     daemonBridgeForTesting = null;
     CodexOAuthProvider = class extends BaseProvider {
       async initialize() {
