@@ -90,7 +90,7 @@ async function clearProjectedPageEdges(pageIds: string[]): Promise<void> {
   }
 }
 
-async function retireProjectedMemory(memory: { id: string; userId: string }): Promise<void> {
+async function retireProjectedMemory(memory: { id: string; userId: string }): Promise<number> {
   const pages = await db
     .update(schema.brainPages)
     .set({
@@ -102,11 +102,13 @@ async function retireProjectedMemory(memory: { id: string; userId: string }): Pr
         eq(schema.brainPages.userId, memory.userId),
         eq(schema.brainPages.sourceKind, "user_memory"),
         eq(schema.brainPages.sourceId, memory.id),
+        sql`${schema.brainPages.reviewStatus} <> 'discarded'`,
       ),
     )
     .returning({ id: schema.brainPages.id });
 
   await clearProjectedPageEdges(pages.map((page) => page.id));
+  return pages.length;
 }
 
 async function retireStaleProjectedMemorySlugs(memory: { id: string; userId: string; slug: string }): Promise<void> {
@@ -243,8 +245,7 @@ export async function projectApprovedMemories(
       memory.pendingReview || memory.reviewStatus === "pending" || memory.reviewStatus === "discarded";
 
     if (expired || reviewBlocked) {
-      await retireProjectedMemory({ id: memory.id, userId });
-      skipped += 1;
+      skipped += await retireProjectedMemory({ id: memory.id, userId });
       continue;
     }
 

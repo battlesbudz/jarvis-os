@@ -8,6 +8,10 @@ import * as schema from "@shared/schema";
 const TEST_USER_ID = "adapter-test-user";
 
 async function cleanup(): Promise<void> {
+  await db.delete(schema.brainPages).where(eq(schema.brainPages.userId, TEST_USER_ID));
+  await db.delete(schema.brainIngestLog).where(eq(schema.brainIngestLog.userId, TEST_USER_ID));
+  await db.delete(schema.brainConfig).where(eq(schema.brainConfig.userId, TEST_USER_ID));
+  await db.delete(schema.userMemories).where(eq(schema.userMemories.userId, TEST_USER_ID));
   await db.delete(schema.users).where(eq(schema.users.id, TEST_USER_ID));
 }
 
