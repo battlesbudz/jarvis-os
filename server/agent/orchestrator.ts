@@ -16,7 +16,7 @@ import type { ToolContext } from "./types";
 import type { AgentTool } from "./types";
 import { detectTournamentSignals } from "./tournamentRunner";
 import { routeModelTurn } from "./modelRouter";
-import { DEFAULT_CODEX_OAUTH_MODEL } from "./runtimeModel";
+import { DEFAULT_CODEX_OAUTH_MODEL, isCodexOAuthModel } from "./runtimeModel";
 import { getCoachAppAgentId } from "./coreAgentIds";
 import { createSystemApprovalOnBeforeTool } from "./systemApprovalGate";
 
@@ -25,6 +25,10 @@ const ORCHESTRATOR_MAX_TOKENS = 8192;
 /** Default maximum retries per sub-task when not overridden by caller or env. */
 const DEFAULT_MAX_RETRIES = 3;
 const FAST_REPLY_MAX_TOKENS = 360;
+
+export function shouldBypassOrchestratorVerifier(orchestratorModel: string | undefined | null): boolean {
+  return isCodexOAuthModel(orchestratorModel);
+}
 
 function abortError(message: string): Error {
   const err = new Error(message);
@@ -269,9 +273,17 @@ async function verifyResult(
   task: SubTask,
   result: string,
   userId: string,
+  orchestratorModel: string,
   correctionContext?: string,
   signal?: AbortSignal,
 ): Promise<{ passed: boolean; reason: string }> {
+  if (shouldBypassOrchestratorVerifier(orchestratorModel)) {
+    return {
+      passed: true,
+      reason: "Codex OAuth verifier bypassed; accepted sub-task result without extra daemon model turn",
+    };
+  }
+
   try {
     throwIfAborted(signal);
     const text = await routeOrchestratorText({
@@ -572,7 +584,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
       }
 
       // Strict verification — fail-safe on errors
-      const verification = await verifyResult(task, taskResult, userId, correctionContext, signal);
+      const verification = await verifyResult(task, taskResult, userId, orchestratorModel, correctionContext, signal);
       verificationReason = verification.reason;
 
       if (verification.passed) {
@@ -722,6 +734,13 @@ export async function verifyJobOutput(opts: {
   userId?: string;
   correctionContext?: string;
 }): Promise<{ passed: boolean | null; reason: string }> {
+  if (shouldBypassOrchestratorVerifier(opts.orchestratorModel)) {
+    return {
+      passed: null,
+      reason: "Codex OAuth verifier bypassed; accepted worker output without extra daemon model turn",
+    };
+  }
+
   const VERIFY_TIMEOUT_MS = 8000;
 
   const criteria =

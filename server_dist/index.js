@@ -16176,9 +16176,13 @@ var init_tournamentRunner = __esm({
 function getCodexOAuthModel() {
   return getProviderEnvValue("JARVIS_CODEX_OAUTH_MODEL", "CHATGPT_CODEX_OAUTH_MODEL") ?? DEFAULT_CODEX_OAUTH_MODEL;
 }
+function isCodexOAuthModel(model) {
+  const normalized = String(model ?? "").trim().toLowerCase();
+  return normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/") || normalized === "chatgpt-codex-oauth" || normalized === "codex-oauth";
+}
 function resolveRuntimeAgentModel(requestedModel) {
   const normalized = requestedModel.trim().toLowerCase();
-  if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
+  if (isCodexOAuthModel(normalized)) {
     return requestedModel;
   }
   const explicitProvider = getProviderEnvValue("JARVIS_MODEL_PROVIDER", "JARVIS_AI_PROVIDER");
@@ -16292,8 +16296,12 @@ var orchestrator_exports = {};
 __export(orchestrator_exports, {
   runFastOrchestratorReply: () => runFastOrchestratorReply,
   runOrchestrator: () => runOrchestrator,
+  shouldBypassOrchestratorVerifier: () => shouldBypassOrchestratorVerifier,
   verifyJobOutput: () => verifyJobOutput
 });
+function shouldBypassOrchestratorVerifier(orchestratorModel) {
+  return isCodexOAuthModel(orchestratorModel);
+}
 function abortError(message) {
   const err2 = new Error(message);
   err2.name = "AbortError";
@@ -16437,7 +16445,13 @@ ${systemContext}`
   });
   return parseSubTasks(text2);
 }
-async function verifyResult(task, result, userId, correctionContext, signal) {
+async function verifyResult(task, result, userId, orchestratorModel, correctionContext, signal) {
+  if (shouldBypassOrchestratorVerifier(orchestratorModel)) {
+    return {
+      passed: true,
+      reason: "Codex OAuth verifier bypassed; accepted sub-task result without extra daemon model turn"
+    };
+  }
   try {
     throwIfAborted(signal);
     const text2 = await routeOrchestratorText({
@@ -16650,7 +16664,7 @@ async function runOrchestrator(input) {
         if (signal?.aborted || err2?.name === "AbortError") throw err2;
         taskResult = `Execution error: ${err2 instanceof Error ? err2.message : String(err2)}`;
       }
-      const verification = await verifyResult(task, taskResult, userId, correctionContext, signal);
+      const verification = await verifyResult(task, taskResult, userId, orchestratorModel, correctionContext, signal);
       verificationReason = verification.reason;
       if (verification.passed) {
         finalPassed = true;
@@ -16735,6 +16749,12 @@ async function runOrchestrator(input) {
   };
 }
 async function verifyJobOutput(opts) {
+  if (shouldBypassOrchestratorVerifier(opts.orchestratorModel)) {
+    return {
+      passed: null,
+      reason: "Codex OAuth verifier bypassed; accepted worker output without extra daemon model turn"
+    };
+  }
   const VERIFY_TIMEOUT_MS = 8e3;
   const criteria = JOB_QUALITY_CRITERIA[opts.agentType] ?? JOB_QUALITY_CRITERIA.custom_agent;
   try {
@@ -83431,7 +83451,7 @@ var init_fastInteractive = __esm({
     "use strict";
     FAST_REPLY_BLOCKERS = [
       /\b(email|gmail|inbox|calendar|schedule|meeting|remind|reminder|task|commitment|goal|memory|remember)\b/i,
-      /\b(research|search|look up|browse|website|web|latest|today|news|price|weather|stock)\b/i,
+      /\b(research|search|look up|browse|website|web|latest|current|recent|today|news|source|sources|price|weather|stock)\b/i,
       /\b(open|click|tap|type|swipe|screenshot|desktop|terminal|shell|file|folder|repo|code|build|deploy|railway)\b/i,
       /\b(android|phone|app|youtube|discord|slack|telegram settings|connected channel)\b/i,
       /\b(create|send|post|delete|edit|update|change|install|download|upload)\b/i
@@ -83441,8 +83461,7 @@ var init_fastInteractive = __esm({
 
 // server/agent/qualityLoop.ts
 function shouldBypassQualityLoopForModel(model) {
-  const normalized = String(model ?? "").trim().toLowerCase();
-  return normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/") || normalized === "chatgpt-codex-oauth" || normalized === "codex-oauth";
+  return isCodexOAuthModel(model);
 }
 function abortError3(message) {
   const err2 = new Error(message);
@@ -83529,6 +83548,7 @@ var init_qualityLoop = __esm({
   "server/agent/qualityLoop.ts"() {
     "use strict";
     init_modelRouter();
+    init_runtimeModel();
     MAX_TOKENS = 80;
     TIMEOUT_MS = 4e3;
   }

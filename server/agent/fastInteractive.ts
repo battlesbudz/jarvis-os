@@ -1,6 +1,6 @@
 const FAST_REPLY_BLOCKERS = [
   /\b(email|gmail|inbox|calendar|schedule|meeting|remind|reminder|task|commitment|goal|memory|remember)\b/i,
-  /\b(research|search|look up|browse|website|web|latest|today|news|price|weather|stock)\b/i,
+  /\b(research|search|look up|browse|website|web|latest|current|recent|today|news|source|sources|price|weather|stock)\b/i,
   /\b(open|click|tap|type|swipe|screenshot|desktop|terminal|shell|file|folder|repo|code|build|deploy|railway)\b/i,
   /\b(android|phone|app|youtube|discord|slack|telegram settings|connected channel)\b/i,
   /\b(create|send|post|delete|edit|update|change|install|download|upload)\b/i,

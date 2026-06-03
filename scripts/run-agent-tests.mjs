@@ -56,6 +56,7 @@ const tests = [
   { file: "server/agent/__tests__/modelRouter.assert.ts" },
   { file: "server/agent/__tests__/codexOnlyOrchestrator.assert.ts" },
   { file: "server/agent/__tests__/qualityLoopCodexBypass.assert.ts" },
+  { file: "server/agent/__tests__/orchestratorCodexVerifierBypass.assert.ts" },
   { file: "server/agent/__tests__/codexOAuth.assert.ts" },
   { file: "server/agent/__tests__/codexGatewayRecovery.assert.ts" },
   { file: "server/agent/__tests__/coachPromptClutter.assert.ts" },

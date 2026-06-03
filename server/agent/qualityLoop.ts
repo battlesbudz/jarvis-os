@@ -17,18 +17,13 @@
  */
 
 import { routeModelTurn } from "./modelRouter";
+import { isCodexOAuthModel } from "./runtimeModel";
 
 const MAX_TOKENS = 80;
 const TIMEOUT_MS = 4000;
 
 export function shouldBypassQualityLoopForModel(model: string | undefined | null): boolean {
-  const normalized = String(model ?? "").trim().toLowerCase();
-  return (
-    normalized.startsWith("chatgpt-codex-oauth/") ||
-    normalized.startsWith("codex-oauth/") ||
-    normalized === "chatgpt-codex-oauth" ||
-    normalized === "codex-oauth"
-  );
+  return isCodexOAuthModel(model);
 }
 
 /**
