@@ -83563,22 +83563,34 @@ function getMaxTokensForChannel(channelName) {
   if (channelName === "Telegram") return 8e3;
   return 2e3;
 }
+function getTelegramE2eProbeId(userText) {
+  const match = String(userText ?? "").match(/\bJTE2E_[A-Z0-9_:-]+\b/i);
+  return match ? match[0].slice(0, 80) : null;
+}
+function logTelegramE2eReply(probeId, reply) {
+  if (!probeId) return;
+  const compactReply = reply.replace(/\s+/g, " ").trim().slice(0, 1800);
+  console.log(`[TelegramE2E] id=${probeId} reply=${JSON.stringify(compactReply)}`);
+}
 async function runCoachAgent(input) {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
   const channelLower = channelName.toLowerCase();
+  const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
+  const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
   if (channelName === "Telegram" && !imageUrl && !input.extraTools?.length && isFastInteractiveRequest(userText || "")) {
     logInteraction(userId, channelLower, "inbound", userText || "[image]").catch(() => {
     });
     try {
       const fastStartedAt = Date.now();
-      console.log("[Telegram] route=fast_orchestrator start");
+      console.log(`[Telegram] route=fast_orchestrator start${telegramE2eLogSuffix}`);
       const fastResult = await runFastOrchestratorReply({
         userId,
         userRequest: userText,
         channelName,
         signal
       });
-      console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}`);
+      console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}${telegramE2eLogSuffix}`);
+      logTelegramE2eReply(telegramE2eProbeId, fastResult.finalAnswer);
       return {
         reply: fastResult.finalAnswer,
         rawReply: fastResult.finalAnswer,
@@ -84111,7 +84123,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
   const switchingFromBuild = !!userText && isUnrelatedIntent(userText) && hasActiveBuildSession(chatMessages);
   let rawReply;
   const orchestratorStartedAt = Date.now();
-  console.log(`[${channelName}] route=full_orchestrator start tools=${scopedTools.length}`);
+  console.log(`[${channelName}] route=full_orchestrator start tools=${scopedTools.length}${telegramE2eLogSuffix}`);
   try {
     const orchResult = await runOrchestrator({
       userId,
@@ -84125,7 +84137,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
     });
     rawReply = orchResult.finalAnswer;
     console.log(
-      `[${channelName}] route=full_orchestrator done durationMs=${Date.now() - orchestratorStartedAt} tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`
+      `[${channelName}] route=full_orchestrator done durationMs=${Date.now() - orchestratorStartedAt} tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}${telegramE2eLogSuffix}`
     );
   } catch (orchErr) {
     if (signal?.aborted || orchErr?.name === "AbortError") throw orchErr;
@@ -84245,6 +84257,7 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
     }
   }
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";
+  logTelegramE2eReply(telegramE2eProbeId, reply);
   const attachments = agentCtx.state.pendingAttachments || [];
   if (rawReply && rawReply.length >= 100 && userText && userText.length >= 10) {
     Promise.resolve().then(() => (init_vaultWriter(), vaultWriter_exports)).then(({ fileQuery: fileQuery2 }) => {
