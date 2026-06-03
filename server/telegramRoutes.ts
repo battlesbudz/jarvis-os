@@ -56,6 +56,17 @@ function generateLinkCode(): string {
   return code;
 }
 
+function getTelegramE2eProbeId(text?: string): string | null {
+  const match = String(text ?? "").match(/\bJTE2E_[A-Z0-9_:-]+\b/i);
+  return match ? match[0].slice(0, 80) : null;
+}
+
+function logTelegramE2eReply(probeId: string | null, route: string, startedAt: number, reply: string): void {
+  if (!probeId) return;
+  const compactReply = reply.replace(/\s+/g, " ").trim().slice(0, 1800);
+  console.log(`[TelegramE2E] id=${probeId} route=${route} durationMs=${Date.now() - startedAt} reply=${JSON.stringify(compactReply)}`);
+}
+
 
 /**
  * Deliver the reply and any attachments from a named-agent result to a Telegram chat.
@@ -744,6 +755,7 @@ async function processUpdate(update: any): Promise<void> {
     // Capture the clean user input before any context-prefix injection so task
     // guidance is stored without the "[Replying to Jarvis's message: ...]" wrapper.
     const rawUserText = text;
+    const telegramE2eProbeId = getTelegramE2eProbeId(rawUserText);
 
     // Inject context when the user replies to a specific Jarvis message, so the
     // agent knows what the reply is referring to without needing conversation history.
@@ -1694,6 +1706,7 @@ async function processUpdate(update: any): Promise<void> {
 
       const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
       if (shouldTryAgentSdkWorkflow) {
+        const primeStartedAt = Date.now();
         const primeResult = await handlePrimeInput({
           userId,
           channel: "telegram",
@@ -1701,6 +1714,9 @@ async function processUpdate(update: any): Promise<void> {
           metadata: { originChannelId: chatId },
         });
         if (primeResult.handled) {
+          if (primeResult.reply) {
+            logTelegramE2eReply(telegramE2eProbeId, `prime_${primeResult.status}`, primeStartedAt, primeResult.reply);
+          }
           if (primeResult.status !== "complete" && primeResult.status !== "failed" && primeResult.reply) {
             await sendMessage(chatId, primeResult.reply);
           }
@@ -1710,6 +1726,7 @@ async function processUpdate(update: any): Promise<void> {
 
       if (shouldTryAgentSdkWorkflow && !isPrimeRuntimeEnabled()) {
         const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
+        const reminderStartedAt = Date.now();
         const agentSdkReminderResult = await runAgentSdkReminderWorkflow({
           userId,
           userText: rawUserText,
@@ -1717,11 +1734,13 @@ async function processUpdate(update: any): Promise<void> {
           originChannelId: chatId,
         });
         if (agentSdkReminderResult.handled) {
+          logTelegramE2eReply(telegramE2eProbeId, `agent_sdk_reminder_${agentSdkReminderResult.status}`, reminderStartedAt, agentSdkReminderResult.reply);
           if (agentSdkReminderResult.status !== "complete" && agentSdkReminderResult.status !== "failed") {
             await sendMessage(chatId, agentSdkReminderResult.reply);
           }
           return;
         }
+        const emailStartedAt = Date.now();
         const agentSdkResult = await runAgentSdkEmailWorkflow({
           userId,
           userText: rawUserText,
@@ -1729,6 +1748,7 @@ async function processUpdate(update: any): Promise<void> {
           originChannelId: chatId,
         });
         if (agentSdkResult.handled) {
+          logTelegramE2eReply(telegramE2eProbeId, `agent_sdk_email_${agentSdkResult.status}`, emailStartedAt, agentSdkResult.reply);
           if (agentSdkResult.status !== "complete" && agentSdkResult.status !== "failed") {
             await sendMessage(chatId, agentSdkResult.reply);
           }

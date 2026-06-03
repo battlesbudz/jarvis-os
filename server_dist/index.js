@@ -19384,6 +19384,15 @@ function generateLinkCode() {
   }
   return code;
 }
+function getTelegramE2eProbeId(text2) {
+  const match = String(text2 ?? "").match(/\bJTE2E_[A-Z0-9_:-]+\b/i);
+  return match ? match[0].slice(0, 80) : null;
+}
+function logTelegramE2eReply(probeId, route, startedAt, reply) {
+  if (!probeId) return;
+  const compactReply = reply.replace(/\s+/g, " ").trim().slice(0, 1800);
+  console.log(`[TelegramE2E] id=${probeId} route=${route} durationMs=${Date.now() - startedAt} reply=${JSON.stringify(compactReply)}`);
+}
 async function deliverNamedAgentResult(chatId, userId, agentLabel, result, placeholderMsgId) {
   const atts = result.attachments ?? [];
   const mediaAttsCount = atts.filter((a) => a.kind !== "markdown").length;
@@ -19921,6 +19930,7 @@ async function processUpdate(update) {
     let imageUrl;
     let text2 = message.text?.trim() || message.caption?.trim() || "";
     const rawUserText = text2;
+    const telegramE2eProbeId = getTelegramE2eProbeId(rawUserText);
     const repliedToText = message.reply_to_message?.text?.trim();
     const taskTagMatch = repliedToText ? /\[task:([0-9a-f-]{36})\]/.exec(repliedToText) : null;
     if (taskTagMatch && text2) {
@@ -20823,6 +20833,7 @@ Please reply directly to the specific task notification message so I know which 
       const shouldTryAgentSdkWorkflow = /\b(remind\s+me|set\s+(?:a\s+)?reminder|reminder)\b/i.test(rawUserText) || /\b(email|reply)\b/i.test(rawUserText) && /\b(send|sent|draft|write|compose|reply)\b/i.test(rawUserText);
       const { handlePrimeInput: handlePrimeInput2, isPrimeRuntimeEnabled: isPrimeRuntimeEnabled2 } = await Promise.resolve().then(() => (init_autonomyRuntime(), autonomyRuntime_exports));
       if (shouldTryAgentSdkWorkflow) {
+        const primeStartedAt = Date.now();
         const primeResult = await handlePrimeInput2({
           userId,
           channel: "telegram",
@@ -20830,6 +20841,9 @@ Please reply directly to the specific task notification message so I know which 
           metadata: { originChannelId: chatId }
         });
         if (primeResult.handled) {
+          if (primeResult.reply) {
+            logTelegramE2eReply(telegramE2eProbeId, `prime_${primeResult.status}`, primeStartedAt, primeResult.reply);
+          }
           if (primeResult.status !== "complete" && primeResult.status !== "failed" && primeResult.reply) {
             await sendMessage(chatId, primeResult.reply);
           }
@@ -20838,6 +20852,7 @@ Please reply directly to the specific task notification message so I know which 
       }
       if (shouldTryAgentSdkWorkflow && !isPrimeRuntimeEnabled2()) {
         const { runAgentSdkEmailWorkflow: runAgentSdkEmailWorkflow2, runAgentSdkReminderWorkflow: runAgentSdkReminderWorkflow2 } = await Promise.resolve().then(() => (init_agentRunner(), agentRunner_exports));
+        const reminderStartedAt = Date.now();
         const agentSdkReminderResult = await runAgentSdkReminderWorkflow2({
           userId,
           userText: rawUserText,
@@ -20845,11 +20860,13 @@ Please reply directly to the specific task notification message so I know which 
           originChannelId: chatId
         });
         if (agentSdkReminderResult.handled) {
+          logTelegramE2eReply(telegramE2eProbeId, `agent_sdk_reminder_${agentSdkReminderResult.status}`, reminderStartedAt, agentSdkReminderResult.reply);
           if (agentSdkReminderResult.status !== "complete" && agentSdkReminderResult.status !== "failed") {
             await sendMessage(chatId, agentSdkReminderResult.reply);
           }
           return;
         }
+        const emailStartedAt = Date.now();
         const agentSdkResult = await runAgentSdkEmailWorkflow2({
           userId,
           userText: rawUserText,
@@ -20857,6 +20874,7 @@ Please reply directly to the specific task notification message so I know which 
           originChannelId: chatId
         });
         if (agentSdkResult.handled) {
+          logTelegramE2eReply(telegramE2eProbeId, `agent_sdk_email_${agentSdkResult.status}`, emailStartedAt, agentSdkResult.reply);
           if (agentSdkResult.status !== "complete" && agentSdkResult.status !== "failed") {
             await sendMessage(chatId, agentSdkResult.reply);
           }
@@ -83563,11 +83581,11 @@ function getMaxTokensForChannel(channelName) {
   if (channelName === "Telegram") return 8e3;
   return 2e3;
 }
-function getTelegramE2eProbeId(userText) {
+function getTelegramE2eProbeId2(userText) {
   const match = String(userText ?? "").match(/\bJTE2E_[A-Z0-9_:-]+\b/i);
   return match ? match[0].slice(0, 80) : null;
 }
-function logTelegramE2eReply(probeId, reply) {
+function logTelegramE2eReply2(probeId, reply) {
   if (!probeId) return;
   const compactReply = reply.replace(/\s+/g, " ").trim().slice(0, 1800);
   console.log(`[TelegramE2E] id=${probeId} reply=${JSON.stringify(compactReply)}`);
@@ -83575,7 +83593,7 @@ function logTelegramE2eReply(probeId, reply) {
 async function runCoachAgent(input) {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
   const channelLower = channelName.toLowerCase();
-  const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
+  const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId2(userText) : null;
   const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
   if (channelName === "Telegram" && !imageUrl && !input.extraTools?.length && isFastInteractiveRequest(userText || "")) {
     logInteraction(userId, channelLower, "inbound", userText || "[image]").catch(() => {
@@ -83590,7 +83608,7 @@ async function runCoachAgent(input) {
         signal
       });
       console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}${telegramE2eLogSuffix}`);
-      logTelegramE2eReply(telegramE2eProbeId, fastResult.finalAnswer);
+      logTelegramE2eReply2(telegramE2eProbeId, fastResult.finalAnswer);
       return {
         reply: fastResult.finalAnswer,
         rawReply: fastResult.finalAnswer,
@@ -84257,7 +84275,7 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
     }
   }
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";
-  logTelegramE2eReply(telegramE2eProbeId, reply);
+  logTelegramE2eReply2(telegramE2eProbeId, reply);
   const attachments = agentCtx.state.pendingAttachments || [];
   if (rawReply && rawReply.length >= 100 && userText && userText.length >= 10) {
     Promise.resolve().then(() => (init_vaultWriter(), vaultWriter_exports)).then(({ fileQuery: fileQuery2 }) => {
