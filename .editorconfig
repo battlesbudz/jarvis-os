@@ -1,0 +1,47 @@
+# EditorConfig helps maintain consistent coding styles across editors.
+# https://editorconfig.org/
+
+root = true
+
+[*]
+indent_style = space
+indent_size = 2
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+# Python files (nixpacks, scripts/, replit tooling)
+[*.py]
+indent_size = 4
+
+# Shell scripts
+[*.sh]
+end_of_line = lf
+
+# PowerShell scripts (Windows-side daemon tooling)
+[*.ps1]
+end_of_line = crlf
+indent_size = 4
+
+# Make sure Windows line endings are preserved for PS1 since
+# PowerShell 5.1 is picky about CRLF.
+[*.{cmd,bat}]
+end_of_line = crlf
+
+# Markdown allows trailing whitespace (used for line breaks)
+[*.md]
+trim_trailing_whitespace = false
+
+# Don't trim trailing whitespace in patch files (patches are
+# sensitive to byte-exact reproduction).
+[*.{patch,diff}]
+trim_trailing_whitespace = false
+
+# Tauri / Rust (desktop-connector)
+[*.rs]
+indent_size = 4
+
+# Makefiles must use tabs
+[Makefile]
+indent_style = tab
