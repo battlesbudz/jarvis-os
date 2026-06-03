@@ -25,6 +25,7 @@ import { getUserDriveSettings } from './driveRoutes';
 import { createDriveTextFile } from './integrations/googleDrive';
 import { runBackfillEmbeddings } from './jobs/backfillEmbeddings';
 import { shouldExecuteScheduledTask } from './jarvisScheduledTaskSemantics';
+import { runBrainMaintenanceForAllUsers } from './brain/maintenance';
 
 // ---------------------------------------------------------------------------
 // Retention windows — edit these constants to tune how long high-growth logs
@@ -835,9 +836,10 @@ export function startScheduler() {
     // run every day without risk of overwhelming the API.
     if (h === 6 && m === 0) {
       console.log('[Scheduler] Running nightly embedding backfill...');
-      runBackfillEmbeddings().catch((err) =>
-        console.error('[Scheduler] Embedding backfill failed:', err),
-      );
+      runBackfillEmbeddings()
+        .catch((err) => console.error('[Scheduler] Embedding backfill failed:', err))
+        .then(() => runBrainMaintenanceForAllUsers(now))
+        .catch((err) => console.error('[Scheduler] G-Brain maintenance failed:', err));
     }
 
     // Discord channel schedules — check every minute
