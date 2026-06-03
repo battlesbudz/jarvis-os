@@ -9,6 +9,9 @@ assert.equal(extractBrainLinks("Jean Smith emailed Jean Smith.", ["Jean Smith"])
 assert.deepEqual(extractBrainLinks("JEAN SMITH replied.", ["jean smith"]), [
   { verb: "mentions", toSlug: "person/jean-smith", confidence: 80 },
 ]);
+assert.deepEqual(extractBrainLinks("Sam Taylor replied.", [{ name: "Sam Taylor", toSlug: "person/sam-taylor-samalpha" }]), [
+  { verb: "mentions", toSlug: "person/sam-taylor-samalpha", confidence: 80 },
+]);
 assert.deepEqual(extractBrainLinks("Justin met about the website.", [" ", "Jean Smith"]), []);
 assert.deepEqual(extractBrainLinks("annual report", ["Ann"]), []);
 assert.deepEqual(extractBrainLinks("Jean Smithsonian replied", ["Jean Smith"]), []);

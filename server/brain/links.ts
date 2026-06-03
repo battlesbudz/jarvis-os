@@ -1,6 +1,8 @@
 import type { BrainLinkInput } from "./types";
 import { personPageSlug } from "./slug";
 
+export type PersonLinkHint = string | { name: string; toSlug: string };
+
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -11,16 +13,17 @@ function matchesHintBoundary(text: string, hint: string): boolean {
   return pattern.test(text);
 }
 
-export function extractBrainLinks(text: string, personHints: string[] = []): BrainLinkInput[] {
+export function extractBrainLinks(text: string, personHints: PersonLinkHint[] = []): BrainLinkInput[] {
   const seen = new Set<string>();
   const links: BrainLinkInput[] = [];
 
-  for (const name of personHints) {
+  for (const hint of personHints) {
+    const name = typeof hint === "string" ? hint : hint.name;
     const trimmed = name.trim();
     if (!trimmed) continue;
     if (!matchesHintBoundary(text, trimmed)) continue;
 
-    const toSlug = personPageSlug(trimmed);
+    const toSlug = typeof hint === "string" ? personPageSlug(trimmed) : hint.toSlug;
     const key = `mentions:${toSlug}`;
     if (seen.has(key)) continue;
 

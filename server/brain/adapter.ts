@@ -2,7 +2,7 @@ import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../db";
 import * as schema from "@shared/schema";
 import { chunkText } from "./chunk";
-import { extractBrainLinks } from "./links";
+import { extractBrainLinks, type PersonLinkHint } from "./links";
 import { memoryPageSlug, personPageSlug } from "./slug";
 import { embedText } from "../memory/retrieve";
 import type {
@@ -36,6 +36,25 @@ function compactPersonTruth(person: typeof schema.people.$inferSelect): string {
   if (person.nextInteractionAt) parts.push(`Next interaction: ${person.nextInteractionAt.toISOString()}.`);
   if (person.upcomingCount > 0) parts.push(`Upcoming shared events: ${person.upcomingCount}.`);
   return parts.join(" ");
+}
+
+function personSlugMap(people: Array<Pick<typeof schema.people.$inferSelect, "id" | "name">>): Map<string, string> {
+  const nameCounts = new Map<string, number>();
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const key = name.toLocaleLowerCase();
+    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+  }
+
+  const slugs = new Map<string, string>();
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const hasDuplicateName = (nameCounts.get(name.toLocaleLowerCase()) ?? 0) > 1;
+    slugs.set(person.id, personPageSlug(name, hasDuplicateName ? person.id : undefined));
+  }
+  return slugs;
 }
 
 async function replaceChunks(page: {
@@ -173,6 +192,53 @@ async function retireOrphanedProjectedMemories(userId: string): Promise<void> {
   await clearProjectedPageEdges(orphanedPages.map((page) => page.id));
 }
 
+async function retireStaleProjectedPersonSlugs(person: { id: string; userId: string; slug: string }): Promise<void> {
+  const pages = await db
+    .update(schema.brainPages)
+    .set({
+      reviewStatus: "discarded",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.brainPages.userId, person.userId),
+        eq(schema.brainPages.sourceKind, "people"),
+        eq(schema.brainPages.sourceId, person.id),
+        ne(schema.brainPages.slug, person.slug),
+      ),
+    )
+    .returning({ id: schema.brainPages.id });
+
+  await clearProjectedPageEdges(pages.map((page) => page.id));
+}
+
+async function retireOrphanedProjectedPeople(userId: string): Promise<void> {
+  const orphanedPages = await db
+    .select({ id: schema.brainPages.id })
+    .from(schema.brainPages)
+    .leftJoin(schema.people, eq(schema.people.id, schema.brainPages.sourceId))
+    .where(
+      and(
+        eq(schema.brainPages.userId, userId),
+        eq(schema.brainPages.sourceKind, "people"),
+        sql`${schema.people.id} IS NULL`,
+        sql`${schema.brainPages.reviewStatus} <> 'discarded'`,
+      ),
+    );
+
+  if (orphanedPages.length === 0) return;
+
+  await db
+    .update(schema.brainPages)
+    .set({
+      reviewStatus: "discarded",
+      updatedAt: new Date(),
+    })
+    .where(inArray(schema.brainPages.id, orphanedPages.map((page) => page.id)));
+
+  await clearProjectedPageEdges(orphanedPages.map((page) => page.id));
+}
+
 export async function upsertEvidence(input: UpsertEvidenceInput): Promise<{ pageId: string; versionId?: string }> {
   assertWritableApproval(input);
 
@@ -234,14 +300,20 @@ export async function projectApprovedMemories(
 ): Promise<{ scanned: number; projected: number; skipped: number }> {
   await retireOrphanedProjectedMemories(userId);
 
-  const personHints = (
-    await db
-      .select({ name: schema.people.name })
-      .from(schema.people)
-      .where(eq(schema.people.userId, userId))
-  )
-    .map((person) => person.name.trim())
-    .filter((name) => name.length > 0);
+  const people = await db
+    .select({ id: schema.people.id, name: schema.people.name })
+    .from(schema.people)
+    .where(eq(schema.people.userId, userId));
+  const personSlugs = personSlugMap(people);
+  const personHints: PersonLinkHint[] = (
+    people
+      .map((person) => {
+        const name = person.name.trim();
+        const toSlug = personSlugs.get(person.id);
+        return name && toSlug ? { name, toSlug } : null;
+      })
+      .filter((hint): hint is PersonLinkHint => hint !== null)
+  );
 
   const memories = await db
     .select({
@@ -308,6 +380,8 @@ export async function projectPeopleIntoBrain(
   userId: string,
   limit = 100,
 ): Promise<{ scanned: number; projected: number; skipped: number }> {
+  await retireOrphanedProjectedPeople(userId);
+
   const people = await db
     .select()
     .from(schema.people)
@@ -316,6 +390,7 @@ export async function projectPeopleIntoBrain(
 
   let projected = 0;
   let skipped = 0;
+  const personSlugs = personSlugMap(people);
 
   for (const person of people) {
     const name = person.name.trim();
@@ -324,7 +399,7 @@ export async function projectPeopleIntoBrain(
       continue;
     }
 
-    const slug = personPageSlug(name);
+    const slug = personSlugs.get(person.id) ?? personPageSlug(name);
     const compiledTruth = compactPersonTruth(person);
     const [existing] = await db
       .select({
@@ -362,6 +437,7 @@ export async function projectPeopleIntoBrain(
         },
       ],
     });
+    await retireStaleProjectedPersonSlugs({ id: person.id, userId, slug });
     projected += 1;
   }
 
@@ -539,6 +615,7 @@ export async function queueMaintenance(
 export const jarvisBrainAdapter: JarvisBrainAdapter = {
   upsertEvidence,
   projectApprovedMemories,
+  projectPeopleIntoBrain,
   query: queryBrain,
   refreshIndex,
   queueMaintenance,

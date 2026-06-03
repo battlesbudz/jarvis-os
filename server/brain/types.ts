@@ -69,6 +69,7 @@ export type QueryBrainResult = {
 export interface JarvisBrainAdapter {
   upsertEvidence(input: UpsertEvidenceInput): Promise<{ pageId: string; versionId?: string }>;
   projectApprovedMemories(userId: string, limit?: number): Promise<{ scanned: number; projected: number; skipped: number }>;
+  projectPeopleIntoBrain(userId: string, limit?: number): Promise<{ scanned: number; projected: number; skipped: number }>;
   query(input: QueryBrainInput): Promise<QueryBrainResult>;
   refreshIndex(scope: BrainScope & { staleOnly?: boolean; limit?: number }): Promise<{ embedded: number; linked: number }>;
   queueMaintenance(scope: BrainScope & { job: "citation_fix" | "link_refresh" | "compact" | "daily_synthesis" }): Promise<{ jobId: string }>;
