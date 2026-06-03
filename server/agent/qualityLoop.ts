@@ -1,20 +1,35 @@
 /**
  * Quality Loop — pre-think and post-check bookends for every chat turn.
  *
- * preThink  : asks Codex OAuth for a 1-2 sentence approach note before the
- *             agent runs, so the system prompt carries a clear directive.
- * postCheck : asks Codex OAuth whether the agent reply addressed the request;
+ * preThink  : asks the orchestrator model for a 1-2 sentence approach note
+ *             before the agent runs, so the system prompt carries a clear
+ *             directive.
+ * postCheck : asks the orchestrator model whether the agent reply addressed the request;
  *             returns { passed, feedback }.  Errors are fail-open (passed=true)
  *             so a provider hiccup never silently drops a user reply.
  *
  * Both calls are capped at 80 output tokens and enforced with a 4-second hard
  * timeout so they never become a bottleneck on the hot path.
+ *
+ * Codex OAuth models are bypassed here because these checks are optional and
+ * daemon-backed Codex turns are a shared foreground runtime; aborting a
+ * 4-second quality probe can cancel the runtime the real orchestrator needs.
  */
 
 import { routeModelTurn } from "./modelRouter";
 
 const MAX_TOKENS = 80;
 const TIMEOUT_MS = 4000;
+
+export function shouldBypassQualityLoopForModel(model: string | undefined | null): boolean {
+  const normalized = String(model ?? "").trim().toLowerCase();
+  return (
+    normalized.startsWith("chatgpt-codex-oauth/") ||
+    normalized.startsWith("codex-oauth/") ||
+    normalized === "chatgpt-codex-oauth" ||
+    normalized === "codex-oauth"
+  );
+}
 
 /**
  * Run with a linked AbortSignal. Resolves to `fallback` on timeout, abort, or
@@ -61,6 +76,8 @@ export async function preThink(
   userId?: string,
   signal?: AbortSignal,
 ): Promise<string> {
+  if (shouldBypassQualityLoopForModel(orchestratorModel)) return "";
+
   const run = async (runSignal: AbortSignal): Promise<string> => {
     const response = await routeModelTurn({
       tier: "smart",
@@ -103,6 +120,8 @@ export async function postCheck(
   userId?: string,
   signal?: AbortSignal,
 ): Promise<PostCheckResult> {
+  if (shouldBypassQualityLoopForModel(orchestratorModel)) return { passed: true, feedback: "" };
+
   const run = async (runSignal: AbortSignal): Promise<PostCheckResult> => {
     const response = await routeModelTurn({
       tier: "smart",

@@ -83440,6 +83440,10 @@ var init_fastInteractive = __esm({
 });
 
 // server/agent/qualityLoop.ts
+function shouldBypassQualityLoopForModel(model) {
+  const normalized = String(model ?? "").trim().toLowerCase();
+  return normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/") || normalized === "chatgpt-codex-oauth" || normalized === "codex-oauth";
+}
 function abortError3(message) {
   const err2 = new Error(message);
   err2.name = "AbortError";
@@ -83462,6 +83466,7 @@ async function withAbortableTimeout(run, ms, fallback, parentSignal) {
   }
 }
 async function preThink(userMessage, briefContext, orchestratorModel, userId, signal) {
+  if (shouldBypassQualityLoopForModel(orchestratorModel)) return "";
   const run = async (runSignal) => {
     const response = await routeModelTurn({
       tier: "smart",
@@ -83487,6 +83492,7 @@ In 1-2 sentences, describe the best approach to answering this message. Be conci
   return withAbortableTimeout(run, TIMEOUT_MS, "", signal);
 }
 async function postCheck(userMessage, agentReply, orchestratorModel, userId, signal) {
+  if (shouldBypassQualityLoopForModel(orchestratorModel)) return { passed: true, feedback: "" };
   const run = async (runSignal) => {
     const response = await routeModelTurn({
       tier: "smart",
