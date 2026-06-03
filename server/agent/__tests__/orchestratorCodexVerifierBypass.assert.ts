@@ -31,5 +31,14 @@ assert.match(
   /passed:\s*null,\s*reason:\s*["']Codex OAuth verifier bypassed/,
   "background job verification should fail open instead of spending a Codex OAuth verifier turn",
 );
+const specialistCallStart = orchestratorSource.indexOf("const result = await runNamedAgent({");
+assert.notEqual(specialistCallStart, -1, "orchestrator should route specialists through runNamedAgent");
+const specialistCallEnd = orchestratorSource.indexOf("});", specialistCallStart);
+const specialistCall = orchestratorSource.slice(specialistCallStart, specialistCallEnd);
+assert.match(
+  specialistCall,
+  /\bsignal,/,
+  "orchestrator specialist runs should receive the caller AbortSignal so Telegram timeouts stop the sub-agent",
+);
 
 console.log("OK: Codex OAuth verifier bypass contract is present.");

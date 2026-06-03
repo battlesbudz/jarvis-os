@@ -390,6 +390,7 @@ async function executeSubTask(
           platform: "orchestrator",
           initiatedBy: "jarvis",
           onProgressMessage,
+          signal,
         });
         throwIfAborted(signal);
         return result.reply || "(no result)";

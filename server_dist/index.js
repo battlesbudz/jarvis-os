@@ -16525,7 +16525,8 @@ Please try again with this feedback.${depContext}` : `${task.instruction}${depCo
           userMessage: instruction,
           platform: "orchestrator",
           initiatedBy: "jarvis",
-          onProgressMessage
+          onProgressMessage,
+          signal
         });
         throwIfAborted(signal);
         return result2.reply || "(no result)";
