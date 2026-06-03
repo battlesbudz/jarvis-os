@@ -50,6 +50,7 @@ const tests = [
   { file: "server/agent/__tests__/webSearchFallback.assert.ts" },
   { file: "server/agent/__tests__/reminderDirectRoute.assert.ts" },
   { file: "server/agent/__tests__/scheduledTaskSemantics.assert.ts" },
+  { file: "server/agent/__tests__/scheduledTaskSchemaRepair.assert.ts" },
   { file: "server/agent/__tests__/toolAwareRouting.assert.ts" },
   { file: "server/agent/__tests__/projectCreateRequest.assert.ts" },
   { file: "server/agent/__tests__/modelRouter.assert.ts" },

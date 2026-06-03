@@ -3073,6 +3073,20 @@ async function ensureTablesExist() {
     });
     await db.execute(sql2`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true`).catch(() => {
     });
+    await db.execute(sql2`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS task_kind VARCHAR NOT NULL DEFAULT 'user_task'`).catch(() => {
+    });
+    await db.execute(sql2`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS needs_attention BOOLEAN NOT NULL DEFAULT false`).catch(() => {
+    });
+    await db.execute(sql2`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS attention_question TEXT`).catch(() => {
+    });
+    await db.execute(sql2`
+      UPDATE jarvis_scheduled_tasks
+      SET task_kind = 'jarvis_action'
+      WHERE shell_command IS NOT NULL
+        AND shell_command <> ''
+        AND task_kind = 'user_task'
+    `).catch(() => {
+    });
     await db.execute(sql2`
       CREATE TABLE IF NOT EXISTS jarvis_predictions (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -83556,13 +83570,15 @@ async function runCoachAgent(input) {
     logInteraction(userId, channelLower, "inbound", userText || "[image]").catch(() => {
     });
     try {
-      console.log("[Telegram] routing through orchestrator fast lane");
+      const fastStartedAt = Date.now();
+      console.log("[Telegram] route=fast_orchestrator start");
       const fastResult = await runFastOrchestratorReply({
         userId,
         userRequest: userText,
         channelName,
         signal
       });
+      console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}`);
       return {
         reply: fastResult.finalAnswer,
         rawReply: fastResult.finalAnswer,
@@ -84094,7 +84110,8 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
   }
   const switchingFromBuild = !!userText && isUnrelatedIntent(userText) && hasActiveBuildSession(chatMessages);
   let rawReply;
-  console.log(`[${channelName}] routing through orchestrator`);
+  const orchestratorStartedAt = Date.now();
+  console.log(`[${channelName}] route=full_orchestrator start tools=${scopedTools.length}`);
   try {
     const orchResult = await runOrchestrator({
       userId,
@@ -84108,11 +84125,12 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
     });
     rawReply = orchResult.finalAnswer;
     console.log(
-      `[${channelName}] orchestrator done \u2014 tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`
+      `[${channelName}] route=full_orchestrator done durationMs=${Date.now() - orchestratorStartedAt} tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`
     );
   } catch (orchErr) {
     if (signal?.aborted || orchErr?.name === "AbortError") throw orchErr;
-    console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
+    console.error(`[${channelName}] route=full_orchestrator failed durationMs=${Date.now() - orchestratorStartedAt}; falling back to direct harness:`, orchErr);
+    const fallbackStartedAt = Date.now();
     const fallback = await runAgent({
       model: "gpt-4o-mini",
       messages: baseMessages,
@@ -84127,6 +84145,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
       signal
     });
     rawReply = fallback.reply;
+    console.log(`[${channelName}] route=direct_harness_fallback done durationMs=${Date.now() - fallbackStartedAt}`);
   }
   let postCheckPassed = true;
   let retried = false;

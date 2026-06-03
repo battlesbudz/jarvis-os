@@ -125,13 +125,15 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   ) {
     logInteraction(userId, channelLower as any, "inbound", userText || "[image]").catch(() => {});
     try {
-      console.log("[Telegram] routing through orchestrator fast lane");
+      const fastStartedAt = Date.now();
+      console.log("[Telegram] route=fast_orchestrator start");
       const fastResult = await runFastOrchestratorReply({
         userId,
         userRequest: userText,
         channelName,
         signal,
       });
+      console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}`);
       return {
         reply: fastResult.finalAnswer,
         rawReply: fastResult.finalAnswer,
@@ -822,7 +824,8 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   // Always route through the orchestrator — it is the foundational execution
   // architecture. Falls back to direct harness on any orchestrator error.
   let rawReply: string;
-  console.log(`[${channelName}] routing through orchestrator`);
+  const orchestratorStartedAt = Date.now();
+  console.log(`[${channelName}] route=full_orchestrator start tools=${scopedTools.length}`);
   try {
     const orchResult = await runOrchestrator({
       userId,
@@ -836,11 +839,12 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     });
     rawReply = orchResult.finalAnswer;
     console.log(
-      `[${channelName}] orchestrator done — tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`,
+      `[${channelName}] route=full_orchestrator done durationMs=${Date.now() - orchestratorStartedAt} tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`,
     );
   } catch (orchErr) {
     if (signal?.aborted || (orchErr as Error)?.name === "AbortError") throw orchErr;
-    console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
+    console.error(`[${channelName}] route=full_orchestrator failed durationMs=${Date.now() - orchestratorStartedAt}; falling back to direct harness:`, orchErr);
+    const fallbackStartedAt = Date.now();
     const fallback = await runAgent({
       model: "gpt-4o-mini",
       messages: baseMessages,
@@ -855,6 +859,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       signal,
     });
     rawReply = fallback.reply;
+    console.log(`[${channelName}] route=direct_harness_fallback done durationMs=${Date.now() - fallbackStartedAt}`);
   }
 
   // ── Post-check quality gate ────────────────────────────────────────────────

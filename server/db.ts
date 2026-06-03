@@ -1026,6 +1026,16 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS in_progress_at TIMESTAMP`).catch(() => {});
     // Pause/resume support — active=false skips a task in the scheduler
     await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT true`).catch(() => {});
+    await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS task_kind VARCHAR NOT NULL DEFAULT 'user_task'`).catch(() => {});
+    await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS needs_attention BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+    await db.execute(sql`ALTER TABLE jarvis_scheduled_tasks ADD COLUMN IF NOT EXISTS attention_question TEXT`).catch(() => {});
+    await db.execute(sql`
+      UPDATE jarvis_scheduled_tasks
+      SET task_kind = 'jarvis_action'
+      WHERE shell_command IS NOT NULL
+        AND shell_command <> ''
+        AND task_kind = 'user_task'
+    `).catch(() => {});
 
     // ── Prediction Engine (Task #156) ─────────────────────────────────────────
     await db.execute(sql`
