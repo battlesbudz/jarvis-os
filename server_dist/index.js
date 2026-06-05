@@ -704,12 +704,21 @@ __export(schema_exports, {
   writeBudgetWarnings: () => writeBudgetWarnings
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, userOAuthTokens, composioConnectedAccounts, commitments, userMemories, MEMORY_TIERS, MEMORY_TYPES, MEMORY_CATEGORIES, people, brainPages, brainTimelineEntries, brainContentChunks, brainLinks, brainPageVersions, brainIngestLog, brainConfig, jarvisSouls, livingContextUpdates, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, websiteCrawls, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, buildSessions, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, SIMPLE_ORIGIN_CHANNELS, discordChannelSchedules, interactionLog, discordPendingApprovals, DEFAULT_AGENT_PERMISSIONS, discordAgents, agentMemories, AGENT_MESSAGE_TYPES, AGENT_MESSAGE_STATUSES, agentMessages, AGENT_APPROVAL_STATUSES, agentApprovalGates, AGENT_POLICY_SCOPES, agentApprovalPolicies, agentApprovalAllowlist, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, mcpApiKeys, mcpRateLimits, jarvisActionLog, openclawBuildLog, egoWeeklyReports, INTEGRATION_NAMES, integrationStatus, skillPacks, DIAGNOSTIC_SUBSYSTEMS, DIAGNOSTIC_SEVERITIES, diagnosticEvents, orchestrationTraces, agentChatMessages, agentChatSessions, agentChatSessionSummaries, coachChannelSessions, userSkillPacks, systemErrorLog, CODE_PROPOSAL_STATUSES, codeProposals, MCP_CREDENTIAL_MODES, userSkills, skillCandidates, mcpServers, writeBudgetLog, writeBudgetWarnings, conversations, messages, learningSynthesisLog, discordConfirmTokens, webchatInviteTokens, GATEWAY_DEVICE_SCOPES, gatewayDevicePairingRequests, gatewayDevices, gatewayEvents, CUSTOM_AGENT_BASE_TYPES, customAgents, insertCustomAgentSchema, jarvisProjects, jarvisProjectSessions, jarvisProjectFiles, jarvisProjectArchives, selfHealAuditLog, searchBarLocations, buttonLocations, tournamentRuns, VAULT_SLUGS, VAULT_PAGE_TYPES, knowledgeVaultPages, wikiLintLog, transcriptJobs, capabilityGaps;
+var vector1536, users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, userOAuthTokens, composioConnectedAccounts, commitments, userMemories, MEMORY_TIERS, MEMORY_TYPES, MEMORY_CATEGORIES, people, brainPages, brainTimelineEntries, brainContentChunks, brainLinks, brainPageVersions, brainIngestLog, brainConfig, jarvisSouls, livingContextUpdates, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, websiteCrawls, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, buildSessions, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, SIMPLE_ORIGIN_CHANNELS, discordChannelSchedules, interactionLog, discordPendingApprovals, DEFAULT_AGENT_PERMISSIONS, discordAgents, agentMemories, AGENT_MESSAGE_TYPES, AGENT_MESSAGE_STATUSES, agentMessages, AGENT_APPROVAL_STATUSES, agentApprovalGates, AGENT_POLICY_SCOPES, agentApprovalPolicies, agentApprovalAllowlist, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, mcpApiKeys, mcpRateLimits, jarvisActionLog, openclawBuildLog, egoWeeklyReports, INTEGRATION_NAMES, integrationStatus, skillPacks, DIAGNOSTIC_SUBSYSTEMS, DIAGNOSTIC_SEVERITIES, diagnosticEvents, orchestrationTraces, agentChatMessages, agentChatSessions, agentChatSessionSummaries, coachChannelSessions, userSkillPacks, systemErrorLog, CODE_PROPOSAL_STATUSES, codeProposals, MCP_CREDENTIAL_MODES, userSkills, skillCandidates, mcpServers, writeBudgetLog, writeBudgetWarnings, conversations, messages, learningSynthesisLog, discordConfirmTokens, webchatInviteTokens, GATEWAY_DEVICE_SCOPES, gatewayDevicePairingRequests, gatewayDevices, gatewayEvents, CUSTOM_AGENT_BASE_TYPES, customAgents, insertCustomAgentSchema, jarvisProjects, jarvisProjectSessions, jarvisProjectFiles, jarvisProjectArchives, selfHealAuditLog, searchBarLocations, buttonLocations, tournamentRuns, VAULT_SLUGS, VAULT_PAGE_TYPES, knowledgeVaultPages, wikiLintLog, transcriptJobs, capabilityGaps;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
+    vector1536 = customType({
+      dataType() {
+        return "vector(1536)";
+      },
+      toDriver(value) {
+        if (!Array.isArray(value)) return null;
+        return `[${value.map((entry) => Number(entry) || 0).join(",")}]`;
+      }
+    });
     users = pgTable("users", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       username: text("username").notNull().unique(),
@@ -952,6 +961,7 @@ var init_schema = __esm({
       chunkIndex: integer("chunk_index").notNull(),
       content: text("content").notNull(),
       embedding: jsonb("embedding").$type(),
+      embeddingVector: vector1536("embedding_vector"),
       provenance: jsonb("provenance").$type().notNull().default(sql`'[]'::jsonb`),
       createdAt: timestamp("created_at").defaultNow().notNull(),
       updatedAt: timestamp("updated_at").defaultNow().notNull()
@@ -8692,11 +8702,11 @@ async function appendAudit(auditLogPath, entry) {
 async function withDb(fn) {
   if (!process.env.DATABASE_URL) return null;
   try {
-    const [{ db: db2 }, { sql: sql55 }] = await Promise.all([
+    const [{ db: db2 }, { sql: sql56 }] = await Promise.all([
       Promise.resolve().then(() => (init_db(), db_exports)),
       import("drizzle-orm")
     ]);
-    return await fn(db2, sql55);
+    return await fn(db2, sql56);
   } catch {
     return null;
   }
@@ -8736,8 +8746,8 @@ function formatLearning(args, now) {
   return { block: lines.join("\n"), learned, status: finalStatus, confidence, sourceType };
 }
 async function persistLivingContextUpdate(input) {
-  await withDb(async (db2, sql55) => {
-    await db2.execute(sql55`
+  await withDb(async (db2, sql56) => {
+    await db2.execute(sql56`
       INSERT INTO living_context_updates (
         user_id,
         target,
@@ -8776,8 +8786,8 @@ async function persistLivingContextUpdate(input) {
 }
 async function syncPersistedUpdatesToFile(input) {
   const existing = await fs2.readFile(input.abs, "utf-8").catch(() => "");
-  const rows = await withDb(async (db2, sql55) => {
-    const result = await db2.execute(sql55`
+  const rows = await withDb(async (db2, sql56) => {
+    const result = await db2.execute(sql56`
       SELECT block
       FROM living_context_updates
       WHERE user_id = ${input.userId}
@@ -10344,9 +10354,9 @@ async function awardXp(userId, amount) {
     console.error("[Momentum] Failed to award XP:", err2);
   }
 }
-async function hasMomentumSessionToday(userId, dateKey) {
+async function hasMomentumSessionToday(userId, dateKey3) {
   const rows = await db.select({ sessionDate: momentumSessions.sessionDate }).from(momentumSessions).where(eq14(momentumSessions.userId, userId)).limit(1);
-  return rows.length > 0 && rows[0].sessionDate === dateKey;
+  return rows.length > 0 && rows[0].sessionDate === dateKey3;
 }
 async function expireStaleMomentumSessions() {
   try {
@@ -10945,8 +10955,100 @@ function shortId(id) {
 function memoryPageSlug(memoryId, content) {
   return `memory/${slugify(content)}-${shortId(memoryId)}`;
 }
+function personPageSlug(name, id) {
+  const suffix = id ? `-${shortId(id)}` : "";
+  return `person/${slugify(name)}${suffix}`;
+}
 var init_slug = __esm({
   "server/brain/slug.ts"() {
+    "use strict";
+  }
+});
+
+// server/brain/links.ts
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function matchesHintBoundary(text2, hint) {
+  const escaped = escapeRegex(hint);
+  const pattern = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "iu");
+  return pattern.test(text2);
+}
+function extractBrainLinks(text2, personHints = []) {
+  const seen = /* @__PURE__ */ new Set();
+  const links = [];
+  for (const hint of personHints) {
+    const name = typeof hint === "string" ? hint : hint.name;
+    const trimmed = name.trim();
+    if (!trimmed) continue;
+    if (!matchesHintBoundary(text2, trimmed)) continue;
+    const toSlug2 = typeof hint === "string" ? personPageSlug(trimmed) : hint.toSlug;
+    const key = `mentions:${toSlug2}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push({ verb: "mentions", toSlug: toSlug2, confidence: 80 });
+  }
+  return links;
+}
+var init_links = __esm({
+  "server/brain/links.ts"() {
+    "use strict";
+    init_slug();
+  }
+});
+
+// server/brain/vector.ts
+function cosineSimilarity(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return 0;
+  const len = Math.min(a.length, b.length);
+  if (len === 0) return 0;
+  let dot = 0;
+  let aNorm = 0;
+  let bNorm = 0;
+  for (let index2 = 0; index2 < len; index2 += 1) {
+    const av = Number(a[index2]) || 0;
+    const bv = Number(b[index2]) || 0;
+    dot += av * bv;
+    aNorm += av * av;
+    bNorm += bv * bv;
+  }
+  const denominator = Math.sqrt(aNorm) * Math.sqrt(bNorm);
+  if (denominator === 0) return 0;
+  return dot / denominator;
+}
+function blendedScore(candidate, queryEmbedding) {
+  const fts = Math.max(0, Math.min(1, Number(candidate.ftsScore) || 0));
+  if (!queryEmbedding || !candidate.embedding) return fts;
+  const semantic = Math.max(0, Math.min(1, (cosineSimilarity(queryEmbedding, candidate.embedding) + 1) / 2));
+  return 0.35 * fts + 0.65 * semantic;
+}
+function rankBrainChunkCandidates(candidates, queryEmbedding, topK) {
+  const ranked = candidates.map((candidate) => ({
+    ...candidate,
+    score: blendedScore(candidate, queryEmbedding)
+  })).sort((a, b) => b.score - a.score).slice(0, Math.max(1, topK));
+  const pages = /* @__PURE__ */ new Map();
+  const chunks = [];
+  for (const candidate of ranked) {
+    if (!pages.has(candidate.pageSlug)) {
+      pages.set(candidate.pageSlug, {
+        slug: candidate.pageSlug,
+        title: candidate.pageTitle,
+        score: candidate.score,
+        citations: candidate.pageProvenance
+      });
+    }
+    chunks.push({
+      pageSlug: candidate.pageSlug,
+      content: candidate.content,
+      score: candidate.score,
+      citations: candidate.chunkProvenance
+    });
+  }
+  return { pages: [...pages.values()], chunks };
+}
+var init_vector = __esm({
+  "server/brain/vector.ts"() {
     "use strict";
   }
 });
@@ -10956,9 +11058,12 @@ var adapter_exports = {};
 __export(adapter_exports, {
   jarvisBrainAdapter: () => jarvisBrainAdapter,
   projectApprovedMemories: () => projectApprovedMemories,
+  projectPeopleIntoBrain: () => projectPeopleIntoBrain,
   queryBrain: () => queryBrain,
+  queryBrainWithEmbedder: () => queryBrainWithEmbedder,
   queueMaintenance: () => queueMaintenance,
   refreshIndex: () => refreshIndex,
+  refreshIndexWithEmbedder: () => refreshIndexWithEmbedder,
   upsertEvidence: () => upsertEvidence
 });
 import { and as and14, eq as eq17, inArray as inArray2, ne, sql as sql10 } from "drizzle-orm";
@@ -10969,6 +11074,34 @@ function assertWritableApproval(input) {
 }
 function toDate(value) {
   return value ? new Date(value) : null;
+}
+function compactPersonTruth(person) {
+  const parts = [`Name: ${person.name}.`];
+  if (person.email) parts.push(`Email: ${person.email}.`);
+  if (person.relationship) parts.push(`Relationship: ${person.relationship}.`);
+  if (person.notes) parts.push(`Notes: ${person.notes}.`);
+  if (person.interactionCount > 0) parts.push(`Interaction count: ${person.interactionCount}.`);
+  if (person.lastInteractionAt) parts.push(`Last interaction: ${person.lastInteractionAt.toISOString()}.`);
+  if (person.nextInteractionAt) parts.push(`Next interaction: ${person.nextInteractionAt.toISOString()}.`);
+  if (person.upcomingCount > 0) parts.push(`Upcoming shared events: ${person.upcomingCount}.`);
+  return parts.join(" ");
+}
+function personSlugMap(people2) {
+  const nameCounts = /* @__PURE__ */ new Map();
+  for (const person of people2) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const key = name.toLocaleLowerCase();
+    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+  }
+  const slugs = /* @__PURE__ */ new Map();
+  for (const person of people2) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const hasDuplicateName = (nameCounts.get(name.toLocaleLowerCase()) ?? 0) > 1;
+    slugs.set(person.id, personPageSlug(name, hasDuplicateName ? person.id : void 0));
+  }
+  return slugs;
 }
 async function replaceChunks(page) {
   await db.delete(brainContentChunks).where(eq17(brainContentChunks.pageId, page.id));
@@ -11064,6 +11197,36 @@ async function retireOrphanedProjectedMemories(userId) {
   }).where(inArray2(brainPages.id, orphanedPages.map((page) => page.id)));
   await clearProjectedPageEdges(orphanedPages.map((page) => page.id));
 }
+async function retireStaleProjectedPersonSlugs(person) {
+  const pages = await db.update(brainPages).set({
+    reviewStatus: "discarded",
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(
+    and14(
+      eq17(brainPages.userId, person.userId),
+      eq17(brainPages.sourceKind, "people"),
+      eq17(brainPages.sourceId, person.id),
+      ne(brainPages.slug, person.slug)
+    )
+  ).returning({ id: brainPages.id });
+  await clearProjectedPageEdges(pages.map((page) => page.id));
+}
+async function retireOrphanedProjectedPeople(userId) {
+  const orphanedPages = await db.select({ id: brainPages.id }).from(brainPages).leftJoin(people, eq17(people.id, brainPages.sourceId)).where(
+    and14(
+      eq17(brainPages.userId, userId),
+      eq17(brainPages.sourceKind, "people"),
+      sql10`${people.id} IS NULL`,
+      sql10`${brainPages.reviewStatus} <> 'discarded'`
+    )
+  );
+  if (orphanedPages.length === 0) return;
+  await db.update(brainPages).set({
+    reviewStatus: "discarded",
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(inArray2(brainPages.id, orphanedPages.map((page) => page.id)));
+  await clearProjectedPageEdges(orphanedPages.map((page) => page.id));
+}
 async function upsertEvidence(input) {
   assertWritableApproval(input);
   const compiledTruth = input.compiledTruth ?? "";
@@ -11109,6 +11272,13 @@ async function upsertEvidence(input) {
 }
 async function projectApprovedMemories(userId, limit = 100) {
   await retireOrphanedProjectedMemories(userId);
+  const people2 = await db.select({ id: people.id, name: people.name }).from(people).where(eq17(people.userId, userId));
+  const personSlugs = personSlugMap(people2);
+  const personHints = people2.map((person) => {
+    const name = person.name.trim();
+    const toSlug2 = personSlugs.get(person.id);
+    return name && toSlug2 ? { name, toSlug: toSlug2 } : null;
+  }).filter((hint) => hint !== null);
   const memories = await db.select({
     id: userMemories.id,
     content: userMemories.content,
@@ -11149,38 +11319,63 @@ async function projectApprovedMemories(userId, limit = 100) {
       compiledTruth: memory.content,
       sourceKind: "user_memory",
       sourceId: memory.id,
-      provenance
+      provenance,
+      links: extractBrainLinks(memory.content, personHints)
     });
     await retireStaleProjectedMemorySlugs({ id: memory.id, userId, slug });
     projected += 1;
   }
   return { scanned: memories.length, projected, skipped };
 }
-async function queryBrain(input) {
-  const topK = Math.max(1, Math.min(input.topK ?? 10, 50));
-  const approvalPredicate = input.approvalFilter === "include_pending" ? sql10`AND ${brainPages.reviewStatus} IN ('active', 'pending', 'kept', 'edited')` : sql10`AND ${brainPages.reviewStatus} IN ('active', 'kept', 'edited')`;
-  const result = await db.execute(sql10`
-    SELECT
-      ${brainPages.slug} AS page_slug,
-      ${brainPages.title} AS page_title,
-      ${brainPages.provenance} AS page_provenance,
-      ${brainContentChunks.content} AS chunk_content,
-      ${brainContentChunks.provenance} AS chunk_provenance,
-      ts_rank_cd(
-        to_tsvector('english', ${brainContentChunks.content}),
-        websearch_to_tsquery('english', ${input.query})
-      ) AS score
-    FROM ${brainContentChunks}
-    INNER JOIN ${brainPages}
-      ON ${brainPages.id} = ${brainContentChunks.pageId}
-    WHERE ${brainPages.userId} = ${input.userId}
-      ${approvalPredicate}
-      AND to_tsvector('english', ${brainContentChunks.content})
-        @@ websearch_to_tsquery('english', ${input.query})
-    ORDER BY score DESC, ${brainPages.updatedAt} DESC
-    LIMIT ${topK}
-  `);
-  const rows = result.rows;
+async function projectPeopleIntoBrain(userId, limit = 100) {
+  await retireOrphanedProjectedPeople(userId);
+  const people2 = await db.select().from(people).where(eq17(people.userId, userId)).limit(limit);
+  let projected = 0;
+  let skipped = 0;
+  const personSlugs = personSlugMap(people2);
+  for (const person of people2) {
+    const name = person.name.trim();
+    if (!name) {
+      skipped += 1;
+      continue;
+    }
+    const slug = personSlugs.get(person.id) ?? personPageSlug(name);
+    const compiledTruth = compactPersonTruth(person);
+    const [existing] = await db.select({
+      compiledTruth: brainPages.compiledTruth,
+      sourceKind: brainPages.sourceKind,
+      sourceId: brainPages.sourceId
+    }).from(brainPages).where(and14(eq17(brainPages.userId, userId), eq17(brainPages.slug, slug))).limit(1);
+    if (existing?.compiledTruth === compiledTruth && existing.sourceKind === "people" && existing.sourceId === person.id) {
+      skipped += 1;
+      continue;
+    }
+    await upsertEvidence({
+      userId,
+      actorId: "brain-people-projection",
+      pageType: "person",
+      slug,
+      title: name,
+      compiledTruth,
+      sourceKind: "people",
+      sourceId: person.id,
+      provenance: [
+        {
+          kind: "people",
+          id: person.id,
+          timestamp: person.updatedAt.toISOString()
+        }
+      ]
+    });
+    await retireStaleProjectedPersonSlugs({ id: person.id, userId, slug });
+    projected += 1;
+  }
+  return { scanned: people2.length, projected, skipped };
+}
+function vectorLiteral(vector) {
+  return `[${vector.map((value) => Number(value) || 0).join(",")}]`;
+}
+function mapRowsToResult(rows) {
   const pagesBySlug = /* @__PURE__ */ new Map();
   const chunks = [];
   for (const row of rows) {
@@ -11201,8 +11396,125 @@ async function queryBrain(input) {
   }
   return { pages: [...pagesBySlug.values()], chunks };
 }
-async function refreshIndex(_scope) {
-  return { embedded: 0, linked: 0 };
+async function queryBrainWithEmbedder(input, queryEmbedder) {
+  const topK = Math.max(1, Math.min(input.topK ?? 10, 50));
+  const approvalPredicate = input.approvalFilter === "include_pending" ? sql10`AND ${brainPages.reviewStatus} IN ('active', 'pending', 'kept', 'edited')` : sql10`AND ${brainPages.reviewStatus} IN ('active', 'kept', 'edited')`;
+  const queryEmbedding = await queryEmbedder(input.query);
+  if (queryEmbedding && process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL === "1") {
+    try {
+      const literal = vectorLiteral(queryEmbedding);
+      const vectorResult = await db.execute(sql10`
+        SELECT
+          ${brainPages.slug} AS page_slug,
+          ${brainPages.title} AS page_title,
+          ${brainPages.provenance} AS page_provenance,
+          ${brainContentChunks.content} AS chunk_content,
+          ${brainContentChunks.provenance} AS chunk_provenance,
+          ${brainContentChunks.embedding} AS chunk_embedding,
+          ts_rank_cd(
+            to_tsvector('english', ${brainContentChunks.content}),
+            websearch_to_tsquery('english', ${input.query})
+          ) AS score
+        FROM ${brainContentChunks}
+        INNER JOIN ${brainPages}
+          ON ${brainPages.id} = ${brainContentChunks.pageId}
+        WHERE ${brainPages.userId} = ${input.userId}
+          ${approvalPredicate}
+          AND ${brainContentChunks.embeddingVector} IS NOT NULL
+        ORDER BY ${brainContentChunks.embeddingVector} <=> ${literal}::vector ASC,
+          score DESC,
+          ${brainPages.updatedAt} DESC
+        LIMIT ${Math.min(topK * 3, 100)}
+      `);
+      const vectorRows = vectorResult.rows;
+      const candidates = vectorRows.map((row) => ({
+        pageSlug: row.page_slug,
+        pageTitle: row.page_title,
+        content: row.chunk_content,
+        pageProvenance: row.page_provenance ?? [],
+        chunkProvenance: row.chunk_provenance ?? [],
+        ftsScore: Number(row.score),
+        embedding: row.chunk_embedding
+      }));
+      if (candidates.length > 0) {
+        return rankBrainChunkCandidates(candidates, queryEmbedding, topK);
+      }
+    } catch (err2) {
+      console.warn("[Brain] vector retrieval unavailable; falling back to FTS candidate rerank:", err2);
+    }
+  }
+  const result = await db.execute(sql10`
+    SELECT
+      ${brainPages.slug} AS page_slug,
+      ${brainPages.title} AS page_title,
+      ${brainPages.provenance} AS page_provenance,
+      ${brainContentChunks.content} AS chunk_content,
+      ${brainContentChunks.provenance} AS chunk_provenance,
+      ${brainContentChunks.embedding} AS chunk_embedding,
+      ts_rank_cd(
+        to_tsvector('english', ${brainContentChunks.content}),
+        websearch_to_tsquery('english', ${input.query})
+      ) AS score
+    FROM ${brainContentChunks}
+    INNER JOIN ${brainPages}
+      ON ${brainPages.id} = ${brainContentChunks.pageId}
+    WHERE ${brainPages.userId} = ${input.userId}
+      ${approvalPredicate}
+      AND to_tsvector('english', ${brainContentChunks.content})
+        @@ websearch_to_tsquery('english', ${input.query})
+    ORDER BY score DESC, ${brainPages.updatedAt} DESC
+    LIMIT ${queryEmbedding ? Math.min(topK * 5, 100) : topK}
+  `);
+  const rows = result.rows;
+  if (queryEmbedding) {
+    const candidates = rows.map((row) => ({
+      pageSlug: row.page_slug,
+      pageTitle: row.page_title,
+      content: row.chunk_content,
+      pageProvenance: row.page_provenance ?? [],
+      chunkProvenance: row.chunk_provenance ?? [],
+      ftsScore: Number(row.score),
+      embedding: row.chunk_embedding
+    }));
+    return rankBrainChunkCandidates(candidates, queryEmbedding, topK);
+  }
+  return mapRowsToResult(rows);
+}
+async function queryBrain(input) {
+  const queryEmbedder = process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL === "1" ? embedText : async () => null;
+  return queryBrainWithEmbedder(input, queryEmbedder);
+}
+async function refreshIndexWithEmbedder(scope, embedder) {
+  const limit = Math.max(1, Math.min(scope.limit ?? 25, 100));
+  const staleOnly = scope.staleOnly ?? true;
+  const where = staleOnly ? and14(eq17(brainContentChunks.userId, scope.userId), sql10`${brainContentChunks.embedding} IS NULL`) : eq17(brainContentChunks.userId, scope.userId);
+  const chunks = await db.select({
+    id: brainContentChunks.id,
+    content: brainContentChunks.content
+  }).from(brainContentChunks).where(where).limit(limit);
+  let embedded = 0;
+  for (const chunk of chunks) {
+    const embedding = await embedder(chunk.content);
+    if (!embedding) continue;
+    try {
+      await db.update(brainContentChunks).set({
+        embedding,
+        embeddingVector: embedding,
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq17(brainContentChunks.id, chunk.id));
+    } catch (err2) {
+      console.warn("[Brain] embeddingVector update unavailable; storing JSON embedding only:", err2);
+      await db.update(brainContentChunks).set({
+        embedding,
+        updatedAt: /* @__PURE__ */ new Date()
+      }).where(eq17(brainContentChunks.id, chunk.id));
+    }
+    embedded += 1;
+  }
+  return { embedded, linked: 0 };
+}
+async function refreshIndex(scope) {
+  return refreshIndexWithEmbedder(scope, embedText);
 }
 async function queueMaintenance(_scope) {
   return { jobId: "not-queued-first-slice" };
@@ -11213,11 +11525,15 @@ var init_adapter = __esm({
     "use strict";
     init_db();
     init_schema();
+    init_retrieve();
     init_chunk();
+    init_links();
     init_slug();
+    init_vector();
     jarvisBrainAdapter = {
       upsertEvidence,
       projectApprovedMemories,
+      projectPeopleIntoBrain,
       query: queryBrain,
       refreshIndex,
       queueMaintenance
@@ -12565,9 +12881,9 @@ var init_telegramNeedsAttention = __esm({
 });
 
 // server/lib/proactiveDedup.ts
-async function claimAndMark(userId, messageType, dateKey) {
+async function claimAndMark(userId, messageType, dateKey3) {
   try {
-    const rows = await db.insert(proactiveScheduleLog).values({ userId, messageType, sentDate: dateKey }).onConflictDoNothing().returning({ id: proactiveScheduleLog.id });
+    const rows = await db.insert(proactiveScheduleLog).values({ userId, messageType, sentDate: dateKey3 }).onConflictDoNothing().returning({ id: proactiveScheduleLog.id });
     return rows.length > 0;
   } catch {
     return false;
@@ -16134,12 +16450,12 @@ ${opts.task}`;
 }
 async function getTournamentRunners(userId, tournamentId) {
   try {
-    const { eq: eq144, and: and108, desc: desc55 } = await import("drizzle-orm");
+    const { eq: eq145, and: and109, desc: desc55 } = await import("drizzle-orm");
     let rows;
     if (tournamentId) {
-      rows = await db.select().from(tournamentRuns).where(and108(eq144(tournamentRuns.id, tournamentId), eq144(tournamentRuns.userId, userId))).limit(1);
+      rows = await db.select().from(tournamentRuns).where(and109(eq145(tournamentRuns.id, tournamentId), eq145(tournamentRuns.userId, userId))).limit(1);
     } else {
-      rows = await db.select().from(tournamentRuns).where(eq144(tournamentRuns.userId, userId)).orderBy(desc55(tournamentRuns.createdAt)).limit(1);
+      rows = await db.select().from(tournamentRuns).where(eq145(tournamentRuns.userId, userId)).orderBy(desc55(tournamentRuns.createdAt)).limit(1);
     }
     if (!rows[0]) return { found: false };
     return { found: true, run: rows[0] };
@@ -21505,7 +21821,7 @@ async function getProactiveEligibleUsers() {
   for (const r of prefRows) userIds.add(r.userId);
   return Array.from(userIds).map((userId) => ({ userId, chatId: chatIdByUser.get(userId) }));
 }
-async function sendScheduledMessage(link, schedule, dateKey, timezone) {
+async function sendScheduledMessage(link, schedule, dateKey3, timezone) {
   if (schedule.type === "followup_check") {
     const tokens = await getValidGoogleTokens(link.userId).catch(() => []);
     if (!tokens || tokens.length === 0) return;
@@ -21529,7 +21845,7 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
   }
   const [goalsRow, planRow, statsRow] = await Promise.allSettled([
     db.select().from(goals).where(eq30(goals.userId, link.userId)).limit(1),
-    db.select().from(plans).where(and24(eq30(plans.userId, link.userId), eq30(plans.date, dateKey))).limit(1),
+    db.select().from(plans).where(and24(eq30(plans.userId, link.userId), eq30(plans.date, dateKey3))).limit(1),
     db.select().from(stats).where(eq30(stats.userId, link.userId)).limit(1)
   ]);
   const userGoals = goalsRow.status === "fulfilled" ? goalsRow.value[0]?.data || [] : [];
@@ -21538,14 +21854,14 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
   const tasks = todayPlan?.tasks || [];
   if (schedule.type === "momentum_nudge") {
     if (!link.chatId) return;
-    const alreadyHasSession = await hasMomentumSessionToday(link.userId, dateKey);
+    const alreadyHasSession = await hasMomentumSessionToday(link.userId, dateKey3);
     if (alreadyHasSession) return;
     console.log(`[Proactive] Sending momentum_nudge to user ${link.userId} (${timezone})`);
     await startMomentumSession(link.userId, link.chatId, {
       tasks,
       goals: userGoals,
       stats: userStats,
-      dateKey
+      dateKey: dateKey3
     });
     logInteraction(link.userId, "notification", "outbound", "[Momentum coaching session started]", "momentum_nudge").catch(() => {
     });
@@ -21557,7 +21873,7 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
     goals: userGoals,
     commitments: commitments2,
     stats: userStats,
-    dateKey,
+    dateKey: dateKey3,
     userId: link.userId
   });
   if (message) {
@@ -21568,10 +21884,10 @@ Still relevant? Reply, archive, or unstar anything you've handled.`;
         const currentPrefs = existingPrefs[0]?.data || {};
         await db.insert(userPreferences).values({
           userId: link.userId,
-          data: { ...currentPrefs, morningBrief: { date: dateKey, text: message } }
+          data: { ...currentPrefs, morningBrief: { date: dateKey3, text: message } }
         }).onConflictDoUpdate({
           target: [userPreferences.userId],
-          set: { data: { ...currentPrefs, morningBrief: { date: dateKey, text: message } }, updatedAt: /* @__PURE__ */ new Date() }
+          set: { data: { ...currentPrefs, morningBrief: { date: dateKey3, text: message } }, updatedAt: /* @__PURE__ */ new Date() }
         });
       } catch (e) {
         console.error("[Proactive] Failed to save morning brief:", e);
@@ -21606,18 +21922,18 @@ async function runProactiveStartupCatchup() {
       const yr = localDate.getFullYear();
       const mo = String(localDate.getMonth() + 1).padStart(2, "0");
       const dy = String(localDate.getDate()).padStart(2, "0");
-      const dateKey = `${yr}-${mo}-${dy}`;
+      const dateKey3 = `${yr}-${mo}-${dy}`;
       for (const schedule of PROACTIVE_SCHEDULE) {
         if (schedule.type === "weekly_planning" && localDay !== (schedule.dayOfWeek ?? -1)) continue;
         const scheduleMinutesFromMidnight = schedule.hour * 60 + schedule.minute;
         const currentMinutesFromMidnight = localHour4 * 60 + localDate.getMinutes();
         const minutesSinceScheduled = currentMinutesFromMidnight - scheduleMinutesFromMidnight;
         if (minutesSinceScheduled < 0 || minutesSinceScheduled > 120) continue;
-        const claimed = await claimAndMark(link.userId, schedule.type, dateKey);
+        const claimed = await claimAndMark(link.userId, schedule.type, dateKey3);
         if (!claimed) continue;
         console.log(`[Proactive] Catchup: sending missed ${schedule.type} to user ${link.userId}`);
         try {
-          await sendScheduledMessage(link, schedule, dateKey, timezone);
+          await sendScheduledMessage(link, schedule, dateKey3, timezone);
         } catch (err2) {
           console.error(`[Proactive] Catchup error for ${link.userId}:`, err2);
         }
@@ -21645,14 +21961,14 @@ async function startProactiveScheduler() {
         const yr = localDate.getFullYear();
         const mo = String(localDate.getMonth() + 1).padStart(2, "0");
         const dy = String(localDate.getDate()).padStart(2, "0");
-        const dateKey = `${yr}-${mo}-${dy}`;
+        const dateKey3 = `${yr}-${mo}-${dy}`;
         for (const schedule of PROACTIVE_SCHEDULE) {
           if (localHour4 !== schedule.hour || localMinute !== schedule.minute) continue;
           if (schedule.type === "weekly_planning" && localDay !== (schedule.dayOfWeek ?? -1)) continue;
-          const claimed = await claimAndMark(link.userId, schedule.type, dateKey);
+          const claimed = await claimAndMark(link.userId, schedule.type, dateKey3);
           if (!claimed) continue;
           try {
-            await sendScheduledMessage(link, schedule, dateKey, timezone);
+            await sendScheduledMessage(link, schedule, dateKey3, timezone);
           } catch (err2) {
             console.error(`[Proactive] Error for user ${link.userId}:`, err2);
           }
@@ -22093,7 +22409,7 @@ var init_manageTasks = __esm({
       },
       async execute(args, ctx) {
         const userId = ctx.userId;
-        const dateKey = ctx.state?.dateKey || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const dateKey3 = ctx.state?.dateKey || (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         try {
           switch (String(args.action ?? "")) {
             case "add_plan_task": {
@@ -22109,7 +22425,7 @@ var init_manageTasks = __esm({
               };
               tasks.push(newTask);
               const planData = todayPlan ? { ...todayPlan, tasks } : { tasks };
-              await db.insert(plans).values({ userId, date: dateKey, data: planData }).onConflictDoUpdate({
+              await db.insert(plans).values({ userId, date: dateKey3, data: planData }).onConflictDoUpdate({
                 target: [plans.userId, plans.date],
                 set: { data: planData, updatedAt: /* @__PURE__ */ new Date() }
               });
@@ -50470,12 +50786,12 @@ async function recentCompletionRate(userId) {
     return 1;
   }
 }
-async function weekdayCompletionRate(userId, dateKey) {
+async function weekdayCompletionRate(userId, dateKey3) {
   try {
     const [row] = await db.select({ data: completionHistory.data }).from(completionHistory).where(eq64(completionHistory.userId, userId)).limit(1);
     const arr = row?.data || [];
     if (arr.length === 0) return void 0;
-    const targetDay = (/* @__PURE__ */ new Date(`${dateKey}T00:00:00Z`)).getUTCDay();
+    const targetDay = (/* @__PURE__ */ new Date(`${dateKey3}T00:00:00Z`)).getUTCDay();
     const matching = arr.filter((entry) => {
       if (!entry.date) return false;
       return (/* @__PURE__ */ new Date(`${entry.date}T00:00:00Z`)).getUTCDay() === targetDay;
@@ -50494,9 +50810,9 @@ async function getGoalPacingMode(userId) {
     return "balanced";
   }
 }
-async function getEnergyLevel(userId, dateKey) {
+async function getEnergyLevel(userId, dateKey3) {
   try {
-    const [row] = await db.select({ data: energyCheckins.data }).from(energyCheckins).where(and43(eq64(energyCheckins.userId, userId), eq64(energyCheckins.date, dateKey))).limit(1);
+    const [row] = await db.select({ data: energyCheckins.data }).from(energyCheckins).where(and43(eq64(energyCheckins.userId, userId), eq64(energyCheckins.date, dateKey3))).limit(1);
     const data = row?.data;
     const value = typeof data?.energy === "number" ? data.energy : data?.level;
     return typeof value === "number" ? value : void 0;
@@ -50508,10 +50824,10 @@ function energyFromData(data) {
   const value = typeof data?.energy === "number" ? data.energy : data?.level;
   return typeof value === "number" ? value : void 0;
 }
-async function getRecentEnergyLevels(userId, dateKey) {
+async function getRecentEnergyLevels(userId, dateKey3) {
   try {
     const rows = await db.select({ date: energyCheckins.date, data: energyCheckins.data }).from(energyCheckins).where(eq64(energyCheckins.userId, userId)).orderBy(desc20(energyCheckins.date)).limit(14);
-    return rows.filter((row) => row.date !== dateKey).map((row) => energyFromData(row.data)).filter((value) => typeof value === "number");
+    return rows.filter((row) => row.date !== dateKey3).map((row) => energyFromData(row.data)).filter((value) => typeof value === "number");
   } catch {
     return [];
   }
@@ -50521,13 +50837,13 @@ function parseDateKey(value) {
   const time = (/* @__PURE__ */ new Date(`${value}T00:00:00Z`)).getTime();
   return Number.isFinite(time) ? time : null;
 }
-function daysUntil(dateKey, dueDate) {
-  const start = parseDateKey(dateKey);
+function daysUntil(dateKey3, dueDate) {
+  const start = parseDateKey(dateKey3);
   const due = parseDateKey(dueDate);
   if (start === null || due === null) return null;
   return Math.ceil((due - start) / (24 * 60 * 60 * 1e3));
 }
-function nearestGoalDeadlineDays(trees, dateKey) {
+function nearestGoalDeadlineDays(trees, dateKey3) {
   let nearest = null;
   for (const row of trees) {
     const tree = row.tree || { phases: [] };
@@ -50535,7 +50851,7 @@ function nearestGoalDeadlineDays(trees, dateKey) {
       for (const milestone of phase.milestones) {
         for (const task of milestone.tasks) {
           if (task.status === "complete") continue;
-          const days = daysUntil(dateKey, task.dueDate);
+          const days = daysUntil(dateKey3, task.dueDate);
           if (days === null) continue;
           nearest = nearest === null ? days : Math.min(nearest, days);
         }
@@ -50544,12 +50860,12 @@ function nearestGoalDeadlineDays(trees, dateKey) {
   }
   return nearest ?? void 0;
 }
-async function getNearestCommitmentDeadlineDays(userId, dateKey) {
+async function getNearestCommitmentDeadlineDays(userId, dateKey3) {
   try {
     const rows = await db.select({ dueDate: commitments.dueDate }).from(commitments).where(and43(eq64(commitments.userId, userId), eq64(commitments.status, "pending"))).limit(100);
     let nearest = null;
     for (const row of rows) {
-      const days = daysUntil(dateKey, row.dueDate ?? void 0);
+      const days = daysUntil(dateKey3, row.dueDate ?? void 0);
       if (days === null) continue;
       nearest = nearest === null ? days : Math.min(nearest, days);
     }
@@ -50577,9 +50893,9 @@ function getPlanPacingContextFromTasks(tasks) {
     calendarBusyMinutes: calendarBusyMinutesFromTasks(tasks)
   };
 }
-async function getExistingPlanSignals(userId, dateKey) {
+async function getExistingPlanSignals(userId, dateKey3) {
   try {
-    const [row] = await db.select({ data: plans.data }).from(plans).where(and43(eq64(plans.userId, userId), eq64(plans.date, dateKey))).limit(1);
+    const [row] = await db.select({ data: plans.data }).from(plans).where(and43(eq64(plans.userId, userId), eq64(plans.date, dateKey3))).limit(1);
     const tasks = row?.data?.tasks;
     const context = getPlanPacingContextFromTasks(tasks);
     return { taskCount: context.existingPlanTaskCount ?? 0, calendarBusyMinutes: context.calendarBusyMinutes ?? 0 };
@@ -50587,7 +50903,7 @@ async function getExistingPlanSignals(userId, dateKey) {
     return { taskCount: 0, calendarBusyMinutes: 0 };
   }
 }
-async function getGoalPacingDecision(userId, dateKey, context = {}) {
+async function getGoalPacingDecision(userId, dateKey3, context = {}) {
   const [
     completionRate,
     mode,
@@ -50600,14 +50916,14 @@ async function getGoalPacingDecision(userId, dateKey, context = {}) {
   ] = await Promise.all([
     recentCompletionRate(userId),
     getGoalPacingMode(userId),
-    getEnergyLevel(userId, dateKey),
-    getRecentEnergyLevels(userId, dateKey),
-    getExistingPlanSignals(userId, dateKey),
-    weekdayCompletionRate(userId, dateKey),
+    getEnergyLevel(userId, dateKey3),
+    getRecentEnergyLevels(userId, dateKey3),
+    getExistingPlanSignals(userId, dateKey3),
+    weekdayCompletionRate(userId, dateKey3),
     db.select().from(goalTrees).where(and43(eq64(goalTrees.userId, userId), eq64(goalTrees.status, "active"))).catch(() => []),
-    getNearestCommitmentDeadlineDays(userId, dateKey)
+    getNearestCommitmentDeadlineDays(userId, dateKey3)
   ]);
-  const goalDeadlineDays = nearestGoalDeadlineDays(activeGoalTrees, dateKey);
+  const goalDeadlineDays = nearestGoalDeadlineDays(activeGoalTrees, dateKey3);
   const deadlineCandidates = [goalDeadlineDays, commitmentDeadlineDays].filter(
     (days) => typeof days === "number"
   );
@@ -50622,17 +50938,17 @@ async function getGoalPacingDecision(userId, dateKey, context = {}) {
     nearestDeadlineDays: deadlineCandidates.length > 0 ? Math.min(...deadlineCandidates) : void 0
   });
 }
-async function getInjectableGoalTasks(userId, dateKey, context = {}) {
+async function getInjectableGoalTasks(userId, dateKey3, context = {}) {
   const trees = await db.select().from(goalTrees).where(and43(eq64(goalTrees.userId, userId), eq64(goalTrees.status, "active")));
   if (trees.length === 0) return [];
-  const pacing = await getGoalPacingDecision(userId, dateKey, context);
+  const pacing = await getGoalPacingDecision(userId, dateKey3, context);
   const dailyCap = pacing.dailyCap;
   const candidates = [];
   for (const row of trees) {
     const tree = row.tree || { phases: [] };
     const next = nextActionableTasksFromTree(tree);
     for (const t of next) {
-      if (Array.isArray(t.injectedOnDates) && t.injectedOnDates.includes(dateKey)) continue;
+      if (Array.isArray(t.injectedOnDates) && t.injectedOnDates.includes(dateKey3)) continue;
       let phaseId = "";
       let milestoneId = "";
       for (const ph of tree.phases) {
@@ -50659,7 +50975,7 @@ async function getInjectableGoalTasks(userId, dateKey, context = {}) {
   }
   return candidates;
 }
-async function markTasksInjected(userId, picks, dateKey) {
+async function markTasksInjected(userId, picks, dateKey3) {
   if (picks.length === 0) return;
   const byTree = /* @__PURE__ */ new Map();
   for (const p of picks) {
@@ -50678,8 +50994,8 @@ async function markTasksInjected(userId, picks, dateKey) {
         for (const t of ms.tasks) {
           if (ids.has(t.id)) {
             const dates = Array.isArray(t.injectedOnDates) ? t.injectedOnDates : [];
-            if (!dates.includes(dateKey)) {
-              t.injectedOnDates = [...dates, dateKey];
+            if (!dates.includes(dateKey3)) {
+              t.injectedOnDates = [...dates, dateKey3];
               mutated = true;
             }
             if (t.status === "ready") {
@@ -51946,8 +52262,8 @@ function registerChannelRoutes(app2) {
         if (Object.keys(updates).length > 0) {
           const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
           const { discordChannelSchedules: discordChannelSchedules2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-          const { eq: eq144, and: and108 } = await import("drizzle-orm");
-          await db2.update(discordChannelSchedules2).set(updates).where(and108(eq144(discordChannelSchedules2.id, id), eq144(discordChannelSchedules2.userId, userId)));
+          const { eq: eq145, and: and109 } = await import("drizzle-orm");
+          await db2.update(discordChannelSchedules2).set(updates).where(and109(eq145(discordChannelSchedules2.id, id), eq145(discordChannelSchedules2.userId, userId)));
         }
       }
       const schedules = await listSchedules(userId);
@@ -54805,8 +55121,8 @@ async function checkDatabaseConnectivity() {
   const id = "database_connectivity";
   const label = "Database Connectivity";
   try {
-    const { sql: sql55 } = await import("drizzle-orm");
-    await db.execute(sql55`SELECT 1`);
+    const { sql: sql56 } = await import("drizzle-orm");
+    await db.execute(sql56`SELECT 1`);
     return pass(id, label, "Database is reachable and responding.");
   } catch (err2) {
     const msg = err2 instanceof Error ? err2.message : String(err2);
@@ -59112,8 +59428,8 @@ async function gatherSignals(userId, tz, now) {
     const tokens = await getValidGoogleTokens(userId);
     const token = tokens?.[0];
     if (token) {
-      const dateKey = localDateKey(now, tz);
-      const events = await getGoogleCalendarEvents(dateKey, void 0, void 0, token);
+      const dateKey3 = localDateKey(now, tz);
+      const events = await getGoogleCalendarEvents(dateKey3, void 0, void 0, token);
       const next24h = new Date(now.getTime() + 24 * 60 * 60 * 1e3);
       const upcoming = events.filter((e) => {
         const start = new Date(e.start);
@@ -59899,14 +60215,14 @@ function getZonedDateTimeParts(date2, timezone) {
     second: Number(map.second)
   };
 }
-function addDaysToDateKey(dateKey, days) {
-  const [year, month, day] = dateKey.split("-").map(Number);
+function addDaysToDateKey(dateKey3, days) {
+  const [year, month, day] = dateKey3.split("-").map(Number);
   const date2 = new Date(Date.UTC(year, (month || 1) - 1, day || 1 + days));
   date2.setUTCDate(date2.getUTCDate() + days);
   return `${date2.getUTCFullYear()}-${String(date2.getUTCMonth() + 1).padStart(2, "0")}-${String(date2.getUTCDate()).padStart(2, "0")}`;
 }
-function zonedDateTimeToUtc(dateKey, timezone, hour, minute, second, millisecond) {
-  const [year, month, day] = dateKey.split("-").map(Number);
+function zonedDateTimeToUtc(dateKey3, timezone, hour, minute, second, millisecond) {
+  const [year, month, day] = dateKey3.split("-").map(Number);
   const targetMs = Date.UTC(year, (month || 1) - 1, day || 1, hour, minute, second, millisecond);
   let guess = new Date(targetMs);
   for (let i = 0; i < 3; i += 1) {
@@ -59931,21 +60247,21 @@ function getLocalDateKey(now = /* @__PURE__ */ new Date(), timezone = "America/N
     return now.toISOString().slice(0, 10);
   }
 }
-function getNextLocalDateKey(dateKey) {
-  return addDaysToDateKey(dateKey, 1);
+function getNextLocalDateKey(dateKey3) {
+  return addDaysToDateKey(dateKey3, 1);
 }
-function getLocalDayWindow(dateKey, timezone = "America/New_York") {
+function getLocalDayWindow(dateKey3, timezone = "America/New_York") {
   try {
-    const start = zonedDateTimeToUtc(dateKey, timezone, 0, 0, 0, 0);
-    const nextStart = zonedDateTimeToUtc(getNextLocalDateKey(dateKey), timezone, 0, 0, 0, 0);
+    const start = zonedDateTimeToUtc(dateKey3, timezone, 0, 0, 0, 0);
+    const nextStart = zonedDateTimeToUtc(getNextLocalDateKey(dateKey3), timezone, 0, 0, 0, 0);
     return {
       startTime: start.toISOString(),
       endTime: new Date(nextStart.getTime() - 1).toISOString()
     };
   } catch {
     return {
-      startTime: (/* @__PURE__ */ new Date(`${dateKey}T00:00:00.000Z`)).toISOString(),
-      endTime: (/* @__PURE__ */ new Date(`${dateKey}T23:59:59.999Z`)).toISOString()
+      startTime: (/* @__PURE__ */ new Date(`${dateKey3}T00:00:00.000Z`)).toISOString(),
+      endTime: (/* @__PURE__ */ new Date(`${dateKey3}T23:59:59.999Z`)).toISOString()
     };
   }
 }
@@ -59955,8 +60271,8 @@ function safeTasks(plan) {
 function normaliseTitle(title) {
   return String(title || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
-function makeGeneratedTaskId(dateKey, createdAt, index2) {
-  return `jarvis_${dateKey}_${createdAt}_${index2}`;
+function makeGeneratedTaskId(dateKey3, createdAt, index2) {
+  return `jarvis_${dateKey3}_${createdAt}_${index2}`;
 }
 function withDailyCommandMeta(plan, meta) {
   return {
@@ -60169,7 +60485,7 @@ function formatEventTime(start, timezone) {
     minute: "2-digit"
   });
 }
-async function collectDailyCommandContext(userId, dateKey, timezone = "America/New_York") {
+async function collectDailyCommandContext(userId, dateKey3, timezone = "America/New_York") {
   const warnings = [];
   const tokens = await getValidGoogleTokens(userId).catch((err2) => {
     warnings.push({
@@ -60185,9 +60501,9 @@ async function collectDailyCommandContext(userId, dateKey, timezone = "America/N
     return { calendarEvents: [], gmailItems: [], warnings };
   }
   const token = tokens[0];
-  const window = getLocalDayWindow(dateKey, timezone);
+  const window = getLocalDayWindow(dateKey3, timezone);
   const [calendarResult, gmailResult] = await Promise.allSettled([
-    getGoogleCalendarEvents(dateKey, window.startTime, window.endTime, token),
+    getGoogleCalendarEvents(dateKey3, window.startTime, window.endTime, token),
     getRecentEmailCommitments(7, token)
   ]);
   const calendarEvents = calendarResult.status === "fulfilled" ? calendarResult.value.map((event) => ({
@@ -60516,9 +60832,9 @@ async function validateExpiredPredictions(userId, now) {
       let validated = null;
       let validationNote = null;
       if (pred.predictionType === "energy_dip") {
-        const dateKey = pred.targetDate;
+        const dateKey3 = pred.targetDate;
         try {
-          const checkinRows = await db.select().from(energyCheckins).where(and64(eq90(energyCheckins.userId, userId), eq90(energyCheckins.date, dateKey))).limit(1);
+          const checkinRows = await db.select().from(energyCheckins).where(and64(eq90(energyCheckins.userId, userId), eq90(energyCheckins.date, dateKey3))).limit(1);
           if (checkinRows.length > 0) {
             const data = checkinRows[0].data;
             const level = data.level ?? data.energy ?? null;
@@ -60535,9 +60851,9 @@ async function validateExpiredPredictions(userId, now) {
         } catch {
         }
       } else if (pred.predictionType === "procrastination_risk") {
-        const dateKey = pred.targetDate;
+        const dateKey3 = pred.targetDate;
         try {
-          const planRows = await db.select().from(plans).where(and64(eq90(plans.userId, userId), eq90(plans.date, dateKey))).limit(1);
+          const planRows = await db.select().from(plans).where(and64(eq90(plans.userId, userId), eq90(plans.date, dateKey3))).limit(1);
           if (planRows.length > 0) {
             const data = planRows[0].data;
             const tasks = data.tasks || [];
@@ -60999,10 +61315,10 @@ Left undone recently: ${skipped.map((h) => h.title).join(", ") || "none"}`;
   };
   const modeText = coachingMode && modeInstructions[coachingMode] ? modeInstructions[coachingMode] : "";
   const timezone = typeof body.timezone === "string" ? body.timezone : "America/New_York";
-  const dateKey = typeof body.dateKey === "string" ? body.dateKey : void 0;
-  const now = dateKey ? /* @__PURE__ */ new Date(`${dateKey}T12:00:00.000Z`) : /* @__PURE__ */ new Date();
-  const dayOfWeek = now.toLocaleDateString("en-US", { weekday: "long", timeZone: dateKey ? "UTC" : timezone });
-  const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: dateKey ? "UTC" : timezone });
+  const dateKey3 = typeof body.dateKey === "string" ? body.dateKey : void 0;
+  const now = dateKey3 ? /* @__PURE__ */ new Date(`${dateKey3}T12:00:00.000Z`) : /* @__PURE__ */ new Date();
+  const dayOfWeek = now.toLocaleDateString("en-US", { weekday: "long", timeZone: dateKey3 ? "UTC" : timezone });
+  const dateStr = now.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: dateKey3 ? "UTC" : timezone });
   const { buildAiContextSections: buildAiContextSections2 } = await Promise.resolve().then(() => (init_promptContext(), promptContext_exports));
   const planSeed = [
     ...Array.isArray(goals2) ? goals2.slice(0, 3).map((g) => g?.title).filter(Boolean) : [],
@@ -62501,10 +62817,10 @@ __export(goalPlanHandoff_exports, {
   buildGoalPlanTask: () => buildGoalPlanTask,
   mergeGoalTaskIntoPlan: () => mergeGoalTaskIntoPlan
 });
-function buildGoalPlanTask(pick, dateKey, createdAt = Date.now()) {
+function buildGoalPlanTask(pick, dateKey3, createdAt = Date.now()) {
   const minutes = Math.max(15, Math.round((pick.estimateHours || 1) * 60));
   return {
-    id: `goal_${pick.taskId}_${dateKey}`,
+    id: `goal_${pick.taskId}_${dateKey3}`,
     title: pick.title,
     category: "goal",
     priority: "high",
@@ -62518,15 +62834,15 @@ function buildGoalPlanTask(pick, dateKey, createdAt = Date.now()) {
     goalTaskId: pick.taskId
   };
 }
-function mergeGoalTaskIntoPlan(plan, pick, dateKey, createdAt = Date.now()) {
-  const task = buildGoalPlanTask(pick, dateKey, createdAt);
+function mergeGoalTaskIntoPlan(plan, pick, dateKey3, createdAt = Date.now()) {
+  const task = buildGoalPlanTask(pick, dateKey3, createdAt);
   const existingTasks = Array.isArray(plan?.tasks) ? plan.tasks : [];
   const alreadyPresent = existingTasks.some((candidate) => {
     return candidate.id === task.id || candidate.goalTreeId === task.goalTreeId && candidate.goalTaskId === task.goalTaskId;
   });
   const base = {
     ...plan || {},
-    date: plan?.date || dateKey,
+    date: plan?.date || dateKey3,
     tasks: [...existingTasks]
   };
   if (alreadyPresent) {
@@ -62660,9 +62976,9 @@ async function getDailyCommandSnapshot(userId, now = /* @__PURE__ */ new Date())
     statusReasons
   };
 }
-function fallbackTask(dateKey) {
+function fallbackTask(dateKey3) {
   return {
-    id: `jarvis_${dateKey}_fallback`,
+    id: `jarvis_${dateKey3}_fallback`,
     title: "Review today's top priorities",
     category: "personal",
     priority: "high",
@@ -62670,7 +62986,7 @@ function fallbackTask(dateKey) {
     description: "Fallback task created because Jarvis could not produce a reliable generated plan.",
     completed: false,
     fromJarvis: true,
-    dailyCommandDate: dateKey,
+    dailyCommandDate: dateKey3,
     originSurface: "daily_command",
     sourceIntent: "fallback_plan",
     createdAt: Date.now()
@@ -62678,15 +62994,15 @@ function fallbackTask(dateKey) {
 }
 async function generateDailyCommandPlan(userId, opts = {}) {
   const timezone = await getUserTimezone(userId);
-  const dateKey = getLocalDateKey(opts.now ?? /* @__PURE__ */ new Date(), timezone);
-  const existingPlan = await getPlanForUser(userId, dateKey);
+  const dateKey3 = getLocalDateKey(opts.now ?? /* @__PURE__ */ new Date(), timezone);
+  const existingPlan = await getPlanForUser(userId, dateKey3);
   const mode = opts.mode ?? "merge";
   if (mode === "replace" && opts.confirmReplace !== true) {
     const error = new Error("Replacing today's plan requires confirmReplace=true.");
     error.status = 409;
     throw error;
   }
-  const basePlan = mode === "replace" ? { date: dateKey, tasks: [] } : existingPlan ?? { date: dateKey, tasks: [] };
+  const basePlan = mode === "replace" ? { date: dateKey3, tasks: [] } : existingPlan ?? { date: dateKey3, tasks: [] };
   const existingTasks = Array.isArray(basePlan.tasks) ? basePlan.tasks : [];
   let generatedTasks = [];
   let contextWarnings = [];
@@ -62694,7 +63010,7 @@ async function generateDailyCommandPlan(userId, opts = {}) {
   if (opts.allowAiSuggestions !== false) {
     const { buildPlanForUser: buildPlanForUser2 } = await Promise.resolve().then(() => (init_planGenerationService(), planGenerationService_exports));
     const result = await buildPlanForUser2(userId, {
-      dateKey,
+      dateKey: dateKey3,
       timezone,
       existingTasks
     });
@@ -62703,14 +63019,14 @@ async function generateDailyCommandPlan(userId, opts = {}) {
     reasoning = result?.reasoning ?? "";
   }
   if (generatedTasks.length === 0 && existingTasks.length === 0) {
-    generatedTasks = [fallbackTask(dateKey)];
+    generatedTasks = [fallbackTask(dateKey3)];
     contextWarnings = [
       ...contextWarnings,
       { source: "plan_generation", severity: "warning", message: "Jarvis used a fallback task because generated plan output was empty." }
     ];
   }
   let merged = mergeGeneratedTasksIntoPlan(basePlan, generatedTasks, {
-    dateKey,
+    dateKey: dateKey3,
     source: opts.source ?? "daily_command_api",
     mode,
     contextWarnings
@@ -62718,19 +63034,19 @@ async function generateDailyCommandPlan(userId, opts = {}) {
   let goalTaskCount = 0;
   try {
     const { getInjectableGoalTasks: getInjectableGoalTasks2, getPlanPacingContextFromTasks: getPlanPacingContextFromTasks2, markTasksInjected: markTasksInjected2 } = await Promise.resolve().then(() => (init_goalScheduler(), goalScheduler_exports));
-    const picks = await getInjectableGoalTasks2(userId, dateKey, getPlanPacingContextFromTasks2(merged.plan.tasks));
+    const picks = await getInjectableGoalTasks2(userId, dateKey3, getPlanPacingContextFromTasks2(merged.plan.tasks));
     const insertedPicks = [];
     const { mergeGoalTaskIntoPlan: mergeGoalTaskIntoPlan2 } = await Promise.resolve().then(() => (init_goalPlanHandoff(), goalPlanHandoff_exports));
     let nextPlan = merged.plan;
     for (const pick of picks) {
-      const result = mergeGoalTaskIntoPlan2(nextPlan, pick, dateKey);
+      const result = mergeGoalTaskIntoPlan2(nextPlan, pick, dateKey3);
       nextPlan = result.plan;
       if (result.inserted) {
         insertedPicks.push(pick);
       }
     }
     if (insertedPicks.length > 0) {
-      await markTasksInjected2(userId, insertedPicks, dateKey);
+      await markTasksInjected2(userId, insertedPicks, dateKey3);
       goalTaskCount = insertedPicks.length;
     }
     merged = {
@@ -62773,7 +63089,7 @@ async function generateDailyCommandPlan(userId, opts = {}) {
   }
   await savePlanForUser({
     userId,
-    date: dateKey,
+    date: dateKey3,
     data: merged.plan,
     previousData: existingPlan
   });
@@ -72551,10 +72867,10 @@ Reply directly to this message with your answer and I'll take it from there.
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const dateKey = typeof req.query.date === "string" && req.query.date.trim() ? req.query.date.trim() : (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const dateKey3 = typeof req.query.date === "string" && req.query.date.trim() ? req.query.date.trim() : (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
       const { getGoalPacingDecision: getGoalPacingDecision2 } = await Promise.resolve().then(() => (init_goalScheduler(), goalScheduler_exports));
-      const pacing = await getGoalPacingDecision2(userId, dateKey);
-      res.json({ ...pacing, date: dateKey });
+      const pacing = await getGoalPacingDecision2(userId, dateKey3);
+      res.json({ ...pacing, date: dateKey3 });
     } catch (err2) {
       console.error("Error fetching goal pacing:", err2);
       res.status(500).json({ error: "Failed to fetch goal pacing" });
@@ -72575,9 +72891,9 @@ Reply directly to this message with your answer and I'll take it from there.
         set: { data, updatedAt: /* @__PURE__ */ new Date() }
       });
       const { getGoalPacingDecision: getGoalPacingDecision2 } = await Promise.resolve().then(() => (init_goalScheduler(), goalScheduler_exports));
-      const dateKey = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-      const pacing = await getGoalPacingDecision2(userId, dateKey);
-      res.json({ ...pacing, date: dateKey });
+      const dateKey3 = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      const pacing = await getGoalPacingDecision2(userId, dateKey3);
+      res.json({ ...pacing, date: dateKey3 });
     } catch (err2) {
       console.error("Error updating goal pacing:", err2);
       res.status(500).json({ error: "Failed to update goal pacing" });
@@ -73343,8 +73659,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq144 } = await import("drizzle-orm");
-      const existing = await db.select().from(userSkills2).where(eq144(userSkills2.userId, userId));
+      const { eq: eq145 } = await import("drizzle-orm");
+      const existing = await db.select().from(userSkills2).where(eq145(userSkills2.userId, userId));
       const existingBuiltInNames = new Set(
         existing.filter((s) => s.isBuiltIn).map((s) => s.name)
       );
@@ -73361,7 +73677,7 @@ Extract up to 8 memories per batch.`;
             isActive: false
           }))
         ).onConflictDoNothing();
-        const fresh = await db.select().from(userSkills2).where(eq144(userSkills2.userId, userId));
+        const fresh = await db.select().from(userSkills2).where(eq145(userSkills2.userId, userId));
         return res.json({ skills: fresh });
       }
       res.json({ skills: existing });
@@ -73400,10 +73716,10 @@ Extract up to 8 memories per batch.`;
     const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq144, and: and108 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and108(eq144(userSkills2.id, id), eq144(userSkills2.userId, userId))).limit(1);
+      const { eq: eq145, and: and109 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and109(eq145(userSkills2.id, id), eq145(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
-      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and108(eq144(userSkills2.id, id), eq144(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and109(eq145(userSkills2.id, id), eq145(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH toggle failed:", err2);
@@ -73417,8 +73733,8 @@ Extract up to 8 memories per batch.`;
     const { name, description, instructions, emoji } = req.body;
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq144, and: and108 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and108(eq144(userSkills2.id, id), eq144(userSkills2.userId, userId))).limit(1);
+      const { eq: eq145, and: and109 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and109(eq145(userSkills2.id, id), eq145(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be modified" });
       const updates = {};
@@ -73427,7 +73743,7 @@ Extract up to 8 memories per batch.`;
       if (instructions?.trim()) updates.instructions = instructions.trim().slice(0, 3e3);
       if (emoji?.trim()) updates.emoji = emoji.trim().slice(0, 8);
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
-      const [updated] = await db.update(userSkills2).set(updates).where(and108(eq144(userSkills2.id, id), eq144(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set(updates).where(and109(eq145(userSkills2.id, id), eq145(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH update failed:", err2);
@@ -73440,11 +73756,11 @@ Extract up to 8 memories per batch.`;
     const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq144, and: and108 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and108(eq144(userSkills2.id, id), eq144(userSkills2.userId, userId))).limit(1);
+      const { eq: eq145, and: and109 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and109(eq145(userSkills2.id, id), eq145(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be deleted" });
-      await db.delete(userSkills2).where(and108(eq144(userSkills2.id, id), eq144(userSkills2.userId, userId)));
+      await db.delete(userSkills2).where(and109(eq145(userSkills2.id, id), eq145(userSkills2.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[UserSkills] DELETE failed:", err2);
@@ -73456,8 +73772,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { skillCandidates: skillCandidates2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq144, and: and108 } = await import("drizzle-orm");
-      const rows = await db.select().from(skillCandidates2).where(and108(eq144(skillCandidates2.userId, userId), eq144(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
+      const { eq: eq145, and: and109 } = await import("drizzle-orm");
+      const rows = await db.select().from(skillCandidates2).where(and109(eq145(skillCandidates2.userId, userId), eq145(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
       res.json({ candidates: rows });
     } catch (err2) {
       console.error("[SkillCandidates] GET failed:", err2);
@@ -73476,15 +73792,15 @@ Extract up to 8 memories per batch.`;
     }
     try {
       const { skillCandidates: skillCandidates2, userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq144, and: and108 } = await import("drizzle-orm");
-      const [candidate] = await db.select().from(skillCandidates2).where(and108(eq144(skillCandidates2.id, id), eq144(skillCandidates2.userId, userId))).limit(1);
+      const { eq: eq145, and: and109 } = await import("drizzle-orm");
+      const [candidate] = await db.select().from(skillCandidates2).where(and109(eq145(skillCandidates2.id, id), eq145(skillCandidates2.userId, userId))).limit(1);
       if (!candidate) return res.status(404).json({ error: "Candidate not found" });
       if (candidate.status !== "pending") {
         return res.status(409).json({ error: "Candidate has already been reviewed" });
       }
       const newStatus = action === "accept" ? "accepted" : action === "edit" ? "edited" : "dismissed";
       await db.transaction(async (tx) => {
-        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq144(skillCandidates2.id, id));
+        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq145(skillCandidates2.id, id));
         if (action === "accept" || action === "edit") {
           const finalName = name?.trim() ? name.trim().slice(0, 80) : candidate.name;
           const finalInstructions = instructionText?.trim() ? instructionText.trim().slice(0, 3e3) : candidate.instructionText;
@@ -73513,9 +73829,9 @@ Extract up to 8 memories per batch.`;
     try {
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { integrationStatus: integrationStatus2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq144, sql: sql55 } = await import("drizzle-orm");
-      const rows = await db2.select().from(integrationStatus2).where(eq144(integrationStatus2.userId, userId));
-      const linkedRaw = await db2.execute(sql55`
+      const { eq: eq145, sql: sql56 } = await import("drizzle-orm");
+      const rows = await db2.select().from(integrationStatus2).where(eq145(integrationStatus2.userId, userId));
+      const linkedRaw = await db2.execute(sql56`
         SELECT DISTINCT integration FROM (
           SELECT 'telegram' AS integration FROM telegram_links WHERE user_id = ${userId}
           UNION ALL
@@ -76374,9 +76690,9 @@ async function bootAllBots() {
   try {
     await seedSeenMessageIds();
     const { db: _db } = await Promise.resolve().then(() => (init_db(), db_exports));
-    const { sql: sql55 } = await import("drizzle-orm");
+    const { sql: sql56 } = await import("drizzle-orm");
     const rows = await _db.execute(
-      sql55`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
+      sql56`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
     );
     const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
     let started = 0;
@@ -82170,10 +82486,10 @@ ${skillBlock}`;
     }
     try {
       const { userSkills: userSkillsTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq144, and: and108 } = await import("drizzle-orm");
+      const { eq: eq145, and: and109 } = await import("drizzle-orm");
       const { db: dbImport } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { truncateToBudget: truncateToBudget2, BUDGET_PRESETS: BUDGET_PRESETS2 } = await Promise.resolve().then(() => (init_contextBuilder(), contextBuilder_exports));
-      const activeSkills = await dbImport.select().from(userSkillsTable).where(and108(eq144(userSkillsTable.userId, context.userId), eq144(userSkillsTable.isActive, true)));
+      const activeSkills = await dbImport.select().from(userSkillsTable).where(and109(eq145(userSkillsTable.userId, context.userId), eq145(userSkillsTable.isActive, true)));
       if (activeSkills.length > 0) {
         const skillBlockRaw = activeSkills.map((s) => `### ${s.emoji} ${s.name}
 ${s.instructions}`).join("\n\n");
@@ -83346,20 +83662,20 @@ var init_activationPlanner = __esm({
         const now = /* @__PURE__ */ new Date();
         const tz = timezone ?? await this.resolveTimezone(userId);
         const hour = localHour2(now, tz);
-        const dateKey = localDateKey2(now, tz);
+        const dateKey3 = localDateKey2(now, tz);
         const timeOfDay = hourToTimeOfDay(hour);
         const [emotionalStateRow, predictions, skillCount, hasDeclaredFocusBlock] = await Promise.all([
           this.fetchEmotionalState(userId),
-          this.fetchPredictions(userId, dateKey),
+          this.fetchPredictions(userId, dateKey3),
           this.fetchSkillCount(userId),
-          this.fetchFocusBlock(userId, dateKey)
+          this.fetchFocusBlock(userId, dateKey3)
         ]);
         const sessionContext = this.buildSessionContext({
           emotionalStateRow,
           predictions,
           skillCount,
           timeOfDay,
-          dateKey
+          dateKey: dateKey3
         });
         return this.applyRules({
           sessionContext,
@@ -83391,9 +83707,9 @@ var init_activationPlanner = __esm({
           return null;
         }
       }
-      async fetchPredictions(userId, dateKey) {
+      async fetchPredictions(userId, dateKey3) {
         try {
-          return await getTodayPredictions(userId, dateKey, 55);
+          return await getTodayPredictions(userId, dateKey3, 55);
         } catch {
           return [];
         }
@@ -83413,9 +83729,9 @@ var init_activationPlanner = __esm({
        * type declares it as a focus block (case-insensitive match on "focus").
        * Returns false on error or no plan — never throws.
        */
-      async fetchFocusBlock(userId, dateKey) {
+      async fetchFocusBlock(userId, dateKey3) {
         try {
-          const rows = await db.select({ data: plans.data }).from(plans).where(and88(eq122(plans.userId, userId), eq122(plans.date, dateKey))).limit(1);
+          const rows = await db.select({ data: plans.data }).from(plans).where(and88(eq122(plans.userId, userId), eq122(plans.date, dateKey3))).limit(1);
           const data = rows[0]?.data;
           if (!data?.tasks || !Array.isArray(data.tasks)) return false;
           return data.tasks.some((task) => {
@@ -83430,7 +83746,7 @@ var init_activationPlanner = __esm({
       }
       // ── Session context builder ───────────────────────────────────────────────
       buildSessionContext(opts) {
-        const { emotionalStateRow, predictions, skillCount, timeOfDay, dateKey } = opts;
+        const { emotionalStateRow, predictions, skillCount, timeOfDay, dateKey: dateKey3 } = opts;
         const focusAreas = [];
         const urgentSignals = [];
         const energyState = emotionalStateRow ? {
@@ -83490,7 +83806,7 @@ var init_activationPlanner = __esm({
           energyState,
           topPredictions,
           timeOfDay,
-          dateKey,
+          dateKey: dateKey3,
           activeSkillCount: skillCount
         };
       }
@@ -83647,7 +83963,8 @@ function isFastLaneDeflection(text2) {
     /\bneed(s)?\s+(the\s+)?full\s+(jarvis\s+)?workflow\b/i,
     /\b(full\s+(jarvis\s+)?workflow|full\s+orchestrator)\b/i,
     /\b(no|not|don't|do not|can't|cannot)\s+(have\s+)?access\s+to\s+tools?\b/i,
-    /\bfrom\s+this\s+fast\s+path\b/i
+    /\bfrom\s+this\s+fast\s+(path|lane|chat\s+lane)\b/i,
+    /\b(can't|cannot|can\s+not)\s+(generate|make|draw|render|create)\s+(the\s+)?(image|picture|photo|art|visual)\b/i
   ].some((pattern) => pattern.test(trimmed));
 }
 function getDeterministicFastReply(text2) {
@@ -83671,8 +83988,11 @@ var init_fastInteractive = __esm({
       /\b(email|gmail|inbox|calendar|schedule|meeting|remind|reminder|task|commitment|goal|memory|remember)\b/i,
       /\b(research|search|look up|browse|website|web|latest|current|recent|today|news|source|sources|price|weather|stock)\b/i,
       /\b(open|click|tap|type|swipe|screenshot|desktop|terminal|shell|file|folder|repo|code|build|deploy|railway)\b/i,
+      /\b(generate|make|draw|render|create)\b.*\b(image|picture|photo|art|visual|illustration|logo|poster|thumbnail)\b/i,
+      /\b(image|picture|photo|art|visual|illustration|logo|poster|thumbnail)\b.*\b(generate|make|draw|render|create)\b/i,
       /\b(android|phone|app|youtube|discord|slack|telegram settings|connected channel)\b/i,
-      /\b(create|send|post|delete|edit|update|change|install|download|upload)\b/i
+      /\b(create|send|post|delete|edit|update|change|install|download|upload)\b/i,
+      /\b(what\s+did\s+i\s+(just\s+)?(say|tell\s+you)|what\s+was\s+my\s+last\s+message|do\s+you\s+remember\s+what\s+i\s+(said|told\s+you)|you\s+(forgot|don't\s+remember|do\s+not\s+remember))\b/i
     ];
   }
 });
@@ -83845,6 +84165,44 @@ function logTelegramE2eReply2(probeId, reply) {
   const compactReply = reply.replace(/\s+/g, " ").trim().slice(0, 1800);
   console.log(`[TelegramE2E] id=${probeId} reply=${JSON.stringify(compactReply)}`);
 }
+async function persistFastCoachExchange(input) {
+  const { userId, channelName, channelLower, userText, reply, coachSessionAgentId, sdkSessionId } = input;
+  const userMsg = { id: Date.now().toString(), role: "user", content: userText };
+  const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
+  await logInteraction(userId, channelLower, "outbound", reply).catch(() => {
+  });
+  try {
+    const rows = await db.select().from(chatHistory).where(eq123(chatHistory.userId, userId)).limit(1);
+    const existing = rows[0]?.data || [];
+    const updatedChat = [assistantMsg, userMsg, ...existing].slice(0, 100);
+    await db.insert(chatHistory).values({ userId, data: updatedChat }).onConflictDoUpdate({
+      target: chatHistory.userId,
+      set: { data: updatedChat, updatedAt: /* @__PURE__ */ new Date() }
+    });
+  } catch (err2) {
+    console.error("[coach] fast-lane chat history persist failed:", err2);
+  }
+  try {
+    const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
+    const newUserMsg = { role: "user", content: userText };
+    const newAssistMsg = { role: "assistant", content: reply };
+    if (sdkSessionId) {
+      await appendToSession2(sdkSessionId, coachSessionAgentId, userId, [newUserMsg, newAssistMsg]);
+      return sdkSessionId;
+    }
+    return await initSession2(coachSessionAgentId, userId, [
+      {
+        role: "system",
+        content: `You are GamePlan Coach Jarvis responding via ${channelName}. This session includes fast-lane turns that must be treated as normal recent conversation.`
+      },
+      newUserMsg,
+      newAssistMsg
+    ]);
+  } catch (err2) {
+    console.error("[coach] fast-lane session persist failed:", err2);
+    return sdkSessionId;
+  }
+}
 async function runCoachAgent(input) {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
   const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
@@ -83858,11 +84216,20 @@ async function runCoachAgent(input) {
     if (deterministicReply) {
       console.log(`[Telegram] route=deterministic_fast_reply${telegramE2eLogSuffix}`);
       logTelegramE2eReply2(telegramE2eProbeId, deterministicReply);
+      const fastSessionId = await persistFastCoachExchange({
+        userId,
+        channelName,
+        channelLower,
+        userText,
+        reply: deterministicReply,
+        coachSessionAgentId,
+        sdkSessionId: input.sdkSessionId
+      });
       return {
         reply: deterministicReply,
         rawReply: deterministicReply,
         attachments: [],
-        sdkSessionId: input.sdkSessionId
+        sdkSessionId: fastSessionId
       };
     }
     try {
@@ -83877,11 +84244,20 @@ async function runCoachAgent(input) {
       console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}${telegramE2eLogSuffix}`);
       if (!isFastLaneDeflection(fastResult.finalAnswer)) {
         logTelegramE2eReply2(telegramE2eProbeId, fastResult.finalAnswer);
+        const fastSessionId = await persistFastCoachExchange({
+          userId,
+          channelName,
+          channelLower,
+          userText,
+          reply: fastResult.finalAnswer,
+          coachSessionAgentId,
+          sdkSessionId: input.sdkSessionId
+        });
         return {
           reply: fastResult.finalAnswer,
           rawReply: fastResult.finalAnswer,
           attachments: [],
-          sdkSessionId: input.sdkSessionId
+          sdkSessionId: fastSessionId
         };
       }
       console.log(`[Telegram] route=fast_orchestrator escalated_to_full reason=fast_deflection${telegramE2eLogSuffix}`);
@@ -84018,14 +84394,14 @@ async function runCoachAgent(input) {
   }) : "";
   let websiteCrawlBlock = websiteCrawlResult.status === "fulfilled" ? websiteCrawlResult.value : "";
   const localForDateKey = new Date((/* @__PURE__ */ new Date()).toLocaleString("en-US", { timeZone: userTimezone }));
-  const dateKey = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
+  const dateKey3 = `${localForDateKey.getFullYear()}-${String(localForDateKey.getMonth() + 1).padStart(2, "0")}-${String(localForDateKey.getDate()).padStart(2, "0")}`;
   let todayPlan = null;
   if (todayPlanRow.status === "fulfilled") {
     todayPlan = todayPlanRow.value[0]?.data || null;
   }
-  if (dateKey !== tentativeDateKey) {
+  if (dateKey3 !== tentativeDateKey) {
     try {
-      const planRows = await db.select().from(plans).where(and89(eq123(plans.userId, userId), eq123(plans.date, dateKey))).limit(1);
+      const planRows = await db.select().from(plans).where(and89(eq123(plans.userId, userId), eq123(plans.date, dateKey3))).limit(1);
       todayPlan = planRows[0]?.data || null;
     } catch (err2) {
       console.error("[coach] plan re-fetch (timezone reconcile) failed:", err2);
@@ -84048,10 +84424,10 @@ async function runCoachAgent(input) {
         }
       }
     }
-    if (dateKey !== tentativeDateKey) {
+    if (dateKey3 !== tentativeDateKey) {
       try {
         const reCalResults = await Promise.allSettled(
-          googleRaw.tokens.map((t) => getGoogleCalendarEvents(dateKey, void 0, void 0, t))
+          googleRaw.tokens.map((t) => getGoogleCalendarEvents(dateKey3, void 0, void 0, t))
         );
         calendarEvents = [];
         const seenIds2 = /* @__PURE__ */ new Set();
@@ -84256,7 +84632,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
     discordChannelId: discordChannelId || void 0,
     signal,
     state: {
-      dateKey,
+      dateKey: dateKey3,
       todayPlan,
       gmailMessageIds: gmailItems.map((i) => i.id).filter((id) => !!id),
       pendingAttachments: [],
@@ -86756,7 +87132,7 @@ var flagTaskNeedsAttention_exports = {};
 __export(flagTaskNeedsAttention_exports, {
   buildFlagTaskNeedsAttentionTool: () => buildFlagTaskNeedsAttentionTool
 });
-import { and as and98, eq as eq134 } from "drizzle-orm";
+import { and as and99, eq as eq135 } from "drizzle-orm";
 function buildFlagTaskNeedsAttentionTool(taskId) {
   return {
     name: "flag_task_needs_attention",
@@ -86778,22 +87154,22 @@ function buildFlagTaskNeedsAttentionTool(taskId) {
       }
       try {
         const [task] = await db.select().from(jarvisScheduledTasks).where(
-          and98(
-            eq134(jarvisScheduledTasks.id, taskId),
-            eq134(jarvisScheduledTasks.userId, ctx.userId)
+          and99(
+            eq135(jarvisScheduledTasks.id, taskId),
+            eq135(jarvisScheduledTasks.userId, ctx.userId)
           )
         ).limit(1);
         if (!task) {
           return { ok: false, content: `Scheduled task id=${taskId} not found.`, label: "Task not found" };
         }
         await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion: question }).where(
-          and98(
-            eq134(jarvisScheduledTasks.id, taskId),
-            eq134(jarvisScheduledTasks.userId, ctx.userId)
+          and99(
+            eq135(jarvisScheduledTasks.id, taskId),
+            eq135(jarvisScheduledTasks.userId, ctx.userId)
           )
         );
         try {
-          const [link] = await db.select().from(telegramLinks).where(eq134(telegramLinks.userId, ctx.userId));
+          const [link] = await db.select().from(telegramLinks).where(eq135(telegramLinks.userId, ctx.userId));
           if (link?.chatId) {
             const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
             await sendLongMessage2(
@@ -87245,7 +87621,7 @@ __export(primeIdentityAudit_exports, {
 });
 import * as fs26 from "fs/promises";
 import * as path33 from "path";
-import { eq as eq136, and as and100, desc as desc53, inArray as inArray11, gte as gte26 } from "drizzle-orm";
+import { eq as eq137, and as and101, desc as desc53, inArray as inArray11, gte as gte26 } from "drizzle-orm";
 function currentMonthKey() {
   const now = /* @__PURE__ */ new Date();
   const y = now.getUTCFullYear();
@@ -87255,10 +87631,10 @@ function currentMonthKey() {
 async function auditAlreadyRan(userId, monthKey) {
   try {
     const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-      and100(
-        eq136(proactiveScheduleLog.userId, userId),
-        eq136(proactiveScheduleLog.messageType, "prime_identity_audit"),
-        eq136(proactiveScheduleLog.sentDate, monthKey)
+      and101(
+        eq137(proactiveScheduleLog.userId, userId),
+        eq137(proactiveScheduleLog.messageType, "prime_identity_audit"),
+        eq137(proactiveScheduleLog.sentDate, monthKey)
       )
     ).limit(1);
     return rows.length > 0;
@@ -87284,9 +87660,9 @@ async function runPrimeIdentityAudit(userId) {
       label: interactionLog.label,
       createdAt: interactionLog.createdAt
     }).from(interactionLog).where(
-      and100(
-        eq136(interactionLog.userId, userId),
-        eq136(interactionLog.direction, "outbound"),
+      and101(
+        eq137(interactionLog.userId, userId),
+        eq137(interactionLog.direction, "outbound"),
         inArray11(interactionLog.channel, ["telegram", "app_chat"]),
         gte26(interactionLog.createdAt, cutoff)
       )
@@ -87480,29 +87856,29 @@ __export(decay_exports, {
   reinforceMemories: () => reinforceMemories,
   runDailyDecay: () => runDailyDecay
 });
-import { eq as eq138, sql as sql52, and as and102 } from "drizzle-orm";
+import { eq as eq139, sql as sql53, and as and103 } from "drizzle-orm";
 function utcDayKey2(d) {
   return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
 }
 async function runDailyDecay() {
   const result = { decremented: 0, deleted: 0 };
   try {
-    const dec = await db.execute(sql52`
+    const dec = await db.execute(sql53`
       UPDATE user_memories
-      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql52.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql52.raw(String(DECAY_STEP))} END)
+      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql53.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql53.raw(String(DECAY_STEP))} END)
       WHERE (
-        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql52.raw(String(STALE_AFTER_REF_DAYS))} days')
-        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql52.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql53.raw(String(STALE_AFTER_REF_DAYS))} days')
+        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql53.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
       )
       RETURNING id
     `);
     result.decremented = dec.rows?.length || 0;
-    const del = await db.execute(sql52`
+    const del = await db.execute(sql53`
       DELETE FROM user_memories
       WHERE relevance_score < ${DECAY_FLOOR}
         AND (
-          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql52.raw(String(STALE_AFTER_REF_DAYS))} days')
-          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql52.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql53.raw(String(STALE_AFTER_REF_DAYS))} days')
+          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql53.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
         )
       RETURNING id
     `);
@@ -87525,9 +87901,9 @@ async function reinforceMemories(userId, ids) {
   if (ids.length === 0) return;
   try {
     await db.update(userMemories).set({
-      relevanceScore: sql52`LEAST(100, ${userMemories.relevanceScore} + 5)`,
+      relevanceScore: sql53`LEAST(100, ${userMemories.relevanceScore} + 5)`,
       lastReferencedAt: /* @__PURE__ */ new Date()
-    }).where(and102(eq138(userMemories.userId, userId), sql52`${userMemories.id} = ANY(${ids})`));
+    }).where(and103(eq139(userMemories.userId, userId), sql53`${userMemories.id} = ANY(${ids})`));
   } catch (err2) {
     console.error("[MemoryDecay] reinforce failed:", err2);
   }
@@ -87552,7 +87928,7 @@ __export(scanner_exports, {
   runNervousSystemScan: () => runNervousSystemScan
 });
 import crypto12 from "crypto";
-import { eq as eq139, and as and103 } from "drizzle-orm";
+import { eq as eq140, and as and104 } from "drizzle-orm";
 function contentHash(userId, headline, url) {
   return crypto12.createHash("sha256").update(`${userId}::${headline.toLowerCase().trim()}::${url.toLowerCase().trim()}`).digest("hex").slice(0, 64);
 }
@@ -87611,7 +87987,7 @@ ${items}`;
   }
 }
 async function scanWatchTopic(userId, watch3) {
-  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq139(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
+  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq140(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
   let searchResults = [];
   try {
     const query = `${watch3.label} news latest`;
@@ -87690,7 +88066,7 @@ ${hit.url}` : ""}`;
       const deliveryResults = await notifyUser(userId, "nervous_system", msgText);
       const anyDelivered = deliveryResults.some((r) => r.result.ok && r.channel !== "in_app");
       if (anyDelivered) {
-        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and103(eq139(nervousSystemSignals.userId, userId), eq139(nervousSystemSignals.contentHash, hash)));
+        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and104(eq140(nervousSystemSignals.userId, userId), eq140(nervousSystemSignals.contentHash, hash)));
         logInteraction(userId, "notification", "outbound", msgText, "nervous_system").catch(() => {
         });
       }
@@ -87706,7 +88082,7 @@ async function runNervousSystemScan() {
   const now = Date.now();
   let watches = [];
   try {
-    watches = await db.select().from(nervousSystemWatches).where(eq139(nervousSystemWatches.active, true));
+    watches = await db.select().from(nervousSystemWatches).where(eq140(nervousSystemWatches.active, true));
   } catch (err2) {
     console.error("[NervousSystem] failed to load watches:", err2);
     return;
@@ -87762,7 +88138,7 @@ var peopleSync_exports = {};
 __export(peopleSync_exports, {
   syncPeopleFromGoogle: () => syncPeopleFromGoogle
 });
-import { eq as eq140, and as and104 } from "drizzle-orm";
+import { eq as eq141, and as and105 } from "drizzle-orm";
 function parseSender(from) {
   const angle = from.match(/^"?([^"<]+?)"?\s*<([^>]+)>$/);
   if (angle) return { name: angle[1].trim(), email: angle[2].trim().toLowerCase() };
@@ -87837,7 +88213,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
   for (const obs of byEmail.values()) {
     const upc = upcoming.get(obs.email);
     try {
-      const [existing] = await db.select().from(people).where(and104(eq140(people.userId, userId), eq140(people.email, obs.email))).limit(1);
+      const [existing] = await db.select().from(people).where(and105(eq141(people.userId, userId), eq141(people.email, obs.email))).limit(1);
       const relationshipHint = obs.source === "calendar" ? `calendar attendee \u2014 ${obs.context}` : `email correspondent \u2014 re: ${obs.context}`;
       if (existing) {
         await db.update(people).set({
@@ -87848,7 +88224,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
           nextInteractionAt: upc?.nearest ?? null,
           upcomingCount: upc?.count ?? 0,
           updatedAt: /* @__PURE__ */ new Date()
-        }).where(eq140(people.id, existing.id));
+        }).where(eq141(people.id, existing.id));
       } else {
         await db.insert(people).values({
           userId,
@@ -90057,7 +90433,7 @@ init_goalPlanHandoff();
 init_goalScheduler();
 init_weeklyJob();
 init_schedules();
-import { eq as eq137, and as and101, lt as lt9, lte as lte2, or as or5, sql as sql51, isNull as isNull6 } from "drizzle-orm";
+import { eq as eq138, and as and102, lt as lt9, lte as lte2, or as or5, sql as sql52, isNull as isNull6 } from "drizzle-orm";
 
 // server/discord/digest.ts
 init_db();
@@ -90264,6 +90640,245 @@ async function runBackfillEmbeddings() {
   }
 }
 
+// server/brain/maintenance.ts
+function dateKey(now) {
+  return now.toISOString().slice(0, 10);
+}
+var defaultDeps2 = {
+  async listUserIds() {
+    const [{ db: db2 }, schema] = await Promise.all([Promise.resolve().then(() => (init_db(), db_exports)), Promise.resolve().then(() => (init_schema(), schema_exports))]);
+    const users3 = await db2.select({ id: schema.users.id }).from(schema.users).catch(() => []);
+    return users3.map((user) => user.id);
+  },
+  async claimRun(userId, messageType, sentDate) {
+    const [{ db: db2 }, schema] = await Promise.all([Promise.resolve().then(() => (init_db(), db_exports)), Promise.resolve().then(() => (init_schema(), schema_exports))]);
+    const claimed = await db2.insert(schema.proactiveScheduleLog).values({ userId, messageType, sentDate }).onConflictDoNothing().returning({ id: schema.proactiveScheduleLog.id });
+    return claimed.length > 0;
+  },
+  async projectPeople(userId) {
+    const { projectPeopleIntoBrain: projectPeopleIntoBrain2 } = await Promise.resolve().then(() => (init_adapter(), adapter_exports));
+    return projectPeopleIntoBrain2(userId);
+  },
+  async projectMemories(userId) {
+    const { projectApprovedMemories: projectApprovedMemories2 } = await Promise.resolve().then(() => (init_adapter(), adapter_exports));
+    return projectApprovedMemories2(userId);
+  },
+  async refreshUserIndex(userId) {
+    const { refreshIndex: refreshIndex2 } = await Promise.resolve().then(() => (init_adapter(), adapter_exports));
+    return refreshIndex2({ userId, staleOnly: true, limit: 50, actorId: "brain-maintenance" });
+  },
+  log(message) {
+    console.log(message);
+  },
+  error(message, error) {
+    console.error(message, error);
+  }
+};
+async function runBrainMaintenanceForAllUsers(now = /* @__PURE__ */ new Date(), deps = defaultDeps2) {
+  const sentDate = dateKey(now);
+  const messageType = `gbrain:refresh_index:${sentDate}`;
+  const userIds = await deps.listUserIds();
+  const result = {
+    users: userIds.length,
+    processed: 0,
+    skipped: 0,
+    failed: 0,
+    peopleProjected: 0,
+    memoriesProjected: 0,
+    chunksEmbedded: 0
+  };
+  for (const userId of userIds) {
+    try {
+      if (!await deps.claimRun(userId, messageType, sentDate)) {
+        result.skipped += 1;
+        continue;
+      }
+      const people2 = await deps.projectPeople(userId);
+      const memories = await deps.projectMemories(userId);
+      const refreshed = await deps.refreshUserIndex(userId);
+      result.processed += 1;
+      result.peopleProjected += people2.projected;
+      result.memoriesProjected += memories.projected;
+      result.chunksEmbedded += refreshed.embedded;
+    } catch (err2) {
+      result.failed += 1;
+      deps.error(`[GBrainMaintenance] Failed for user ${userId}:`, err2);
+    }
+  }
+  deps.log(
+    `[GBrainMaintenance] Complete - users=${result.users} processed=${result.processed} skipped=${result.skipped} failed=${result.failed} peopleProjected=${result.peopleProjected} memoriesProjected=${result.memoriesProjected} chunksEmbedded=${result.chunksEmbedded}`
+  );
+  return result;
+}
+
+// server/memory/autoReview.ts
+import { and as and98, eq as eq134, sql as sql51 } from "drizzle-orm";
+var AUTO_KEEP_CATEGORIES = /* @__PURE__ */ new Set([
+  "work_patterns",
+  "communication_style",
+  "energy_rhythms",
+  "goals_history",
+  "blockers",
+  "accomplishments",
+  "preferences",
+  "fact"
+]);
+var AUTO_KEEP_SOURCES = /* @__PURE__ */ new Set([
+  "weekly_pattern",
+  "dream_cycle",
+  "chat",
+  "telegram",
+  "manual"
+]);
+var SENSITIVE_CONTENT_PATTERNS = [
+  /\b(password|passcode|api[\s_-]*key|secret|token|credential|private key|seed phrase|oauth)\b/i,
+  /\b(ssn|social security|credit card|debit card|routing number|bank account|tax return|irs)\b/i,
+  /\b(diagnosis|diagnosed|prescription|medication|therapy|therapist|medical|symptom)\b/i,
+  /\b(lawsuit|sue|attorney|lawyer|contract|nda|legal|compliance)\b/i,
+  /\b(husband|wife|girlfriend|boyfriend|partner|dating|married|divorced|pregnant)\b/i
+];
+var GENERIC_CONTENT_PATTERNS = [
+  /\b(user\s+(is|was|seems)\s+(busy|stressed|tired|overwhelmed|good|fine))\b/i,
+  /\b(currently|right now|today|tomorrow|this week)\b/i
+];
+function dateKey2(now) {
+  return now.toISOString().slice(0, 10);
+}
+function isSensitiveContent(content) {
+  return SENSITIVE_CONTENT_PATTERNS.some((pattern) => pattern.test(content));
+}
+function isTooGeneric(content) {
+  if (content.trim().length < 24) return true;
+  return GENERIC_CONTENT_PATTERNS.some((pattern) => pattern.test(content));
+}
+function evaluateMemoryAutoReviewDecision(memory) {
+  if (!memory.pendingReview || memory.reviewStatus !== "pending") {
+    return { action: "pending", reason: "not-pending-review" };
+  }
+  if (memory.tier !== "long_term") {
+    return { action: "pending", reason: "non-long-term" };
+  }
+  if (memory.memoryType !== "semantic" && memory.memoryType !== "procedural") {
+    return { action: "pending", reason: "non-durable-type" };
+  }
+  if (memory.confidence < 80) {
+    return { action: "pending", reason: "low-confidence" };
+  }
+  if (!AUTO_KEEP_CATEGORIES.has(memory.category)) {
+    return { action: "pending", reason: "sensitive-or-unsupported-category" };
+  }
+  if (!AUTO_KEEP_SOURCES.has(memory.sourceType)) {
+    return { action: "pending", reason: "unsupported-source" };
+  }
+  if (isSensitiveContent(memory.content)) {
+    return { action: "pending", reason: "sensitive-content" };
+  }
+  if (isTooGeneric(memory.content)) {
+    return { action: "pending", reason: "generic-content" };
+  }
+  return { action: "keep", reason: "high-confidence-low-risk" };
+}
+var defaultDeps3 = {
+  async listUserIds() {
+    const [{ db: db2 }, shared] = await Promise.all([Promise.resolve().then(() => (init_db(), db_exports)), Promise.resolve().then(() => (init_schema(), schema_exports))]);
+    const users3 = await db2.select({ id: shared.users.id }).from(shared.users).catch(() => []);
+    return users3.map((user) => user.id);
+  },
+  async claimRun(userId, messageType, sentDate) {
+    const [{ db: db2 }, shared] = await Promise.all([Promise.resolve().then(() => (init_db(), db_exports)), Promise.resolve().then(() => (init_schema(), schema_exports))]);
+    const claimed = await db2.insert(shared.proactiveScheduleLog).values({ userId, messageType, sentDate }).onConflictDoNothing().returning({ id: shared.proactiveScheduleLog.id });
+    return claimed.length > 0;
+  },
+  async listPendingMemories(userId) {
+    const [{ db: db2 }, shared] = await Promise.all([Promise.resolve().then(() => (init_db(), db_exports)), Promise.resolve().then(() => (init_schema(), schema_exports))]);
+    return db2.select({
+      id: shared.userMemories.id,
+      userId: shared.userMemories.userId,
+      content: shared.userMemories.content,
+      category: shared.userMemories.category,
+      confidence: shared.userMemories.confidence,
+      sourceType: shared.userMemories.sourceType,
+      tier: shared.userMemories.tier,
+      memoryType: shared.userMemories.memoryType,
+      pendingReview: shared.userMemories.pendingReview,
+      reviewStatus: shared.userMemories.reviewStatus
+    }).from(shared.userMemories).where(
+      and98(
+        eq134(shared.userMemories.userId, userId),
+        eq134(shared.userMemories.pendingReview, true),
+        eq134(shared.userMemories.reviewStatus, "pending")
+      )
+    ).limit(200);
+  },
+  async keepMemories(userId, memoryIds) {
+    if (memoryIds.length === 0) return 0;
+    const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+    const result = await db2.execute(sql51`
+      UPDATE user_memories
+      SET pending_review = FALSE, review_status = 'kept'
+      WHERE user_id = ${userId}
+        AND id = ANY(${memoryIds}::varchar[])
+        AND pending_review = TRUE
+        AND review_status = 'pending'
+      RETURNING id
+    `);
+    return (result.rows ?? []).length;
+  },
+  async markSoulStale(userId) {
+    const { markSoulStale: markSoulStale2 } = await Promise.resolve().then(() => (init_soul(), soul_exports));
+    await markSoulStale2(userId);
+  },
+  async projectApprovedMemories(userId) {
+    if (process.env.JARVIS_BRAIN_PROJECTION !== "1") return;
+    const { projectApprovedMemories: projectApprovedMemories2 } = await Promise.resolve().then(() => (init_adapter(), adapter_exports));
+    await projectApprovedMemories2(userId, 50);
+  },
+  log(message) {
+    console.log(message);
+  },
+  error(message, error) {
+    console.error(message, error);
+  }
+};
+async function runMemoryAutoReviewForAllUsers(now = /* @__PURE__ */ new Date(), deps = defaultDeps3) {
+  const sentDate = dateKey2(now);
+  const messageType = `memory:auto_review:${sentDate}`;
+  const userIds = await deps.listUserIds();
+  const result = {
+    users: userIds.length,
+    processed: 0,
+    skipped: 0,
+    failed: 0,
+    scanned: 0,
+    autoKept: 0
+  };
+  for (const userId of userIds) {
+    try {
+      if (!await deps.claimRun(userId, messageType, sentDate)) {
+        result.skipped += 1;
+        continue;
+      }
+      const pending = await deps.listPendingMemories(userId);
+      result.scanned += pending.length;
+      const keepIds = pending.filter((memory) => evaluateMemoryAutoReviewDecision(memory).action === "keep").map((memory) => memory.id);
+      const kept = await deps.keepMemories(userId, keepIds);
+      if (kept > 0) {
+        await deps.markSoulStale(userId);
+        await deps.projectApprovedMemories(userId);
+      }
+      result.processed += 1;
+      result.autoKept += kept;
+    } catch (err2) {
+      result.failed += 1;
+      deps.error(`[MemoryAutoReview] Failed for user ${userId}:`, err2);
+    }
+  }
+  deps.log(
+    `[MemoryAutoReview] Complete - users=${result.users} processed=${result.processed} skipped=${result.skipped} failed=${result.failed} scanned=${result.scanned} autoKept=${result.autoKept}`
+  );
+  return result;
+}
+
 // server/scheduler.ts
 init_jarvisScheduledTaskSemantics();
 var INTERACTION_LOG_RETENTION_DAYS = 90;
@@ -90280,7 +90895,7 @@ function sundayKey(d) {
 }
 async function runDiscordSchedules(now) {
   try {
-    const schedules = await db.select().from(discordChannelSchedules).where(eq137(discordChannelSchedules.enabled, true));
+    const schedules = await db.select().from(discordChannelSchedules).where(eq138(discordChannelSchedules.enabled, true));
     for (const schedule of schedules) {
       if (matchesCron(schedule.cronExpression, now)) {
         console.log(`[Scheduler] Firing Discord schedule "${schedule.label}" (${schedule.id})`);
@@ -90295,9 +90910,9 @@ async function runDiscordSchedules(now) {
 }
 async function runAgentLoops(now) {
   try {
-    const agents = await db.select().from(discordAgents).where(and101(
-      eq137(discordAgents.isActive, 1),
-      eq137(discordAgents.loopEnabled, 1)
+    const agents = await db.select().from(discordAgents).where(and102(
+      eq138(discordAgents.isActive, 1),
+      eq138(discordAgents.loopEnabled, 1)
     ));
     for (const agent of agents) {
       const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1e3;
@@ -90333,11 +90948,11 @@ ${prompt}`,
   if (result && agent.channelName) {
     await postToDiscordChannel2(agent.userId, agent.channelName, agent.channelId, result);
   }
-  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq137(discordAgents.id, agent.id));
+  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq138(discordAgents.id, agent.id));
 }
 async function runDailyDigests() {
   try {
-    const links = await db.select().from(channelLinks).where(eq137(channelLinks.channel, "discord"));
+    const links = await db.select().from(channelLinks).where(eq138(channelLinks.channel, "discord"));
     for (const link of links) {
       try {
         const meta = link.metadata;
@@ -90356,7 +90971,7 @@ async function runDailyDigests() {
 }
 async function cleanUpExpiredMemories() {
   try {
-    const result = await db.execute(sql51`
+    const result = await db.execute(sql52`
       DELETE FROM user_memories
       WHERE expires_at IS NOT NULL AND expires_at < NOW()
       RETURNING id
@@ -90379,7 +90994,7 @@ async function cleanUpExpiredAgentChatSessions() {
 async function cleanUpOldInteractionLogs() {
   try {
     const cutoff = new Date(Date.now() - INTERACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1e3);
-    const result = await db.execute(sql51`
+    const result = await db.execute(sql52`
       DELETE FROM interaction_log WHERE created_at < ${cutoff}
     `);
     const count2 = result.rowCount ?? 0;
@@ -90390,7 +91005,7 @@ async function cleanUpOldInteractionLogs() {
 }
 async function cleanUpOldBuildSessions() {
   try {
-    const result = await db.execute(sql51`
+    const result = await db.execute(sql52`
       DELETE FROM build_sessions
       WHERE
         (reminded = true  AND created_at < NOW() - INTERVAL '30 days')
@@ -90407,7 +91022,7 @@ async function cleanUpOldBuildSessions() {
 async function cleanUpOldActionLogs() {
   try {
     const cutoff = new Date(Date.now() - ACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1e3);
-    const result = await db.execute(sql51`
+    const result = await db.execute(sql52`
       DELETE FROM jarvis_action_log WHERE created_at < ${cutoff}
     `);
     const count2 = result.rowCount ?? 0;
@@ -90549,12 +91164,12 @@ async function runDueScheduledTasks(now) {
   let claimed = [];
   try {
     claimed = await db.update(jarvisScheduledTasks).set({ inProgressAt: now }).where(
-      and101(
+      and102(
         lte2(jarvisScheduledTasks.scheduledAt, now),
         isNull6(jarvisScheduledTasks.completedAt),
-        eq137(jarvisScheduledTasks.active, true),
-        eq137(jarvisScheduledTasks.taskKind, "jarvis_action"),
-        eq137(jarvisScheduledTasks.needsAttention, false),
+        eq138(jarvisScheduledTasks.active, true),
+        eq138(jarvisScheduledTasks.taskKind, "jarvis_action"),
+        eq138(jarvisScheduledTasks.needsAttention, false),
         or5(
           isNull6(jarvisScheduledTasks.inProgressAt),
           lt9(jarvisScheduledTasks.inProgressAt, staleThreshold)
@@ -90568,7 +91183,7 @@ async function runDueScheduledTasks(now) {
   for (const task of claimed) {
     handleDueTask(task, now).catch((err2) => {
       console.error(`[Scheduler] handleDueTask id=${task.id} failed:`, err2);
-      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id)).catch(() => {
+      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id)).catch(() => {
       });
     });
   }
@@ -90579,7 +91194,7 @@ async function appendVoiceCallKeyboardOnTelegram(userId, notificationType) {
     if (!activeChannels.includes("telegram")) return;
     const { buildVoiceCallKeyboard: buildVoiceCallKeyboard2, isTelegramConfigured: isTelegramConfigured2, sendMessage: tgSend } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
     if (!isTelegramConfigured2()) return;
-    const links = await db.select().from(telegramLinks).where(eq137(telegramLinks.userId, userId)).limit(1);
+    const links = await db.select().from(telegramLinks).where(eq138(telegramLinks.userId, userId)).limit(1);
     const chatId = links[0]?.chatId;
     if (!chatId) return;
     const keyboard = buildVoiceCallKeyboard2();
@@ -90593,7 +91208,7 @@ async function appendVoiceCallKeyboardOnTelegram(userId, notificationType) {
 async function handleDueTask(task, firedAt) {
   console.log(`[Scheduler] Firing scheduled task id=${task.id} title="${task.title}" shell=${!!task.shellCommand}`);
   if (!shouldExecuteScheduledTask(task)) {
-    await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id));
+    await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id));
     console.log(`[Scheduler] Skipping non-executable user task id=${task.id} title="${task.title}"`);
     return;
   }
@@ -90628,12 +91243,12 @@ ${relevant.map((m) => `- ${m.content}`).join("\n")}
     if (isRecurring) {
       const nextRun = computeNextRun(task.recurrence, firedAt);
       if (nextRun) {
-        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id));
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id));
       }
     } else {
-      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id));
     }
     let notifText;
     if (!result.ok && result.error) {
@@ -90683,20 +91298,20 @@ If you encounter a blocker or need the user's input to proceed, call the flag_ta
     } catch (err2) {
       agentReply = `\u26A0\uFE0F Scheduled task "${task.title}" encountered an error: ${err2 instanceof Error ? err2.message : String(err2)}`;
     }
-    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq137(jarvisScheduledTasks.id, task.id)).limit(1);
+    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq138(jarvisScheduledTasks.id, task.id)).limit(1);
     if (freshTask?.needsAttention) {
-      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id));
       console.log(`[Scheduler] Agent task id=${task.id} paused \u2014 needsAttention=true, skipping completion`);
     } else {
       if (isRecurring) {
         const nextRun = computeNextRun(task.recurrence, firedAt);
         if (nextRun) {
-          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id));
         } else {
-          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id));
         }
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq137(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq138(jarvisScheduledTasks.id, task.id));
       }
       if (agentReply) {
         try {
@@ -90847,9 +91462,7 @@ function startScheduler() {
     }
     if (h === 6 && m === 0) {
       console.log("[Scheduler] Running nightly embedding backfill...");
-      runBackfillEmbeddings().catch(
-        (err2) => console.error("[Scheduler] Embedding backfill failed:", err2)
-      );
+      runBackfillEmbeddings().catch((err2) => console.error("[Scheduler] Embedding backfill failed:", err2)).then(() => runMemoryAutoReviewForAllUsers(now)).catch((err2) => console.error("[Scheduler] Memory auto-review failed:", err2)).then(() => runBrainMaintenanceForAllUsers(now)).catch((err2) => console.error("[Scheduler] G-Brain maintenance failed:", err2));
     }
     await runDiscordSchedules(now);
     await runAgentLoops(now);
@@ -90865,11 +91478,11 @@ function startScheduler() {
 async function runDueAutonomousProjectSessions() {
   const now = /* @__PURE__ */ new Date();
   const due = await db.update(jarvisProjects).set({ nextRunAt: null }).where(
-    and101(
-      eq137(jarvisProjects.autonomousMode, true),
+    and102(
+      eq138(jarvisProjects.autonomousMode, true),
       or5(
-        eq137(jarvisProjects.status, "building"),
-        eq137(jarvisProjects.status, "waiting_for_input")
+        eq138(jarvisProjects.status, "building"),
+        eq138(jarvisProjects.status, "waiting_for_input")
       ),
       lte2(jarvisProjects.nextRunAt, now)
     )
@@ -90933,7 +91546,7 @@ async function runMorningPlanBuild() {
     try {
       const userTimezone = await getUserTimezone(user.id).catch(() => "America/New_York");
       const today = getLocalDateKey(schedulerNow, userTimezone);
-      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and101(eq137(plans.userId, user.id), eq137(plans.date, today)));
+      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and102(eq138(plans.userId, user.id), eq138(plans.date, today)));
       const existingTasks = existingPlan[0]?.data?.tasks || [];
       if (existingTasks.length > 0) {
         console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, merging daily command updates`);
@@ -91050,7 +91663,7 @@ async function runMorningPlanBuild() {
         console.error(`[Scheduler] prediction fetch failed for ${user.id}:`, predErr);
       }
       const topTask = newTasks[0];
-      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq137(userPreferences.userId, user.id));
+      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq138(userPreferences.userId, user.id));
       const currentPrefs = existingPrefs[0]?.data || {};
       const lastDreamCycle = currentPrefs.lastDreamCycle || null;
       const updatedPrefs = {
@@ -91215,10 +91828,10 @@ async function runDreamCycleForAllUsers(now) {
     const messageType = `dream_cycle:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and101(
-          eq137(proactiveScheduleLog.userId, user.id),
-          eq137(proactiveScheduleLog.messageType, messageType),
-          eq137(proactiveScheduleLog.sentDate, localDate)
+        and102(
+          eq138(proactiveScheduleLog.userId, user.id),
+          eq138(proactiveScheduleLog.messageType, messageType),
+          eq138(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -91236,7 +91849,7 @@ async function runDreamCycleForAllUsers(now) {
         );
       }
       try {
-        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq137(userPreferences.userId, user.id));
+        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq138(userPreferences.userId, user.id));
         const existingPrefs = existingPrefsRows[0]?.data || {};
         const updatedPrefsWithDream = {
           ...existingPrefs,
@@ -91288,10 +91901,10 @@ async function runDreamDeliveryForAllUsers(now) {
     const messageType = `dream_delivery:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and101(
-          eq137(proactiveScheduleLog.userId, user.id),
-          eq137(proactiveScheduleLog.messageType, messageType),
-          eq137(proactiveScheduleLog.sentDate, localDate)
+        and102(
+          eq138(proactiveScheduleLog.userId, user.id),
+          eq138(proactiveScheduleLog.messageType, messageType),
+          eq138(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -91383,7 +91996,7 @@ function startWorkerBoot() {
 }
 
 // server/boot/postListen.ts
-import { and as and107, eq as eq143 } from "drizzle-orm";
+import { and as and108, eq as eq144 } from "drizzle-orm";
 
 // server/heartbeat.ts
 init_db();
@@ -91404,7 +92017,7 @@ init_diagnosticsService();
 init_routedChatCompletion();
 import * as fs27 from "fs";
 import * as path34 from "path";
-import { eq as eq141, and as and105, sql as sql54, desc as desc54, gte as gte27 } from "drizzle-orm";
+import { eq as eq142, and as and106, sql as sql55, desc as desc54, gte as gte27 } from "drizzle-orm";
 var openai23 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 var CHECKLIST_PATH = path34.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
@@ -91510,7 +92123,7 @@ async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEm
     try {
       const emails = externalAttendees.map((a) => a.email.toLowerCase()).filter(Boolean);
       if (emails.length > 0) {
-        const peopleRows = await db.select().from(people).where(and105(eq141(people.userId, userId), sql54`lower(${people.email}) = ANY(${emails})`));
+        const peopleRows = await db.select().from(people).where(and106(eq142(people.userId, userId), sql55`lower(${people.email}) = ANY(${emails})`));
         if (peopleRows.length > 0) {
           peopleContext = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -91597,13 +92210,13 @@ async function runEmailDrafts(userId, chatId, token, now) {
   let urgentItems = [];
   try {
     urgentItems = await db.select().from(inboxItems).where(
-      and105(
-        eq141(inboxItems.userId, userId),
-        eq141(inboxItems.sourceType, "email"),
-        eq141(inboxItems.status, "pending"),
-        sql54`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
-        sql54`${inboxItems.jarvisReason} IS NOT NULL`,
-        sql54`${inboxItems.matchedRuleId} IS NULL`
+      and106(
+        eq142(inboxItems.userId, userId),
+        eq142(inboxItems.sourceType, "email"),
+        eq142(inboxItems.status, "pending"),
+        sql55`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
+        sql55`${inboxItems.jarvisReason} IS NOT NULL`,
+        sql55`${inboxItems.matchedRuleId} IS NULL`
       )
     ).limit(10);
   } catch (err2) {
@@ -91625,9 +92238,9 @@ async function runEmailDrafts(userId, chatId, token, now) {
     if (!sourceMessageId) continue;
     try {
       const existing = await db.select({ id: emailDrafts.id }).from(emailDrafts).where(
-        and105(
-          eq141(emailDrafts.userId, userId),
-          eq141(emailDrafts.sourceMessageId, sourceMessageId)
+        and106(
+          eq142(emailDrafts.userId, userId),
+          eq142(emailDrafts.sourceMessageId, sourceMessageId)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -91720,7 +92333,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   if (!await claimAndMark(userId, messageType, localKey)) return false;
   let tasks = [];
   try {
-    const planRows = await db.select().from(plans).where(and105(eq141(plans.userId, userId), eq141(plans.date, localKey))).limit(1);
+    const planRows = await db.select().from(plans).where(and106(eq142(plans.userId, userId), eq142(plans.date, localKey))).limit(1);
     const data = planRows[0]?.data || {};
     tasks = Array.isArray(data.tasks) ? data.tasks : [];
   } catch {
@@ -91728,7 +92341,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   let statsData = {};
   let statsRowExists = false;
   try {
-    const statsRows = await db.select().from(stats).where(eq141(stats.userId, userId)).limit(1);
+    const statsRows = await db.select().from(stats).where(eq142(stats.userId, userId)).limit(1);
     if (statsRows.length > 0) {
       statsData = statsRows[0].data || {};
       statsRowExists = true;
@@ -91767,7 +92380,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
           lastStreakDate: localKey
         },
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq141(stats.userId, userId));
+      }).where(eq142(stats.userId, userId));
       statsData = {
         ...statsData,
         streak: newStreak,
@@ -91839,7 +92452,7 @@ ${summary}`);
       d.setDate(d.getDate() + 1);
       return localDateKey3(d, tz);
     })();
-    const prefRows = await db.select().from(userPreferences).where(eq141(userPreferences.userId, userId)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq142(userPreferences.userId, userId)).limit(1);
     const prefData = prefRows[0]?.data || {};
     const tomorrowSeed = {
       date: tomorrowKey,
@@ -91848,7 +92461,7 @@ ${summary}`);
       observation,
       tomorrowPrompt
     };
-    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq141(userPreferences.userId, userId));
+    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq142(userPreferences.userId, userId));
     console.log(`[Heartbeat] tomorrow seed written for ${userId} (date: ${tomorrowKey})`);
   } catch (err2) {
     console.error(`[Heartbeat] tomorrow seed write failed (non-fatal):`, err2);
@@ -91887,11 +92500,11 @@ async function enqueueNewInboxItemsForPrime(userId) {
   let items = [];
   try {
     items = await db.select().from(inboxItems).where(
-      and105(
-        eq141(inboxItems.userId, userId),
-        eq141(inboxItems.status, "pending"),
-        sql54`${inboxItems.actedAt} IS NULL`,
-        sql54`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
+      and106(
+        eq142(inboxItems.userId, userId),
+        eq142(inboxItems.status, "pending"),
+        sql55`${inboxItems.actedAt} IS NULL`,
+        sql55`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
       )
     ).limit(CREW_BATCH_MAX);
   } catch (err2) {
@@ -92028,7 +92641,7 @@ async function runHeartbeatTick() {
     }
     let memories = [];
     try {
-      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq141(userMemories.userId, link.userId)).orderBy(desc54(userMemories.extractedAt)).limit(30);
+      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq142(userMemories.userId, link.userId)).orderBy(desc54(userMemories.extractedAt)).limit(30);
     } catch {
     }
     let actionsFired = 0;
@@ -92121,7 +92734,7 @@ async function runHeartbeatMemoryPass(userId, googleToken, now) {
   lastHeartbeatExtractAt[userId] = now.getTime();
   const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
   try {
-    const recentMessages = await db.select().from(telegramGroupMessages).where(and105(eq141(telegramGroupMessages.userId, userId), gte27(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc54(telegramGroupMessages.messageDate)).limit(20);
+    const recentMessages = await db.select().from(telegramGroupMessages).where(and106(eq142(telegramGroupMessages.userId, userId), gte27(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc54(telegramGroupMessages.messageDate)).limit(20);
     if (recentMessages.length > 0) {
       const text2 = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4e3);
       const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
@@ -92157,7 +92770,7 @@ async function runAgentHealthCheck() {
     const { logAgentEvent: logAgentEvent2 } = await Promise.resolve().then(() => (init_agentLogger(), agentLogger_exports));
     const now = /* @__PURE__ */ new Date();
     const THIRTY_MIN_MS = 30 * 60 * 1e3;
-    const allActive = await db.select().from(discordAgents3).where(eq141(discordAgents3.isActive, 1));
+    const allActive = await db.select().from(discordAgents3).where(eq142(discordAgents3.isActive, 1));
     const summaryByUser = /* @__PURE__ */ new Map();
     for (const agent of allActive) {
       const configIssues = [];
@@ -92183,7 +92796,7 @@ async function runAgentHealthCheck() {
           const newFailCount = (agent.heartbeatFailCount ?? 0) + 1;
           if (newFailCount >= 3) {
             await disableAgent2(agent.id);
-            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq141(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq142(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] auto-disabled stuck agent ${agent.name} (${agent.id}), fails=${newFailCount}`);
             logAgentEvent2({
               event: "agent_disabled_stuck",
@@ -92193,7 +92806,7 @@ async function runAgentHealthCheck() {
             });
             addSummary2(agent.userId, `\u{1F534} Agent "${agent.name}" was auto-disabled after ${newFailCount} missed heartbeats.`);
           } else {
-            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq141(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq142(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] agent ${agent.name} (${agent.id}) stale \u2014 fail ${newFailCount}/3`);
             logAgentEvent2({
               event: "heartbeat_check",
@@ -92204,7 +92817,7 @@ async function runAgentHealthCheck() {
             addSummary2(agent.userId, `\u{1F7E1} Agent "${agent.name}" missed heartbeat (${newFailCount}/3 before auto-disable).`);
           }
         } else {
-          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq141(discordAgents3.id, agent.id));
+          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq142(discordAgents3.id, agent.id));
         }
       }
       const agentPlatforms = agent.platforms ?? ["discord"];
@@ -92320,15 +92933,15 @@ init_outlook();
 init_interactionLog();
 init_actionLog();
 init_routedChatCompletion();
-import { eq as eq142, and as and106, gt as gt6, lt as lt10, inArray as inArray12 } from "drizzle-orm";
+import { eq as eq143, and as and107, gt as gt6, lt as lt10, inArray as inArray12 } from "drizzle-orm";
 var CURIOSITY_SCAN_LOCK_ID = 7654321098;
 var scannerStarted = false;
 var ALREADY_ASKED_WINDOW_DAYS = 30;
 async function getAlreadyAskedSourceIds(userId) {
   const windowStart = new Date(Date.now() - ALREADY_ASKED_WINDOW_DAYS * 24 * 60 * 60 * 1e3);
   const rows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and106(
-      eq142(proactiveQuestionsSent.userId, userId),
+    and107(
+      eq143(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, windowStart)
     )
   );
@@ -92347,16 +92960,16 @@ function extractSenderKey(sender) {
 var EMAIL_SOURCE_TYPES = ["email", "gmail", "outlook_email"];
 async function getRecentlySurfacedSenders(userId, since) {
   const sentRows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and106(
-      eq142(proactiveQuestionsSent.userId, userId),
+    and107(
+      eq143(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, since)
     )
   );
   if (sentRows.length === 0) return /* @__PURE__ */ new Set();
   const sentSourceIds = sentRows.map((r) => r.sourceId);
   const inboxRows = await db.select({ sender: inboxItems.sender }).from(inboxItems).where(
-    and106(
-      eq142(inboxItems.userId, userId),
+    and107(
+      eq143(inboxItems.userId, userId),
       inArray12(inboxItems.sourceId, sentSourceIds),
       inArray12(inboxItems.sourceType, [...EMAIL_SOURCE_TYPES])
     )
@@ -92372,7 +92985,7 @@ async function getUserMemories(userId) {
   return db.select({
     content: userMemories.content,
     category: userMemories.category
-  }).from(userMemories).where(eq142(userMemories.userId, userId));
+  }).from(userMemories).where(eq143(userMemories.userId, userId));
 }
 async function generateCuriosityQuestions(items, memories, userId) {
   if (items.length === 0) return [];
@@ -92835,11 +93448,11 @@ async function alertTelegramUsersWebhookDown() {
     let alertedCount = 0;
     for (const userId of uniqueUserIds) {
       const existing = await db.select({ id: inboxItems.id }).from(inboxItems).where(
-        and107(
-          eq143(inboxItems.userId, userId),
-          eq143(inboxItems.sourceType, "other"),
-          eq143(inboxItems.status, "pending"),
-          eq143(inboxItems.subject, "Telegram bot is offline")
+        and108(
+          eq144(inboxItems.userId, userId),
+          eq144(inboxItems.sourceType, "other"),
+          eq144(inboxItems.status, "pending"),
+          eq144(inboxItems.subject, "Telegram bot is offline")
         )
       ).limit(1);
       if (existing.length > 0) continue;

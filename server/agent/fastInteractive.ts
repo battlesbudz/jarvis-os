@@ -3,8 +3,11 @@ const FAST_REPLY_BLOCKERS = [
   /\b(email|gmail|inbox|calendar|schedule|meeting|remind|reminder|task|commitment|goal|memory|remember)\b/i,
   /\b(research|search|look up|browse|website|web|latest|current|recent|today|news|source|sources|price|weather|stock)\b/i,
   /\b(open|click|tap|type|swipe|screenshot|desktop|terminal|shell|file|folder|repo|code|build|deploy|railway)\b/i,
+  /\b(generate|make|draw|render|create)\b.*\b(image|picture|photo|art|visual|illustration|logo|poster|thumbnail)\b/i,
+  /\b(image|picture|photo|art|visual|illustration|logo|poster|thumbnail)\b.*\b(generate|make|draw|render|create)\b/i,
   /\b(android|phone|app|youtube|discord|slack|telegram settings|connected channel)\b/i,
   /\b(create|send|post|delete|edit|update|change|install|download|upload)\b/i,
+  /\b(what\s+did\s+i\s+(just\s+)?(say|tell\s+you)|what\s+was\s+my\s+last\s+message|do\s+you\s+remember\s+what\s+i\s+(said|told\s+you)|you\s+(forgot|don't\s+remember|do\s+not\s+remember))\b/i,
 ];
 
 export function isFastLaneDeflection(text: string): boolean {
@@ -14,7 +17,8 @@ export function isFastLaneDeflection(text: string): boolean {
     /\bneed(s)?\s+(the\s+)?full\s+(jarvis\s+)?workflow\b/i,
     /\b(full\s+(jarvis\s+)?workflow|full\s+orchestrator)\b/i,
     /\b(no|not|don't|do not|can't|cannot)\s+(have\s+)?access\s+to\s+tools?\b/i,
-    /\bfrom\s+this\s+fast\s+path\b/i,
+    /\bfrom\s+this\s+fast\s+(path|lane|chat\s+lane)\b/i,
+    /\b(can't|cannot|can\s+not)\s+(generate|make|draw|render|create)\s+(the\s+)?(image|picture|photo|art|visual)\b/i,
   ].some((pattern) => pattern.test(trimmed));
 }
 

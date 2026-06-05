@@ -122,6 +122,57 @@ function logTelegramE2eReply(probeId: string | null, reply: string): void {
 // Channel-agnostic coach pipeline shared by Telegram / WhatsApp / Slack /
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
+async function persistFastCoachExchange(input: {
+  userId: string;
+  channelName: string;
+  channelLower: string;
+  userText: string;
+  reply: string;
+  coachSessionAgentId: string;
+  sdkSessionId?: string;
+}): Promise<string | undefined> {
+  const { userId, channelName, channelLower, userText, reply, coachSessionAgentId, sdkSessionId } = input;
+  const userMsg = { id: Date.now().toString(), role: "user", content: userText };
+  const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
+
+  await logInteraction(userId, channelLower as any, "outbound", reply).catch(() => {});
+
+  try {
+    const rows = await db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1);
+    const existing = (rows[0]?.data as Array<{ id?: string; role: string; content: string }> | undefined) || [];
+    const updatedChat = [assistantMsg, userMsg, ...existing].slice(0, 100);
+    await db.insert(schema.chatHistory)
+      .values({ userId, data: updatedChat })
+      .onConflictDoUpdate({
+        target: schema.chatHistory.userId,
+        set: { data: updatedChat, updatedAt: new Date() },
+      });
+  } catch (err) {
+    console.error("[coach] fast-lane chat history persist failed:", err);
+  }
+
+  try {
+    const { initSession, appendToSession } = await import("../agent/providers/sessionStore");
+    const newUserMsg = { role: "user" as const, content: userText };
+    const newAssistMsg = { role: "assistant" as const, content: reply };
+    if (sdkSessionId) {
+      await appendToSession(sdkSessionId, coachSessionAgentId, userId, [newUserMsg, newAssistMsg]);
+      return sdkSessionId;
+    }
+    return await initSession(coachSessionAgentId, userId, [
+      {
+        role: "system" as const,
+        content: `You are GamePlan Coach Jarvis responding via ${channelName}. This session includes fast-lane turns that must be treated as normal recent conversation.`,
+      },
+      newUserMsg,
+      newAssistMsg,
+    ]);
+  } catch (err) {
+    console.error("[coach] fast-lane session persist failed:", err);
+    return sdkSessionId;
+  }
+}
+
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
   const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
@@ -140,11 +191,20 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     if (deterministicReply) {
       console.log(`[Telegram] route=deterministic_fast_reply${telegramE2eLogSuffix}`);
       logTelegramE2eReply(telegramE2eProbeId, deterministicReply);
+      const fastSessionId = await persistFastCoachExchange({
+        userId,
+        channelName,
+        channelLower,
+        userText,
+        reply: deterministicReply,
+        coachSessionAgentId,
+        sdkSessionId: input.sdkSessionId,
+      });
       return {
         reply: deterministicReply,
         rawReply: deterministicReply,
         attachments: [],
-        sdkSessionId: input.sdkSessionId,
+        sdkSessionId: fastSessionId,
       };
     }
     try {
@@ -159,11 +219,20 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
       console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}${telegramE2eLogSuffix}`);
       if (!isFastLaneDeflection(fastResult.finalAnswer)) {
         logTelegramE2eReply(telegramE2eProbeId, fastResult.finalAnswer);
+        const fastSessionId = await persistFastCoachExchange({
+          userId,
+          channelName,
+          channelLower,
+          userText,
+          reply: fastResult.finalAnswer,
+          coachSessionAgentId,
+          sdkSessionId: input.sdkSessionId,
+        });
         return {
           reply: fastResult.finalAnswer,
           rawReply: fastResult.finalAnswer,
           attachments: [],
-          sdkSessionId: input.sdkSessionId,
+          sdkSessionId: fastSessionId,
         };
       }
       console.log(`[Telegram] route=fast_orchestrator escalated_to_full reason=fast_deflection${telegramE2eLogSuffix}`);
