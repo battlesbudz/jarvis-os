@@ -183,6 +183,91 @@ export function registerProfileMemoryRoutes(app: Express): void {
     }
   });
 
+  // ── Memory Correction Route ────────────────────────────────────────────────
+  // Allows users to correct existing (non-pending) memories.
+  // The old content is preserved in correctionNote for audit trail.
+  app.patch("/api/memory/:id/correct", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const { correctedContent, reason } = req.body as { correctedContent: string; reason?: string };
+
+      if (!correctedContent || typeof correctedContent !== "string" || !correctedContent.trim()) {
+        return res.status(400).json({ error: "correctedContent is required" });
+      }
+
+      // Fetch existing memory to preserve old content
+      const [existing] = await db
+        .select({ content: userMemories.content, correctionNote: userMemories.correctionNote })
+        .from(userMemories)
+        .where(sql`${userMemories.id} = ${id} AND ${userMemories.userId} = ${userId}`)
+        .limit(1);
+
+      if (!existing) {
+        return res.status(404).json({ error: "Memory not found" });
+      }
+
+      // Build correction note: preserve old content with timestamp
+      const timestamp = new Date().toISOString();
+      const oldContentNote = `--- Corrected on ${timestamp} ---\nPrevious: ${existing.content}`;
+      const newCorrectionNote = existing.correctionNote
+        ? `${existing.correctionNote}\n\n${oldContentNote}`
+        : oldContentNote;
+
+      // Update memory with correction, mark as user-overridden
+      const result = await db.execute(sql`
+        UPDATE user_memories
+        SET content = ${correctedContent.trim()},
+            corrected_at = NOW(),
+            correction_note = ${newCorrectionNote},
+            user_override = TRUE,
+            review_status = 'edited'
+        WHERE id = ${id} AND user_id = ${userId}
+        RETURNING id
+      `);
+
+      if ((result.rows ?? []).length === 0) {
+        return res.status(404).json({ error: "Memory not found" });
+      }
+
+      // Mark SOUL as stale since memory changed
+      markSoulStale(userId).catch(() => {});
+
+      return res.json({ ok: true, message: "Memory corrected successfully" });
+    } catch (error) {
+      console.error("Error correcting memory:", error);
+      res.status(500).json({ error: "Failed to correct memory" });
+    }
+  });
+
+  // ── Memory Deletion Route ─────────────────────────────────────────────────
+  // Allows users to delete memories with audit trail.
+  app.delete("/api/memory/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+
+      const result = await db.execute(sql`
+        UPDATE user_memories
+        SET review_status = 'deleted'
+        WHERE id = ${id} AND user_id = ${userId}
+        RETURNING id
+      `);
+
+      if ((result.rows ?? []).length === 0) {
+        return res.status(404).json({ error: "Memory not found" });
+      }
+
+      markSoulStale(userId).catch(() => {});
+      return res.json({ ok: true, message: "Memory deleted" });
+    } catch (error) {
+      console.error("Error deleting memory:", error);
+      res.status(500).json({ error: "Failed to delete memory" });
+    }
+  });
+
   app.patch("/api/memories/pending/approve-all", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
@@ -746,6 +831,81 @@ export function registerProfileMemoryRoutes(app: Express): void {
     } catch (error) {
       console.error("Error getting dream source memories:", error);
       return res.status(500).json({ error: "Failed to get source memories" });
+    }
+  });
+
+  // ── Pattern Calibration Route ───────────────────────────────────────────────
+  // Allows users to mark a pattern as correct/wrong to calibrate future suggestions.
+  // Updates the weekly_insights patterns array with userOverride flag.
+  app.patch("/api/weekly-insights/:id/calibrate", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const { patternIndex, feedback, note } = req.body as {
+        patternIndex: number;
+        feedback: "correct" | "wrong" | "partially_correct";
+        note?: string;
+      };
+
+      if (![0, 1, 2, 3, 4].includes(patternIndex)) {
+        return res.status(400).json({ error: "patternIndex must be 0-4" });
+      }
+      if (!["correct", "wrong", "partially_correct"].includes(feedback)) {
+        return res.status(400).json({ error: "feedback must be correct, wrong, or partially_correct" });
+      }
+
+      // Fetch existing weekly insight
+      const [insight] = await db
+        .select({ patterns: schema.weeklyInsights.patterns })
+        .from(schema.weeklyInsights)
+        .where(and(
+          eq(schema.weeklyInsights.id, id),
+          eq(schema.weeklyInsights.userId, userId)
+        ))
+        .limit(1);
+
+      if (!insight) {
+        return res.status(404).json({ error: "Weekly insight not found" });
+      }
+
+      const patterns = [...(insight.patterns || [])];
+      if (patternIndex >= patterns.length) {
+        return res.status(400).json({ error: "Pattern index out of bounds" });
+      }
+
+      // Apply calibration: reduce confidence if wrong, keep if correct
+      const calibratedPattern = { ...patterns[patternIndex] };
+      calibratedPattern.userOverride = true;
+      calibratedPattern.userNote = note || null;
+      calibratedPattern.calibratedAt = new Date().toISOString();
+
+      if (feedback === "wrong") {
+        calibratedPattern.confidence = 0.1; // Mark as very low confidence
+      } else if (feedback === "partially_correct") {
+        calibratedPattern.confidence = 0.5; // Mark as medium confidence
+      }
+      // "correct" keeps original confidence
+
+      patterns[patternIndex] = calibratedPattern;
+
+      // Update the weekly insight with calibrated patterns
+      await db
+        .update(schema.weeklyInsights)
+        .set({ patterns })
+        .where(and(
+          eq(schema.weeklyInsights.id, id),
+          eq(schema.weeklyInsights.userId, userId)
+        ));
+
+      return res.json({
+        ok: true,
+        message: `Pattern ${patternIndex} calibrated as ${feedback}`,
+        updatedPattern: calibratedPattern,
+      });
+    } catch (error) {
+      console.error("Error calibrating pattern:", error);
+      res.status(500).json({ error: "Failed to calibrate pattern" });
     }
   });
 

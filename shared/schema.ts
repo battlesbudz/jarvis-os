@@ -213,6 +213,12 @@ export const userMemories = pgTable("user_memories", {
   // review_status: "active" (default, fully live) | "pending" (awaiting review) | "kept" | "edited" | "discarded"
   pendingReview: boolean("pending_review").notNull().default(false),
   reviewStatus: varchar("review_status").notNull().default("active"),
+  // Memory correction tracking (Phase 3 completion work)
+  // When a user corrects a memory, we preserve the old content and track the correction
+  correctedAt: timestamp("corrected_at"),
+  correctionNote: text("correction_note"),
+  // User override flag — set when user corrects a memory's confidence or accuracy
+  userOverride: boolean("user_override").notNull().default(false),
 });
 
 // Biomimetic memory tiers — mirrors human memory architecture.
@@ -394,6 +400,12 @@ export interface WeeklyPattern {
   observation: string;
   evidence: string[];
   confidence: number;
+  /** Set when user overrides/calibrates the pattern confidence */
+  userOverride?: boolean;
+  /** User's note explaining the correction */
+  userNote?: string;
+  /** When user calibrated this pattern */
+  calibratedAt?: string;
 }
 
 // Phase 4 — Sunday pattern recognition output. The weekly agent job
@@ -2080,3 +2092,43 @@ export const capabilityGaps = pgTable("capability_gaps", {
 
 export type CapabilityGap = typeof capabilityGaps.$inferSelect;
 export type InsertCapabilityGap = typeof capabilityGaps.$inferInsert;
+
+// ── Daemon Audit Log ───────────────────────────────────────────────────────────
+// Durable audit trail for all daemon actions (desktop and Android).
+// Every action is logged with user, daemon type, action, args, result, and timestamp.
+// This enables security review, compliance, and recovery tracing.
+
+export const daemonAuditLog = pgTable("daemon_audit_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** "desktop" | "android" */
+  daemonType: varchar("daemon_type").notNull(),
+  /** The operation performed (e.g. "shell", "android_tap", "file_write") */
+  action: varchar("action").notNull(),
+  /** Arguments passed to the operation (JSON) */
+  argsJson: jsonb("args_json").notNull().default(sql`'{}'::jsonb`),
+  /** "success" | "denied" | "failed" | "timeout" */
+  result: varchar("result").notNull(),
+  /** Human-readable reason for denial or failure */
+  reason: text("reason"),
+  /** Client IP address when available */
+  ipAddress: varchar("ip_address"),
+  /** The daemon's hostname or device identifier */
+  daemonHost: varchar("daemon_host"),
+  /** Whether approval was obtained before this action */
+  approvalObtained: boolean("approval_obtained").default(false),
+  /** ID of the approval gate if one was used */
+  gateId: varchar("gate_id"),
+  /** Duration in milliseconds */
+  durationMs: integer("duration_ms"),
+  /** Job ID if this action was triggered by a background job */
+  jobId: varchar("job_id").references(() => agentJobs.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("daemon_audit_user_idx").on(table.userId),
+  index("daemon_audit_daemon_type_idx").on(table.daemonType),
+  index("daemon_audit_action_idx").on(table.action),
+  index("daemon_audit_created_idx").on(table.createdAt),
+]);
+
+export type DaemonAuditLog = typeof daemonAuditLog.$inferSelect;

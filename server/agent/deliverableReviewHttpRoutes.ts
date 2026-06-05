@@ -395,4 +395,105 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       res.status(500).json({ error: "Failed to save to Drive" });
     }
   });
+
+  // ── Revision Comparison Endpoint ────────────────────────────────────────────
+  // Returns the full revision chain for a deliverable for side-by-side comparison.
+  app.get("/api/deliverables/:id/revisions", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+
+      // Fetch the target deliverable
+      const [target] = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+        .limit(1);
+
+      if (!target) {
+        return res.status(404).json({ error: "Deliverable not found" });
+      }
+
+      const revisions: typeof schema.deliverables.$inferSelect[] = [target];
+      const meta = (target.meta || {}) as Record<string, unknown>;
+
+      // Follow revision chain: look for deliverables that reference this one as revisionOfDeliverableId
+      let currentId = id;
+      for (let i = 0; i < 10; i++) { // Max 10 revisions to prevent infinite loops
+        const [revisionOf] = await db
+          .select()
+          .from(schema.deliverables)
+          .where(and(
+            eq(schema.deliverables.userId, userId),
+            sql`${schema.deliverables.meta}->>'revisionOfDeliverableId' = ${currentId}`
+          ))
+          .orderBy(schema.deliverables.createdAt)
+          .limit(1);
+
+        if (!revisionOf || revisions.includes(revisionOf)) break;
+        revisions.push(revisionOf);
+        currentId = revisionOf.id;
+      }
+
+      // Also check for deliverables where this deliverable is the revisionOf
+      // (i.e., we need to find all children that reference this one)
+      const children = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(
+          eq(schema.deliverables.userId, userId),
+          sql`${schema.deliverables.meta}->>'revisionOfDeliverableId' = ${id}`
+        ))
+        .orderBy(schema.deliverables.createdAt);
+
+      // Include original if this deliverable is a revision
+      const originalId = meta.revisionOfDeliverableId as string | undefined;
+      let original: typeof schema.deliverables.$inferSelect | null = null;
+      if (originalId) {
+        const [orig] = await db
+          .select()
+          .from(schema.deliverables)
+          .where(and(eq(schema.deliverables.id, originalId), eq(schema.deliverables.userId, userId)))
+          .limit(1);
+        if (orig) original = orig;
+      }
+
+      // Build comparison data
+      const comparison = {
+        current: {
+          id: target.id,
+          title: target.title,
+          body: target.body,
+          createdAt: target.createdAt,
+          status: target.status,
+          isCurrent: true,
+        },
+        original: original ? {
+          id: original.id,
+          title: original.title,
+          body: original.body,
+          createdAt: original.createdAt,
+          status: original.status,
+          isCurrent: false,
+        } : null,
+        revisions: revisions
+          .filter(r => r.id !== id) // Exclude self from revisions list
+          .map(r => ({
+            id: r.id,
+            title: r.title,
+            body: r.body,
+            createdAt: r.createdAt,
+            status: r.status,
+            instructions: (r.meta as Record<string, unknown>)?.revisionInstructions || null,
+          })),
+        totalCount: revisions.length + (original ? 1 : 0),
+      };
+
+      res.json({ ok: true, comparison });
+    } catch (err) {
+      console.error("Error fetching revision comparison:", err);
+      res.status(500).json({ error: "Failed to fetch revisions" });
+    }
+  });
 }

@@ -11,6 +11,7 @@ import {
   type DaemonOp,
 } from "../../daemon/bridge";
 import { checkAndIncrementScreenshotBudget } from "./daemonShellTool";
+import { logDaemonAction, sanitizeArgs, extractActionName } from "../../daemon/auditLogger";
 
 const DESKTOP_ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen"] as const;
 const ANDROID_ACTIONS: readonly string[] = [
@@ -194,10 +195,30 @@ Always confirm with the user before tap/type/swipe actions and before android_no
     // ── Android actions ────────────────────────────────────────────────────
     if (isAndroidAction(rawAction)) {
       if (!androidActive) {
+        // Log denied attempt when daemon not active
+        logDaemonAction({
+          userId: ctx.userId,
+          daemonType: "android",
+          action: rawAction,
+          args: args,
+          result: "denied",
+          reason: "No Android daemon connected",
+          jobId: ctx.jobId,
+        }).catch(() => {});
         return { ok: false, content: JSON.stringify({ ok: false, error: "No Android daemon connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device)." }) };
       }
       const permKey = androidPermKey(rawAction);
       if (permKey && !(await isAndroidDaemonActionAllowed(ctx.userId, permKey))) {
+        // Log permission denied
+        logDaemonAction({
+          userId: ctx.userId,
+          daemonType: "android",
+          action: rawAction,
+          args: args,
+          result: "denied",
+          reason: `Permission '${permKey}' not granted`,
+          jobId: ctx.jobId,
+        }).catch(() => {});
         return { ok: false, content: JSON.stringify({ ok: false, error: `Android action '${rawAction}' is not permitted. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.` }) };
       }
 
@@ -319,7 +340,22 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           ? Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000) + 20000
           : rawAction === "android_location_get" ? 20000 : 30000;
 
+      const startTime = Date.now();
       const result = await sendDaemonOp(ctx.userId, op, opTimeout);
+      const durationMs = Date.now() - startTime;
+
+      // Log Android daemon action to audit trail
+      logDaemonAction({
+        userId: ctx.userId,
+        daemonType: "android",
+        action: rawAction,
+        args: { ...args, action: rawAction, op: sanitizeArgs(op as unknown as DaemonOp) },
+        result: result.ok ? "success" : "failed",
+        reason: result.ok ? undefined : result.error,
+        approvalObtained: Boolean(args.approved),
+        durationMs,
+        jobId: ctx.jobId,
+      }).catch(() => {});
 
       // Translate structured error codes from the daemon into user-friendly Fix instructions
       if (!result.ok && typeof result.error === "string") {
@@ -357,11 +393,31 @@ Always confirm with the user before tap/type/swipe actions and before android_no
     }
 
     if (!desktopActive) {
+      // Log denied attempt when daemon not active
+      logDaemonAction({
+        userId: ctx.userId,
+        daemonType: "desktop",
+        action: rawAction,
+        args: args,
+        result: "denied",
+        reason: "No desktop daemon connected",
+        jobId: ctx.jobId,
+      }).catch(() => {});
       return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${rawAction}' requires the Desktop Daemon, which is not connected. Ask the user to install and pair the desktop daemon (Profile → Connected Channels → Desktop Daemon).` }) };
     }
 
     const action: DaemonAction = rawAction;
     if (!(await isDaemonActionAllowed(ctx.userId, action))) {
+      // Log permission denied
+      logDaemonAction({
+        userId: ctx.userId,
+        daemonType: "desktop",
+        action: rawAction,
+        args: args,
+        result: "denied",
+        reason: `Permission not granted for '${action}'`,
+        jobId: ctx.jobId,
+      }).catch(() => {});
       return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${action}' is not permitted on this user's daemon. Ask the user to enable it in Profile → Connected Channels → Desktop Daemon → Permissions.` }) };
     }
     let op: DaemonOp;
@@ -390,7 +446,22 @@ Always confirm with the user before tap/type/swipe actions and before android_no
     // desktop_read_screen can take up to 30s for OCR — give bridge a 40s window so
     // it never times out before the daemon finishes. desktop_screenshot is faster (20s).
     const screenTimeout = action === "desktop_read_screen" ? 40000 : 20000;
+    const startTime = Date.now();
     const result = await sendDaemonOp(ctx.userId, op, action === "shell" ? 30000 : isScreenOp ? screenTimeout : 10000);
+    const durationMs = Date.now() - startTime;
+
+    // Log Desktop daemon action to audit trail
+    logDaemonAction({
+      userId: ctx.userId,
+      daemonType: "desktop",
+      action: rawAction,
+      args: { ...args, action: rawAction, op: sanitizeArgs(op as unknown as DaemonOp) },
+      result: result.ok ? "success" : "failed",
+      reason: result.ok ? undefined : result.error,
+      durationMs,
+      jobId: ctx.jobId,
+    }).catch(() => {});
+
     // Screen ops return base64 PNG — do not truncate or the base64 will be corrupt.
     // For all other ops keep the existing 8 000-char safety cap.
     const serialised = JSON.stringify(result);

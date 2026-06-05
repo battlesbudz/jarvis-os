@@ -1545,13 +1545,32 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
         ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
 
-      /** Persist progress state into agent_jobs.input (merge, not replace). */
-      const persistProgress = async (updates: Record<string, unknown>): Promise<void> => {
+      /** Persist progress state into agent_jobs.input (merge, not replace) + emit worker progress event. */
+      const persistProgress = async (updates: Record<string, unknown>, progressNote?: string): Promise<void> => {
         const merged = { ...jobInput, ...updates };
         await db.update(schema.agentJobs)
           .set({ input: merged })
           .where(eq(schema.agentJobs.id, job.id));
         Object.assign(jobInput, updates);
+
+        // Emit worker progress event for real-time UI visibility
+        if (progressNote) {
+          const currentStepIndex = typeof jobInput.currentStepIndex === "number" ? jobInput.currentStepIndex : 0;
+          const totalSteps = plan.length;
+          const percent = Math.round((currentStepIndex / totalSteps) * 100);
+
+          await appendWorkerProgressToJob({
+            jobId: job.id,
+            agentType: job.agentType,
+            title: job.title,
+            input: jobInput,
+            currentStep: progressNote,
+            percent,
+            metadata: { currentStepIndex, totalSteps, ...updates },
+          }).catch((err) => {
+            console.warn(`[JobQueue] worker progress event failed for ${job.id}:`, err);
+          });
+        }
       };
 
       /** Fire a brief progress notification to the origin channel. */
@@ -1581,7 +1600,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
             prompt: `Research context for building this Jarvis feature: ${featureDescription}`,
             input: { parentJobId: job.id, originChannel, originDiscordChannelId },
           })).id;
-          await persistProgress({ researchJobId });
+          await persistProgress({ researchJobId }, "Research phase started");
           await sendBuildPing(`🔍 Background research queued (job ${researchJobId.slice(0, 8)}…) — waiting up to 5 min`);
         }
 
@@ -1609,7 +1628,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
             .limit(1);
           if (deliv?.body) {
             researchBody = deliv.body.slice(0, 4000);
-            await persistProgress({ researchBody });
+            await persistProgress({ researchBody }, "Research phase complete — planning implementation");
             console.log(`[JobQueue] build_feature job ${job.id} — research complete (${researchBody.length} chars)`);
           }
         } else {
@@ -1694,7 +1713,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           }];
         }
 
-        await persistProgress({ plan, currentStepIndex: 0, completedSteps: [] });
+        await persistProgress({ plan, currentStepIndex: 0, completedSteps: [] }, "Implementation plan created — starting build");
         console.log(`[JobQueue] build_feature job ${job.id} — plan with ${plan.length} step(s)`);
         await sendBuildPing(`📋 Build plan ready (${plan.length} step${plan.length === 1 ? "" : "s"}) — beginning implementation`);
       }
@@ -1843,7 +1862,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           }
         }
 
-        // d. Step complete — persist progress
+        // d. Step complete — persist progress + emit worker runtime event
         completedSteps.push({
           step_id: step.step_id,
           label: step.label,
@@ -1852,12 +1871,15 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         });
 
         const nextStepIdx = stepIdx + 1;
+        const stepProgressNote = stepPassed
+          ? `Step ${stepIdx + 1}/${plan.length} complete: "${step.label}"`
+          : `Step ${stepIdx + 1}/${plan.length} failed: "${step.label}"`;
         await persistProgress({
           currentStepIndex: nextStepIdx,
           completedSteps,
           verificationPassed: stepPassed,
           verificationRetries: stepRetries,
-        });
+        }, stepProgressNote);
 
         // If all retries exhausted and step still failed → abort the build
         if (!stepPassed) {
@@ -2179,6 +2201,16 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             console.log(
               `[JobQueue] deep_research ${job.id} — Phase 1 complete: ${phase1Bodies.length} results, ${priorContext.length} chars of context`,
             );
+            // Emit worker progress event for Phase 1 completion
+            await appendWorkerProgressToJob({
+              jobId: job.id,
+              agentType: "deep_research",
+              title: job.title,
+              input: jobInput,
+              currentStep: `Phase 1 complete: ${phase1Bodies.length} prerequisite research results`,
+              percent: 40,
+              metadata: { phase: 1, resultCount: phase1Bodies.length },
+            }).catch(() => {});
           } else {
             console.warn(`[JobQueue] deep_research ${job.id} — Phase 1 produced no usable context, proceeding`);
           }
@@ -2452,6 +2484,26 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // Attach verification outcome to meta so the UI can surface a badge.
     sub.meta.verificationPassed = verificationPassed;
     sub.meta.verificationRetries = verificationRetries;
+
+    // Attach synthesis trace for multi-agent visibility
+    // This shows users when Jarvis synthesized results from sub-agents
+    const synthesisTrace = {
+      synthesizedAt: new Date().toISOString(),
+      synthesisMethod: verificationRetries > 0 ? "iterative" : "single_pass",
+      primaryAgent: "JobQueue orchestrator",
+      subAgents: [
+        {
+          agentType: job.agentType,
+          task: job.prompt.slice(0, 200),
+          outputSummary: sub.summary,
+          turns: sub.turns,
+          toolCallsCount: sub.toolCallsCount,
+        },
+      ],
+      verificationAttempts: verificationRetries + 1,
+      verificationPassed: verificationPassed ?? null,
+    };
+    sub.meta.synthesisTrace = synthesisTrace;
     // ─────────────────────────────────────────────────────────────────────────
 
     if (job.agentType === "research" && !researchHasSourceUrls(sub.body)) {
