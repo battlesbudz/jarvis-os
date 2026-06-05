@@ -1,6 +1,22 @@
+/**
+ * hitlApproval.ts — SDK Human-in-the-Loop Approval (Jarvis-controlled)
+ *
+ * ⚠️ DEPRECATED: SDK no longer has its own approval system.
+ *
+ * All SDK approval requests go through Jarvis's approval system:
+ * - SDK cannot create its own approval gates
+ * - SDK cannot have independent approval receipts
+ * - All approval flows through Jarvis's agentApproval.ts
+ *
+ * This file is kept for backwards compatibility but all approvals
+ * should go through server/agent/sdkGateway.ts.
+ *
+ * @deprecated Use server/agent/sdkGateway.ts instead
+ */
+
 import type { AgentSdkRunStore } from "./runStore";
 
-export const AGENT_SDK_HITL_AGENT_ID = "jarvis-agent-sdk-hitl";
+export const AGENT_SDK_HITL_AGENT_ID = "jarvis-sdk-gateway"; // Jarvis owns approval
 
 export interface AgentSdkPendingApproval {
   runId: string;
@@ -38,10 +54,19 @@ function approvalNotificationOrigin(originChannel: string): string {
   return originChannel.toLowerCase().startsWith("telegram") ? originChannel : "telegram";
 }
 
+/**
+ * @deprecated SDK no longer creates its own approval gates
+ * All approval requests should go through Jarvis's sdkGateway
+ */
 export async function requestTelegramApprovalForPendingCall(
   pending: AgentSdkPendingApproval,
   deps: HitlApprovalDeps,
 ): Promise<string> {
+  console.warn(
+    "[SDK HITL] DEPRECATED: SDK approval should go through server/agent/sdkGateway.ts. " +
+    "Jarvis owns the approval system, not the SDK."
+  );
+
   const args = pending.arguments;
   const to = String(args.to || "");
   const subject = String(args.subject || "");
@@ -55,6 +80,7 @@ export async function requestTelegramApprovalForPendingCall(
     body.slice(0, 1200),
   ].join("\n");
 
+  // All approvals go through Jarvis's system (not SDK's own system)
   const gate = await deps.requestApproval({
     agentId: AGENT_SDK_HITL_AGENT_ID,
     userId: pending.userId,
@@ -64,10 +90,10 @@ export async function requestTelegramApprovalForPendingCall(
       __agentSdkRunId: pending.runId,
       __agentSdkToolCallId: pending.toolCallId,
       __jarvisAgentSdkRun: true,
-      __agentSdkPrototype: true,
+      // Removed __agentSdkPrototype — Jarvis owns approval
     },
     description,
-    initiatedBy: "user",
+    initiatedBy: "jarvis",  // Jarvis initiates, not SDK
   });
 
   const record = await deps.store.load(pending.runId);
@@ -82,7 +108,7 @@ export async function requestTelegramApprovalForPendingCall(
   await deps.notifyApprovalRequest({
     gateId: gate.id,
     agentId: AGENT_SDK_HITL_AGENT_ID,
-    agentName: "Jarvis Agent SDK",
+    agentName: "Jarvis SDK Gateway",
     userId: pending.userId,
     toolName: pending.toolName,
     description,

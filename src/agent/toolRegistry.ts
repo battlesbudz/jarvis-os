@@ -1,24 +1,31 @@
-import { z } from "zod/v4";
+/**
+ * toolRegistry.ts — SDK Tool Registry (Jarvis-controlled)
+ *
+ * ⚠️ DEPRECATED: SDK no longer has its own tool registry.
+ *
+ * All SDK tool execution goes through Jarvis's tool policy:
+ * - SDK cannot self-register tools
+ * - SDK cannot execute tools outside Jarvis's allowed list
+ * - SDK tool calls go through Jarvis's toolRiskScoring
+ * - SDK tool calls go through Jarvis's approval gates
+ *
+ * This file is kept for backwards compatibility but all tools
+ * are now executed through the Jarvis SDK Gateway.
+ *
+ * @deprecated Use server/agent/sdkGateway.ts instead
+ */
+
 import type { AgentSdkRunStore } from "./runStore";
 
-function tool<TDefinition extends Record<string, unknown>>(definition: TDefinition): TDefinition {
-  return {
-    ...definition,
-    type: "function",
-    function: {
-      name: definition.name,
-      description: definition.description,
-      parameters: definition.inputSchema,
-      requireApproval: definition.requireApproval,
-      execute: definition.execute,
-    },
-  };
-}
+// ── SDK Tool Boundaries ───────────────────────────────────────────────────────
+// Jarvis controls which tools the SDK can access.
+// SDK cannot self-expand its tool registry.
 
 export interface AgentSdkToolDeps {
   userId: string;
   runId: string;
   store: AgentSdkRunStore;
+  // All other deps are deprecated — tools now go through Jarvis
   includeDraftEmailTool?: boolean;
   includeSendEmailTool?: boolean;
   includeReminderTool?: boolean;
@@ -37,126 +44,40 @@ export interface AgentSdkToolDeps {
   }) => Promise<{ ok: boolean; id?: string; scheduledAt?: string; recurrence?: string | null; deduped?: boolean; error?: string }>;
 }
 
-export function createAgentSdkTools(deps: AgentSdkToolDeps) {
-  const readContext = tool({
-    name: "read_context",
-    description: "Read a small amount of Jarvis memory/context relevant to drafting the email.",
-    inputSchema: z.object({ query: z.string() }),
-    outputSchema: z.object({ context: z.string() }),
-    execute: async ({ query }) => ({
-      context: deps.readContext ? await deps.readContext(query) : "",
-    }),
-  });
+/**
+ * @deprecated SDK tools are now executed through Jarvis's sdkGateway
+ *
+ * This function is kept for backwards compatibility but all tool
+ * execution should go through the Jarvis SDK Gateway.
+ */
+export function createAgentSdkTools(_deps: AgentSdkToolDeps) {
+  console.warn(
+    "[SDK ToolRegistry] DEPRECATED: createAgentSdkTools is deprecated. " +
+    "All SDK tool execution should go through server/agent/sdkGateway.ts. " +
+    "SDK cannot have its own tool registry — Jarvis owns all tool policy."
+  );
 
-  const draftEmail = tool({
-    name: "draft_email",
-    description: "Create an internal email draft preview. This does not create a Gmail draft and does not send.",
-    inputSchema: z.object({
-      to: z.string().email(),
-      subject: z.string().min(1),
-      body: z.string().min(1),
-    }),
-    outputSchema: z.object({
-      drafted: z.boolean(),
-      to: z.string(),
-      subject: z.string(),
-      body: z.string(),
-    }),
-    execute: async ({ to, subject, body }) => {
-      const record = await deps.store.load(deps.runId);
-      if (record) {
-        record.meta.draft = { to, subject, body };
-        record.meta.updatedAt = new Date().toISOString();
-        await deps.store.save(record);
-      }
-      return { drafted: true, to, subject, body };
-    },
-  });
-
-  const sendEmail = tool({
-    name: "send_email",
-    description: "Send the reviewed email. This requires human approval before execution.",
-    inputSchema: z.object({
-      to: z.string().email(),
-      subject: z.string().min(1),
-      body: z.string().min(1),
-      provider: z.enum(["google", "microsoft"]).optional(),
-    }),
-    outputSchema: z.object({
-      sent: z.boolean(),
-      messageId: z.string().optional(),
-      error: z.string().optional(),
-    }),
-    requireApproval: true,
-    execute: async ({ to, subject, body, provider }) => {
-      if (!deps.sendEmail) return { sent: false, error: "sendEmail adapter missing" };
-      const result = await deps.sendEmail({ to, subject, body, provider });
-      return result.ok
-        ? { sent: true, messageId: result.messageId }
-        : { sent: false, error: result.error || "Email send failed" };
-    },
-  });
-
-  const createInternalReminder = tool({
-    name: "create_internal_reminder",
-    description: "Create an internal Jarvis reminder through the existing scheduled-task system. This does not create an external calendar event, send a message, run a shell command, or control a device.",
-    inputSchema: z.object({
-      title: z.string().min(1),
-      description: z.string().optional(),
-      scheduledAt: z.string().min(1),
-      recurrence: z.string().optional(),
-    }),
-    outputSchema: z.object({
-      created: z.boolean(),
-      id: z.string().optional(),
-      title: z.string(),
-      scheduledAt: z.string().optional(),
-      recurrence: z.string().nullable().optional(),
-      deduped: z.boolean().optional(),
-      error: z.string().optional(),
-    }),
-    execute: async ({ title, description, scheduledAt, recurrence }) => {
-      if (!deps.createInternalReminder) {
-        return { created: false, title, error: "createInternalReminder adapter missing" };
-      }
-      const result = await deps.createInternalReminder({ title, description, scheduledAt, recurrence });
-      if (result.ok) {
-        const record = await deps.store.load(deps.runId);
-        if (record) {
-          record.meta.reminder = {
-            id: result.id,
-            title,
-            scheduledAt: result.scheduledAt || scheduledAt,
-            recurrence: result.recurrence ?? recurrence ?? null,
-            deduped: result.deduped,
-          };
-          record.meta.updatedAt = new Date().toISOString();
-          await deps.store.save(record);
-        }
-      }
-      return {
-        created: result.ok,
-        id: result.id,
-        title,
-        scheduledAt: result.scheduledAt,
-        recurrence: result.recurrence ?? null,
-        deduped: result.deduped,
-        error: result.error,
-      };
-    },
-  });
-
-  const tools = [readContext];
-
-  if (deps.includeDraftEmailTool !== false) {
-    tools.push(draftEmail);
-  }
-  if (deps.includeSendEmailTool === false) {
-    if (deps.includeReminderTool === true) tools.push(createInternalReminder);
-    return tools;
-  }
-
-  tools.push(sendEmail);
-  if (deps.includeReminderTool === true) tools.push(createInternalReminder);
-  return tools;
+  // Return empty array — SDK no longer has independent tools
+  // All tool execution goes through Jarvis's sdkGateway
+  return [];
 }
+
+// ── Tool Policy Enforcement ───────────────────────────────────────────────────
+// These constants are now controlled by Jarvis, not the SDK.
+
+export const SDK_TOOL_POLICY = {
+  // Tools the SDK is allowed to use (controlled by Jarvis in sdkGateway.ts)
+  allowedTools: [] as string[],
+
+  // Tools the SDK can NEVER use (blocked by Jarvis)
+  blockedTools: [
+    "send_email",
+    "android_sms_send",
+    "android_notification_reply",
+    "android_camera_clip",
+    "android_screen_record",
+  ] as string[],
+
+  // Message indicating SDK cannot self-expand
+  selfExpandError: "SDK cannot self-expand tool registry. All tool requests must be delegated through Jarvis.",
+} as const;

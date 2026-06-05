@@ -521,13 +521,63 @@ function recentPrimeConversationContext(messages: Array<{ role?: string; content
 }
 
 async function defaultRunAgentSdkReminderWorkflow(input: Parameters<NonNullable<PrimeRuntimeDeps["runAgentSdkReminderWorkflow"]>>[0]) {
-  const { runAgentSdkReminderWorkflow } = await import("../../src/agent/agentRunner");
-  return runAgentSdkReminderWorkflow(input);
+  // SDK workflows are delegated through Jarvis's SDK gateway
+  // SDK is NOT a second brain — it executes bounded workflows under Jarvis control
+  const { executeJarvisDelegatedWorkflow, validateWorkflowRequest } = await import("./sdkGateway");
+  const { listTools } = await import("./tools");
+
+  // Validate workflow is registered with Jarvis (SDK cannot self-expand)
+  const validation = validateWorkflowRequest("reminder_create");
+  if (!validation.valid) {
+    return { handled: false };
+  }
+
+  const tools = listTools();
+  return executeJarvisDelegatedWorkflow({
+    userId: input.userId,
+    userText: input.userText,
+    workflowType: "reminder_create",
+    context: input.conversationContext,
+    originChannel: input.originChannel,
+    originChannelId: input.originChannelId,
+  }, tools).then(result => ({
+    handled: result.ok,
+    status: result.approvalRequired ? "awaiting_approval" as const : "complete" as const,
+    runId: `jarvis-delegated-${Date.now()}`,
+    reply: result.reply || result.error || "",
+    gateId: result.gateId,
+    error: result.error,
+  }));
 }
 
 async function defaultRunAgentSdkEmailWorkflow(input: Parameters<NonNullable<PrimeRuntimeDeps["runAgentSdkEmailWorkflow"]>>[0]) {
-  const { runAgentSdkEmailWorkflow } = await import("../../src/agent/agentRunner");
-  return runAgentSdkEmailWorkflow(input);
+  // SDK workflows are delegated through Jarvis's SDK gateway
+  // SDK is NOT a second brain — it executes bounded workflows under Jarvis control
+  const { executeJarvisDelegatedWorkflow, validateWorkflowRequest } = await import("./sdkGateway");
+  const { listTools } = await import("./tools");
+
+  // Validate workflow is registered with Jarvis (SDK cannot self-expand)
+  const validation = validateWorkflowRequest("email_draft");
+  if (!validation.valid) {
+    return { handled: false };
+  }
+
+  const tools = listTools();
+  return executeJarvisDelegatedWorkflow({
+    userId: input.userId,
+    userText: input.userText,
+    workflowType: "email_draft",
+    context: input.conversationContext,
+    originChannel: input.originChannel,
+    originChannelId: input.originChannelId,
+  }, tools).then(result => ({
+    handled: result.ok,
+    status: result.approvalRequired ? "awaiting_approval" as const : "complete" as const,
+    runId: `jarvis-delegated-${Date.now()}`,
+    reply: result.reply || result.error || "",
+    gateId: result.gateId,
+    error: result.error,
+  }));
 }
 
 async function defaultHandleDirectReminderRequest(input: Parameters<NonNullable<PrimeRuntimeDeps["handleDirectReminderRequest"]>>[0]) {
@@ -551,13 +601,40 @@ async function defaultRouteAppCoachChatAutonomy(
 async function defaultResumeAgentSdkRunFromApprovalGate(
   input: Parameters<NonNullable<PrimeRuntimeDeps["resumeAgentSdkRunFromApprovalGate"]>>[0],
 ) {
-  const { resumeAgentSdkRunFromApprovalGate } = await import("../../src/agent/agentRunner");
-  return resumeAgentSdkRunFromApprovalGate(input);
+  // Jarvis owns the approval system — SDK cannot have its own approval gates
+  // All SDK approval resume goes through Jarvis's approval system
+  const { approveGate, getGate } = await import("./agentApproval");
+
+  const gate = await getGate(input.gate.id);
+  if (!gate) {
+    return { error: "Approval gate not found" };
+  }
+
+  if (input.approved) {
+    await approveGate(input.gate.id, input.gate.userId);
+    return { status: "approved" };
+  } else {
+    // Rejection goes through Jarvis's rejection flow
+    const { rejectGate } = await import("./agentApproval");
+    await rejectGate(input.gate.id, input.gate.userId);
+    return { status: "rejected" };
+  }
 }
 
 async function defaultIsAgentSdkApprovalGate(gate: ApprovalGate): Promise<boolean> {
-  const { isAgentSdkApprovalGate } = await import("../../src/agent/agentRunner");
-  return isAgentSdkApprovalGate(gate);
+  // Jarvis owns approval — SDK approval gates are just regular Jarvis approval gates
+  // The SDK cannot create its own approval system
+  // Check if this is a Jarvis-delegated SDK workflow by checking metadata
+  if (gate.agentId === "jarvis-sdk-gateway") {
+    return true;
+  }
+  // Legacy: check for SDK prototype flag — this should be phased out
+  const toolArgs = gate.toolArgs as Record<string, unknown> || {};
+  if (toolArgs.__agentSdkPrototype === true) {
+    console.warn("[AutonomyRuntime] Legacy SDK approval gate detected — consider migrating to Jarvis-delegated workflow");
+    return true;
+  }
+  return false;
 }
 
 function sdkResultToPrime(
