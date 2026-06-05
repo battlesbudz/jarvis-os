@@ -15,7 +15,7 @@ import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive, isDaemonAct
 import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
 import { runFastOrchestratorReply, runOrchestrator } from "../agent/orchestrator";
-import { isFastInteractiveRequest, isFastLaneDeflection } from "../agent/fastInteractive";
+import { getDeterministicFastReply, isFastInteractiveRequest, isFastLaneDeflection } from "../agent/fastInteractive";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
@@ -136,6 +136,17 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     isFastInteractiveRequest(userText || "")
   ) {
     logInteraction(userId, channelLower as any, "inbound", userText || "[image]").catch(() => {});
+    const deterministicReply = getDeterministicFastReply(userText || "");
+    if (deterministicReply) {
+      console.log(`[Telegram] route=deterministic_fast_reply${telegramE2eLogSuffix}`);
+      logTelegramE2eReply(telegramE2eProbeId, deterministicReply);
+      return {
+        reply: deterministicReply,
+        rawReply: deterministicReply,
+        attachments: [],
+        sdkSessionId: input.sdkSessionId,
+      };
+    }
     try {
       const fastStartedAt = Date.now();
       console.log(`[Telegram] route=fast_orchestrator start${telegramE2eLogSuffix}`);

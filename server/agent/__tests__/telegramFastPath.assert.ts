@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { isFastInteractiveRequest, isFastLaneDeflection } from "../fastInteractive";
+import { getDeterministicFastReply, isFastInteractiveRequest, isFastLaneDeflection } from "../fastInteractive";
 
 assert.equal(isFastInteractiveRequest("hello jarvis"), true);
 assert.equal(isFastInteractiveRequest("tell me a joke"), true);
@@ -20,5 +20,10 @@ assert.equal(isFastInteractiveRequest("/help"), false);
 assert.equal(isFastLaneDeflection("I need the full Jarvis workflow for that."), true);
 assert.equal(isFastLaneDeflection("I do not have access to tools from this fast path."), true);
 assert.equal(isFastLaneDeflection("Sure - here's a quick answer."), false);
+
+assert.equal(getDeterministicFastReply("reply with FAST_OK"), "FAST_OK");
+assert.equal(getDeterministicFastReply("JTE2E_REPLY_WITH_123456 reply with FAST ROUTE OK exactly"), "FAST ROUTE OK");
+assert.equal(getDeterministicFastReply("please repeat hello world"), "hello world");
+assert.equal(getDeterministicFastReply("tell me a joke"), null);
 
 console.log("OK: Telegram fast path classifier keeps quick chat fast and routes work to full Jarvis");

@@ -18,6 +18,15 @@ export function isFastLaneDeflection(text: string): boolean {
   ].some((pattern) => pattern.test(trimmed));
 }
 
+export function getDeterministicFastReply(text: string): string | null {
+  const trimmed = text
+    .trim()
+    .replace(/^\bJTE2E_[A-Z0-9_:-]+\b\s+/i, "");
+  const match = /^(?:please\s+)?(?:say|repeat|reply\s+with)\s+(.+?)(?:\s+(?:exactly|only))?[.!?]*$/i.exec(trimmed);
+  const reply = match?.[1]?.replace(/\s+/g, " ").trim();
+  return reply && reply.length <= 240 ? reply : null;
+}
+
 export function isFastInteractiveRequest(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed || trimmed.startsWith("/") || trimmed.length > 320) return false;

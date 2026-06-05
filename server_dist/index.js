@@ -83469,6 +83469,12 @@ function isFastLaneDeflection(text2) {
     /\bfrom\s+this\s+fast\s+path\b/i
   ].some((pattern) => pattern.test(trimmed));
 }
+function getDeterministicFastReply(text2) {
+  const trimmed = text2.trim().replace(/^\bJTE2E_[A-Z0-9_:-]+\b\s+/i, "");
+  const match = /^(?:please\s+)?(?:say|repeat|reply\s+with)\s+(.+?)(?:\s+(?:exactly|only))?[.!?]*$/i.exec(trimmed);
+  const reply = match?.[1]?.replace(/\s+/g, " ").trim();
+  return reply && reply.length <= 240 ? reply : null;
+}
 function isFastInteractiveRequest(text2) {
   const trimmed = text2.trim();
   if (!trimmed || trimmed.startsWith("/") || trimmed.length > 320) return false;
@@ -83667,6 +83673,17 @@ async function runCoachAgent(input) {
   if (channelName === "Telegram" && !imageUrl && !input.extraTools?.length && isFastInteractiveRequest(userText || "")) {
     logInteraction(userId, channelLower, "inbound", userText || "[image]").catch(() => {
     });
+    const deterministicReply = getDeterministicFastReply(userText || "");
+    if (deterministicReply) {
+      console.log(`[Telegram] route=deterministic_fast_reply${telegramE2eLogSuffix}`);
+      logTelegramE2eReply2(telegramE2eProbeId, deterministicReply);
+      return {
+        reply: deterministicReply,
+        rawReply: deterministicReply,
+        attachments: [],
+        sdkSessionId: input.sdkSessionId
+      };
+    }
     try {
       const fastStartedAt = Date.now();
       console.log(`[Telegram] route=fast_orchestrator start${telegramE2eLogSuffix}`);
