@@ -83611,6 +83611,17 @@ var init_buildIntentRouter = __esm({
   }
 });
 
+// server/channels/coachAgentSession.ts
+function getCoachAgentSessionAgentId(userId) {
+  return getCoachAppAgentId(userId);
+}
+var init_coachAgentSession = __esm({
+  "server/channels/coachAgentSession.ts"() {
+    "use strict";
+    init_coreAgentIds();
+  }
+});
+
 // server/channels/coachAgent.ts
 var coachAgent_exports = {};
 __export(coachAgent_exports, {
@@ -83636,6 +83647,7 @@ function logTelegramE2eReply2(probeId, reply) {
 }
 async function runCoachAgent(input) {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
+  const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
   const channelLower = channelName.toLowerCase();
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId2(userText) : null;
   const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
@@ -83673,7 +83685,7 @@ async function runCoachAgent(input) {
   if (input.sdkSessionId) {
     try {
       const { resumeSession: resumeSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
-      const resumed = await resumeSession2(input.sdkSessionId, COACH_AGENT_ID, userId);
+      const resumed = await resumeSession2(input.sdkSessionId, coachSessionAgentId, userId);
       if (resumed) {
         cachedSessionMessages = resumed.messages;
         sessionResumed = true;
@@ -84338,14 +84350,14 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
   try {
     const { initSession: initSession2, appendToSession: appendToSession2 } = await Promise.resolve().then(() => (init_sessionStore2(), sessionStore_exports2));
     if (sessionResumed && activeSessionId) {
-      appendToSession2(activeSessionId, COACH_AGENT_ID, userId, [newUserMsg, newAssistMsg]).catch(() => {
+      appendToSession2(activeSessionId, coachSessionAgentId, userId, [newUserMsg, newAssistMsg]).catch(() => {
       });
     } else {
       const priorHistory = chatMessages.slice(0, 10).reverse().map((m) => ({
         role: m.role === "assistant" ? "assistant" : "user",
         content: m.content
       }));
-      finalSessionId = await initSession2(COACH_AGENT_ID, userId, [
+      finalSessionId = await initSession2(coachSessionAgentId, userId, [
         { role: "system", content: effectiveSystemPrompt },
         ...priorHistory,
         newUserMsg,
@@ -84396,7 +84408,7 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
   }
   return { reply, rawReply, attachments, sdkSessionId: finalSessionId };
 }
-var FORMAT_HINTS, COACH_AGENT_ID;
+var FORMAT_HINTS;
 var init_coachAgent = __esm({
   "server/channels/coachAgent.ts"() {
     "use strict";
@@ -84426,6 +84438,7 @@ var init_coachAgent = __esm({
     init_autonomyRuntime();
     init_coreAgentIds();
     init_systemApprovalGate();
+    init_coachAgentSession();
     init_topicContext();
     FORMAT_HINTS = {
       Telegram: "You're responding via Telegram. Match response length to the request: short and direct for simple questions, but complete and thorough for research, analysis, planning, or anything that needs a full answer. Never truncate or redirect the user to the app \u2014 deliver the full response here. Plain text, no markdown headers.",
@@ -84436,7 +84449,6 @@ var init_coachAgent = __esm({
       Gateway: "You're responding in the Jarvis Control UI. Be direct, operational, and complete enough for a power user managing agents, devices, jobs, and integrations from the dashboard. Markdown is supported, but avoid large decorative headers.",
       Voice: "You're responding via voice / Talk Mode \u2014 your reply will be read aloud on a phone speaker. Plain text only. No markdown, bullet points, or special characters. Keep your answer to 1-3 short, natural spoken sentences. Be direct and conversational."
     };
-    COACH_AGENT_ID = "coach";
   }
 });
 

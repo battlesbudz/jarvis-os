@@ -26,6 +26,7 @@ import { routeBuildIntent } from "../agent/buildIntentRouter";
 import { routeAutonomyRequest } from "../agent/autonomyRuntime";
 import { getCoachAppAgentId } from "../agent/coreAgentIds";
 import { createSystemApprovalOnBeforeTool } from "../agent/systemApprovalGate";
+import { getCoachAgentSessionAgentId } from "./coachAgentSession";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -121,11 +122,9 @@ function logTelegramE2eReply(probeId: string | null, reply: string): void {
 // Channel-agnostic coach pipeline shared by Telegram / WhatsApp / Slack /
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
-/** Agent ID used as the namespace key in the persisted session store for main coach turns. */
-const COACH_AGENT_ID = "coach";
-
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
+  const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
   const channelLower = channelName.toLowerCase();
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
   const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
@@ -176,7 +175,7 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   if (input.sdkSessionId) {
     try {
       const { resumeSession } = await import("../agent/providers/sessionStore");
-      const resumed = await resumeSession(input.sdkSessionId, COACH_AGENT_ID, userId);
+      const resumed = await resumeSession(input.sdkSessionId, coachSessionAgentId, userId);
       if (resumed) {
         cachedSessionMessages = resumed.messages;
         sessionResumed = true;
@@ -1042,7 +1041,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   try {
     const { initSession, appendToSession } = await import("../agent/providers/sessionStore");
     if (sessionResumed && activeSessionId) {
-      appendToSession(activeSessionId, COACH_AGENT_ID, userId, [newUserMsg, newAssistMsg]).catch(() => {});
+      appendToSession(activeSessionId, coachSessionAgentId, userId, [newUserMsg, newAssistMsg]).catch(() => {});
     } else {
       // Build the full message list for the new session:
       // system prompt + prior history (from DB or empty) + new exchange.
@@ -1054,7 +1053,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
           content: m.content,
         }));
 
-      finalSessionId = await initSession(COACH_AGENT_ID, userId, [
+      finalSessionId = await initSession(coachSessionAgentId, userId, [
         { role: "system" as const, content: effectiveSystemPrompt },
         ...priorHistory,
         newUserMsg,
