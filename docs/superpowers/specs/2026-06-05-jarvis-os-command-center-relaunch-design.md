@@ -1,4 +1,4 @@
-# Jarvis OS Command Center Relaunch Design
+# Jarvis Command Center Relaunch Design
 
 ## Status
 
@@ -8,11 +8,13 @@ User request: "Can you do a massive overhaul of the UI and UX of the entire app 
 
 ## Objective
 
-Turn the existing Gameplanjarvisai Expo app into a coherent Jarvis OS command surface. The app should feel like the control layer for JARVIS: Joint Autonomous Runtime Virtual Intelligence System, not a generic coach, productivity app, or chatbot.
+Turn the existing Gameplanjarvisai Expo app into a coherent Jarvis command surface. The app should feel like the control layer for Jarvis, not a generic coach, productivity app, or chatbot.
+
+The full acronym, JARVIS: Joint Autonomous Runtime Virtual Intelligence System, may appear once in a small introduction or brand detail. It should not drive everyday navigation, headings, or section labels.
 
 ## Product Positioning
 
-Jarvis is a persistent cognitive operating system for memory, work, decisions, channels, agents, approvals, and device/runtime control. The interface should make autonomous work observable, reviewable, approval-gated, and recoverable.
+Jarvis is a persistent cognitive operating system for memory, work, decisions, channels, agents, approvals, and device control. The interface should make autonomous work observable, reviewable, approval-gated, and recoverable.
 
 The redesign must preserve the current app's functionality while making the product identity clear across every major user-facing surface.
 
@@ -28,21 +30,21 @@ The current Expo Router app includes:
 
 Use approach A: Command Center Relaunch.
 
-This is not a full architecture rewrite. It is a UI/UX and brand-system overhaul that keeps the existing route structure and APIs while introducing a more deliberate Jarvis OS shell, shared design primitives, and consistent product language.
+This is not a full architecture rewrite. It is a UI/UX and brand-system overhaul that keeps the existing route structure and APIs while introducing a more deliberate Jarvis shell, shared design primitives, and consistent product language.
 
 ## Design Principles
 
 1. Jarvis first
-   - The first viewport should make "JARVIS" and "Joint Autonomous Runtime Virtual Intelligence System" clear.
+   - The first viewport should make "Jarvis" clear. The full acronym can appear once as a small brand detail.
    - Avoid treating Jarvis as a feature inside the app. Jarvis is the app's operating layer.
 
 2. Observable autonomy
-   - Jobs, approvals, deliverables, memories, agents, channels, and daemon state should be visible as runtime signals.
+   - Jobs, approvals, deliverables, memories, agents, channels, and daemon state should be visible as live status signals.
    - The user should understand what Jarvis is doing, what needs review, and what is safe to approve.
 
 3. Command over clutter
    - Dense operational surfaces are acceptable, but they must be organized for scanning.
-   - Use status rows, runtime cards, segmented controls, tables/lists, and compact cards instead of decorative card piles.
+   - Use status rows, signal cards, segmented controls, tables/lists, and compact cards instead of decorative card piles.
 
 4. Approval-aware UX
    - Approval gates must feel intentional and protected.
@@ -52,8 +54,8 @@ This is not a full architecture rewrite. It is a UI/UX and brand-system overhaul
    - Memory review should look like a core Jarvis safety feature, not a profile afterthought.
    - Use language such as memory vault, learning queue, confidence, source, review, and verified.
 
-6. Cross-device runtime
-   - Desktop connector, Android daemon, Telegram, Discord, Slack, WhatsApp, web, and voice should appear as nodes in Jarvis's runtime, not isolated settings.
+6. Cross-device presence
+   - Desktop connector, Android daemon, Telegram, Discord, Slack, WhatsApp, web, and voice should appear as connected parts of Jarvis, not isolated settings.
 
 ## Information Architecture
 
@@ -61,11 +63,11 @@ Keep the existing route structure for risk control, but reframe the navigation l
 
 Primary navigation:
 
-- Command: Mission Control and runtime dashboard.
-- Jarvis: conversational runtime, voice, command input, and approval-aware action cards.
-- Agents: Jarvis council, workforce, jobs, agent detail, and self-repair.
-- Vault: profile, memories, people, identity, wiki, pending memory review.
-- System: settings, integrations, daemon nodes, health, skills, code proposals, capability gaps.
+- Command: the home dashboard for today's plan, review queue, active work, and system status.
+- Ask: chat, voice, command input, and approval-aware action cards.
+- Crew: Jarvis's agents, council, active work, agent detail, and self-repair.
+- Memory: what Jarvis knows, pending learning review, people, identity, and wiki/vault pages.
+- System: settings, connections, devices, health, skills, code proposals, and capability gaps.
 
 Routes can continue to live where they are today. The first pass should change labels, headers, shared components, and cross-links without moving route files.
 
@@ -75,10 +77,10 @@ Routes can continue to live where they are today. The first pass should change l
 
 Use a dark precision interface with luminous operational accents:
 
-- Runtime background: near-black blue/graphite.
+- App background: near-black blue/graphite.
 - Surface: layered dark panels with restrained borders.
 - Primary accent: Jarvis green for healthy/online/approve/safe.
-- Secondary accent: cyan for intelligence, command input, and active runtime.
+- Secondary accent: cyan for intelligence, command input, and active work.
 - Tertiary accent: violet for memory/council/deep cognition.
 - Warning: amber for attention/review.
 - Error: red for blocked/offline/failed.
@@ -93,7 +95,7 @@ Use:
 
 - Tight, readable headers for operational screens.
 - Small uppercase labels only for system statuses and section labels.
-- Tabular numbers for counts, queues, usage, timers, and runtime metrics.
+- Tabular numbers for counts, queues, usage, timers, and system metrics.
 - Avoid oversized hero text except on login/onboarding or an intentionally branded command landing area.
 
 ### Shape and Layout
@@ -108,7 +110,7 @@ Use:
 
 Use subtle motion only for:
 
-- Runtime online pulse.
+- Jarvis online pulse.
 - Active voice/listening state.
 - New approval or memory item entrance.
 - Agent/job progress changes.
@@ -124,7 +126,7 @@ Purpose: Replace inconsistent logos/sprites in headers with a consistent mark.
 Behavior:
 
 - Compact "J" mark for small headers and tabs.
-- Expanded lockup for login/onboarding: "JARVIS" plus "Joint Autonomous Runtime Virtual Intelligence System."
+- Expanded lockup for login/onboarding: "Jarvis" plus the full acronym in one small supporting line when appropriate.
 - Optional online/active state.
 
 ### JarvisScreenShell
@@ -140,9 +142,9 @@ Props:
 - primaryAction
 - children
 
-It should handle safe-area top padding, background, header spacing, and a consistent runtime header.
+It should handle safe-area top padding, background, header spacing, and a consistent Jarvis header.
 
-### RuntimeStatusPill
+### JarvisStatusPill
 
 Purpose: Reusable status indicator.
 
@@ -155,7 +157,7 @@ Tones:
 - blocked
 - offline
 
-### RuntimeMetricCard
+### SignalMetricCard
 
 Purpose: Compact metric cards for queue count, approvals, connected nodes, memory review, usage, and agent status.
 
@@ -184,9 +186,9 @@ Required fields:
 - why Jarvis learned it
 - approve/edit/reject controls
 
-### RuntimeNodeCard
+### ConnectionNodeCard
 
-Purpose: Show integrations and devices as Jarvis runtime nodes.
+Purpose: Show integrations and devices as connected parts of Jarvis.
 
 Examples:
 
@@ -209,20 +211,20 @@ Goal: Immediately establish Jarvis identity.
 
 Changes:
 
-- Replace generic login treatment with JARVIS lockup.
-- Add full name: Joint Autonomous Runtime Virtual Intelligence System.
-- Explain login in one sentence: "Sign in to connect your memory, channels, agents, and runtime."
+- Replace generic login treatment with a Jarvis lockup.
+- Add full name only as a small supporting line: Joint Autonomous Runtime Virtual Intelligence System.
+- Explain login in one sentence: "Sign in to connect your memory, channels, agents, and devices."
 - Keep existing Google, Telegram, mobile auth, and password fallback behavior.
 
 ### Onboarding
 
-Goal: Introduce Jarvis as a runtime partner, not only a coach.
+Goal: Introduce Jarvis as the user's operating partner, not only a coach.
 
 Changes:
 
-- Replace "coach" language with Jarvis OS language.
+- Replace "coach" language with Jarvis-first language.
 - Ask for identity, priority objective, current obligations, decision pressure, and connection preferences.
-- Make final step "Activate Jarvis Runtime" instead of generic connect-calendar framing.
+- Make final step "Activate Jarvis" instead of generic connect-calendar framing.
 
 ### Command Tab
 
@@ -230,26 +232,26 @@ Goal: Make Mission Control the app's operational home.
 
 Changes:
 
-- Header: JARVIS Command, Prime status, runtime health.
-- First panel: runtime metrics for jobs, approvals, memory review, channels, and nodes.
-- Main sections: Needs Review, Running Now, Today's Command Plan, Memory Queue, Runtime Nodes.
+- Header: Jarvis Command, Prime status, system health.
+- First panel: signal metrics for jobs, approvals, memory review, channels, and connected devices.
+- Main sections: Needs Review, Working Now, Today's Command Plan, Memory Queue, Connections.
 - Keep existing sub-screens but make them feel like system panes: Tasks, Calendar, Projects, Memory, Usage, Visual Office.
 
-### Jarvis Tab
+### Ask Tab
 
-Goal: Make chat feel like Jarvis's command interface.
+Goal: Make chat and voice feel like the direct way to ask Jarvis for help or assign work.
 
 Changes:
 
-- Rename visible "coach" copy to Jarvis or runtime modes.
-- Keep coaching modes, but present them as Jarvis response modes: Sharp, Drill, Mentor, Strategist, Flow.
+- Rename visible "coach" copy to Jarvis or Jarvis modes.
+- Keep coaching modes, but present them as Jarvis modes: Sharp, Drill, Mentor, Strategist, Flow.
 - Give command input a stronger affordance: "Ask Jarvis or assign work..."
 - Approval cards should use shared ApprovalActionCard styling.
 - Voice entry should be visible and branded as Jarvis Voice.
 
-### Agents Tab
+### Crew Tab
 
-Goal: Present agents as Jarvis's council and autonomous workforce.
+Goal: Present agents as Jarvis's crew, council, and autonomous workforce.
 
 Changes:
 
@@ -259,13 +261,13 @@ Changes:
 - Replace generic role color/icon choices with semantic Jarvis role tokens.
 - Surface "Jarvis synthesized this" trace when jobs return from agents.
 
-### Vault/Profile Tab
+### Memory/Profile Tab
 
-Goal: Make identity and memory review first-class.
+Goal: Make what Jarvis knows, remembers, and is learning first-class.
 
 Changes:
 
-- Rename Profile to Vault in primary navigation.
+- Rename Profile to Memory in primary navigation.
 - Group panels as Identity Kernel, Memory Review, People, Progress, Connections, Notes.
 - Show pending memory/living updates prominently.
 - Make "why Jarvis learned this" visible wherever available.
@@ -273,18 +275,18 @@ Changes:
 
 ### System Tab
 
-Goal: Turn Settings into a runtime operations console.
+Goal: Turn Settings into Jarvis system controls.
 
 Changes:
 
 - Rename Settings to System in navigation.
-- Organize into Runtime Nodes, Connected Accounts, Notifications, Autonomy and Approvals, Skills, Health, Code Proposals, Capability Gaps.
+- Organize into Connections, Devices, Notifications, Autonomy and Approvals, Skills, Health, Code Proposals, Capability Gaps.
 - Keep existing settings functions and routes.
-- Use RuntimeNodeCard for connectors and health states.
+- Use ConnectionNodeCard for connectors and health states.
 
 ### Voice Realtime
 
-Goal: Make voice feel like a Jarvis runtime mode.
+Goal: Make voice feel like a natural Jarvis mode.
 
 Changes:
 
@@ -295,11 +297,11 @@ Changes:
 
 ### Desktop Connector Setup
 
-Goal: Make device pairing feel like adding a runtime node.
+Goal: Make device pairing feel like adding a trusted device to Jarvis.
 
 Changes:
 
-- Rename framing to Windows Runtime Node.
+- Rename framing to Windows Device.
 - Emphasize approvals, auditability, and safe device control.
 - Preserve existing setup flow.
 
@@ -318,14 +320,14 @@ Changes:
 Replace generic terms where appropriate:
 
 - Coach -> Jarvis or Jarvis Mode
-- Profile -> Vault
+- Profile -> Memory
 - Settings -> System
-- Connect apps -> Add runtime nodes
+- Connect apps -> Add connections
 - Tasks -> Command Plan
 - Inbox -> Review Queue
 - Deliverables -> Reviewable outputs
 - Memories -> Memory Vault or Learning Queue
-- Integrations -> Runtime Nodes
+- Integrations -> Connections
 - Running jobs -> Active workers
 
 Do not rename backend concepts or database fields as part of the first pass unless required by visible UI text.
@@ -366,7 +368,7 @@ Mobile:
 
 - Single-column command surface.
 - Horizontal segmented controls may remain.
-- Runtime metrics collapse to two-column or one-column depending width.
+- Signal metrics collapse to two-column or one-column depending width.
 
 Web:
 
@@ -384,11 +386,11 @@ UI verification:
 
 - Start Expo web.
 - Verify login/onboarding render.
-- Verify primary tabs render: Command, Jarvis, Agents, Vault, System.
-- Verify Mission Control runtime metrics and sub-tabs.
-- Verify Jarvis chat input and approval card states.
-- Verify Agents list and empty/loading states.
-- Verify Vault/Profile pending memory badge and panels.
+- Verify primary tabs render: Command, Ask, Crew, Memory, System.
+- Verify Mission Control signal metrics and sub-tabs.
+- Verify Ask/Jarvis chat input and approval card states.
+- Verify Crew/Agents list and empty/loading states.
+- Verify Memory/Profile pending memory badge and panels.
 - Verify System connectors/health sections.
 - Verify mobile-width layout has no clipped primary text.
 
@@ -403,12 +405,12 @@ Phase 1: Shared brand foundation
 Phase 2: Highest-traffic screens
 
 - Command/Mission Control.
-- Jarvis chat.
-- Agents.
+- Ask/Jarvis chat.
+- Crew/Agents.
 
 Phase 3: Trust and system screens
 
-- Vault/Profile.
+- Memory/Profile.
 - System/Settings.
 - Voice.
 - Desktop connector.
@@ -426,12 +428,12 @@ Phase 4: Remaining standalone routes
 
 ## Acceptance Criteria
 
-- The app visibly presents itself as JARVIS: Joint Autonomous Runtime Virtual Intelligence System.
-- Primary navigation uses Jarvis OS language.
-- Major screens share a consistent dark Jarvis runtime visual system.
+- The app visibly presents itself as Jarvis, with the full acronym used only as a small introduction or brand detail.
+- Primary navigation uses plain Jarvis language that everyday users can understand.
+- Major screens share a consistent dark Jarvis visual system.
 - Mission Control becomes a coherent command dashboard.
 - Chat, agents, profile, and settings no longer feel like separate products.
-- Approval, memory review, and runtime status are visually distinct and easy to scan.
+- Approval, memory review, and live status are visually distinct and easy to scan.
 - Existing user flows remain functional.
 - Standard tests/builds pass or any failures are documented with exact reasons.
 
@@ -446,6 +448,6 @@ Phase 4: Remaining standalone routes
 ## Spec Self-Review
 
 - Placeholder scan: no TBD or TODO placeholders remain.
-- Consistency check: the design uses "Jarvis OS" and "JARVIS: Joint Autonomous Runtime Virtual Intelligence System" consistently.
+- Consistency check: the design uses "Jarvis" as the public brand, with the full acronym reserved for one small introduction or brand detail.
 - Scope check: this is a large UI/UX overhaul, but it can be implemented in phased, testable passes without touching backend behavior.
 - Ambiguity check: the approved direction is Command Center Relaunch; route moves and backend changes are explicitly out of scope for the first pass.
