@@ -15,7 +15,7 @@ import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive, isDaemonAct
 import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
 import { runFastOrchestratorReply, runOrchestrator } from "../agent/orchestrator";
-import { isFastInteractiveRequest } from "../agent/fastInteractive";
+import { isFastInteractiveRequest, isFastLaneDeflection } from "../agent/fastInteractive";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
@@ -147,13 +147,16 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
         signal,
       });
       console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}${telegramE2eLogSuffix}`);
-      logTelegramE2eReply(telegramE2eProbeId, fastResult.finalAnswer);
-      return {
-        reply: fastResult.finalAnswer,
-        rawReply: fastResult.finalAnswer,
-        attachments: [],
-        sdkSessionId: input.sdkSessionId,
-      };
+      if (!isFastLaneDeflection(fastResult.finalAnswer)) {
+        logTelegramE2eReply(telegramE2eProbeId, fastResult.finalAnswer);
+        return {
+          reply: fastResult.finalAnswer,
+          rawReply: fastResult.finalAnswer,
+          attachments: [],
+          sdkSessionId: input.sdkSessionId,
+        };
+      }
+      console.log(`[Telegram] route=fast_orchestrator escalated_to_full reason=fast_deflection${telegramE2eLogSuffix}`);
     } catch (fastErr) {
       if (signal?.aborted || (fastErr as Error)?.name === "AbortError") throw fastErr;
       console.warn("[Telegram] orchestrator fast lane failed; falling back to full coach workflow:", fastErr);

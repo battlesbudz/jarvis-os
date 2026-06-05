@@ -13144,6 +13144,11 @@ var init_runRegistry = __esm({
 
 // server/telegramRunGuard.ts
 import crypto3 from "crypto";
+function resolveTelegramReplyTimeoutMs(raw = process.env.TELEGRAM_REPLY_TIMEOUT_MS) {
+  const parsed = Number(raw || MIN_TELEGRAM_TURN_TIMEOUT_MS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return MIN_TELEGRAM_TURN_TIMEOUT_MS;
+  return Math.max(parsed, MIN_TELEGRAM_TURN_TIMEOUT_MS);
+}
 function isTelegramRunAbortedError(error) {
   return error instanceof TelegramRunAbortedError;
 }
@@ -13205,12 +13210,13 @@ function createTelegramRunGuard(userId) {
     race
   };
 }
-var TELEGRAM_REPLY_TIMEOUT_MS, TelegramRunAbortedError, TelegramRunTimeoutError;
+var MIN_TELEGRAM_TURN_TIMEOUT_MS, TELEGRAM_REPLY_TIMEOUT_MS, TelegramRunAbortedError, TelegramRunTimeoutError;
 var init_telegramRunGuard = __esm({
   "server/telegramRunGuard.ts"() {
     "use strict";
     init_runRegistry();
-    TELEGRAM_REPLY_TIMEOUT_MS = Number(process.env.TELEGRAM_REPLY_TIMEOUT_MS || 6e4);
+    MIN_TELEGRAM_TURN_TIMEOUT_MS = 3e5;
+    TELEGRAM_REPLY_TIMEOUT_MS = resolveTelegramReplyTimeoutMs();
     TelegramRunAbortedError = class extends Error {
       constructor(message = "Telegram turn was aborted.") {
         super(message);
@@ -19685,7 +19691,7 @@ ${markdownExtra}` : markdownExtra : reply;
       return;
     }
     if (isTelegramRunTimeoutError(error)) {
-      const timeoutMessage = "I couldn't finish that within 10 seconds, so I stopped the turn instead of leaving you hanging.";
+      const timeoutMessage = "I hit a Telegram safety limit while working on that, so I paused this turn instead of leaving it running forever. Send it again or ask me to delegate it as a background job.";
       console.warn(`[Telegram] coach turn timed out after ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
@@ -83440,6 +83446,16 @@ var init_activationPlanner = __esm({
 });
 
 // server/agent/fastInteractive.ts
+function isFastLaneDeflection(text2) {
+  const trimmed = text2.trim();
+  if (!trimmed) return false;
+  return [
+    /\bneed(s)?\s+(the\s+)?full\s+(jarvis\s+)?workflow\b/i,
+    /\b(full\s+(jarvis\s+)?workflow|full\s+orchestrator)\b/i,
+    /\b(no|not|don't|do not|can't|cannot)\s+(have\s+)?access\s+to\s+tools?\b/i,
+    /\bfrom\s+this\s+fast\s+path\b/i
+  ].some((pattern) => pattern.test(trimmed));
+}
 function isFastInteractiveRequest(text2) {
   const trimmed = text2.trim();
   if (!trimmed || trimmed.startsWith("/") || trimmed.length > 320) return false;
@@ -83451,6 +83467,7 @@ var init_fastInteractive = __esm({
   "server/agent/fastInteractive.ts"() {
     "use strict";
     FAST_REPLY_BLOCKERS = [
+      /\b(full\s+(jarvis\s+)?workflow|full\s+orchestrator|slow\s+path|fast\s+path|use\s+(the\s+)?tools?|tool\s+access|tools?\b|orchestrator)\b/i,
       /\b(email|gmail|inbox|calendar|schedule|meeting|remind|reminder|task|commitment|goal|memory|remember)\b/i,
       /\b(research|search|look up|browse|website|web|latest|current|recent|today|news|source|sources|price|weather|stock)\b/i,
       /\b(open|click|tap|type|swipe|screenshot|desktop|terminal|shell|file|folder|repo|code|build|deploy|railway)\b/i,
@@ -83635,13 +83652,16 @@ async function runCoachAgent(input) {
         signal
       });
       console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}${telegramE2eLogSuffix}`);
-      logTelegramE2eReply2(telegramE2eProbeId, fastResult.finalAnswer);
-      return {
-        reply: fastResult.finalAnswer,
-        rawReply: fastResult.finalAnswer,
-        attachments: [],
-        sdkSessionId: input.sdkSessionId
-      };
+      if (!isFastLaneDeflection(fastResult.finalAnswer)) {
+        logTelegramE2eReply2(telegramE2eProbeId, fastResult.finalAnswer);
+        return {
+          reply: fastResult.finalAnswer,
+          rawReply: fastResult.finalAnswer,
+          attachments: [],
+          sdkSessionId: input.sdkSessionId
+        };
+      }
+      console.log(`[Telegram] route=fast_orchestrator escalated_to_full reason=fast_deflection${telegramE2eLogSuffix}`);
     } catch (fastErr) {
       if (signal?.aborted || fastErr?.name === "AbortError") throw fastErr;
       console.warn("[Telegram] orchestrator fast lane failed; falling back to full coach workflow:", fastErr);

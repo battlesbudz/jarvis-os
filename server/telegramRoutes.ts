@@ -429,7 +429,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       return;
     }
     if (isTelegramRunTimeoutError(error)) {
-      const timeoutMessage = "I couldn't finish that within 10 seconds, so I stopped the turn instead of leaving you hanging.";
+      const timeoutMessage = "I hit a Telegram safety limit while working on that, so I paused this turn instead of leaving it running forever. Send it again or ask me to delegate it as a background job.";
       console.warn(`[Telegram] coach turn timed out after ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {

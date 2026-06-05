@@ -3,11 +3,21 @@ import {
   TelegramRunAbortedError,
   TelegramRunTimeoutError,
   createTelegramRunGuard,
+  resolveTelegramReplyTimeoutMs,
 } from "../../telegramRunGuard";
 import { activeCoachRuns } from "../../runRegistry";
 
 async function main() {
   activeCoachRuns.clear();
+
+  assert.equal(
+    resolveTelegramReplyTimeoutMs("10000"),
+    300_000,
+    "a 10-second env override must not become Telegram's production turn abort timeout",
+  );
+  assert.equal(resolveTelegramReplyTimeoutMs("60000"), 300_000);
+  assert.equal(resolveTelegramReplyTimeoutMs("900000"), 900_000);
+  console.log("OK: Telegram production timeout has a floor well above the fast-reply target");
 
   const first = createTelegramRunGuard("user-telegram");
   assert.equal(activeCoachRuns.size, 1);

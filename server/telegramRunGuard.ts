@@ -1,7 +1,15 @@
 import crypto from "crypto";
 import { activeCoachRuns } from "./runRegistry";
 
-export const TELEGRAM_REPLY_TIMEOUT_MS = Number(process.env.TELEGRAM_REPLY_TIMEOUT_MS || 60_000);
+export const MIN_TELEGRAM_TURN_TIMEOUT_MS = 300_000;
+
+export function resolveTelegramReplyTimeoutMs(raw = process.env.TELEGRAM_REPLY_TIMEOUT_MS): number {
+  const parsed = Number(raw || MIN_TELEGRAM_TURN_TIMEOUT_MS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return MIN_TELEGRAM_TURN_TIMEOUT_MS;
+  return Math.max(parsed, MIN_TELEGRAM_TURN_TIMEOUT_MS);
+}
+
+export const TELEGRAM_REPLY_TIMEOUT_MS = resolveTelegramReplyTimeoutMs();
 
 export class TelegramRunAbortedError extends Error {
   constructor(message = "Telegram turn was aborted.") {
