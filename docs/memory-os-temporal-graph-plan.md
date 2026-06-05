@@ -32,6 +32,11 @@ Redis hot state
 
 The first G-Brain slices are now implemented as a derived second-brain layer on top of the canonical `user_memories` ledger.
 
+Detailed G-Brain docs:
+
+- `gbrain-implementation-plan.md`
+- `gbrain-spec-sheet.md`
+
 Landed:
 
 - Temporal parsing exists in `server/time/temporalContext.ts` with tests.

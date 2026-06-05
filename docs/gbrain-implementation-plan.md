@@ -1,0 +1,210 @@
+# G-Brain Implementation Plan
+
+Status: active implementation plan.
+
+Last updated: 2026-06-05.
+
+G-Brain is Jarvis's derived second-brain layer. It does not replace canonical memory. It projects reviewed, durable source data into page/chunk/link structures optimized for recall, provenance, and later temporal reasoning.
+
+Canonical truth remains in Postgres source tables:
+
+- `user_memories`
+- `people`
+- `chat_history`
+- `interaction_log`
+- goals, plans, jobs, approvals, and connected-account context
+
+G-Brain tables are derived and rebuildable:
+
+- `brain_pages`
+- `brain_timeline_entries`
+- `brain_content_chunks`
+- `brain_links`
+- `brain_page_versions`
+- `brain_ingest_log`
+- `brain_config`
+
+## Design Rules
+
+- Never let G-Brain silently overwrite canonical source tables.
+- Only project source data with provenance.
+- Keep review gates in front of durable semantic/procedural memory.
+- Treat pending, discarded, expired, or orphaned source rows as non-live projections.
+- Prefer deterministic projection and maintenance before LLM synthesis.
+- Feature-flag vector retrieval so deployments without pgvector keep working.
+- Make every derived page recoverable from source rows.
+
+## Completed Slices
+
+### Slice 1: Derived Brain Foundation
+
+Status: landed.
+
+Implemented:
+
+- `server/brain/types.ts`
+- `server/brain/adapter.ts`
+- `server/brain/chunk.ts`
+- `server/brain/slug.ts`
+- `server/brain/links.ts`
+- migration `0008_brain_projection.sql`
+
+Capabilities:
+
+- upsert derived brain pages
+- store page versions
+- chunk compiled page truth
+- store provenance
+- project approved `user_memories`
+- retire expired, discarded, pending, stale, and orphaned projected memory pages
+- query G-Brain with Postgres full-text search
+- fall back from memory retrieval to legacy retrieval when G-Brain is empty or unavailable
+
+### Slice 2: People Projection And Links
+
+Status: landed.
+
+Implemented:
+
+- `projectPeopleIntoBrain(userId, limit?)`
+- duplicate-safe person slugs
+- deterministic person link hints
+- memory-page links to known person pages
+- stale and orphaned person-page retirement
+
+Behavior:
+
+- each `people` row can project to a `pageType = "person"` brain page
+- duplicate names receive id-suffixed slugs
+- memory content mentioning known people links to the corresponding person page
+- renamed or deleted people do not leave active stale pages behind
+
+### Slice 3: Daily Maintenance
+
+Status: landed.
+
+Implemented:
+
+- `server/brain/maintenance.ts`
+- scheduler integration at the daily 06:00 maintenance slot
+- idempotency via `proactiveScheduleLog`
+
+Daily order:
+
+1. user memory embedding backfill
+2. deterministic memory auto-review
+3. G-Brain people projection
+4. G-Brain approved-memory projection
+5. G-Brain stale chunk embedding refresh
+
+### Slice 4: Brain Chunk Vector Retrieval
+
+Status: landed, pending live DB verification.
+
+Implemented:
+
+- migration `0009_brain_vector_index.sql`
+- optional `brain_content_chunks.embedding_vector vector(1536)`
+- `server/brain/vector.ts`
+- `refreshIndexWithEmbedder(...)`
+- `queryBrainWithEmbedder(...)`
+- feature flag `JARVIS_BRAIN_VECTOR_RETRIEVAL=1`
+
+Behavior:
+
+- embeddings are stored in JSONB and, when available, pgvector
+- vector queries are attempted only when the feature flag is enabled
+- vector write/query failures fall back to JSONB/FTS behavior
+- current migration targets G-Brain chunks, not canonical `user_memories`
+
+### Slice 5: Deterministic Memory Auto-Review
+
+Status: landed.
+
+Implemented:
+
+- `server/memory/autoReview.ts`
+- scheduler integration before G-Brain maintenance
+
+Policy:
+
+- auto-keep only pending long-term semantic/procedural memories
+- require high confidence
+- allow low-risk categories such as work patterns, preferences, communication style, energy rhythms, accomplishments, blockers, goals history, and facts
+- allow trusted sources such as chat, Telegram, manual entries, weekly patterns, and dream cycle outputs
+- leave relationships, medical, legal, financial, credentials, secrets, identity-sensitive, low-confidence, unusual-source, and generic memories pending
+
+Status transition:
+
+- auto-kept rows use the manual keep semantics: `pending_review = FALSE`, `review_status = 'kept'`
+- auto-kept rows can then project into G-Brain
+
+### Slice 6: Fast-Lane Continuity Fix
+
+Status: landed.
+
+Implemented:
+
+- fast-lane image/tool requests bypass fast mode
+- fast-lane deflections escalate to full workflow
+- fast-lane exchanges persist to `chat_history`
+- fast-lane exchanges update the SDK session store
+- immediate recall questions bypass fast mode
+
+Purpose:
+
+- prevent short-term user facts from disappearing from the normal prompt path
+- avoid requiring Jarvis to call a separate history action for something said seconds earlier
+
+## Remaining Work
+
+### Next Slice: Live DB Verification
+
+Verify:
+
+- migration `0009_brain_vector_index.sql` applies cleanly in the target Postgres environment
+- pgvector extension is available where deployed
+- `refreshIndex()` writes `embedding_vector`
+- vector query path activates under `JARVIS_BRAIN_VECTOR_RETRIEVAL=1`
+- fallback behavior works when pgvector is absent
+
+### Next Slice: Canonical Memory Vector Index
+
+Implement after G-Brain chunk vectors are verified:
+
+- `embedding_vector vector(1536)` on `user_memories`
+- backfill from existing JSONB `embedding`
+- vector retrieval path for canonical approved memories
+- capability probe and fallback
+
+### Next Slice: Memory OS Facade
+
+Implement:
+
+- `server/memory/memoryOs.ts`
+- single read path for memory tool, coach context, daily command, Agent SDK context, and G-Brain retrieval
+- structured provenance and uncertainty
+- fallback to existing retrieval when G-Brain or vector search is unavailable
+
+### Later Slices
+
+- Redis hot state for active working context
+- Graphiti temporal graph adapter
+- temporal query UX
+- user-facing provenance and correction flows for current-vs-past facts
+
+## Verification Commands
+
+Focused checks used for the current implementation:
+
+```powershell
+node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\links.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\maintenance.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vector.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorMigration.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\autoReview.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\telegramFastPath.assert.ts
+npm.cmd run server:build
+```
+
+DB-backed tests require `DATABASE_URL`.
