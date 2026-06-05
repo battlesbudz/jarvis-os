@@ -1,6 +1,8 @@
 # Jarvis Memory OS Temporal Graph Plan
 
-Status: proposed architecture plan.
+Status: active implementation plan.
+
+Last updated: 2026-06-05.
 
 This plan hardens the existing Jarvis memory system instead of replacing it.
 
@@ -25,6 +27,35 @@ Redis hot state
 -> context router retrieval packs
 -> user-visible memory review and provenance
 ```
+
+## Current Implementation Status
+
+The first G-Brain slices are now implemented as a derived second-brain layer on top of the canonical `user_memories` ledger.
+
+Landed:
+
+- Temporal parsing exists in `server/time/temporalContext.ts` with tests.
+- G-Brain derived storage exists under `server/brain/*`.
+- Approved memories project into G-Brain pages, chunks, links, and versions.
+- People rows project into duplicate-safe person pages.
+- Memory pages link deterministically to person pages when names match known people.
+- Daily G-Brain maintenance runs from the scheduler after embedding backfill.
+- `brain_content_chunks` now has optional pgvector support via `embedding_vector vector(1536)`.
+- Brain vector retrieval is feature-flagged by `JARVIS_BRAIN_VECTOR_RETRIEVAL=1`.
+- Brain retrieval falls back to FTS/JSONB embedding rerank when pgvector is unavailable.
+- A deterministic memory auto-review daemon exists in `server/memory/autoReview.ts`.
+- Auto-review keeps only high-confidence, low-risk pending memories and leaves sensitive/ambiguous memories pending.
+- Auto-kept memories are marked with the same state as manual keep: `pending_review = FALSE`, `review_status = 'kept'`.
+- Telegram fast-lane turns now persist into normal chat history/session state so immediate recall does not depend on a separate history action.
+
+Still planned:
+
+- pgvector support for canonical `user_memories`; current vector migration applies to G-Brain chunks.
+- A unified `server/memory/memoryOs.ts` read/write facade.
+- Redis hot state.
+- Graphiti temporal graph adapter.
+- Full temporal query UX and provenance display.
+- Live DB verification of the pgvector migration and feature flag path.
 
 ## Product Goal
 
