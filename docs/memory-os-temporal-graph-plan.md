@@ -48,6 +48,7 @@ Landed:
 - `brain_content_chunks` now has optional pgvector support via `embedding_vector vector(1536)`.
 - Brain vector retrieval is feature-flagged by `JARVIS_BRAIN_VECTOR_RETRIEVAL=1`.
 - Brain retrieval falls back to FTS/JSONB embedding rerank when pgvector is unavailable.
+- G-Brain chunk-vector live DB verification passed against Railway Postgres on 2026-06-05 via `npm.cmd run jarvis:verify:brain-vector-db`.
 - A deterministic memory auto-review daemon exists in `server/memory/autoReview.ts`.
 - Auto-review keeps only high-confidence, low-risk pending memories and leaves sensitive/ambiguous memories pending.
 - Auto-kept memories are marked with the same state as manual keep: `pending_review = FALSE`, `review_status = 'kept'`.
@@ -60,7 +61,8 @@ Still planned:
 - Redis hot state.
 - Graphiti temporal graph adapter.
 - Full temporal query UX and provenance display.
-- Live DB verification of the pgvector migration and feature flag path.
+
+Roadmap cross-reference: this plan overlaps `JARVIS_ROADMAP.md` Phase 4.1. The live-verified work covers derived G-Brain chunk vectors only. Canonical `user_memories.embedding_vector` support and the unified Memory OS facade remain the next roadmap-backed slices for packable autonomy.
 
 ## Product Goal
 
@@ -405,6 +407,8 @@ Implement:
 Outcome:
 
 Approved memories become scalable semantic recall.
+
+Status note, 2026-06-05: the G-Brain chunk side of this baseline is live-DB verified. The remaining Phase 2 work is the canonical `user_memories.embedding_vector` migration, backfill, retrieval path, capability probe, fallback, and monitoring.
 
 ### Phase 3: Memory OS Facade
 

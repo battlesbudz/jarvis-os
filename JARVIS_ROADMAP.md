@@ -1,7 +1,7 @@
 # Jarvis Autonomous Agent Roadmap
 
 > Living document - updated as features are built and shipped.
-> Last updated: May 30, 2026
+> Last updated: June 5, 2026
 
 ---
 
@@ -235,8 +235,11 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Hybrid retrieval uses full-text rank, optional embeddings, relevance, tier-recency boost, and access boost
 - [x] Memory extraction and review-gated promotion exist
 - [x] Pending memory review is surfaced in the tab badge
+- [x] G-Brain chunk pgvector migration and feature-flag retrieval are live-DB verified against Railway Postgres via `npm.cmd run jarvis:verify:brain-vector-db`
 - [ ] Finish user-facing memory correction, deletion, and provenance explanation flows
-- [ ] Backfill and monitor embeddings consistently in production
+- [ ] Add canonical `user_memories.embedding_vector` backfill/search and monitor embeddings consistently in production
+
+Roadmap cross-reference: the verified G-Brain chunk-vector work belongs to this Phase 4.1 memory-scaling lane and is tracked in `docs/gbrain-implementation-plan.md` plus `docs/memory-os-temporal-graph-plan.md`. It unblocks the canonical memory vector index and Memory OS facade work, but does not complete those slices.
 
 ### 4.2 - Pattern Recognition Engine
 

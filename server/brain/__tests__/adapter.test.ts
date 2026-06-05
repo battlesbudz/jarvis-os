@@ -212,16 +212,26 @@ async function main(): Promise<void> {
   assert.equal(embeddedChunk.embedding?.[0], 0.25);
   assert.equal(embeddedChunk.embedding?.[1], 0.75);
 
-  const semanticResult = await queryBrainWithEmbedder(
-    {
-      userId: TEST_USER_ID,
-      actorId: "adapter-test",
-      query: "no lexical overlap",
-      topK: 1,
-    },
-    async () => Array.from({ length: 1536 }, (_, index) => (index === 0 ? 0.25 : 0.75)),
-  );
-  assert.equal(semanticResult.chunks[0]?.pageSlug, "memory/vector-refresh");
+  const previousVectorFlag = process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL;
+  process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL = "1";
+  try {
+    const semanticResult = await queryBrainWithEmbedder(
+      {
+        userId: TEST_USER_ID,
+        actorId: "adapter-test",
+        query: "no lexical overlap",
+        topK: 1,
+      },
+      async () => Array.from({ length: 1536 }, (_, index) => (index === 0 ? 0.25 : 0.75)),
+    );
+    assert.equal(semanticResult.chunks[0]?.pageSlug, "memory/vector-refresh");
+  } finally {
+    if (previousVectorFlag === undefined) {
+      delete process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL;
+    } else {
+      process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL = previousVectorFlag;
+    }
+  }
 
   await assert.rejects(
     () =>

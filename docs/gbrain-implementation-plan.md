@@ -99,7 +99,7 @@ Daily order:
 
 ### Slice 4: Brain Chunk Vector Retrieval
 
-Status: landed, pending live DB verification.
+Status: landed and live DB verified.
 
 Implemented:
 
@@ -116,6 +116,13 @@ Behavior:
 - vector queries are attempted only when the feature flag is enabled
 - vector write/query failures fall back to JSONB/FTS behavior
 - current migration targets G-Brain chunks, not canonical `user_memories`
+
+Live DB verification on 2026-06-05:
+
+- Command: `npm.cmd run jarvis:verify:brain-vector-db` with `JARVIS_RUN_DB_TESTS_WITH_DATABASE_URL=1`
+- Target: Railway Postgres from `DATABASE_URL`
+- Result: PASS
+- Evidence: `0008_brain_projection.sql` and `0009_brain_vector_index.sql` executed successfully; pgvector extension version `0.8.2` is installed; `brain_content_chunks.embedding_vector` and `brain_chunks_embedding_vector_idx` exist; `refreshIndexWithEmbedder(...)` writes `embedding_vector`; vector query returns the seeded chunk under `JARVIS_BRAIN_VECTOR_RETRIEVAL=1`; a simulated pgvector failure falls back to FTS retrieval.
 
 ### Slice 5: Deterministic Memory Auto-Review
 
@@ -158,16 +165,6 @@ Purpose:
 
 ## Remaining Work
 
-### Next Slice: Live DB Verification
-
-Verify:
-
-- migration `0009_brain_vector_index.sql` applies cleanly in the target Postgres environment
-- pgvector extension is available where deployed
-- `refreshIndex()` writes `embedding_vector`
-- vector query path activates under `JARVIS_BRAIN_VECTOR_RETRIEVAL=1`
-- fallback behavior works when pgvector is absent
-
 ### Next Slice: Canonical Memory Vector Index
 
 Implement after G-Brain chunk vectors are verified:
@@ -193,6 +190,10 @@ Implement:
 - temporal query UX
 - user-facing provenance and correction flows for current-vs-past facts
 
+## Roadmap Cross-Reference
+
+This work maps to `JARVIS_ROADMAP.md` Phase 4.1, "Structured Long-Term Memory Store." The completed part is live-DB-verified vector retrieval for derived G-Brain chunks. The remaining roadmap overlap is canonical `user_memories.embedding_vector` search/backfill/monitoring, then the Memory OS facade that gives memory tools, coach context, daily command, Agent SDK context, and G-Brain one read path.
+
 ## Verification Commands
 
 Focused checks used for the current implementation:
@@ -201,6 +202,7 @@ Focused checks used for the current implementation:
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\links.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\maintenance.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vector.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorDbVerification.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorMigration.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\autoReview.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\telegramFastPath.assert.ts
@@ -208,3 +210,9 @@ npm.cmd run server:build
 ```
 
 DB-backed tests require `DATABASE_URL`.
+
+Live DB verification:
+
+```powershell
+$env:JARVIS_RUN_DB_TESTS_WITH_DATABASE_URL='1'; npm.cmd run jarvis:verify:brain-vector-db
+```
