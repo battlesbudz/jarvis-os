@@ -14208,8 +14208,9 @@ function matchesAgentSdkEmailWorkflow(message) {
 }
 function matchesAgentSdkEmailDraftOnlyWorkflow(message) {
   const text2 = String(message || "").toLowerCase();
-  if (!/\b(email|reply)\b/.test(text2)) return false;
-  if (!/\b(draft|write|compose|reply)\b/.test(text2)) return false;
+  const explicitEmailContext = /\b(email|e-mail|gmail|outlook|inbox|mail|thread)\b/.test(text2) || /\b(reply|respond)\s+to\b/.test(text2);
+  if (!explicitEmailContext) return false;
+  if (!/\b(draft|write|compose)\b/.test(text2) && !/\b(reply|respond)\s+to\b/.test(text2)) return false;
   if (/\b(send|sent)\b/.test(text2) && !/\b(do not send|don't send|dont send|draft only|just draft)\b/.test(text2)) {
     return false;
   }
@@ -15020,6 +15021,17 @@ var init_agentRunner = __esm({
     DEFAULT_MAX_COST_USD = 0.25;
     DEFAULT_MAX_STEPS = 20;
     DEFAULT_PROGRESS_TEXT_CHUNK_CHARS = 80;
+  }
+});
+
+// server/telegramWorkflowIntent.ts
+function shouldTryTelegramAgentSdkWorkflow(rawUserText) {
+  return matchesAgentSdkReminderWorkflow(rawUserText) || matchesAgentSdkEmailWorkflow(rawUserText) || matchesAgentSdkEmailDraftOnlyWorkflow(rawUserText);
+}
+var init_telegramWorkflowIntent = __esm({
+  "server/telegramWorkflowIntent.ts"() {
+    "use strict";
+    init_agentRunner();
   }
 });
 
@@ -20857,7 +20869,7 @@ Please reply directly to the specific task notification message so I know which 
           console.error("[Telegram] needsAttention routing error:", needsErr);
         }
       }
-      const shouldTryAgentSdkWorkflow = /\b(remind\s+me|set\s+(?:a\s+)?reminder|reminder)\b/i.test(rawUserText) || /\b(email|reply)\b/i.test(rawUserText) && /\b(send|sent|draft|write|compose|reply)\b/i.test(rawUserText);
+      const shouldTryAgentSdkWorkflow = shouldTryTelegramAgentSdkWorkflow(rawUserText);
       const { handlePrimeInput: handlePrimeInput2, isPrimeRuntimeEnabled: isPrimeRuntimeEnabled2 } = await Promise.resolve().then(() => (init_autonomyRuntime(), autonomyRuntime_exports));
       if (shouldTryAgentSdkWorkflow) {
         const primeStartedAt = Date.now();
@@ -21964,6 +21976,7 @@ var init_telegramRoutes = __esm({
     init_runRegistry();
     init_telegramRunGuard();
     init_telegramMessageBatcher();
+    init_telegramWorkflowIntent();
     openai5 = new OpenAI6(getOpenAIClientConfig());
     pollingOffset = 0;
     pollingActive = false;

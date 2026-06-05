@@ -44,6 +44,7 @@ import {
   cancelTelegramCoachMessageBatches,
   enqueueTelegramCoachMessageBatch,
 } from "./telegramMessageBatcher";
+import { shouldTryTelegramAgentSdkWorkflow } from "./telegramWorkflowIntent";
 
 const openai = new OpenAI(getOpenAIClientConfig());
 
@@ -1697,12 +1698,7 @@ async function processUpdate(update: any): Promise<void> {
         }
       }
 
-      const shouldTryAgentSdkWorkflow =
-        /\b(remind\s+me|set\s+(?:a\s+)?reminder|reminder)\b/i.test(rawUserText)
-        || (
-          /\b(email|reply)\b/i.test(rawUserText)
-          && /\b(send|sent|draft|write|compose|reply)\b/i.test(rawUserText)
-        );
+      const shouldTryAgentSdkWorkflow = shouldTryTelegramAgentSdkWorkflow(rawUserText);
 
       const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
       if (shouldTryAgentSdkWorkflow) {
