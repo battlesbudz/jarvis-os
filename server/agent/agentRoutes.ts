@@ -77,6 +77,11 @@ import { AGENT_POLICY_SCOPES } from "@shared/schema";
 import { readAuditEntries, countAuditEntries } from "./selfHealAudit";
 import { isIntegrationOwner } from "../integrationOwner";
 import { buildWorkerRuntimeTaskView } from "./workerRuntime";
+import {
+  TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildVisibleTurnProgressMessage,
+  shouldEmitVisibleProgressUpdate,
+} from "./turnProgress";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -613,6 +618,11 @@ export function registerAgentRoutes(app: Express): void {
         res.setHeader("X-Run-Id", runId);
         res.flushHeaders();
 
+        const turnStartedAtMs = Date.now();
+        let lastVisibleUpdateAtMs = turnStartedAtMs;
+        let progressUpdateCount = 0;
+        let latestProgressPhase = "";
+
         // Heartbeat: SSE comment every 15 s prevents mobile network idle-drops.
         const heartbeat = setInterval(() => {
           if (!res.writableEnded && !res.destroyed) {
@@ -620,9 +630,26 @@ export function registerAgentRoutes(app: Express): void {
           }
         }, 15_000);
 
+        const visibleProgress = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return;
+          const nowMs = Date.now();
+          if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+          const message = buildVisibleTurnProgressMessage({
+            startedAtMs: turnStartedAtMs,
+            nowMs,
+            updateCount: progressUpdateCount,
+            latestPhase: latestProgressPhase,
+          });
+          progressUpdateCount += 1;
+          lastVisibleUpdateAtMs = nowMs;
+          console.log(`[AgentRoutes/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} runId=${runId}`);
+          res.write(`data: ${JSON.stringify({ type: "progress", message })}\n\n`);
+        }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
+
         // Cleanup helper — called on normal completion and on client disconnect.
         const cleanup = () => {
           clearInterval(heartbeat);
+          clearInterval(visibleProgress);
           activeRuns.delete(runId);
         };
 
@@ -644,6 +671,7 @@ export function registerAgentRoutes(app: Express): void {
             sdkSessionId: incomingSessionId,
             onToken: (chunk: string) => {
               fullReply += chunk;
+              lastVisibleUpdateAtMs = Date.now();
               if (!res.writableEnded) {
                 res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
               }
@@ -658,6 +686,7 @@ export function registerAgentRoutes(app: Express): void {
                 const label = integrationLabels[integrationKey] ?? integrationKey;
                 const safeMessage = `Your ${label} connection has expired and needs to be reconnected.`;
                 console.debug(`[AgentRoutes/SSE] integration_error detail: ${errorMessage.slice(0, 300)}`);
+                lastVisibleUpdateAtMs = Date.now();
                 res.write(
                   `data: ${JSON.stringify({ type: "integration_error", integration: integrationKey, message: safeMessage })}\n\n`,
                 );
@@ -667,6 +696,7 @@ export function registerAgentRoutes(app: Express): void {
               if (!res.writableEnded) {
                 console.warn(`[AgentRoutes/SSE] tool_error: tool=${toolName}`);
                 console.debug(`[AgentRoutes/SSE] tool_error detail: ${errorMessage.slice(0, 300)}`);
+                lastVisibleUpdateAtMs = Date.now();
                 res.write(
                   `data: ${JSON.stringify({ type: "tool_error", tool: toolName })}\n\n`,
                 );
@@ -674,7 +704,9 @@ export function registerAgentRoutes(app: Express): void {
             },
             onProgressMessage: (message: string) => {
               if (!res.writableEnded) {
+                latestProgressPhase = message;
                 console.debug(`[AgentRoutes/SSE] progress: ${message}`);
+                lastVisibleUpdateAtMs = Date.now();
                 res.write(
                   `data: ${JSON.stringify({ type: "progress", message })}\n\n`,
                 );

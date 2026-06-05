@@ -109,6 +109,11 @@ import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { buildToolExecutionPolicy } from "./agent/toolExecutionPolicy";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
+import {
+  TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildVisibleTurnProgressMessage,
+  shouldEmitVisibleProgressUpdate,
+} from "./agent/turnProgress";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import {
@@ -2074,6 +2079,7 @@ Answer (yes/no):`,
     let userId: string | null | undefined;
     let cleanupRun: () => void = () => {};
     let stopKeepalive: () => void = () => {};
+    let stopVisibleProgress: () => void = () => {};
     try {
       const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId, originChannel: rawOriginChannel } = req.body;
       const originChannel: string = (typeof rawOriginChannel === "string" && rawOriginChannel.trim()) ? rawOriginChannel.trim().toLowerCase() : "appchat";
@@ -2082,6 +2088,86 @@ Answer (yes/no):`,
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
+
+      const turnStartedAtMs = Date.now();
+      let lastVisibleUpdateAtMs = turnStartedAtMs;
+      let visibleProgressUpdateCount = 0;
+      let latestVisibleProgressPhase = "";
+      let visibleProgressInterval: ReturnType<typeof setInterval> | null = null;
+
+      const ensureCoachSseOpen = () => {
+        if (res.headersSent) return;
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.flushHeaders();
+      };
+
+      const emitVisibleProgress = (phase?: string) => {
+        if (phase) latestVisibleProgressPhase = phase;
+        if (res.writableEnded || res.destroyed) return;
+        const nowMs = Date.now();
+        ensureCoachSseOpen();
+        const message = buildVisibleTurnProgressMessage({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          latestPhase: latestVisibleProgressPhase,
+        });
+        visibleProgressUpdateCount += 1;
+        lastVisibleUpdateAtMs = nowMs;
+        try {
+          res.write(`data: ${JSON.stringify({ type: "progress", message })}\n\n`);
+          console.log(`[Coach/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"} phase=${latestVisibleProgressPhase || "auto"}`);
+        } catch {}
+      };
+
+      const touchVisibleProgress = (phase?: string) => {
+        if (phase) latestVisibleProgressPhase = phase;
+        lastVisibleUpdateAtMs = Date.now();
+      };
+
+      const startVisibleProgress = () => {
+        if (visibleProgressInterval) return;
+        visibleProgressInterval = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return;
+          const nowMs = Date.now();
+          if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+          emitVisibleProgress();
+        }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
+      };
+
+      stopVisibleProgress = () => {
+        if (visibleProgressInterval) {
+          clearInterval(visibleProgressInterval);
+          visibleProgressInterval = null;
+        }
+      };
+      res.on("close", stopVisibleProgress);
+      res.on("finish", stopVisibleProgress);
+
+      // Register the run before any expensive context loading so a visible
+      // progress event can open SSE without preventing X-Run-Id from being set.
+      const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+      const abortController = new AbortController();
+      const { signal } = abortController;
+      let clientDisconnected = false;
+      let hasDaemonActions = false;
+      activeCoachRuns.set(runId, { controller: abortController, userId: userId ?? '' });
+      cleanupRun = () => {
+        abortController.abort();
+        activeCoachRuns.delete(runId);
+      };
+      req.on('close', cleanupRun);
+      req.on('close', () => {
+        if (!res.writableEnded) clientDisconnected = true;
+      });
+      res.on("finish", cleanupRun);
+
+      res.setHeader('X-Run-Id', runId);
+      res.setHeader('Access-Control-Expose-Headers', 'X-Run-Id');
+      startVisibleProgress();
 
       if (userId) {
         const latestUserMessage = [...messages].reverse().find((m: any) => m?.role === "user")?.content ?? "";
@@ -2111,11 +2197,8 @@ Answer (yes/no):`,
           },
         });
         if (coreRuntimeResult.handled) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Returning response");
           res.write(`data: ${JSON.stringify({
             content: coreRuntimeResult.reply,
             agentSdkRunId: coreRuntimeResult.sdkRunId,
@@ -2158,11 +2241,8 @@ Answer (yes/no):`,
           originChannel,
         });
         if (agentSdkReminderResult.handled) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Scheduling reminder");
           res.write(`data: ${JSON.stringify({
             content: agentSdkReminderResult.reply,
             agentSdkRunId: agentSdkReminderResult.runId,
@@ -2182,11 +2262,8 @@ Answer (yes/no):`,
           && agentSdkResult.status === "failed"
           && /OPENROUTER_API_KEY|provider|configured/i.test(agentSdkResult.error || agentSdkResult.reply || "");
         if (agentSdkResult.handled && !agentSdkSetupFailure) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Preparing email workflow response");
           res.write(`data: ${JSON.stringify({
             content: agentSdkResult.reply,
             agentSdkRunId: agentSdkResult.runId,
@@ -2204,11 +2281,8 @@ Answer (yes/no):`,
           channel: originChannel,
         });
         if (directEmailApprovalResult.handled) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Preparing approval request");
           res.write(`data: ${JSON.stringify({
             content: directEmailApprovalResult.reply,
             status: "awaiting_approval",
@@ -2226,11 +2300,8 @@ Answer (yes/no):`,
           channel: originChannel,
         });
         if (directReminderResult.handled) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Scheduling reminder");
           res.write(`data: ${JSON.stringify({ content: directReminderResult.reply })}\n\n`);
           if (directReminderResult.toolResult) {
             res.write(`data: ${JSON.stringify({
@@ -2272,11 +2343,8 @@ Answer (yes/no):`,
       );
 
       if (autonomyResult.handled && autonomyResult.reply) {
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.flushHeaders();
+        ensureCoachSseOpen();
+        touchVisibleProgress("Returning response");
         res.write(`data: ${JSON.stringify({ content: autonomyResult.reply })}\n\n`);
         if (autonomyResult.jobId) {
           res.write(`data: ${JSON.stringify({ type: "background_job", jobId: autonomyResult.jobId, agentType: autonomyResult.decision.agentType })}\n\n`);
@@ -2578,27 +2646,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       // Track whether the client disconnected mid-stream (e.g. switched to camera app).
       // If so, the full streamed response is saved to DB so it survives the disconnect.
-      // Per-run abort support: register an AbortController so the client can stop mid-stream
-      const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-      const abortController = new AbortController();
-      const { signal } = abortController;
-      activeCoachRuns.set(runId, { controller: abortController, userId: userId ?? '' });
-      cleanupRun = () => {
-        abortController.abort();
-        activeCoachRuns.delete(runId);
-      };
-      req.on('close', cleanupRun);
-
-      // Expose runId to client via response header (set before first flushHeaders call)
-      res.setHeader('X-Run-Id', runId);
-      res.setHeader('Access-Control-Expose-Headers', 'X-Run-Id');
-
-      let clientDisconnected = false;
-      let hasDaemonActions = false;
-      req.on('close', () => {
-        if (!res.writableEnded) clientDisconnected = true;
-      });
-
       // SSE keepalive: once the SSE stream is open, send a comment every 10s so
       // the connection isn't killed by proxies or the Android OS while daemon ops run.
       // Declared here (outer scope) so stopKeepalive() is reachable in the catch block
@@ -2736,6 +2783,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 res.flushHeaders();
               }
+              touchVisibleProgress(msg);
               try { res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: msg })}\n\n`); } catch {}
             },
           },
@@ -2905,6 +2953,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             res.setHeader('X-Accel-Buffering', 'no');
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.flushHeaders();
+            touchVisibleProgress("Searching the web");
             res.write(`data: ${JSON.stringify({ type: 'searching' })}\n\n`);
           }
 
@@ -2989,6 +3038,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 notify: 'Sending you a notification...',
               };
               const workingMsg = actionLabel[String(args.action || '')] || 'Working on your phone...';
+              touchVisibleProgress(workingMsg);
               res.write(`data: ${JSON.stringify({ type: 'working', message: workingMsg })}\n\n`);
               startKeepalive();
             }
@@ -3024,6 +3074,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 return parts.length >= 2 ? parts[1].replace(/_/g, ' ') : 'MCP';
               })();
               plainMcpServerName = mcpServerDisplayName;
+              touchVisibleProgress(`Calling ${mcpServerDisplayName}...`);
               res.write(`data: ${JSON.stringify({ type: 'working', message: `Calling ${mcpServerDisplayName}...` })}\n\n`);
               try {
                 const toolResult = await mcpAgentTool.execute(args, mcpToolCtx);
@@ -3281,6 +3332,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             const screenshotUrl = actionResults.find(a => a.screenshotUrl)?.screenshotUrl;
             savePendingCoachResponse(userId, loopFinalText, screenshotUrl).catch(() => {});
           }
+          touchVisibleProgress("Returning response");
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
@@ -3345,6 +3397,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         if (content) {
           fullStreamedReply += content;
           if (!clientDisconnected) {
+            touchVisibleProgress("Streaming response");
             try { res.write(`data: ${JSON.stringify({ content })}\n\n`); } catch {}
           }
         }
@@ -3425,6 +3478,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
     } catch (error) {
       stopKeepalive();
+      stopVisibleProgress();
       cleanupRun();
       // Graceful abort — user pressed Stop
       if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted'))) {

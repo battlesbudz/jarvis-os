@@ -223,6 +223,13 @@ export function RunModal({ agent, onClose }: { agent: RunModalAgent | null; onCl
             if (parsed.type === "tool_error") {
               hadToolError = true;
             }
+            if (parsed.type === "progress" && parsed.message) {
+              const progressMessage = String(parsed.message);
+              if (!accumulated.trim()) {
+                setStreamingContent(progressMessage);
+              }
+              continue;
+            }
             if (parsed.type === "attachment" && parsed.kind) {
               pendingAttachments.push({
                 kind: parsed.kind as InAppAttachment["kind"],

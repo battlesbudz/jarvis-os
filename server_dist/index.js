@@ -15035,6 +15035,32 @@ var init_telegramWorkflowIntent = __esm({
   }
 });
 
+// server/agent/turnProgress.ts
+function shouldEmitVisibleProgressUpdate(input) {
+  const intervalMs = input.intervalMs ?? TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS;
+  return input.nowMs - input.lastVisibleUpdateAtMs >= intervalMs;
+}
+function buildVisibleTurnProgressMessage(input) {
+  const elapsedSeconds = Math.max(0, Math.round((input.nowMs - input.startedAtMs) / 1e3));
+  const phase = input.latestPhase?.trim() || DEFAULT_PHASES[input.updateCount % DEFAULT_PHASES.length];
+  return `Working - ${phase}
+Elapsed: ${elapsedSeconds}s`;
+}
+var TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS, DEFAULT_PHASES;
+var init_turnProgress = __esm({
+  "server/agent/turnProgress.ts"() {
+    "use strict";
+    TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS = 8e3;
+    DEFAULT_PHASES = [
+      "Loading conversation context",
+      "Checking available tools and route",
+      "Working through the request",
+      "Waiting on model or tool results",
+      "Still running the turn"
+    ];
+  }
+});
+
 // server/agent/directEmailApprovalRoute.ts
 var directEmailApprovalRoute_exports = {};
 __export(directEmailApprovalRoute_exports, {
@@ -19518,6 +19544,7 @@ async function deliverCoachText(chatId, text2, placeholderMsgId) {
 }
 async function handleCoachReply(userId, chatId, userText, imageUrl) {
   const runGuard = createTelegramRunGuard(userId);
+  const turnStartedAtMs = Date.now();
   const ttsPrefs = await getUserTtsPrefs(userId).catch(() => ({ enabled: false, voice: "" }));
   sendChatAction(chatId, "typing").catch(() => {
   });
@@ -19533,9 +19560,31 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
   let streamIntervalMs = STREAM_INTERVAL_BASE_MS;
   let ttsStillThinkingTimer = null;
   let streamClosed = false;
+  let progressUpdateCount = 0;
+  let latestProgressPhase = "";
+  let lastVisibleUpdateAtMs = turnStartedAtMs;
+  let visibleProgressTimer = null;
   let onToken;
   if (!ttsPrefs.enabled) {
     placeholderMsgId = await sendMessageGetId(chatId, "Working on it\u2026").catch(() => null);
+    lastVisibleUpdateAtMs = Date.now();
+    visibleProgressTimer = setInterval(() => {
+      if (streamClosed || !placeholderMsgId || streamBuf.trim()) return;
+      const nowMs = Date.now();
+      if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+      const progressText = buildVisibleTurnProgressMessage({
+        startedAtMs: turnStartedAtMs,
+        nowMs,
+        updateCount: progressUpdateCount,
+        latestPhase: latestProgressPhase
+      });
+      progressUpdateCount += 1;
+      lastVisibleUpdateAtMs = nowMs;
+      editMessage(chatId, placeholderMsgId, progressText).then((result) => {
+        console.log(`[Telegram] visible progress ok=${result.ok} elapsedMs=${nowMs - turnStartedAtMs} chatId=${chatId}`);
+      }).catch(() => {
+      });
+    }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
     onToken = (chunk) => {
       if (streamClosed) return;
       streamBuf += chunk;
@@ -19564,6 +19613,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
         }).catch(() => {
         });
         lastEditAt = now;
+        lastVisibleUpdateAtMs = now;
       }
     };
   } else {
@@ -19576,6 +19626,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
   }
   const clearTimers = () => {
     clearInterval(typingInterval);
+    if (visibleProgressTimer !== null) clearInterval(visibleProgressTimer);
     if (ttsStillThinkingTimer !== null) clearTimeout(ttsStillThinkingTimer);
   };
   try {
@@ -19589,9 +19640,20 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
       return;
     }
     const onProgressMessage = (msg) => {
+      latestProgressPhase = msg;
       if (placeholderMsgId && !streamBuf) {
-        editMessage(chatId, placeholderMsgId, `\u23F3 ${msg}`).catch(() => {
+        const nowMs = Date.now();
+        lastVisibleUpdateAtMs = nowMs;
+        editMessage(chatId, placeholderMsgId, buildVisibleTurnProgressMessage({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: progressUpdateCount,
+          latestPhase: msg
+        })).then((result) => {
+          console.log(`[Telegram] routed progress ok=${result.ok} elapsedMs=${nowMs - turnStartedAtMs} chatId=${chatId} phase=${msg}`);
+        }).catch(() => {
         });
+        progressUpdateCount += 1;
       }
     };
     const storedSessionId = await getSession(userId, "Telegram");
@@ -21977,6 +22039,7 @@ var init_telegramRoutes = __esm({
     init_telegramRunGuard();
     init_telegramMessageBatcher();
     init_telegramWorkflowIntent();
+    init_turnProgress();
     openai5 = new OpenAI6(getOpenAIClientConfig());
     pollingOffset = 0;
     pollingActive = false;
@@ -53217,6 +53280,10 @@ function registerAgentRoutes(app2) {
         res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("X-Run-Id", runId);
         res.flushHeaders();
+        const turnStartedAtMs = Date.now();
+        let lastVisibleUpdateAtMs = turnStartedAtMs;
+        let progressUpdateCount = 0;
+        let latestProgressPhase = "";
         const heartbeat2 = setInterval(() => {
           if (!res.writableEnded && !res.destroyed) {
             try {
@@ -53225,8 +53292,26 @@ function registerAgentRoutes(app2) {
             }
           }
         }, 15e3);
+        const visibleProgress = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return;
+          const nowMs = Date.now();
+          if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+          const message2 = buildVisibleTurnProgressMessage({
+            startedAtMs: turnStartedAtMs,
+            nowMs,
+            updateCount: progressUpdateCount,
+            latestPhase: latestProgressPhase
+          });
+          progressUpdateCount += 1;
+          lastVisibleUpdateAtMs = nowMs;
+          console.log(`[AgentRoutes/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} runId=${runId}`);
+          res.write(`data: ${JSON.stringify({ type: "progress", message: message2 })}
+
+`);
+        }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
         const cleanup = () => {
           clearInterval(heartbeat2);
+          clearInterval(visibleProgress);
           activeRuns.delete(runId);
         };
         req.on("close", () => {
@@ -53245,6 +53330,7 @@ function registerAgentRoutes(app2) {
             sdkSessionId: incomingSessionId,
             onToken: (chunk) => {
               fullReply += chunk;
+              lastVisibleUpdateAtMs = Date.now();
               if (!res.writableEnded) {
                 res.write(`data: ${JSON.stringify({ content: chunk })}
 
@@ -53265,6 +53351,7 @@ function registerAgentRoutes(app2) {
                 const label = integrationLabels[integrationKey] ?? integrationKey;
                 const safeMessage = `Your ${label} connection has expired and needs to be reconnected.`;
                 console.debug(`[AgentRoutes/SSE] integration_error detail: ${errorMessage.slice(0, 300)}`);
+                lastVisibleUpdateAtMs = Date.now();
                 res.write(
                   `data: ${JSON.stringify({ type: "integration_error", integration: integrationKey, message: safeMessage })}
 
@@ -53276,6 +53363,7 @@ function registerAgentRoutes(app2) {
               if (!res.writableEnded) {
                 console.warn(`[AgentRoutes/SSE] tool_error: tool=${toolName2}`);
                 console.debug(`[AgentRoutes/SSE] tool_error detail: ${errorMessage.slice(0, 300)}`);
+                lastVisibleUpdateAtMs = Date.now();
                 res.write(
                   `data: ${JSON.stringify({ type: "tool_error", tool: toolName2 })}
 
@@ -53285,7 +53373,9 @@ function registerAgentRoutes(app2) {
             },
             onProgressMessage: (message2) => {
               if (!res.writableEnded) {
+                latestProgressPhase = message2;
                 console.debug(`[AgentRoutes/SSE] progress: ${message2}`);
+                lastVisibleUpdateAtMs = Date.now();
                 res.write(
                   `data: ${JSON.stringify({ type: "progress", message: message2 })}
 
@@ -53616,6 +53706,7 @@ var init_agentRoutes = __esm({
     init_selfHealAudit();
     init_integrationOwner();
     init_workerRuntime();
+    init_turnProgress();
     _p4 = (v) => Array.isArray(v) ? v[0] ?? "" : v;
     activeRuns = /* @__PURE__ */ new Map();
   }
@@ -69738,6 +69829,8 @@ Answer (yes/no):`
     };
     let stopKeepalive = () => {
     };
+    let stopVisibleProgress = () => {
+    };
     try {
       const { messages: messages2, goals: goals2, stats: stats2, history, calendarEvents, lifeContext: lifeContext2, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId, originChannel: rawOriginChannel } = req.body;
       const originChannel = typeof rawOriginChannel === "string" && rawOriginChannel.trim() ? rawOriginChannel.trim().toLowerCase() : "appchat";
@@ -69745,6 +69838,79 @@ Answer (yes/no):`
       if (!messages2 || !Array.isArray(messages2)) {
         return res.status(400).json({ error: "messages array is required" });
       }
+      const turnStartedAtMs = Date.now();
+      let lastVisibleUpdateAtMs = turnStartedAtMs;
+      let visibleProgressUpdateCount = 0;
+      let latestVisibleProgressPhase = "";
+      let visibleProgressInterval = null;
+      const ensureCoachSseOpen = () => {
+        if (res.headersSent) return;
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("X-Accel-Buffering", "no");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        res.flushHeaders();
+      };
+      const emitVisibleProgress = (phase) => {
+        if (phase) latestVisibleProgressPhase = phase;
+        if (res.writableEnded || res.destroyed) return;
+        const nowMs = Date.now();
+        ensureCoachSseOpen();
+        const message = buildVisibleTurnProgressMessage({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          latestPhase: latestVisibleProgressPhase
+        });
+        visibleProgressUpdateCount += 1;
+        lastVisibleUpdateAtMs = nowMs;
+        try {
+          res.write(`data: ${JSON.stringify({ type: "progress", message })}
+
+`);
+          console.log(`[Coach/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"} phase=${latestVisibleProgressPhase || "auto"}`);
+        } catch {
+        }
+      };
+      const touchVisibleProgress = (phase) => {
+        if (phase) latestVisibleProgressPhase = phase;
+        lastVisibleUpdateAtMs = Date.now();
+      };
+      const startVisibleProgress = () => {
+        if (visibleProgressInterval) return;
+        visibleProgressInterval = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return;
+          const nowMs = Date.now();
+          if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+          emitVisibleProgress();
+        }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
+      };
+      stopVisibleProgress = () => {
+        if (visibleProgressInterval) {
+          clearInterval(visibleProgressInterval);
+          visibleProgressInterval = null;
+        }
+      };
+      res.on("close", stopVisibleProgress);
+      res.on("finish", stopVisibleProgress);
+      const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+      const abortController = new AbortController();
+      const { signal } = abortController;
+      let clientDisconnected = false;
+      let hasDaemonActions = false;
+      activeCoachRuns.set(runId, { controller: abortController, userId: userId ?? "" });
+      cleanupRun = () => {
+        abortController.abort();
+        activeCoachRuns.delete(runId);
+      };
+      req.on("close", cleanupRun);
+      req.on("close", () => {
+        if (!res.writableEnded) clientDisconnected = true;
+      });
+      res.on("finish", cleanupRun);
+      res.setHeader("X-Run-Id", runId);
+      res.setHeader("Access-Control-Expose-Headers", "X-Run-Id");
+      startVisibleProgress();
       if (userId) {
         const latestUserMessage = [...messages2].reverse().find((m) => m?.role === "user")?.content ?? "";
         const { handlePrimeInput: handlePrimeInput2, isPrimeRuntimeEnabled: isPrimeRuntimeEnabled2 } = await Promise.resolve().then(() => (init_autonomyRuntime(), autonomyRuntime_exports));
@@ -69771,11 +69937,8 @@ Answer (yes/no):`
           }
         });
         if (coreRuntimeResult.handled) {
-          res.setHeader("Content-Type", "text/event-stream");
-          res.setHeader("Cache-Control", "no-cache, no-transform");
-          res.setHeader("X-Accel-Buffering", "no");
-          res.setHeader("Access-Control-Allow-Origin", "*");
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Returning response");
           res.write(`data: ${JSON.stringify({
             content: coreRuntimeResult.reply,
             agentSdkRunId: coreRuntimeResult.sdkRunId,
@@ -69819,11 +69982,8 @@ Answer (yes/no):`
             originChannel
           });
           if (agentSdkReminderResult.handled) {
-            res.setHeader("Content-Type", "text/event-stream");
-            res.setHeader("Cache-Control", "no-cache, no-transform");
-            res.setHeader("X-Accel-Buffering", "no");
-            res.setHeader("Access-Control-Allow-Origin", "*");
-            res.flushHeaders();
+            ensureCoachSseOpen();
+            touchVisibleProgress("Scheduling reminder");
             res.write(`data: ${JSON.stringify({
               content: agentSdkReminderResult.reply,
               agentSdkRunId: agentSdkReminderResult.runId,
@@ -69843,11 +70003,8 @@ Answer (yes/no):`
           });
           const agentSdkSetupFailure = agentSdkResult.handled && agentSdkResult.status === "failed" && /OPENROUTER_API_KEY|provider|configured/i.test(agentSdkResult.error || agentSdkResult.reply || "");
           if (agentSdkResult.handled && !agentSdkSetupFailure) {
-            res.setHeader("Content-Type", "text/event-stream");
-            res.setHeader("Cache-Control", "no-cache, no-transform");
-            res.setHeader("X-Accel-Buffering", "no");
-            res.setHeader("Access-Control-Allow-Origin", "*");
-            res.flushHeaders();
+            ensureCoachSseOpen();
+            touchVisibleProgress("Preparing email workflow response");
             res.write(`data: ${JSON.stringify({
               content: agentSdkResult.reply,
               agentSdkRunId: agentSdkResult.runId,
@@ -69866,11 +70023,8 @@ Answer (yes/no):`
             channel: originChannel
           });
           if (directEmailApprovalResult.handled) {
-            res.setHeader("Content-Type", "text/event-stream");
-            res.setHeader("Cache-Control", "no-cache, no-transform");
-            res.setHeader("X-Accel-Buffering", "no");
-            res.setHeader("Access-Control-Allow-Origin", "*");
-            res.flushHeaders();
+            ensureCoachSseOpen();
+            touchVisibleProgress("Preparing approval request");
             res.write(`data: ${JSON.stringify({
               content: directEmailApprovalResult.reply,
               status: "awaiting_approval",
@@ -69889,11 +70043,8 @@ Answer (yes/no):`
             channel: originChannel
           });
           if (directReminderResult.handled) {
-            res.setHeader("Content-Type", "text/event-stream");
-            res.setHeader("Cache-Control", "no-cache, no-transform");
-            res.setHeader("X-Accel-Buffering", "no");
-            res.setHeader("Access-Control-Allow-Origin", "*");
-            res.flushHeaders();
+            ensureCoachSseOpen();
+            touchVisibleProgress("Scheduling reminder");
             res.write(`data: ${JSON.stringify({ content: directReminderResult.reply })}
 
 `);
@@ -69935,11 +70086,8 @@ Answer (yes/no):`
         }
       );
       if (autonomyResult.handled && autonomyResult.reply) {
-        res.setHeader("Content-Type", "text/event-stream");
-        res.setHeader("Cache-Control", "no-cache, no-transform");
-        res.setHeader("X-Accel-Buffering", "no");
-        res.setHeader("Access-Control-Allow-Origin", "*");
-        res.flushHeaders();
+        ensureCoachSseOpen();
+        touchVisibleProgress("Returning response");
         res.write(`data: ${JSON.stringify({ content: autonomyResult.reply })}
 
 `);
@@ -70306,22 +70454,6 @@ Do not give a capability disclaimer until you have tried the matching tool path 
       const actionResults = [];
       const allMcpAttachments = [];
       let toolMessages = [];
-      const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-      const abortController = new AbortController();
-      const { signal } = abortController;
-      activeCoachRuns.set(runId, { controller: abortController, userId: userId ?? "" });
-      cleanupRun = () => {
-        abortController.abort();
-        activeCoachRuns.delete(runId);
-      };
-      req.on("close", cleanupRun);
-      res.setHeader("X-Run-Id", runId);
-      res.setHeader("Access-Control-Expose-Headers", "X-Run-Id");
-      let clientDisconnected = false;
-      let hasDaemonActions = false;
-      req.on("close", () => {
-        if (!res.writableEnded) clientDisconnected = true;
-      });
       let keepaliveInterval = null;
       const startKeepalive = () => {
         if (keepaliveInterval) return;
@@ -70445,6 +70577,7 @@ Do not give a capability disclaimer until you have tried the matching tool path 
                 res.setHeader("Access-Control-Allow-Origin", "*");
                 res.flushHeaders();
               }
+              touchVisibleProgress(msg);
               try {
                 res.write(`data: ${JSON.stringify({ type: "mcp_progress", message: msg })}
 
@@ -70627,6 +70760,7 @@ Do not give a capability disclaimer until you have tried the matching tool path 
             res.setHeader("X-Accel-Buffering", "no");
             res.setHeader("Access-Control-Allow-Origin", "*");
             res.flushHeaders();
+            touchVisibleProgress("Searching the web");
             res.write(`data: ${JSON.stringify({ type: "searching" })}
 
 `);
@@ -70706,6 +70840,7 @@ Do not give a capability disclaimer until you have tried the matching tool path 
                 notify: "Sending you a notification..."
               };
               const workingMsg = actionLabel[String(args.action || "")] || "Working on your phone...";
+              touchVisibleProgress(workingMsg);
               res.write(`data: ${JSON.stringify({ type: "working", message: workingMsg })}
 
 `);
@@ -70735,6 +70870,7 @@ Do not give a capability disclaimer until you have tried the matching tool path 
                 return parts.length >= 2 ? parts[1].replace(/_/g, " ") : "MCP";
               })();
               plainMcpServerName = mcpServerDisplayName;
+              touchVisibleProgress(`Calling ${mcpServerDisplayName}...`);
               res.write(`data: ${JSON.stringify({ type: "working", message: `Calling ${mcpServerDisplayName}...` })}
 
 `);
@@ -70998,6 +71134,7 @@ You MUST tell the user this specific action FAILED. Do NOT describe it as succes
             savePendingCoachResponse(userId, loopFinalText, screenshotUrl).catch(() => {
             });
           }
+          touchVisibleProgress("Returning response");
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}
 
 `);
@@ -71059,6 +71196,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
         if (content) {
           fullStreamedReply += content;
           if (!clientDisconnected) {
+            touchVisibleProgress("Streaming response");
             try {
               res.write(`data: ${JSON.stringify({ content })}
 
@@ -71159,6 +71297,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       }
     } catch (error) {
       stopKeepalive();
+      stopVisibleProgress();
       cleanupRun();
       if (error instanceof Error && (error.name === "AbortError" || error.message?.includes("aborted"))) {
         if (!res.headersSent) {
@@ -74048,6 +74187,7 @@ var init_routes3 = __esm({
     init_toolExecutionPolicy();
     init_appCoachChatAutonomy();
     init_coreAgentIds();
+    init_turnProgress();
     init_connectionCenter();
     init_coachRuntimeState();
     init_aiCoachContextService();
