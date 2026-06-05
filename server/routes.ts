@@ -106,6 +106,7 @@ import {
   isCodexDelegationEnabled,
 } from "./agent/codexDelegation";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
+import { buildToolExecutionPolicy } from "./agent/toolExecutionPolicy";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
@@ -2707,10 +2708,18 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           focusedToolNames.add("jarvis_self_diagnose");
         }
         toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
-        const modelRequestTools =
+        const focusedRequestTools =
           toolAwareRoute.shouldPreferTool
             ? requestTools.filter((tool) => focusedToolNames.has(tool.function.name))
             : requestTools;
+        const firstTurnToolPolicy = buildToolExecutionPolicy({
+          route: toolAwareRoute,
+          tools: focusedRequestTools,
+          maxTurns: MAX_TOOL_TURNS,
+          getToolName: (tool) => tool.function.name,
+          forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest,
+        });
+        const modelRequestTools = firstTurnToolPolicy.tools;
 
         // Shared MCP tool context (pendingAttachments accumulate across turns)
         const mcpToolCtx: import("./agent/types").ToolContext = {
@@ -2744,10 +2753,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           const phase1 = await runCoachModelTurn({
             messages: currentMessages,
             tools: modelRequestTools,
-            // Force a tool call on turn 0 for requests where a plain-text guess
-            // is especially likely to repeat stale chat history.
-            // Subsequent turns use "auto" so the model can stop and respond.
-            toolChoice: (turn === 0 && (isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest || toolAwareRoute.shouldPreferTool)) ? "required" : "auto",
+            // Router-selected tool routes are enforced outside the model:
+            // turn 0 must call one of the narrowed tools, later turns may stop.
+            toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
             maxCompletionTokens: 2048,
             signal,
             userId: userId ?? undefined,

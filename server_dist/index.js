@@ -65481,6 +65481,39 @@ var init_toolAwareRouting = __esm({
   }
 });
 
+// server/agent/toolExecutionPolicy.ts
+function buildToolExecutionPolicy({
+  route,
+  tools,
+  maxTurns,
+  getToolName,
+  forceRequired = false
+}) {
+  const requiredToolNames = new Set(route.priorityToolNames);
+  const shouldRequireTool = forceRequired || route.shouldPreferTool && requiredToolNames.size > 0;
+  if (!shouldRequireTool) {
+    return {
+      tools,
+      toolChoice: "auto",
+      maxTurns,
+      requiredToolNames: []
+    };
+  }
+  const narrowedTools = tools.filter((tool2) => requiredToolNames.has(getToolName(tool2)));
+  const effectiveTools = narrowedTools.length > 0 ? narrowedTools : tools;
+  return {
+    tools: effectiveTools,
+    toolChoice: effectiveTools.length > 0 ? "required" : "auto",
+    maxTurns: Math.max(maxTurns, 3),
+    requiredToolNames: [...requiredToolNames]
+  };
+}
+var init_toolExecutionPolicy = __esm({
+  "server/agent/toolExecutionPolicy.ts"() {
+    "use strict";
+  }
+});
+
 // server/services/aiCoachContextService.ts
 import fs22 from "fs";
 import path29 from "path";
@@ -70389,7 +70422,15 @@ Do not give a capability disclaimer until you have tried the matching tool path 
           focusedToolNames.add("jarvis_self_diagnose");
         }
         toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
-        const modelRequestTools = toolAwareRoute.shouldPreferTool ? requestTools.filter((tool2) => focusedToolNames.has(tool2.function.name)) : requestTools;
+        const focusedRequestTools = toolAwareRoute.shouldPreferTool ? requestTools.filter((tool2) => focusedToolNames.has(tool2.function.name)) : requestTools;
+        const firstTurnToolPolicy = buildToolExecutionPolicy({
+          route: toolAwareRoute,
+          tools: focusedRequestTools,
+          maxTurns: MAX_TOOL_TURNS,
+          getToolName: (tool2) => tool2.function.name,
+          forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest
+        });
+        const modelRequestTools = firstTurnToolPolicy.tools;
         const mcpToolCtx = {
           userId,
           channel: originChannel,
@@ -70425,10 +70466,9 @@ Do not give a capability disclaimer until you have tried the matching tool path 
           const phase1 = await runCoachModelTurn({
             messages: currentMessages,
             tools: modelRequestTools,
-            // Force a tool call on turn 0 for requests where a plain-text guess
-            // is especially likely to repeat stale chat history.
-            // Subsequent turns use "auto" so the model can stop and respond.
-            toolChoice: turn === 0 && (isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest || toolAwareRoute.shouldPreferTool) ? "required" : "auto",
+            // Router-selected tool routes are enforced outside the model:
+            // turn 0 must call one of the narrowed tools, later turns may stop.
+            toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
             maxCompletionTokens: 2048,
             signal,
             userId: userId ?? void 0,
@@ -74005,6 +74045,7 @@ var init_routes3 = __esm({
     init_modelUsage();
     init_codexDelegation();
     init_toolAwareRouting();
+    init_toolExecutionPolicy();
     init_appCoachChatAutonomy();
     init_coreAgentIds();
     init_connectionCenter();

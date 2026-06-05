@@ -52,6 +52,7 @@ const tests = [
   { file: "server/agent/__tests__/scheduledTaskSemantics.assert.ts" },
   { file: "server/agent/__tests__/scheduledTaskSchemaRepair.assert.ts" },
   { file: "server/agent/__tests__/toolAwareRouting.assert.ts" },
+  { file: "server/agent/__tests__/toolExecutionPolicy.assert.ts" },
   { file: "server/agent/__tests__/projectCreateRequest.assert.ts" },
   { file: "server/agent/__tests__/modelRouter.assert.ts" },
   { file: "server/agent/__tests__/codexOnlyOrchestrator.assert.ts" },
