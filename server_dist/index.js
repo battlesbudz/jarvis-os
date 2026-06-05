@@ -13474,7 +13474,14 @@ function isTelegramRunTimeoutError(error) {
 function createTelegramRunGuard(userId) {
   const runId = `telegram_${Date.now()}_${crypto3.randomBytes(4).toString("hex")}`;
   const controller = new AbortController();
+  let lastMeaningfulActivityAtMs = Date.now();
+  let rescheduleInactivityTimer = null;
   activeCoachRuns.set(runId, { controller, userId });
+  const touch = (kind = "progress", _message) => {
+    if (NON_MEANINGFUL_ACTIVITY_KINDS.has(kind)) return;
+    lastMeaningfulActivityAtMs = Date.now();
+    rescheduleInactivityTimer?.();
+  };
   const finish = () => {
     const active = activeCoachRuns.get(runId);
     if (active?.controller === controller) {
@@ -13487,9 +13494,13 @@ function createTelegramRunGuard(userId) {
     }
     return new Promise((resolve10, reject) => {
       let settled = false;
+      let timeout;
       const cleanup = () => {
         settled = true;
         clearTimeout(timeout);
+        if (rescheduleInactivityTimer === scheduleTimeout) {
+          rescheduleInactivityTimer = null;
+        }
         controller.signal.removeEventListener("abort", onAbort);
       };
       const onAbort = () => {
@@ -13497,14 +13508,22 @@ function createTelegramRunGuard(userId) {
         cleanup();
         reject(controller.signal.reason instanceof Error ? controller.signal.reason : new TelegramRunAbortedError());
       };
-      const timeout = setTimeout(() => {
+      const onTimeout = () => {
         if (settled) return;
         const error = new TelegramRunTimeoutError(timeoutMs);
         cleanup();
         controller.abort(error);
         reject(error);
-      }, timeoutMs);
+      };
+      const scheduleTimeout = () => {
+        clearTimeout(timeout);
+        const elapsedSinceMeaningfulActivity = Date.now() - lastMeaningfulActivityAtMs;
+        const remainingMs = Math.max(0, timeoutMs - elapsedSinceMeaningfulActivity);
+        timeout = setTimeout(onTimeout, remainingMs);
+      };
       controller.signal.addEventListener("abort", onAbort, { once: true });
+      rescheduleInactivityTimer = scheduleTimeout;
+      scheduleTimeout();
       promise.then(
         (value) => {
           if (settled) return;
@@ -13523,15 +13542,21 @@ function createTelegramRunGuard(userId) {
     runId,
     signal: controller.signal,
     finish,
-    race
+    race,
+    touch
   };
 }
-var MIN_TELEGRAM_TURN_TIMEOUT_MS, TELEGRAM_REPLY_TIMEOUT_MS, TelegramRunAbortedError, TelegramRunTimeoutError;
+var MIN_TELEGRAM_TURN_TIMEOUT_MS, NON_MEANINGFUL_ACTIVITY_KINDS, TELEGRAM_REPLY_TIMEOUT_MS, TelegramRunAbortedError, TelegramRunTimeoutError;
 var init_telegramRunGuard = __esm({
   "server/telegramRunGuard.ts"() {
     "use strict";
     init_runRegistry();
-    MIN_TELEGRAM_TURN_TIMEOUT_MS = 3e5;
+    MIN_TELEGRAM_TURN_TIMEOUT_MS = 9e5;
+    NON_MEANINGFUL_ACTIVITY_KINDS = /* @__PURE__ */ new Set([
+      "auto_progress",
+      "keepalive",
+      "typing"
+    ]);
     TELEGRAM_REPLY_TIMEOUT_MS = resolveTelegramReplyTimeoutMs();
     TelegramRunAbortedError = class extends Error {
       constructor(message = "Telegram turn was aborted.") {
@@ -13541,7 +13566,7 @@ var init_telegramRunGuard = __esm({
     };
     TelegramRunTimeoutError = class extends Error {
       constructor(timeoutMs) {
-        super(`Telegram turn timed out after ${timeoutMs}ms.`);
+        super(`Telegram turn had no meaningful activity for ${timeoutMs}ms.`);
         this.name = "TelegramRunTimeoutError";
       }
     };
@@ -15361,6 +15386,18 @@ function buildVisibleTurnProgressMessage(input) {
   const phase = input.latestPhase?.trim() || DEFAULT_PHASES[input.updateCount % DEFAULT_PHASES.length];
   return `Working - ${phase}
 Elapsed: ${elapsedSeconds}s`;
+}
+function buildTurnProgressEvent(input) {
+  return {
+    type: "progress",
+    source: input.source?.trim() || "server",
+    stage: input.stage?.trim() || "working",
+    message: input.message,
+    ...input.detail ? { detail: input.detail } : {},
+    elapsedSeconds: Math.max(0, Math.round((input.nowMs - input.startedAtMs) / 1e3)),
+    updateCount: input.updateCount,
+    meaningful: input.meaningful ?? false
+  };
 }
 var TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS, DEFAULT_PHASES;
 var init_turnProgress = __esm({
@@ -19888,6 +19925,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
       if (streamClosed || !placeholderMsgId || streamBuf.trim()) return;
       const nowMs = Date.now();
       if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+      runGuard.touch("auto_progress", latestProgressPhase || "Still running");
       const progressText = buildVisibleTurnProgressMessage({
         startedAtMs: turnStartedAtMs,
         nowMs,
@@ -19903,6 +19941,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
     }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
     onToken = (chunk) => {
       if (streamClosed) return;
+      runGuard.touch("model_token", "Streaming model response");
       streamBuf += chunk;
       const now = Date.now();
       if (placeholderMsgId && now - lastEditAt >= streamIntervalMs && streamBuf.trim().length >= 10) {
@@ -19957,6 +19996,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
     }
     const onProgressMessage = (msg) => {
       latestProgressPhase = msg;
+      runGuard.touch("progress", msg);
       if (placeholderMsgId && !streamBuf) {
         const nowMs = Date.now();
         lastVisibleUpdateAtMs = nowMs;
@@ -19973,7 +20013,7 @@ async function handleCoachReply(userId, chatId, userText, imageUrl) {
       }
     };
     const storedSessionId = await getSession(userId, "Telegram");
-    console.log(`[Telegram] starting coach turn with timeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
+    console.log(`[Telegram] starting coach turn with inactivityTimeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
     const { reply, attachments, sdkSessionId } = await runGuard.race(
       runCoachAgent({
         userId,
@@ -20081,8 +20121,8 @@ ${markdownExtra}` : markdownExtra : reply;
       return;
     }
     if (isTelegramRunTimeoutError(error)) {
-      const timeoutMessage = "I hit a Telegram safety limit while working on that, so I paused this turn instead of leaving it running forever. Send it again or ask me to delegate it as a background job.";
-      console.warn(`[Telegram] coach turn timed out after ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
+      const timeoutMessage = "I stopped this Telegram turn because I did not see meaningful progress for a long time. Send it again or ask me to delegate it as a background job.";
+      console.warn(`[Telegram] coach turn inactive for ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
           sendMessage(chatId, timeoutMessage).catch(() => {
@@ -53618,10 +53658,20 @@ function registerAgentRoutes(app2) {
             updateCount: progressUpdateCount,
             latestPhase: latestProgressPhase
           });
+          const event = buildTurnProgressEvent({
+            startedAtMs: turnStartedAtMs,
+            nowMs,
+            updateCount: progressUpdateCount,
+            source: "server",
+            stage: "idle_visible_update",
+            message: message2,
+            detail: latestProgressPhase || void 0,
+            meaningful: false
+          });
           progressUpdateCount += 1;
           lastVisibleUpdateAtMs = nowMs;
           console.log(`[AgentRoutes/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} runId=${runId}`);
-          res.write(`data: ${JSON.stringify({ type: "progress", message: message2 })}
+          res.write(`data: ${JSON.stringify(event)}
 
 `);
         }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
@@ -53691,9 +53741,20 @@ function registerAgentRoutes(app2) {
               if (!res.writableEnded) {
                 latestProgressPhase = message2;
                 console.debug(`[AgentRoutes/SSE] progress: ${message2}`);
-                lastVisibleUpdateAtMs = Date.now();
+                const nowMs = Date.now();
+                lastVisibleUpdateAtMs = nowMs;
+                const event = buildTurnProgressEvent({
+                  startedAtMs: turnStartedAtMs,
+                  nowMs,
+                  updateCount: progressUpdateCount,
+                  source: "harness",
+                  stage: "progress",
+                  message: message2,
+                  meaningful: true
+                });
+                progressUpdateCount += 1;
                 res.write(
-                  `data: ${JSON.stringify({ type: "progress", message: message2 })}
+                  `data: ${JSON.stringify(event)}
 
 `
                 );
@@ -70178,13 +70239,48 @@ Answer (yes/no):`
           updateCount: visibleProgressUpdateCount,
           latestPhase: latestVisibleProgressPhase
         });
+        const event = buildTurnProgressEvent({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          source: "server",
+          stage: "idle_visible_update",
+          message,
+          detail: latestVisibleProgressPhase || void 0,
+          meaningful: false
+        });
         visibleProgressUpdateCount += 1;
         lastVisibleUpdateAtMs = nowMs;
         try {
-          res.write(`data: ${JSON.stringify({ type: "progress", message })}
+          res.write(`data: ${JSON.stringify(event)}
 
 `);
           console.log(`[Coach/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"} phase=${latestVisibleProgressPhase || "auto"}`);
+        } catch {
+        }
+      };
+      const emitMeaningfulProgress = (input) => {
+        if (res.writableEnded || res.destroyed) return;
+        const nowMs = Date.now();
+        ensureCoachSseOpen();
+        const event = buildTurnProgressEvent({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          source: input.source,
+          stage: input.stage,
+          message: input.message,
+          detail: input.detail,
+          meaningful: true
+        });
+        visibleProgressUpdateCount += 1;
+        latestVisibleProgressPhase = input.message;
+        lastVisibleUpdateAtMs = nowMs;
+        try {
+          res.write(`data: ${JSON.stringify(event)}
+
+`);
+          console.log(`[Coach/SSE] meaningful progress source=${input.source} stage=${input.stage} elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"}`);
         } catch {
         }
       };
@@ -70894,6 +70990,11 @@ Do not give a capability disclaimer until you have tried the matching tool path 
                 res.flushHeaders();
               }
               touchVisibleProgress(msg);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_progress",
+                message: msg
+              });
               try {
                 res.write(`data: ${JSON.stringify({ type: "mcp_progress", message: msg })}
 
@@ -70911,6 +71012,12 @@ Do not give a capability disclaimer until you have tried the matching tool path 
             ...baseMessages,
             ...toolMessages
           ];
+          emitMeaningfulProgress({
+            source: "model",
+            stage: turn === 0 ? "model_route" : "model_continue",
+            message: turn === 0 ? "Choosing the response path" : "Continuing after tool results",
+            detail: useToolFocusedLoop ? "Tool-focused route selected" : "Full coach context route selected"
+          });
           const phase1StartedAt = Date.now();
           const phase1 = await runCoachModelTurn({
             messages: currentMessages,
@@ -70934,6 +71041,21 @@ Do not give a capability disclaimer until you have tried the matching tool path 
           const phase1ToolCalls = (choice.message.tool_calls ?? []).filter(
             (tc) => tc.type === "function"
           );
+          if (phase1ToolCalls.length > 0) {
+            emitMeaningfulProgress({
+              source: "model",
+              stage: "tool_selection",
+              message: `Model selected ${phase1ToolCalls.length} tool${phase1ToolCalls.length === 1 ? "" : "s"}`,
+              detail: phase1ToolCalls.map((tc) => tc.function.name).join(", ")
+            });
+          } else if (choice.message.content) {
+            emitMeaningfulProgress({
+              source: "model",
+              stage: "model_answer",
+              message: "Model produced a response",
+              detail: `finish_reason=${choice.finish_reason ?? "unknown"}`
+            });
+          }
           const phase1Usage = estimateModelUsage({
             messages: currentMessages,
             tools: modelRequestTools,
@@ -71077,6 +71199,12 @@ Do not give a capability disclaimer until you have tried the matching tool path 
             res.setHeader("Access-Control-Allow-Origin", "*");
             res.flushHeaders();
             touchVisibleProgress("Searching the web");
+            emitMeaningfulProgress({
+              source: "tool",
+              stage: "tool_call",
+              message: "Searching the web",
+              detail: choice.message.tool_calls.map((tc) => tc.type === "function" ? tc.function.name : tc.type).join(", ")
+            });
             res.write(`data: ${JSON.stringify({ type: "searching" })}
 
 `);
@@ -71157,6 +71285,12 @@ Do not give a capability disclaimer until you have tried the matching tool path 
               };
               const workingMsg = actionLabel[String(args.action || "")] || "Working on your phone...";
               touchVisibleProgress(workingMsg);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_call",
+                message: workingMsg,
+                detail: `daemon_action:${String(args.action || "")}`
+              });
               res.write(`data: ${JSON.stringify({ type: "working", message: workingMsg })}
 
 `);
@@ -71187,6 +71321,12 @@ Do not give a capability disclaimer until you have tried the matching tool path 
               })();
               plainMcpServerName = mcpServerDisplayName;
               touchVisibleProgress(`Calling ${mcpServerDisplayName}...`);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_call",
+                message: `Calling ${mcpServerDisplayName}...`,
+                detail: tc.function.name
+              });
               res.write(`data: ${JSON.stringify({ type: "working", message: `Calling ${mcpServerDisplayName}...` })}
 
 `);

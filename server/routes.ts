@@ -111,6 +111,7 @@ import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
 import {
   TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildTurnProgressEvent,
   buildVisibleTurnProgressMessage,
   shouldEmitVisibleProgressUpdate,
 } from "./agent/turnProgress";
@@ -2115,11 +2116,49 @@ Answer (yes/no):`,
           updateCount: visibleProgressUpdateCount,
           latestPhase: latestVisibleProgressPhase,
         });
+        const event = buildTurnProgressEvent({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          source: "server",
+          stage: "idle_visible_update",
+          message,
+          detail: latestVisibleProgressPhase || undefined,
+          meaningful: false,
+        });
         visibleProgressUpdateCount += 1;
         lastVisibleUpdateAtMs = nowMs;
         try {
-          res.write(`data: ${JSON.stringify({ type: "progress", message })}\n\n`);
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
           console.log(`[Coach/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"} phase=${latestVisibleProgressPhase || "auto"}`);
+        } catch {}
+      };
+
+      const emitMeaningfulProgress = (input: {
+        source: string;
+        stage: string;
+        message: string;
+        detail?: string;
+      }) => {
+        if (res.writableEnded || res.destroyed) return;
+        const nowMs = Date.now();
+        ensureCoachSseOpen();
+        const event = buildTurnProgressEvent({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          source: input.source,
+          stage: input.stage,
+          message: input.message,
+          detail: input.detail,
+          meaningful: true,
+        });
+        visibleProgressUpdateCount += 1;
+        latestVisibleProgressPhase = input.message;
+        lastVisibleUpdateAtMs = nowMs;
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          console.log(`[Coach/SSE] meaningful progress source=${input.source} stage=${input.stage} elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"}`);
         } catch {}
       };
 
@@ -2784,6 +2823,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 res.flushHeaders();
               }
               touchVisibleProgress(msg);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_progress",
+                message: msg,
+              });
               try { res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: msg })}\n\n`); } catch {}
             },
           },
@@ -2797,6 +2841,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             ...baseMessages,
             ...toolMessages,
           ];
+          emitMeaningfulProgress({
+            source: "model",
+            stage: turn === 0 ? "model_route" : "model_continue",
+            message: turn === 0 ? "Choosing the response path" : "Continuing after tool results",
+            detail: useToolFocusedLoop ? "Tool-focused route selected" : "Full coach context route selected",
+          });
           const phase1StartedAt = Date.now();
           const phase1 = await runCoachModelTurn({
             messages: currentMessages,
@@ -2821,6 +2871,21 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           const phase1ToolCalls = (choice.message.tool_calls ?? []).filter(
             (tc): tc is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => tc.type === "function",
           );
+          if (phase1ToolCalls.length > 0) {
+            emitMeaningfulProgress({
+              source: "model",
+              stage: "tool_selection",
+              message: `Model selected ${phase1ToolCalls.length} tool${phase1ToolCalls.length === 1 ? "" : "s"}`,
+              detail: phase1ToolCalls.map((tc) => tc.function.name).join(", "),
+            });
+          } else if (choice.message.content) {
+            emitMeaningfulProgress({
+              source: "model",
+              stage: "model_answer",
+              message: "Model produced a response",
+              detail: `finish_reason=${choice.finish_reason ?? "unknown"}`,
+            });
+          }
           const phase1Usage = estimateModelUsage({
             messages: currentMessages,
             tools: modelRequestTools,
@@ -2954,6 +3019,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.flushHeaders();
             touchVisibleProgress("Searching the web");
+            emitMeaningfulProgress({
+              source: "tool",
+              stage: "tool_call",
+              message: "Searching the web",
+              detail: choice.message.tool_calls.map((tc) => tc.type === "function" ? tc.function.name : tc.type).join(", "),
+            });
             res.write(`data: ${JSON.stringify({ type: 'searching' })}\n\n`);
           }
 
@@ -3039,6 +3110,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               };
               const workingMsg = actionLabel[String(args.action || '')] || 'Working on your phone...';
               touchVisibleProgress(workingMsg);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_call",
+                message: workingMsg,
+                detail: `daemon_action:${String(args.action || "")}`,
+              });
               res.write(`data: ${JSON.stringify({ type: 'working', message: workingMsg })}\n\n`);
               startKeepalive();
             }
@@ -3075,6 +3152,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               })();
               plainMcpServerName = mcpServerDisplayName;
               touchVisibleProgress(`Calling ${mcpServerDisplayName}...`);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_call",
+                message: `Calling ${mcpServerDisplayName}...`,
+                detail: tc.function.name,
+              });
               res.write(`data: ${JSON.stringify({ type: 'working', message: `Calling ${mcpServerDisplayName}...` })}\n\n`);
               try {
                 const toolResult = await mcpAgentTool.execute(args, mcpToolCtx);

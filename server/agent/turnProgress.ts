@@ -28,3 +28,36 @@ export function buildVisibleTurnProgressMessage(input: {
     || DEFAULT_PHASES[input.updateCount % DEFAULT_PHASES.length];
   return `Working - ${phase}\nElapsed: ${elapsedSeconds}s`;
 }
+
+export type TurnProgressEvent = {
+  type: "progress";
+  source: string;
+  stage: string;
+  message: string;
+  detail?: string;
+  elapsedSeconds: number;
+  updateCount: number;
+  meaningful: boolean;
+};
+
+export function buildTurnProgressEvent(input: {
+  startedAtMs: number;
+  nowMs: number;
+  updateCount: number;
+  source?: string;
+  stage?: string;
+  message: string;
+  detail?: string;
+  meaningful?: boolean;
+}): TurnProgressEvent {
+  return {
+    type: "progress",
+    source: input.source?.trim() || "server",
+    stage: input.stage?.trim() || "working",
+    message: input.message,
+    ...(input.detail ? { detail: input.detail } : {}),
+    elapsedSeconds: Math.max(0, Math.round((input.nowMs - input.startedAtMs) / 1000)),
+    updateCount: input.updateCount,
+    meaningful: input.meaningful ?? false,
+  };
+}

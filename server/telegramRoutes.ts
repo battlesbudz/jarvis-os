@@ -254,6 +254,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       if (streamClosed || !placeholderMsgId || streamBuf.trim()) return;
       const nowMs = Date.now();
       if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+      runGuard.touch("auto_progress", latestProgressPhase || "Still running");
       const progressText = buildVisibleTurnProgressMessage({
         startedAtMs: turnStartedAtMs,
         nowMs,
@@ -270,6 +271,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
     onToken = (chunk: string) => {
       if (streamClosed) return;
+      runGuard.touch("model_token", "Streaming model response");
       streamBuf += chunk;
       const now = Date.now();
       // Only edit once we have a meaningful snippet (≥10 chars) and the interval has elapsed.
@@ -333,6 +335,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     // the user can see progress without an additional status edit).
     const onProgressMessage = (msg: string) => {
       latestProgressPhase = msg;
+      runGuard.touch("progress", msg);
       if (placeholderMsgId && !streamBuf) {
         const nowMs = Date.now();
         lastVisibleUpdateAtMs = nowMs;
@@ -349,7 +352,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     };
 
     const storedSessionId = await getCoachSession(userId, "Telegram");
-    console.log(`[Telegram] starting coach turn with timeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
+    console.log(`[Telegram] starting coach turn with inactivityTimeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
     const { reply, attachments, sdkSessionId } = await runGuard.race(
       runCoachAgent({
         userId,
@@ -472,8 +475,8 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       return;
     }
     if (isTelegramRunTimeoutError(error)) {
-      const timeoutMessage = "I hit a Telegram safety limit while working on that, so I paused this turn instead of leaving it running forever. Send it again or ask me to delegate it as a background job.";
-      console.warn(`[Telegram] coach turn timed out after ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
+      const timeoutMessage = "I stopped this Telegram turn because I did not see meaningful progress for a long time. Send it again or ask me to delegate it as a background job.";
+      console.warn(`[Telegram] coach turn inactive for ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
           sendMessage(chatId, timeoutMessage).catch(() => {});

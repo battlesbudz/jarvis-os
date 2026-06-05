@@ -79,6 +79,7 @@ import { isIntegrationOwner } from "../integrationOwner";
 import { buildWorkerRuntimeTaskView } from "./workerRuntime";
 import {
   TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildTurnProgressEvent,
   buildVisibleTurnProgressMessage,
   shouldEmitVisibleProgressUpdate,
 } from "./turnProgress";
@@ -640,10 +641,20 @@ export function registerAgentRoutes(app: Express): void {
             updateCount: progressUpdateCount,
             latestPhase: latestProgressPhase,
           });
+          const event = buildTurnProgressEvent({
+            startedAtMs: turnStartedAtMs,
+            nowMs,
+            updateCount: progressUpdateCount,
+            source: "server",
+            stage: "idle_visible_update",
+            message,
+            detail: latestProgressPhase || undefined,
+            meaningful: false,
+          });
           progressUpdateCount += 1;
           lastVisibleUpdateAtMs = nowMs;
           console.log(`[AgentRoutes/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} runId=${runId}`);
-          res.write(`data: ${JSON.stringify({ type: "progress", message })}\n\n`);
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
         }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
 
         // Cleanup helper — called on normal completion and on client disconnect.
@@ -706,9 +717,20 @@ export function registerAgentRoutes(app: Express): void {
               if (!res.writableEnded) {
                 latestProgressPhase = message;
                 console.debug(`[AgentRoutes/SSE] progress: ${message}`);
-                lastVisibleUpdateAtMs = Date.now();
+                const nowMs = Date.now();
+                lastVisibleUpdateAtMs = nowMs;
+                const event = buildTurnProgressEvent({
+                  startedAtMs: turnStartedAtMs,
+                  nowMs,
+                  updateCount: progressUpdateCount,
+                  source: "harness",
+                  stage: "progress",
+                  message,
+                  meaningful: true,
+                });
+                progressUpdateCount += 1;
                 res.write(
-                  `data: ${JSON.stringify({ type: "progress", message })}\n\n`,
+                  `data: ${JSON.stringify(event)}\n\n`,
                 );
               }
             },

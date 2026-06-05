@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildTurnProgressEvent,
   buildVisibleTurnProgressMessage,
   shouldEmitVisibleProgressUpdate,
 } from "../turnProgress";
@@ -44,6 +45,32 @@ assert.match(
   }),
   /Searching memory/,
   "explicit phase should be surfaced when available",
+);
+
+const event = buildTurnProgressEvent({
+  startedAtMs: startedAt,
+  nowMs: startedAt + 42_000,
+  updateCount: 3,
+  source: "model",
+  stage: "tool_call",
+  message: "Calling memory_search",
+  detail: "Looking up prior preferences",
+  meaningful: true,
+});
+
+assert.deepEqual(
+  event,
+  {
+    type: "progress",
+    source: "model",
+    stage: "tool_call",
+    message: "Calling memory_search",
+    detail: "Looking up prior preferences",
+    elapsedSeconds: 42,
+    updateCount: 3,
+    meaningful: true,
+  },
+  "progress events should carry structured source/stage/detail metadata",
 );
 
 console.log("OK: visible turn progress messages provide timed user-facing status");
