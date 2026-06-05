@@ -82,6 +82,8 @@ try {
     },
     state: null,
   });
+  
+  // Test SDK built-in tools (draft_email, send_email, create_internal_reminder)
   const tools = createAgentSdkTools({
     userId: "user_1",
     runId: "run_tools",
@@ -94,6 +96,7 @@ try {
   });
   assert.equal(tools.length, 3);
   assert.ok(tools.some((tool: any) => tool.function?.name === "send_email"));
+  
   const draftOnlyTools = createAgentSdkTools({
     userId: "user_1",
     runId: "run_tools",
@@ -102,6 +105,7 @@ try {
   });
   assert.equal(draftOnlyTools.length, 2);
   assert.equal(draftOnlyTools.some((tool: any) => tool.function?.name === "send_email"), false);
+  
   const reminderTools = createAgentSdkTools({
     userId: "user_1",
     runId: "run_tools",
@@ -121,6 +125,7 @@ try {
   assert.equal(reminderTools.some((tool: any) => tool.function?.name === "create_internal_reminder"), true);
   assert.equal(reminderTools.some((tool: any) => tool.function?.name === "send_email"), false);
   assert.equal(reminderTools.some((tool: any) => tool.function?.name === "draft_email"), false);
+  
   const reminderTool: any = reminderTools.find((tool: any) => tool.function?.name === "create_internal_reminder");
   const reminderToolResult = await reminderTool.function.execute({
     title: "Call the company",
@@ -128,6 +133,7 @@ try {
   });
   assert.equal(reminderToolResult.created, true);
   assert.equal((await store.load("run_tools"))?.meta.reminder?.id, "task_123");
+  
   const draftTool: any = tools.find((tool: any) => tool.function?.name === "draft_email");
   const draftResult = await draftTool.function.execute({
     to: "sam@example.com",

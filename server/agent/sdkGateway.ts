@@ -19,7 +19,7 @@
 import type { AgentTool, ToolContext, ToolResult } from "./types";
 import { runAgent } from "./harness";
 import { buildUntrustedSoulContext } from "../memory/contextBuilder";
-import { evaluateToolRisk } from "./toolRiskScoring";
+import { requiresApproval } from "./approvalToolRisk";
 import { requestApproval, getGate } from "./agentApproval";
 import { getModel } from "../lib/modelPrefs";
 
@@ -97,43 +97,31 @@ interface SdkGatewayDeps {
 
 /**
  * Check if a tool call is allowed by Jarvis's policy.
- * Returns { allowed, reason, riskScore }
+ * Returns { allowed, reason, riskScore, approvalRequired }
  */
-async function checkToolPolicy(
+function checkToolPolicy(
   toolName: string,
-  toolArgs: Record<string, unknown>,
-  deps: SdkGatewayDeps,
-): Promise<{ allowed: boolean; reason?: string; riskScore: number }> {
-  // Get risk score from Jarvis's tool risk scoring
-  const riskResult = await evaluateToolRisk({
-    toolName,
-    toolArgs,
-    userId: deps.userId,
-    channel: deps.channel,
-  });
-
-  const riskScore = riskResult.score;
-
-  // Jarvis decides based on risk score threshold
-  const RISK_THRESHOLD = 50;  // Jarvis configurable threshold
-  if (riskScore > RISK_THRESHOLD) {
-    return {
-      allowed: false,
-      reason: `Tool "${toolName}" exceeds Jarvis risk threshold (${riskScore} > ${RISK_THRESHOLD})`,
-      riskScore,
-    };
-  }
-
-  // For medium-high risk, request approval through Jarvis
-  if (riskScore > 30 && riskScore <= RISK_THRESHOLD) {
+  _toolArgs: Record<string, unknown>,
+  _deps: SdkGatewayDeps,
+): { allowed: boolean; reason?: string; riskScore: number; approvalRequired: boolean } {
+  // Use Jarvis's built-in requiresApproval check
+  const approvalRequired = requiresApproval(toolName);
+  
+  // If tool requires approval, it's medium-high risk
+  if (approvalRequired) {
     return {
       allowed: true,
-      reason: "Medium risk — approval will be requested",
-      riskScore,
+      reason: `Tool "${toolName}" requires approval before execution`,
+      riskScore: 40,
+      approvalRequired: true,
     };
   }
 
-  return { allowed: true, riskScore };
+  return {
+    allowed: true,
+    riskScore: 10,
+    approvalRequired: false,
+  };
 }
 
 /**
@@ -155,8 +143,8 @@ export async function executeSdkTool(
     };
   }
 
-  // Check tool policy
-  const policyCheck = await checkToolPolicy(toolCall.toolName, toolCall.toolArgs, deps);
+  // Check tool policy (synchronous)
+  const policyCheck = checkToolPolicy(toolCall.toolName, toolCall.toolArgs, deps);
   if (!policyCheck.allowed) {
     return {
       ok: false,
