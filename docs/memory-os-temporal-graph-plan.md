@@ -62,12 +62,11 @@ Landed:
 Still planned:
 
 - A unified `server/memory/memoryOs.ts` read/write facade.
-- Production monitoring dashboard/alerts for memory embedding health.
 - Redis hot state.
 - Graphiti temporal graph adapter.
 - Full temporal query UX and provenance display.
 
-Roadmap cross-reference: this plan overlaps `JARVIS_ROADMAP.md` Phase 4.1. The vector-index work now covers derived G-Brain chunk vectors and canonical `user_memories.embedding_vector` support. The unified Memory OS facade remains the next roadmap-backed slice for packable autonomy.
+Roadmap cross-reference: this plan overlaps `JARVIS_ROADMAP.md` Phase 4.1. The vector-index work now covers derived G-Brain chunk vectors and canonical `user_memories.embedding_vector` support, the targeted Memory OS read facade is implemented, and production embedding-health monitoring now feeds diagnostics health. Redis hot state is the next Memory OS infrastructure slice for packable autonomy.
 
 ## Product Goal
 
@@ -413,7 +412,7 @@ Outcome:
 
 Approved memories become scalable semantic recall.
 
-Status note, 2026-06-05: the G-Brain chunk side of this baseline and the canonical `user_memories.embedding_vector` migration/backfill/retrieval/capability/fallback slice are live-DB verified. Remaining Phase 2 follow-up is production monitoring for embedding health.
+Status note, 2026-06-05: the G-Brain chunk side of this baseline and the canonical `user_memories.embedding_vector` migration/backfill/retrieval/capability/fallback slice are live-DB verified. Production embedding-health monitoring is implemented through `server/memory/embeddingHealth.ts` and diagnostics health now reports pgvector availability, JSON/vector coverage, vector-path errors, and memory subsystem degradation.
 
 ### Phase 3: Memory OS Facade
 

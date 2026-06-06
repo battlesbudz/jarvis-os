@@ -8726,11 +8726,11 @@ async function appendAudit(auditLogPath, entry) {
 async function withDb(fn) {
   if (!process.env.DATABASE_URL) return null;
   try {
-    const [{ db: db2 }, { sql: sql57 }] = await Promise.all([
+    const [{ db: db2 }, { sql: sql58 }] = await Promise.all([
       Promise.resolve().then(() => (init_db(), db_exports)),
       import("drizzle-orm")
     ]);
-    return await fn(db2, sql57);
+    return await fn(db2, sql58);
   } catch {
     return null;
   }
@@ -8770,8 +8770,8 @@ function formatLearning(args, now) {
   return { block: lines.join("\n"), learned, status: finalStatus, confidence, sourceType };
 }
 async function persistLivingContextUpdate(input) {
-  await withDb(async (db2, sql57) => {
-    await db2.execute(sql57`
+  await withDb(async (db2, sql58) => {
+    await db2.execute(sql58`
       INSERT INTO living_context_updates (
         user_id,
         target,
@@ -8810,8 +8810,8 @@ async function persistLivingContextUpdate(input) {
 }
 async function syncPersistedUpdatesToFile(input) {
   const existing = await fs2.readFile(input.abs, "utf-8").catch(() => "");
-  const rows = await withDb(async (db2, sql57) => {
-    const result = await db2.execute(sql57`
+  const rows = await withDb(async (db2, sql58) => {
+    const result = await db2.execute(sql58`
       SELECT block
       FROM living_context_updates
       WHERE user_id = ${input.userId}
@@ -16689,12 +16689,12 @@ ${opts.task}`;
 }
 async function getTournamentRunners(userId, tournamentId) {
   try {
-    const { eq: eq146, and: and109, desc: desc55 } = await import("drizzle-orm");
+    const { eq: eq147, and: and110, desc: desc55 } = await import("drizzle-orm");
     let rows;
     if (tournamentId) {
-      rows = await db.select().from(tournamentRuns).where(and109(eq146(tournamentRuns.id, tournamentId), eq146(tournamentRuns.userId, userId))).limit(1);
+      rows = await db.select().from(tournamentRuns).where(and110(eq147(tournamentRuns.id, tournamentId), eq147(tournamentRuns.userId, userId))).limit(1);
     } else {
-      rows = await db.select().from(tournamentRuns).where(eq146(tournamentRuns.userId, userId)).orderBy(desc55(tournamentRuns.createdAt)).limit(1);
+      rows = await db.select().from(tournamentRuns).where(eq147(tournamentRuns.userId, userId)).orderBy(desc55(tournamentRuns.createdAt)).limit(1);
     }
     if (!rows[0]) return { found: false };
     return { found: true, run: rows[0] };
@@ -52675,8 +52675,8 @@ function registerChannelRoutes(app2) {
         if (Object.keys(updates).length > 0) {
           const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
           const { discordChannelSchedules: discordChannelSchedules2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-          const { eq: eq146, and: and109 } = await import("drizzle-orm");
-          await db2.update(discordChannelSchedules2).set(updates).where(and109(eq146(discordChannelSchedules2.id, id), eq146(discordChannelSchedules2.userId, userId)));
+          const { eq: eq147, and: and110 } = await import("drizzle-orm");
+          await db2.update(discordChannelSchedules2).set(updates).where(and110(eq147(discordChannelSchedules2.id, id), eq147(discordChannelSchedules2.userId, userId)));
         }
       }
       const schedules = await listSchedules(userId);
@@ -55555,8 +55555,8 @@ async function checkDatabaseConnectivity() {
   const id = "database_connectivity";
   const label = "Database Connectivity";
   try {
-    const { sql: sql57 } = await import("drizzle-orm");
-    await db.execute(sql57`SELECT 1`);
+    const { sql: sql58 } = await import("drizzle-orm");
+    await db.execute(sql58`SELECT 1`);
     return pass(id, label, "Database is reachable and responding.");
   } catch (err2) {
     const msg = err2 instanceof Error ? err2.message : String(err2);
@@ -55990,12 +55990,12 @@ async function runStartupDoctorScan() {
     if (failures.length > 0) {
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { users: users3, diagnosticEvents: diagnosticEvents2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { gte: gte28, and: andOp } = await import("drizzle-orm");
+      const { gte: gte29, and: andOp } = await import("drizzle-orm");
       const { sql: sqlExpr2 } = await import("drizzle-orm");
       const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1e3);
       const recentAlerts = await db2.select({ id: diagnosticEvents2.id }).from(diagnosticEvents2).where(
         andOp(
-          gte28(diagnosticEvents2.createdAt, fourHoursAgo),
+          gte29(diagnosticEvents2.createdAt, fourHoursAgo),
           sqlExpr2`(${diagnosticEvents2.metadata}->>'source') = 'startup_scan_notify'`
         )
       ).limit(1);
@@ -74178,8 +74178,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq146 } = await import("drizzle-orm");
-      const existing = await db.select().from(userSkills2).where(eq146(userSkills2.userId, userId));
+      const { eq: eq147 } = await import("drizzle-orm");
+      const existing = await db.select().from(userSkills2).where(eq147(userSkills2.userId, userId));
       const existingBuiltInNames = new Set(
         existing.filter((s) => s.isBuiltIn).map((s) => s.name)
       );
@@ -74196,7 +74196,7 @@ Extract up to 8 memories per batch.`;
             isActive: false
           }))
         ).onConflictDoNothing();
-        const fresh = await db.select().from(userSkills2).where(eq146(userSkills2.userId, userId));
+        const fresh = await db.select().from(userSkills2).where(eq147(userSkills2.userId, userId));
         return res.json({ skills: fresh });
       }
       res.json({ skills: existing });
@@ -74235,10 +74235,10 @@ Extract up to 8 memories per batch.`;
     const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq146, and: and109 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and109(eq146(userSkills2.id, id), eq146(userSkills2.userId, userId))).limit(1);
+      const { eq: eq147, and: and110 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and110(eq147(userSkills2.id, id), eq147(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
-      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and109(eq146(userSkills2.id, id), eq146(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set({ isActive: !existing.isActive, updatedAt: /* @__PURE__ */ new Date() }).where(and110(eq147(userSkills2.id, id), eq147(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH toggle failed:", err2);
@@ -74252,8 +74252,8 @@ Extract up to 8 memories per batch.`;
     const { name, description, instructions, emoji } = req.body;
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq146, and: and109 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and109(eq146(userSkills2.id, id), eq146(userSkills2.userId, userId))).limit(1);
+      const { eq: eq147, and: and110 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and110(eq147(userSkills2.id, id), eq147(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be modified" });
       const updates = {};
@@ -74262,7 +74262,7 @@ Extract up to 8 memories per batch.`;
       if (instructions?.trim()) updates.instructions = instructions.trim().slice(0, 3e3);
       if (emoji?.trim()) updates.emoji = emoji.trim().slice(0, 8);
       if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
-      const [updated] = await db.update(userSkills2).set(updates).where(and109(eq146(userSkills2.id, id), eq146(userSkills2.userId, userId))).returning();
+      const [updated] = await db.update(userSkills2).set(updates).where(and110(eq147(userSkills2.id, id), eq147(userSkills2.userId, userId))).returning();
       res.json({ skill: updated });
     } catch (err2) {
       console.error("[UserSkills] PATCH update failed:", err2);
@@ -74275,11 +74275,11 @@ Extract up to 8 memories per batch.`;
     const id = _p9(req.params.id);
     try {
       const { userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq146, and: and109 } = await import("drizzle-orm");
-      const [existing] = await db.select().from(userSkills2).where(and109(eq146(userSkills2.id, id), eq146(userSkills2.userId, userId))).limit(1);
+      const { eq: eq147, and: and110 } = await import("drizzle-orm");
+      const [existing] = await db.select().from(userSkills2).where(and110(eq147(userSkills2.id, id), eq147(userSkills2.userId, userId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Skill not found" });
       if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be deleted" });
-      await db.delete(userSkills2).where(and109(eq146(userSkills2.id, id), eq146(userSkills2.userId, userId)));
+      await db.delete(userSkills2).where(and110(eq147(userSkills2.id, id), eq147(userSkills2.userId, userId)));
       res.json({ ok: true });
     } catch (err2) {
       console.error("[UserSkills] DELETE failed:", err2);
@@ -74291,8 +74291,8 @@ Extract up to 8 memories per batch.`;
     if (!userId) return res.status(401).json({ error: "Unauthorized" });
     try {
       const { skillCandidates: skillCandidates2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq146, and: and109 } = await import("drizzle-orm");
-      const rows = await db.select().from(skillCandidates2).where(and109(eq146(skillCandidates2.userId, userId), eq146(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
+      const { eq: eq147, and: and110 } = await import("drizzle-orm");
+      const rows = await db.select().from(skillCandidates2).where(and110(eq147(skillCandidates2.userId, userId), eq147(skillCandidates2.status, "pending"))).orderBy(skillCandidates2.createdAt);
       res.json({ candidates: rows });
     } catch (err2) {
       console.error("[SkillCandidates] GET failed:", err2);
@@ -74311,15 +74311,15 @@ Extract up to 8 memories per batch.`;
     }
     try {
       const { skillCandidates: skillCandidates2, userSkills: userSkills2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq146, and: and109 } = await import("drizzle-orm");
-      const [candidate] = await db.select().from(skillCandidates2).where(and109(eq146(skillCandidates2.id, id), eq146(skillCandidates2.userId, userId))).limit(1);
+      const { eq: eq147, and: and110 } = await import("drizzle-orm");
+      const [candidate] = await db.select().from(skillCandidates2).where(and110(eq147(skillCandidates2.id, id), eq147(skillCandidates2.userId, userId))).limit(1);
       if (!candidate) return res.status(404).json({ error: "Candidate not found" });
       if (candidate.status !== "pending") {
         return res.status(409).json({ error: "Candidate has already been reviewed" });
       }
       const newStatus = action === "accept" ? "accepted" : action === "edit" ? "edited" : "dismissed";
       await db.transaction(async (tx) => {
-        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq146(skillCandidates2.id, id));
+        await tx.update(skillCandidates2).set({ status: newStatus }).where(eq147(skillCandidates2.id, id));
         if (action === "accept" || action === "edit") {
           const finalName = name?.trim() ? name.trim().slice(0, 80) : candidate.name;
           const finalInstructions = instructionText?.trim() ? instructionText.trim().slice(0, 3e3) : candidate.instructionText;
@@ -74348,9 +74348,9 @@ Extract up to 8 memories per batch.`;
     try {
       const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { integrationStatus: integrationStatus2 } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq146, sql: sql57 } = await import("drizzle-orm");
-      const rows = await db2.select().from(integrationStatus2).where(eq146(integrationStatus2.userId, userId));
-      const linkedRaw = await db2.execute(sql57`
+      const { eq: eq147, sql: sql58 } = await import("drizzle-orm");
+      const rows = await db2.select().from(integrationStatus2).where(eq147(integrationStatus2.userId, userId));
+      const linkedRaw = await db2.execute(sql58`
         SELECT DISTINCT integration FROM (
           SELECT 'telegram' AS integration FROM telegram_links WHERE user_id = ${userId}
           UNION ALL
@@ -77209,9 +77209,9 @@ async function bootAllBots() {
   try {
     await seedSeenMessageIds();
     const { db: _db } = await Promise.resolve().then(() => (init_db(), db_exports));
-    const { sql: sql57 } = await import("drizzle-orm");
+    const { sql: sql58 } = await import("drizzle-orm");
     const rows = await _db.execute(
-      sql57`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
+      sql58`SELECT user_id, access_token FROM user_oauth_tokens WHERE provider = 'discord_bot'`
     );
     const items = rows.rows ?? (Array.isArray(rows) ? rows : []);
     let started = 0;
@@ -82085,6 +82085,171 @@ var init_integrationValidator = __esm({
   }
 });
 
+// server/memory/embeddingHealth.ts
+var embeddingHealth_exports = {};
+__export(embeddingHealth_exports, {
+  classifyMemoryEmbeddingHealth: () => classifyMemoryEmbeddingHealth,
+  getMemoryEmbeddingHealth: () => getMemoryEmbeddingHealth
+});
+import { and as and87, eq as eq122, gte as gte22, sql as sql48 } from "drizzle-orm";
+function percent(part, total) {
+  if (total <= 0) return 100;
+  return Math.round(Math.max(0, part) / total * 100);
+}
+function boundedCount(value) {
+  return Math.max(0, Math.trunc(Number.isFinite(value) ? value : 0));
+}
+function classifyMemoryEmbeddingHealth(input, now = /* @__PURE__ */ new Date()) {
+  const approvedMemoryCount = boundedCount(input.approvedMemoryCount);
+  const jsonEmbeddingCount = Math.min(approvedMemoryCount, boundedCount(input.jsonEmbeddingCount));
+  const vectorEmbeddingCount = Math.min(approvedMemoryCount, boundedCount(input.vectorEmbeddingCount));
+  const recentVectorErrors15m = boundedCount(input.recentVectorErrors15m);
+  const missingJsonEmbeddingCount = Math.max(0, approvedMemoryCount - jsonEmbeddingCount);
+  const missingVectorEmbeddingCount = Math.max(0, approvedMemoryCount - vectorEmbeddingCount);
+  const jsonCoveragePct = percent(jsonEmbeddingCount, approvedMemoryCount);
+  const vectorCoveragePct = percent(vectorEmbeddingCount, approvedMemoryCount);
+  const alerts = [];
+  if (input.vectorRetrievalEnabled && input.pgvectorAvailable === false) {
+    alerts.push({
+      severity: "critical",
+      metric: "pgvectorAvailable",
+      message: "pgvector is unavailable while canonical memory vector retrieval is enabled."
+    });
+  }
+  if (recentVectorErrors15m >= VECTOR_ERROR_DOWN_THRESHOLD) {
+    alerts.push({
+      severity: "critical",
+      metric: "recentVectorErrors15m",
+      message: `Memory vector-path error count is ${recentVectorErrors15m} in the last 15 minutes.`
+    });
+  } else if (recentVectorErrors15m > 0) {
+    alerts.push({
+      severity: "warning",
+      metric: "recentVectorErrors15m",
+      message: `Memory vector-path error count is ${recentVectorErrors15m} in the last 15 minutes.`
+    });
+  }
+  if (approvedMemoryCount > 0 && vectorCoveragePct < VECTOR_COVERAGE_WARNING_THRESHOLD) {
+    alerts.push({
+      severity: "warning",
+      metric: "vectorCoveragePct",
+      message: `Canonical memory vector coverage is ${vectorCoveragePct}% (${missingVectorEmbeddingCount} approved memories missing pgvector embeddings).`
+    });
+  }
+  if (approvedMemoryCount > 0 && jsonCoveragePct < JSON_COVERAGE_WARNING_THRESHOLD) {
+    alerts.push({
+      severity: "warning",
+      metric: "jsonCoveragePct",
+      message: `Canonical memory JSON embedding coverage is ${jsonCoveragePct}% (${missingJsonEmbeddingCount} approved memories missing embeddings).`
+    });
+  }
+  let status = "healthy";
+  if (input.pgvectorAvailable === null) status = "unknown";
+  if (alerts.some((alert) => alert.severity === "warning")) status = "degraded";
+  if (alerts.some((alert) => alert.severity === "critical")) status = "down";
+  return {
+    vectorRetrievalEnabled: input.vectorRetrievalEnabled,
+    pgvectorAvailable: input.pgvectorAvailable,
+    approvedMemoryCount,
+    jsonEmbeddingCount,
+    vectorEmbeddingCount,
+    recentVectorErrors15m,
+    status,
+    generatedAt: now.toISOString(),
+    jsonCoveragePct,
+    vectorCoveragePct,
+    missingJsonEmbeddingCount,
+    missingVectorEmbeddingCount,
+    alerts
+  };
+}
+async function countEmbeddingRows() {
+  const result = await db.execute(sql48`
+    SELECT
+      COUNT(*)::int AS approved_memory_count,
+      COUNT(*) FILTER (WHERE embedding IS NOT NULL)::int AS json_embedding_count,
+      COUNT(*) FILTER (WHERE embedding_vector IS NOT NULL)::int AS vector_embedding_count
+    FROM user_memories
+    WHERE (expires_at IS NULL OR expires_at >= NOW())
+      AND pending_review = FALSE
+      AND review_status IN ('active', 'kept', 'edited')
+  `);
+  const row = result.rows?.[0];
+  return {
+    approvedMemoryCount: Number(row?.approved_memory_count ?? 0),
+    jsonEmbeddingCount: Number(row?.json_embedding_count ?? 0),
+    vectorEmbeddingCount: Number(row?.vector_embedding_count ?? 0)
+  };
+}
+async function countRecentVectorErrors() {
+  const windowStart = new Date(Date.now() - 15 * 60 * 1e3);
+  const result = await db.select({ count: sql48`count(*)::int` }).from(diagnosticEvents).where(and87(
+    eq122(diagnosticEvents.subsystem, "memory"),
+    eq122(diagnosticEvents.resolved, false),
+    gte22(diagnosticEvents.createdAt, windowStart),
+    sql48`${diagnosticEvents.severity} IN ('error', 'critical')`,
+    sql48`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
+    sql48`(${diagnosticEvents.metadata}->>'operation') IN ('retrieveRelevantMemories', 'searchMemoryVectors', 'upsertMemoryEmbedding', 'syncExistingMemoryEmbeddingVectors', 'memoryEmbeddingHealth')`
+  ));
+  return Number(result[0]?.count ?? 0);
+}
+async function getMemoryEmbeddingHealth(deps = {}) {
+  const now = deps.now?.() ?? /* @__PURE__ */ new Date();
+  const vectorRetrievalEnabled = isMemoryVectorRetrievalEnabled(deps.env ?? process.env);
+  try {
+    const [counts, pgvectorAvailable, recentVectorErrors15m] = await Promise.all([
+      (deps.countEmbeddingRows ?? countEmbeddingRows)(),
+      (deps.isPgvectorAvailable ?? isPgvectorAvailable)(),
+      (deps.countRecentVectorErrors ?? countRecentVectorErrors)()
+    ]);
+    return classifyMemoryEmbeddingHealth(
+      {
+        vectorRetrievalEnabled,
+        pgvectorAvailable,
+        approvedMemoryCount: counts.approvedMemoryCount,
+        jsonEmbeddingCount: counts.jsonEmbeddingCount,
+        vectorEmbeddingCount: counts.vectorEmbeddingCount,
+        recentVectorErrors15m
+      },
+      now
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const report = classifyMemoryEmbeddingHealth(
+      {
+        vectorRetrievalEnabled,
+        pgvectorAvailable: null,
+        approvedMemoryCount: 0,
+        jsonEmbeddingCount: 0,
+        vectorEmbeddingCount: 0,
+        recentVectorErrors15m: 0
+      },
+      now
+    );
+    return {
+      ...report,
+      status: "unknown",
+      alerts: [{
+        severity: "warning",
+        metric: "memoryEmbeddingHealth",
+        message: `Memory embedding health check failed: ${message}`
+      }]
+    };
+  }
+}
+var VECTOR_COVERAGE_WARNING_THRESHOLD, JSON_COVERAGE_WARNING_THRESHOLD, VECTOR_ERROR_DOWN_THRESHOLD;
+var init_embeddingHealth = __esm({
+  "server/memory/embeddingHealth.ts"() {
+    "use strict";
+    init_db();
+    init_schema();
+    init_vectorStore();
+    VECTOR_COVERAGE_WARNING_THRESHOLD = 95;
+    JSON_COVERAGE_WARNING_THRESHOLD = 95;
+    VECTOR_ERROR_DOWN_THRESHOLD = 3;
+  }
+});
+
 // server/diagnostics/diagnosticsService.ts
 var diagnosticsService_exports = {};
 __export(diagnosticsService_exports, {
@@ -82093,12 +82258,12 @@ __export(diagnosticsService_exports, {
   runAIDiagnosis: () => runAIDiagnosis,
   runHealthCheck: () => runHealthCheck
 });
-import { eq as eq122, and as and87, desc as desc44, gte as gte22, sql as sqlExpr } from "drizzle-orm";
+import { eq as eq123, and as and88, desc as desc44, gte as gte23, sql as sqlExpr } from "drizzle-orm";
 function buildDiagnosticEventConditions(subsystem, userId, unresolvedProblemOnly = false, excludePatternDetected = false) {
-  const conditions = [eq122(diagnosticEvents.subsystem, subsystem)];
-  if (userId) conditions.push(eq122(diagnosticEvents.userId, userId));
+  const conditions = [eq123(diagnosticEvents.subsystem, subsystem)];
+  if (userId) conditions.push(eq123(diagnosticEvents.userId, userId));
   if (unresolvedProblemOnly) {
-    conditions.push(eq122(diagnosticEvents.resolved, false));
+    conditions.push(eq123(diagnosticEvents.resolved, false));
     conditions.push(sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`);
   }
   if (excludePatternDetected) {
@@ -82129,14 +82294,14 @@ async function isDegradedInDB(subsystem, userId) {
   try {
     const since = new Date(Date.now() - 4 * 60 * 60 * 1e3);
     const conditions = [
-      eq122(diagnosticEvents.subsystem, subsystem),
-      eq122(diagnosticEvents.severity, "critical"),
-      eq122(diagnosticEvents.resolved, false),
-      gte22(diagnosticEvents.createdAt, since),
+      eq123(diagnosticEvents.subsystem, subsystem),
+      eq123(diagnosticEvents.severity, "critical"),
+      eq123(diagnosticEvents.resolved, false),
+      gte23(diagnosticEvents.createdAt, since),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') = 'pattern_detected'`
     ];
-    if (userId) conditions.push(eq122(diagnosticEvents.userId, userId));
-    const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and87(...conditions)).limit(1);
+    if (userId) conditions.push(eq123(diagnosticEvents.userId, userId));
+    const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and88(...conditions)).limit(1);
     return rows.length > 0;
   } catch {
     return false;
@@ -82146,12 +82311,12 @@ async function detectDegradation(subsystem, userId) {
   try {
     const windowStart = new Date(Date.now() - 15 * 60 * 1e3);
     const errorConditions = [
-      eq122(diagnosticEvents.subsystem, subsystem),
+      eq123(diagnosticEvents.subsystem, subsystem),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
-      gte22(diagnosticEvents.createdAt, windowStart)
+      gte23(diagnosticEvents.createdAt, windowStart)
     ];
-    if (userId) errorConditions.push(eq122(diagnosticEvents.userId, userId));
-    const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and87(...errorConditions)).limit(5);
+    if (userId) errorConditions.push(eq123(diagnosticEvents.userId, userId));
+    const rows = await db.select({ id: diagnosticEvents.id }).from(diagnosticEvents).where(and88(...errorConditions)).limit(5);
     if (rows.length < 3) return;
     const alreadyDegraded = await isDegradedInDB(subsystem, userId);
     if (alreadyDegraded) return;
@@ -82190,12 +82355,12 @@ async function clearDegradation(subsystem, userId) {
     if (!isDegraded) return;
     const since = new Date(Date.now() - 4 * 60 * 60 * 1e3);
     const conditions = [
-      eq122(diagnosticEvents.subsystem, subsystem),
-      eq122(diagnosticEvents.resolved, false),
-      gte22(diagnosticEvents.createdAt, since)
+      eq123(diagnosticEvents.subsystem, subsystem),
+      eq123(diagnosticEvents.resolved, false),
+      gte23(diagnosticEvents.createdAt, since)
     ];
-    if (userId) conditions.push(eq122(diagnosticEvents.userId, userId));
-    await db.update(diagnosticEvents).set({ resolved: true }).where(and87(...conditions)).catch(() => {
+    if (userId) conditions.push(eq123(diagnosticEvents.userId, userId));
+    await db.update(diagnosticEvents).set({ resolved: true }).where(and88(...conditions)).catch(() => {
     });
     console.log(`[Diagnostics] subsystem RECOVERED: ${subsystem}`);
   } catch (err2) {
@@ -82207,14 +82372,14 @@ async function attemptAutoRecovery(subsystem, userId) {
     if (subsystem === "job_queue") {
       const staleThreshold = new Date(Date.now() - 10 * 60 * 1e3);
       const staleJobs = await db.select({ id: agentJobs.id, agentType: agentJobs.agentType }).from(agentJobs).where(
-        and87(
-          eq122(agentJobs.userId, userId),
-          eq122(agentJobs.status, "running"),
+        and88(
+          eq123(agentJobs.userId, userId),
+          eq123(agentJobs.status, "running"),
           sqlExpr`${agentJobs.startedAt} < ${staleThreshold}`
         )
       ).limit(5);
       for (const job of staleJobs) {
-        await db.update(agentJobs).set({ status: "queued", startedAt: null, error: "Auto-re-enqueued: exceeded watchdog timeout" }).where(eq122(agentJobs.id, job.id)).catch(() => {
+        await db.update(agentJobs).set({ status: "queued", startedAt: null, error: "Auto-re-enqueued: exceeded watchdog timeout" }).where(eq123(agentJobs.id, job.id)).catch(() => {
         });
         await emit({
           userId,
@@ -82229,14 +82394,14 @@ async function attemptAutoRecovery(subsystem, userId) {
     if (subsystem === "workflow_engine") {
       const staleThreshold = new Date(Date.now() - 30 * 60 * 1e3);
       const stuckWorkflows = await db.select({ id: agentWorkflows.id, title: agentWorkflows.title }).from(agentWorkflows).where(
-        and87(
-          eq122(agentWorkflows.userId, userId),
-          eq122(agentWorkflows.status, "running"),
+        and88(
+          eq123(agentWorkflows.userId, userId),
+          eq123(agentWorkflows.status, "running"),
           sqlExpr`${agentWorkflows.updatedAt} < ${staleThreshold}`
         )
       ).limit(3);
       for (const wf of stuckWorkflows) {
-        await db.update(agentWorkflows).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq122(agentWorkflows.id, wf.id)).catch(() => {
+        await db.update(agentWorkflows).set({ status: "failed", updatedAt: /* @__PURE__ */ new Date() }).where(eq123(agentWorkflows.id, wf.id)).catch(() => {
         });
         await emit({
           userId,
@@ -82320,19 +82485,19 @@ async function getRecentEvents(opts) {
   const { userId, subsystem, severity, limit = 50, sinceMinutes, excludePatternDetected = false } = opts;
   try {
     const conditions = [];
-    if (userId) conditions.push(eq122(diagnosticEvents.userId, userId));
-    if (subsystem) conditions.push(eq122(diagnosticEvents.subsystem, subsystem));
-    if (severity) conditions.push(eq122(diagnosticEvents.severity, severity));
+    if (userId) conditions.push(eq123(diagnosticEvents.userId, userId));
+    if (subsystem) conditions.push(eq123(diagnosticEvents.subsystem, subsystem));
+    if (severity) conditions.push(eq123(diagnosticEvents.severity, severity));
     if (sinceMinutes) {
       const since = new Date(Date.now() - sinceMinutes * 60 * 1e3);
-      conditions.push(gte22(diagnosticEvents.createdAt, since));
+      conditions.push(gte23(diagnosticEvents.createdAt, since));
     }
     if (excludePatternDetected) {
       conditions.push(
         sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`
       );
     }
-    return await db.select().from(diagnosticEvents).where(conditions.length ? and87(...conditions) : void 0).orderBy(desc44(diagnosticEvents.createdAt)).limit(limit);
+    return await db.select().from(diagnosticEvents).where(conditions.length ? and88(...conditions) : void 0).orderBy(desc44(diagnosticEvents.createdAt)).limit(limit);
   } catch {
     return [];
   }
@@ -82346,16 +82511,16 @@ async function runHealthCheck(userId) {
   let stuckWorkflowCount = 0;
   try {
     const [depthRows, staleRows, stuckWfRows] = await Promise.all([
-      db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(eq122(agentJobs.status, "queued")),
+      db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(eq123(agentJobs.status, "queued")),
       db.select({ count: sqlExpr`count(*)::int` }).from(agentJobs).where(
-        and87(
-          eq122(agentJobs.status, "running"),
+        and88(
+          eq123(agentJobs.status, "running"),
           sqlExpr`${agentJobs.startedAt} < ${new Date(now.getTime() - 10 * 60 * 1e3)}`
         )
       ),
       db.select({ count: sqlExpr`count(*)::int` }).from(agentWorkflows).where(
-        and87(
-          eq122(agentWorkflows.status, "running"),
+        and88(
+          eq123(agentWorkflows.status, "running"),
           sqlExpr`${agentWorkflows.updatedAt} < ${new Date(now.getTime() - 30 * 60 * 1e3)}`
         )
       )
@@ -82424,16 +82589,16 @@ async function runHealthCheck(userId) {
     DIAGNOSTIC_SUBSYSTEMS.map(async (sub) => {
       try {
         const errorConditions = [
-          eq122(diagnosticEvents.subsystem, sub),
-          eq122(diagnosticEvents.resolved, false),
-          gte22(diagnosticEvents.createdAt, windowStart),
+          eq123(diagnosticEvents.subsystem, sub),
+          eq123(diagnosticEvents.resolved, false),
+          gte23(diagnosticEvents.createdAt, windowStart),
           sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
           sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`
         ];
-        if (userId) errorConditions.push(eq122(diagnosticEvents.userId, userId));
+        if (userId) errorConditions.push(eq123(diagnosticEvents.userId, userId));
         const [recentErrorRows, lastEventRows] = await Promise.all([
-          db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and87(...errorConditions)),
-          db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and87(...buildDiagnosticEventConditions(sub, userId))).orderBy(desc44(diagnosticEvents.createdAt)).limit(1)
+          db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and88(...errorConditions)),
+          db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and88(...buildDiagnosticEventConditions(sub, userId))).orderBy(desc44(diagnosticEvents.createdAt)).limit(1)
         ]);
         const errorCount = recentErrorRows[0]?.count ?? 0;
         const isDegraded = await isDegradedInDB(sub, userId);
@@ -82442,9 +82607,9 @@ async function runHealthCheck(userId) {
         else if (errorCount >= 3 || isDegraded) status = "degraded";
         let displayEventRows = lastEventRows;
         if (status !== "healthy") {
-          displayEventRows = await db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and87(...buildDiagnosticEventConditions(sub, userId, true, true))).orderBy(desc44(diagnosticEvents.createdAt)).limit(1);
+          displayEventRows = await db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and88(...buildDiagnosticEventConditions(sub, userId, true, true))).orderBy(desc44(diagnosticEvents.createdAt)).limit(1);
           if (displayEventRows.length === 0) {
-            displayEventRows = await db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and87(...buildDiagnosticEventConditions(sub, userId, true))).orderBy(desc44(diagnosticEvents.createdAt)).limit(1);
+            displayEventRows = await db.select({ message: diagnosticEvents.message, createdAt: diagnosticEvents.createdAt }).from(diagnosticEvents).where(and88(...buildDiagnosticEventConditions(sub, userId, true))).orderBy(desc44(diagnosticEvents.createdAt)).limit(1);
           }
           if (displayEventRows.length === 0) displayEventRows = lastEventRows;
         }
@@ -82493,10 +82658,6 @@ async function runHealthCheck(userId) {
     sinceMinutes: 60,
     excludePatternDetected: true
   });
-  const degradedSubsystems = subsystems.filter((s) => s.status !== "healthy" && s.status !== "unknown").map((s) => s.name);
-  let overallStatus = "healthy";
-  if (subsystems.some((s) => s.status === "down")) overallStatus = "down";
-  else if (degradedSubsystems.length > 0) overallStatus = "degraded";
   const MEMORY_WRITE_OPS = [
     "extractAndStore",
     "extractAndStore_insert",
@@ -82516,40 +82677,57 @@ async function runHealthCheck(userId) {
   ];
   let memoryWriteErrors15m = 0;
   let memoryReadErrors15m = 0;
+  let memoryEmbeddingHealth = null;
   try {
     const memWriteConditions = [
-      eq122(diagnosticEvents.subsystem, "memory"),
-      eq122(diagnosticEvents.resolved, false),
+      eq123(diagnosticEvents.subsystem, "memory"),
+      eq123(diagnosticEvents.resolved, false),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
-      gte22(diagnosticEvents.createdAt, windowStart),
+      gte23(diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
       sqlExpr`(${diagnosticEvents.metadata}->>'operation') = ANY(ARRAY[${MEMORY_WRITE_OPS.map((op) => `'${op}'`).join(",")}])`
     ];
     const memReadConditions = [
-      eq122(diagnosticEvents.subsystem, "memory"),
-      eq122(diagnosticEvents.resolved, false),
+      eq123(diagnosticEvents.subsystem, "memory"),
+      eq123(diagnosticEvents.resolved, false),
       sqlExpr`${diagnosticEvents.severity} IN ('error', 'critical')`,
-      gte22(diagnosticEvents.createdAt, windowStart),
+      gte23(diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
       sqlExpr`(${diagnosticEvents.metadata}->>'operation') = ANY(ARRAY[${MEMORY_READ_OPS.map((op) => `'${op}'`).join(",")}])`
     ];
     if (userId) {
-      memWriteConditions.push(eq122(diagnosticEvents.userId, userId));
-      memReadConditions.push(eq122(diagnosticEvents.userId, userId));
+      memWriteConditions.push(eq123(diagnosticEvents.userId, userId));
+      memReadConditions.push(eq123(diagnosticEvents.userId, userId));
     }
     const [writeRows, readRows] = await Promise.all([
-      db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and87(...memWriteConditions)),
-      db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and87(...memReadConditions))
+      db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and88(...memWriteConditions)),
+      db.select({ count: sqlExpr`count(*)::int` }).from(diagnosticEvents).where(and88(...memReadConditions))
     ]);
     memoryWriteErrors15m = writeRows[0]?.count ?? 0;
     memoryReadErrors15m = readRows[0]?.count ?? 0;
   } catch {
   }
+  try {
+    const { getMemoryEmbeddingHealth: getMemoryEmbeddingHealth2 } = await Promise.resolve().then(() => (init_embeddingHealth(), embeddingHealth_exports));
+    memoryEmbeddingHealth = await getMemoryEmbeddingHealth2();
+    if (memoryEmbeddingHealth.status === "down" || memoryEmbeddingHealth.status === "degraded") {
+      const s = subsystems.find((subsystem) => subsystem.name === "memory");
+      if (s) {
+        s.status = memoryEmbeddingHealth.status === "down" ? "down" : "degraded";
+        s.lastEvent = memoryEmbeddingHealth.alerts[0]?.message ?? s.lastEvent;
+      }
+    }
+  } catch {
+  }
+  const finalDegradedSubsystems = subsystems.filter((s) => s.status !== "healthy" && s.status !== "unknown").map((s) => s.name);
+  let finalOverallStatus = "healthy";
+  if (subsystems.some((s) => s.status === "down")) finalOverallStatus = "down";
+  else if (finalDegradedSubsystems.length > 0) finalOverallStatus = "degraded";
   return {
-    overallStatus,
+    overallStatus: finalOverallStatus,
     subsystems: Array.isArray(subsystems) ? subsystems : [],
     recentErrors: Array.isArray(recentErrors) ? recentErrors : [],
-    degradedSubsystems: Array.isArray(degradedSubsystems) ? degradedSubsystems : [],
+    degradedSubsystems: Array.isArray(finalDegradedSubsystems) ? finalDegradedSubsystems : [],
     generatedAt: now,
     openAiReachable,
     openAiLatencyMs,
@@ -82559,7 +82737,8 @@ async function runHealthCheck(userId) {
     channelStatuses: channelStatuses ?? {},
     stuckWorkflowCount,
     memoryWriteErrors15m,
-    memoryReadErrors15m
+    memoryReadErrors15m,
+    memoryEmbeddingHealth
   };
 }
 async function runAIDiagnosis(userId, existingReport) {
@@ -83005,10 +83184,10 @@ ${skillBlock}`;
     }
     try {
       const { userSkills: userSkillsTable } = await Promise.resolve().then(() => (init_schema(), schema_exports));
-      const { eq: eq146, and: and109 } = await import("drizzle-orm");
+      const { eq: eq147, and: and110 } = await import("drizzle-orm");
       const { db: dbImport } = await Promise.resolve().then(() => (init_db(), db_exports));
       const { truncateToBudget: truncateToBudget2, BUDGET_PRESETS: BUDGET_PRESETS2 } = await Promise.resolve().then(() => (init_contextBuilder(), contextBuilder_exports));
-      const activeSkills = await dbImport.select().from(userSkillsTable).where(and109(eq146(userSkillsTable.userId, context.userId), eq146(userSkillsTable.isActive, true)));
+      const activeSkills = await dbImport.select().from(userSkillsTable).where(and110(eq147(userSkillsTable.userId, context.userId), eq147(userSkillsTable.isActive, true)));
       if (activeSkills.length > 0) {
         const skillBlockRaw = activeSkills.map((s) => `### ${s.emoji} ${s.name}
 ${s.instructions}`).join("\n\n");
@@ -84138,7 +84317,7 @@ var init_queryClassifier = __esm({
 });
 
 // server/agent/activationPlanner.ts
-import { eq as eq123, and as and88 } from "drizzle-orm";
+import { eq as eq124, and as and89 } from "drizzle-orm";
 function localHour2(now, tz) {
   return new Date(now.toLocaleString("en-US", { timeZone: tz })).getHours();
 }
@@ -84211,7 +84390,7 @@ var init_activationPlanner = __esm({
       // ── Signal fetchers ───────────────────────────────────────────────────────
       async resolveTimezone(userId) {
         try {
-          const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq123(userPreferences.userId, userId)).limit(1);
+          const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq124(userPreferences.userId, userId)).limit(1);
           const prefs = rows[0]?.data || {};
           return prefs.timezone || "America/New_York";
         } catch {
@@ -84220,7 +84399,7 @@ var init_activationPlanner = __esm({
       }
       async fetchEmotionalState(userId) {
         try {
-          const rows = await db.select().from(userEmotionalState).where(eq123(userEmotionalState.userId, userId)).limit(1);
+          const rows = await db.select().from(userEmotionalState).where(eq124(userEmotionalState.userId, userId)).limit(1);
           return rows[0] ?? null;
         } catch {
           return null;
@@ -84250,7 +84429,7 @@ var init_activationPlanner = __esm({
        */
       async fetchFocusBlock(userId, dateKey3) {
         try {
-          const rows = await db.select({ data: plans.data }).from(plans).where(and88(eq123(plans.userId, userId), eq123(plans.date, dateKey3))).limit(1);
+          const rows = await db.select({ data: plans.data }).from(plans).where(and89(eq124(plans.userId, userId), eq124(plans.date, dateKey3))).limit(1);
           const data = rows[0]?.data;
           if (!data?.tasks || !Array.isArray(data.tasks)) return false;
           return data.tasks.some((task) => {
@@ -84666,7 +84845,7 @@ var coachAgent_exports = {};
 __export(coachAgent_exports, {
   runCoachAgent: () => runCoachAgent
 });
-import { eq as eq124, and as and89, desc as desc46, gte as gte23 } from "drizzle-orm";
+import { eq as eq125, and as and90, desc as desc46, gte as gte24 } from "drizzle-orm";
 function getMaxTokensForChannel(channelName) {
   if (channelName.startsWith("Discord")) return 1200;
   if (channelName === "Daemon") return 200;
@@ -84691,7 +84870,7 @@ async function persistFastCoachExchange(input) {
   await logInteraction(userId, channelLower, "outbound", reply).catch(() => {
   });
   try {
-    const rows = await db.select().from(chatHistory).where(eq124(chatHistory.userId, userId)).limit(1);
+    const rows = await db.select().from(chatHistory).where(eq125(chatHistory.userId, userId)).limit(1);
     const existing = rows[0]?.data || [];
     const updatedChat = [assistantMsg, userMsg, ...existing].slice(0, 100);
     await db.insert(chatHistory).values({ userId, data: updatedChat }).onConflictDoUpdate({
@@ -84840,14 +85019,14 @@ async function runCoachAgent(input) {
     return null;
   });
   const [goalsRow, statsRow, lcRow, chatRow, commitmentsRows, prefsRow, recentInteractionsResult, surfacedItemsResult, soulBlockResult, websiteCrawlResult, todayPlanRow, orchestratorModelResult, preThinkResult] = await Promise.allSettled([
-    db.select().from(goals).where(eq124(goals.userId, userId)).limit(1),
-    db.select().from(stats).where(eq124(stats.userId, userId)).limit(1),
-    db.select().from(lifeContext).where(eq124(lifeContext.userId, userId)).limit(1),
+    db.select().from(goals).where(eq125(goals.userId, userId)).limit(1),
+    db.select().from(stats).where(eq125(stats.userId, userId)).limit(1),
+    db.select().from(lifeContext).where(eq125(lifeContext.userId, userId)).limit(1),
     // Skip chat_history fetch when the session cache is warm — the cached
     // message list replaces the rolling 10-message DB window.
-    sessionResumed ? Promise.resolve([]) : db.select().from(chatHistory).where(eq124(chatHistory.userId, userId)).limit(1),
-    db.select().from(commitments).where(and89(eq124(commitments.userId, userId), eq124(commitments.status, "pending"))).orderBy(desc46(commitments.extractedAt)).limit(10),
-    db.select().from(userPreferences).where(eq124(userPreferences.userId, userId)).limit(1),
+    sessionResumed ? Promise.resolve([]) : db.select().from(chatHistory).where(eq125(chatHistory.userId, userId)).limit(1),
+    db.select().from(commitments).where(and90(eq125(commitments.userId, userId), eq125(commitments.status, "pending"))).orderBy(desc46(commitments.extractedAt)).limit(10),
+    db.select().from(userPreferences).where(eq125(userPreferences.userId, userId)).limit(1),
     getRecentInteractions(userId, 20),
     db.select({
       sourceType: inboxItems.sourceType,
@@ -84856,9 +85035,9 @@ async function runCoachAgent(input) {
       snippet: inboxItems.snippet,
       jarvisReason: inboxItems.jarvisReason,
       surfacedAt: inboxItems.surfacedAt
-    }).from(inboxItems).where(and89(
-      eq124(inboxItems.userId, userId),
-      gte23(inboxItems.surfacedAt, twentyFourHoursAgo)
+    }).from(inboxItems).where(and90(
+      eq125(inboxItems.userId, userId),
+      gte24(inboxItems.surfacedAt, twentyFourHoursAgo)
     )).orderBy(desc46(inboxItems.surfacedAt)).limit(5),
     // Soul and website crawl blocks are independent of DB results — run them
     // concurrently with the rest of the batch instead of serially after it.
@@ -84874,7 +85053,7 @@ async function runCoachAgent(input) {
     // todayPlan — fetched with tentative UTC date key so it runs in the
     // parallel batch; reconciled below if the user's timezone-adjusted date
     // differs from the UTC date (rare, only near day boundaries).
-    db.select().from(plans).where(and89(eq124(plans.userId, userId), eq124(plans.date, tentativeDateKey))).limit(1),
+    db.select().from(plans).where(and90(eq125(plans.userId, userId), eq125(plans.date, tentativeDateKey))).limit(1),
     // Resolved per-user orchestrator model (already fired above).
     _orchestratorModelPromise,
     // Pre-think fires as soon as the model resolves (already chained above).
@@ -84920,7 +85099,7 @@ async function runCoachAgent(input) {
   }
   if (dateKey3 !== tentativeDateKey) {
     try {
-      const planRows = await db.select().from(plans).where(and89(eq124(plans.userId, userId), eq124(plans.date, dateKey3))).limit(1);
+      const planRows = await db.select().from(plans).where(and90(eq125(plans.userId, userId), eq125(plans.date, dateKey3))).limit(1);
       todayPlan = planRows[0]?.data || null;
     } catch (err2) {
       console.error("[coach] plan re-fetch (timezone reconcile) failed:", err2);
@@ -85401,7 +85580,7 @@ ${registryCtx.systemContext}` : effectiveSystemPromptBase;
       let storedSession = null;
       let storedSessionId = null;
       try {
-        const rows = await db.select().from(buildSessions).where(eq124(buildSessions.userId, userId)).orderBy(desc46(buildSessions.createdAt)).limit(1);
+        const rows = await db.select().from(buildSessions).where(eq125(buildSessions.userId, userId)).orderBy(desc46(buildSessions.createdAt)).limit(1);
         if (rows.length > 0) {
           const row = rows[0];
           storedSessionId = row.id;
@@ -85432,7 +85611,7 @@ Reminder: we ${SUSPENDED_BUILD_REMINDED_MARKER} for "${buildDescription}". Say t
           `[${channelName}] suspended-build reminder appended (ackAge=${Math.round(ackAgeMs / 36e5)}h, build="${buildDescription.slice(0, 60)}")`
         );
         if (storedSessionId) {
-          db.update(buildSessions).set({ reminded: true }).where(eq124(buildSessions.id, storedSessionId)).catch((err2) => console.error("[coach] build-session remind flag update failed:", err2));
+          db.update(buildSessions).set({ reminded: true }).where(eq125(buildSessions.id, storedSessionId)).catch((err2) => console.error("[coach] build-session remind flag update failed:", err2));
         }
       }
     } catch (reminderErr) {
@@ -85587,7 +85766,7 @@ __export(bridge_exports, {
   waitForTrainingTap: () => waitForTrainingTap
 });
 import { WebSocketServer, WebSocket } from "ws";
-import { eq as eq125, and as and90, sql as sql49 } from "drizzle-orm";
+import { eq as eq126, and as and91, sql as sql50 } from "drizzle-orm";
 import { randomBytes as randomBytes3, createHash as createHash7 } from "crypto";
 function getRecentPhoneNotifications2(userId, limit = 20) {
   const arr = userNotifications.get(userId) || [];
@@ -85640,7 +85819,7 @@ async function processDaemonUtterance(userId, utterance) {
 }
 async function syncWakeSettingsToDaemon(userId) {
   try {
-    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq125(userPreferences.userId, userId));
+    const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq126(userPreferences.userId, userId));
     const prefs = rows[0]?.data ?? {};
     const wakeWordEnabled = prefs.wakeWordEnabled ?? false;
     const talkModeEnabled = prefs.talkModeEnabled ?? false;
@@ -85713,7 +85892,7 @@ function closeUserDaemon(userId, platform) {
   return closed;
 }
 async function findUserDaemonRow(userId, platform) {
-  const rows = await db.select().from(channelLinks).where(and90(eq125(channelLinks.userId, userId), eq125(channelLinks.channel, "daemon")));
+  const rows = await db.select().from(channelLinks).where(and91(eq126(channelLinks.userId, userId), eq126(channelLinks.channel, "daemon")));
   if (rows.length === 0) return null;
   let candidates = rows;
   if (platform) {
@@ -85769,7 +85948,7 @@ async function setDaemonPermissions(userId, perms) {
     const meta = row?.metadata || {};
     meta.permissions = merged;
     if (row) {
-      await db.update(channelLinks).set({ metadata: meta }).where(eq125(channelLinks.id, row.id));
+      await db.update(channelLinks).set({ metadata: meta }).where(eq126(channelLinks.id, row.id));
     } else {
       await db.insert(channelLinks).values({
         userId,
@@ -85808,7 +85987,7 @@ async function setAndroidDaemonPermissions(userId, perms) {
     const meta = row?.metadata || {};
     meta.android_permissions = merged;
     if (row) {
-      await db.update(channelLinks).set({ metadata: meta }).where(eq125(channelLinks.id, row.id));
+      await db.update(channelLinks).set({ metadata: meta }).where(eq126(channelLinks.id, row.id));
     } else {
       await db.insert(channelLinks).values({
         userId,
@@ -85971,14 +86150,14 @@ async function createDaemonPairingCode(userId) {
 }
 async function consumePairingCode(code) {
   try {
-    const rows = await db.select().from(channelLinkCodes).where(and90(eq125(channelLinkCodes.code, code), eq125(channelLinkCodes.channel, "daemon"))).limit(1);
+    const rows = await db.select().from(channelLinkCodes).where(and91(eq126(channelLinkCodes.code, code), eq126(channelLinkCodes.channel, "daemon"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-      await db.delete(channelLinkCodes).where(eq125(channelLinkCodes.code, code));
+      await db.delete(channelLinkCodes).where(eq126(channelLinkCodes.code, code));
       return null;
     }
-    await db.delete(channelLinkCodes).where(eq125(channelLinkCodes.code, code));
+    await db.delete(channelLinkCodes).where(eq126(channelLinkCodes.code, code));
     return row.userId;
   } catch (err2) {
     console.error("[daemon] consumePairingCode failed:", err2);
@@ -85989,7 +86168,7 @@ async function recordDaemonLink(userId, daemonId, meta) {
   try {
     const rawPlatform = meta.platform;
     const platform = normalizeDaemonPlatform(rawPlatform);
-    const existing = await db.select().from(channelLinks).where(and90(eq125(channelLinks.userId, userId), eq125(channelLinks.channel, "daemon")));
+    const existing = await db.select().from(channelLinks).where(and91(eq126(channelLinks.userId, userId), eq126(channelLinks.channel, "daemon")));
     const mergedMeta = { ...meta, platform };
     if (rawPlatform && rawPlatform !== platform && !mergedMeta.osPlatform) {
       mergedMeta.osPlatform = rawPlatform;
@@ -86010,7 +86189,7 @@ async function recordDaemonLink(userId, daemonId, meta) {
       const priorMeta = row.metadata || {};
       const priorPlatform = normalizeDaemonPlatform(priorMeta.platform);
       if (priorPlatform === platform) {
-        await db.delete(channelLinks).where(eq125(channelLinks.id, row.id));
+        await db.delete(channelLinks).where(eq126(channelLinks.id, row.id));
       }
     }
     await db.insert(channelLinks).values({
@@ -86068,7 +86247,7 @@ function startDaemonBridge(server) {
           return;
         }
         try {
-          const rows = await db.select().from(channelLinks).where(and90(eq125(channelLinks.address, rm5.daemonId), eq125(channelLinks.channel, "daemon"))).limit(1);
+          const rows = await db.select().from(channelLinks).where(and91(eq126(channelLinks.address, rm5.daemonId), eq126(channelLinks.channel, "daemon"))).limit(1);
           const row = rows[0];
           if (!row) {
             try {
@@ -86111,7 +86290,7 @@ function startDaemonBridge(server) {
           }
           const reconnPlatform = normalizeDaemonPlatform(storedMeta.platform);
           storedMeta.platform = reconnPlatform;
-          await db.update(channelLinks).set({ metadata: storedMeta, lastSeenAt: /* @__PURE__ */ new Date() }).where(eq125(channelLinks.id, row.id));
+          await db.update(channelLinks).set({ metadata: storedMeta, lastSeenAt: /* @__PURE__ */ new Date() }).where(eq126(channelLinks.id, row.id));
           pairedPlatform = reconnPlatform;
           const reconnKey = socketKey(pairedUserId, reconnPlatform);
           const prior = userSockets.get(reconnKey);
@@ -86251,7 +86430,7 @@ function startDaemonBridge(server) {
           const resolvedData = data !== void 0 ? data : Object.keys(rest).length > 0 ? rest : void 0;
           pending.resolve({ ok: ok3, data: resolvedData, error });
         }
-        db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and90(eq125(channelLinks.userId, pairedUserId), eq125(channelLinks.channel, "daemon"))).catch((err2) => console.error("[daemon] last_seen update failed:", err2));
+        db.update(channelLinks).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(and91(eq126(channelLinks.userId, pairedUserId), eq126(channelLinks.channel, "daemon"))).catch((err2) => console.error("[daemon] last_seen update failed:", err2));
       }
     });
     const keepalive = setInterval(() => {
@@ -86292,7 +86471,7 @@ function startDaemonBridge(server) {
   });
   console.log("[daemon] WebSocket bridge mounted at /api/daemon/ws");
   const cleanup = setInterval(() => {
-    db.delete(channelLinkCodes).where(and90(eq125(channelLinkCodes.channel, "daemon"), sql49`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[daemon] code cleanup failed:", err2));
+    db.delete(channelLinkCodes).where(and91(eq126(channelLinkCodes.channel, "daemon"), sql50`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[daemon] code cleanup failed:", err2));
   }, 5 * 60 * 1e3);
   cleanup.unref();
 }
@@ -87651,7 +87830,7 @@ var flagTaskNeedsAttention_exports = {};
 __export(flagTaskNeedsAttention_exports, {
   buildFlagTaskNeedsAttentionTool: () => buildFlagTaskNeedsAttentionTool
 });
-import { and as and99, eq as eq136 } from "drizzle-orm";
+import { and as and100, eq as eq137 } from "drizzle-orm";
 function buildFlagTaskNeedsAttentionTool(taskId) {
   return {
     name: "flag_task_needs_attention",
@@ -87673,22 +87852,22 @@ function buildFlagTaskNeedsAttentionTool(taskId) {
       }
       try {
         const [task] = await db.select().from(jarvisScheduledTasks).where(
-          and99(
-            eq136(jarvisScheduledTasks.id, taskId),
-            eq136(jarvisScheduledTasks.userId, ctx.userId)
+          and100(
+            eq137(jarvisScheduledTasks.id, taskId),
+            eq137(jarvisScheduledTasks.userId, ctx.userId)
           )
         ).limit(1);
         if (!task) {
           return { ok: false, content: `Scheduled task id=${taskId} not found.`, label: "Task not found" };
         }
         await db.update(jarvisScheduledTasks).set({ needsAttention: true, attentionQuestion: question }).where(
-          and99(
-            eq136(jarvisScheduledTasks.id, taskId),
-            eq136(jarvisScheduledTasks.userId, ctx.userId)
+          and100(
+            eq137(jarvisScheduledTasks.id, taskId),
+            eq137(jarvisScheduledTasks.userId, ctx.userId)
           )
         );
         try {
-          const [link] = await db.select().from(telegramLinks).where(eq136(telegramLinks.userId, ctx.userId));
+          const [link] = await db.select().from(telegramLinks).where(eq137(telegramLinks.userId, ctx.userId));
           if (link?.chatId) {
             const { sendLongMessage: sendLongMessage2 } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
             await sendLongMessage2(
@@ -87734,7 +87913,7 @@ __export(selfImprovementLoop_exports, {
   runSelfImprovementCycle: () => runSelfImprovementCycle,
   runSelfImprovementForAllUsers: () => runSelfImprovementForAllUsers
 });
-import { gte as gte25, desc as desc52 } from "drizzle-orm";
+import { gte as gte26, desc as desc52 } from "drizzle-orm";
 import fs25 from "fs/promises";
 import path32 from "path";
 function getISOWeekKey(d) {
@@ -87845,7 +88024,7 @@ async function _runCycleInner(userId, signal) {
   const [auditEntries, rawInteractions, recentErrors] = await Promise.all([
     readAuditEntries(50).catch(() => []),
     getRecentInteractions(userId, 100, 7 * 24).catch(() => []),
-    db.select().from(systemErrorLog).where(gte25(systemErrorLog.createdAt, sevenDaysAgo)).orderBy(desc52(systemErrorLog.createdAt)).limit(30).catch(() => [])
+    db.select().from(systemErrorLog).where(gte26(systemErrorLog.createdAt, sevenDaysAgo)).orderBy(desc52(systemErrorLog.createdAt)).limit(30).catch(() => [])
   ]);
   const flaggedInteractions = [];
   const sortedInteractions = [...rawInteractions].sort(
@@ -88140,7 +88319,7 @@ __export(primeIdentityAudit_exports, {
 });
 import * as fs26 from "fs/promises";
 import * as path33 from "path";
-import { eq as eq138, and as and101, desc as desc53, inArray as inArray11, gte as gte26 } from "drizzle-orm";
+import { eq as eq139, and as and102, desc as desc53, inArray as inArray11, gte as gte27 } from "drizzle-orm";
 function currentMonthKey() {
   const now = /* @__PURE__ */ new Date();
   const y = now.getUTCFullYear();
@@ -88150,10 +88329,10 @@ function currentMonthKey() {
 async function auditAlreadyRan(userId, monthKey) {
   try {
     const rows = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-      and101(
-        eq138(proactiveScheduleLog.userId, userId),
-        eq138(proactiveScheduleLog.messageType, "prime_identity_audit"),
-        eq138(proactiveScheduleLog.sentDate, monthKey)
+      and102(
+        eq139(proactiveScheduleLog.userId, userId),
+        eq139(proactiveScheduleLog.messageType, "prime_identity_audit"),
+        eq139(proactiveScheduleLog.sentDate, monthKey)
       )
     ).limit(1);
     return rows.length > 0;
@@ -88179,11 +88358,11 @@ async function runPrimeIdentityAudit(userId) {
       label: interactionLog.label,
       createdAt: interactionLog.createdAt
     }).from(interactionLog).where(
-      and101(
-        eq138(interactionLog.userId, userId),
-        eq138(interactionLog.direction, "outbound"),
+      and102(
+        eq139(interactionLog.userId, userId),
+        eq139(interactionLog.direction, "outbound"),
         inArray11(interactionLog.channel, ["telegram", "app_chat"]),
-        gte26(interactionLog.createdAt, cutoff)
+        gte27(interactionLog.createdAt, cutoff)
       )
     ).orderBy(desc53(interactionLog.createdAt)).limit(40);
     if (rows.length === 0) {
@@ -88375,29 +88554,29 @@ __export(decay_exports, {
   reinforceMemories: () => reinforceMemories,
   runDailyDecay: () => runDailyDecay
 });
-import { eq as eq140, sql as sql54, and as and103 } from "drizzle-orm";
+import { eq as eq141, sql as sql55, and as and104 } from "drizzle-orm";
 function utcDayKey2(d) {
   return `${d.getUTCFullYear()}-${d.getUTCMonth() + 1}-${d.getUTCDate()}`;
 }
 async function runDailyDecay() {
   const result = { decremented: 0, deleted: 0 };
   try {
-    const dec = await db.execute(sql54`
+    const dec = await db.execute(sql55`
       UPDATE user_memories
-      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql54.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql54.raw(String(DECAY_STEP))} END)
+      SET relevance_score = GREATEST(0, relevance_score - CASE WHEN confidence >= 90 THEN ${sql55.raw(String(Math.max(1, Math.floor(DECAY_STEP / 3))))} ELSE ${sql55.raw(String(DECAY_STEP))} END)
       WHERE (
-        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql54.raw(String(STALE_AFTER_REF_DAYS))} days')
-        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql54.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+        (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql55.raw(String(STALE_AFTER_REF_DAYS))} days')
+        OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql55.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
       )
       RETURNING id
     `);
     result.decremented = dec.rows?.length || 0;
-    const del = await db.execute(sql54`
+    const del = await db.execute(sql55`
       DELETE FROM user_memories
       WHERE relevance_score < ${DECAY_FLOOR}
         AND (
-          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql54.raw(String(STALE_AFTER_REF_DAYS))} days')
-          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql54.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
+          (last_referenced_at IS NOT NULL AND last_referenced_at < NOW() - INTERVAL '${sql55.raw(String(STALE_AFTER_REF_DAYS))} days')
+          OR (last_referenced_at IS NULL AND extracted_at < NOW() - INTERVAL '${sql55.raw(String(STALE_AFTER_EXTRACT_DAYS))} days')
         )
       RETURNING id
     `);
@@ -88420,9 +88599,9 @@ async function reinforceMemories(userId, ids) {
   if (ids.length === 0) return;
   try {
     await db.update(userMemories).set({
-      relevanceScore: sql54`LEAST(100, ${userMemories.relevanceScore} + 5)`,
+      relevanceScore: sql55`LEAST(100, ${userMemories.relevanceScore} + 5)`,
       lastReferencedAt: /* @__PURE__ */ new Date()
-    }).where(and103(eq140(userMemories.userId, userId), sql54`${userMemories.id} = ANY(${ids})`));
+    }).where(and104(eq141(userMemories.userId, userId), sql55`${userMemories.id} = ANY(${ids})`));
   } catch (err2) {
     console.error("[MemoryDecay] reinforce failed:", err2);
   }
@@ -88447,7 +88626,7 @@ __export(scanner_exports, {
   runNervousSystemScan: () => runNervousSystemScan
 });
 import crypto12 from "crypto";
-import { eq as eq141, and as and104 } from "drizzle-orm";
+import { eq as eq142, and as and105 } from "drizzle-orm";
 function contentHash(userId, headline, url) {
   return crypto12.createHash("sha256").update(`${userId}::${headline.toLowerCase().trim()}::${url.toLowerCase().trim()}`).digest("hex").slice(0, 64);
 }
@@ -88506,7 +88685,7 @@ ${items}`;
   }
 }
 async function scanWatchTopic(userId, watch3) {
-  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq141(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
+  const stampLastChecked = () => db.update(nervousSystemWatches).set({ lastCheckedAt: /* @__PURE__ */ new Date() }).where(eq142(nervousSystemWatches.id, watch3.id)).catch((err2) => console.error("[NervousSystem] lastCheckedAt update failed:", err2));
   let searchResults = [];
   try {
     const query = `${watch3.label} news latest`;
@@ -88585,7 +88764,7 @@ ${hit.url}` : ""}`;
       const deliveryResults = await notifyUser(userId, "nervous_system", msgText);
       const anyDelivered = deliveryResults.some((r) => r.result.ok && r.channel !== "in_app");
       if (anyDelivered) {
-        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and104(eq141(nervousSystemSignals.userId, userId), eq141(nervousSystemSignals.contentHash, hash)));
+        await db.update(nervousSystemSignals).set({ deliveredAt: /* @__PURE__ */ new Date() }).where(and105(eq142(nervousSystemSignals.userId, userId), eq142(nervousSystemSignals.contentHash, hash)));
         logInteraction(userId, "notification", "outbound", msgText, "nervous_system").catch(() => {
         });
       }
@@ -88601,7 +88780,7 @@ async function runNervousSystemScan() {
   const now = Date.now();
   let watches = [];
   try {
-    watches = await db.select().from(nervousSystemWatches).where(eq141(nervousSystemWatches.active, true));
+    watches = await db.select().from(nervousSystemWatches).where(eq142(nervousSystemWatches.active, true));
   } catch (err2) {
     console.error("[NervousSystem] failed to load watches:", err2);
     return;
@@ -88657,7 +88836,7 @@ var peopleSync_exports = {};
 __export(peopleSync_exports, {
   syncPeopleFromGoogle: () => syncPeopleFromGoogle
 });
-import { eq as eq142, and as and105 } from "drizzle-orm";
+import { eq as eq143, and as and106 } from "drizzle-orm";
 function parseSender(from) {
   const angle = from.match(/^"?([^"<]+?)"?\s*<([^>]+)>$/);
   if (angle) return { name: angle[1].trim(), email: angle[2].trim().toLowerCase() };
@@ -88732,7 +88911,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
   for (const obs of byEmail.values()) {
     const upc = upcoming.get(obs.email);
     try {
-      const [existing] = await db.select().from(people).where(and105(eq142(people.userId, userId), eq142(people.email, obs.email))).limit(1);
+      const [existing] = await db.select().from(people).where(and106(eq143(people.userId, userId), eq143(people.email, obs.email))).limit(1);
       const relationshipHint = obs.source === "calendar" ? `calendar attendee \u2014 ${obs.context}` : `email correspondent \u2014 re: ${obs.context}`;
       if (existing) {
         await db.update(people).set({
@@ -88743,7 +88922,7 @@ async function syncPeopleFromGoogle(userId, accessToken, now) {
           nextInteractionAt: upc?.nearest ?? null,
           upcomingCount: upc?.count ?? 0,
           updatedAt: /* @__PURE__ */ new Date()
-        }).where(eq142(people.id, existing.id));
+        }).where(eq143(people.id, existing.id));
       } else {
         await db.insert(people).values({
           userId,
@@ -88797,14 +88976,14 @@ import express4 from "express";
 init_db();
 init_schema();
 init_coachAgent();
-import { eq as eq127, and as and92, sql as sql50 } from "drizzle-orm";
+import { eq as eq128, and as and93, sql as sql51 } from "drizzle-orm";
 import express2 from "express";
 import * as crypto11 from "crypto";
 
 // server/channels/whatsappChannel.ts
 init_db();
 init_schema();
-import { eq as eq126, and as and91 } from "drizzle-orm";
+import { eq as eq127, and as and92 } from "drizzle-orm";
 var TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
 var TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
 var TWILIO_FROM = process.env.TWILIO_WHATSAPP_NUMBER;
@@ -88859,7 +89038,7 @@ function verifyTwilioSignature(req) {
 }
 async function findUserByPhone(phone) {
   try {
-    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and92(eq127(channelLinks.channel, "whatsapp"), eq127(channelLinks.address, phone))).limit(1);
+    const rows = await db.select({ userId: channelLinks.userId }).from(channelLinks).where(and93(eq128(channelLinks.channel, "whatsapp"), eq128(channelLinks.address, phone))).limit(1);
     return rows[0]?.userId ?? null;
   } catch (err2) {
     console.error("[whatsapp] user lookup failed:", err2);
@@ -88868,11 +89047,11 @@ async function findUserByPhone(phone) {
 }
 async function tryConsumeLinkCode(code, phone) {
   try {
-    const rows = await db.select().from(channelLinkCodes).where(and92(eq127(channelLinkCodes.code, code), eq127(channelLinkCodes.channel, "whatsapp"))).limit(1);
+    const rows = await db.select().from(channelLinkCodes).where(and93(eq128(channelLinkCodes.code, code), eq128(channelLinkCodes.channel, "whatsapp"))).limit(1);
     const row = rows[0];
     if (!row) return null;
     if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-      await db.delete(channelLinkCodes).where(eq127(channelLinkCodes.code, code));
+      await db.delete(channelLinkCodes).where(eq128(channelLinkCodes.code, code));
       return null;
     }
     await db.insert(channelLinks).values({
@@ -88884,7 +89063,7 @@ async function tryConsumeLinkCode(code, phone) {
       target: [channelLinks.channel, channelLinks.address],
       set: { userId: row.userId, lastSeenAt: /* @__PURE__ */ new Date() }
     });
-    await db.delete(channelLinkCodes).where(eq127(channelLinkCodes.code, code));
+    await db.delete(channelLinkCodes).where(eq128(channelLinkCodes.code, code));
     return row.userId;
   } catch (err2) {
     console.error("[whatsapp] link code consume failed:", err2);
@@ -88938,7 +89117,7 @@ function registerWhatsAppWebhook(app2) {
     }
   });
   const cleanup = setInterval(() => {
-    db.delete(channelLinkCodes).where(and92(eq127(channelLinkCodes.channel, "whatsapp"), sql50`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[whatsapp] code cleanup failed:", err2));
+    db.delete(channelLinkCodes).where(and93(eq128(channelLinkCodes.channel, "whatsapp"), sql51`${channelLinkCodes.expiresAt} < NOW()`)).catch((err2) => console.error("[whatsapp] code cleanup failed:", err2));
   }, 5 * 60 * 1e3);
   cleanup.unref();
 }
@@ -89311,13 +89490,13 @@ init_bridge();
 import fs24 from "fs";
 import path31 from "path";
 import { WebSocket as WebSocket2, WebSocketServer as WebSocketServer2 } from "ws";
-import { and as and95, desc as desc50, eq as eq131 } from "drizzle-orm";
+import { and as and96, desc as desc50, eq as eq132 } from "drizzle-orm";
 
 // server/gateway/devicePairing.ts
 init_db();
 init_schema();
 import { createHash as createHash8, randomBytes as randomBytes4 } from "crypto";
-import { and as and93, desc as desc47, eq as eq128, isNull as isNull5 } from "drizzle-orm";
+import { and as and94, desc as desc47, eq as eq129, isNull as isNull5 } from "drizzle-orm";
 var JWT_GATEWAY_SCOPES = [
   "operator.admin",
   "operator.read",
@@ -89353,10 +89532,10 @@ function requireGatewayScope(principal, scope) {
 async function authenticateGatewayDeviceToken(token) {
   if (!token?.startsWith("jgwd_")) return null;
   const hash = tokenHash(token);
-  const rows = await db.select().from(gatewayDevices).where(and93(eq128(gatewayDevices.tokenHash, hash), isNull5(gatewayDevices.revokedAt))).limit(1).catch(() => []);
+  const rows = await db.select().from(gatewayDevices).where(and94(eq129(gatewayDevices.tokenHash, hash), isNull5(gatewayDevices.revokedAt))).limit(1).catch(() => []);
   const device = rows[0];
   if (!device) return null;
-  db.update(gatewayDevices).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq128(gatewayDevices.id, device.id)).catch(() => {
+  db.update(gatewayDevices).set({ lastSeenAt: /* @__PURE__ */ new Date() }).where(eq129(gatewayDevices.id, device.id)).catch(() => {
   });
   return {
     userId: device.userId,
@@ -89389,7 +89568,7 @@ async function createGatewayPairingRequest({
   return row;
 }
 async function listGatewayPairingRequests(userId, limit = 25) {
-  return db.select().from(gatewayDevicePairingRequests).where(eq128(gatewayDevicePairingRequests.userId, userId)).orderBy(desc47(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
+  return db.select().from(gatewayDevicePairingRequests).where(eq129(gatewayDevicePairingRequests.userId, userId)).orderBy(desc47(gatewayDevicePairingRequests.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
 }
 async function approveGatewayPairingRequest({
   userId,
@@ -89397,12 +89576,12 @@ async function approveGatewayPairingRequest({
   code,
   scopes
 }) {
-  const rows = requestId ? await db.select().from(gatewayDevicePairingRequests).where(eq128(gatewayDevicePairingRequests.id, requestId)).limit(1) : await db.select().from(gatewayDevicePairingRequests).where(eq128(gatewayDevicePairingRequests.code, code || "")).limit(1);
+  const rows = requestId ? await db.select().from(gatewayDevicePairingRequests).where(eq129(gatewayDevicePairingRequests.id, requestId)).limit(1) : await db.select().from(gatewayDevicePairingRequests).where(eq129(gatewayDevicePairingRequests.code, code || "")).limit(1);
   const request = rows[0];
   if (!request || request.userId !== userId) throw new Error("Pairing request not found");
   if (request.status !== "pending") throw new Error(`Pairing request is ${request.status}`);
   if (new Date(request.expiresAt).getTime() < Date.now()) {
-    await db.update(gatewayDevicePairingRequests).set({ status: "expired", resolvedAt: /* @__PURE__ */ new Date() }).where(eq128(gatewayDevicePairingRequests.id, request.id)).catch(() => {
+    await db.update(gatewayDevicePairingRequests).set({ status: "expired", resolvedAt: /* @__PURE__ */ new Date() }).where(eq129(gatewayDevicePairingRequests.id, request.id)).catch(() => {
     });
     throw new Error("Pairing request expired");
   }
@@ -89420,26 +89599,26 @@ async function approveGatewayPairingRequest({
       pairedFromRequestId: request.id
     }
   }).returning();
-  await db.update(gatewayDevicePairingRequests).set({ status: "approved", deviceId: device.id, resolvedAt: /* @__PURE__ */ new Date() }).where(eq128(gatewayDevicePairingRequests.id, request.id));
+  await db.update(gatewayDevicePairingRequests).set({ status: "approved", deviceId: device.id, resolvedAt: /* @__PURE__ */ new Date() }).where(eq129(gatewayDevicePairingRequests.id, request.id));
   return {
     device: { ...device, tokenHash: void 0 },
     token: rawToken
   };
 }
 async function rejectGatewayPairingRequest(userId, requestId) {
-  const [request] = await db.select().from(gatewayDevicePairingRequests).where(eq128(gatewayDevicePairingRequests.id, requestId)).limit(1);
+  const [request] = await db.select().from(gatewayDevicePairingRequests).where(eq129(gatewayDevicePairingRequests.id, requestId)).limit(1);
   if (!request || request.userId !== userId) throw new Error("Pairing request not found");
-  await db.update(gatewayDevicePairingRequests).set({ status: "rejected", resolvedAt: /* @__PURE__ */ new Date() }).where(eq128(gatewayDevicePairingRequests.id, request.id));
+  await db.update(gatewayDevicePairingRequests).set({ status: "rejected", resolvedAt: /* @__PURE__ */ new Date() }).where(eq129(gatewayDevicePairingRequests.id, request.id));
   return { ok: true };
 }
 async function listGatewayDevices(userId, includeRevoked = false, limit = 50) {
-  const rows = await db.select().from(gatewayDevices).where(eq128(gatewayDevices.userId, userId)).orderBy(desc47(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
+  const rows = await db.select().from(gatewayDevices).where(eq129(gatewayDevices.userId, userId)).orderBy(desc47(gatewayDevices.pairedAt)).limit(Math.min(Math.max(limit, 1), 100));
   return rows.filter((device) => includeRevoked || !device.revokedAt).map((device) => ({ ...device, tokenHash: void 0 }));
 }
 async function revokeGatewayDevice(userId, deviceId) {
-  const [device] = await db.select().from(gatewayDevices).where(eq128(gatewayDevices.id, deviceId)).limit(1);
+  const [device] = await db.select().from(gatewayDevices).where(eq129(gatewayDevices.id, deviceId)).limit(1);
   if (!device || device.userId !== userId) throw new Error("Gateway device not found");
-  await db.update(gatewayDevices).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq128(gatewayDevices.id, deviceId));
+  await db.update(gatewayDevices).set({ revokedAt: /* @__PURE__ */ new Date() }).where(eq129(gatewayDevices.id, deviceId));
   return { ok: true };
 }
 
@@ -89447,7 +89626,7 @@ async function revokeGatewayDevice(userId, deviceId) {
 init_db();
 init_schema();
 import { EventEmitter as EventEmitter2 } from "events";
-import { desc as desc48, eq as eq129 } from "drizzle-orm";
+import { desc as desc48, eq as eq130 } from "drizzle-orm";
 var emitter = new EventEmitter2();
 emitter.setMaxListeners(100);
 function onGatewayEvent(listener) {
@@ -89479,7 +89658,7 @@ async function recordGatewayEvent(input) {
 async function listGatewayEvents(userId, limit) {
   const query = db.select().from(gatewayEvents).orderBy(desc48(gatewayEvents.createdAt)).limit(limit);
   if (!userId) return query.catch(() => []);
-  return db.select().from(gatewayEvents).where(eq129(gatewayEvents.userId, userId)).orderBy(desc48(gatewayEvents.createdAt)).limit(limit).catch(() => []);
+  return db.select().from(gatewayEvents).where(eq130(gatewayEvents.userId, userId)).orderBy(desc48(gatewayEvents.createdAt)).limit(limit).catch(() => []);
 }
 
 // server/gateway/nodeRegistry.ts
@@ -89487,7 +89666,7 @@ init_db();
 init_registry();
 init_bridge();
 init_schema();
-import { and as and94, desc as desc49, eq as eq130, inArray as inArray10 } from "drizzle-orm";
+import { and as and95, desc as desc49, eq as eq131, inArray as inArray10 } from "drizzle-orm";
 var SERVER_CAPABILITIES = [
   "gateway.health",
   "gateway.status",
@@ -89564,8 +89743,8 @@ async function listGatewayNodes(userId, limit = 50) {
   }
   if (!userId) return nodes;
   const [gatewayDevices2, activeJobs] = await Promise.all([
-    db.select().from(gatewayDevices).where(eq130(gatewayDevices.userId, userId)).orderBy(desc49(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
-    db.select().from(agentJobs).where(and94(eq130(agentJobs.userId, userId), inArray10(agentJobs.status, ["queued", "running"]))).orderBy(desc49(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
+    db.select().from(gatewayDevices).where(eq131(gatewayDevices.userId, userId)).orderBy(desc49(gatewayDevices.pairedAt)).limit(Math.min(limit, 100)).catch(() => []),
+    db.select().from(agentJobs).where(and95(eq131(agentJobs.userId, userId), inArray10(agentJobs.status, ["queued", "running"]))).orderBy(desc49(agentJobs.createdAt)).limit(Math.min(limit, 100)).catch(() => [])
   ]);
   for (const device of gatewayDevices2) {
     const scopes = device.scopes || [];
@@ -89728,19 +89907,19 @@ async function channelState(userId, limit) {
     configured: channel.isConfigured(),
     toolGroups: channel.toolGroups
   }));
-  const linked = userId ? await db.select().from(channelLinks).where(eq131(channelLinks.userId, userId)).limit(limit).catch(() => []) : [];
+  const linked = userId ? await db.select().from(channelLinks).where(eq132(channelLinks.userId, userId)).limit(limit).catch(() => []) : [];
   return { registered, linked };
 }
 async function sessionState(userId, limit) {
   const [coachSessions, agentSessions] = await Promise.all([
-    db.select().from(coachChannelSessions).where(eq131(coachChannelSessions.userId, userId)).limit(limit).catch(() => []),
+    db.select().from(coachChannelSessions).where(eq132(coachChannelSessions.userId, userId)).limit(limit).catch(() => []),
     db.select({
       sdkSessionId: agentChatSessions.sdkSessionId,
       agentId: agentChatSessions.agentId,
       createdAt: agentChatSessions.createdAt,
       updatedAt: agentChatSessions.updatedAt,
       expiresAt: agentChatSessions.expiresAt
-    }).from(agentChatSessions).where(eq131(agentChatSessions.userId, userId)).orderBy(desc50(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
+    }).from(agentChatSessions).where(eq132(agentChatSessions.userId, userId)).orderBy(desc50(agentChatSessions.updatedAt)).limit(limit).catch(() => [])
   ]);
   return { coachSessions, agentSessions };
 }
@@ -89759,16 +89938,16 @@ async function daemonState(userId) {
 }
 async function agentState(userId, limit) {
   const [discordAgents3, customAgents2] = await Promise.all([
-    db.select().from(discordAgents).where(eq131(discordAgents.userId, userId)).limit(limit).catch(() => []),
-    db.select().from(customAgents).where(eq131(customAgents.userId, userId)).limit(limit).catch(() => [])
+    db.select().from(discordAgents).where(eq132(discordAgents.userId, userId)).limit(limit).catch(() => []),
+    db.select().from(customAgents).where(eq132(customAgents.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { discordAgents: discordAgents3, customAgents: customAgents2 };
 }
 async function cronState(userId, limit) {
   const [scheduledTasks, workflows, jobs] = await Promise.all([
-    db.select().from(jarvisScheduledTasks).where(eq131(jarvisScheduledTasks.userId, userId)).orderBy(desc50(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentWorkflows).where(eq131(agentWorkflows.userId, userId)).orderBy(desc50(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
-    db.select().from(agentJobs).where(eq131(agentJobs.userId, userId)).orderBy(desc50(agentJobs.createdAt)).limit(limit).catch(() => [])
+    db.select().from(jarvisScheduledTasks).where(eq132(jarvisScheduledTasks.userId, userId)).orderBy(desc50(jarvisScheduledTasks.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentWorkflows).where(eq132(agentWorkflows.userId, userId)).orderBy(desc50(agentWorkflows.updatedAt)).limit(limit).catch(() => []),
+    db.select().from(agentJobs).where(eq132(agentJobs.userId, userId)).orderBy(desc50(agentJobs.createdAt)).limit(limit).catch(() => [])
   ]);
   return { scheduledTasks, workflows, jobs };
 }
@@ -89838,11 +90017,11 @@ async function jobCreate(userId, params) {
 async function jobCancel(userId, params) {
   const jobId = typeof params.jobId === "string" ? params.jobId.trim() : "";
   if (!jobId) throw new Error("jobId is required");
-  const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(and95(eq131(agentJobs.id, jobId), eq131(agentJobs.userId, userId))).limit(1);
+  const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(and96(eq132(agentJobs.id, jobId), eq132(agentJobs.userId, userId))).limit(1);
   if (!row) throw new Error("Job not found");
   if (!["queued", "running"].includes(row.status)) throw new Error(`Job is already ${row.status}`);
   const nextStatus = row.status === "running" ? "cancelling" : "cancelled";
-  const [updated] = await db.update(agentJobs).set({ status: nextStatus, ...nextStatus === "cancelled" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(and95(eq131(agentJobs.id, jobId), eq131(agentJobs.userId, userId))).returning({ id: agentJobs.id, status: agentJobs.status });
+  const [updated] = await db.update(agentJobs).set({ status: nextStatus, ...nextStatus === "cancelled" ? { completedAt: /* @__PURE__ */ new Date() } : {} }).where(and96(eq132(agentJobs.id, jobId), eq132(agentJobs.userId, userId))).returning({ id: agentJobs.id, status: agentJobs.status });
   recordGatewayEvent({
     userId,
     type: "job.cancelled",
@@ -89912,8 +90091,8 @@ async function daemonTest(userId, params) {
 }
 async function approvalState(userId, limit) {
   const [gates, policies] = await Promise.all([
-    db.select().from(agentApprovalGates).where(eq131(agentApprovalGates.userId, userId)).orderBy(desc50(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
-    db.select().from(agentApprovalPolicies).where(eq131(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
+    db.select().from(agentApprovalGates).where(eq132(agentApprovalGates.userId, userId)).orderBy(desc50(agentApprovalGates.createdAt)).limit(limit).catch(() => []),
+    db.select().from(agentApprovalPolicies).where(eq132(agentApprovalPolicies.userId, userId)).limit(limit).catch(() => [])
   ]);
   return { gates, policies };
 }
@@ -89942,8 +90121,8 @@ async function resolveApprovalGate(userId, params, decision2) {
 async function skillState(userId, limit) {
   const [skillPacks2, mcpServers2, userSkills2] = await Promise.all([
     db.select().from(skillPacks).limit(limit).catch(() => []),
-    userId ? db.select().from(mcpServers).where(eq131(mcpServers.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([]),
-    userId ? db.select().from(userSkills).where(eq131(userSkills.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([])
+    userId ? db.select().from(mcpServers).where(eq132(mcpServers.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([]),
+    userId ? db.select().from(userSkills).where(eq132(userSkills.userId, userId)).limit(limit).catch(() => []) : Promise.resolve([])
   ]);
   return { skillPacks: skillPacks2, mcpServers: mcpServers2, userSkills: userSkills2 };
 }
@@ -90412,7 +90591,7 @@ import { WebSocketServer as WebSocketServer3, WebSocket as WebSocket3 } from "ws
 init_db();
 init_schema();
 init_loader();
-import { eq as eq132, desc as desc51 } from "drizzle-orm";
+import { eq as eq133, desc as desc51 } from "drizzle-orm";
 var ticketStore = /* @__PURE__ */ new Map();
 function consumeTicket(ticket) {
   const entry = ticketStore.get(ticket);
@@ -90456,7 +90635,7 @@ async function loadUserMemories(userId, maxLines = 50) {
       content: userMemories.content,
       category: userMemories.category,
       confidence: userMemories.confidence
-    }).from(userMemories).where(eq132(userMemories.userId, userId)).orderBy(desc51(userMemories.confidence)).limit(30);
+    }).from(userMemories).where(eq133(userMemories.userId, userId)).orderBy(desc51(userMemories.confidence)).limit(30);
     if (!rows.length) return "";
     const lines = [];
     for (const row of rows) {
@@ -90703,7 +90882,7 @@ init_schema();
 init_soul();
 init_agentApproval();
 init_routedChatCompletion();
-import { eq as eq133, and as and96, sql as drizzleSql2 } from "drizzle-orm";
+import { eq as eq134, and as and97, sql as drizzleSql2 } from "drizzle-orm";
 
 // server/inboxTriageConfig.ts
 function isInboxTriageEnabled(env = process.env) {
@@ -90809,9 +90988,9 @@ Jarvis reason: ${item.jarvisReason || "(none)"}`;
 }
 async function triageInboxItemsForUser(userId) {
   const pendingItems = await db.select().from(inboxItems).where(
-    and96(
-      eq133(inboxItems.userId, userId),
-      eq133(inboxItems.status, "pending")
+    and97(
+      eq134(inboxItems.userId, userId),
+      eq134(inboxItems.status, "pending")
     )
   ).limit(15);
   for (const item of pendingItems) {
@@ -90822,7 +91001,7 @@ async function triageInboxItemsForUser(userId) {
           status: "dismissed",
           actedAt: /* @__PURE__ */ new Date(),
           jarvisReason: reason || "Auto-dismissed \u2014 not actionable"
-        }).where(eq133(inboxItems.id, item.id));
+        }).where(eq134(inboxItems.id, item.id));
         console.log(`[InboxTriage] auto-dismissed inbox item: ${item.id} (${(item.subject || "").slice(0, 60)}) \u2014 ${reason}`);
       }
     } catch (err2) {
@@ -90832,10 +91011,10 @@ async function triageInboxItemsForUser(userId) {
 }
 async function runTriagePassForUser(userId) {
   const pending = await db.select().from(deliverables).where(
-    and96(
-      eq133(deliverables.userId, userId),
-      eq133(deliverables.status, "pending_approval"),
-      eq133(deliverables.triageStatus, "needs_attention")
+    and97(
+      eq134(deliverables.userId, userId),
+      eq134(deliverables.status, "pending_approval"),
+      eq134(deliverables.triageStatus, "needs_attention")
     )
   ).limit(20);
   for (const d of pending) {
@@ -90847,7 +91026,7 @@ async function runTriagePassForUser(userId) {
           if (meta.gateId) {
             const gateOk = await approveGate(meta.gateId, userId).catch(() => false);
             if (!gateOk) {
-              await db.update(deliverables).set({ triageNote: "Auto-approve attempted but gate not found / already resolved" }).where(eq133(deliverables.id, d.id));
+              await db.update(deliverables).set({ triageNote: "Auto-approve attempted but gate not found / already resolved" }).where(eq134(deliverables.id, d.id));
               console.warn(`[InboxTriage] approveGate failed for ${d.id} \u2014 gate may already be resolved`);
               continue;
             }
@@ -90858,7 +91037,7 @@ async function runTriagePassForUser(userId) {
           triageStatus: "auto_handled",
           triageNote: note || "Auto-handled by Jarvis",
           actedAt: /* @__PURE__ */ new Date()
-        }).where(eq133(deliverables.id, d.id));
+        }).where(eq134(deliverables.id, d.id));
         console.log(`[InboxTriage] auto-handled: ${d.id} (${d.title.slice(0, 60)})`);
       } else if (verdict === "promote_memory") {
         await promoteToMemory(userId, d);
@@ -90867,10 +91046,10 @@ async function runTriagePassForUser(userId) {
           triageStatus: "promoted_memory",
           triageNote: note || "Saved to long-term memory by Jarvis",
           actedAt: /* @__PURE__ */ new Date()
-        }).where(eq133(deliverables.id, d.id));
+        }).where(eq134(deliverables.id, d.id));
         console.log(`[InboxTriage] promoted to memory: ${d.id} (${d.title.slice(0, 60)})`);
       } else {
-        await db.update(deliverables).set({ triageStatus: "escalated", triageNote: note || void 0 }).where(eq133(deliverables.id, d.id));
+        await db.update(deliverables).set({ triageStatus: "escalated", triageNote: note || void 0 }).where(eq134(deliverables.id, d.id));
         console.log(`[InboxTriage] escalated to user: ${d.id} (${d.title.slice(0, 60)})`);
       }
     } catch (err2) {
@@ -90880,10 +91059,10 @@ async function runTriagePassForUser(userId) {
   await triageInboxItemsForUser(userId);
   try {
     const orphanedGates = await db.select().from(agentApprovalGates).where(
-      and96(
-        eq133(agentApprovalGates.userId, userId),
-        eq133(agentApprovalGates.status, "pending"),
-        eq133(agentApprovalGates.initiatedBy, "jarvis"),
+      and97(
+        eq134(agentApprovalGates.userId, userId),
+        eq134(agentApprovalGates.status, "pending"),
+        eq134(agentApprovalGates.initiatedBy, "jarvis"),
         drizzleSql2`${agentApprovalGates.expiresAt} > NOW()`
       )
     ).limit(10);
@@ -90952,28 +91131,28 @@ init_goalPlanHandoff();
 init_goalScheduler();
 init_weeklyJob();
 init_schedules();
-import { eq as eq139, and as and102, lt as lt9, lte as lte2, or as or5, sql as sql53, isNull as isNull6 } from "drizzle-orm";
+import { eq as eq140, and as and103, lt as lt9, lte as lte2, or as or5, sql as sql54, isNull as isNull6 } from "drizzle-orm";
 
 // server/discord/digest.ts
 init_db();
 init_schema();
 init_schedules();
-import { eq as eq134, and as and97 } from "drizzle-orm";
+import { eq as eq135, and as and98 } from "drizzle-orm";
 async function buildDailyDigest(userId) {
   const now = /* @__PURE__ */ new Date();
   const midnight = new Date(now);
   midnight.setHours(0, 0, 0, 0);
-  const allSchedules = await db.select().from(discordChannelSchedules).where(eq134(discordChannelSchedules.userId, userId));
+  const allSchedules = await db.select().from(discordChannelSchedules).where(eq135(discordChannelSchedules.userId, userId));
   const completedToday = allSchedules.filter(
     (s) => s.lastRun && s.lastRun >= midnight
   );
   const pendingApprovals = await db.select().from(discordPendingApprovals).where(
-    and97(
-      eq134(discordPendingApprovals.userId, userId),
-      eq134(discordPendingApprovals.status, "pending")
+    and98(
+      eq135(discordPendingApprovals.userId, userId),
+      eq135(discordPendingApprovals.status, "pending")
     )
   );
-  const agents = await db.select().from(discordAgents).where(eq134(discordAgents.userId, userId));
+  const agents = await db.select().from(discordAgents).where(eq135(discordAgents.userId, userId));
   const upcoming = allSchedules.filter((s) => s.enabled).map((s) => ({ schedule: s, next: nextRunTime(s.cronExpression) })).filter((x) => x.next !== null && x.next <= new Date(now.getTime() + 24 * 60 * 60 * 1e3)).sort((a, b) => a.next.getTime() - b.next.getTime());
   const dateStr = now.toLocaleDateString("en-US", {
     weekday: "long",
@@ -91043,7 +91222,7 @@ init_db();
 init_retrieve();
 init_vectorStore();
 init_diagnosticsService();
-import { sql as sql51 } from "drizzle-orm";
+import { sql as sql52 } from "drizzle-orm";
 var BATCH_SIZE = 50;
 var INTER_ITEM_DELAY_MS = 200;
 var isRunning = false;
@@ -91055,7 +91234,7 @@ async function isEmbeddingsAvailable() {
   return result !== null;
 }
 async function fetchUnembedded(limit) {
-  const rows = await db.execute(sql51`
+  const rows = await db.execute(sql52`
     SELECT id, content
     FROM user_memories
     WHERE embedding IS NULL
@@ -91067,7 +91246,7 @@ async function fetchUnembedded(limit) {
   return rows.rows ?? [];
 }
 async function countUnembedded() {
-  const result = await db.execute(sql51`
+  const result = await db.execute(sql52`
     SELECT COUNT(*) AS cnt FROM user_memories WHERE embedding IS NULL
   `);
   return parseInt(result.rows?.[0]?.cnt ?? "0", 10);
@@ -91236,7 +91415,7 @@ async function runBrainMaintenanceForAllUsers(now = /* @__PURE__ */ new Date(), 
 }
 
 // server/memory/autoReview.ts
-import { and as and98, eq as eq135, sql as sql52 } from "drizzle-orm";
+import { and as and99, eq as eq136, sql as sql53 } from "drizzle-orm";
 var AUTO_KEEP_CATEGORIES = /* @__PURE__ */ new Set([
   "work_patterns",
   "communication_style",
@@ -91327,17 +91506,17 @@ var defaultDeps4 = {
       pendingReview: shared.userMemories.pendingReview,
       reviewStatus: shared.userMemories.reviewStatus
     }).from(shared.userMemories).where(
-      and98(
-        eq135(shared.userMemories.userId, userId),
-        eq135(shared.userMemories.pendingReview, true),
-        eq135(shared.userMemories.reviewStatus, "pending")
+      and99(
+        eq136(shared.userMemories.userId, userId),
+        eq136(shared.userMemories.pendingReview, true),
+        eq136(shared.userMemories.reviewStatus, "pending")
       )
     ).limit(200);
   },
   async keepMemories(userId, memoryIds) {
     if (memoryIds.length === 0) return 0;
     const { db: db2 } = await Promise.resolve().then(() => (init_db(), db_exports));
-    const result = await db2.execute(sql52`
+    const result = await db2.execute(sql53`
       UPDATE user_memories
       SET pending_review = FALSE, review_status = 'kept'
       WHERE user_id = ${userId}
@@ -91419,7 +91598,7 @@ function sundayKey(d) {
 }
 async function runDiscordSchedules(now) {
   try {
-    const schedules = await db.select().from(discordChannelSchedules).where(eq139(discordChannelSchedules.enabled, true));
+    const schedules = await db.select().from(discordChannelSchedules).where(eq140(discordChannelSchedules.enabled, true));
     for (const schedule of schedules) {
       if (matchesCron(schedule.cronExpression, now)) {
         console.log(`[Scheduler] Firing Discord schedule "${schedule.label}" (${schedule.id})`);
@@ -91434,9 +91613,9 @@ async function runDiscordSchedules(now) {
 }
 async function runAgentLoops(now) {
   try {
-    const agents = await db.select().from(discordAgents).where(and102(
-      eq139(discordAgents.isActive, 1),
-      eq139(discordAgents.loopEnabled, 1)
+    const agents = await db.select().from(discordAgents).where(and103(
+      eq140(discordAgents.isActive, 1),
+      eq140(discordAgents.loopEnabled, 1)
     ));
     for (const agent of agents) {
       const intervalMs = (agent.loopIntervalMinutes ?? 60) * 60 * 1e3;
@@ -91472,11 +91651,11 @@ ${prompt}`,
   if (result && agent.channelName) {
     await postToDiscordChannel2(agent.userId, agent.channelName, agent.channelId, result);
   }
-  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq139(discordAgents.id, agent.id));
+  await db.update(discordAgents).set({ lastLoopRun: /* @__PURE__ */ new Date() }).where(eq140(discordAgents.id, agent.id));
 }
 async function runDailyDigests() {
   try {
-    const links = await db.select().from(channelLinks).where(eq139(channelLinks.channel, "discord"));
+    const links = await db.select().from(channelLinks).where(eq140(channelLinks.channel, "discord"));
     for (const link of links) {
       try {
         const meta = link.metadata;
@@ -91495,7 +91674,7 @@ async function runDailyDigests() {
 }
 async function cleanUpExpiredMemories() {
   try {
-    const result = await db.execute(sql53`
+    const result = await db.execute(sql54`
       DELETE FROM user_memories
       WHERE expires_at IS NOT NULL AND expires_at < NOW()
       RETURNING id
@@ -91518,7 +91697,7 @@ async function cleanUpExpiredAgentChatSessions() {
 async function cleanUpOldInteractionLogs() {
   try {
     const cutoff = new Date(Date.now() - INTERACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1e3);
-    const result = await db.execute(sql53`
+    const result = await db.execute(sql54`
       DELETE FROM interaction_log WHERE created_at < ${cutoff}
     `);
     const count2 = result.rowCount ?? 0;
@@ -91529,7 +91708,7 @@ async function cleanUpOldInteractionLogs() {
 }
 async function cleanUpOldBuildSessions() {
   try {
-    const result = await db.execute(sql53`
+    const result = await db.execute(sql54`
       DELETE FROM build_sessions
       WHERE
         (reminded = true  AND created_at < NOW() - INTERVAL '30 days')
@@ -91546,7 +91725,7 @@ async function cleanUpOldBuildSessions() {
 async function cleanUpOldActionLogs() {
   try {
     const cutoff = new Date(Date.now() - ACTION_LOG_RETENTION_DAYS * 24 * 60 * 60 * 1e3);
-    const result = await db.execute(sql53`
+    const result = await db.execute(sql54`
       DELETE FROM jarvis_action_log WHERE created_at < ${cutoff}
     `);
     const count2 = result.rowCount ?? 0;
@@ -91688,12 +91867,12 @@ async function runDueScheduledTasks(now) {
   let claimed = [];
   try {
     claimed = await db.update(jarvisScheduledTasks).set({ inProgressAt: now }).where(
-      and102(
+      and103(
         lte2(jarvisScheduledTasks.scheduledAt, now),
         isNull6(jarvisScheduledTasks.completedAt),
-        eq139(jarvisScheduledTasks.active, true),
-        eq139(jarvisScheduledTasks.taskKind, "jarvis_action"),
-        eq139(jarvisScheduledTasks.needsAttention, false),
+        eq140(jarvisScheduledTasks.active, true),
+        eq140(jarvisScheduledTasks.taskKind, "jarvis_action"),
+        eq140(jarvisScheduledTasks.needsAttention, false),
         or5(
           isNull6(jarvisScheduledTasks.inProgressAt),
           lt9(jarvisScheduledTasks.inProgressAt, staleThreshold)
@@ -91707,7 +91886,7 @@ async function runDueScheduledTasks(now) {
   for (const task of claimed) {
     handleDueTask(task, now).catch((err2) => {
       console.error(`[Scheduler] handleDueTask id=${task.id} failed:`, err2);
-      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id)).catch(() => {
+      db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id)).catch(() => {
       });
     });
   }
@@ -91718,7 +91897,7 @@ async function appendVoiceCallKeyboardOnTelegram(userId, notificationType) {
     if (!activeChannels.includes("telegram")) return;
     const { buildVoiceCallKeyboard: buildVoiceCallKeyboard2, isTelegramConfigured: isTelegramConfigured2, sendMessage: tgSend } = await Promise.resolve().then(() => (init_telegram(), telegram_exports));
     if (!isTelegramConfigured2()) return;
-    const links = await db.select().from(telegramLinks).where(eq139(telegramLinks.userId, userId)).limit(1);
+    const links = await db.select().from(telegramLinks).where(eq140(telegramLinks.userId, userId)).limit(1);
     const chatId = links[0]?.chatId;
     if (!chatId) return;
     const keyboard = buildVoiceCallKeyboard2();
@@ -91732,7 +91911,7 @@ async function appendVoiceCallKeyboardOnTelegram(userId, notificationType) {
 async function handleDueTask(task, firedAt) {
   console.log(`[Scheduler] Firing scheduled task id=${task.id} title="${task.title}" shell=${!!task.shellCommand}`);
   if (!shouldExecuteScheduledTask(task)) {
-    await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id));
+    await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id));
     console.log(`[Scheduler] Skipping non-executable user task id=${task.id} title="${task.title}"`);
     return;
   }
@@ -91767,12 +91946,12 @@ ${relevant.map((m) => `- ${m.content}`).join("\n")}
     if (isRecurring) {
       const nextRun = computeNextRun(task.recurrence, firedAt);
       if (nextRun) {
-        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, lastShellResult: shellResult, inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id));
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id));
       }
     } else {
-      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, lastShellResult: shellResult, inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id));
     }
     let notifText;
     if (!result.ok && result.error) {
@@ -91822,20 +92001,20 @@ If you encounter a blocker or need the user's input to proceed, call the flag_ta
     } catch (err2) {
       agentReply = `\u26A0\uFE0F Scheduled task "${task.title}" encountered an error: ${err2 instanceof Error ? err2.message : String(err2)}`;
     }
-    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq139(jarvisScheduledTasks.id, task.id)).limit(1);
+    const [freshTask] = await db.select({ needsAttention: jarvisScheduledTasks.needsAttention }).from(jarvisScheduledTasks).where(eq140(jarvisScheduledTasks.id, task.id)).limit(1);
     if (freshTask?.needsAttention) {
-      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id));
+      await db.update(jarvisScheduledTasks).set({ inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id));
       console.log(`[Scheduler] Agent task id=${task.id} paused \u2014 needsAttention=true, skipping completion`);
     } else {
       if (isRecurring) {
         const nextRun = computeNextRun(task.recurrence, firedAt);
         if (nextRun) {
-          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ scheduledAt: nextRun, inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id));
         } else {
-          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id));
+          await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id));
         }
       } else {
-        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq139(jarvisScheduledTasks.id, task.id));
+        await db.update(jarvisScheduledTasks).set({ completedAt: firedAt, inProgressAt: null }).where(eq140(jarvisScheduledTasks.id, task.id));
       }
       if (agentReply) {
         try {
@@ -92002,11 +92181,11 @@ function startScheduler() {
 async function runDueAutonomousProjectSessions() {
   const now = /* @__PURE__ */ new Date();
   const due = await db.update(jarvisProjects).set({ nextRunAt: null }).where(
-    and102(
-      eq139(jarvisProjects.autonomousMode, true),
+    and103(
+      eq140(jarvisProjects.autonomousMode, true),
       or5(
-        eq139(jarvisProjects.status, "building"),
-        eq139(jarvisProjects.status, "waiting_for_input")
+        eq140(jarvisProjects.status, "building"),
+        eq140(jarvisProjects.status, "waiting_for_input")
       ),
       lte2(jarvisProjects.nextRunAt, now)
     )
@@ -92070,7 +92249,7 @@ async function runMorningPlanBuild() {
     try {
       const userTimezone = await getUserTimezone(user.id).catch(() => "America/New_York");
       const today = getLocalDateKey(schedulerNow, userTimezone);
-      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and102(eq139(plans.userId, user.id), eq139(plans.date, today)));
+      const existingPlan = await db.select({ data: plans.data }).from(plans).where(and103(eq140(plans.userId, user.id), eq140(plans.date, today)));
       const existingTasks = existingPlan[0]?.data?.tasks || [];
       if (existingTasks.length > 0) {
         console.log(`[Scheduler] User ${user.id} already has ${existingTasks.length} tasks, merging daily command updates`);
@@ -92187,7 +92366,7 @@ async function runMorningPlanBuild() {
         console.error(`[Scheduler] prediction fetch failed for ${user.id}:`, predErr);
       }
       const topTask = newTasks[0];
-      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq139(userPreferences.userId, user.id));
+      const existingPrefs = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq140(userPreferences.userId, user.id));
       const currentPrefs = existingPrefs[0]?.data || {};
       const lastDreamCycle = currentPrefs.lastDreamCycle || null;
       const updatedPrefs = {
@@ -92352,10 +92531,10 @@ async function runDreamCycleForAllUsers(now) {
     const messageType = `dream_cycle:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and102(
-          eq139(proactiveScheduleLog.userId, user.id),
-          eq139(proactiveScheduleLog.messageType, messageType),
-          eq139(proactiveScheduleLog.sentDate, localDate)
+        and103(
+          eq140(proactiveScheduleLog.userId, user.id),
+          eq140(proactiveScheduleLog.messageType, messageType),
+          eq140(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -92373,7 +92552,7 @@ async function runDreamCycleForAllUsers(now) {
         );
       }
       try {
-        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq139(userPreferences.userId, user.id));
+        const existingPrefsRows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq140(userPreferences.userId, user.id));
         const existingPrefs = existingPrefsRows[0]?.data || {};
         const updatedPrefsWithDream = {
           ...existingPrefs,
@@ -92425,10 +92604,10 @@ async function runDreamDeliveryForAllUsers(now) {
     const messageType = `dream_delivery:${localDate}`;
     try {
       const existing = await db.select({ id: proactiveScheduleLog.id }).from(proactiveScheduleLog).where(
-        and102(
-          eq139(proactiveScheduleLog.userId, user.id),
-          eq139(proactiveScheduleLog.messageType, messageType),
-          eq139(proactiveScheduleLog.sentDate, localDate)
+        and103(
+          eq140(proactiveScheduleLog.userId, user.id),
+          eq140(proactiveScheduleLog.messageType, messageType),
+          eq140(proactiveScheduleLog.sentDate, localDate)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -92520,7 +92699,7 @@ function startWorkerBoot() {
 }
 
 // server/boot/postListen.ts
-import { and as and108, eq as eq145 } from "drizzle-orm";
+import { and as and109, eq as eq146 } from "drizzle-orm";
 
 // server/heartbeat.ts
 init_db();
@@ -92541,7 +92720,7 @@ init_diagnosticsService();
 init_routedChatCompletion();
 import * as fs27 from "fs";
 import * as path34 from "path";
-import { eq as eq143, and as and106, sql as sql56, desc as desc54, gte as gte27 } from "drizzle-orm";
+import { eq as eq144, and as and107, sql as sql57, desc as desc54, gte as gte28 } from "drizzle-orm";
 var openai23 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 var CHECKLIST_PATH = path34.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
@@ -92647,7 +92826,7 @@ async function runMeetingBriefs(userId, chatId, token, memories, now, tz, userEm
     try {
       const emails = externalAttendees.map((a) => a.email.toLowerCase()).filter(Boolean);
       if (emails.length > 0) {
-        const peopleRows = await db.select().from(people).where(and106(eq143(people.userId, userId), sql56`lower(${people.email}) = ANY(${emails})`));
+        const peopleRows = await db.select().from(people).where(and107(eq144(people.userId, userId), sql57`lower(${people.email}) = ANY(${emails})`));
         if (peopleRows.length > 0) {
           peopleContext = peopleRows.map((p) => {
             const bits = [`${p.name}${p.email ? ` <${p.email}>` : ""}`];
@@ -92734,13 +92913,13 @@ async function runEmailDrafts(userId, chatId, token, now) {
   let urgentItems = [];
   try {
     urgentItems = await db.select().from(inboxItems).where(
-      and106(
-        eq143(inboxItems.userId, userId),
-        eq143(inboxItems.sourceType, "email"),
-        eq143(inboxItems.status, "pending"),
-        sql56`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
-        sql56`${inboxItems.jarvisReason} IS NOT NULL`,
-        sql56`${inboxItems.matchedRuleId} IS NULL`
+      and107(
+        eq144(inboxItems.userId, userId),
+        eq144(inboxItems.sourceType, "email"),
+        eq144(inboxItems.status, "pending"),
+        sql57`${inboxItems.surfacedAt} > ${twelveHoursAgo}`,
+        sql57`${inboxItems.jarvisReason} IS NOT NULL`,
+        sql57`${inboxItems.matchedRuleId} IS NULL`
       )
     ).limit(10);
   } catch (err2) {
@@ -92762,9 +92941,9 @@ async function runEmailDrafts(userId, chatId, token, now) {
     if (!sourceMessageId) continue;
     try {
       const existing = await db.select({ id: emailDrafts.id }).from(emailDrafts).where(
-        and106(
-          eq143(emailDrafts.userId, userId),
-          eq143(emailDrafts.sourceMessageId, sourceMessageId)
+        and107(
+          eq144(emailDrafts.userId, userId),
+          eq144(emailDrafts.sourceMessageId, sourceMessageId)
         )
       ).limit(1);
       if (existing.length > 0) continue;
@@ -92857,7 +93036,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   if (!await claimAndMark(userId, messageType, localKey)) return false;
   let tasks = [];
   try {
-    const planRows = await db.select().from(plans).where(and106(eq143(plans.userId, userId), eq143(plans.date, localKey))).limit(1);
+    const planRows = await db.select().from(plans).where(and107(eq144(plans.userId, userId), eq144(plans.date, localKey))).limit(1);
     const data = planRows[0]?.data || {};
     tasks = Array.isArray(data.tasks) ? data.tasks : [];
   } catch {
@@ -92865,7 +93044,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
   let statsData = {};
   let statsRowExists = false;
   try {
-    const statsRows = await db.select().from(stats).where(eq143(stats.userId, userId)).limit(1);
+    const statsRows = await db.select().from(stats).where(eq144(stats.userId, userId)).limit(1);
     if (statsRows.length > 0) {
       statsData = statsRows[0].data || {};
       statsRowExists = true;
@@ -92904,7 +93083,7 @@ async function runEveningWrapUp(userId, chatId, token, prefs, now, tz) {
           lastStreakDate: localKey
         },
         updatedAt: /* @__PURE__ */ new Date()
-      }).where(eq143(stats.userId, userId));
+      }).where(eq144(stats.userId, userId));
       statsData = {
         ...statsData,
         streak: newStreak,
@@ -92976,7 +93155,7 @@ ${summary}`);
       d.setDate(d.getDate() + 1);
       return localDateKey3(d, tz);
     })();
-    const prefRows = await db.select().from(userPreferences).where(eq143(userPreferences.userId, userId)).limit(1);
+    const prefRows = await db.select().from(userPreferences).where(eq144(userPreferences.userId, userId)).limit(1);
     const prefData = prefRows[0]?.data || {};
     const tomorrowSeed = {
       date: tomorrowKey,
@@ -92985,7 +93164,7 @@ ${summary}`);
       observation,
       tomorrowPrompt
     };
-    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq143(userPreferences.userId, userId));
+    await db.update(userPreferences).set({ data: { ...prefData, tomorrowSeed }, updatedAt: /* @__PURE__ */ new Date() }).where(eq144(userPreferences.userId, userId));
     console.log(`[Heartbeat] tomorrow seed written for ${userId} (date: ${tomorrowKey})`);
   } catch (err2) {
     console.error(`[Heartbeat] tomorrow seed write failed (non-fatal):`, err2);
@@ -93024,11 +93203,11 @@ async function enqueueNewInboxItemsForPrime(userId) {
   let items = [];
   try {
     items = await db.select().from(inboxItems).where(
-      and106(
-        eq143(inboxItems.userId, userId),
-        eq143(inboxItems.status, "pending"),
-        sql56`${inboxItems.actedAt} IS NULL`,
-        sql56`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
+      and107(
+        eq144(inboxItems.userId, userId),
+        eq144(inboxItems.status, "pending"),
+        sql57`${inboxItems.actedAt} IS NULL`,
+        sql57`${inboxItems.surfacedAt} >= ${windowStart.toISOString()}`
       )
     ).limit(CREW_BATCH_MAX);
   } catch (err2) {
@@ -93165,7 +93344,7 @@ async function runHeartbeatTick() {
     }
     let memories = [];
     try {
-      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq143(userMemories.userId, link.userId)).orderBy(desc54(userMemories.extractedAt)).limit(30);
+      memories = await db.select({ content: userMemories.content, category: userMemories.category }).from(userMemories).where(eq144(userMemories.userId, link.userId)).orderBy(desc54(userMemories.extractedAt)).limit(30);
     } catch {
     }
     let actionsFired = 0;
@@ -93258,7 +93437,7 @@ async function runHeartbeatMemoryPass(userId, googleToken, now) {
   lastHeartbeatExtractAt[userId] = now.getTime();
   const sinceCutoff = new Date(now.getTime() - HEARTBEAT_EXTRACT_INTERVAL_MS);
   try {
-    const recentMessages = await db.select().from(telegramGroupMessages).where(and106(eq143(telegramGroupMessages.userId, userId), gte27(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc54(telegramGroupMessages.messageDate)).limit(20);
+    const recentMessages = await db.select().from(telegramGroupMessages).where(and107(eq144(telegramGroupMessages.userId, userId), gte28(telegramGroupMessages.messageDate, sinceCutoff))).orderBy(desc54(telegramGroupMessages.messageDate)).limit(20);
     if (recentMessages.length > 0) {
       const text2 = recentMessages.map((m) => `[${m.fromUser ?? "?"}]: ${m.text}`).join("\n").slice(0, 4e3);
       const { extractAndStore: extractAndStore2 } = await Promise.resolve().then(() => (init_extractor(), extractor_exports));
@@ -93294,7 +93473,7 @@ async function runAgentHealthCheck() {
     const { logAgentEvent: logAgentEvent2 } = await Promise.resolve().then(() => (init_agentLogger(), agentLogger_exports));
     const now = /* @__PURE__ */ new Date();
     const THIRTY_MIN_MS = 30 * 60 * 1e3;
-    const allActive = await db.select().from(discordAgents3).where(eq143(discordAgents3.isActive, 1));
+    const allActive = await db.select().from(discordAgents3).where(eq144(discordAgents3.isActive, 1));
     const summaryByUser = /* @__PURE__ */ new Map();
     for (const agent of allActive) {
       const configIssues = [];
@@ -93320,7 +93499,7 @@ async function runAgentHealthCheck() {
           const newFailCount = (agent.heartbeatFailCount ?? 0) + 1;
           if (newFailCount >= 3) {
             await disableAgent2(agent.id);
-            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq143(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ stuckSince: agent.stuckSince ?? now, heartbeatFailCount: newFailCount }).where(eq144(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] auto-disabled stuck agent ${agent.name} (${agent.id}), fails=${newFailCount}`);
             logAgentEvent2({
               event: "agent_disabled_stuck",
@@ -93330,7 +93509,7 @@ async function runAgentHealthCheck() {
             });
             addSummary2(agent.userId, `\u{1F534} Agent "${agent.name}" was auto-disabled after ${newFailCount} missed heartbeats.`);
           } else {
-            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq143(discordAgents3.id, agent.id));
+            await db.update(discordAgents3).set({ heartbeatFailCount: newFailCount, stuckSince: agent.stuckSince ?? now }).where(eq144(discordAgents3.id, agent.id));
             console.warn(`[AgentHealth] agent ${agent.name} (${agent.id}) stale \u2014 fail ${newFailCount}/3`);
             logAgentEvent2({
               event: "heartbeat_check",
@@ -93341,7 +93520,7 @@ async function runAgentHealthCheck() {
             addSummary2(agent.userId, `\u{1F7E1} Agent "${agent.name}" missed heartbeat (${newFailCount}/3 before auto-disable).`);
           }
         } else {
-          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq143(discordAgents3.id, agent.id));
+          await db.update(discordAgents3).set({ lastHeartbeatAt: now, heartbeatFailCount: 0, stuckSince: null }).where(eq144(discordAgents3.id, agent.id));
         }
       }
       const agentPlatforms = agent.platforms ?? ["discord"];
@@ -93457,15 +93636,15 @@ init_outlook();
 init_interactionLog();
 init_actionLog();
 init_routedChatCompletion();
-import { eq as eq144, and as and107, gt as gt6, lt as lt10, inArray as inArray12 } from "drizzle-orm";
+import { eq as eq145, and as and108, gt as gt6, lt as lt10, inArray as inArray12 } from "drizzle-orm";
 var CURIOSITY_SCAN_LOCK_ID = 7654321098;
 var scannerStarted = false;
 var ALREADY_ASKED_WINDOW_DAYS = 30;
 async function getAlreadyAskedSourceIds(userId) {
   const windowStart = new Date(Date.now() - ALREADY_ASKED_WINDOW_DAYS * 24 * 60 * 60 * 1e3);
   const rows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and107(
-      eq144(proactiveQuestionsSent.userId, userId),
+    and108(
+      eq145(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, windowStart)
     )
   );
@@ -93484,16 +93663,16 @@ function extractSenderKey(sender) {
 var EMAIL_SOURCE_TYPES = ["email", "gmail", "outlook_email"];
 async function getRecentlySurfacedSenders(userId, since) {
   const sentRows = await db.select({ sourceId: proactiveQuestionsSent.sourceId }).from(proactiveQuestionsSent).where(
-    and107(
-      eq144(proactiveQuestionsSent.userId, userId),
+    and108(
+      eq145(proactiveQuestionsSent.userId, userId),
       gt6(proactiveQuestionsSent.sentAt, since)
     )
   );
   if (sentRows.length === 0) return /* @__PURE__ */ new Set();
   const sentSourceIds = sentRows.map((r) => r.sourceId);
   const inboxRows = await db.select({ sender: inboxItems.sender }).from(inboxItems).where(
-    and107(
-      eq144(inboxItems.userId, userId),
+    and108(
+      eq145(inboxItems.userId, userId),
       inArray12(inboxItems.sourceId, sentSourceIds),
       inArray12(inboxItems.sourceType, [...EMAIL_SOURCE_TYPES])
     )
@@ -93509,7 +93688,7 @@ async function getUserMemories(userId) {
   return db.select({
     content: userMemories.content,
     category: userMemories.category
-  }).from(userMemories).where(eq144(userMemories.userId, userId));
+  }).from(userMemories).where(eq145(userMemories.userId, userId));
 }
 async function generateCuriosityQuestions(items, memories, userId) {
   if (items.length === 0) return [];
@@ -93972,11 +94151,11 @@ async function alertTelegramUsersWebhookDown() {
     let alertedCount = 0;
     for (const userId of uniqueUserIds) {
       const existing = await db.select({ id: inboxItems.id }).from(inboxItems).where(
-        and108(
-          eq145(inboxItems.userId, userId),
-          eq145(inboxItems.sourceType, "other"),
-          eq145(inboxItems.status, "pending"),
-          eq145(inboxItems.subject, "Telegram bot is offline")
+        and109(
+          eq146(inboxItems.userId, userId),
+          eq146(inboxItems.sourceType, "other"),
+          eq146(inboxItems.status, "pending"),
+          eq146(inboxItems.subject, "Telegram bot is offline")
         )
       ).limit(1);
       if (existing.length > 0) continue;

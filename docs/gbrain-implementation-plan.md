@@ -211,6 +211,16 @@ Implementation notes:
 - Named Agent SDK first-turn global memory context now retrieves relevant user memories through the Memory OS facade for agents with global-memory access.
 - The facade exposes planned write/explanation/correction entrypoints as unavailable stubs so later slices have named integration points without implying those flows are complete.
 
+### Completed Slice: Memory Embedding Health Monitoring
+
+Implemented in this slice:
+
+- `server/memory/embeddingHealth.ts`
+- diagnostics health report field `memoryEmbeddingHealth`
+- alerts for pgvector outage while vector retrieval is enabled, low canonical JSON/vector embedding coverage, and recent vector-path errors
+- memory subsystem degradation/down status when embedding-health alerts require operator attention
+- test-runner coverage for the monitor and diagnostics routing contract
+
 ### Later Slices
 
 - Redis hot state for active working context
@@ -220,7 +230,7 @@ Implementation notes:
 
 ## Roadmap Cross-Reference
 
-This work maps to `JARVIS_ROADMAP.md` Phase 4.1, "Structured Long-Term Memory Store." The completed vector-index pieces are live-DB-verified derived G-Brain chunk retrieval plus live-DB-verified canonical `user_memories.embedding_vector` migration/backfill/search/fallback. The targeted Memory OS read facade now gives the `memory_search` tool, coach context, daily command context, Agent SDK global memory context, and G-Brain-backed retrieval one shared read path. It does not yet migrate every legacy direct memory read. Remaining roadmap overlap is production monitoring for embedding health plus later user-facing correction/provenance flows.
+This work maps to `JARVIS_ROADMAP.md` Phase 4.1, "Structured Long-Term Memory Store." The completed vector-index pieces are live-DB-verified derived G-Brain chunk retrieval plus live-DB-verified canonical `user_memories.embedding_vector` migration/backfill/search/fallback. The targeted Memory OS read facade now gives the `memory_search` tool, coach context, daily command context, Agent SDK global memory context, and G-Brain-backed retrieval one shared read path. Memory embedding-health monitoring now feeds diagnostics health. Remaining roadmap overlap is later user-facing correction/provenance flows.
 
 ## Verification Commands
 
@@ -232,8 +242,10 @@ node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\maintenance.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vector.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorDbVerification.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorMigration.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\diagnostics\__tests__\memoryEmbeddingHealthRouting.assert.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\autoReview.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\memoryOs.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\embeddingHealth.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\retrieveVectorScoring.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\vectorDbVerification.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\vectorMigration.test.ts
