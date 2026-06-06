@@ -22,6 +22,89 @@ export interface StepResult {
   correctionContext: string | undefined;
 }
 
+export type BuildFeatureProgressPhase =
+  | "research"
+  | "planning"
+  | "step_started"
+  | "type_check"
+  | "verifying"
+  | "step_completed"
+  | "final_check"
+  | "smoke_tests"
+  | "synthesis";
+
+export interface BuildFeatureProgressInput {
+  phase: BuildFeatureProgressPhase;
+  stepIndex?: number;
+  stepCount?: number;
+  stepLabel?: string;
+  attempt?: number;
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(99, Math.round(value)));
+}
+
+function stepBase(input: BuildFeatureProgressInput): number {
+  const count = Math.max(1, input.stepCount ?? 1);
+  const index = Math.max(0, Math.min(count - 1, input.stepIndex ?? 0));
+  return 35 + (index / count) * 45;
+}
+
+export function buildFeatureProgressPercent(input: BuildFeatureProgressInput): number {
+  switch (input.phase) {
+    case "research":
+      return 12;
+    case "planning":
+      return 25;
+    case "step_started":
+      return clampPercent(stepBase(input));
+    case "type_check":
+      return clampPercent(stepBase(input) + 7);
+    case "verifying":
+      return clampPercent(stepBase(input) + 12);
+    case "step_completed": {
+      const count = Math.max(1, input.stepCount ?? 1);
+      const completed = Math.max(1, Math.min(count, (input.stepIndex ?? 0) + 1));
+      return clampPercent(35 + (completed / count) * 45);
+    }
+    case "final_check":
+      return 85;
+    case "smoke_tests":
+      return 90;
+    case "synthesis":
+      return 95;
+  }
+}
+
+export function buildFeatureProgressLabel(input: BuildFeatureProgressInput): string {
+  const stepNumber = typeof input.stepIndex === "number" ? input.stepIndex + 1 : 1;
+  const stepCount = Math.max(1, input.stepCount ?? 1);
+  const label = input.stepLabel ? `: ${input.stepLabel}` : "";
+  const attempt = typeof input.attempt === "number" ? ` attempt ${input.attempt + 1}` : "";
+
+  switch (input.phase) {
+    case "research":
+      return "Gathering build research";
+    case "planning":
+      return "Planning build steps";
+    case "step_started":
+      return `Building step ${stepNumber}/${stepCount}${label}${attempt}`;
+    case "type_check":
+      return `Type-checking step ${stepNumber}/${stepCount}${label}`;
+    case "verifying":
+      return `Verifying step ${stepNumber}/${stepCount}${label}`;
+    case "step_completed":
+      return `Completed step ${stepNumber}/${stepCount}${label}`;
+    case "final_check":
+      return "Running final type-check";
+    case "smoke_tests":
+      return "Running smoke tests";
+    case "synthesis":
+      return "Summarizing build result";
+  }
+}
+
 // ── Plan parsing ──────────────────────────────────────────────────────────────
 
 /**

@@ -15,6 +15,8 @@ import {
   parsePlanResponse,
   pollResearchJob,
   runStepAttempts,
+  buildFeatureProgressLabel,
+  buildFeatureProgressPercent,
   MAX_STEP_RETRIES,
   type BuildStep,
   type ResearchPollDeps,
@@ -52,6 +54,42 @@ function assertEquals<T>(actual: T, expected: T, label: string): void {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const FEATURE_DESC = "Add a widget to the dashboard";
+
+function testBuildFeatureProgressHelpers() {
+  console.log("\n-- Suite 0: build feature progress helpers --");
+
+  assertEquals(
+    buildFeatureProgressPercent({ phase: "research" }),
+    12,
+    "research phase starts at a visible early percent",
+  );
+  assertEquals(
+    buildFeatureProgressPercent({ phase: "planning" }),
+    25,
+    "planning phase advances beyond research",
+  );
+  assert(
+    buildFeatureProgressPercent({ phase: "step_started", stepIndex: 0, stepCount: 4 }) <
+      buildFeatureProgressPercent({ phase: "step_completed", stepIndex: 0, stepCount: 4 }),
+    "completed step percent is greater than started step percent",
+  );
+  assertEquals(
+    buildFeatureProgressPercent({ phase: "synthesis" }),
+    95,
+    "synthesis phase stays below terminal complete percent",
+  );
+  assertEquals(
+    buildFeatureProgressLabel({
+      phase: "step_started",
+      stepIndex: 1,
+      stepCount: 3,
+      stepLabel: "Wire status panel",
+      attempt: 1,
+    }),
+    "Building step 2/3: Wire status panel attempt 2",
+    "step labels include ordinal, title, and retry attempt",
+  );
+}
 
 /** Returns a StepAttemptDeps where every call is customisable via overrides. */
 function makeStepDeps(overrides: Partial<StepAttemptDeps> = {}): StepAttemptDeps {
@@ -519,6 +557,7 @@ async function testConstantGuard(): Promise<void> {
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 async function run(): Promise<void> {
+  testBuildFeatureProgressHelpers();
   await testParsePlanResponse();
   await testRunStepAttempts();
   await testPollResearchJob();

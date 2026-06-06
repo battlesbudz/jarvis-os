@@ -164,6 +164,32 @@ test.describe("Dev login button — UI click", () => {
   });
 });
 
+test.describe("Mission Control navigation", () => {
+  test.beforeEach(async ({ page }) => {
+    const token = await fetchDevToken();
+    await loginViaTokenInjection(page, token);
+  });
+
+  test("dashboard home can navigate to Projects by clicking UI", async ({ page }) => {
+    await page.goto(BASE, { waitUntil: "domcontentloaded", timeout: 20000 });
+    await page.waitForTimeout(1500);
+
+    const dashboardProjectsNav = page.getByTestId("dashboard-nav-projects");
+    const missionProjectsTab = page.locator('[data-testid="mission-control-tab-projects"]');
+    const projectsNav = await dashboardProjectsNav.isVisible({ timeout: 2000 }).catch(() => false)
+      ? dashboardProjectsNav
+      : missionProjectsTab;
+
+    await projectsNav.scrollIntoViewIfNeeded({ timeout: 10000 });
+    await expect(projectsNav).toBeVisible({ timeout: 8000 });
+    await projectsNav.click({ force: true });
+
+    await expect(page).toHaveURL(/\/projects(?:\?|$)/, { timeout: 15000 });
+    await expect(page.getByText("TASK PANEL")).toHaveCount(0, { timeout: 15000 });
+    await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 15000 });
+  });
+});
+
 test.describe("Profile tab — identity and memory", () => {
   test.beforeEach(async ({ page }) => {
     const token = await fetchDevToken();

@@ -8,6 +8,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import VisionSprite from '@/components/VisionSprite';
 import TasksScreen from '@/components/missionControl/TasksScreen';
@@ -64,6 +65,9 @@ function SegmentControl({ active, onChange }: { active: number; onChange: (i: nu
         return (
           <Pressable
             key={tab}
+            testID={`mission-control-tab-${tab.toLowerCase()}`}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
             onPress={() => onChange(i)}
             style={[styles.segmentBtn, isActive && styles.segmentBtnActive]}
           >
@@ -96,6 +100,7 @@ function TabContent({ tab }: { tab: TabName }) {
 
 export default function MissionControlScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const primeOnline = usePrimeStatus();
   const [activeTab, setActiveTab] = useState<number>(0);
 
@@ -109,6 +114,18 @@ export default function MissionControlScreen() {
   const statusColor =
     primeOnline === null ? Colors.textTertiary :
     primeOnline ? Colors.green : Colors.error;
+
+  const handleTabChange = (index: number) => {
+    if (TABS[index] === 'Projects') {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.assign('/projects');
+        return;
+      }
+      router.navigate('/projects');
+      return;
+    }
+    setActiveTab(index);
+  };
 
   return (
     <View style={[styles.root, { paddingTop: topPad, paddingBottom: bottomPad }]}>
@@ -137,7 +154,7 @@ export default function MissionControlScreen() {
       <View style={styles.headerSep} />
 
       {/* ── Segment Control ────────────────────────────── */}
-      <SegmentControl active={activeTab} onChange={setActiveTab} />
+      <SegmentControl active={activeTab} onChange={handleTabChange} />
 
       {/* ── Content ────────────────────────────────────── */}
       <View style={styles.content}>

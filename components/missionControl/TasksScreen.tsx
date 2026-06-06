@@ -54,6 +54,7 @@ interface AgentJob {
       progress?: {
         currentStep?: string;
         percent?: number;
+        updatedAt?: string;
       };
     };
   } | null;
@@ -96,6 +97,23 @@ function formatScheduled(dt: string): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `in ${hrs}h`;
   return `in ${Math.floor(hrs / 24)}d`;
+}
+
+function minutesSince(dt?: string | null): number | null {
+  if (!dt) return null;
+  const parsed = new Date(dt).getTime();
+  if (!Number.isFinite(parsed)) return null;
+  return Math.max(0, Math.floor((Date.now() - parsed) / 60000));
+}
+
+function formatLastProgress(dt?: string | null): string {
+  const mins = minutesSince(dt);
+  if (mins === null) return 'No progress timestamp';
+  if (mins < 1) return 'Updated just now';
+  if (mins < 60) return `Updated ${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `Updated ${hrs}h ago`;
+  return `Updated ${Math.floor(hrs / 24)}d ago`;
 }
 
 function NeedsYouCard({ task }: { task: ScheduledTask }) {
@@ -229,6 +247,8 @@ function WorkerJobCard({ job }: { job: AgentJob }) {
   const percent = typeof progress?.percent === 'number'
     ? Math.max(0, Math.min(100, progress.percent))
     : null;
+  const stalledMinutes = isRunning ? minutesSince(progress?.updatedAt) : null;
+  const isStalled = stalledMinutes !== null && stalledMinutes >= 10;
 
   const cancelMutation = useMutation({
     mutationFn: async () => {
@@ -266,6 +286,9 @@ function WorkerJobCard({ job }: { job: AgentJob }) {
       {progress?.currentStep ? (
         <Text style={styles.workerStep} numberOfLines={1}>{progress.currentStep}</Text>
       ) : null}
+      <Text style={[styles.workerProgressMeta, isStalled && styles.workerStalled]}>
+        {isStalled ? `No update for ${stalledMinutes}m` : formatLastProgress(progress?.updatedAt)}
+      </Text>
       {percent !== null && (
         <View style={styles.progressTrack}>
           <View style={[styles.progressFill, { width: `${percent}%`, backgroundColor: color }]} />
@@ -615,6 +638,8 @@ const styles = StyleSheet.create({
   },
   workerMeta: { color: Colors.textTertiary, fontSize: 11, marginTop: 2, textTransform: 'capitalize' },
   workerStep: { color: Colors.textSecondary, fontSize: 12 },
+  workerProgressMeta: { color: Colors.textTertiary, fontSize: 10, marginTop: 4 },
+  workerStalled: { color: Colors.warning, fontWeight: '700' },
   workerError: { color: Colors.error, fontSize: 12, lineHeight: 16 },
   cancelBtn: {
     width: 34,
