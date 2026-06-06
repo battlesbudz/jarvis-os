@@ -25,6 +25,9 @@ export interface RetrievedMemory {
   confidence: number;
   accessCount: number;
   score: number;
+  source?: "canonical" | "gbrain";
+  sourceId?: string;
+  sourceRefs?: QueryBrainResult["chunks"][number]["citations"];
 }
 
 type MemoryRow = MemoryVectorRow;
@@ -109,9 +112,10 @@ function clampRelevanceScore(score: number): number {
 export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chunks"]): RetrievedMemory[] {
   return chunks.map((chunk, index) => {
     const canonicalMemoryId = chunk.citations.find((citation) => citation.kind === "user_memory")?.id;
+    const brainChunkId = `${chunk.pageSlug}:${index}`;
 
     return {
-      id: canonicalMemoryId ?? `${chunk.pageSlug}:${index}`,
+      id: canonicalMemoryId ?? brainChunkId,
       content: chunk.content,
       category: "fact",
       tier: "long_term",
@@ -120,6 +124,9 @@ export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chun
       confidence: 80,
       accessCount: 0,
       score: chunk.score,
+      source: "gbrain",
+      sourceId: brainChunkId,
+      sourceRefs: chunk.citations,
     };
   });
 }

@@ -237,10 +237,11 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Pending memory review is surfaced in the tab badge
 - [x] G-Brain chunk pgvector migration and feature-flag retrieval are live-DB verified against Railway Postgres via `npm.cmd run jarvis:verify:brain-vector-db`
 - [x] Canonical `user_memories.embedding_vector` migration, JSONB backfill, feature-flag search, verifier, and fallback are live-DB verified against Railway Postgres via `npm.cmd run jarvis:verify:memory-vector-db`
+- [x] Memory OS targeted read facade routes `memory_search`, coach context, daily command context, Agent SDK global memory context, and G-Brain-backed retrieval through `server/memory/memoryOs.ts` with structured source/provenance and fallback uncertainty
 - [ ] Finish user-facing memory correction, deletion, and provenance explanation flows
 - [ ] Add production monitoring dashboard/alerts for memory embedding health
 
-Roadmap cross-reference: the verified G-Brain chunk-vector work and implemented canonical memory vector index both belong to this Phase 4.1 memory-scaling lane and are tracked in `docs/gbrain-implementation-plan.md` plus `docs/memory-os-temporal-graph-plan.md`. Together they unblock the Memory OS facade work, but do not complete the unified facade or user-facing correction/provenance flows.
+Roadmap cross-reference: the verified G-Brain chunk-vector work, implemented canonical memory vector index, and targeted Memory OS read facade all belong to this Phase 4.1 memory-scaling lane and are tracked in `docs/gbrain-implementation-plan.md` plus `docs/memory-os-temporal-graph-plan.md`. This completes the current named read-context facade baseline, but does not migrate every legacy memory read path or complete user-facing correction/provenance flows, Redis hot state, Graphiti temporal graph work, or production embedding-health monitoring.
 
 ### 4.2 - Pattern Recognition Engine
 

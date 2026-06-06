@@ -335,6 +335,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
       // ── Optionally include global soul ───────────────────────────────────────
       let soulBlock = "";
+      let globalMemoryBlock = "";
       if (agent.accessGlobalMemory) {
         try {
           const { getSoulPromptBlock } = await import("../memory/soul");
@@ -345,6 +346,27 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
               title: "User Context (Global)",
               items: [{ text: soul.trim() }],
               budget: BUDGET_PRESETS.agentTurn.soul,
+            });
+          }
+        } catch { /* non-blocking */ }
+
+        try {
+          const { retrieveMemoryContext } = await import("../memory/memoryOs");
+          const { buildBudgetedContextBlock, BUDGET_PRESETS } = await import("../memory/contextBuilder");
+          const memoryContext = await retrieveMemoryContext({
+            userId,
+            query: userMessage,
+            limit: 6,
+            caller: "agent_sdk_context",
+          });
+          if (memoryContext.items.length > 0) {
+            globalMemoryBlock = buildBudgetedContextBlock({
+              title: "Relevant User Memories (Global)",
+              items: memoryContext.items.map((item) => ({
+                label: item.memory.category,
+                text: item.memory.content,
+              })),
+              budget: BUDGET_PRESETS.agentTurn.memory,
             });
           }
         } catch { /* non-blocking */ }
@@ -365,7 +387,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
         ? loadCrewReinforcement(crewRoleForPrompt)
         : "";
 
-      const systemPromptBase = `${persona}${reinforcementBlock}${soulBlock}${memoryBlock}`;
+      const systemPromptBase = `${persona}${reinforcementBlock}${soulBlock}${globalMemoryBlock}${memoryBlock}`;
 
       // ── Context registry: inject registered provider context ───────────────
       const registryCtx = await contextRegistry.build({

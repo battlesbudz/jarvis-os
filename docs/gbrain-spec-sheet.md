@@ -258,4 +258,4 @@ Idempotency:
 - Should G-Brain eventually project selected pending-but-low-risk memories as `pending` pages for conversational-only recall?
 - Should `brain_ingest_log` become the canonical idempotency mechanism for all projection jobs?
 - Should vector retrieval default on after DB verification, or remain opt-in per environment?
-- Should canonical `user_memories` vector indexing be implemented before or after the Memory OS facade?
+- Resolved 2026-06-05: canonical `user_memories` vector indexing landed before the Memory OS read facade, so the facade can delegate to the verified canonical retrieval/fallback path.

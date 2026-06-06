@@ -11773,8 +11773,9 @@ function clampRelevanceScore(score) {
 function mapBrainChunksToRetrievedMemories(chunks) {
   return chunks.map((chunk, index2) => {
     const canonicalMemoryId = chunk.citations.find((citation) => citation.kind === "user_memory")?.id;
+    const brainChunkId = `${chunk.pageSlug}:${index2}`;
     return {
-      id: canonicalMemoryId ?? `${chunk.pageSlug}:${index2}`,
+      id: canonicalMemoryId ?? brainChunkId,
       content: chunk.content,
       category: "fact",
       tier: "long_term",
@@ -11782,7 +11783,10 @@ function mapBrainChunksToRetrievedMemories(chunks) {
       relevanceScore: clampRelevanceScore(chunk.score),
       confidence: 80,
       accessCount: 0,
-      score: chunk.score
+      score: chunk.score,
+      source: "gbrain",
+      sourceId: brainChunkId,
+      sourceRefs: chunk.citations
     };
   });
 }
@@ -42164,6 +42168,129 @@ var init_mediaCapability = __esm({
   }
 });
 
+// server/memory/memoryOs.ts
+var memoryOs_exports = {};
+__export(memoryOs_exports, {
+  explainMemoryAnswer: () => explainMemoryAnswer,
+  memoryContextItemsToRetrievedMemories: () => memoryContextItemsToRetrievedMemories,
+  recordMemoryCorrection: () => recordMemoryCorrection,
+  rememberEpisode: () => rememberEpisode,
+  retrieveMemoryContext: () => retrieveMemoryContext
+});
+function emptyContext(input, uncertainty = []) {
+  return {
+    userId: input.userId,
+    query: input.query.trim(),
+    caller: input.caller,
+    items: [],
+    sources: {
+      memories: [],
+      brainChunks: [],
+      hotState: []
+    },
+    provenance: [],
+    uncertainty
+  };
+}
+function uniqueRefs(refs) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const ref of refs) {
+    const key = `${ref.kind}:${ref.source}:${ref.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(ref);
+  }
+  return out;
+}
+function provenanceForMemory(memory) {
+  if (memory.source === "gbrain") {
+    const refs = [
+      {
+        kind: "brain_chunk",
+        id: memory.sourceId ?? memory.id,
+        source: "gbrain",
+        label: memory.category
+      }
+    ];
+    const canonicalCitation = memory.sourceRefs?.find((citation) => citation.kind === "user_memory");
+    if (canonicalCitation) {
+      refs.push({
+        kind: "user_memory",
+        id: canonicalCitation.id,
+        source: "canonical",
+        label: memory.category
+      });
+    }
+    return uniqueRefs(refs);
+  }
+  return [
+    {
+      kind: "user_memory",
+      id: memory.id,
+      source: "canonical",
+      label: memory.category
+    }
+  ];
+}
+function memoryContextItemsToRetrievedMemories(items) {
+  return items.map((item) => item.memory);
+}
+async function retrieveMemoryContext(input, deps = defaultDeps2) {
+  const query = input.query.trim();
+  const limit = Math.max(1, Math.min(input.limit ?? 10, 50));
+  const skipAccessUpdate = input.skipAccessUpdate ?? false;
+  if (!input.userId.trim()) {
+    return emptyContext(input, ["No user id was provided for memory retrieval."]);
+  }
+  if (!query) {
+    return emptyContext(input, ["No memory query was provided."]);
+  }
+  try {
+    const memories = await deps.retrieveMemories(input.userId, query, limit, skipAccessUpdate);
+    const items = memories.map((memory) => ({
+      memory,
+      provenance: provenanceForMemory(memory)
+    }));
+    const provenance = items.flatMap((item) => item.provenance);
+    return {
+      userId: input.userId,
+      query,
+      caller: input.caller,
+      items,
+      sources: {
+        memories: provenance.filter((ref) => ref.kind === "user_memory").map((ref) => ref.id),
+        brainChunks: provenance.filter((ref) => ref.kind === "brain_chunk").map((ref) => ref.id),
+        hotState: []
+      },
+      provenance,
+      uncertainty: memories.length === 0 ? ["No relevant memories were found."] : []
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return emptyContext(input, [`Memory retrieval failed: ${detail}`]);
+  }
+}
+async function rememberEpisode() {
+  return { recorded: false, reason: "Memory OS episode writes are planned for a later slice." };
+}
+async function explainMemoryAnswer() {
+  return { available: false, reason: "User-facing memory explanation is planned for a later slice." };
+}
+async function recordMemoryCorrection() {
+  return { recorded: false, reason: "Memory correction flows are planned for a later slice." };
+}
+var defaultDeps2;
+var init_memoryOs = __esm({
+  "server/memory/memoryOs.ts"() {
+    "use strict";
+    init_retrieve();
+    defaultDeps2 = {
+      retrieveMemories: retrieveRelevantMemories
+    };
+  }
+});
+
 // server/agent/tools/memorySearch.ts
 import { eq as eq53, sql as sql21 } from "drizzle-orm";
 function isIdentityFallbackQuery(query) {
@@ -42198,7 +42325,23 @@ async function executeMemorySearch(args, ctx, deps) {
   const tierFilter = args.tier ? String(args.tier).trim() : null;
   const shouldIncludeProfileFallback = isIdentityFallbackQuery(query);
   try {
-    let memories = await deps.retrieveMemories(ctx.userId, query, limit * 2, true);
+    let memories;
+    let uncertainty = [];
+    if (deps.retrieveMemoryContext) {
+      const memoryContext = await deps.retrieveMemoryContext({
+        userId: ctx.userId,
+        query,
+        limit: limit * 2,
+        caller: "memory_search",
+        skipAccessUpdate: true
+      });
+      memories = memoryContextItemsToRetrievedMemories(memoryContext.items);
+      uncertainty = memoryContext.uncertainty;
+    } else if (deps.retrieveMemories) {
+      memories = await deps.retrieveMemories(ctx.userId, query, limit * 2, true);
+    } else {
+      throw new Error("No memory retrieval dependency configured.");
+    }
     if (category) {
       memories = memories.filter(
         (m) => m.category.toLowerCase() === category.toLowerCase()
@@ -42213,6 +42356,15 @@ async function executeMemorySearch(args, ctx, deps) {
     const profileIdentity = shouldIncludeProfileFallback ? await deps.fetchProfileIdentity(ctx.userId) : null;
     deps.incrementAccessCount(top.map((m) => m.id));
     if (top.length === 0) {
+      const retrievalFailure = uncertainty.find((note) => note.startsWith("Memory retrieval failed:"));
+      if (retrievalFailure) {
+        return {
+          ok: false,
+          content: retrievalFailure,
+          label: "Memory search error",
+          detail: retrievalFailure
+        };
+      }
       return {
         ok: true,
         content: appendProfileIdentityFallback(
@@ -42253,10 +42405,11 @@ var init_memorySearch = __esm({
   "server/agent/tools/memorySearch.ts"() {
     "use strict";
     init_retrieve();
+    init_memoryOs();
     init_db();
     init_schema();
     defaultMemorySearchDeps = {
-      retrieveMemories: retrieveRelevantMemories,
+      retrieveMemoryContext,
       incrementAccessCount: batchIncrementAccessCount,
       fetchProfileIdentity
     };
@@ -48623,6 +48776,7 @@ async function runNamedAgent(opts) {
       } catch {
       }
       let soulBlock = "";
+      let globalMemoryBlock = "";
       if (agent.accessGlobalMemory) {
         try {
           const { getSoulPromptBlock: getSoulPromptBlock2 } = await Promise.resolve().then(() => (init_soul(), soul_exports));
@@ -48637,13 +48791,34 @@ async function runNamedAgent(opts) {
           }
         } catch {
         }
+        try {
+          const { retrieveMemoryContext: retrieveMemoryContext2 } = await Promise.resolve().then(() => (init_memoryOs(), memoryOs_exports));
+          const { buildBudgetedContextBlock: buildBudgetedContextBlock2, BUDGET_PRESETS: BUDGET_PRESETS2 } = await Promise.resolve().then(() => (init_contextBuilder(), contextBuilder_exports));
+          const memoryContext = await retrieveMemoryContext2({
+            userId,
+            query: userMessage,
+            limit: 6,
+            caller: "agent_sdk_context"
+          });
+          if (memoryContext.items.length > 0) {
+            globalMemoryBlock = buildBudgetedContextBlock2({
+              title: "Relevant User Memories (Global)",
+              items: memoryContext.items.map((item) => ({
+                label: item.memory.category,
+                text: item.memory.content
+              })),
+              budget: BUDGET_PRESETS2.agentTurn.memory
+            });
+          }
+        } catch {
+        }
       }
       const persona = agent.persona ?? `You are ${agent.name}, a ${agent.role} assistant.`;
       const configJsonForPrompt = agent.configJson ?? {};
       const crewRoleForPrompt = typeof configJsonForPrompt.crewRole === "string" ? configJsonForPrompt.crewRole : null;
       const isCrewMemberForPrompt = configJsonForPrompt.isCrewMember === true;
       const reinforcementBlock = isCrewMemberForPrompt && crewRoleForPrompt ? loadCrewReinforcement(crewRoleForPrompt) : "";
-      const systemPromptBase = `${persona}${reinforcementBlock}${soulBlock}${memoryBlock}`;
+      const systemPromptBase = `${persona}${reinforcementBlock}${soulBlock}${globalMemoryBlock}${memoryBlock}`;
       const registryCtx = await contextRegistry.build({
         userId,
         platform,
@@ -60190,7 +60365,13 @@ async function buildAiContextSections(userId, seedQuery) {
   try {
     const trimmed = (seedQuery || "").trim();
     if (trimmed.length > 0) {
-      const mems = await retrieveRelevantMemories(userId, trimmed, 6);
+      const memoryContext = await retrieveMemoryContext({
+        userId,
+        query: trimmed,
+        limit: 6,
+        caller: "coach_context"
+      });
+      const mems = memoryContext.items.map((item) => item.memory);
       if (mems.length > 0) {
         out.memorySection = buildBudgetedContextBlock({
           title: "Relevant memories",
@@ -60248,7 +60429,7 @@ var init_promptContext = __esm({
     init_db();
     init_schema();
     init_soul();
-    init_retrieve();
+    init_memoryOs();
     init_emotional_state();
     init_diagnosticsService();
     init_contextBuilder();
@@ -90987,7 +91168,7 @@ async function runBackfillEmbeddings() {
 function dateKey(now) {
   return now.toISOString().slice(0, 10);
 }
-var defaultDeps2 = {
+var defaultDeps3 = {
   async listUserIds() {
     const [{ db: db2 }, schema] = await Promise.all([Promise.resolve().then(() => (init_db(), db_exports)), Promise.resolve().then(() => (init_schema(), schema_exports))]);
     const users3 = await db2.select({ id: schema.users.id }).from(schema.users).catch(() => []);
@@ -91017,7 +91198,7 @@ var defaultDeps2 = {
     console.error(message, error);
   }
 };
-async function runBrainMaintenanceForAllUsers(now = /* @__PURE__ */ new Date(), deps = defaultDeps2) {
+async function runBrainMaintenanceForAllUsers(now = /* @__PURE__ */ new Date(), deps = defaultDeps3) {
   const sentDate = dateKey(now);
   const messageType = `gbrain:refresh_index:${sentDate}`;
   const userIds = await deps.listUserIds();
@@ -91121,7 +91302,7 @@ function evaluateMemoryAutoReviewDecision(memory) {
   }
   return { action: "keep", reason: "high-confidence-low-risk" };
 }
-var defaultDeps3 = {
+var defaultDeps4 = {
   async listUserIds() {
     const [{ db: db2 }, shared] = await Promise.all([Promise.resolve().then(() => (init_db(), db_exports)), Promise.resolve().then(() => (init_schema(), schema_exports))]);
     const users3 = await db2.select({ id: shared.users.id }).from(shared.users).catch(() => []);
@@ -91183,7 +91364,7 @@ var defaultDeps3 = {
     console.error(message, error);
   }
 };
-async function runMemoryAutoReviewForAllUsers(now = /* @__PURE__ */ new Date(), deps = defaultDeps3) {
+async function runMemoryAutoReviewForAllUsers(now = /* @__PURE__ */ new Date(), deps = defaultDeps4) {
   const sentDate = dateKey2(now);
   const messageType = `memory:auto_review:${sentDate}`;
   const userIds = await deps.listUserIds();

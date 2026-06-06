@@ -417,7 +417,9 @@ Status note, 2026-06-05: the G-Brain chunk side of this baseline and the canonic
 
 ### Phase 3: Memory OS Facade
 
-Implement:
+Status note, 2026-06-05: the targeted read-path facade baseline is implemented. It routes the `memory_search` tool, coach context, daily command context, Agent SDK global memory context, and G-Brain-backed retrieval through `server/memory/memoryOs.ts` with structured source/provenance fields and fallback uncertainty. Legacy direct memory reads outside those named contexts, write-path episode capture, user-facing explanation/correction, Redis hot state, and Graphiti remain later phases.
+
+Implemented:
 
 - `server/memory/memoryOs.ts`
 - route existing `memory_search`, daily command, Agent SDK read context, and coach context through it
@@ -426,7 +428,7 @@ Implement:
 
 Outcome:
 
-Jarvis has one memory read/write API instead of scattered calls.
+Jarvis has one facade for the roadmap-named memory read contexts instead of continuing to route those contexts through scattered calls. Broader read consolidation and the write API remain planned for later Memory OS slices.
 
 ### Phase 4: Redis Hot State
 

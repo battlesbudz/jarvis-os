@@ -195,14 +195,21 @@ Live DB verification on 2026-06-05:
 - Result: PASS
 - Evidence: `0010_user_memory_vector_index.sql` executed successfully; pgvector extension version `0.8.2` is installed; `user_memories.embedding_vector` and `user_memories_embedding_vector_idx` exist; existing JSONB embeddings mirror into `embedding_vector`; vector query returns the seeded memory under `JARVIS_MEMORY_VECTOR_RETRIEVAL=1`; a simulated pgvector failure falls back through canonical memory retrieval.
 
-### Next Slice: Memory OS Facade
+### Completed Slice: Memory OS Facade Read Path
 
-Implement:
+Implemented in this slice:
 
 - `server/memory/memoryOs.ts`
-- single read path for memory tool, coach context, daily command, Agent SDK context, and G-Brain retrieval
+- single read path for the `memory_search` tool, coach context, daily command context, Agent SDK global memory context, and G-Brain-backed retrieval
 - structured provenance and uncertainty
 - fallback to existing retrieval when G-Brain or vector search is unavailable
+
+Implementation notes:
+
+- `memory_search` now calls `retrieveMemoryContext` while preserving its existing output format, category/tier filters, profile identity fallback, and durable access-count updates.
+- Coach prompt context and daily command planning route through `buildAiContextSections`, which now retrieves memories through the Memory OS facade.
+- Named Agent SDK first-turn global memory context now retrieves relevant user memories through the Memory OS facade for agents with global-memory access.
+- The facade exposes planned write/explanation/correction entrypoints as unavailable stubs so later slices have named integration points without implying those flows are complete.
 
 ### Later Slices
 
@@ -213,7 +220,7 @@ Implement:
 
 ## Roadmap Cross-Reference
 
-This work maps to `JARVIS_ROADMAP.md` Phase 4.1, "Structured Long-Term Memory Store." The completed vector-index pieces are live-DB-verified derived G-Brain chunk retrieval plus live-DB-verified canonical `user_memories.embedding_vector` migration/backfill/search/fallback. The remaining roadmap overlap is the Memory OS facade that gives memory tools, coach context, daily command, Agent SDK context, and G-Brain one read path, plus production monitoring for embedding health.
+This work maps to `JARVIS_ROADMAP.md` Phase 4.1, "Structured Long-Term Memory Store." The completed vector-index pieces are live-DB-verified derived G-Brain chunk retrieval plus live-DB-verified canonical `user_memories.embedding_vector` migration/backfill/search/fallback. The targeted Memory OS read facade now gives the `memory_search` tool, coach context, daily command context, Agent SDK global memory context, and G-Brain-backed retrieval one shared read path. It does not yet migrate every legacy direct memory read. Remaining roadmap overlap is production monitoring for embedding health plus later user-facing correction/provenance flows.
 
 ## Verification Commands
 
@@ -226,10 +233,16 @@ node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vector.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorDbVerification.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorMigration.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\autoReview.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\memoryOs.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\retrieveVectorScoring.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\vectorDbVerification.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\vectorMigration.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\vectorStore.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\memoryOsFacadeRouting.assert.ts
+node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\memorySearchMemoryOs.assert.ts
+node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\memorySearchIdentityFallback.assert.ts
+node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\mindTraceContextPacks.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\dailyCommand.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\telegramFastPath.assert.ts
 npm.cmd run server:build
 ```
