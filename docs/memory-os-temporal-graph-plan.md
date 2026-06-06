@@ -49,6 +49,11 @@ Landed:
 - Brain vector retrieval is feature-flagged by `JARVIS_BRAIN_VECTOR_RETRIEVAL=1`.
 - Brain retrieval falls back to FTS/JSONB embedding rerank when pgvector is unavailable.
 - G-Brain chunk-vector live DB verification passed against Railway Postgres on 2026-06-05 via `npm.cmd run jarvis:verify:brain-vector-db`.
+- `user_memories` now has optional canonical pgvector support via `embedding_vector vector(1536)`.
+- Canonical memory vector retrieval is feature-flagged by `JARVIS_MEMORY_VECTOR_RETRIEVAL=1`.
+- Canonical memory vector write/query failures fall back to JSONB/FTS behavior.
+- Canonical vector search is scoped to approved memories: `pending_review = FALSE`, `review_status IN ('active', 'kept', 'edited')`.
+- Canonical memory vector live DB verification passed against Railway Postgres on 2026-06-05 via `npm.cmd run jarvis:verify:memory-vector-db`.
 - A deterministic memory auto-review daemon exists in `server/memory/autoReview.ts`.
 - Auto-review keeps only high-confidence, low-risk pending memories and leaves sensitive/ambiguous memories pending.
 - Auto-kept memories are marked with the same state as manual keep: `pending_review = FALSE`, `review_status = 'kept'`.
@@ -56,13 +61,13 @@ Landed:
 
 Still planned:
 
-- pgvector support for canonical `user_memories`; current vector migration applies to G-Brain chunks.
 - A unified `server/memory/memoryOs.ts` read/write facade.
+- Production monitoring dashboard/alerts for memory embedding health.
 - Redis hot state.
 - Graphiti temporal graph adapter.
 - Full temporal query UX and provenance display.
 
-Roadmap cross-reference: this plan overlaps `JARVIS_ROADMAP.md` Phase 4.1. The live-verified work covers derived G-Brain chunk vectors only. Canonical `user_memories.embedding_vector` support and the unified Memory OS facade remain the next roadmap-backed slices for packable autonomy.
+Roadmap cross-reference: this plan overlaps `JARVIS_ROADMAP.md` Phase 4.1. The vector-index work now covers derived G-Brain chunk vectors and canonical `user_memories.embedding_vector` support. The unified Memory OS facade remains the next roadmap-backed slice for packable autonomy.
 
 ## Product Goal
 
@@ -79,9 +84,9 @@ The target behavior is not just semantic recall. It is temporal recall with prov
 
 ## Source Reality
 
-Current `user_memories.embedding` is JSONB. The code comments explicitly avoid requiring pgvector today. Retrieval in `server/memory/retrieve.ts` combines Postgres full-text search, optional OpenAI embeddings, cosine scoring in TypeScript, relevance, tier recency, and access count.
+Current `user_memories.embedding` remains JSONB for portability, with optional `user_memories.embedding_vector` pgvector support where the extension is available. Retrieval in `server/memory/retrieve.ts` combines Postgres full-text search, optional OpenAI embeddings, cosine scoring in TypeScript, relevance, tier recency, and access count, and can prefer pgvector candidates when `JARVIS_MEMORY_VECTOR_RETRIEVAL=1`.
 
-That is a useful baseline, but it will not scale as memory grows because vector similarity is computed outside the database over a limited candidate set.
+That gives Jarvis a scalable semantic candidate path while preserving the current fallback when pgvector is unavailable.
 
 Graphiti is a good fit for the temporal layer because it is designed for dynamic agent memory, temporal relationships, episodes/provenance, and hybrid semantic/keyword/graph retrieval. It should not be treated as the only source of truth. Jarvis still needs Postgres as the canonical reviewable memory ledger.
 
@@ -103,13 +108,13 @@ Tables/classes to keep using:
 - `life_context`
 - deliverables, jobs, approvals, and interaction logs
 
-Add pgvector as a real index layer:
+Current pgvector index layer:
 
 - install/enable `vector` extension where supported
 - add `embedding_vector vector(1536)` to `user_memories`
 - backfill from existing JSONB embeddings
-- keep JSONB embedding temporarily during migration
-- add HNSW or IVFFlat index after backfill
+- keep JSONB embedding during migration as the portable fallback
+- add IVFFlat index after backfill
 - make retrieval prefer pgvector when available and fall back to current JSONB/FTS behavior
 
 Do not remove memory review gates. All durable user-facing memories still require provenance, status, confidence, tier, and deletion/correction behavior.
@@ -396,7 +401,7 @@ Jarvis stops treating time phrases as vague text.
 
 ### Phase 2: pgvector Baseline
 
-Implement:
+Implemented:
 
 - schema migration with `embedding_vector vector(1536)`
 - pgvector capability probe
@@ -408,7 +413,7 @@ Outcome:
 
 Approved memories become scalable semantic recall.
 
-Status note, 2026-06-05: the G-Brain chunk side of this baseline is live-DB verified. The remaining Phase 2 work is the canonical `user_memories.embedding_vector` migration, backfill, retrieval path, capability probe, fallback, and monitoring.
+Status note, 2026-06-05: the G-Brain chunk side of this baseline and the canonical `user_memories.embedding_vector` migration/backfill/retrieval/capability/fallback slice are live-DB verified. Remaining Phase 2 follow-up is production monitoring for embedding health.
 
 ### Phase 3: Memory OS Facade
 

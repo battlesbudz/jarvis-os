@@ -195,9 +195,10 @@ export const userMemories = pgTable("user_memories", {
   sourceRef: varchar("source_ref"),
   lastReferencedAt: timestamp("last_referenced_at"),
   // Cached OpenAI text-embedding-3-small vector (1536 floats) used by the
-  // hybrid retrieval helper in server/memory/retrieve.ts. Stored as jsonb
-  // so we don't require the pgvector extension; FTS handles primary recall.
-  embedding: jsonb("embedding"),
+  // hybrid retrieval helper in server/memory/retrieve.ts. JSONB remains the
+  // portable fallback; embeddingVector is the optional pgvector index column.
+  embedding: jsonb("embedding").$type<number[] | null>(),
+  embeddingVector: vector1536("embedding_vector"),
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
   // Biomimetic memory tier & type system (Phase 5).
   // tier: working (minutes) | short_term (hours/days) | long_term (permanent)

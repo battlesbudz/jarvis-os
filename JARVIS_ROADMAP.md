@@ -236,10 +236,11 @@ This was added after the original roadmap to make the system dependable before d
 - [x] Memory extraction and review-gated promotion exist
 - [x] Pending memory review is surfaced in the tab badge
 - [x] G-Brain chunk pgvector migration and feature-flag retrieval are live-DB verified against Railway Postgres via `npm.cmd run jarvis:verify:brain-vector-db`
+- [x] Canonical `user_memories.embedding_vector` migration, JSONB backfill, feature-flag search, verifier, and fallback are live-DB verified against Railway Postgres via `npm.cmd run jarvis:verify:memory-vector-db`
 - [ ] Finish user-facing memory correction, deletion, and provenance explanation flows
-- [ ] Add canonical `user_memories.embedding_vector` backfill/search and monitor embeddings consistently in production
+- [ ] Add production monitoring dashboard/alerts for memory embedding health
 
-Roadmap cross-reference: the verified G-Brain chunk-vector work belongs to this Phase 4.1 memory-scaling lane and is tracked in `docs/gbrain-implementation-plan.md` plus `docs/memory-os-temporal-graph-plan.md`. It unblocks the canonical memory vector index and Memory OS facade work, but does not complete those slices.
+Roadmap cross-reference: the verified G-Brain chunk-vector work and implemented canonical memory vector index both belong to this Phase 4.1 memory-scaling lane and are tracked in `docs/gbrain-implementation-plan.md` plus `docs/memory-os-temporal-graph-plan.md`. Together they unblock the Memory OS facade work, but do not complete the unified facade or user-facing correction/provenance flows.
 
 ### 4.2 - Pattern Recognition Engine
 

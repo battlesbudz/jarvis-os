@@ -115,7 +115,7 @@ Behavior:
 - embeddings are stored in JSONB and, when available, pgvector
 - vector queries are attempted only when the feature flag is enabled
 - vector write/query failures fall back to JSONB/FTS behavior
-- current migration targets G-Brain chunks, not canonical `user_memories`
+- this slice targets G-Brain chunks; canonical `user_memories` vector search is tracked separately below
 
 Live DB verification on 2026-06-05:
 
@@ -165,14 +165,35 @@ Purpose:
 
 ## Remaining Work
 
-### Next Slice: Canonical Memory Vector Index
+### Slice 7: Canonical Memory Vector Index
 
-Implement after G-Brain chunk vectors are verified:
+Status: landed and live DB verified.
 
-- `embedding_vector vector(1536)` on `user_memories`
-- backfill from existing JSONB `embedding`
-- vector retrieval path for canonical approved memories
-- capability probe and fallback
+Implemented:
+
+- migration `0010_user_memory_vector_index.sql`
+- optional `user_memories.embedding_vector vector(1536)`
+- JSONB `embedding` to pgvector backfill in the migration and embedding backfill job
+- `server/memory/vectorStore.ts`
+- `server/memory/vectorDbVerification.ts`
+- `scripts/verify-memory-vector-db.ts`
+- package script `npm.cmd run jarvis:verify:memory-vector-db`
+- feature flag `JARVIS_MEMORY_VECTOR_RETRIEVAL=1`
+
+Behavior:
+
+- canonical memory embeddings remain stored in JSONB as the portable fallback
+- pgvector writes are attempted when the column/extension are available
+- vector retrieval is attempted only under `JARVIS_MEMORY_VECTOR_RETRIEVAL=1`
+- vector query/write failures fall back to current JSONB/FTS behavior
+- vector search is scoped to approved durable memories: `pending_review = FALSE` and `review_status IN ('active', 'kept', 'edited')`
+
+Live DB verification on 2026-06-05:
+
+- Command: `npm.cmd run jarvis:verify:memory-vector-db` with `JARVIS_RUN_DB_TESTS_WITH_DATABASE_URL=1`
+- Target: Railway Postgres from `DATABASE_URL`
+- Result: PASS
+- Evidence: `0010_user_memory_vector_index.sql` executed successfully; pgvector extension version `0.8.2` is installed; `user_memories.embedding_vector` and `user_memories_embedding_vector_idx` exist; existing JSONB embeddings mirror into `embedding_vector`; vector query returns the seeded memory under `JARVIS_MEMORY_VECTOR_RETRIEVAL=1`; a simulated pgvector failure falls back through canonical memory retrieval.
 
 ### Next Slice: Memory OS Facade
 
@@ -192,7 +213,7 @@ Implement:
 
 ## Roadmap Cross-Reference
 
-This work maps to `JARVIS_ROADMAP.md` Phase 4.1, "Structured Long-Term Memory Store." The completed part is live-DB-verified vector retrieval for derived G-Brain chunks. The remaining roadmap overlap is canonical `user_memories.embedding_vector` search/backfill/monitoring, then the Memory OS facade that gives memory tools, coach context, daily command, Agent SDK context, and G-Brain one read path.
+This work maps to `JARVIS_ROADMAP.md` Phase 4.1, "Structured Long-Term Memory Store." The completed vector-index pieces are live-DB-verified derived G-Brain chunk retrieval plus live-DB-verified canonical `user_memories.embedding_vector` migration/backfill/search/fallback. The remaining roadmap overlap is the Memory OS facade that gives memory tools, coach context, daily command, Agent SDK context, and G-Brain one read path, plus production monitoring for embedding health.
 
 ## Verification Commands
 
@@ -205,6 +226,10 @@ node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vector.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorDbVerification.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\brain\__tests__\vectorMigration.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\autoReview.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\retrieveVectorScoring.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\vectorDbVerification.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\vectorMigration.test.ts
+node .\node_modules\tsx\dist\cli.mjs server\memory\__tests__\vectorStore.test.ts
 node .\node_modules\tsx\dist\cli.mjs server\agent\__tests__\telegramFastPath.assert.ts
 npm.cmd run server:build
 ```
@@ -215,4 +240,5 @@ Live DB verification:
 
 ```powershell
 $env:JARVIS_RUN_DB_TESTS_WITH_DATABASE_URL='1'; npm.cmd run jarvis:verify:brain-vector-db
+$env:JARVIS_RUN_DB_TESTS_WITH_DATABASE_URL='1'; npm.cmd run jarvis:verify:memory-vector-db
 ```
