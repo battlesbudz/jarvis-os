@@ -1098,9 +1098,9 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
 
-    // openclaw_build_log — created via migration 005; ensure new columns exist
+    // agent_build_log — created via migration 005; ensure new columns exist
     await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS openclaw_build_log (
+      CREATE TABLE IF NOT EXISTS agent_build_log (
         id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id         VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         feature_name    VARCHAR NOT NULL,
@@ -1112,11 +1112,11 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
     await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS openclaw_build_log_user_created_idx
-        ON openclaw_build_log (user_id, created_at DESC)
+      CREATE INDEX IF NOT EXISTS agent_build_log_user_created_idx
+        ON agent_build_log (user_id, created_at DESC)
     `).catch(() => {});
     await db.execute(sql`
-      ALTER TABLE openclaw_build_log ADD COLUMN IF NOT EXISTS smoke_test_args JSONB
+      ALTER TABLE agent_build_log ADD COLUMN IF NOT EXISTS smoke_test_args JSONB
     `).catch(() => {});
 
     // integration_status — pre-flight validator cache written every 30 min
@@ -1408,7 +1408,7 @@ export async function ensureTablesExist() {
         ON user_skills (user_id, name) WHERE is_built_in = TRUE
     `).catch(() => {});
 
-    // Chat integration tables (used by server/replit_integrations/chat)
+    // Chat integration tables (used by server/integrations/chatStorage)
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS conversations (
         id SERIAL PRIMARY KEY,
@@ -1517,7 +1517,7 @@ export async function ensureTablesExist() {
         ON webchat_invite_tokens (token)
     `).catch(() => {});
 
-    // ── Gateway devices — OpenClaw-style scoped browser/node pairing ─────────
+    // ── Gateway devices — scoped browser/node pairing ─────────
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS gateway_device_pairing_requests (
         id               VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),

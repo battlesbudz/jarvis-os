@@ -165,7 +165,7 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
   try {
     console.log(`[daemon] talk: processing utterance for userId=${userId}: "${utterance.slice(0, 60)}"`);
     const { runCoachAgent } = await import("../channels/coachAgent");
-    const { textToSpeech } = await import("../replit_integrations/audio/client");
+    const { textToSpeech } = await import("../integrations/audioClient");
 
     const storedSessionId = await _getCoachSession(userId, "Voice");
     const result = await runCoachAgent({
@@ -921,8 +921,8 @@ export function startDaemonBridge(server: HttpServer): void {
       }
     });
 
-    // Server-side keepalive — ping the daemon every 20 s so Replit's proxy
-    // doesn't drop the WebSocket due to idle timeout.
+    // Server-side keepalive - ping the daemon every 20 s so hosting proxies
+    // do not drop the WebSocket due to idle timeout.
     const keepalive = setInterval(() => {
       if (ws.readyState === WebSocket.OPEN) {
         try { ws.ping(); } catch { /* noop */ }

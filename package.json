@@ -8,7 +8,7 @@
   },
   "scripts": {
     "postinstall": "patch-package",
-    "expo:dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_DEV_DOMAIN REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN:5000 npx expo start --localhost",
+    "expo:dev": "npx expo start --localhost",
     "server:dev": "NODE_ENV=development tsx server/index.ts",
     "expo:start:static:build": "npx expo start --no-dev --minify --localhost",
     "expo:static:build": "node scripts/build.js",
@@ -58,7 +58,6 @@
     "@playwright/mcp": "^0.0.70",
     "@playwright/test": "^1.59.1",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@replit/connectors-sdk": "^0.4.0",
     "@stardazed/streams-text-encoding": "^1.0.2",
     "@supadata/js": "^1.4.0",
     "@tanstack/react-query": "^5.83.0",

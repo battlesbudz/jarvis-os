@@ -56,16 +56,6 @@ function getDeploymentDomain() {
     return stripProtocol(process.env.SERVER_URL);
   }
 
-  // Legacy Replit deployment domain fallbacks.
-  if (process.env.REPLIT_INTERNAL_APP_DOMAIN) {
-    return stripProtocol(process.env.REPLIT_INTERNAL_APP_DOMAIN);
-  }
-
-  // Dev fallback — only used in local/dev builds without an explicit domain set
-  if (process.env.REPLIT_DEV_DOMAIN) {
-    return stripProtocol(process.env.REPLIT_DEV_DOMAIN);
-  }
-
   console.error(
     "ERROR: No deployment domain found. Set EXPO_PUBLIC_DOMAIN, RAILWAY_PUBLIC_DOMAIN, PUBLIC_BASE_URL, or SERVER_URL",
   );

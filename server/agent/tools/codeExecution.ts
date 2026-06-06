@@ -56,7 +56,7 @@
  *
  * Threat model:
  *   Subprocess-isolated sandbox.  No OS namespaces or seccomp available in
- *   the Replit environment (prctl/unshare return EPERM).
+ *   locked-down hosted environments (prctl/unshare return EPERM).
  *
  *   Process isolation (Layer 0) is the primary defence:
  *     • Server memory and in-process state are never reachable.

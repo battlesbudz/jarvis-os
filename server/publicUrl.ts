@@ -8,19 +8,13 @@ function normalizeBaseUrl(value: string): string {
   return new URL(withProtocol).origin;
 }
 
-function firstDomain(value: string | undefined): string | undefined {
-  return value?.split(",").map((part) => part.trim()).find(Boolean);
-}
-
 export function getPublicBaseUrl(req?: Request): string {
   const explicit =
     process.env.PUBLIC_BASE_URL ||
     process.env.APP_BASE_URL ||
     process.env.SERVER_URL ||
     process.env.RAILWAY_PUBLIC_DOMAIN ||
-    process.env.EXPO_PUBLIC_DOMAIN ||
-    firstDomain(process.env.REPLIT_DOMAINS) ||
-    process.env.REPLIT_DEV_DOMAIN;
+    process.env.EXPO_PUBLIC_DOMAIN;
 
   if (explicit) return normalizeBaseUrl(explicit);
 

@@ -322,18 +322,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { getYtdlpStatus, ensureYtdlpUpgraded } = await import("./lib/transcriptCache");
 
       // Check Gemini key status (do NOT call Gemini)
-      const geminiDirectKey = process.env.GOOGLE_GEMINI_API_KEY;
-      const geminiProxyKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-      const geminiKeyConfigured = !!(geminiDirectKey || geminiProxyKey);
-      const geminiKeyType = geminiDirectKey ? "direct" : geminiProxyKey ? "proxy" : "none";
+      const geminiKeyConfigured = !!process.env.GOOGLE_GEMINI_API_KEY;
+      const geminiKeyType = geminiKeyConfigured ? "direct" : "none";
       const geminiResult = {
         keyConfigured: geminiKeyConfigured,
         keyType: geminiKeyType,
         note: geminiKeyConfigured
-          ? geminiKeyType === "direct"
-            ? "Will attempt transcription as Phase 0 (direct Google AI Studio key)"
-            : "Will attempt transcription as Phase 0 (proxy key — may have quota limits)"
-          : "Phase 0 skipped — no Gemini key configured. Set GOOGLE_GEMINI_API_KEY at https://aistudio.google.com/apikey",
+          ? "Will attempt transcription as Phase 0 (direct Google AI Studio key)"
+          : "Phase 0 skipped - no Gemini key configured. Set GOOGLE_GEMINI_API_KEY at https://aistudio.google.com/apikey",
       };
 
       // Check Supadata key + native captions
@@ -385,7 +381,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cmd: ytdlpStatus.cmd,
         reason: ytdlpStatus.available
           ? "yt-dlp is installed and responding"
-          : "yt-dlp is not available — audio transcription and caption download will fail. Note: Replit datacenter IPs are blocked by YouTube, so yt-dlp success rates are very low even when installed.",
+          : "yt-dlp is not available — audio transcription and caption download will fail. Note: cloud datacenter IPs are often blocked by YouTube, so yt-dlp success rates may be very low even when installed.",
       };
 
       // Build recommendation
@@ -400,7 +396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else if (supadataKey) {
         recommendation = "Only Supadata AI generation is viable. Takes 5-10 min for long videos. Recommend enabling Gemini with GOOGLE_GEMINI_API_KEY.";
       } else {
-        recommendation = "No cloud transcript methods available. Only local yt-dlp/Whisper pipeline (IP-blocked on Replit). Enable Gemini or Supadata.";
+        recommendation = "No cloud transcript methods available. Only local yt-dlp/Whisper pipeline remains, and cloud IPs are often blocked. Enable Gemini or Supadata.";
       }
 
       res.json({
@@ -1740,7 +1736,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const errorParts: string[] = [];
               if (phaseErrors?.gemini) errorParts.push(`Gemini error: ${phaseErrors.gemini}`);
               if (phaseErrors?.supadata) errorParts.push(`Supadata error: ${phaseErrors.supadata}`);
-              const geminiKey = process.env.GOOGLE_GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+              const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
               const supadataKey = process.env.SUPADATA_API_KEY;
               let detail = `Could not retrieve transcript for video '${resolvedId}'.`;
               if (errorParts.length > 0) {
@@ -4004,7 +4000,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         return res.status(400).json({ error: "audio (base64) is required" });
       }
 
-      const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+      const { speechToText, detectAudioFormat } = await import('./integrations/audioClient');
       const rawBuffer = Buffer.from(audio, 'base64');
 
       // Size guards: skip silent/empty clips, reject huge files
@@ -4052,7 +4048,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         resolvedVoice = OPENAI_VOICES.has(prefs.voice) ? prefs.voice : 'nova';
       }
 
-      const { textToSpeech } = await import('./replit_integrations/audio/client');
+      const { textToSpeech } = await import('./integrations/audioClient');
       const audioBuffer = await textToSpeech(trimmedText, (resolvedVoice ?? "nova") as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer", 'mp3');
       res.json({ audio: audioBuffer.toString('base64') });
     } catch (error) {
@@ -4121,7 +4117,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
     req.on('close', () => streamAbort.abort());
 
     try {
-      const { textToSpeechStream, elevenlabsTtsStream } = await import('./replit_integrations/audio/client');
+      const { textToSpeechStream, elevenlabsTtsStream } = await import('./integrations/audioClient');
 
       const openaiVoice = OPENAI_VOICES.has(resolvedVoice)
         ? resolvedVoice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"
@@ -5758,9 +5754,9 @@ Extract up to 8 memories per batch.`;
     try {
       const rows = await db
         .select()
-        .from(schema.openclawBuildLog)
-        .where(eq(schema.openclawBuildLog.userId, userId))
-        .orderBy(desc(schema.openclawBuildLog.createdAt))
+        .from(schema.agentBuildLog)
+        .where(eq(schema.agentBuildLog.userId, userId))
+        .orderBy(desc(schema.agentBuildLog.createdAt))
         .limit(50);
       res.json({ builds: rows });
     } catch (err) {
@@ -6438,8 +6434,7 @@ Extract up to 8 memories per batch.`;
       const hasServerCredential = (integration: string) => {
         switch (integration) {
           case "google":
-            return Boolean((process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID) && process.env.GOOGLE_CLIENT_SECRET)
-              || Boolean(process.env.REPLIT_CONNECTORS_HOST || process.env.REPL_ID);
+            return Boolean((process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID) && process.env.GOOGLE_CLIENT_SECRET);
           case "outlook":
             return Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
           case "telegram":
@@ -6733,7 +6728,7 @@ Extract up to 8 memories per batch.`;
    */
   app.post("/api/conversations", authMiddleware, async (req: Request, res: Response) => {
     try {
-      const { chatStorage } = await import('./replit_integrations/chat/storage');
+      const { chatStorage } = await import('./integrations/chatStorage');
       const { title } = req.body || {};
       const conversation = await chatStorage.createConversation(title || 'Voice Session');
       res.status(201).json(conversation);
@@ -6755,7 +6750,7 @@ Extract up to 8 memories per batch.`;
       if (!Array.isArray(entries) || entries.length === 0) {
         return res.status(400).json({ error: 'entries array is required' });
       }
-      const { chatStorage } = await import('./replit_integrations/chat/storage');
+      const { chatStorage } = await import('./integrations/chatStorage');
       for (const entry of entries) {
         if (entry.role && entry.text) {
           await chatStorage.createMessage(conversationId, entry.role, entry.text);

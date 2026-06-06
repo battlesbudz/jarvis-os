@@ -1275,11 +1275,11 @@ export const jarvisActionLog = pgTable("jarvis_action_log", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// ── OpenClaw Build Log ────────────────────────────────────────────────────────
-// Persisted record of every openclaw_build_feature call. Lets users review
+// ── Agent Build Log ───────────────────────────────────────────────────────────
+// Persisted record of every build_feature call. Lets users review
 // past self-improvement attempts, re-apply previous tools, or see when a
 // capability was added.
-export const openclawBuildLog = pgTable("openclaw_build_log", {
+export const agentBuildLog = pgTable("agent_build_log", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   featureName: varchar("feature_name").notNull(),
@@ -1653,7 +1653,7 @@ export const writeBudgetWarnings = pgTable("write_budget_warnings", {
   warnedAt: timestamp("warned_at").notNull().default(sql`'1970-01-01'`),
 });
 
-// Chat integration tables — used by server/replit_integrations/chat
+// Chat integration tables — used by server/integrations/chatStorage
 export const conversations = pgTable("conversations", {
   id: serial("id").primaryKey(),
   title: text("title").notNull().default("New Chat"),
