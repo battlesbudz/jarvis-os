@@ -333,7 +333,7 @@ async function generateTtsAudio(userId: string, text: string): Promise<Buffer> {
     }
   }
 
-  const { textToSpeech } = await import("../replit_integrations/audio/client");
+      const { textToSpeech } = await import("../integrations/audioClient");
   const openaiVoice = isOpenAiVoice ? (voice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer") : "nova";
   return await textToSpeech(trimmed, openaiVoice, "mp3");
 }

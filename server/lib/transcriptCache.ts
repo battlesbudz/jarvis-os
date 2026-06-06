@@ -644,7 +644,7 @@ export function getAudioTranscriptTelemetry() {
 }
 
 async function transcribeBuffer(buf: Buffer, ext: "wav" | "mp3"): Promise<string> {
-  const { openai } = await import("../replit_integrations/audio/client");
+      const { openai } = await import("../integrations/audioClient");
   const { toFile } = await import("openai");
   const file = await toFile(buf, `audio.${ext}`, { type: `audio/${ext}` });
   const resp = await openai.audio.transcriptions.create({

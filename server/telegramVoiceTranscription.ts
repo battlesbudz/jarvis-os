@@ -1,7 +1,7 @@
 import { Blob } from "node:buffer";
 import { getProviderEnvValue, isDirectOpenAIDisabled } from "./agent/providers/env";
 import type { AudioFormat } from "./replit_integrations/audio/client";
-import { speechToText } from "./replit_integrations/audio/client";
+import { speechToText } from "./integrations/audioClient";
 import { isWorkerOnline, queueAudioTranscriptionJob } from "./lib/localWorkerQueue";
 
 export type TelegramVoiceTranscriptionSource = "groq" | "local-worker" | "openai";
