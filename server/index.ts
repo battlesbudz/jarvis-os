@@ -23,10 +23,24 @@ import { startPostListenBoot } from "./boot/postListen";
 const app = express();
 const log = console.log;
 
-(async () => {
-  await ensureTablesExist();
-  await runPreListenBoot();
+async function verifyDatabaseTablesInBackground(): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await ensureTablesExist();
+      return;
+    } catch (err) {
+      lastErr = err;
+      const delayMs = attempt * 2000;
+      console.warn(`[Startup] database table verification failed (attempt ${attempt}/5); retrying in ${delayMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
 
+  console.error("[Startup] database table verification failed after retries; continuing with existing schema", lastErr);
+}
+
+(async () => {
   logTelegramStatus();
 
   setupCors(app);
@@ -56,6 +70,12 @@ const log = console.log;
     },
     () => {
       log(`express server serving on ${host}:${port}`);
+      runPreListenBoot().catch((err) => {
+        console.error("[Startup] pre-listen boot tasks crashed unexpectedly:", err);
+      });
+      verifyDatabaseTablesInBackground().catch((err) => {
+        console.error("[Startup] database table verification crashed unexpectedly:", err);
+      });
       startPostListenBoot();
     },
   );
