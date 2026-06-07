@@ -165,6 +165,10 @@ Dry-run results can be transformed into structured audit event payloads containi
 
 Tool Gateway descriptors can be summarized into provider, scope, approval, and maximum-risk metadata. This helps preview callers understand the available tool surface before attempting preflight.
 
+## Runtime Capability Preview
+
+AgentTool-shaped metadata can be adapted once, summarized as a capability surface, and used for a runtime dry run. This provides a combined view of available tools and event-specific readiness without importing live tool registries or executing tools.
+
 ## Non-Goals
 
 - no broad folder restructuring
