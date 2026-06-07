@@ -105,6 +105,12 @@ The first Tool Gateway slice is preflight-only. It accepts protocol `ToolIntent`
 
 This layer does not import the live tool registry and never executes tools. It is the policy vocabulary that future runtime adapters can use before handing execution back to the existing tool owners.
 
+## Agent Tool Descriptor Adapter
+
+Existing `AgentTool` objects can be adapted into Tool Gateway descriptors without importing the live registry. The adapter accepts tool-name shaped objects and optional explicit overrides, then infers conservative provider, scope, risk, and approval metadata for preflight.
+
+This adapter is intentionally metadata-only. It does not call `execute`, mutate the tool list, or grant provider access.
+
 ## Non-Goals
 
 - no broad folder restructuring
