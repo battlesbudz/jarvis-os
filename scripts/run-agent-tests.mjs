@@ -82,6 +82,7 @@ const tests = [
   { file: "server/agent/__tests__/mindTraceContextPacks.test.ts" },
   { file: "server/core/protocol/__tests__/runtimeProtocol.test.ts" },
   { file: "server/core/runtime/__tests__/executeRuntimeEvent.test.ts" },
+  { file: "server/core/tools/__tests__/toolGateway.test.ts" },
   { file: "server/agent/__tests__/livingContextUpdateTool.assert.ts" },
   { file: "server/workspace/__tests__/livingContextRouter.assert.ts" },
   { file: "server/agent/__tests__/integrationError.assert.ts", requiresDatabase: true },

@@ -32,7 +32,7 @@ The runtime should make these things explicit:
 |---|---|---|
 | Request and channel input | `server/routes.ts`, route slices, channel modules | `server/core/protocol/JarvisEvent` |
 | Context routing | `server/agent/contextPacks.ts`, memory modules | `server/core/protocol/ContextPacket` |
-| Tool execution | `server/agent/harness.ts`, `server/agent/tools/` | `server/core/tools/toolGateway.ts` |
+| Tool preflight and execution | `server/agent/harness.ts`, `server/agent/tools/` | `server/core/tools/toolGateway.ts` |
 | Approval gates | `server/agent/agentApproval.ts`, route handlers | `server/core/protocol/ApprovalRequirement` |
 | Model/provider choice | `server/agent/modelRouter.ts`, provider modules | `server/core/protocol/ModelRoute` |
 | Trace | `server/agent/mindTrace.ts`, `mindTraceRecorder.ts` | `server/core/protocol/MindTraceRef` |
@@ -80,6 +80,19 @@ The preview maps an incoming event through the existing context-pack classifier,
 - no approval bypasses
 
 Invalid events fail closed into a blocked runtime decision with validation errors attached.
+
+## Tool Gateway Preflight
+
+The first Tool Gateway slice is preflight-only. It accepts protocol `ToolIntent` objects plus an explicit registry/auth/policy snapshot and returns one of:
+
+- `ready`
+- `needs_auth`
+- `missing_scope`
+- `provider_down`
+- `blocked_by_policy`
+- `approval_required`
+
+This layer does not import the live tool registry and never executes tools. It is the policy vocabulary that future runtime adapters can use before handing execution back to the existing tool owners.
 
 ## Non-Goals
 
