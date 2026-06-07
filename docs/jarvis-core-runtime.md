@@ -157,6 +157,10 @@ Guarded dry run checks runtime feature flags before composing preview output. If
 
 Runtime preview reports can be formatted into deterministic text for logs, diagnostics, or simple UI panels. Formatting consumes derived preview/report/approval objects only and does not inspect secrets or execute tools.
 
+## Runtime Audit Event
+
+Dry-run results can be transformed into structured audit event payloads containing event, decision, status, risk, response mode, approval, and tool-count metadata. The builder returns a payload only; it does not write logs, persist records, or emit events.
+
 ## Non-Goals
 
 - no broad folder restructuring
