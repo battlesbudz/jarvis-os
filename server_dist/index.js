@@ -68150,6 +68150,31 @@ __export(deliverableReviewHttpRoutes_exports, {
   registerDeliverableReviewRoutes: () => registerDeliverableReviewRoutes
 });
 import { and as and79, eq as eq113 } from "drizzle-orm";
+function deliverableMeta(deliverable) {
+  const meta = deliverable.meta;
+  return meta && typeof meta === "object" && !Array.isArray(meta) ? meta : {};
+}
+function revisionParentId(deliverable) {
+  const value = deliverableMeta(deliverable).revisionOfDeliverableId;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+function compareDeliverableCreatedAt(left, right) {
+  return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+}
+function revisionSummary(deliverable, currentId, originalId) {
+  const meta = deliverableMeta(deliverable);
+  return {
+    id: deliverable.id,
+    title: deliverable.title,
+    body: deliverable.body,
+    createdAt: deliverable.createdAt,
+    status: deliverable.status,
+    parentId: revisionParentId(deliverable),
+    instructions: meta.revisionInstructions ?? null,
+    isCurrent: deliverable.id === currentId,
+    isOriginal: deliverable.id === originalId
+  };
+}
 async function defaultApproveGate(gateId, userId) {
   const { approveGate: approveGate2 } = await Promise.resolve().then(() => (init_agentApproval(), agentApproval_exports));
   await approveGate2(gateId, userId);
@@ -68388,6 +68413,52 @@ function registerDeliverableReviewRoutes(app2, deps) {
     } catch (err2) {
       console.error("Error requesting deliverable revision:", err2);
       res.status(500).json({ error: "Failed to request revision" });
+    }
+  });
+  app2.get("/api/deliverables/:id/revisions", async (req, res) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue8(req.params.id);
+      const [target] = await db2.select().from(deliverables).where(and79(eq113(deliverables.id, id), eq113(deliverables.userId, userId))).limit(1);
+      if (!target) return res.status(404).json({ error: "Deliverable not found" });
+      const userDeliverables = await db2.select().from(deliverables).where(eq113(deliverables.userId, userId));
+      const byId = new Map(userDeliverables.map((deliverable) => [deliverable.id, deliverable]));
+      let original = target;
+      const ancestors = /* @__PURE__ */ new Set();
+      for (; ; ) {
+        const parentId = revisionParentId(original);
+        if (!parentId || ancestors.has(parentId)) break;
+        const parent = byId.get(parentId);
+        if (!parent) break;
+        ancestors.add(original.id);
+        original = parent;
+      }
+      const familyIds = /* @__PURE__ */ new Set([original.id]);
+      for (let changed = true; changed; ) {
+        changed = false;
+        for (const deliverable of userDeliverables) {
+          const parentId = revisionParentId(deliverable);
+          if (parentId && familyIds.has(parentId) && !familyIds.has(deliverable.id)) {
+            familyIds.add(deliverable.id);
+            changed = true;
+          }
+        }
+      }
+      const family = userDeliverables.filter((deliverable) => familyIds.has(deliverable.id)).sort(compareDeliverableCreatedAt);
+      const current = revisionSummary(target, target.id, original.id);
+      res.json({
+        ok: true,
+        comparison: {
+          current,
+          original: original.id === target.id ? null : revisionSummary(original, target.id, original.id),
+          revisions: family.filter((deliverable) => deliverable.id !== target.id).map((deliverable) => revisionSummary(deliverable, target.id, original.id)),
+          totalCount: family.length
+        }
+      });
+    } catch (err2) {
+      console.error("Error fetching deliverable revisions:", err2);
+      res.status(500).json({ error: "Failed to fetch revisions" });
     }
   });
   app2.post("/api/deliverables/:id/discard", async (req, res) => {
@@ -81484,7 +81555,7 @@ Use the above as background. Do not re-research topics already covered there \u2
         sub.meta.pdfError = pdfMsg;
       }
     }
-    const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(jobInput) };
+    const deliverableMeta2 = { ...sub.meta, ...getRevisionDeliverableMeta(jobInput) };
     const inserted = await db.insert(deliverables).values({
       userId: job.userId,
       jobId: job.id,
@@ -81493,7 +81564,7 @@ Use the above as background. Do not re-research topics already covered there \u2
       title: sub.title,
       summary: sub.summary,
       body: sub.body,
-      meta: deliverableMeta,
+      meta: deliverableMeta2,
       driveLink: sub.meta?.pdfDriveLink ?? null
     }).returning({ id: deliverables.id });
     const deliverableId = inserted[0]?.id || "";
