@@ -24,7 +24,7 @@
 import assert from "node:assert/strict";
 
 // DATABASE_URL must be set before db.ts is imported by any module.
-// In the Replit environment it is already set via the environment; this guard
+// In hosted environments it may already be set via the environment; this guard
 // only matters if the test is run in a completely clean shell without it.
 if (!process.env.DATABASE_URL) {
   console.error("selfHeal.assert.ts: DATABASE_URL not set — circuit-breaker tests require a real DB.");

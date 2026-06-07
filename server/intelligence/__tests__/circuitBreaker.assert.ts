@@ -19,7 +19,7 @@
 // Pool constructor requires a valid connection string.
 if (!process.env.DATABASE_URL) {
   console.error(
-    "circuitBreaker.assert.ts: DATABASE_URL not set — please run in the Replit environment.",
+    "circuitBreaker.assert.ts: DATABASE_URL not set — please run with a configured DATABASE_URL.",
   );
   process.exit(1);
 }
@@ -536,7 +536,7 @@ const TEST_INTEGRATION = "google" as const;
   }
 
   // ── Test M: HTML connector error pages are classified as unconfigured ─────────
-  // When the Replit connector proxy returns an HTML error page (e.g. HTTP 404
+  // When a connector proxy returns an HTML error page (e.g. HTTP 404
   // with <!DOCTYPE html>), checkConnectorStatus must return "unconfigured" rather
   // than "broken", so no user alert is fired.  This test exercises the string
   // detection logic directly (same guard used in checkConnectorStatus).

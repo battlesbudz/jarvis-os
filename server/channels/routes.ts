@@ -940,7 +940,7 @@ export function registerChannelRoutes(app: Express): void {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    // Keep-alive ping every 25 s so Replit proxy doesn't close the connection
+    // Keep-alive ping every 25 s so hosting proxies do not close the connection
     const keepalive = setInterval(() => {
       try { res.write(": ping\n\n"); } catch { clearInterval(keepalive); }
     }, 25000);

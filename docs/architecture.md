@@ -33,7 +33,7 @@ Make routing visible before moving code. The fastest way to improve Jarvis is to
 ## Jarvis OS Foundation
 The Jarvis OS Foundation is the reliability layer that sits above the existing server and agent modules. It does not replace the current architecture. It defines a readiness contract, a doctor command, a first-pass autonomy policy, and smoke tests that prove Jarvis can safely decide between inline answers, background jobs, and approval-gated actions.
 
-This layer exists so OpenClaw-style capabilities can be added incrementally without turning setup and debugging into guesswork.
+This layer exists so Jarvis runtime capabilities can be added incrementally without turning setup and debugging into guesswork.
 
 ## Suggested Future Refactors
 Do these only as separate implementation tasks with tests/checks:

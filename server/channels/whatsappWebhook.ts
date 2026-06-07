@@ -17,7 +17,7 @@ function verifyTwilioSignature(req: Request): boolean {
   const sigHeader = req.header("x-twilio-signature");
   if (!sigHeader) return false;
   // Reconstruct the URL Twilio used. Honour X-Forwarded-Proto/Host since we
-  // typically run behind Replit's proxy / a reverse proxy in production.
+  // typically run behind a reverse proxy in production.
   const proto = (req.header("x-forwarded-proto") || req.protocol || "https").split(",")[0].trim();
   const host = req.header("x-forwarded-host") || req.header("host") || "";
   const fullUrl = `${proto}://${host}${req.originalUrl}`;

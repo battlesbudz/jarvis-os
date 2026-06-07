@@ -1,7 +1,7 @@
 /**
  * Jarvis Heartbeat — autonomous action daemon.
  *
- * Inspired by OpenClaw's heartbeat pattern (MIT, © 2025 Peter Steinberger).
+ * Jarvis heartbeat runtime.
  * Runs on a fixed interval, walks the JARVIS_HEARTBEAT.md checklist for
  * every linked user, and either acts now / queues a draft for review /
  * stays silent. No Telegram pings unless an action fired.

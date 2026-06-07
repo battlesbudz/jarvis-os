@@ -583,7 +583,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
         const arrBuf = await resp.arrayBuffer();
         const buf = Buffer.from(arrBuf);
         const { speechToText, detectAudioFormat } = await import(
-          "../replit_integrations/audio/client"
+          "../integrations/audioClient"
         );
         const format = detectAudioFormat(buf);
         const transcript = await speechToText(buf, format);

@@ -860,7 +860,7 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
           return;
         }
-        const { detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const { detectAudioFormat } = await import('./integrations/audioClient');
         const format = detectAudioFormat(file.buffer);
         let linkedUserId: string | null = null;
 
@@ -928,7 +928,7 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Sorry, I couldn't download that video. Could you try again or share the YouTube URL instead?");
           return;
         }
-        const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const { speechToText, detectAudioFormat } = await import('./integrations/audioClient');
         const format = detectAudioFormat(file.buffer);
         const transcript = await speechToText(file.buffer, format === 'unknown' ? 'mp4' : format);
         if (!transcript || !transcript.trim()) {

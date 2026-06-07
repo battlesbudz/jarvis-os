@@ -439,7 +439,7 @@ async function runDueScheduledTasks(now: Date): Promise<void> {
  * a proactive notification, but ONLY when:
  *   a) The given notificationType targets Telegram in the user's channel prefs
  *   b) The user has an active Telegram link
- *   c) REPLIT_DOMAINS is set (production / staging environment)
+ *   c) a public base URL is configured for production / staging
  *
  * This is best-effort — errors are logged but never surfaced to the caller.
  */
