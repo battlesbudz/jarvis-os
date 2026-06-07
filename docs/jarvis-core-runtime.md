@@ -67,6 +67,20 @@ Core Runtime v0.1 is intentionally small:
 
 No behavior should move in v0.1. Tool execution, memory writes, jobs, approvals, and route behavior remain owned by the existing modules.
 
+## v0.2 Runtime Gate Preview
+
+Core Runtime v0.2 adds a read-only Runtime Gate preview around `JarvisEvent`.
+
+The preview maps an incoming event through the existing context-pack classifier, then emits protocol-shaped `ContextPacket`, `RuntimeDecision`, and gate outcome objects. It is deliberately observational:
+
+- no live route changes
+- no tool execution
+- no memory writes
+- no job enqueueing
+- no approval bypasses
+
+Invalid events fail closed into a blocked runtime decision with validation errors attached.
+
 ## Non-Goals
 
 - no broad folder restructuring
