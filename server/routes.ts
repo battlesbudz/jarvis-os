@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import fs from "fs";
 import path from "path";
 import { activeCoachRuns } from "./runRegistry";
+import { registerCoachRunLifecycle } from "./coachRunLifecycle";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
@@ -2184,9 +2185,6 @@ Answer (yes/no):`,
           visibleProgressInterval = null;
         }
       };
-      res.on("close", stopVisibleProgress);
-      res.on("finish", stopVisibleProgress);
-
       // Register the run before any expensive context loading so a visible
       // progress event can open SSE without preventing X-Run-Id from being set.
       const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
@@ -2199,11 +2197,15 @@ Answer (yes/no):`,
         abortController.abort();
         activeCoachRuns.delete(runId);
       };
-      req.on('close', cleanupRun);
-      req.on('close', () => {
-        if (!res.writableEnded) clientDisconnected = true;
+      registerCoachRunLifecycle({
+        req,
+        res,
+        cleanupRun,
+        markClientDisconnected: () => {
+          clientDisconnected = true;
+        },
+        stopVisibleProgress,
       });
-      res.on("finish", cleanupRun);
 
       res.setHeader('X-Run-Id', runId);
       res.setHeader('Access-Control-Expose-Headers', 'X-Run-Id');
