@@ -95,6 +95,7 @@ const tests = [
   { file: "server/core/runtime/__tests__/runtimePreviewReport.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeToolPreflight.test.ts" },
   { file: "server/core/tools/__tests__/agentToolAdapter.test.ts" },
+  { file: "server/core/tools/__tests__/toolCapabilitySummary.test.ts" },
   { file: "server/core/tools/__tests__/toolGateway.test.ts" },
   { file: "server/agent/__tests__/livingContextUpdateTool.assert.ts" },
   { file: "server/workspace/__tests__/livingContextRouter.assert.ts" },
