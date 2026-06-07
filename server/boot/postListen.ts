@@ -214,10 +214,23 @@ function startDiagnosticsBoot(): void {
   }
 }
 
+function startMemoryVectorRepairBoot(): void {
+  setTimeout(() => {
+    import("../jobs/backfillEmbeddings").then(({ runBackfillEmbeddings }) => {
+      runBackfillEmbeddings().catch((err: Error) => {
+        console.error("[Startup] memory embedding backfill failed:", err.message);
+      });
+    }).catch((err: Error) => {
+      console.warn("[Startup] memory embedding backfill module unavailable:", err.message);
+    });
+  }, 60_000);
+}
+
 export function startPostListenBoot(): void {
   startTelegramBoot();
   logExternalChannelBoot();
   startProactiveEngines();
   startWorkspaceBoot();
   startDiagnosticsBoot();
+  startMemoryVectorRepairBoot();
 }

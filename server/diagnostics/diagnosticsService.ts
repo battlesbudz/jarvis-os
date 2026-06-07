@@ -449,15 +449,25 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
   let openAiLatencyMs: number | null = null;
   const openAiProbeStart = Date.now();
   try {
-    await routeModelTurn({
-      tier: "cheap",
-      messages: [{ role: "user", content: "ping" }],
-      toolChoice: "none",
-      maxCompletionTokens: 8,
-      stream: false,
-      userId,
-      logPrefix: "[DiagnosticsProviderProbe]",
-    });
+    const { hasCodexOAuthProvider, isDirectOpenAIDisabled } = await import("../agent/providers/env");
+    if (hasCodexOAuthProvider() && isDirectOpenAIDisabled()) {
+      const { runProviderHealthChecks } = await import("../agent/providers/healthCheck");
+      const report = await runProviderHealthChecks();
+      if (!report.allOk) {
+        const failed = report.results.filter((result) => !result.ok);
+        throw new Error(failed.map((result) => `${result.provider}: ${result.error ?? "failed"}`).join("; "));
+      }
+    } else {
+      await routeModelTurn({
+        tier: "cheap",
+        messages: [{ role: "user", content: "ping" }],
+        toolChoice: "none",
+        maxCompletionTokens: 8,
+        stream: false,
+        userId,
+        logPrefix: "[DiagnosticsProviderProbe]",
+      });
+    }
     openAiLatencyMs = Date.now() - openAiProbeStart;
   } catch (probeErr) {
     openAiReachable = false;

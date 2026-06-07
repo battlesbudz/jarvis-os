@@ -40,6 +40,13 @@ async function verifyDatabaseTablesInBackground(): Promise<void> {
   console.error("[Startup] database table verification failed after retries; continuing with existing schema", lastErr);
 }
 
+async function startRuntimeBootAfterListen(): Promise<void> {
+  await verifyDatabaseTablesInBackground();
+  await runPreListenBoot();
+  startWorkerBoot();
+  startPostListenBoot();
+}
+
 (async () => {
   logTelegramStatus();
 
@@ -57,7 +64,6 @@ async function verifyDatabaseTablesInBackground(): Promise<void> {
   const server = await registerRoutes(app);
 
   registerRealtimeBoot(app, server);
-  startWorkerBoot();
   setupErrorHandler(app);
 
   const port = parseInt(process.env.PORT || "5000", 10);
@@ -70,13 +76,9 @@ async function verifyDatabaseTablesInBackground(): Promise<void> {
     },
     () => {
       log(`express server serving on ${host}:${port}`);
-      runPreListenBoot().catch((err) => {
-        console.error("[Startup] pre-listen boot tasks crashed unexpectedly:", err);
+      startRuntimeBootAfterListen().catch((err) => {
+        console.error("[Startup] runtime boot tasks crashed unexpectedly:", err);
       });
-      verifyDatabaseTablesInBackground().catch((err) => {
-        console.error("[Startup] database table verification crashed unexpectedly:", err);
-      });
-      startPostListenBoot();
     },
   );
 })();
