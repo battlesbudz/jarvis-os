@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  type AgentSdkRunnerResult,
   isAgentSdkRunnerEnabled,
   getAgentSdkModelProvider,
   matchesAgentSdkEmailDraftOnlyWorkflow,
@@ -16,6 +17,10 @@ import {
 import { requestTelegramApprovalForPendingCall } from "../hitlApproval";
 import { createFileAgentSdkRunStore } from "../runStore";
 import { createAgentSdkTools } from "../toolRegistry";
+
+function assertHandled(result: AgentSdkRunnerResult): asserts result is Exclude<AgentSdkRunnerResult, { handled: false }> {
+  assert.equal(result.handled, true);
+}
 
 async function main() {
 process.env.ENABLE_AGENT_SDK_RUNNER = "true";
@@ -237,6 +242,7 @@ try {
     },
   );
   assert.equal(runnerResult.handled, true);
+  assertHandled(runnerResult);
   assert.equal(runnerResult.status, "awaiting_approval");
   assert.equal(requestApprovalForPendingCallCount, 1);
   assert.equal(sent, false);
@@ -297,6 +303,7 @@ try {
       },
     },
   );
+  assertHandled(draftFallbackResult);
   assert.equal(draftFallbackResult.status, "awaiting_approval");
   assert.equal(draftFallbackResult.gateId, "gate_draft_fallback");
   assert.equal(draftFallbackApprovals.length, 1);
@@ -333,6 +340,7 @@ try {
       },
     },
   );
+  assertHandled(fallbackResumeResult);
   assert.equal(fallbackResumeResult.status, "complete");
   assert.equal(sent, true);
   assert.equal((await store.load(draftFallbackResult.runId))?.meta.status, "complete");
@@ -380,6 +388,7 @@ try {
       },
     },
   );
+  assertHandled(longHorizonResult);
   assert.equal(longHorizonResult.status, "complete");
   assert.equal(Array.isArray(longHorizonRequests[0].stopWhen), true);
   assert.equal(longHorizonRequests[0].stopWhen.length, 2);
@@ -421,6 +430,7 @@ try {
       },
     },
   );
+  assertHandled(draftOnlyResult);
   assert.equal(draftOnlyResult.status, "complete");
   assert.equal(draftOnlyRequests[0].tools.some((tool: any) => tool.function?.name === "send_email"), false);
   assert.match(draftOnlyRequests[0].input, /Relevant conversation context/);
@@ -473,6 +483,7 @@ try {
       sendTelegramMessage: async () => {},
     },
   );
+  assertHandled(reminderResult);
   assert.equal(reminderResult.status, "complete");
   assert.equal(reminderCreateCount, 1);
   assert.equal(reminderRequests[0].tools.some((tool: any) => tool.function?.name === "create_internal_reminder"), true);
@@ -525,6 +536,7 @@ try {
       },
     },
   );
+  assertHandled(restartResult);
   assert.equal(restartResult.status, "complete");
   assert.deepEqual(restartRequests[0].input, []);
   assert.equal(Array.isArray(restartRequests[0].stopWhen), true);
@@ -554,7 +566,7 @@ try {
       callModel: async (request) => {
         resumeCalls.push(request);
         const sendTool: any = (request.tools as any[]).find((tool) => tool.function?.name === "send_email");
-        if (request.approveToolCalls?.includes("call_send_2")) {
+        if ((request.approveToolCalls as string[] | undefined)?.includes("call_send_2")) {
           await sendTool.function.execute({
             to: "sam@example.com",
             subject: "Hello",
@@ -583,6 +595,7 @@ try {
       },
     },
   );
+  assertHandled(approvedResume);
   assert.equal(approvedResume.status, "complete");
   assert.deepEqual(resumeCalls[0].approveToolCalls, ["call_send_2"]);
   assert.equal(sent, true);
@@ -648,6 +661,7 @@ try {
       },
     },
   );
+  assertHandled(rejectedResume);
   assert.equal(rejectedResume.status, "rejected");
   assert.equal(sent, false);
   assert.equal((await store.load("run_reject"))?.meta.status, "rejected");

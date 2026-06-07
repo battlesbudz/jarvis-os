@@ -46,21 +46,21 @@ export interface LivingAgentCardAgent {
   } | null;
 }
 
-const STATUS_COLORS: Record<string, string> = {
+export const STATUS_COLORS: Record<string, string> = {
   online: "#22c55e",
   idle: "#f59e0b",
   dormant: "#6b7280",
   stuck: "#ef4444",
 };
 
-const STATUS_LABELS: Record<string, string> = {
+export const STATUS_LABELS: Record<string, string> = {
   online: "Online",
   idle: "Idle",
   dormant: "Dormant",
   stuck: "Stuck",
 };
 
-const PLATFORM_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
+export const PLATFORM_ICONS: Record<string, keyof typeof Ionicons.glyphMap> = {
   telegram: "paper-plane-outline",
   discord: "logo-discord",
   slack: "logo-slack",

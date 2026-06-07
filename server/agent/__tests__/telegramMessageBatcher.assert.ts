@@ -45,12 +45,12 @@ async function main() {
   const separated: string[] = [];
   enqueueTelegramCoachMessageBatch(
     { userId: "user-1", chatId: "chat-1", text: "same chat" },
-    (batch) => separated.push(batch.text),
+    (batch) => { separated.push(batch.text); },
     10,
   );
   enqueueTelegramCoachMessageBatch(
     { userId: "user-1", chatId: "chat-2", text: "different chat" },
-    (batch) => separated.push(batch.text),
+    (batch) => { separated.push(batch.text); },
     10,
   );
   await sleep(30);

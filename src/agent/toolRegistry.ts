@@ -1,7 +1,34 @@
 import { z } from "zod/v4";
 import type { AgentSdkRunStore } from "./runStore";
 
-function tool<TDefinition extends Record<string, unknown>>(definition: TDefinition): TDefinition {
+export interface AgentSdkToolDefinition {
+  [key: string]: unknown;
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  outputSchema: unknown;
+  requireApproval?: boolean;
+  execute: (args: any) => unknown;
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: unknown;
+    requireApproval?: boolean;
+    execute: (args: any) => unknown;
+  };
+}
+
+interface AgentSdkToolInput {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+  outputSchema: unknown;
+  requireApproval?: boolean;
+  execute: (args: any) => unknown;
+}
+
+function tool(definition: AgentSdkToolInput): AgentSdkToolDefinition {
   return {
     ...definition,
     type: "function",
@@ -43,7 +70,7 @@ export function createAgentSdkTools(deps: AgentSdkToolDeps) {
     description: "Read a small amount of Jarvis memory/context relevant to drafting the email.",
     inputSchema: z.object({ query: z.string() }),
     outputSchema: z.object({ context: z.string() }),
-    execute: async ({ query }) => ({
+    execute: async ({ query }: { query: string }) => ({
       context: deps.readContext ? await deps.readContext(query) : "",
     }),
   });
@@ -62,7 +89,7 @@ export function createAgentSdkTools(deps: AgentSdkToolDeps) {
       subject: z.string(),
       body: z.string(),
     }),
-    execute: async ({ to, subject, body }) => {
+    execute: async ({ to, subject, body }: { to: string; subject: string; body: string }) => {
       const record = await deps.store.load(deps.runId);
       if (record) {
         record.meta.draft = { to, subject, body };
@@ -88,7 +115,7 @@ export function createAgentSdkTools(deps: AgentSdkToolDeps) {
       error: z.string().optional(),
     }),
     requireApproval: true,
-    execute: async ({ to, subject, body, provider }) => {
+    execute: async ({ to, subject, body, provider }: { to: string; subject: string; body: string; provider?: "google" | "microsoft" }) => {
       if (!deps.sendEmail) return { sent: false, error: "sendEmail adapter missing" };
       const result = await deps.sendEmail({ to, subject, body, provider });
       return result.ok
@@ -115,7 +142,7 @@ export function createAgentSdkTools(deps: AgentSdkToolDeps) {
       deduped: z.boolean().optional(),
       error: z.string().optional(),
     }),
-    execute: async ({ title, description, scheduledAt, recurrence }) => {
+    execute: async ({ title, description, scheduledAt, recurrence }: { title: string; description?: string; scheduledAt: string; recurrence?: string }) => {
       if (!deps.createInternalReminder) {
         return { created: false, title, error: "createInternalReminder adapter missing" };
       }
@@ -146,7 +173,7 @@ export function createAgentSdkTools(deps: AgentSdkToolDeps) {
     },
   });
 
-  const tools = [readContext];
+  const tools: AgentSdkToolDefinition[] = [readContext];
 
   if (deps.includeDraftEmailTool !== false) {
     tools.push(draftEmail);

@@ -3,11 +3,11 @@ import { initChannels } from "../channels";
 import { startDaemonBridge } from "../daemon/bridge";
 import { registerGatewayControlPlane } from "../gateway/controlPlane";
 import { registerVoiceRelay } from "../voiceRelayRoutes";
-import type express from "express";
+import type { Express } from "express";
 
 const KNOWN_WS_PATHS = ["/api/daemon/ws", "/api/voice/ws", "/api/gateway/ws"];
 
-export function registerRealtimeBoot(app: express.Application, server: Server): void {
+export function registerRealtimeBoot(app: Express, server: Server): void {
   initChannels();
   startDaemonBridge(server);
   registerGatewayControlPlane(app, server);

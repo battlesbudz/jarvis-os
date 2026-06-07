@@ -98,6 +98,9 @@ async function runLeanContextToolBudgetAssertion(): Promise<void> {
 
   let captured: ProviderQueryParams | null = null;
   class CapturingProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
     async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
       captured = params;
       yield { type: "text", delta: "short answer" };
@@ -139,10 +142,11 @@ async function runLeanContextToolBudgetAssertion(): Promise<void> {
       logPrefix: "[ModelRouterLeanTest]",
     });
 
-    assert.equal(captured?.tools, undefined);
-    assert.equal(captured?.toolChoice, "none");
-    assert.equal(captured?.messages.at(-1)?.role, "user");
-    assert.equal(captured?.messages.at(-1)?.content, "Please create a tiny 3-bullet test plan for checking that Jarvis is working.");
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(capturedRequest?.tools, undefined);
+    assert.equal(capturedRequest?.toolChoice, "none");
+    assert.equal(capturedRequest?.messages.at(-1)?.role, "user");
+    assert.equal(capturedRequest?.messages.at(-1)?.content, "Please create a tiny 3-bullet test plan for checking that Jarvis is working.");
     console.log("OK: oversized tool schemas trigger lean context for simple writing/planning chat turns");
   } finally {
     _clearProviderCacheForTesting();

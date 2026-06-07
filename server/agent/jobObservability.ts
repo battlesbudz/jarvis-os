@@ -8,7 +8,7 @@ export interface ObservableJobRow {
   agentType: string;
   title: string;
   prompt?: string;
-  input: Record<string, unknown> | null;
+  input: unknown;
   status: string;
   result?: Jsonish | null;
   error?: string | null;
@@ -25,7 +25,7 @@ export interface ObservableDiagnosticEvent {
   subsystem: string;
   severity: string;
   message: string;
-  metadata?: Record<string, unknown> | null;
+  metadata?: unknown;
   resolved?: boolean;
   createdAt: Date | string;
 }
@@ -96,15 +96,21 @@ function previewResult(result: Jsonish | null | undefined): string | null {
   return raw.length > PREVIEW_LIMIT ? `${raw.slice(0, PREVIEW_LIMIT)}...` : raw;
 }
 
-function retryCountFromInput(input: Record<string, unknown> | null | undefined): number {
-  const retryCount = input?.retryCount;
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function retryCountFromInput(input: unknown): number {
+  const retryCount = objectRecord(input)?.retryCount;
   return typeof retryCount === "number" && Number.isFinite(retryCount) && retryCount > 0
     ? Math.floor(retryCount)
     : 0;
 }
 
-function throttleCountFromInput(input: Record<string, unknown> | null | undefined): number {
-  const throttleCount = input?.providerThrottleCount;
+function throttleCountFromInput(input: unknown): number {
+  const throttleCount = objectRecord(input)?.providerThrottleCount;
   return typeof throttleCount === "number" && Number.isFinite(throttleCount) && throttleCount > 0
     ? Math.floor(throttleCount)
     : 0;
@@ -121,21 +127,22 @@ export function decorateJobForObservability(job: ObservableJobRow, now = new Dat
   const completedAt = toDate(job.completedAt);
   const runtimeEnd = completedAt ?? (job.status === "running" || job.status === "cancelling" ? now : null);
   const runtimeMs = startedAt && runtimeEnd ? Math.max(0, runtimeEnd.getTime() - startedAt.getTime()) : null;
-  const workerRuntime = getWorkerRuntimeFromInput(job.input ?? undefined);
+  const input = objectRecord(job.input);
+  const workerRuntime = getWorkerRuntimeFromInput(input ?? undefined);
 
   return {
     id: job.id,
     agentType: job.agentType,
-    workerType: workerRuntime?.workerType ?? resolveWorkerType({ agentType: job.agentType, input: job.input }),
+    workerType: workerRuntime?.workerType ?? resolveWorkerType({ agentType: job.agentType, input }),
     title: job.title,
-    input: job.input ?? null,
+    input,
     status: job.status,
     createdAt: createdAt.toISOString(),
     startedAt: startedAt ? startedAt.toISOString() : null,
     completedAt: completedAt ? completedAt.toISOString() : null,
     ageMs: ageSince(createdAt, now) ?? 0,
     runtimeMs,
-    retryCount: retryCountFromInput(job.input),
+    retryCount: retryCountFromInput(input),
     lastError: job.error ?? null,
     resultPreview: previewResult(job.result),
     turns: job.turns ?? 0,
@@ -193,7 +200,7 @@ export function buildJobRunnerObservability(opts: {
       subsystem: event.subsystem,
       severity: event.severity,
       message: event.message,
-      metadata: event.metadata ?? {},
+      metadata: objectRecord(event.metadata) ?? {},
       createdAt: (toDate(event.createdAt) ?? now).toISOString(),
     })),
   };

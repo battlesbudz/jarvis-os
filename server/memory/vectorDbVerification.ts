@@ -203,27 +203,27 @@ export async function runMemoryVectorDbVerification(options: {
     });
 
     await recordCheck(checks, "pgvector_extension_available", async () => {
-      const result = await pool.query<{ extversion: string }>(
+      const result = await pool.query(
         "SELECT extversion FROM pg_extension WHERE extname = 'vector'",
-      );
+      ) as { rows: { extversion: string }[] };
       const extversion = result.rows[0]?.extversion;
       if (!extversion) throw new Error("pgvector extension is not installed after migration");
       return `pgvector extension installed (version ${extversion})`;
     });
 
     await recordCheck(checks, "embedding_vector_schema", async () => {
-      const column = await pool.query<{ udt_name: string; data_type: string }>(
+      const column = await pool.query(
         `SELECT udt_name, data_type
          FROM information_schema.columns
          WHERE table_name = 'user_memories'
            AND column_name = 'embedding_vector'`,
-      );
-      const index = await pool.query<{ indexname: string }>(
+      ) as { rows: { udt_name: string; data_type: string }[] };
+      const index = await pool.query(
         `SELECT indexname
          FROM pg_indexes
          WHERE tablename = 'user_memories'
            AND indexname = 'user_memories_embedding_vector_idx'`,
-      );
+      ) as { rows: { indexname: string }[] };
       if (!column.rows[0]) throw new Error("user_memories.embedding_vector column is missing");
       if (column.rows[0].udt_name !== "vector") {
         throw new Error(`embedding_vector uses unexpected type ${column.rows[0].udt_name}`);
@@ -237,10 +237,10 @@ export async function runMemoryVectorDbVerification(options: {
       const sync = await syncExistingMemoryEmbeddingVectors(5);
       if (sync.unavailable) throw new Error("JSONB-to-pgvector sync reported pgvector unavailable");
       if (sync.updated < 1) throw new Error(`expected at least one vector backfill, got ${sync.updated}`);
-      const vector = await pool.query<{ embedding_vector: string | null }>(
+      const vector = await pool.query(
         "SELECT embedding_vector::text AS embedding_vector FROM user_memories WHERE id = $1 LIMIT 1",
         [TEST_MEMORY_ID],
-      );
+      ) as { rows: { embedding_vector: string | null }[] };
       if (!vector.rows[0]?.embedding_vector) throw new Error("embedding_vector was not written");
       return "existing JSONB embedding was mirrored into user_memories.embedding_vector";
     });

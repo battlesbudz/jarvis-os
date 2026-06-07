@@ -146,7 +146,7 @@ function hasPack(decision: ContextPackDecision, pack: string): boolean {
   assert.equal(trace.taskTypeDetected, "memory_query");
   assert.equal(trace.routeChosen, "memory");
   assert.equal(trace.memoriesRetrieved[0]?.id, "mem-1");
-  assert.equal(trace.toolsCalled[0]?.argsPreview?.accessToken, "[redacted]");
+  assert.equal((trace.toolsCalled[0]?.argsPreview as { accessToken?: string } | undefined)?.accessToken, "[redacted]");
   assert.equal(trace.approval.required, false);
   assert.ok(trace.contextLoaded.includes("memory_context"));
   console.log("OK: mind trace explains route, context, memory, SOUL, tools, and approval state");
@@ -203,7 +203,7 @@ function hasPack(decision: ContextPackDecision, pack: string): boolean {
   });
 
   assert.equal(trace.traceId, "harness-trace-test");
-  assert.equal(trace.toolsCalled[0]?.argsPreview?.accessToken, "[redacted]");
+  assert.equal((trace.toolsCalled[0]?.argsPreview as { accessToken?: string } | undefined)?.accessToken, "[redacted]");
   assert.equal(trace.toolsCalled[1]?.status, "blocked");
   assert.equal(trace.approval.required, true);
   assert.ok(trace.contextLoaded.includes("memory_context"));

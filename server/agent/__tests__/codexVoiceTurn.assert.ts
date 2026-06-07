@@ -23,7 +23,7 @@ async function main() {
         throw new Error("worker should not be used for text turns");
       },
       runCoachAgent: async (input) => {
-        calls.push(input);
+        calls.push(input as unknown as Record<string, unknown>);
         return {
           reply: "Start with the compliance checklist, then update the tracking system.",
           rawReply: "Start with the compliance checklist, then update the tracking system.",

@@ -131,7 +131,8 @@ function normalizeLocationCandidates(location: string): string[] {
     "staten island, ny": ["Staten Island", "New York"],
   };
 
-  const candidates = [location.trim(), ...(aliases[withoutCountry] ?? []), cityState?.city].filter(Boolean);
+  const candidates = [location.trim(), ...(aliases[withoutCountry] ?? []), cityState?.city]
+    .filter((candidate): candidate is string => Boolean(candidate));
   return [...new Set(candidates)];
 }
 

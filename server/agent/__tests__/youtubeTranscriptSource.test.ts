@@ -1,40 +1,42 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import { humanReadableSource } from "../../lib/transcriptSourceLabel";
 
 describe("humanReadableSource", () => {
   it("returns null for undefined, empty string, 'unknown', and 'cache'", () => {
-    expect(humanReadableSource(undefined)).toBeNull();
-    expect(humanReadableSource("")).toBeNull();
-    expect(humanReadableSource("unknown")).toBeNull();
-    expect(humanReadableSource("cache")).toBeNull();
+    assert.equal(humanReadableSource(undefined), null);
+    assert.equal(humanReadableSource(""), null);
+    assert.equal(humanReadableSource("unknown"), null);
+    assert.equal(humanReadableSource("cache"), null);
   });
 
   it("returns null for 'gemini' (attribution already present in transcript body)", () => {
-    expect(humanReadableSource("gemini")).toBeNull();
+    assert.equal(humanReadableSource("gemini"), null);
   });
 
   it("returns 'Supadata (verbatim captions)' for the supadata source", () => {
-    expect(humanReadableSource("supadata")).toBe("Supadata (verbatim captions)");
+    assert.equal(humanReadableSource("supadata"), "Supadata (verbatim captions)");
   });
 
   it("returns 'YouTube captions (verbatim)' for all caption-based sources", () => {
-    expect(humanReadableSource("innertube/ANDROID")).toBe("YouTube captions (verbatim)");
-    expect(humanReadableSource("innertube/WEB")).toBe("YouTube captions (verbatim)");
-    expect(humanReadableSource("yt-dlp")).toBe("YouTube captions (verbatim)");
-    expect(humanReadableSource("timedtext")).toBe("YouTube captions (verbatim)");
-    expect(humanReadableSource("youtube-transcript")).toBe("YouTube captions (verbatim)");
+    assert.equal(humanReadableSource("innertube/ANDROID"), "YouTube captions (verbatim)");
+    assert.equal(humanReadableSource("innertube/WEB"), "YouTube captions (verbatim)");
+    assert.equal(humanReadableSource("yt-dlp"), "YouTube captions (verbatim)");
+    assert.equal(humanReadableSource("timedtext"), "YouTube captions (verbatim)");
+    assert.equal(humanReadableSource("youtube-transcript"), "YouTube captions (verbatim)");
   });
 
   it("returns 'Whisper (AI audio transcription)' for audio-transcription sources", () => {
-    expect(humanReadableSource("audio-transcription")).toBe("Whisper (AI audio transcription)");
-    expect(humanReadableSource("audio-transcription (auto-retry)")).toBe("Whisper (AI audio transcription)");
+    assert.equal(humanReadableSource("audio-transcription"), "Whisper (AI audio transcription)");
+    assert.equal(humanReadableSource("audio-transcription (auto-retry)"), "Whisper (AI audio transcription)");
   });
 
   it("returns 'browser' and 'local worker' for browser/worker sources", () => {
-    expect(humanReadableSource("browser")).toBe("browser");
-    expect(humanReadableSource("local-worker")).toBe("local worker");
+    assert.equal(humanReadableSource("browser"), "browser");
+    assert.equal(humanReadableSource("local-worker"), "local worker");
   });
 
   it("passes through unrecognised source strings verbatim", () => {
-    expect(humanReadableSource("some-future-source")).toBe("some-future-source");
+    assert.equal(humanReadableSource("some-future-source"), "some-future-source");
   });
 });

@@ -187,7 +187,7 @@ async function main() {
       op: { type: "shell", cmd: "echo JARVIS_DESKTOP_CONNECTOR_SHELL_OK", timeoutMs: 15000 },
       timeoutMs: 20000,
     }]);
-    const verifyOp = calls.sendDaemonOp[0].op as { cmd: string };
+    const verifyOp = (calls.sendDaemonOp as Array<{ op: { cmd: string } }>)[0].op;
     assert.equal(verifyOp.cmd.includes("Write-Output"), false, "verify command must not rely on PowerShell-only Write-Output");
     assert.equal(shellOkVerify.json.ok, true);
     assert.deepEqual(shellOkVerify.json.result, { ok: true, data: { stdout: "JARVIS_DESKTOP_CONNECTOR_SHELL_OK" } });

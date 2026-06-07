@@ -161,7 +161,7 @@ export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps 
     title: input.title,
     input: mergedInput,
   });
-  const runtimeInput = {
+  const runtimeInput: Record<string, unknown> = {
     ...mergedInput,
     workerType: workerRuntime.workerType,
     workerRuntime,

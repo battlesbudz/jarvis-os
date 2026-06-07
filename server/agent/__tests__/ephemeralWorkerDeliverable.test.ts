@@ -20,10 +20,15 @@ async function main() {
     {
       reply: "1. Confirm vendor owner.\n2. Schedule licensing follow-up.",
       turns: 3,
-      toolCalls: [{ name: "memory_search" }],
+      toolCalls: [{
+        name: "memory_search",
+        args: {},
+        result: { ok: true, content: "memory search complete" },
+        durationMs: 12,
+      }],
       agentId: "agent-temp-1",
       agentName: "Temporary Worker",
-      attachments: [{ name: "action-items.md" }],
+      attachments: [{ kind: "file", filename: "action-items.md" }],
       ephemeral: true,
     },
     "task_worker",
@@ -44,7 +49,7 @@ async function main() {
     cleanupMode: "delete",
     turns: 3,
     toolCallsCount: 1,
-    attachments: [{ name: "action-items.md" }],
+    attachments: [{ kind: "file", filename: "action-items.md" }],
   });
 
   console.log("OK: ephemeral worker results are converted into reviewable deliverables");

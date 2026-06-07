@@ -9,6 +9,7 @@ type ChatCreateBody = OpenAI.Chat.Completions.ChatCompletionCreateParams;
 type ChatCreateOptions = { signal?: AbortSignal };
 type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion;
 type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk;
+type ChatCompletionFinishReason = NonNullable<ChatCompletion["choices"][number]["finish_reason"]>;
 
 const ROUTER_PATCHED = Symbol.for("jarvis.openaiChatRouterPatched");
 const CLIENT_POST_PATCHED = Symbol.for("jarvis.openaiClientPostRouterPatched");
@@ -55,7 +56,7 @@ function toCompletion(
     choices: [
       {
         index: 0,
-        finish_reason: (finishReason as ChatCompletion.Choice["finish_reason"]) ?? "stop",
+        finish_reason: (finishReason as ChatCompletionFinishReason | null) ?? "stop",
         logprobs: null,
         message: {
           role: "assistant",
@@ -99,17 +100,19 @@ async function* toStream(text: string, routedModel: string): AsyncGenerator<Chat
   } as ChatCompletionChunk;
 }
 
+type OpenAIClientPatchProto = {
+  [CLIENT_POST_PATCHED]?: boolean;
+  [CLIENT_METHOD_PATCHED]?: boolean;
+  post?: (path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }) => unknown;
+  methodRequest?: (method: string, path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }) => unknown;
+};
+
 type OpenAIConstructor = {
-  prototype: OpenAI & {
-    [CLIENT_POST_PATCHED]?: boolean;
-    [CLIENT_METHOD_PATCHED]?: boolean;
-    post?: (path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }) => unknown;
-    methodRequest?: (method: string, path: string, opts?: { body?: unknown; stream?: boolean; signal?: AbortSignal }) => unknown;
-  };
+  prototype: OpenAIClientPatchProto;
 };
 
 type CompletionsConstructor = {
-  prototype: typeof Completions.prototype & {
+  prototype: {
     [ROUTER_PATCHED]?: boolean;
     create: (body: ChatCreateBody, options?: ChatCreateOptions) => unknown;
   };
@@ -201,7 +204,7 @@ export function installOpenAIChatRouterPatch(): void {
   const cjsCompletions = optionalRequire("openai/resources/chat/completions") as { Completions?: CompletionsConstructor } | null;
 
   const patched = [
-    patchCompletions(Completions as CompletionsConstructor, "[OpenAIChatRouterPatch]"),
+    patchCompletions(Completions as unknown as CompletionsConstructor, "[OpenAIChatRouterPatch]"),
     patchCompletions(cjsCompletions?.Completions, "[OpenAIChatRouterPatch:cjs]"),
     patchOpenAIClient(OpenAI as unknown as OpenAIConstructor, "[OpenAIClientPostRouterPatch]", "[OpenAIClientMethodRouterPatch]"),
     patchOpenAIClient(cjsOpenAI?.default, "[OpenAIClientPostRouterPatch:cjs]", "[OpenAIClientMethodRouterPatch:cjs]"),

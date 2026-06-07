@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createFileAgentSdkRunStore } from "../src/agent/runStore";
 import {
+  type AgentSdkRunnerResult,
   matchesAgentSdkEmailDraftOnlyWorkflow,
   matchesAgentSdkEmailWorkflow,
   matchesAgentSdkReminderWorkflow,
@@ -17,6 +18,10 @@ import {
   isBrowserSearchChallengeText,
   isNewsLikeSearchQuery,
 } from "../server/agent/tools/webSearchFallback";
+
+function assertHandled(result: AgentSdkRunnerResult): asserts result is Exclude<AgentSdkRunnerResult, { handled: false }> {
+  assert.equal(result.handled, true);
+}
 
 type WorkflowStatus =
   | "sdk_passed_mocked"
@@ -206,6 +211,7 @@ async function proveEmailHitlSdkSlice(): Promise<string[]> {
       },
     );
 
+    assertHandled(result);
     assert.equal(result.status, "awaiting_approval");
     assert.equal(approvalRequested, true);
     assert.equal(sendCount, 0);
@@ -254,6 +260,7 @@ async function proveEmailHitlSdkSlice(): Promise<string[]> {
       },
     );
 
+    assertHandled(approved);
     assert.equal(approved.status, "complete");
     assert.equal(sendCount, 1);
     assert.ok(telegramMessages.some((message) => /completed/i.test(message)));
@@ -314,6 +321,7 @@ async function proveEmailDraftOnlySdkSlice(): Promise<string[]> {
       },
     );
 
+    assertHandled(result);
     assert.equal(result.status, "complete");
     assert.equal(sendCount, 0);
     assert.equal((await store.load(result.runId))?.meta.workflow, "email_draft_only");
@@ -382,6 +390,7 @@ async function proveInternalReminderSdkSlice(): Promise<string[]> {
       },
     );
 
+    assertHandled(result);
     assert.equal(result.status, "complete");
     assert.equal(createCount, 1);
     assert.equal((await store.load(result.runId))?.meta.workflow, "internal_reminder");

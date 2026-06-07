@@ -3,6 +3,7 @@ import {
   buildGoalPlanTask,
   mergeGoalTaskIntoPlan,
 } from "../../goalPlanHandoff";
+import type { GoalPlanData } from "../../goalPlanHandoff";
 import type { InjectableGoalTask } from "../../goalScheduler";
 
 const pick: InjectableGoalTask = {
@@ -35,7 +36,7 @@ function run(): void {
     "Choose the smallest useful next move. (from goal: Launch Jarvis project loops)",
   );
 
-  const emptyPlan = { date: dateKey, tasks: [], greeting: "Morning", insight: "" };
+  const emptyPlan: GoalPlanData = { date: dateKey, tasks: [], greeting: "Morning", insight: "" };
   const inserted = mergeGoalTaskIntoPlan(emptyPlan, pick, dateKey, 1_700_000_000_000);
 
   assert.equal(inserted.inserted, true);

@@ -42,6 +42,6 @@ try {
   if (originalPublicBaseUrl === undefined) delete process.env.PUBLIC_BASE_URL;
   else process.env.PUBLIC_BASE_URL = originalPublicBaseUrl;
 
-  if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+  if (originalNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
   else process.env.NODE_ENV = originalNodeEnv;
 }
