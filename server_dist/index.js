@@ -88180,7 +88180,7 @@ async function fetchUnembedded(limit) {
     WHERE embedding IS NULL
       AND content IS NOT NULL
       AND content != ''
-    ORDER BY created_at ASC
+    ORDER BY extracted_at ASC
     LIMIT ${limit}
   `);
   return rows.rows ?? [];
