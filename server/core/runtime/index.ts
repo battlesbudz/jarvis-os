@@ -1,6 +1,7 @@
 export * from "./executeRuntimeEvent";
 export * from "./runtimeAuditEvent";
 export * from "./runtimeApprovalPreview";
+export * from "./runtimeCapabilityPreview";
 export * from "./runtimeDryRun";
 export * from "./runtimeEventAdapter";
 export * from "./runtimeFeatureFlags";
