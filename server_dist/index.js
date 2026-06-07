@@ -592,6 +592,7 @@ __export(schema_exports, {
   agentApprovalAllowlist: () => agentApprovalAllowlist,
   agentApprovalGates: () => agentApprovalGates,
   agentApprovalPolicies: () => agentApprovalPolicies,
+  agentBuildLog: () => agentBuildLog,
   agentChatMessages: () => agentChatMessages,
   agentChatSessionSummaries: () => agentChatSessionSummaries,
   agentChatSessions: () => agentChatSessions,
@@ -668,7 +669,6 @@ __export(schema_exports, {
   morningVoiceNotes: () => morningVoiceNotes,
   nervousSystemSignals: () => nervousSystemSignals,
   nervousSystemWatches: () => nervousSystemWatches,
-  openclawBuildLog: () => openclawBuildLog,
   orchestrationTraces: () => orchestrationTraces,
   people: () => people,
   planSnapshots: () => planSnapshots,
@@ -706,7 +706,7 @@ __export(schema_exports, {
 import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
-var vector1536, users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, userOAuthTokens, composioConnectedAccounts, commitments, userMemories, MEMORY_TIERS, MEMORY_TYPES, MEMORY_CATEGORIES, people, brainPages, brainTimelineEntries, brainContentChunks, brainLinks, brainPageVersions, brainIngestLog, brainConfig, jarvisSouls, livingContextUpdates, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, websiteCrawls, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, buildSessions, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, SIMPLE_ORIGIN_CHANNELS, discordChannelSchedules, interactionLog, discordPendingApprovals, DEFAULT_AGENT_PERMISSIONS, discordAgents, agentMemories, AGENT_MESSAGE_TYPES, AGENT_MESSAGE_STATUSES, agentMessages, AGENT_APPROVAL_STATUSES, agentApprovalGates, AGENT_POLICY_SCOPES, agentApprovalPolicies, agentApprovalAllowlist, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, mcpApiKeys, mcpRateLimits, jarvisActionLog, openclawBuildLog, egoWeeklyReports, INTEGRATION_NAMES, integrationStatus, skillPacks, DIAGNOSTIC_SUBSYSTEMS, DIAGNOSTIC_SEVERITIES, diagnosticEvents, orchestrationTraces, agentChatMessages, agentChatSessions, agentChatSessionSummaries, coachChannelSessions, userSkillPacks, systemErrorLog, CODE_PROPOSAL_STATUSES, codeProposals, MCP_CREDENTIAL_MODES, userSkills, skillCandidates, mcpServers, writeBudgetLog, writeBudgetWarnings, conversations, messages, learningSynthesisLog, discordConfirmTokens, webchatInviteTokens, GATEWAY_DEVICE_SCOPES, gatewayDevicePairingRequests, gatewayDevices, gatewayEvents, CUSTOM_AGENT_BASE_TYPES, customAgents, insertCustomAgentSchema, jarvisProjects, jarvisProjectSessions, jarvisProjectFiles, jarvisProjectArchives, selfHealAuditLog, searchBarLocations, buttonLocations, tournamentRuns, VAULT_SLUGS, VAULT_PAGE_TYPES, knowledgeVaultPages, wikiLintLog, transcriptJobs, capabilityGaps;
+var vector1536, users, insertUserSchema, plans, goals, stats, brainDumpInbox, energyCheckins, chatHistory, lifeContext, timerSettings, userPreferences, completionHistory, blockedTasks, completedCalendarIds, planSnapshots, telegramLinks, telegramLinkCodes, telegramGroupMessages, userOAuthTokens, composioConnectedAccounts, commitments, userMemories, MEMORY_TIERS, MEMORY_TYPES, MEMORY_CATEGORIES, people, brainPages, brainTimelineEntries, brainContentChunks, brainLinks, brainPageVersions, brainIngestLog, brainConfig, jarvisSouls, livingContextUpdates, weeklyInsights, proactiveQuestionsSent, inboxRules, inboxItems, mobileAuthSessions, userDocuments, websiteCrawls, chatgptImports, proactiveScheduleLog, momentumSessions, morningVoiceNotes, emailDrafts, goalTrees, jarvisScheduledTasks, agentWorkflows, agentJobs, buildSessions, deliverables, channelLinks, channelLinkCodes, channelPreferences, NOTIFICATION_TYPES, CHANNEL_NAMES, SIMPLE_ORIGIN_CHANNELS, discordChannelSchedules, interactionLog, discordPendingApprovals, DEFAULT_AGENT_PERMISSIONS, discordAgents, agentMemories, AGENT_MESSAGE_TYPES, AGENT_MESSAGE_STATUSES, agentMessages, AGENT_APPROVAL_STATUSES, agentApprovalGates, AGENT_POLICY_SCOPES, agentApprovalPolicies, agentApprovalAllowlist, nervousSystemWatches, nervousSystemSignals, userEmotionalState, userEmotionalStateHistory, GUT_SIGNAL_TYPES, GUT_USER_RESPONSES, gutSignals, jarvisPredictions, gutCalibration, dreamInsights, mcpApiKeys, mcpRateLimits, jarvisActionLog, agentBuildLog, egoWeeklyReports, INTEGRATION_NAMES, integrationStatus, skillPacks, DIAGNOSTIC_SUBSYSTEMS, DIAGNOSTIC_SEVERITIES, diagnosticEvents, orchestrationTraces, agentChatMessages, agentChatSessions, agentChatSessionSummaries, coachChannelSessions, userSkillPacks, systemErrorLog, CODE_PROPOSAL_STATUSES, codeProposals, MCP_CREDENTIAL_MODES, userSkills, skillCandidates, mcpServers, writeBudgetLog, writeBudgetWarnings, conversations, messages, learningSynthesisLog, discordConfirmTokens, webchatInviteTokens, GATEWAY_DEVICE_SCOPES, gatewayDevicePairingRequests, gatewayDevices, gatewayEvents, CUSTOM_AGENT_BASE_TYPES, customAgents, insertCustomAgentSchema, jarvisProjects, jarvisProjectSessions, jarvisProjectFiles, jarvisProjectArchives, selfHealAuditLog, searchBarLocations, buttonLocations, tournamentRuns, VAULT_SLUGS, VAULT_PAGE_TYPES, knowledgeVaultPages, wikiLintLog, transcriptJobs, capabilityGaps;
 var init_schema = __esm({
   "shared/schema.ts"() {
     "use strict";
@@ -1612,7 +1612,7 @@ var init_schema = __esm({
       createdAt: timestamp("created_at").defaultNow().notNull(),
       updatedAt: timestamp("updated_at").defaultNow().notNull()
     });
-    openclawBuildLog = pgTable("openclaw_build_log", {
+    agentBuildLog = pgTable("agent_build_log", {
       id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
       userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
       featureName: varchar("feature_name").notNull(),
@@ -3158,7 +3158,7 @@ async function ensureTablesExist() {
     `).catch(() => {
     });
     await db.execute(sql2`
-      CREATE TABLE IF NOT EXISTS openclaw_build_log (
+      CREATE TABLE IF NOT EXISTS agent_build_log (
         id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id         VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         feature_name    VARCHAR NOT NULL,
@@ -3171,12 +3171,12 @@ async function ensureTablesExist() {
     `).catch(() => {
     });
     await db.execute(sql2`
-      CREATE INDEX IF NOT EXISTS openclaw_build_log_user_created_idx
-        ON openclaw_build_log (user_id, created_at DESC)
+      CREATE INDEX IF NOT EXISTS agent_build_log_user_created_idx
+        ON agent_build_log (user_id, created_at DESC)
     `).catch(() => {
     });
     await db.execute(sql2`
-      ALTER TABLE openclaw_build_log ADD COLUMN IF NOT EXISTS smoke_test_args JSONB
+      ALTER TABLE agent_build_log ADD COLUMN IF NOT EXISTS smoke_test_args JSONB
     `).catch(() => {
     });
     await db.execute(sql2`
@@ -5278,11 +5278,8 @@ function normalizeBaseUrl(value) {
   const withProtocol = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
   return new URL(withProtocol).origin;
 }
-function firstDomain(value) {
-  return value?.split(",").map((part) => part.trim()).find(Boolean);
-}
 function getPublicBaseUrl(req) {
-  const explicit = process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || process.env.SERVER_URL || process.env.RAILWAY_PUBLIC_DOMAIN || process.env.EXPO_PUBLIC_DOMAIN || firstDomain(process.env.REPLIT_DOMAINS) || process.env.REPLIT_DEV_DOMAIN;
+  const explicit = process.env.PUBLIC_BASE_URL || process.env.APP_BASE_URL || process.env.SERVER_URL || process.env.RAILWAY_PUBLIC_DOMAIN || process.env.EXPO_PUBLIC_DOMAIN;
   if (explicit) return normalizeBaseUrl(explicit);
   if (req) {
     const forwardedHost = req.headers["x-forwarded-host"];
@@ -7525,31 +7522,19 @@ var init_registry2 = __esm({
 
 // server/integrations/googleCalendar.ts
 import { google } from "googleapis";
-async function getProjectAccessToken() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
-  if (!xReplitToken) throw new Error("X-Replit-Token not available");
-  const connectionSettings = await fetch(
-    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=google-calendar",
-    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
-  ).then((res) => res.json()).then((data) => data.items?.[0]);
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
-  if (!accessToken) throw new Error("Google Calendar not connected");
-  return accessToken;
-}
 function buildCalendarClient(accessToken) {
   const oauth2Client = new google.auth.OAuth2();
   oauth2Client.setCredentials({ access_token: accessToken });
   return google.calendar({ version: "v3", auth: oauth2Client });
 }
 async function getGoogleCalendarEvents(date2, startTime, endTime, userAccessToken) {
-  const accessToken = userAccessToken ?? await getProjectAccessToken();
-  const calendar = buildCalendarClient(accessToken);
-  const startOfDay = startTime ? new Date(startTime) : /* @__PURE__ */ new Date(date2 + "T00:00:00Z");
-  const endOfDay = endTime ? new Date(endTime) : /* @__PURE__ */ new Date(date2 + "T23:59:59Z");
+  if (!userAccessToken) throw new Error("Google Calendar user OAuth token is required");
+  const calendar = buildCalendarClient(userAccessToken);
+  const startOfDay = startTime ? new Date(startTime) : /* @__PURE__ */ new Date(`${date2}T00:00:00Z`);
+  const endOfDay = endTime ? new Date(endTime) : /* @__PURE__ */ new Date(`${date2}T23:59:59Z`);
   const calList = await calendar.calendarList.list({ minAccessRole: "reader" });
   const calendarIds = (calList.data.items || []).filter((c) => !c.deleted).map((c) => c.id).filter(Boolean);
-  console.log(`[Calendar] Found ${calendarIds.length} calendar(s) for token. Querying ${startOfDay.toISOString()} \u2192 ${endOfDay.toISOString()}`);
+  console.log(`[Calendar] Found ${calendarIds.length} calendar(s) for token. Querying ${startOfDay.toISOString()} -> ${endOfDay.toISOString()}`);
   const allEvents = [];
   const seenIds = /* @__PURE__ */ new Set();
   await Promise.all(
@@ -7570,8 +7555,8 @@ async function getGoogleCalendarEvents(date2, startTime, endTime, userAccessToke
           const attendees = (e.attendees || []).filter((a) => a.email).map((a) => ({
             email: String(a.email),
             displayName: a.displayName || void 0,
-            organizer: !!a.organizer,
-            self: !!a.self
+            organizer: Boolean(a.organizer),
+            self: Boolean(a.self)
           }));
           allEvents.push({
             id: e.id || String(Math.random()),
@@ -7591,19 +7576,10 @@ async function getGoogleCalendarEvents(date2, startTime, endTime, userAccessToke
   allEvents.sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
   return allEvents;
 }
-async function checkGoogleCalendarConnection(userAccessToken) {
-  try {
-    if (userAccessToken) return true;
-    await getProjectAccessToken();
-    return true;
-  } catch {
-    return false;
-  }
-}
 async function createGoogleCalendarEvent(accessToken, event) {
   const calendar = buildCalendarClient(accessToken);
-  const startDt = event.start.includes("T") ? event.start : event.start + "T00:00:00Z";
-  const endDt = event.end.includes("T") ? event.end : event.end + "T01:00:00Z";
+  const startDt = event.start.includes("T") ? event.start : `${event.start}T00:00:00Z`;
+  const endDt = event.end.includes("T") ? event.end : `${event.end}T01:00:00Z`;
   const res = await calendar.events.insert({
     calendarId: "primary",
     requestBody: {
@@ -7702,30 +7678,10 @@ ${blocks.join("\n\n")}`,
 });
 
 // server/integrations/outlook.ts
-var outlook_exports = {};
-__export(outlook_exports, {
-  checkOutlookConnection: () => checkOutlookConnection,
-  createOutlookCalendarEvent: () => createOutlookCalendarEvent,
-  getOutlookCalendarEvents: () => getOutlookCalendarEvents,
-  getRecentOutlookEmails: () => getRecentOutlookEmails,
-  sendOutlookEmail: () => sendOutlookEmail
-});
 import { Client as Client2 } from "@microsoft/microsoft-graph-client";
 function ensureUtc(dateTime) {
   if (/Z$|[+-]\d{2}:\d{2}$/.test(dateTime)) return dateTime;
-  return dateTime + "Z";
-}
-async function getProjectAccessToken2() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
-  if (!xReplitToken) throw new Error("X-Replit-Token not available");
-  const connectionSettings = await fetch(
-    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=outlook",
-    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
-  ).then((res) => res.json()).then((data) => data.items?.[0]);
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
-  if (!accessToken) throw new Error("Outlook not connected");
-  return accessToken;
+  return `${dateTime}Z`;
 }
 function buildOutlookClient(accessToken) {
   return Client2.initWithMiddleware({
@@ -7733,10 +7689,10 @@ function buildOutlookClient(accessToken) {
   });
 }
 async function getOutlookCalendarEvents(date2, startTime, endTime, userAccessToken) {
-  const accessToken = userAccessToken ?? await getProjectAccessToken2();
-  const client = buildOutlookClient(accessToken);
-  const startOfDay = startTime ? new Date(startTime).toISOString() : (/* @__PURE__ */ new Date(date2 + "T00:00:00")).toISOString();
-  const endOfDay = endTime ? new Date(endTime).toISOString() : (/* @__PURE__ */ new Date(date2 + "T23:59:59")).toISOString();
+  if (!userAccessToken) throw new Error("Outlook user OAuth token is required");
+  const client = buildOutlookClient(userAccessToken);
+  const startOfDay = startTime ? new Date(startTime).toISOString() : (/* @__PURE__ */ new Date(`${date2}T00:00:00`)).toISOString();
+  const endOfDay = endTime ? new Date(endTime).toISOString() : (/* @__PURE__ */ new Date(`${date2}T23:59:59`)).toISOString();
   const res = await client.api("/me/calendarView").query({ startDateTime: startOfDay, endDateTime: endOfDay }).header("Prefer", 'outlook.timezone="UTC"').select("id,subject,start,end,body,location").orderby("start/dateTime").top(20).get();
   const items = res.value || [];
   return items.map((e) => ({
@@ -7748,19 +7704,10 @@ async function getOutlookCalendarEvents(date2, startTime, endTime, userAccessTok
     location: e.location?.displayName || void 0
   }));
 }
-async function checkOutlookConnection(userAccessToken) {
-  try {
-    if (userAccessToken) return true;
-    await getProjectAccessToken2();
-    return true;
-  } catch {
-    return false;
-  }
-}
 async function createOutlookCalendarEvent(userAccessToken, event) {
   const client = buildOutlookClient(userAccessToken);
-  const startDt = event.start.includes("T") ? ensureUtc(event.start) : event.start + "T00:00:00Z";
-  const endDt = event.end.includes("T") ? ensureUtc(event.end) : event.end + "T01:00:00Z";
+  const startDt = event.start.includes("T") ? ensureUtc(event.start) : `${event.start}T00:00:00Z`;
+  const endDt = event.end.includes("T") ? ensureUtc(event.end) : `${event.end}T01:00:00Z`;
   const body = {
     subject: event.title,
     start: { dateTime: startDt.slice(0, 19), timeZone: "UTC" },
@@ -7792,7 +7739,7 @@ async function getRecentOutlookEmails(userAccessToken, count2 = 10) {
     from: m.from?.emailAddress?.address || "unknown",
     snippet: (m.bodyPreview || "").slice(0, 150),
     date: m.receivedDateTime || "",
-    isRead: !!m.isRead
+    isRead: Boolean(m.isRead)
   }));
 }
 var init_outlook = __esm({
@@ -8154,22 +8101,10 @@ var init_calendarCapability = __esm({
 
 // server/integrations/gmailClient.ts
 import { google as google2 } from "googleapis";
-async function getProjectAccessToken3() {
-  const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY ? "repl " + process.env.REPL_IDENTITY : process.env.WEB_REPL_RENEWAL ? "depl " + process.env.WEB_REPL_RENEWAL : null;
-  if (!xReplitToken) throw new Error("X-Replit-Token not available");
-  const connectionSettings = await fetch(
-    "https://" + hostname + "/api/v2/connection?include_secrets=true&connector_names=google-mail",
-    { headers: { Accept: "application/json", "X-Replit-Token": xReplitToken } }
-  ).then((res) => res.json()).then((data) => data.items?.[0]);
-  const accessToken = connectionSettings?.settings?.access_token || connectionSettings?.settings?.oauth?.credentials?.access_token;
-  if (!accessToken) throw new Error("Gmail not connected");
-  return accessToken;
-}
 async function getGmailClient(userAccessToken) {
-  const accessToken = userAccessToken ?? await getProjectAccessToken3();
+  if (!userAccessToken) throw new Error("Gmail user OAuth token is required");
   const oauth2Client = new google2.auth.OAuth2();
-  oauth2Client.setCredentials({ access_token: accessToken });
+  oauth2Client.setCredentials({ access_token: userAccessToken });
   return google2.gmail({ version: "v1", auth: oauth2Client });
 }
 var init_gmailClient = __esm({
@@ -9583,9 +9518,9 @@ var init_telegramDocumentExtractor = __esm({
   }
 });
 
-// server/replit_integrations/audio/client.ts
-var client_exports = {};
-__export(client_exports, {
+// server/integrations/audioClient.ts
+var audioClient_exports = {};
+__export(audioClient_exports, {
   convertToWav: () => convertToWav,
   detectAudioFormat: () => detectAudioFormat,
   elevenlabsTts: () => elevenlabsTts,
@@ -9853,8 +9788,8 @@ async function speechToTextStream(audioBuffer, format = "wav") {
   })();
 }
 var openai;
-var init_client = __esm({
-  "server/replit_integrations/audio/client.ts"() {
+var init_audioClient = __esm({
+  "server/integrations/audioClient.ts"() {
     "use strict";
     init_env();
     openai = new OpenAI4(getOpenAIClientConfig());
@@ -10075,7 +10010,7 @@ var init_tts = __esm({
     init_schema();
     init_schema();
     init_telegram();
-    init_client();
+    init_audioClient();
     tempAudioStore = /* @__PURE__ */ new Map();
     OPENAI_VOICES = /* @__PURE__ */ new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
     ELEVENLABS_VOICES = {
@@ -16106,9 +16041,9 @@ async function pushWorkspaceToGitHub(pat, owner, repoName, workspaceDir, commitM
     ...process.env,
     HOME: os11.homedir(),
     GIT_AUTHOR_NAME: "Jarvis",
-    GIT_AUTHOR_EMAIL: "jarvis@replit.app",
+    GIT_AUTHOR_EMAIL: "jarvis@gameplanjarvisai.com",
     GIT_COMMITTER_NAME: "Jarvis",
-    GIT_COMMITTER_EMAIL: "jarvis@replit.app",
+    GIT_COMMITTER_EMAIL: "jarvis@gameplanjarvisai.com",
     GIT_TERMINAL_PROMPT: "0"
   };
   const run = (args) => spawnSync4("git", args, {
@@ -16129,7 +16064,7 @@ async function pushWorkspaceToGitHub(pat, owner, repoName, workspaceDir, commitM
       run(["checkout", "-b", "main"]);
     }
   }
-  run(["config", "user.email", "jarvis@replit.app"]);
+  run(["config", "user.email", "jarvis@gameplanjarvisai.com"]);
   run(["config", "user.name", "Jarvis"]);
   const addResult = run(["add", "--all"]);
   if (addResult.status !== 0) {
@@ -16426,7 +16361,7 @@ var init_telegramVoiceTranscription = __esm({
   "server/telegramVoiceTranscription.ts"() {
     "use strict";
     init_env();
-    init_client();
+    init_audioClient();
     init_localWorkerQueue();
     DEFAULT_GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3-turbo";
   }
@@ -19945,7 +19880,7 @@ async function createRuleFromText(userId, text2, type, scope) {
 { "senders": [], "subjectKeywords": [], "domains": [], "locationKeywords": [] }
 
 Examples:
-- "suppress Replit notifications" \u2192 { "senders": ["replit"], "subjectKeywords": ["replit"], "domains": ["replit.com"], "locationKeywords": [] }
+- "suppress deployment notifications" -> { "senders": ["deploy"], "subjectKeywords": ["deployment"], "domains": [], "locationKeywords": [] }
 - "always surface New York events" \u2192 { "senders": [], "subjectKeywords": ["new york"], "domains": [], "locationKeywords": ["new york", "nyc", "manhattan"] }
 - "suppress newsletters" \u2192 { "senders": [], "subjectKeywords": ["newsletter", "unsubscribe"], "domains": [], "locationKeywords": [] }`
         },
@@ -20636,7 +20571,7 @@ ${text2}`;
           await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
           return;
         }
-        const { detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+        const { detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
         const format = detectAudioFormat2(file.buffer);
         let linkedUserId = null;
         if (chatType !== "group" && chatType !== "supergroup") {
@@ -20693,7 +20628,7 @@ ${text2}`;
           await sendMessage(chatId, "Sorry, I couldn't download that video. Could you try again or share the YouTube URL instead?");
           return;
         }
-        const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+        const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
         const format = detectAudioFormat2(file.buffer);
         const transcript = await speechToText2(file.buffer, format === "unknown" ? "mp4" : format);
         if (!transcript || !transcript.trim()) {
@@ -23113,13 +23048,13 @@ async function snapshotProjectWorkspace(projectId, workspaceDir) {
     });
   }
   if (seenPaths.length === 0) {
-    await db.delete(jarvisProjectFiles).where(eq34(jarvisProjectFiles.projectId, projectId));
-  } else {
-    await db.delete(jarvisProjectFiles).where(and26(
-      eq34(jarvisProjectFiles.projectId, projectId),
-      notInArray(jarvisProjectFiles.filePath, seenPaths)
-    ));
+    console.warn(`[ProjectArtifacts] skipped empty snapshot for project ${projectId}; preserving stored files`);
+    return;
   }
+  await db.delete(jarvisProjectFiles).where(and26(
+    eq34(jarvisProjectFiles.projectId, projectId),
+    notInArray(jarvisProjectFiles.filePath, seenPaths)
+  ));
 }
 async function hydrateProjectWorkspace(projectId, workspaceDir) {
   if (!isWorkspaceEmpty(workspaceDir)) return false;
@@ -23374,6 +23309,14 @@ async function runCommand(command, cwd, timeoutSeconds) {
     child.stderr.on("data", (d) => {
       stderr += d.toString();
     });
+    child.on("error", (err2) => {
+      clearTimeout(timer);
+      resolve10({
+        stdout: stdout.slice(0, 8e3),
+        stderr: `${stderr}${stderr ? "\n" : ""}${err2.message}`.slice(0, 4e3),
+        exitCode: -1
+      });
+    });
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve10({
@@ -23385,7 +23328,7 @@ async function runCommand(command, cwd, timeoutSeconds) {
   });
 }
 async function runDevServer(command, cwd, projectId, port) {
-  return new Promise((resolve10) => {
+  return new Promise((resolve10, reject) => {
     const env = {
       ...process.env,
       HOME: os2.homedir(),
@@ -23422,6 +23365,11 @@ async function runDevServer(command, cwd, projectId, port) {
       if (text2.toLowerCase().includes("ready") || text2.toLowerCase().includes("started") || text2.toLowerCase().includes("listening") || text2.includes(String(port))) {
         settle();
       }
+    });
+    child.on("error", (err2) => {
+      if (settled) return;
+      settled = true;
+      reject(err2);
     });
     setTimeout(settle, 15e3).unref();
     child.unref();
@@ -25616,6 +25564,7 @@ var init_appProjectPlanning = __esm({
 var appProjectRunner_exports = {};
 __export(appProjectRunner_exports, {
   answerAppProjectQuestion: () => answerAppProjectQuestion,
+  resumeAppProject: () => resumeAppProject,
   runAppProjectSession: () => runAppProjectSession,
   startAppProject: () => startAppProject
 });
@@ -25624,6 +25573,12 @@ import * as fs6 from "fs";
 import { spawnSync } from "child_process";
 import * as os4 from "os";
 import { eq as eq36, asc as asc2 } from "drizzle-orm";
+function isCodexRuntimeUnavailableError(err2) {
+  const text2 = err2 instanceof Error ? `${err2.message}
+${err2.stack ?? ""}
+${err2.cause instanceof Error ? err2.cause.message : ""}` : String(err2);
+  return text2.includes("Codex OAuth provider has no available runtime") || text2.includes("No active Desktop Daemon with Shell Execution is available") || text2.includes("JARVIS_CODEX_RUNTIME");
+}
 function appToolGroupsForPhase(phase) {
   const p = phase.toUpperCase();
   if (p === "SCAFFOLD") return ["app_build"];
@@ -26240,6 +26195,24 @@ Acceptance criteria: ${acceptanceCriteria}`,
     } catch (err2) {
       console.error(`[AppProjectRunner] step "${step.label}" threw error:`, err2);
       const newErrors = (project.consecutiveErrors ?? 0) + 1;
+      if (isCodexRuntimeUnavailableError(err2)) {
+        const summary = "Paused: Codex runtime is unavailable. Connect the Desktop Daemon with Shell Execution or configure the Codex gateway before resuming.";
+        await db.update(jarvisProjects).set({
+          status: "paused",
+          autonomousMode: false,
+          nextRunAt: null,
+          consecutiveErrors: newErrors,
+          updatedAt: /* @__PURE__ */ new Date()
+        }).where(eq36(jarvisProjects.id, projectId));
+        await sendAppProjectMessage(
+          project.userId,
+          project.originChannel ?? void 0,
+          `\u26A0\uFE0F **App Project: ${project.title}** paused because the Codex runtime is unavailable.
+
+Connect the Desktop Daemon with Shell Execution or configure the Codex gateway, then resume the project.`
+        );
+        return { status: "paused", stepsCompleted: completedLabels.length, summary };
+      }
       if (newErrors >= MAX_CONSECUTIVE_ERRORS2) {
         await db.update(jarvisProjects).set({ status: "paused", consecutiveErrors: newErrors, updatedAt: /* @__PURE__ */ new Date() }).where(eq36(jarvisProjects.id, projectId));
         await sendAppProjectMessage(
@@ -26283,6 +26256,24 @@ ${question}`
       return { status: "waiting_for_input", stepsCompleted: completedLabels.length, summary: question };
     }
     const extractSummary = (text2) => {
+      const trimmed = text2.trim();
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed.type === "tool_calls" && Array.isArray(parsed.tool_calls)) {
+          const fileWrites = parsed.tool_calls.filter((call) => call.name === "daemon_action" && call.arguments?.action === "file_write").map((call) => String(call.arguments?.path ?? "")).filter(Boolean);
+          if (fileWrites.length > 0) {
+            const shown = fileWrites.slice(0, 3).join(", ");
+            const more = fileWrites.length > 3 ? ` and ${fileWrites.length - 3} more` : "";
+            return `Wrote project files: ${shown}${more}.`;
+          }
+          const toolNames = [...new Set(parsed.tool_calls.map((call) => call.name).filter(Boolean))];
+          return toolNames.length > 0 ? `Ran project tools: ${toolNames.join(", ")}.` : "Performed project workspace actions.";
+        }
+      } catch {
+        if (trimmed.includes('"type":"tool_calls"') || trimmed.includes('"tool_calls"')) {
+          return "Performed project workspace actions.";
+        }
+      }
       const match = text2.match(/## Step Output Summary\s*([\s\S]*?)(?:\n##|$)/);
       return match ? match[1].trim().slice(0, 500) : text2.slice(0, 300);
     };
@@ -26457,6 +26448,24 @@ async function answerAppProjectQuestion(projectId, answer) {
     prompt: `Continue building app project ${projectId}. User answered the pending question.`,
     input: { projectId, userAnswer: answer }
   });
+}
+async function resumeAppProject(projectId) {
+  await db.update(jarvisProjects).set({
+    status: "building",
+    consecutiveErrors: 0,
+    nextRunAt: null,
+    updatedAt: /* @__PURE__ */ new Date()
+  }).where(eq36(jarvisProjects.id, projectId));
+  const [project] = await db.select().from(jarvisProjects).where(eq36(jarvisProjects.id, projectId)).limit(1);
+  if (project) {
+    await submitAgentJob({
+      userId: project.userId,
+      agentType: "app_project",
+      title: `Build: ${project.title} (resumed)`,
+      prompt: `Continue building app project ${projectId}`,
+      input: { projectId }
+    });
+  }
 }
 var AUTONOMOUS_INTERVAL_MINUTES2, STEPS_PER_SESSION2, MAX_STEP_VERIFY_RETRIES2, MAX_CONSECUTIVE_ERRORS2, npmExecutable, reactViteCss;
 var init_appProjectRunner = __esm({
@@ -37505,7 +37514,7 @@ Constraints: no uuid package; use Math.random().toString(36) for IDs; handle err
         if (!toolCode) return fail("tool_code is required.");
         const writeBuildLog = async (outputCode, success, smokeTestPassed, smokeTestArgs) => {
           try {
-            await db.insert(openclawBuildLog).values({
+            await db.insert(agentBuildLog).values({
               userId: ctx.userId,
               featureName,
               description,
@@ -37524,13 +37533,13 @@ Constraints: no uuid package; use Math.random().toString(36) for IDs; handle err
         };
         let priorPassingArgs = null;
         try {
-          const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
+          const priorRows = await db.select({ smokeTestArgs: agentBuildLog.smokeTestArgs }).from(agentBuildLog).where(
             and35(
-              eq45(openclawBuildLog.userId, ctx.userId),
-              eq45(openclawBuildLog.featureName, featureName),
-              eq45(openclawBuildLog.smokeTestPassed, true)
+              eq45(agentBuildLog.userId, ctx.userId),
+              eq45(agentBuildLog.featureName, featureName),
+              eq45(agentBuildLog.smokeTestPassed, true)
             )
-          ).orderBy(desc14(openclawBuildLog.createdAt)).limit(1);
+          ).orderBy(desc14(agentBuildLog.createdAt)).limit(1);
           const stored = priorRows[0]?.smokeTestArgs;
           if (stored && typeof stored === "object" && !Array.isArray(stored)) {
             priorPassingArgs = stored;
@@ -37659,14 +37668,14 @@ Fix the tool_code and call build_feature again with the corrected code.`,
         }
         let priorPassingArgs = null;
         try {
-          const priorRows = await db.select({ smokeTestArgs: openclawBuildLog.smokeTestArgs }).from(openclawBuildLog).where(
+          const priorRows = await db.select({ smokeTestArgs: agentBuildLog.smokeTestArgs }).from(agentBuildLog).where(
             and35(
-              eq45(openclawBuildLog.userId, ctx.userId),
-              eq45(openclawBuildLog.featureName, toolName2),
-              eq45(openclawBuildLog.smokeTestPassed, true),
-              isNotNull2(openclawBuildLog.smokeTestArgs)
+              eq45(agentBuildLog.userId, ctx.userId),
+              eq45(agentBuildLog.featureName, toolName2),
+              eq45(agentBuildLog.smokeTestPassed, true),
+              isNotNull2(agentBuildLog.smokeTestArgs)
             )
-          ).orderBy(desc14(openclawBuildLog.createdAt)).limit(1);
+          ).orderBy(desc14(agentBuildLog.createdAt)).limit(1);
           const stored = priorRows[0]?.smokeTestArgs;
           if (stored && typeof stored === "object" && !Array.isArray(stored)) {
             priorPassingArgs = stored;
@@ -37701,7 +37710,7 @@ Fix the code in the tool file and call build_feature again with the corrected to
           const isInternalCall = Boolean(args._internal);
           if (callerArgs !== null && !isInternalCall) {
             try {
-              await db.insert(openclawBuildLog).values({
+              await db.insert(agentBuildLog).values({
                 userId: ctx.userId,
                 featureName: toolName2,
                 description: "manual test",
@@ -38767,7 +38776,7 @@ async function generateGptImage(prompt, size) {
       const msg = err2 instanceof Error ? err2.message : String(err2);
       if (/auth|unauthorized|permission|quota|rate.?limit|billing/i.test(msg)) {
         throw new Error(
-          `Image generation requires a direct OpenAI API key. The Replit AI integration proxy does not support image models. Add your own OPENAI_API_KEY as a Railway variable to enable image generation. (Original error: ${msg})`
+          `Image generation requires a direct OpenAI API key. Add OPENAI_API_KEY to enable image generation. (Original error: ${msg})`
         );
       }
     }
@@ -38794,7 +38803,7 @@ async function generateGptImage(prompt, size) {
   } catch (dalle3Err) {
     const msg = dalle3Err instanceof Error ? dalle3Err.message : String(dalle3Err);
     throw new Error(
-      `Image generation requires a direct OpenAI API key \u2014 the Replit AI integration proxy only supports chat/text models. Add your own OPENAI_API_KEY as a Railway variable to enable image generation. (Error: ${msg})`
+      `Image generation requires a direct OpenAI API key \u2014 Add OPENAI_API_KEY to enable image generation. (Error: ${msg})`
     );
   }
   throw new Error("No image data returned from gpt-image-1 or dall-e-3");
@@ -39374,17 +39383,8 @@ import { GoogleGenAI } from "@google/genai";
 function getClient() {
   if (_client) return _client;
   const directKey = process.env.GOOGLE_GEMINI_API_KEY;
-  if (directKey) {
-    _client = new GoogleGenAI({ apiKey: directKey });
-    return _client;
-  }
-  const proxyKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  if (!proxyKey) throw new Error("No Gemini API key configured \u2014 set GOOGLE_GEMINI_API_KEY or AI_INTEGRATIONS_GEMINI_API_KEY");
-  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-  _client = new GoogleGenAI({
-    apiKey: proxyKey,
-    ...baseUrl ? { httpOptions: { baseUrl } } : {}
-  });
+  if (!directKey) throw new Error("No Gemini API key configured - set GOOGLE_GEMINI_API_KEY");
+  _client = new GoogleGenAI({ apiKey: directKey });
   return _client;
 }
 function isUsingDirectKey() {
@@ -39436,7 +39436,7 @@ async function callGemini(model, videoUrl) {
 async function fetchTranscriptViaGemini(videoUrl) {
   if (_phase0GatewayUnsupported && !isUsingDirectKey()) {
     throw new Error(
-      "GATEWAY_UNSUPPORTED: Replit AI proxy does not support the multimodal endpoint \u2014 Phase 0 skipped for this process. Add a GOOGLE_GEMINI_API_KEY secret (free at https://aistudio.google.com/apikey) to enable YouTube transcription."
+      "GATEWAY_UNSUPPORTED: the configured Gemini gateway does not support the multimodal endpoint \u2014 Phase 0 skipped for this process. Add GOOGLE_GEMINI_API_KEY (free at https://aistudio.google.com/apikey) to enable YouTube transcription."
     );
   }
   try {
@@ -39446,7 +39446,7 @@ async function fetchTranscriptViaGemini(videoUrl) {
       if (!_phase0GatewayUnsupported) {
         _phase0GatewayUnsupported = true;
         console.warn(
-          "[geminiTranscript] Replit AI proxy rejected multimodal endpoint (INVALID_ENDPOINT). Phase 0 will be skipped for this process lifetime. To enable Gemini YouTube transcription, add a GOOGLE_GEMINI_API_KEY secret (free key at https://aistudio.google.com/apikey)."
+          "[geminiTranscript] Gemini gateway rejected multimodal endpoint (INVALID_ENDPOINT). Phase 0 will be skipped for this process lifetime. To enable Gemini YouTube transcription, add GOOGLE_GEMINI_API_KEY (free key at https://aistudio.google.com/apikey)."
         );
       }
       throw Object.assign(
@@ -39675,8 +39675,8 @@ async function transcribeVideoFromUrl(videoUrl, mimeType) {
   console.log(
     `[geminiTranscript] Starting ${streamMode ? "streaming" : "buffered"} upload to File API` + (contentLength !== null ? ` (${Math.round(contentLength / 1024 / 1024)} MB)` : " (size unknown)")
   );
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("AI_INTEGRATIONS_GEMINI_API_KEY is not set");
+  const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY is not set");
   let fileName;
   try {
     fileName = await uploadVideoStream(response, resolvedMime, contentLength, apiKey);
@@ -39737,7 +39737,7 @@ async function transcribeVideoFromUrl(videoUrl, mimeType) {
   }
 }
 function isGeminiTranscriptAvailable() {
-  return !!(process.env.GOOGLE_GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY);
+  return !!process.env.GOOGLE_GEMINI_API_KEY;
 }
 var _client, _phase0GatewayUnsupported, TRANSCRIPT_PROMPT, PRIMARY_REJECTION_PATTERNS, GEMINI_REFUSAL_PATTERNS, GEMINI_CALL_TIMEOUT_MS, MAX_STREAM_BYTES, MAX_BUFFER_BYTES;
 var init_geminiTranscript = __esm({
@@ -40554,7 +40554,7 @@ function getAudioTranscriptTelemetry() {
   };
 }
 async function transcribeBuffer(buf, ext) {
-  const { openai: openai24 } = await Promise.resolve().then(() => (init_client(), client_exports));
+  const { openai: openai24 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
   const { toFile: toFile2 } = await import("openai");
   const file = await toFile2(buf, `audio.${ext}`, { type: `audio/${ext}` });
   const resp = await openai24.audio.transcriptions.create({
@@ -41023,7 +41023,7 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
           return { segments, noCaptionsDetected: false, source };
         }
       } else {
-        console.warn("[transcriptCache] Phase 0.5 skipped \u2014 no Gemini key configured (set GOOGLE_GEMINI_API_KEY for direct access, or AI_INTEGRATIONS_GEMINI_API_KEY for proxy)");
+        console.warn("[transcriptCache] Phase 0.5 skipped - no Gemini key configured (set GOOGLE_GEMINI_API_KEY)");
       }
     } catch (geminiErr) {
       const geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
@@ -41033,7 +41033,7 @@ ${geminiText}`, offset: 0, duration: 0, lang: "en" }];
       console.warn(`[transcriptCache] Phase 0.5 (Gemini) FAILED for ${resolvedId}:`, {
         error: fullMsg,
         stack: geminiErr instanceof Error ? geminiErr.stack?.slice(0, 400) : void 0,
-        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key (not the Replit proxy key)"
+        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key"
       });
     }
   }
@@ -41497,7 +41497,7 @@ async function describeFrames(frames) {
   if (frames.length === 0) return [];
   if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
   try {
-    const { openai: openai24 } = await Promise.resolve().then(() => (init_client(), client_exports));
+    const { openai: openai24 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
     const BATCH_SIZE2 = 10;
     const observations = [];
     for (let i = 0; i < frames.length; i += BATCH_SIZE2) {
@@ -49354,7 +49354,7 @@ async function processVoiceUtterance(session, opusChunks, client) {
   let transcript;
   try {
     const wavBuffer = await opusChunksToWav(opusChunks);
-    const { speechToText: speechToText2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+    const { speechToText: speechToText2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
     transcript = (await speechToText2(wavBuffer, "wav")).trim();
     console.log(`[VoiceBridge] STT result for guild=${guildId}: "${transcript.slice(0, 80)}"`);
   } catch (sttErr) {
@@ -49415,13 +49415,13 @@ async function generateTtsAudio(userId, text2) {
   const isOpenAiVoice = OPENAI_VOICES2.has(voice);
   if (!isOpenAiVoice && process.env.ELEVENLABS_API_KEY) {
     try {
-      const { elevenlabsTts: elevenlabsTts2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+      const { elevenlabsTts: elevenlabsTts2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
       return await elevenlabsTts2(trimmed, voice);
     } catch (err2) {
       console.warn("[VoiceBridge] ElevenLabs TTS failed, falling back to OpenAI:", err2 instanceof Error ? err2.message : err2);
     }
   }
-  const { textToSpeech: textToSpeech2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+  const { textToSpeech: textToSpeech2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
   const openaiVoice = isOpenAiVoice ? voice : "nova";
   return await textToSpeech2(trimmed, openaiVoice, "mp3");
 }
@@ -54873,6 +54873,7 @@ var init_projectCreateRequest = __esm({
 var appDelivery_exports = {};
 __export(appDelivery_exports, {
   cleanupExpiredZips: () => cleanupExpiredZips,
+  ensureProjectArchiveAvailable: () => ensureProjectArchiveAvailable,
   generateDownloadToken: () => generateDownloadToken,
   packageAndDeliverApp: () => packageAndDeliverApp,
   validateDownloadToken: () => validateDownloadToken
@@ -54883,6 +54884,25 @@ import { execSync as execSync2, spawnSync as spawnSync3 } from "child_process";
 import * as os10 from "os";
 import * as zlib from "zlib";
 import { eq as eq76 } from "drizzle-orm";
+function isTransientDatabaseError(err2) {
+  const message = err2 instanceof Error ? err2.message : String(err2);
+  return /database system is (in recovery mode|starting up)|connection terminated unexpectedly|terminating connection/i.test(message);
+}
+async function withTransientDbRetry(label, fn) {
+  let lastErr;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      return await fn();
+    } catch (err2) {
+      lastErr = err2;
+      if (!isTransientDatabaseError(err2) || attempt === 5) break;
+      const delayMs = attempt * 1500;
+      console.warn(`[AppDelivery] ${label} hit transient database error; retrying in ${delayMs}ms (attempt ${attempt}/5)`);
+      await new Promise((resolve10) => setTimeout(resolve10, delayMs));
+    }
+  }
+  throw lastErr;
+}
 function generateDownloadToken(projectId) {
   const token = Date.now().toString(36) + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
   downloadTokens.set(projectId, { token, expiresAt: Date.now() + ZIP_TTL_MS });
@@ -55084,7 +55104,7 @@ STDERR: ${stderr}`
     console.log(`[AppDelivery] production build succeeded for framework=${framework}`);
   }
 }
-async function packageAndDeliverApp(projectId, userId, originChannel) {
+async function ensureProjectArchiveAvailable(projectId) {
   const [project] = await db.select().from(jarvisProjects).where(eq76(jarvisProjects.id, projectId)).limit(1);
   if (!project) throw new Error(`Project ${projectId} not found`);
   const workspaceDir = project.workspaceDir;
@@ -55114,13 +55134,19 @@ async function packageAndDeliverApp(projectId, userId, originChannel) {
     throw new Error("Zip file was not created \u2014 zip command may have failed silently");
   }
   scheduleZipCleanup(zipPath);
-  await saveProjectArchive(projectId, zipPath);
+  await withTransientDbRetry("save project archive", () => saveProjectArchive(projectId, zipPath));
   const zipSizeMb = getZipSizeMb(zipPath);
   const fileCount = countFiles(workspaceDir);
+  console.log(`[AppDelivery] project ${projectId} packaged: ${zipSizeMb}MB, ${fileCount} files, framework=${framework}`);
+  return { zipSizeMb, fileCount, framework };
+}
+async function packageAndDeliverApp(projectId, userId, originChannel) {
+  const [project] = await db.select().from(jarvisProjects).where(eq76(jarvisProjects.id, projectId)).limit(1);
+  if (!project) throw new Error(`Project ${projectId} not found`);
+  const { zipSizeMb, fileCount, framework } = await ensureProjectArchiveAvailable(projectId);
   const signedToken = generateDownloadToken(projectId);
   const baseUrl = getPublicBaseUrl();
   const downloadUrl = `${baseUrl}/api/downloads/project/${projectId}?token=${signedToken}`;
-  console.log(`[AppDelivery] project ${projectId} packaged: ${zipSizeMb}MB, ${fileCount} files, framework=${framework}`);
   const effectiveChannel = originChannel ?? project.originChannel ?? void 0;
   const userHasGitHub = await hasGitHubPAT(userId).catch(() => false);
   const githubNote = userHasGitHub ? `
@@ -55339,7 +55365,9 @@ function registerProjectRoutes(app2) {
       const zipPath = path25.join(getProjectDownloadsDir(), `${id}.zip`);
       if (!fs18.existsSync(zipPath)) {
         const archive = await readProjectArchive(id);
-        if (!archive) return res.status(404).json({ error: "Project zip not yet available" });
+        if (!archive) {
+          await ensureProjectArchiveAvailable(id);
+        }
       }
       const token = generateDownloadToken(id);
       const downloadUrl = `${getPublicBaseUrl(req)}/api/downloads/project/${id}?token=${token}`;
@@ -55361,7 +55389,11 @@ function registerProjectRoutes(app2) {
         return res.json({ status: "paused" });
       }
       if (action === "resume") {
-        await resumeProject(id);
+        if (project.appFramework) {
+          await resumeAppProject(id);
+        } else {
+          await resumeProject(id);
+        }
         return res.json({ status: "building" });
       }
       if (answer !== void 0) {
@@ -56344,7 +56376,7 @@ function registerLocalWorkerRoutes(app2) {
       if (audioBuffer.length > 25 * 1024 * 1024) {
         return res.status(413).json({ error: "Audio chunk exceeds 25 MB Whisper limit - split into smaller chunks" });
       }
-      const { openai: openai24 } = await Promise.resolve().then(() => (init_client(), client_exports));
+      const { openai: openai24 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
       const { toFile: toFile2 } = await import("openai");
       const safeFormat = ["mp3", "wav", "m4a", "webm", "mp4", "ogg"].includes(format) ? format : "mp3";
       const file = await toFile2(audioBuffer, `audio.${safeFormat}`, { type: `audio/${safeFormat}` });
@@ -57680,20 +57712,8 @@ function registerIntegrationRoutes(app2) {
         getValidGoogleTokens(userId),
         getValidMicrosoftToken(userId)
       ]);
-      let googleConnected = googleTokens.length > 0;
-      let outlookConnected = !!microsoftToken;
-      if (!googleConnected || !outlookConnected) {
-        const isOwner = await isIntegrationOwner(userId);
-        if (isOwner) {
-          const [projGoogle, projOutlook] = await Promise.all([
-            googleConnected ? true : checkGoogleCalendarConnection(),
-            outlookConnected ? true : checkOutlookConnection()
-          ]);
-          googleConnected = googleConnected || projGoogle;
-          outlookConnected = outlookConnected || projOutlook;
-          if (projGoogle || projOutlook) await claimIntegrationOwnership(userId);
-        }
-      }
+      const googleConnected = googleTokens.length > 0;
+      const outlookConnected = !!microsoftToken;
       res.json({ google: googleConnected, outlook: outlookConnected });
     } catch (error) {
       console.error("Error checking calendar status:", error);
@@ -65545,13 +65565,6 @@ var init_oauthRoutes = __esm({
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       try {
         const status = await getUserOAuthStatus(userId);
-        if (!status.microsoft?.connected) {
-          const { checkOutlookConnection: checkOutlookConnection3 } = await Promise.resolve().then(() => (init_outlook(), outlook_exports));
-          const projConnected = await checkOutlookConnection3().catch(() => false);
-          if (projConnected) {
-            status.microsoft = { connected: true, accounts: [] };
-          }
-        }
         res.json(status);
       } catch (err2) {
         console.error("OAuth status error:", err2);
@@ -68832,15 +68845,15 @@ var init_voiceCodexTurn = __esm({
   }
 });
 
-// server/replit_integrations/chat/storage.ts
-var storage_exports = {};
-__export(storage_exports, {
+// server/integrations/chatStorage.ts
+var chatStorage_exports = {};
+__export(chatStorage_exports, {
   chatStorage: () => chatStorage
 });
 import { eq as eq114, desc as desc40 } from "drizzle-orm";
 var chatStorage;
-var init_storage = __esm({
-  "server/replit_integrations/chat/storage.ts"() {
+var init_chatStorage = __esm({
+  "server/integrations/chatStorage.ts"() {
     "use strict";
     init_db();
     init_schema();
@@ -68981,14 +68994,12 @@ async function registerRoutes(app2) {
     }
     try {
       const { getYtdlpStatus: getYtdlpStatus2, ensureYtdlpUpgraded: ensureYtdlpUpgraded2 } = await Promise.resolve().then(() => (init_transcriptCache(), transcriptCache_exports));
-      const geminiDirectKey = process.env.GOOGLE_GEMINI_API_KEY;
-      const geminiProxyKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-      const geminiKeyConfigured = !!(geminiDirectKey || geminiProxyKey);
-      const geminiKeyType = geminiDirectKey ? "direct" : geminiProxyKey ? "proxy" : "none";
+      const geminiKeyConfigured = !!process.env.GOOGLE_GEMINI_API_KEY;
+      const geminiKeyType = geminiKeyConfigured ? "direct" : "none";
       const geminiResult = {
         keyConfigured: geminiKeyConfigured,
         keyType: geminiKeyType,
-        note: geminiKeyConfigured ? geminiKeyType === "direct" ? "Will attempt transcription as Phase 0 (direct Google AI Studio key)" : "Will attempt transcription as Phase 0 (proxy key \u2014 may have quota limits)" : "Phase 0 skipped \u2014 no Gemini key configured. Set GOOGLE_GEMINI_API_KEY at https://aistudio.google.com/apikey"
+        note: geminiKeyConfigured ? "Will attempt transcription as Phase 0 (direct Google AI Studio key)" : "Phase 0 skipped - no Gemini key configured. Set GOOGLE_GEMINI_API_KEY at https://aistudio.google.com/apikey"
       };
       const supadataKey = process.env.SUPADATA_API_KEY;
       let supadataResult;
@@ -69032,7 +69043,7 @@ async function registerRoutes(app2) {
       const ytdlpResult = {
         available: ytdlpStatus.available,
         cmd: ytdlpStatus.cmd,
-        reason: ytdlpStatus.available ? "yt-dlp is installed and responding" : "yt-dlp is not available \u2014 audio transcription and caption download will fail. Note: Replit datacenter IPs are blocked by YouTube, so yt-dlp success rates are very low even when installed."
+        reason: ytdlpStatus.available ? "yt-dlp is installed and responding" : "yt-dlp is not available \u2014 audio transcription and caption download will fail. Note: cloud datacenter IPs are often blocked by YouTube, so yt-dlp success rates may be very low even when installed."
       };
       const nativeCaptions = supadataResult.nativeCaptions;
       let recommendation;
@@ -69045,7 +69056,7 @@ async function registerRoutes(app2) {
       } else if (supadataKey) {
         recommendation = "Only Supadata AI generation is viable. Takes 5-10 min for long videos. Recommend enabling Gemini with GOOGLE_GEMINI_API_KEY.";
       } else {
-        recommendation = "No cloud transcript methods available. Only local yt-dlp/Whisper pipeline (IP-blocked on Replit). Enable Gemini or Supadata.";
+        recommendation = "No cloud transcript methods available. Only local yt-dlp/Whisper pipeline remains, and cloud IPs are often blocked. Enable Gemini or Supadata.";
       }
       res.json({
         videoId,
@@ -70264,7 +70275,7 @@ ${fullText}`
               const errorParts = [];
               if (phaseErrors?.gemini) errorParts.push(`Gemini error: ${phaseErrors.gemini}`);
               if (phaseErrors?.supadata) errorParts.push(`Supadata error: ${phaseErrors.supadata}`);
-              const geminiKey = process.env.GOOGLE_GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+              const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
               const supadataKey = process.env.SUPADATA_API_KEY;
               let detail = `Could not retrieve transcript for video '${resolvedId}'.`;
               if (errorParts.length > 0) {
@@ -72485,7 +72496,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
       if (!audio || typeof audio !== "string") {
         return res.status(400).json({ error: "audio (base64) is required" });
       }
-      const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+      const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
       const rawBuffer = Buffer.from(audio, "base64");
       if (rawBuffer.length < 1024) {
         return res.json({ text: "" });
@@ -72523,7 +72534,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         const OPENAI_VOICES2 = /* @__PURE__ */ new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
         resolvedVoice = OPENAI_VOICES2.has(prefs.voice) ? prefs.voice : "nova";
       }
-      const { textToSpeech: textToSpeech2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+      const { textToSpeech: textToSpeech2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
       const audioBuffer = await textToSpeech2(trimmedText, resolvedVoice ?? "nova", "mp3");
       res.json({ audio: audioBuffer.toString("base64") });
     } catch (error) {
@@ -72564,7 +72575,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
     const streamAbort = new AbortController();
     req.on("close", () => streamAbort.abort());
     try {
-      const { textToSpeechStream: textToSpeechStream2, elevenlabsTtsStream: elevenlabsTtsStream2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+      const { textToSpeechStream: textToSpeechStream2, elevenlabsTtsStream: elevenlabsTtsStream2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
       const openaiVoice = OPENAI_VOICES2.has(resolvedVoice) ? resolvedVoice : "nova";
       const stream = isElevenLabs && process.env.ELEVENLABS_API_KEY ? await elevenlabsTtsStream2(trimmedText, resolvedVoice, "eleven_turbo_v2_5", elLatency, streamAbort.signal) : await textToSpeechStream2(trimmedText, openaiVoice, streamAbort.signal);
       for await (const base64Chunk of stream) {
@@ -73883,7 +73894,7 @@ Extract up to 8 memories per batch.`;
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     try {
-      const rows = await db.select().from(openclawBuildLog).where(eq115(openclawBuildLog.userId, userId)).orderBy(desc41(openclawBuildLog.createdAt)).limit(50);
+      const rows = await db.select().from(agentBuildLog).where(eq115(agentBuildLog.userId, userId)).orderBy(desc41(agentBuildLog.createdAt)).limit(50);
       res.json({ builds: rows });
     } catch (err2) {
       console.error("[jarvis] GET builds failed:", err2);
@@ -74378,7 +74389,7 @@ Extract up to 8 memories per batch.`;
       const hasServerCredential = (integration) => {
         switch (integration) {
           case "google":
-            return Boolean((process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID) && process.env.GOOGLE_CLIENT_SECRET) || Boolean(process.env.REPLIT_CONNECTORS_HOST || process.env.REPL_ID);
+            return Boolean((process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID) && process.env.GOOGLE_CLIENT_SECRET);
           case "outlook":
             return Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
           case "telegram":
@@ -74598,7 +74609,7 @@ Extract up to 8 memories per batch.`;
   });
   app2.post("/api/conversations", authMiddleware, async (req, res) => {
     try {
-      const { chatStorage: chatStorage2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+      const { chatStorage: chatStorage2 } = await Promise.resolve().then(() => (init_chatStorage(), chatStorage_exports));
       const { title } = req.body || {};
       const conversation = await chatStorage2.createConversation(title || "Voice Session");
       res.status(201).json(conversation);
@@ -74614,7 +74625,7 @@ Extract up to 8 memories per batch.`;
       if (!Array.isArray(entries) || entries.length === 0) {
         return res.status(400).json({ error: "entries array is required" });
       }
-      const { chatStorage: chatStorage2 } = await Promise.resolve().then(() => (init_storage(), storage_exports));
+      const { chatStorage: chatStorage2 } = await Promise.resolve().then(() => (init_chatStorage(), chatStorage_exports));
       for (const entry of entries) {
         if (entry.role && entry.text) {
           await chatStorage2.createMessage(conversationId, entry.role, entry.text);
@@ -76638,7 +76649,7 @@ To link this Discord account:
           const resp = await fetch(audioAtt.url);
           const arrBuf = await resp.arrayBuffer();
           const buf = Buffer.from(arrBuf);
-          const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+          const { speechToText: speechToText2, detectAudioFormat: detectAudioFormat2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
           const format = detectAudioFormat2(buf);
           const transcript = await speechToText2(buf, format);
           if (!transcript?.trim()) {
@@ -79147,6 +79158,72 @@ var init_researchUtils = __esm({
   }
 });
 
+// server/agent/buildFeatureJobCore.ts
+function clampPercent(value) {
+  return Math.max(0, Math.min(99, Math.round(value)));
+}
+function stepBase(input) {
+  const count2 = Math.max(1, input.stepCount ?? 1);
+  const index2 = Math.max(0, Math.min(count2 - 1, input.stepIndex ?? 0));
+  return 35 + index2 / count2 * 45;
+}
+function buildFeatureProgressPercent(input) {
+  switch (input.phase) {
+    case "research":
+      return 12;
+    case "planning":
+      return 25;
+    case "step_started":
+      return clampPercent(stepBase(input));
+    case "type_check":
+      return clampPercent(stepBase(input) + 7);
+    case "verifying":
+      return clampPercent(stepBase(input) + 12);
+    case "step_completed": {
+      const count2 = Math.max(1, input.stepCount ?? 1);
+      const completed = Math.max(1, Math.min(count2, (input.stepIndex ?? 0) + 1));
+      return clampPercent(35 + completed / count2 * 45);
+    }
+    case "final_check":
+      return 85;
+    case "smoke_tests":
+      return 90;
+    case "synthesis":
+      return 95;
+  }
+}
+function buildFeatureProgressLabel(input) {
+  const stepNumber = typeof input.stepIndex === "number" ? input.stepIndex + 1 : 1;
+  const stepCount = Math.max(1, input.stepCount ?? 1);
+  const label = input.stepLabel ? `: ${input.stepLabel}` : "";
+  const attempt = typeof input.attempt === "number" ? ` attempt ${input.attempt + 1}` : "";
+  switch (input.phase) {
+    case "research":
+      return "Gathering build research";
+    case "planning":
+      return "Planning build steps";
+    case "step_started":
+      return `Building step ${stepNumber}/${stepCount}${label}${attempt}`;
+    case "type_check":
+      return `Type-checking step ${stepNumber}/${stepCount}${label}`;
+    case "verifying":
+      return `Verifying step ${stepNumber}/${stepCount}${label}`;
+    case "step_completed":
+      return `Completed step ${stepNumber}/${stepCount}${label}`;
+    case "final_check":
+      return "Running final type-check";
+    case "smoke_tests":
+      return "Running smoke tests";
+    case "synthesis":
+      return "Summarizing build result";
+  }
+}
+var init_buildFeatureJobCore = __esm({
+  "server/agent/buildFeatureJobCore.ts"() {
+    "use strict";
+  }
+});
+
 // server/agent/deepResearchPlanner.ts
 var deepResearchPlanner_exports = {};
 __export(deepResearchPlanner_exports, {
@@ -80336,6 +80413,27 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
         Object.assign(jobInput, updates);
       };
       const sendBuildPing = (text2) => notifyJobComplete(job.userId, "build_feature", job.title, text2, originChannel, originDiscordChannelId);
+      const recordBuildProgress = async (input) => {
+        const currentStep = buildFeatureProgressLabel(input);
+        jobInput = await appendWorkerProgressToJob({
+          jobId: job.id,
+          agentType: job.agentType,
+          title: job.title,
+          input: jobInput,
+          currentStep,
+          percent: buildFeatureProgressPercent(input),
+          metadata: {
+            phase: input.phase,
+            stepIndex: input.stepIndex,
+            stepCount: input.stepCount,
+            stepLabel: input.stepLabel,
+            attempt: input.attempt
+          }
+        }).catch((err2) => {
+          console.warn(`[JobQueue] build_feature progress append failed for ${job.id}:`, err2);
+          return jobInput;
+        });
+      };
       const baseFeatureDescription = String(jobInput.feature_description ?? job.prompt);
       const conversationContext = jobInput.conversationContext ? String(jobInput.conversationContext) : "";
       const featureDescription = conversationContext ? `Conversation context (for follow-up understanding):
@@ -80344,6 +80442,7 @@ ${conversationContext}
 Latest request: ${baseFeatureDescription}` : baseFeatureDescription;
       let researchBody = String(jobInput.researchBody ?? "");
       if (Boolean(jobInput.research_required ?? false) && !researchBody) {
+        await recordBuildProgress({ phase: "research" });
         let researchJobId = String(jobInput.researchJobId ?? "");
         if (!researchJobId) {
           researchJobId = (await submitAgentJob2({
@@ -80354,6 +80453,7 @@ Latest request: ${baseFeatureDescription}` : baseFeatureDescription;
             input: { parentJobId: job.id, originChannel, originDiscordChannelId }
           })).id;
           await persistProgress({ researchJobId });
+          await recordBuildProgress({ phase: "research" });
           await sendBuildPing(`\u{1F50D} Background research queued (job ${researchJobId.slice(0, 8)}\u2026) \u2014 waiting up to 5 min`);
         }
         const RESEARCH_POLL_INTERVAL_MS = 1e4;
@@ -80364,6 +80464,7 @@ Latest request: ${baseFeatureDescription}` : baseFeatureDescription;
           const [row] = await db.select({ status: agentJobs.status }).from(agentJobs).where(eq120(agentJobs.id, researchJobId)).limit(1);
           researchStatus = row?.status ?? "unknown";
           if (researchStatus === "complete" || researchStatus === "failed") break;
+          await recordBuildProgress({ phase: "research" });
           await new Promise((r) => setTimeout(r, RESEARCH_POLL_INTERVAL_MS));
         }
         if (researchStatus === "complete") {
@@ -80371,14 +80472,17 @@ Latest request: ${baseFeatureDescription}` : baseFeatureDescription;
           if (deliv?.body) {
             researchBody = deliv.body.slice(0, 4e3);
             await persistProgress({ researchBody });
+            await recordBuildProgress({ phase: "planning" });
             console.log(`[JobQueue] build_feature job ${job.id} \u2014 research complete (${researchBody.length} chars)`);
           }
         } else {
           console.warn(`[JobQueue] build_feature job ${job.id} \u2014 research job ${researchJobId} did not complete (status=${researchStatus}), proceeding without research`);
+          await recordBuildProgress({ phase: "planning" });
         }
       }
       let plan = jobInput.plan ?? null;
       if (!plan) {
+        await recordBuildProgress({ phase: "planning" });
         const planCtx = [
           featureDescription,
           researchBody ? `
@@ -80443,6 +80547,7 @@ ${planCtx}` }
           }];
         }
         await persistProgress({ plan, currentStepIndex: 0, completedSteps: [] });
+        await recordBuildProgress({ phase: "step_started", stepIndex: 0, stepCount: plan.length, stepLabel: plan[0]?.label });
         console.log(`[JobQueue] build_feature job ${job.id} \u2014 plan with ${plan.length} step(s)`);
         await sendBuildPing(`\u{1F4CB} Build plan ready (${plan.length} step${plan.length === 1 ? "" : "s"}) \u2014 beginning implementation`);
       }
@@ -80465,6 +80570,13 @@ ${planCtx}` }
           `[JobQueue] build_feature job ${job.id} \u2014 step ${stepIdx + 1}/${plan.length}: "${step.label}"`
         );
         for (let attempt = 0; attempt <= MAX_STEP_RETRIES; attempt++) {
+          await recordBuildProgress({
+            phase: "step_started",
+            stepIndex: stepIdx,
+            stepCount: plan.length,
+            stepLabel: step.label,
+            attempt
+          });
           const workerPrompt = [
             `Implement build step: "${step.label}"`,
             ``,
@@ -80496,6 +80608,7 @@ Previous attempt rejected \u2014 fix specifically: ${correctionContext}` : ""
             maxCompletionTokens: 2e3
           });
           const workerOutput = workerResult.reply || "(no output)";
+          await recordBuildProgress({ phase: "type_check", stepIndex: stepIdx, stepCount: plan.length, stepLabel: step.label });
           const typeCheckResult = await buildShellTool.execute({ command: "type_check" }, buildCtx);
           if (!typeCheckResult.ok) {
             correctionContext = `TypeScript type-check failed:
@@ -80536,6 +80649,7 @@ TypeScript type-check: \u2705 passed`,
 Actual file excerpts (post-implementation):
 ${fileSnippets.join("\n\n")}` : ""
           ].filter(Boolean).join("\n");
+          await recordBuildProgress({ phase: "verifying", stepIndex: stepIdx, stepCount: plan.length, stepLabel: step.label });
           const verification = await verifyJobOutput({
             agentType: "build_feature",
             originalPrompt: `Step: ${step.label}
@@ -80581,6 +80695,12 @@ Acceptance criteria: ${step.acceptance_criteria}`,
           verificationPassed: stepPassed,
           verificationRetries: stepRetries
         });
+        await recordBuildProgress({
+          phase: "step_completed",
+          stepIndex: stepIdx,
+          stepCount: plan.length,
+          stepLabel: step.label
+        });
         if (!stepPassed) {
           const failReason = `Build aborted at step ${stepIdx + 1}/${plan.length} \u2014 "${step.label}" failed verification after ${stepRetries + 1} attempt(s). ` + (correctionContext ? `Last rejection: ${correctionContext.slice(0, 300)}` : "");
           await sendBuildPing(
@@ -80612,9 +80732,11 @@ Acceptance criteria: ${step.acceptance_criteria}`,
 ` + (nextStep ? `Next: "${nextStep.label}"` : "All steps done \u2014 running final check\u2026")
         );
       }
+      await recordBuildProgress({ phase: "final_check" });
       const finalTypeCheck = await buildShellTool.execute({ command: "type_check" }, buildCtx);
       let finalTestResult = null;
       try {
+        await recordBuildProgress({ phase: "smoke_tests" });
         finalTestResult = await buildShellTool.execute({ command: "run_tests" }, buildCtx);
         console.log(
           `[JobQueue] build_feature job ${job.id} \u2014 smoke tests: ${finalTestResult.ok ? "\u2705 passed" : "\u274C failed"}`
@@ -80627,6 +80749,7 @@ Acceptance criteria: ${step.acceptance_criteria}`,
       );
       let synthesis = stepSummaryLines.join("\n");
       try {
+        await recordBuildProgress({ phase: "synthesis" });
         const synthResp = await routeModelTurn({
           tier: "smart",
           maxCompletionTokens: 600,
@@ -81288,6 +81411,7 @@ var init_jobQueue = __esm({
     init_approvalReceipt();
     init_jobObservability();
     init_workerRuntime();
+    init_buildFeatureJobCore();
     submitAgentJob2 = submitAgentJob;
     getModelForJobType2 = getModelForJobType;
     researchNotificationBatches = /* @__PURE__ */ new Map();
@@ -81321,7 +81445,6 @@ __export(integrationValidator_exports, {
   validateUserIntegrations: () => validateUserIntegrations
 });
 import { eq as eq121, and as and86, sql as sql47 } from "drizzle-orm";
-import { ReplitConnectors } from "@replit/connectors-sdk";
 async function checkOAuthIntegration(userId, provider) {
   try {
     const rows = await db.execute(sql47`
@@ -81332,8 +81455,6 @@ async function checkOAuthIntegration(userId, provider) {
     `);
     const row = rows.rows?.[0] ?? (Array.isArray(rows) ? rows[0] : null);
     if (!row) {
-      if (provider === "google") return checkGoogleViaConnector();
-      if (provider === "microsoft") return checkOutlookViaConnector();
       return { status: "unconfigured" };
     }
     const expiresAt = row.expires_at ? new Date(row.expires_at) : null;
@@ -81400,59 +81521,6 @@ async function pingOAuthProvider(provider, accessToken) {
   } catch (err2) {
     return { ok: false, error: err2 instanceof Error ? err2.message : String(err2) };
   }
-}
-async function checkConnectorStatus(connectorName, pingPath) {
-  try {
-    const connectors = new ReplitConnectors();
-    const connections = await connectors.listConnections({
-      connector_names: connectorName,
-      refresh_policy: "none"
-    });
-    if (!connections || connections.length === 0) {
-      return { status: "unconfigured" };
-    }
-    const res = await connectors.proxy(connectorName, pingPath, { method: "GET" });
-    if (res.ok) return { status: "healthy" };
-    if (res.status === 429) return { status: "healthy" };
-    const text2 = await res.text().catch(() => "");
-    const isHtmlErrorPage = text2.trimStart().startsWith("<!DOCTYPE") || text2.trimStart().startsWith("<html");
-    if (isHtmlErrorPage) {
-      console.warn(`[IntegrationValidator] ${connectorName} connector returned HTML ${res.status} \u2014 treating as unconfigured (proxy error)`);
-      return { status: "unconfigured" };
-    }
-    return {
-      status: "broken",
-      errorMessage: `${connectorName} connector token invalid (HTTP ${res.status}): ${text2.slice(0, 120)}`
-    };
-  } catch (err2) {
-    const msg = err2 instanceof Error ? err2.message : String(err2);
-    const isNoConnection = msg.includes("not found") || msg.includes("no connection") || msg.includes("404") && msg.includes("connection");
-    if (isNoConnection) {
-      return { status: "unconfigured" };
-    }
-    return { status: "broken", errorMessage: `${connectorName} connector error: ${msg}` };
-  }
-}
-async function checkGoogleViaConnector() {
-  const [calendarResult, mailResult] = await Promise.all([
-    checkConnectorStatus("google-calendar", "/users/me/calendarList"),
-    checkConnectorStatus("google-mail", "/gmail/v1/users/me/labels")
-  ]);
-  if (calendarResult.status === "unconfigured" && mailResult.status === "unconfigured") {
-    return { status: "unconfigured" };
-  }
-  if (calendarResult.status === "broken") return calendarResult;
-  if (mailResult.status === "broken") return mailResult;
-  if (calendarResult.status === "healthy" && mailResult.status === "healthy") {
-    return { status: "healthy" };
-  }
-  return {
-    status: "broken",
-    errorMessage: "One or more Google connectors (Calendar / Gmail) are not fully configured"
-  };
-}
-async function checkOutlookViaConnector() {
-  return checkConnectorStatus("outlook", "/v1.0/me");
 }
 async function checkSystemCredential(key, pingFn) {
   const cached = systemPingCache.get(key);
@@ -85795,7 +85863,7 @@ async function processDaemonUtterance(userId, utterance) {
   try {
     console.log(`[daemon] talk: processing utterance for userId=${userId}: "${utterance.slice(0, 60)}"`);
     const { runCoachAgent: runCoachAgent2 } = await Promise.resolve().then(() => (init_coachAgent(), coachAgent_exports));
-    const { textToSpeech: textToSpeech2 } = await Promise.resolve().then(() => (init_client(), client_exports));
+    const { textToSpeech: textToSpeech2 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
     const storedSessionId = await getSession(userId, "Voice");
     const result = await runCoachAgent2({
       userId,
@@ -89214,14 +89282,6 @@ function setupCors(app2) {
   app2.use((req, res, next) => {
     const origins = /* @__PURE__ */ new Set();
     origins.add(getPublicBaseUrl());
-    if (process.env.REPLIT_DEV_DOMAIN) {
-      origins.add(`https://${process.env.REPLIT_DEV_DOMAIN}`);
-    }
-    if (process.env.REPLIT_DOMAINS) {
-      process.env.REPLIT_DOMAINS.split(",").forEach((d) => {
-        origins.add(`https://${d.trim()}`);
-      });
-    }
     const origin = req.header("origin");
     const isLocalhost = origin?.startsWith("http://localhost:") || origin?.startsWith("http://127.0.0.1:");
     if (origin && (origins.has(origin) || isLocalhost)) {
@@ -89823,21 +89883,21 @@ init_schema();
 var GATEWAY_WS_PATH = "/api/gateway/ws";
 var GATEWAY_CHAT_CHANNEL = "Gateway";
 var STARTED_AT = /* @__PURE__ */ new Date();
-var OPENCLAW_PARITY_CAPABILITIES = [
-  { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
-  { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], openClawSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
-  { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
-  { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
-  { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
-  { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], openClawSurface: ["agents", "sessions", "chat/talk state"] },
-  { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], openClawSurface: ["channels", "instances", "linked apps"] },
-  { area: "daemon", status: "mapped", jarvisSurface: ["daemon.status", "desktop daemon", "android daemon", "operation audit"], openClawSurface: ["nodes", "device status", "exec approvals"] },
-  { area: "devices", status: "foundation", jarvisSurface: ["devices.pairing.request", "devices.pairing.approve", "devices.list", "devices.revoke", "daemon.ping", "daemon.notify", "daemon.test"], openClawSurface: ["device pairing", "scoped operator tokens", "browser/node trust"] },
-  { area: "automation", status: "mapped", jarvisSurface: ["cron.list", "cron.create", "jobs.create", "jobs.cancel", "jarvis_scheduled_tasks", "agent_workflows", "agent_jobs"], openClawSurface: ["cron", "dreams", "background jobs"] },
-  { area: "approvals", status: "mapped", jarvisSurface: ["approvals.list", "approvals.approve", "approvals.reject", "agent_approval_gates", "agent_approval_policies"], openClawSurface: ["approval gates", "exec/tool approvals"] },
-  { area: "skills", status: "partial", jarvisSurface: ["skills.list", "skill_packs", "user_skills", "mcp_servers"], openClawSurface: ["skills", "plugins", "MCP"] },
-  { area: "config", status: "foundation", jarvisSurface: ["config.get"], openClawSurface: ["runtime config", "secret refs", "model/provider config"] },
-  { area: "logs", status: "mapped", jarvisSurface: ["logs.tail", "diagnostic_events", "self_heal_audit_log"], openClawSurface: ["debug", "logs", "health traces"] }
+var JARVIS_RUNTIME_CAPABILITIES = [
+  { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], runtimeSurface: ["Gateway health", "Control UI connection", "runtime status"] },
+  { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], runtimeSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
+  { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], runtimeSurface: ["event bus", "activity timeline", "live control stream"] },
+  { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], runtimeSurface: ["nodes", "capability registry", "capability router"] },
+  { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], runtimeSurface: ["chat", "talk", "session message"] },
+  { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], runtimeSurface: ["agents", "sessions", "chat/talk state"] },
+  { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], runtimeSurface: ["channels", "instances", "linked apps"] },
+  { area: "daemon", status: "mapped", jarvisSurface: ["daemon.status", "desktop daemon", "android daemon", "operation audit"], runtimeSurface: ["nodes", "device status", "exec approvals"] },
+  { area: "devices", status: "foundation", jarvisSurface: ["devices.pairing.request", "devices.pairing.approve", "devices.list", "devices.revoke", "daemon.ping", "daemon.notify", "daemon.test"], runtimeSurface: ["device pairing", "scoped operator tokens", "browser/node trust"] },
+  { area: "automation", status: "mapped", jarvisSurface: ["cron.list", "cron.create", "jobs.create", "jobs.cancel", "jarvis_scheduled_tasks", "agent_workflows", "agent_jobs"], runtimeSurface: ["cron", "background work", "scheduled jobs"] },
+  { area: "approvals", status: "mapped", jarvisSurface: ["approvals.list", "approvals.approve", "approvals.reject", "agent_approval_gates", "agent_approval_policies"], runtimeSurface: ["approval gates", "exec/tool approvals"] },
+  { area: "skills", status: "partial", jarvisSurface: ["skills.list", "skill_packs", "user_skills", "mcp_servers"], runtimeSurface: ["skills", "plugins", "MCP"] },
+  { area: "config", status: "foundation", jarvisSurface: ["config.get"], runtimeSurface: ["runtime config", "secret refs", "model/provider config"] },
+  { area: "logs", status: "mapped", jarvisSurface: ["logs.tail", "diagnostic_events", "self_heal_audit_log"], runtimeSurface: ["debug", "logs", "health traces"] }
 ];
 function readPackageVersion() {
   try {
@@ -89897,7 +89957,7 @@ async function gatewayStatus(userId) {
     authenticated: Boolean(userId),
     activeDaemonUsers: userId ? listPairedUsers() : [],
     recentDiagnostics,
-    capabilities: OPENCLAW_PARITY_CAPABILITIES.map((c) => ({ area: c.area, status: c.status })),
+    capabilities: JARVIS_RUNTIME_CAPABILITIES.map((c) => ({ area: c.area, status: c.status })),
     ...publicConfigSnapshot()
   };
 }
@@ -90353,7 +90413,7 @@ async function handleRpc(req, ctx, events = {}) {
       case "gateway.status":
         return ok2(req.id, await gatewayStatus(userId));
       case "gateway.capabilities":
-        return ok2(req.id, { capabilities: OPENCLAW_PARITY_CAPABILITIES });
+        return ok2(req.id, { capabilities: JARVIS_RUNTIME_CAPABILITIES });
       case "config.get":
         return ok2(req.id, publicConfigSnapshot());
       case "events.list":
@@ -90549,7 +90609,7 @@ async function onMessage(ws, raw, ctx) {
 }
 function registerGatewayControlPlane(app2, server) {
   app2.get("/api/gateway/health", (_req, res) => res.json({ ok: true, ...publicConfigSnapshot() }));
-  app2.get("/api/gateway/capabilities", (_req, res) => res.json({ capabilities: OPENCLAW_PARITY_CAPABILITIES }));
+  app2.get("/api/gateway/capabilities", (_req, res) => res.json({ capabilities: JARVIS_RUNTIME_CAPABILITIES }));
   app2.post("/api/gateway/rpc", async (req, res) => {
     const ctx = await principalFromRequest(req);
     const payload = req.body;
@@ -90573,7 +90633,7 @@ function registerGatewayControlPlane(app2, server) {
         authKind: ctx.authKind,
         deviceId: ctx.deviceId,
         scopes: ctx.scopes,
-        methods: OPENCLAW_PARITY_CAPABILITIES.flatMap((c) => c.jarvisSurface)
+        methods: JARVIS_RUNTIME_CAPABILITIES.flatMap((c) => c.jarvisSurface)
       });
       ws.on("message", (raw) => onMessage(ws, raw, ctx).catch((error) => {
         send(ws, err(null, -32e3, error instanceof Error ? error.message : String(error)));
@@ -94298,10 +94358,12 @@ function startDiagnosticsBoot() {
       console.warn("[Doctor] Could not load doctor module:", err2.message);
     });
   }, 3e4);
-  import("playwright").then(({ chromium }) => {
-    chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] }).then((b) => b.close().then(() => log2("[Browser] Chromium ready"))).catch((err2) => console.error("[Browser] Chromium unavailable - run `npx playwright install chromium`:", err2.message.split("\n")[0]));
-  }).catch(() => {
-  });
+  if (process.env.JARVIS_BROWSER_DIAGNOSTIC === "true") {
+    import("playwright").then(({ chromium }) => {
+      chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] }).then((b) => b.close().then(() => log2("[Browser] Chromium ready"))).catch((err2) => console.warn("[Browser] Chromium diagnostic unavailable:", err2.message.split("\n")[0]));
+    }).catch(() => {
+    });
+  }
 }
 function startPostListenBoot() {
   startTelegramBoot();
@@ -94314,9 +94376,22 @@ function startPostListenBoot() {
 // server/index.ts
 var app = express4();
 var log3 = console.log;
+async function verifyDatabaseTablesInBackground() {
+  let lastErr;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await ensureTablesExist();
+      return;
+    } catch (err2) {
+      lastErr = err2;
+      const delayMs = attempt * 2e3;
+      console.warn(`[Startup] database table verification failed (attempt ${attempt}/5); retrying in ${delayMs}ms`);
+      await new Promise((resolve10) => setTimeout(resolve10, delayMs));
+    }
+  }
+  console.error("[Startup] database table verification failed after retries; continuing with existing schema", lastErr);
+}
 (async () => {
-  await ensureTablesExist();
-  await runPreListenBoot();
   logTelegramStatus();
   setupCors(app);
   setupBodyParsing(app);
@@ -94340,6 +94415,12 @@ var log3 = console.log;
     },
     () => {
       log3(`express server serving on ${host}:${port}`);
+      runPreListenBoot().catch((err2) => {
+        console.error("[Startup] pre-listen boot tasks crashed unexpectedly:", err2);
+      });
+      verifyDatabaseTablesInBackground().catch((err2) => {
+        console.error("[Startup] database table verification crashed unexpectedly:", err2);
+      });
       startPostListenBoot();
     }
   );
