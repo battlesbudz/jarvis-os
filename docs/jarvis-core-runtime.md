@@ -149,6 +149,8 @@ Simple route or channel inputs can be adapted into validated `JarvisEvent` objec
 
 Runtime preview and dry-run integration must be explicitly gated. The feature flag helper reads `JARVIS_RUNTIME_PREVIEW`, `JARVIS_RUNTIME_DRY_RUN`, and `JARVIS_RUNTIME_LIVE_EXECUTION`, defaulting all capabilities off. Current preview slices fail closed if live execution is enabled because no runtime-owned execution path exists yet.
 
+The route integration checklist lives in `docs/runtime-preview-integration-checklist.md`.
+
 ## Guarded Runtime Dry Run
 
 Guarded dry run checks runtime feature flags before composing preview output. If dry run is disabled, callers get an explicit disabled result. If live execution is enabled, the helper throws because the current runtime slices are preview-only.
