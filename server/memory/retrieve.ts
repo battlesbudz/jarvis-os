@@ -16,6 +16,7 @@ import {
 } from "./vectorStore";
 
 const EMBED_MODEL = "text-embedding-3-small";
+const EMBED_DIMENSIONS = 1536;
 
 export interface RetrievedMemory {
   id: string;
@@ -37,6 +38,45 @@ type MemoryRow = MemoryVectorRow;
 function envFlagEnabled(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function isLocalEmbeddingFallbackEnabled(): boolean {
+  return envFlagEnabled(process.env.JARVIS_ENABLE_LOCAL_EMBEDDING_FALLBACK);
+}
+
+function hashString(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function buildLocalEmbedding(text: string): number[] {
+  const vector = new Array<number>(EMBED_DIMENSIONS).fill(0);
+  const tokens = text
+    .toLowerCase()
+    .match(/[a-z0-9][a-z0-9'-]{1,}/g)
+    ?.slice(0, 512) ?? [];
+  const features = tokens.length > 0 ? tokens : [text.toLowerCase().slice(0, 64) || "empty"];
+
+  for (let i = 0; i < features.length; i++) {
+    const token = features[i];
+    const tokenHash = hashString(token);
+    const tokenIndex = tokenHash % EMBED_DIMENSIONS;
+    vector[tokenIndex] += (tokenHash & 1) === 0 ? 1 : -1;
+
+    const next = features[i + 1];
+    if (next) {
+      const bigramHash = hashString(`${token} ${next}`);
+      const bigramIndex = bigramHash % EMBED_DIMENSIONS;
+      vector[bigramIndex] += (bigramHash & 1) === 0 ? 0.5 : -0.5;
+    }
+  }
+
+  const magnitude = Math.sqrt(vector.reduce((sum, value) => sum + value * value, 0)) || 1;
+  return vector.map((value) => value / magnitude);
 }
 
 function getEmbeddingOpenAIClient(): OpenAI | null {
@@ -62,7 +102,9 @@ export async function embedText(text: string): Promise<number[] | null> {
   const trimmed = text.trim();
   if (!trimmed) return null;
   const embeddingClient = getEmbeddingOpenAIClient();
-  if (!embeddingClient) return null;
+  if (!embeddingClient) {
+    return isLocalEmbeddingFallbackEnabled() ? buildLocalEmbedding(trimmed) : null;
+  }
   try {
     const res = await embeddingClient.embeddings.create({
       model: EMBED_MODEL,
@@ -80,6 +122,10 @@ export async function embedText(text: string): Promise<number[] | null> {
       console.debug("[MemoryRetrieve] embedText unavailable (embeddings endpoint not supported by proxy):", message);
     } else {
       console.warn("[MemoryRetrieve] embedText failed (optional enrichment):", message);
+    }
+    if (isLocalEmbeddingFallbackEnabled()) {
+      console.warn("[MemoryRetrieve] using deterministic local embedding fallback");
+      return buildLocalEmbedding(trimmed);
     }
     return null;
   }
