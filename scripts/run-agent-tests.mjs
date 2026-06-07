@@ -89,6 +89,7 @@ const tests = [
   { file: "server/core/runtime/__tests__/runtimeEventAdapter.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeFeatureFlags.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeGoldenDryRun.test.ts" },
+  { file: "server/core/runtime/__tests__/runtimeGuardedDryRun.test.ts" },
   { file: "server/core/runtime/__tests__/runtimePreviewReport.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeToolPreflight.test.ts" },
   { file: "server/core/tools/__tests__/agentToolAdapter.test.ts" },
