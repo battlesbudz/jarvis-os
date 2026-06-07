@@ -161,6 +161,10 @@ Runtime preview reports can be formatted into deterministic text for logs, diagn
 
 Dry-run results can be transformed into structured audit event payloads containing event, decision, status, risk, response mode, approval, and tool-count metadata. The builder returns a payload only; it does not write logs, persist records, or emit events.
 
+## Tool Capability Summary
+
+Tool Gateway descriptors can be summarized into provider, scope, approval, and maximum-risk metadata. This helps preview callers understand the available tool surface before attempting preflight.
+
 ## Non-Goals
 
 - no broad folder restructuring
