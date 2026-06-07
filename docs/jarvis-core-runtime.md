@@ -141,6 +141,10 @@ Runtime dry run composes the preview pieces into one result: runtime/tool prefli
 
 Golden dry-run fixtures cover stable runtime expectations for general answers, memory lookup, approval-required email action, research queue, and invalid-event fail-closed behavior. These fixtures are small smoke cases for keeping the protocol, runtime gate, tool preflight, report, and approval preview aligned.
 
+## Runtime Event Adapter
+
+Simple route or channel inputs can be adapted into validated `JarvisEvent` objects with consistent IDs, timestamps, channel, and metadata defaults. The adapter validates through `JarvisEventSchema` and can feed dry-run previews without wiring any live route behavior.
+
 ## Non-Goals
 
 - no broad folder restructuring
