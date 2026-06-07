@@ -1,5 +1,7 @@
-import { preflightToolGateway } from "../tools";
+import type { AgentTool } from "../../agent/types";
+import { preflightToolGateway, toolDescriptorsFromAgentTools } from "../tools";
 import type {
+  AgentToolDescriptorOptions,
   ToolGatewayAuthSnapshot,
   ToolGatewayPolicy,
   ToolGatewayPreflightResult,
@@ -18,6 +20,11 @@ export interface RuntimeToolPreflightResult extends ExecuteRuntimeEventResult {
   toolPreflight: ToolGatewayPreflightResult;
 }
 
+export interface RuntimeAgentToolPreflightInput extends Omit<RuntimeToolPreflightInput, "availableTools"> {
+  agentTools: Array<Pick<AgentTool, "name">>;
+  descriptorOverrides?: Record<string, AgentToolDescriptorOptions>;
+}
+
 export function previewRuntimeToolPreflight(input: RuntimeToolPreflightInput): RuntimeToolPreflightResult {
   const runtime = executeRuntimeEvent(input);
   const toolPreflight = preflightToolGateway({
@@ -31,4 +38,11 @@ export function previewRuntimeToolPreflight(input: RuntimeToolPreflightInput): R
     ...runtime,
     toolPreflight,
   };
+}
+
+export function previewRuntimePreflightFromAgentTools(input: RuntimeAgentToolPreflightInput): RuntimeToolPreflightResult {
+  return previewRuntimeToolPreflight({
+    ...input,
+    availableTools: toolDescriptorsFromAgentTools(input.agentTools, input.descriptorOverrides),
+  });
 }

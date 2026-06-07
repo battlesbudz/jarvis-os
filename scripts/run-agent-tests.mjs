@@ -82,6 +82,7 @@ const tests = [
   { file: "server/agent/__tests__/mindTraceContextPacks.test.ts" },
   { file: "server/core/protocol/__tests__/runtimeProtocol.test.ts" },
   { file: "server/core/runtime/__tests__/executeRuntimeEvent.test.ts" },
+  { file: "server/core/runtime/__tests__/runtimeAgentToolPreflight.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeToolPreflight.test.ts" },
   { file: "server/core/tools/__tests__/agentToolAdapter.test.ts" },
   { file: "server/core/tools/__tests__/toolGateway.test.ts" },
