@@ -137,6 +137,10 @@ This is not an approval record and it does not notify, persist, approve, reject,
 
 Runtime dry run composes the preview pieces into one result: runtime/tool preflight preview, readiness report, and optional approval preview. It is the safest integration surface for route experiments because all outputs are derived and no side effects occur.
 
+## Runtime Golden Dry Runs
+
+Golden dry-run fixtures cover stable runtime expectations for general answers, memory lookup, approval-required email action, research queue, and invalid-event fail-closed behavior. These fixtures are small smoke cases for keeping the protocol, runtime gate, tool preflight, report, and approval preview aligned.
+
 ## Non-Goals
 
 - no broad folder restructuring
