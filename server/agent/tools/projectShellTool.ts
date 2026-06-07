@@ -304,6 +304,15 @@ async function runCommand(
     child.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
     child.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({
+        stdout: stdout.slice(0, 8000),
+        stderr: `${stderr}${stderr ? "\n" : ""}${err.message}`.slice(0, 4000),
+        exitCode: -1,
+      });
+    });
+
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve({
@@ -321,7 +330,7 @@ async function runDevServer(
   projectId: string,
   port: number,
 ): Promise<{ pid: number; url: string }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const env = {
       ...process.env,
       HOME: os.homedir(),
@@ -374,6 +383,12 @@ async function runDevServer(
       ) {
         settle();
       }
+    });
+
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
     });
 
     (setTimeout(settle, 15000) as unknown as { unref(): void }).unref();
