@@ -2,7 +2,11 @@ import { db } from "../db";
 import { sql, inArray } from "drizzle-orm";
 import { userMemories } from "@shared/schema";
 import OpenAI from "openai";
-import { getOpenAIClientConfig, isDirectOpenAIDisabled } from "../agent/providers/env";
+import {
+  getProviderEnvValue,
+  isDirectOpenAIDisabled,
+  isRouterPlaceholderOpenAIKey,
+} from "../agent/providers/env";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import type { QueryBrainResult } from "../brain/types";
 import {
@@ -10,8 +14,6 @@ import {
   upsertMemoryEmbedding,
   type MemoryVectorRow,
 } from "./vectorStore";
-
-const openai = new OpenAI(getOpenAIClientConfig());
 
 const EMBED_MODEL = "text-embedding-3-small";
 
@@ -32,12 +34,37 @@ export interface RetrievedMemory {
 
 type MemoryRow = MemoryVectorRow;
 
+function envFlagEnabled(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+
+function getEmbeddingOpenAIClient(): OpenAI | null {
+  if (envFlagEnabled(process.env.JARVIS_DISABLE_OPENAI_EMBEDDINGS)) return null;
+  if (isDirectOpenAIDisabled() && !envFlagEnabled(process.env.JARVIS_ENABLE_OPENAI_EMBEDDINGS)) {
+    return null;
+  }
+
+  const apiKey = getProviderEnvValue(
+    "JARVIS_EMBEDDINGS_OPENAI_API_KEY",
+    "AI_INTEGRATIONS_OPENAI_API_KEY",
+    "OPENAI_API_KEY",
+  );
+  if (!apiKey || isRouterPlaceholderOpenAIKey(apiKey)) return null;
+
+  return new OpenAI({
+    apiKey,
+    baseURL: getProviderEnvValue("JARVIS_EMBEDDINGS_OPENAI_BASE_URL", "AI_INTEGRATIONS_OPENAI_BASE_URL", "OPENAI_BASE_URL"),
+  });
+}
+
 export async function embedText(text: string): Promise<number[] | null> {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  if (isDirectOpenAIDisabled()) return null;
+  const embeddingClient = getEmbeddingOpenAIClient();
+  if (!embeddingClient) return null;
   try {
-    const res = await openai.embeddings.create({
+    const res = await embeddingClient.embeddings.create({
       model: EMBED_MODEL,
       input: trimmed.slice(0, 8000),
     });

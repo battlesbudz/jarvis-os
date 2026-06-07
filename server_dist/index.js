@@ -6523,8 +6523,8 @@ async function summarizeAgentMemory(agentId, userId) {
   const memoryText = toSummarize.map((m) => `[${m.category}] ${m.content}`).join("\n");
   let summary = "";
   try {
-    const openai24 = createRoutedOpenAIChatShim("[AgentMemory]", "balanced");
-    const resp = await openai24.chat.completions.create({
+    const openai23 = createRoutedOpenAIChatShim("[AgentMemory]", "balanced");
+    const resp = await openai23.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: "Compress the following agent memories into a concise summary (max 500 words). Preserve key facts, patterns, and context. Output plain text." },
@@ -11665,12 +11665,33 @@ __export(retrieve_exports, {
 });
 import { sql as sql12, inArray as inArray3 } from "drizzle-orm";
 import OpenAI5 from "openai";
+function envFlagEnabled(value) {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes";
+}
+function getEmbeddingOpenAIClient() {
+  if (envFlagEnabled(process.env.JARVIS_DISABLE_OPENAI_EMBEDDINGS)) return null;
+  if (isDirectOpenAIDisabled() && !envFlagEnabled(process.env.JARVIS_ENABLE_OPENAI_EMBEDDINGS)) {
+    return null;
+  }
+  const apiKey = getProviderEnvValue(
+    "JARVIS_EMBEDDINGS_OPENAI_API_KEY",
+    "AI_INTEGRATIONS_OPENAI_API_KEY",
+    "OPENAI_API_KEY"
+  );
+  if (!apiKey || isRouterPlaceholderOpenAIKey(apiKey)) return null;
+  return new OpenAI5({
+    apiKey,
+    baseURL: getProviderEnvValue("JARVIS_EMBEDDINGS_OPENAI_BASE_URL", "AI_INTEGRATIONS_OPENAI_BASE_URL", "OPENAI_BASE_URL")
+  });
+}
 async function embedText(text2) {
   const trimmed = text2.trim();
   if (!trimmed) return null;
-  if (isDirectOpenAIDisabled()) return null;
+  const embeddingClient = getEmbeddingOpenAIClient();
+  if (!embeddingClient) return null;
   try {
-    const res = await openai2.embeddings.create({
+    const res = await embeddingClient.embeddings.create({
       model: EMBED_MODEL,
       input: trimmed.slice(0, 8e3)
     });
@@ -11872,7 +11893,7 @@ async function retrieveRelevantMemories(userId, query, limit = 12, skipAccessUpd
   const queryVec = await embedText(q);
   return retrieveCanonicalMemoriesWithQueryVector(userId, q, queryVec, limit, skipAccessUpdate);
 }
-var openai2, EMBED_MODEL;
+var EMBED_MODEL;
 var init_retrieve = __esm({
   "server/memory/retrieve.ts"() {
     "use strict";
@@ -11881,7 +11902,6 @@ var init_retrieve = __esm({
     init_env();
     init_diagnosticsService();
     init_vectorStore();
-    openai2 = new OpenAI5(getOpenAIClientConfig());
     EMBED_MODEL = "text-embedding-3-small";
   }
 });
@@ -12047,7 +12067,7 @@ async function isVaultStale(userId) {
 async function generatePage(userId, spec, model) {
   try {
     const promptText = await spec.buildPrompt(userId);
-    const response = await openai3.chat.completions.create({
+    const response = await openai2.chat.completions.create({
       model,
       messages: [{ role: "user", content: promptText }],
       max_completion_tokens: 1e3
@@ -12164,7 +12184,7 @@ ${top5 || "(none yet)"}
 
 All pages:
 ${pageListForLLM}${lintLogSection}`;
-    const response = await openai3.chat.completions.create({
+    const response = await openai2.chat.completions.create({
       model,
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 800
@@ -12236,7 +12256,7 @@ Rules:
 - slugs must be lowercase kebab-case
 - Return at most 3 pages_to_update and 2 new_pages per ingest
 - Return {"pages_to_update":[],"new_pages":[]} if nothing needs updating`;
-    const planResponse = await openai3.chat.completions.create({
+    const planResponse = await openai2.chat.completions.create({
       model,
       messages: [{ role: "user", content: planPrompt }],
       response_format: { type: "json_object" },
@@ -12341,7 +12361,7 @@ Instructions:
 - Keep existing content that is still accurate \u2014 this is a cumulative wiki, not a rewrite
 - Max 500 words. Use ## headers for sections.
 - Respond with the FULL revised page content only (no meta-commentary)`;
-    const response = await openai3.chat.completions.create({
+    const response = await openai2.chat.completions.create({
       model,
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 900
@@ -12388,7 +12408,7 @@ async function fileQuery(userId, question, answer) {
   try {
     const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
     const model = await getModel2(userId, "memory");
-    const worthFiling = await openai3.chat.completions.create({
+    const worthFiling = await openai2.chat.completions.create({
       model,
       messages: [
         {
@@ -12444,7 +12464,7 @@ Write a clean wiki page (markdown) that:
 - Adds [[slug]] cross-references where relevant
 - Is self-contained and useful for future retrieval
 - Max 400 words. Use ## headers.`;
-    const response = await openai3.chat.completions.create({
+    const response = await openai2.chat.completions.create({
       model,
       messages: [{ role: "user", content: pagePrompt }],
       max_completion_tokens: 700
@@ -12557,7 +12577,7 @@ Respond with JSON only:
 }
 
 Return {"corrections": []} if no issues found. Only include entries where revision is genuinely needed.`;
-      const lintResponse = await openai3.chat.completions.create({
+      const lintResponse = await openai2.chat.completions.create({
         model,
         messages: [{ role: "user", content: lintPrompt }],
         response_format: { type: "json_object" },
@@ -12638,7 +12658,7 @@ async function lintWikiForAllUsers() {
     return 0;
   }
 }
-var openai3, VAULT_TTL_MS, VAULT_NOVELTY_THRESHOLD, PAGE_SPECS;
+var openai2, VAULT_TTL_MS, VAULT_NOVELTY_THRESHOLD, PAGE_SPECS;
 var init_vaultWriter = __esm({
   "server/memory/vaultWriter.ts"() {
     "use strict";
@@ -12647,7 +12667,7 @@ var init_vaultWriter = __esm({
     init_diagnosticsService();
     init_routedChatCompletion();
     init_fallback();
-    openai3 = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
+    openai2 = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
     VAULT_TTL_MS = 6 * 60 * 60 * 1e3;
     VAULT_NOVELTY_THRESHOLD = 3;
     PAGE_SPECS = [
@@ -18581,8 +18601,8 @@ async function synthesizeCouncilResponse(question, responses) {
   const responsesText = successfulResponses.map((r) => `**${r.agentName}** (specialist response):
 ${r.response}`).join("\n\n---\n\n");
   try {
-    const openai24 = createRoutedOpenAIChatShim("[CouncilSynthesis]", "balanced");
-    const resp = await openai24.chat.completions.create({
+    const openai23 = createRoutedOpenAIChatShim("[CouncilSynthesis]", "balanced");
+    const resp = await openai23.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -20057,7 +20077,7 @@ async function learnFromDismissal(userId, itemId, telegramChatId) {
 async function createRuleFromText(userId, text2, type, scope) {
   let matchHints = {};
   try {
-    const response = await openai4.chat.completions.create({
+    const response = await openai3.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -20090,14 +20110,14 @@ Examples:
   }).returning();
   return rule;
 }
-var openai4;
+var openai3;
 var init_inboxRules = __esm({
   "server/inboxRules.ts"() {
     "use strict";
     init_db();
     init_schema();
     init_routedChatCompletion();
-    openai4 = createRoutedOpenAIChatShim("[InboxRules]", "cheap");
+    openai3 = createRoutedOpenAIChatShim("[InboxRules]", "cheap");
   }
 });
 
@@ -20474,7 +20494,7 @@ ${markdownExtra}` : markdownExtra : reply;
 }
 async function isReplyToProactiveQuestion(userText, question) {
   try {
-    const response = await openai5.chat.completions.create({
+    const response = await openai4.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{
         role: "user",
@@ -22153,7 +22173,7 @@ Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus
   if (!prompt) return null;
   const isWeeklyPlanning = type === "weekly" || type === "weekly_planning";
   try {
-    const resp = await openai5.chat.completions.create({
+    const resp = await openai4.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -22407,7 +22427,7 @@ ${relevantEmails.map((e) => `- ${e}`).join("\n")}` : ""}
 
 Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about, highlight any relevant email context if provided, and end with one clear action item or thing to focus on. Be direct, no fluff.`;
             try {
-              const resp = await openai5.chat.completions.create({
+              const resp = await openai4.chat.completions.create({
                 model: "gpt-4o-mini",
                 messages: [
                   {
@@ -22549,7 +22569,7 @@ Jarvis: ${reason}`;
           ).join("\n\n");
           let flagged = [];
           try {
-            const classification = await openai5.chat.completions.create({
+            const classification = await openai4.chat.completions.create({
               model: "gpt-4o-mini",
               messages: [
                 {
@@ -22684,7 +22704,7 @@ ${alert}`;
   setInterval(runScan, SCAN_INTERVAL_MS2);
   console.log("GitHub CI alert scanner started (30-min interval)");
 }
-var openai5, pollingOffset, pollingActive, PROACTIVE_SCHEDULE;
+var openai4, pollingOffset, pollingActive, PROACTIVE_SCHEDULE;
 var init_telegramRoutes = __esm({
   "server/telegramRoutes.ts"() {
     "use strict";
@@ -22719,7 +22739,7 @@ var init_telegramRoutes = __esm({
     init_telegramMessageBatcher();
     init_telegramWorkflowIntent();
     init_turnProgress();
-    openai5 = new OpenAI6(getOpenAIClientConfig());
+    openai4 = new OpenAI6(getOpenAIClientConfig());
     pollingOffset = 0;
     pollingActive = false;
     PROACTIVE_SCHEDULE = [
@@ -39053,7 +39073,7 @@ async function saveImageToDrive(accessToken, buf, filename, mimeType) {
     return null;
   }
 }
-var openai6, imageOpenai, SIZE_MAP, DALLE3_SIZE_MAP, FLUX_SIZE_MAP, GENERATED_IMAGES_FOLDER, POLLINATIONS_SIZE_MAP, imageGenerateTool;
+var openai5, imageOpenai, SIZE_MAP, DALLE3_SIZE_MAP, FLUX_SIZE_MAP, GENERATED_IMAGES_FOLDER, POLLINATIONS_SIZE_MAP, imageGenerateTool;
 var init_imageGenerate = __esm({
   "server/agent/tools/imageGenerate.ts"() {
     "use strict";
@@ -39062,7 +39082,7 @@ var init_imageGenerate = __esm({
     init_schema();
     init_telegram();
     init_googleDrive();
-    openai6 = new OpenAI7(getOpenAIClientConfig());
+    openai5 = new OpenAI7(getOpenAIClientConfig());
     imageOpenai = new OpenAI7({
       apiKey: process.env.OPENAI_API_KEY ?? "no-direct-openai-key"
       // No baseURL — image requests go to api.openai.com directly.
@@ -40740,10 +40760,10 @@ function getAudioTranscriptTelemetry() {
   };
 }
 async function transcribeBuffer(buf, ext) {
-  const { openai: openai24 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
+  const { openai: openai23 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
   const { toFile: toFile2 } = await import("openai");
   const file = await toFile2(buf, `audio.${ext}`, { type: `audio/${ext}` });
-  const resp = await openai24.audio.transcriptions.create({
+  const resp = await openai23.audio.transcriptions.create({
     file,
     model: "whisper-1",
     language: "en",
@@ -41683,7 +41703,7 @@ async function describeFrames(frames) {
   if (frames.length === 0) return [];
   if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
   try {
-    const { openai: openai24 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
+    const { openai: openai23 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
     const BATCH_SIZE2 = 10;
     const observations = [];
     for (let i = 0; i < frames.length; i += BATCH_SIZE2) {
@@ -41696,7 +41716,7 @@ async function describeFrames(frames) {
         }
       }));
       const timestampList = batch.map((f, idx) => `Frame ${idx + 1}: [${formatSec(f.timestampSec)}]`).join(", ");
-      const response = await openai24.chat.completions.create({
+      const response = await openai23.chat.completions.create({
         model: "gpt-4o",
         max_tokens: 800,
         response_format: { type: "json_object" },
@@ -49263,8 +49283,8 @@ ${registryCtx.systemContext}` : systemPromptBase;
 }
 async function extractAndWriteMemories(agentId, userId, userMessage, agentReply) {
   try {
-    const openai24 = createRoutedOpenAIChatShim("[NamedAgentMemoryExtract]", "cheap");
-    const resp = await openai24.chat.completions.create({
+    const openai23 = createRoutedOpenAIChatShim("[NamedAgentMemoryExtract]", "cheap");
+    const resp = await openai23.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         {
@@ -50260,7 +50280,7 @@ async function extractFromDocx(buffer) {
 async function extractFromImage(buffer, mimeType) {
   const base64 = buffer.toString("base64");
   const dataUrl = `data:${mimeType};base64,${base64}`;
-  const response = await openai7.chat.completions.create({
+  const response = await openai6.chat.completions.create({
     model: "gpt-4o",
     messages: [
       {
@@ -50347,7 +50367,7 @@ The user has uploaded the following documents. Refer to this content when answer
 
 ${sections.join("\n\n")}`;
 }
-var openai7, MAX_DOCS_PER_USER, MAX_EXTRACTED_CHARS2, MAX_SUMMARY_INPUT_CHARS, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS;
+var openai6, MAX_DOCS_PER_USER, MAX_EXTRACTED_CHARS2, MAX_SUMMARY_INPUT_CHARS, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS;
 var init_documentProcessor = __esm({
   "server/documentProcessor.ts"() {
     "use strict";
@@ -50355,7 +50375,7 @@ var init_documentProcessor = __esm({
     init_routedChatCompletion();
     init_db();
     init_schema();
-    openai7 = new OpenAI8(getOpenAIClientConfig());
+    openai6 = new OpenAI8(getOpenAIClientConfig());
     MAX_DOCS_PER_USER = 10;
     MAX_EXTRACTED_CHARS2 = 8e4;
     MAX_SUMMARY_INPUT_CHARS = 6e4;
@@ -51854,7 +51874,7 @@ ${goal.description ? `Notes: ${goal.description}` : ""}
 Decompose it now.`;
   const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
   const model = await getModel2(userId, "research");
-  const resp = await openai8.chat.completions.create({
+  const resp = await openai7.chat.completions.create({
     model,
     messages: [
       { role: "system", content: system },
@@ -51915,7 +51935,7 @@ async function enqueueGoalDecomposition(userId, goal) {
   });
   return id;
 }
-var openai8;
+var openai7;
 var init_goalDecomposer = __esm({
   "server/agent/goalDecomposer.ts"() {
     "use strict";
@@ -51923,7 +51943,7 @@ var init_goalDecomposer = __esm({
     init_schema();
     init_routedChatCompletion();
     init_contextBuilder();
-    openai8 = createRoutedOpenAIChatShim("[GoalDecomposer]", "balanced");
+    openai7 = createRoutedOpenAIChatShim("[GoalDecomposer]", "balanced");
   }
 });
 
@@ -56562,11 +56582,11 @@ function registerLocalWorkerRoutes(app2) {
       if (audioBuffer.length > 25 * 1024 * 1024) {
         return res.status(413).json({ error: "Audio chunk exceeds 25 MB Whisper limit - split into smaller chunks" });
       }
-      const { openai: openai24 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
+      const { openai: openai23 } = await Promise.resolve().then(() => (init_audioClient(), audioClient_exports));
       const { toFile: toFile2 } = await import("openai");
       const safeFormat = ["mp3", "wav", "m4a", "webm", "mp4", "ogg"].includes(format) ? format : "mp3";
       const file = await toFile2(audioBuffer, `audio.${safeFormat}`, { type: `audio/${safeFormat}` });
-      const response = await openai24.audio.transcriptions.create({
+      const response = await openai23.audio.transcriptions.create({
         file,
         model: "whisper-1",
         language: "en",
@@ -58055,7 +58075,7 @@ Return JSON:
   }
 ]}
 Only return the JSON object, no extra text.`;
-      const response = await openai9.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -58223,7 +58243,7 @@ Return JSON with:
 taskOrder: Return up to 3 task IDs from the task list above, reordered optimally for this energy level. Only include IDs that appear in the task list. Prioritise momentum-building.
 
 Return ONLY the JSON object.`;
-      const response = await openai9.chat.completions.create({
+      const response = await openai8.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -58258,7 +58278,7 @@ Return ONLY the JSON object.`;
     }
   });
 }
-var openai9;
+var openai8;
 var init_integrationRoutes = __esm({
   "server/routes/integrationRoutes.ts"() {
     "use strict";
@@ -58272,7 +58292,7 @@ var init_integrationRoutes = __esm({
     init_slack();
     init_integrationOwner();
     init_userTokenStore();
-    openai9 = new OpenAI9(getOpenAIClientConfig());
+    openai8 = new OpenAI9(getOpenAIClientConfig());
   }
 });
 
@@ -58429,7 +58449,7 @@ async function curateSkillsForUser(userId) {
   try {
     for (let i = 0; i < uniqueMessages.length; i += 64) {
       const batch = uniqueMessages.slice(i, i + 64);
-      const resp = await openai10.embeddings.create({
+      const resp = await openai9.embeddings.create({
         model: "text-embedding-3-small",
         input: batch,
         dimensions: 256
@@ -58620,7 +58640,7 @@ Return ONLY a valid JSON object (no markdown fences):
     console.error("[SkillCurator] emitSynthesiserCandidate failed (non-fatal):", err2);
   }
 }
-var openai10, MIN_OCCURRENCES, LOOKBACK_DAYS, MAX_CANDIDATES_PER_RUN;
+var openai9, MIN_OCCURRENCES, LOOKBACK_DAYS, MAX_CANDIDATES_PER_RUN;
 var init_skillCurator = __esm({
   "server/intelligence/skillCurator.ts"() {
     "use strict";
@@ -58628,7 +58648,7 @@ var init_skillCurator = __esm({
     init_routedChatCompletion();
     init_db();
     init_schema();
-    openai10 = new OpenAI10(getOpenAIClientConfig());
+    openai9 = new OpenAI10(getOpenAIClientConfig());
     MIN_OCCURRENCES = 3;
     LOOKBACK_DAYS = 7;
     MAX_CANDIDATES_PER_RUN = 5;
@@ -58685,7 +58705,7 @@ Instructions:
 6. Output ONLY the bullet points \u2014 no headers, no commentary, no JSON.`;
   let rawOutput = "";
   try {
-    const resp = await openai11.chat.completions.create({
+    const resp = await openai10.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 600
@@ -58766,7 +58786,7 @@ async function logSynthesisRun(result, triggeredBy) {
     console.error("[LearningSynthesiser] Failed to write synthesis log to DB:", err2);
   }
 }
-var openai11;
+var openai10;
 var init_learningSynthesiser = __esm({
   "server/intelligence/learningSynthesiser.ts"() {
     "use strict";
@@ -58774,7 +58794,7 @@ var init_learningSynthesiser = __esm({
     init_loader();
     init_db();
     init_schema();
-    openai11 = createRoutedOpenAIChatShim("[LearningSynthesiser]", "balanced");
+    openai10 = createRoutedOpenAIChatShim("[LearningSynthesiser]", "balanced");
   }
 });
 
@@ -58973,7 +58993,7 @@ Output JSON:
   ]
 }`;
     try {
-      const resp = await openai12.chat.completions.create({
+      const resp = await openai11.chat.completions.create({
         model,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -59079,7 +59099,7 @@ Rules:
 - Return at most 3 facts
 - Return { "facts": [] } if no durable pattern can be extracted`;
     try {
-      const resp = await openai12.chat.completions.create({
+      const resp = await openai11.chat.completions.create({
         model,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -59272,7 +59292,7 @@ Return { "insights": [] } if you cannot find anything genuinely non-obvious and 
 ${corpus.text.slice(0, 12e3)}`;
   let rawInsights = [];
   try {
-    const resp = await openai12.chat.completions.create({
+    const resp = await openai11.chat.completions.create({
       model,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
@@ -59401,7 +59421,7 @@ async function markDreamInsightsDelivered(ids) {
   if (ids.length === 0) return;
   await db.update(dreamInsights).set({ shownToUser: true, deliveredAt: /* @__PURE__ */ new Date() }).where(inArray8(dreamInsights.id, ids));
 }
-var openai12, MINIMUM_MEMORY_AGE_DAYS, CONSOLIDATION_BATCH_SIZE;
+var openai11, MINIMUM_MEMORY_AGE_DAYS, CONSOLIDATION_BATCH_SIZE;
 var init_dream = __esm({
   "server/memory/dream.ts"() {
     "use strict";
@@ -59411,7 +59431,7 @@ var init_dream = __esm({
     init_soul();
     init_diagnosticsService();
     init_routedChatCompletion();
-    openai12 = createRoutedOpenAIChatShim("[DreamCycle]", "balanced");
+    openai11 = createRoutedOpenAIChatShim("[DreamCycle]", "balanced");
     MINIMUM_MEMORY_AGE_DAYS = 14;
     CONSOLIDATION_BATCH_SIZE = 20;
   }
@@ -60006,7 +60026,7 @@ function registerProfileMemoryRoutes(app2) {
     }
   });
 }
-var openai13, paramValue4;
+var openai12, paramValue4;
 var init_profileMemoryRoutes = __esm({
   "server/routes/profileMemoryRoutes.ts"() {
     "use strict";
@@ -60020,7 +60040,7 @@ var init_profileMemoryRoutes = __esm({
     init_people();
     init_livingContextRouter();
     init_trust();
-    openai13 = new OpenAI11(getOpenAIClientConfig());
+    openai12 = new OpenAI11(getOpenAIClientConfig());
     paramValue4 = (value) => Array.isArray(value) ? value[0] ?? "" : value;
   }
 });
@@ -61308,7 +61328,7 @@ Be direct, personal, and specific. Use "you" not "the user". Plain text, no mark
 
 JSON array only, no preamble.`;
   try {
-    const resp = await openai14.chat.completions.create({
+    const resp = await openai13.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
@@ -61533,14 +61553,14 @@ async function validateExpiredPredictions(userId, now) {
     console.error("[Predictor] validateExpiredPredictions failed:", err2);
   }
 }
-var openai14, CONFIDENCE_THRESHOLD, DAY_NAMES;
+var openai13, CONFIDENCE_THRESHOLD, DAY_NAMES;
 var init_predictor = __esm({
   "server/intelligence/predictor.ts"() {
     "use strict";
     init_db();
     init_schema();
     init_routedChatCompletion();
-    openai14 = createRoutedOpenAIChatShim("[Predictor]", "balanced");
+    openai13 = createRoutedOpenAIChatShim("[Predictor]", "balanced");
     CONFIDENCE_THRESHOLD = 55;
     DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   }
@@ -62020,7 +62040,7 @@ ${modeText}
 
 Return JSON: { "reasoning": "2-3 sentences on your planning logic \u2014 always name at least one concrete data point (goal, email, brain dump item). If Jarvis Foresight predictions are present, explicitly call out a task that was timed around a prediction (e.g. 'Deep work block at 9 AM \u2014 your predicted peak energy window' or 'Admin tasks slotted at 3 PM to avoid your energy dip').", "tasks": [{ "title": "...", "category": "...", "priority": "...", "duration": 60, "time": "9:30 AM", "description": "..." }] }
 Return ONLY the JSON object.`;
-  const response = await openai15.chat.completions.create({
+  const response = await openai14.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
@@ -62183,7 +62203,7 @@ ${predLines}`;
     return null;
   }
 }
-var openai15;
+var openai14;
 var init_planGenerationService = __esm({
   "server/services/planGenerationService.ts"() {
     "use strict";
@@ -62192,7 +62212,7 @@ var init_planGenerationService = __esm({
     init_routedChatCompletion();
     init_contextCollector();
     init_planOps();
-    openai15 = createRoutedOpenAIChatShim("[PlanGeneration]", "balanced");
+    openai14 = createRoutedOpenAIChatShim("[PlanGeneration]", "balanced");
   }
 });
 
@@ -62491,7 +62511,7 @@ Rules:
 - Keep each title under 60 characters
 - Choose category that best fits the subtask
 - Assign priority based on urgency/importance relative to the overall task`;
-      const response = await openai16.chat.completions.create({
+      const response = await openai15.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -62507,14 +62527,14 @@ Rules:
     }
   });
 }
-var openai16;
+var openai15;
 var init_planGenerationRoutes = __esm({
   "server/routes/planGenerationRoutes.ts"() {
     "use strict";
     init_env();
     init_ai();
     init_planGenerationService();
-    openai16 = new OpenAI12(getOpenAIClientConfig());
+    openai15 = new OpenAI12(getOpenAIClientConfig());
   }
 });
 
@@ -62814,7 +62834,7 @@ Generate a JSON object (no markdown fences) with exactly these fields:
 Reply with ONLY valid JSON.`;
   let skillData = {};
   try {
-    const resp = await openai17.chat.completions.create({
+    const resp = await openai16.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 600
@@ -62908,14 +62928,14 @@ async function getUserSkillSignals(userId) {
     return {};
   }
 }
-var openai17, SKILLS_DIR, CRYSTALLIZE_THRESHOLD, CACHE_TTL_MS4, skillCache, crystallisingNow, activeUserWatchers;
+var openai16, SKILLS_DIR, CRYSTALLIZE_THRESHOLD, CACHE_TTL_MS4, skillCache, crystallisingNow, activeUserWatchers;
 var init_skillWriter = __esm({
   "server/intelligence/skillWriter.ts"() {
     "use strict";
     init_db();
     init_schema();
     init_routedChatCompletion();
-    openai17 = createRoutedOpenAIChatShim("[SkillWriter]", "balanced");
+    openai16 = createRoutedOpenAIChatShim("[SkillWriter]", "balanced");
     SKILLS_DIR = path28.join(process.cwd(), "server", "skills");
     CRYSTALLIZE_THRESHOLD = 3;
     CACHE_TTL_MS4 = 5 * 60 * 1e3;
@@ -67461,7 +67481,7 @@ Write a concise weekly self-report with these sections:
 
 Tone: direct, self-aware, honest. Not corporate, not sycophantic. Under 250 words total. Plain text, no markdown headers.`;
   try {
-    const resp = await openai18.chat.completions.create({
+    const resp = await openai17.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 600
@@ -67605,7 +67625,7 @@ async function runEgoForAllUsers(now, weekOf) {
   }
   if (count2 > 0) console.log(`[Ego] Weekly ego reports delivered to ${count2} user(s)`);
 }
-var openai18, SELF_CORRECTION_THRESHOLD, TWO_WEEKS_MS, ONE_WEEK_MS;
+var openai17, SELF_CORRECTION_THRESHOLD, TWO_WEEKS_MS, ONE_WEEK_MS;
 var init_ego = __esm({
   "server/intelligence/ego.ts"() {
     "use strict";
@@ -67617,7 +67637,7 @@ var init_ego = __esm({
     init_soul();
     init_skillWriter();
     init_routedChatCompletion();
-    openai18 = createRoutedOpenAIChatShim("[Ego]", "balanced");
+    openai17 = createRoutedOpenAIChatShim("[Ego]", "balanced");
     SELF_CORRECTION_THRESHOLD = 0.25;
     TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1e3;
     ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1e3;
@@ -67785,7 +67805,7 @@ async function fetchPage(url) {
 }
 async function distillSummary(url, allText) {
   const truncated = allText.slice(0, 8e4);
-  const response = await openai19.chat.completions.create({
+  const response = await openai18.chat.completions.create({
     model: "gpt-4o-mini",
     messages: [
       {
@@ -67856,14 +67876,14 @@ ${row.summary}
     return "";
   }
 }
-var openai19, MAX_PAGES, FETCH_TIMEOUT_MS, MAX_TEXT_PER_PAGE, BLOCKED_PREFIXES_V4, BLOCKED_HOSTNAMES, MAX_REDIRECTS;
+var openai18, MAX_PAGES, FETCH_TIMEOUT_MS, MAX_TEXT_PER_PAGE, BLOCKED_PREFIXES_V4, BLOCKED_HOSTNAMES, MAX_REDIRECTS;
 var init_websiteCrawler = __esm({
   "server/websiteCrawler.ts"() {
     "use strict";
     init_db();
     init_schema();
     init_routedChatCompletion();
-    openai19 = createRoutedOpenAIChatShim("[WebsiteCrawler]", "balanced");
+    openai18 = createRoutedOpenAIChatShim("[WebsiteCrawler]", "balanced");
     MAX_PAGES = 60;
     FETCH_TIMEOUT_MS = 8e3;
     MAX_TEXT_PER_PAGE = 5e3;
@@ -70767,7 +70787,7 @@ ${text2}`
       if (unanswered.length > 0) {
         const lastUserMessage = messages2.filter((m) => m.role === "user").pop();
         if (!lastUserMessage?.content) return;
-        const checkResponse = await openai20.chat.completions.create({
+        const checkResponse = await openai19.chat.completions.create({
           model: "gpt-4o-mini",
           messages: [{
             role: "user",
@@ -72226,7 +72246,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       }
       const streamMessages = toolMessages.length > 0 ? [...chatMessages, ...toolMessages] : chatMessages;
       const streamStartedAt = Date.now();
-      const stream = await openai20.chat.completions.create({
+      const stream = await openai19.chat.completions.create({
         model: "gpt-4o-mini",
         messages: streamMessages,
         stream: true,
@@ -72509,7 +72529,7 @@ ${failedDaemonActions.map((a) => `- ${a.label}: ${a.result}`).join("\n")}`
       }
       const toolLabel = tool2 === "send_email" ? `sending an email to ${preview.to || "the recipient"}` : tool2 === "connected_accounts_execute" ? `running the Composio ${preview.platform || "connected account"} action ${preview.action || ""}`.trim() : `running a terminal command (${preview.cmd || preview.action || "shell"})`;
       const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence \u2014 do not re-propose the action. Stay in your coaching persona.`;
-      const resp = await openai20.chat.completions.create({
+      const resp = await openai19.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         max_completion_tokens: 80
@@ -72624,7 +72644,7 @@ For each task provide:
 - subtasks: array of short action strings (empty array if not needed)
 
 Return ONLY a JSON object with a "tasks" array. No other text.`;
-      const response = await openai20.chat.completions.create({
+      const response = await openai19.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -72669,7 +72689,7 @@ Their profile:
 Write ONE short, specific coaching observation. Be direct \u2014 name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. No greeting, no sign-off.
 
 Return JSON: { "note": "your 1-2 sentence note here" }`;
-      const response = await openai20.chat.completions.create({
+      const response = await openai19.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -72844,7 +72864,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
 User message: "${message}"
 
 Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they committed to" or null, "dueDate": "YYYY-MM-DD" or null }`;
-      const response = await openai20.chat.completions.create({
+      const response = await openai19.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -72890,7 +72910,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
       res.setHeader("X-Accel-Buffering", "no");
       res.setHeader("Access-Control-Allow-Origin", "*");
       res.flushHeaders();
-      const stream = await openai20.chat.completions.create({
+      const stream = await openai19.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           { role: "system", content: systemPrompt + `
@@ -72982,7 +73002,7 @@ Return JSON:
 }
 
 Return ONLY the JSON object.`;
-      const response = await openai20.chat.completions.create({
+      const response = await openai19.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -73155,7 +73175,7 @@ Extract:
 
 Return JSON: { "moodSignal": "...", "themes": [...], "blockers": [...], "wins": [...], "intention": "..." }
 Return ONLY the JSON object.`;
-    const extraction = await openai20.chat.completions.create({
+    const extraction = await openai19.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: extractionPrompt }],
       response_format: { type: "json_object" },
@@ -73250,7 +73270,7 @@ Return ONLY the JSON object.`;
       const buffer = Buffer.from(audioBase64, "base64");
       const ext = (mimeType || "audio/webm").includes("mp4") ? "mp4" : "webm";
       const file = new File([buffer], `recording.${ext}`, { type: mimeType || "audio/webm" });
-      const transcription = await openai20.audio.transcriptions.create({
+      const transcription = await openai19.audio.transcriptions.create({
         model: "whisper-1",
         file
       });
@@ -74050,7 +74070,7 @@ Return JSON: { "memories": [{"content": "string describing the fact", "category"
 Return { "memories": [] } if nothing new was learned. Do NOT repeat or rephrase existing memories.
 Extract up to 8 memories per batch.`;
         try {
-          const response = await openai20.chat.completions.create({
+          const response = await openai19.chat.completions.create({
             model: "gpt-4o-mini",
             messages: [{ role: "user", content: prompt }],
             response_format: { type: "json_object" },
@@ -75153,7 +75173,7 @@ Extract up to 8 memories per batch.`;
   const httpServer = createServer(app2);
   return httpServer;
 }
-var _p9, openai20;
+var _p9, openai19;
 var init_routes3 = __esm({
   "server/routes.ts"() {
     "use strict";
@@ -75239,7 +75259,7 @@ var init_routes3 = __esm({
     init_aiCoachContextService();
     init_planGenerationService();
     _p9 = (v) => Array.isArray(v) ? v[0] ?? "" : v;
-    openai20 = new OpenAI13(getOpenAIClientConfig());
+    openai19 = new OpenAI13(getOpenAIClientConfig());
   }
 });
 
@@ -79090,7 +79110,7 @@ ${energyText || "(none)"}`;
   try {
     const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
     const model = await getModel2(userId, "memory");
-    const response = await openai21.chat.completions.create({
+    const response = await openai20.chat.completions.create({
       model,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
@@ -79233,7 +79253,7 @@ async function enqueueWeeklyPatternJobs() {
   console.log(`[WeeklyPattern] enqueued ${count2} job(s)`);
   return count2;
 }
-var openai21;
+var openai20;
 var init_weeklyJob = __esm({
   "server/memory/weeklyJob.ts"() {
     "use strict";
@@ -79242,7 +79262,7 @@ var init_weeklyJob = __esm({
     init_categories();
     init_soul();
     init_routedChatCompletion();
-    openai21 = createRoutedOpenAIChatShim("[WeeklyMemory]", "balanced");
+    openai20 = createRoutedOpenAIChatShim("[WeeklyMemory]", "balanced");
   }
 });
 
@@ -89062,7 +89082,7 @@ Return JSON array, one object per result (same order):
 Results:
 ${items}`;
   try {
-    const resp = await openai22.chat.completions.create({
+    const resp = await openai21.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
@@ -89227,7 +89247,7 @@ async function runNervousSystemScan() {
     }
   }
 }
-var openai22, RELEVANCE_THRESHOLD, SCAN_INTERVAL_MS, lastScanAt;
+var openai21, RELEVANCE_THRESHOLD, SCAN_INTERVAL_MS, lastScanAt;
 var init_scanner = __esm({
   "server/nervous-system/scanner.ts"() {
     "use strict";
@@ -89238,7 +89258,7 @@ var init_scanner = __esm({
     init_interactionLog();
     init_actionLog();
     init_routedChatCompletion();
-    openai22 = createRoutedOpenAIChatShim("[NervousSystem]", "balanced");
+    openai21 = createRoutedOpenAIChatShim("[NervousSystem]", "balanced");
     RELEVANCE_THRESHOLD = 0.55;
     SCAN_INTERVAL_MS = 30 * 60 * 1e3;
     lastScanAt = {};
@@ -93008,7 +93028,7 @@ init_routedChatCompletion();
 import * as fs27 from "fs";
 import * as path34 from "path";
 import { eq as eq145, and as and108, sql as sql57, desc as desc54, gte as gte28 } from "drizzle-orm";
-var openai23 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
+var openai22 = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 var HEARTBEAT_INTERVAL_MS = 5 * 60 * 1e3;
 var CHECKLIST_PATH = path34.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
 var VALIDATION_INTERVAL_MS = 30 * 60 * 1e3;
@@ -93166,7 +93186,7 @@ Plain text, no markdown asterisks, no preamble.`;
     try {
       const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
       const briefModel = await getModel2(userId, "planning");
-      const resp = await openai23.chat.completions.create({
+      const resp = await openai22.chat.completions.create({
         model: briefModel,
         messages: [{ role: "user", content: prompt }],
         max_completion_tokens: 600
@@ -93261,7 +93281,7 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
     try {
       const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
       const draftModel = await getModel2(userId, "planning");
-      const resp = await openai23.chat.completions.create({
+      const resp = await openai22.chat.completions.create({
         model: draftModel,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
@@ -93409,7 +93429,7 @@ Return JSON:
   try {
     const { getModel: getModel2 } = await Promise.resolve().then(() => (init_modelPrefs(), modelPrefs_exports));
     const wrapModel = await getModel2(userId, "planning");
-    const resp = await openai23.chat.completions.create({
+    const resp = await openai22.chat.completions.create({
       model: wrapModel,
       messages: [{ role: "user", content: llmPrompt }],
       response_format: { type: "json_object" },
