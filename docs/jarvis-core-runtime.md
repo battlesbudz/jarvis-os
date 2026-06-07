@@ -81,6 +81,17 @@ The preview maps an incoming event through the existing context-pack classifier,
 
 Invalid events fail closed into a blocked runtime decision with validation errors attached.
 
+## Runtime Tool Preflight Preview
+
+The Runtime Gate can now be previewed with Tool Gateway preflight in one dry-run call. This path:
+
+- validates and classifies the incoming `JarvisEvent`
+- emits protocol-shaped context and runtime decision objects
+- preflights the decision's `ToolIntent` list
+- returns tool readiness without executing anything
+
+This is still preview-only. It does not change app routes, execute tools, write memory, enqueue jobs, or create approval records.
+
 ## Tool Gateway Preflight
 
 The first Tool Gateway slice is preflight-only. It accepts protocol `ToolIntent` objects plus an explicit registry/auth/policy snapshot and returns one of:

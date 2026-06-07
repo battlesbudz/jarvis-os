@@ -9,7 +9,15 @@ import type {
 } from "./toolGatewayTypes";
 
 const RISK_ORDER: RuntimeRiskTier[] = ["T0", "T1", "T2", "T3", "T4", "T5"];
-const VIRTUAL_RUNTIME_TOOLS = new Set(["read_context", "draft_only", "search", "queue_job", "approval_gated_action"]);
+const VIRTUAL_RUNTIME_TOOLS = new Set([
+  "read_context",
+  "draft_only",
+  "search",
+  "queue_job",
+  "approval_gated_action",
+  "local_patch",
+  "run_checks",
+]);
 
 function riskExceeds(value: RuntimeRiskTier, max: RuntimeRiskTier): boolean {
   return RISK_ORDER.indexOf(value) > RISK_ORDER.indexOf(max);
