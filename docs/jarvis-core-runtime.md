@@ -115,6 +115,12 @@ This adapter is intentionally metadata-only. It does not call `execute`, mutate 
 
 Runtime Tool Preflight can accept existing `AgentTool`-shaped metadata through the descriptor adapter. This convenience path allows preview callers to pass the current tool surface without importing `ALL_TOOLS` inside core runtime and without calling tool `execute` handlers.
 
+## Runtime Preview Report
+
+Preview output can be summarized into a compact readiness report for logs, route experiments, and UI panels. The report names the event, user, intent, response mode, risk tier, gate outcome, ready/blocked tool counts, approval requirement, and normalized reasons.
+
+The report is derived from preview objects only. It does not execute tools, persist traces, create approvals, or alter runtime decisions.
+
 ## Non-Goals
 
 - no broad folder restructuring
