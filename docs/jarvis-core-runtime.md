@@ -145,6 +145,10 @@ Golden dry-run fixtures cover stable runtime expectations for general answers, m
 
 Simple route or channel inputs can be adapted into validated `JarvisEvent` objects with consistent IDs, timestamps, channel, and metadata defaults. The adapter validates through `JarvisEventSchema` and can feed dry-run previews without wiring any live route behavior.
 
+## Runtime Feature Flags
+
+Runtime preview and dry-run integration must be explicitly gated. The feature flag helper reads `JARVIS_RUNTIME_PREVIEW`, `JARVIS_RUNTIME_DRY_RUN`, and `JARVIS_RUNTIME_LIVE_EXECUTION`, defaulting all capabilities off. Current preview slices fail closed if live execution is enabled because no runtime-owned execution path exists yet.
+
 ## Non-Goals
 
 - no broad folder restructuring

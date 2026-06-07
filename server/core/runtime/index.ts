@@ -2,6 +2,7 @@ export * from "./executeRuntimeEvent";
 export * from "./runtimeApprovalPreview";
 export * from "./runtimeDryRun";
 export * from "./runtimeEventAdapter";
+export * from "./runtimeFeatureFlags";
 export * from "./runtimeGoldenFixtures";
 export * from "./runtimePreviewReport";
 export * from "./runtimeToolPreflight";
