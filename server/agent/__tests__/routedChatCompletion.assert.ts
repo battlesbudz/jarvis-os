@@ -24,8 +24,9 @@ async function main() {
     },
   );
 
-  assert.equal(captured?.tier, "balanced");
-  assert.equal(captured?.maxCompletionTokens, 42);
+  const capturedRequest = captured as Record<string, unknown> | null;
+  assert.equal(capturedRequest?.tier, "balanced");
+  assert.equal(capturedRequest?.maxCompletionTokens, 42);
   assert.equal(response.model, "chatgpt-codex-oauth/auto");
   assert.equal(response.choices[0]?.message.content, '{"ok":true}');
   console.log("OK: routed chat completion maps OpenAI-style requests through the Jarvis router");

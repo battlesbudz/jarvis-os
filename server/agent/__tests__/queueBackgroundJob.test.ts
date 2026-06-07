@@ -7,7 +7,7 @@ process.env.DATABASE_URL ||= "postgres://test:test@localhost:5432/test";
 async function main() {
   const { buildQueueBackgroundJobInput } = await import("../tools/queueBackgroundJobInput");
   const queueToolSource = readFileSync(
-    fileURLToPath(new URL("../tools/queueBackgroundJob.ts", import.meta.url)),
+    fileURLToPath(new URL("../tools/queueBackgroundJob.ts", import.meta.url).toString()),
     "utf8",
   );
 

@@ -21,7 +21,7 @@ import Colors from "@/constants/colors";
 import { CouncilModal } from "@/components/agents/CouncilModal";
 import { CreateAgentSheet } from "@/components/agents/CreateAgentSheet";
 import { JobTaskCard, type AgentTask } from "@/components/agents/JobTaskCard";
-import { LivingAgentCard } from "@/components/agents/LivingAgentCard";
+import { LivingAgentCard, type LivingAgentCardAgent } from "@/components/agents/LivingAgentCard";
 import { RunModal } from "@/components/agents/RunModal";
 import {
   SelfRepairAuditCard,
@@ -95,6 +95,9 @@ export default function AgentsScreen() {
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
+
+  const showAgentDetail = (agent: LivingAgentCardAgent) => setDetailAgent(agent as RosterAgent);
+  const runRosterAgent = (agent: LivingAgentCardAgent) => setRunAgent(agent as RosterAgent);
 
   const { data, isLoading, refetch, isRefetching } = useQuery<{
     agents: RosterAgent[];
@@ -321,8 +324,8 @@ export default function AgentsScreen() {
               key={agent.id}
               agent={agent}
               integrations={integrationReadiness}
-              onDetail={setDetailAgent}
-              onRun={setRunAgent}
+              onDetail={showAgentDetail}
+              onRun={runRosterAgent}
             />
           ))}
           {/* Fallback placeholders for any core agents not yet seeded */}
@@ -344,8 +347,8 @@ export default function AgentsScreen() {
                   key={agent.id}
                   agent={agent}
                   integrations={integrationReadiness}
-                  onDetail={setDetailAgent}
-                  onRun={setRunAgent}
+                  onDetail={showAgentDetail}
+                  onRun={runRosterAgent}
                 />
               ))}
             </>

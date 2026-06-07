@@ -53,6 +53,37 @@ export interface ModelUsageRecordInput {
   metadata?: Record<string, unknown>;
 }
 
+interface ModelUsageTotalsRow {
+  calls?: unknown;
+  prompt_tokens?: unknown;
+  completion_tokens?: unknown;
+  total_tokens?: unknown;
+  duration_ms?: unknown;
+  failed_calls?: unknown;
+}
+
+interface ModelUsageByModelRow extends ModelUsageTotalsRow {
+  provider?: unknown;
+  model?: unknown;
+  estimated_calls?: unknown;
+  last_used_at?: unknown;
+  sources?: unknown;
+}
+
+interface ModelUsageRecentRow {
+  id?: unknown;
+  provider?: unknown;
+  model?: unknown;
+  source?: unknown;
+  prompt_tokens?: unknown;
+  completion_tokens?: unknown;
+  total_tokens?: unknown;
+  duration_ms?: unknown;
+  success?: unknown;
+  estimated?: unknown;
+  created_at?: unknown;
+}
+
 function jsonStringifySafe(value: unknown): string {
   try {
     return JSON.stringify(value ?? "");
@@ -86,6 +117,16 @@ function contentToText(content: OpenAI.Chat.Completions.ChatCompletionMessagePar
 function numberFromDb(value: unknown): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+function isoStringFromDb(value: unknown, fallback?: string): string | null {
+  if (value == null) return fallback ?? null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string" || typeof value === "number") {
+    const date = new Date(value);
+    return Number.isFinite(date.getTime()) ? date.toISOString() : (fallback ?? null);
+  }
+  return fallback ?? null;
 }
 
 export function estimateModelUsage(params: UsageEstimateParams): Omit<ModelUsageRecordInput, "userId" | "provider" | "model" | "source"> {
@@ -183,7 +224,7 @@ export async function getModelUsageSummary(userId: string, days: number) {
           AND created_at >= NOW() - ($2::int * INTERVAL '1 day')
       `,
       [userId, safeDays],
-    ),
+    ) as Promise<{ rows: ModelUsageTotalsRow[] }>,
     pool.query(
       `
         SELECT
@@ -205,7 +246,7 @@ export async function getModelUsageSummary(userId: string, days: number) {
         ORDER BY total_tokens DESC, calls DESC
       `,
       [userId, safeDays],
-    ),
+    ) as Promise<{ rows: ModelUsageByModelRow[] }>,
     pool.query(
       `
         SELECT
@@ -227,7 +268,7 @@ export async function getModelUsageSummary(userId: string, days: number) {
         LIMIT 20
       `,
       [userId, safeDays],
-    ),
+    ) as Promise<{ rows: ModelUsageRecentRow[] }>,
   ]);
 
   const totalRow = totalsResult.rows[0] ?? {};
@@ -250,7 +291,7 @@ export async function getModelUsageSummary(userId: string, days: number) {
     durationMs: numberFromDb(row.duration_ms),
     failedCalls: numberFromDb(row.failed_calls),
     estimatedCalls: numberFromDb(row.estimated_calls),
-    lastUsedAt: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
+    lastUsedAt: isoStringFromDb(row.last_used_at),
     sources: Array.isArray(row.sources) ? row.sources.map(String) : [],
   }));
 
@@ -265,7 +306,7 @@ export async function getModelUsageSummary(userId: string, days: number) {
     durationMs: numberFromDb(row.duration_ms),
     success: Boolean(row.success),
     estimated: Boolean(row.estimated),
-    createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+    createdAt: isoStringFromDb(row.created_at, new Date().toISOString()) ?? new Date().toISOString(),
   }));
 
   return {

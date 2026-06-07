@@ -73,7 +73,7 @@ export const AgentConfigFileSchema = z.object({
   loop_prompt: z.string().optional(),
   channel_id: z.string().optional(),
   channel_name: z.string().optional(),
-  platform_channels: z.record(z.array(z.string())).optional(),
+  platform_channels: z.record(z.string(), z.array(z.string())).optional(),
   allowed_users: z.array(z.string()).optional().default([]),
   allowed_conversations: z.array(z.string()).optional().default([]),
   tags: z.array(z.string()).optional(),

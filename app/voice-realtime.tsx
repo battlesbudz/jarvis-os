@@ -430,7 +430,7 @@ export default function VoiceRealtimeScreen() {
         rate: 0.96,
         pitch: 1,
         onDone: resolve,
-        onError: resolve,
+        onError: () => resolve(),
         onStopped: resolve,
       });
     });

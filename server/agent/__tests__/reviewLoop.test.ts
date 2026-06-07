@@ -133,7 +133,7 @@ import {
   assert.equal(getDeliverableReviewActionPolicy(approvalGate, "revise").allowed, false);
   assert.equal(getDeliverableReviewActionPolicy(approvalGate, "discard").allowed, false);
   assert.equal(getDeliverableReviewActionPolicy(approvalGate, "save_to_drive").allowed, false);
-  assert.match(getDeliverableReviewActionPolicy(approvalGate, "discard").reason, /approve or decline/i);
+  assert.match(getDeliverableReviewActionPolicy(approvalGate, "discard").reason ?? "", /approve or decline/i);
 }
 
 {
@@ -159,7 +159,7 @@ import {
   assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "discard").allowed, true);
   assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "save_to_drive").allowed, true);
   assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "reject").allowed, false);
-  assert.match(getDeliverableReviewActionPolicy(normalDeliverable, "reject").reason, /approval requests/i);
+  assert.match(getDeliverableReviewActionPolicy(normalDeliverable, "reject").reason ?? "", /approval requests/i);
 }
 
 {

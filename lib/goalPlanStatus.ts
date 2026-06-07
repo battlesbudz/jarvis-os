@@ -1,4 +1,5 @@
 interface GoalPlanLike {
+  date?: unknown;
   tasks?: unknown;
 }
 

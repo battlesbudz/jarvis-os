@@ -347,6 +347,9 @@ export async function generateDailyCommandPlan(userId: string, opts: {
         ...merged.plan.meta,
         dailyCommand: {
           ...merged.plan.meta?.dailyCommand,
+          source: opts.source ?? "daily_command_api",
+          generatedAt: new Date().toISOString(),
+          mode,
           contextWarnings,
           goalTaskCount,
           reasoning,

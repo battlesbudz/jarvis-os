@@ -62,7 +62,7 @@ function collectErrorSignals(err: unknown): string {
 
     if (current instanceof Error) {
       parts.push(current.name, current.message);
-      const anyErr = current as Record<string, unknown>;
+      const anyErr = current as unknown as Record<string, unknown>;
       for (const key of ["code", "type", "status", "statusCode"]) {
         const value = anyErr[key];
         if (typeof value === "string" || typeof value === "number") parts.push(String(value));

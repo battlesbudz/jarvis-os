@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
-import { verifyTelegramWebAppInitData } from "../../auth.ts";
+import { verifyTelegramWebAppInitData } from "../../auth";
 
 function signedInitData(botToken: string, values: Record<string, string>): string {
   const pairs = Object.entries(values).map(([key, value]) => `${key}=${value}`).sort();

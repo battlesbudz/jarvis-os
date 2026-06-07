@@ -5,11 +5,16 @@ import path from "node:path";
 import { createFileAgentSdkRunStore } from "../src/agent/runStore";
 import { createAgentSdkTools } from "../src/agent/toolRegistry";
 import {
+  type AgentSdkRunnerResult,
   resumeAgentSdkEmailWorkflowRun,
   resumeAgentSdkRunFromApprovalGate,
   runAgentSdkEmailWorkflow,
   runAgentSdkReminderWorkflow,
 } from "../src/agent/agentRunner";
+
+function assertHandled(result: AgentSdkRunnerResult): asserts result is Exclude<AgentSdkRunnerResult, { handled: false }> {
+  assert.equal(result.handled, true);
+}
 
 async function main() {
   process.env.ENABLE_AGENT_SDK_RUNNER = "true";
@@ -96,6 +101,7 @@ async function main() {
         },
       },
     );
+    assertHandled(startResult);
     assert.equal(startResult.status, "awaiting_approval");
     assert.equal(approvalRequested, true);
     console.log("OK: approval requested");
@@ -147,6 +153,7 @@ async function main() {
         },
       },
     );
+    assertHandled(approved);
     assert.equal(approved.status, "complete");
     assert.equal(sendCount, 1);
     console.log("OK: approval resumes and sends");
@@ -201,6 +208,7 @@ async function main() {
         },
       },
     );
+    assertHandled(restartResult);
     assert.equal(restartResult.status, "complete");
     assert.deepEqual(restartRequests[0].input, []);
     assert.ok(Array.isArray(restartRequests[0].stopWhen));
@@ -254,6 +262,7 @@ async function main() {
         sendTelegramMessage: async () => undefined,
       },
     );
+    assertHandled(reminderResult);
     assert.equal(reminderResult.status, "complete");
     assert.equal(reminderCreateCount, 1);
     assert.equal((await store.load(reminderResult.runId))?.meta.reminder?.id, "task_smoke");
@@ -316,6 +325,7 @@ async function main() {
         },
       },
     );
+    assertHandled(rejected);
     assert.equal(rejected.status, "rejected");
     assert.equal(sendCount, 0);
     console.log("OK: rejection prevents sending");

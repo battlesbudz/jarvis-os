@@ -486,7 +486,7 @@ async function handleDueTask(
     const { retrieveRelevantMemories } = await import('./memory/retrieve');
     const memories = await retrieveRelevantMemories(task.userId, `task guidance: ${task.title}`, 4);
     const relevant = memories.filter(m =>
-      m.sourceType === 'task_guidance' ||
+      (m as { sourceType?: string }).sourceType === 'task_guidance' ||
       (m.content && m.content.toLowerCase().includes(task.title.toLowerCase()))
     );
     if (relevant.length > 0) {

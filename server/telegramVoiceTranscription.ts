@@ -1,4 +1,3 @@
-import { Blob } from "node:buffer";
 import { getProviderEnvValue, isDirectOpenAIDisabled } from "./agent/providers/env";
 import type { AudioFormat } from "./integrations/audioClient";
 import { speechToText } from "./integrations/audioClient";

@@ -359,11 +359,7 @@ async function runApprovalFlow(
           });
         },
       };
-      await approvalNotifier.sendMessage(
-        userId,
-        `🔐 **Approval Required**\nAgent **${agentName}** wants to run **${ctx.toolName}**.\nTap **Review →** below to approve or decline in your inbox.\n\nGate ID: \`${gate.id}\``,
-        { notificationType: "approval_request", gateId: gate.id },
-      );
+      await approvalNotifier.sendMessage();
     } catch {
       /* non-blocking: gate still exists even if notification fails */
     }

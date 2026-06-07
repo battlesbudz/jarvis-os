@@ -1006,6 +1006,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     };
   }
 
+  function chatToolName(tool: OpenAI.Chat.Completions.ChatCompletionTool): string | null {
+    return tool.type === "function" ? tool.function.name : null;
+  }
+
   const pendingConfirmations = new Map<string, { userId: string; tool: string; args: any; expiresAt: number }>();
   setInterval(() => {
     const now = Date.now();
@@ -1019,7 +1023,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     args: any,
     userId: string,
     signal?: AbortSignal
-  ): Promise<{ result: 'success' | 'error'; label: string; detail: string }> {
+  ): Promise<{ result: 'success' | 'error' | 'pending'; label: string; detail: string }> {
     const todayKey = new Date().toISOString().slice(0, 10);
     try {
       switch (toolName) {
@@ -2672,7 +2676,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           ]
         : chatMessages;
 
-      const actionResults: { tool: string; result: 'success' | 'error'; label: string; actionType?: string; actor?: string; approvalRequired?: boolean; actionReason?: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
+      const actionResults: { tool: string; result: 'success' | 'error' | 'pending'; label: string; actionType?: string; actor?: string; approvalRequired?: boolean; actionReason?: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
       // Accumulates MCP rich attachments across all tool calls in this request.
       // Emitted alongside executedActions in the type:'actions' SSE event to
       // mirror the CoachReplyResult { executedActions, attachments } contract.
@@ -2717,7 +2721,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           if (!tool) return;
           if (agentToolMap.has(tool.name)) return;
           agentToolMap.set(tool.name, tool);
-          if (!requestTools.some((candidate) => candidate.function.name === tool.name)) {
+          if (!requestTools.some((candidate) => chatToolName(candidate) === tool.name)) {
             requestTools.push(toOpenAIChatTool(tool));
           }
         };
@@ -2793,13 +2797,16 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
         const focusedRequestTools =
           toolAwareRoute.shouldPreferTool
-            ? requestTools.filter((tool) => focusedToolNames.has(tool.function.name))
+            ? requestTools.filter((tool) => {
+                const name = chatToolName(tool);
+                return name ? focusedToolNames.has(name) : false;
+              })
             : requestTools;
         const firstTurnToolPolicy = buildToolExecutionPolicy({
           route: toolAwareRoute,
           tools: focusedRequestTools,
           maxTurns: MAX_TOOL_TURNS,
-          getToolName: (tool) => tool.function.name,
+          getToolName: (tool) => chatToolName(tool) ?? "",
           forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest,
         });
         const modelRequestTools = firstTurnToolPolicy.tools;
@@ -2828,7 +2835,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               try { res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: msg })}\n\n`); } catch {}
             },
           },
-          allowedToolNames: new Set(modelRequestTools.map((tool) => tool.function.name)),
+          allowedToolNames: new Set(modelRequestTools.map((tool) => chatToolName(tool)).filter((name): name is string => Boolean(name))),
         };
 
         for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
@@ -3129,7 +3136,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             }
 
             // MCP tools are executed via the agent tool registry (not executeCoachTool)
-            let execResult: { result: 'success' | 'error'; label: string; detail: string };
+            let execResult: { result: 'success' | 'error' | 'pending'; label: string; detail: string };
             let plainMcpServerName: string | undefined;
             if (tc.function.name.startsWith('mcp__') && mcpAgentToolsMap.has(tc.function.name)) {
               const mcpAgentTool = mcpAgentToolsMap.get(tc.function.name)!;
@@ -3488,20 +3495,22 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         messages: streamMessages,
         textContent: fullStreamedReply,
       });
-      void recordModelUsage({
-        userId,
-        provider: providerLabelForModel(streamedModel),
-        model: streamedModel,
-        source: "app_chat",
-        ...streamUsage,
-        durationMs: Date.now() - streamStartedAt,
-        success: !signal.aborted,
-        metadata: {
-          phase: "final_stream",
-          actionCount: actionResults.length,
-          attachmentCount: allMcpAttachments.length,
-        },
-      });
+      if (userId) {
+        void recordModelUsage({
+          userId,
+          provider: providerLabelForModel(streamedModel),
+          model: streamedModel,
+          source: "app_chat",
+          ...streamUsage,
+          durationMs: Date.now() - streamStartedAt,
+          success: !signal.aborted,
+          metadata: {
+            phase: "final_stream",
+            actionCount: actionResults.length,
+            attachmentCount: allMcpAttachments.length,
+          },
+        });
+      }
 
       if (hasDaemonActions && userId && fullStreamedReply) {
         const screenshotUrl = actionResults.find((a: any) => a.screenshotUrl)?.screenshotUrl;
@@ -3715,7 +3724,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         return res.status(400).json({ error: 'Confirmation token has expired' });
       }
       pendingConfirmations.delete(token);
-      let execResult: { result: 'success' | 'error'; label: string; detail: string };
+      let execResult: { result: 'success' | 'error' | 'pending'; label: string; detail: string };
       if (pending.tool === 'connected_accounts_execute') {
         const connectedAccountsTool = getTool('connected_accounts_execute');
         if (!connectedAccountsTool) {

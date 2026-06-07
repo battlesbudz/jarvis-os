@@ -399,8 +399,8 @@ export async function pushWorkspaceToGitHub(
   const sanitize = (s?: string | null): string =>
     (s ?? "").replace(new RegExp(pat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "***").slice(0, 500);
 
-  const env: Record<string, string> = {
-    ...(process.env as Record<string, string>),
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
     HOME: os.homedir(),
     GIT_AUTHOR_NAME: "Jarvis",
     GIT_AUTHOR_EMAIL: "jarvis@gameplanjarvisai.com",

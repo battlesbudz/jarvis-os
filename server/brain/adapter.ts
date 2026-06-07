@@ -311,7 +311,7 @@ export async function projectApprovedMemories(
       const toSlug = personSlugs.get(person.id);
       return name && toSlug ? { name, toSlug } : null;
     })
-    .filter((hint): hint is PersonLinkHint => hint !== null);
+    .filter((hint): hint is { name: string; toSlug: string } => hint !== null);
 
   const memories = await db
     .select({

@@ -117,7 +117,12 @@ export function registerProfileMemoryRoutes(app: Express): void {
         LIMIT 50
       `);
       res.json({
-        memories: (rows.rows ?? []).map((row) => {
+        memories: (rows.rows ?? []).map((row: {
+          id: string; content: string; category: string; memory_type: string;
+          tier: string; confidence: number; relevance_score: number;
+          source_type: string; source_ref: string | null; pending_review: boolean;
+          review_status: string; extracted_at: string; last_referenced_at: string | null;
+        }) => {
           const trust = normalizeMemoryTrustRecord(row);
           return {
             ...row,

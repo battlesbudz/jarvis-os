@@ -94,6 +94,7 @@ export async function handleDirectReminderRequest(input: DirectReminderRequest):
     {
       userId: input.userId,
       channel: input.channel || "appchat",
+      state: {},
     },
   );
 

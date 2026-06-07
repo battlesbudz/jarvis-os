@@ -222,15 +222,16 @@ export function isComposioConfigured(): boolean {
 }
 
 export function createComposioClient(): ComposioClientLike {
-  let Composio: ComposioConstructor;
+  let Composio: ComposioConstructor | undefined;
   try {
     const sdk = requireComposio("@composio/core") as {
       Composio?: ComposioConstructor;
       default?: ComposioConstructor | { Composio?: ComposioConstructor };
     };
     const defaultExport = sdk.default;
-    Composio = sdk.Composio
+    const resolvedComposio = sdk.Composio
       ?? (typeof defaultExport === "function" ? defaultExport : defaultExport?.Composio);
+    if (resolvedComposio) Composio = resolvedComposio;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Composio SDK is unavailable. Install dependencies or add @composio/core. Details: ${message}`);

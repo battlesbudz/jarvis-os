@@ -16,7 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import Colors from "@/constants/colors";
 import { JOB_STATUS_COLORS, JOB_STATUS_LABELS, type AgentTask } from "@/components/agents/JobTaskCard";
-import { PulsingDot } from "@/components/agents/LivingAgentCard";
+import { PLATFORM_ICONS, PulsingDot, STATUS_COLORS, STATUS_LABELS } from "@/components/agents/LivingAgentCard";
 import { apiRequest } from "@/lib/query-client";
 import { ROLE_COLORS, ROLE_ICONS, ROLES } from "@/lib/agents/roleMeta";
 

@@ -264,7 +264,7 @@ async function main(): Promise<void> {
       { toSlug: "memory/old-link", verb: "mentions", confidence: 25 },
       { toSlug: "memory/current-link", verb: "supports", confidence: 55 },
     ],
-    timelineAppend: [{ summary: "Original timeline", detail: "first", at: "2026-01-01T00:00:00.000Z" }],
+    timelineAppend: [{ summary: "Original timeline", detail: "first", at: "2026-01-01T00:00:00.000Z", provenance: [{ kind: "user_memory", id: "idempotent" }] }],
   });
 
   await jarvisBrainAdapter.upsertEvidence({
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
     sourceId: "idempotent",
     provenance: [{ kind: "user_memory", id: "idempotent-replacement" }],
     links: [{ toSlug: "memory/current-link", verb: "supports", confidence: 90 }],
-    timelineAppend: [{ summary: "Replacement timeline", detail: "second", at: "2026-01-02T00:00:00.000Z" }],
+    timelineAppend: [{ summary: "Replacement timeline", detail: "second", at: "2026-01-02T00:00:00.000Z", provenance: [{ kind: "user_memory", id: "idempotent-replacement" }] }],
   });
 
   assert.equal(

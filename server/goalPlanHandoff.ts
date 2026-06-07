@@ -1,6 +1,6 @@
 import type { InjectableGoalTask } from "./goalScheduler";
 
-export interface GoalPlanTask {
+export interface GoalPlanTask extends Record<string, unknown> {
   id: string;
   title: string;
   category: "goal";
@@ -15,16 +15,23 @@ export interface GoalPlanTask {
   goalTaskId: string;
 }
 
+type GoalPlanTaskRecord = Record<string, unknown> & {
+  id?: unknown;
+  title?: unknown;
+  goalTreeId?: unknown;
+  goalTaskId?: unknown;
+};
+
 export interface GoalPlanData {
   date: string;
-  tasks: Record<string, unknown>[];
+  tasks: GoalPlanTaskRecord[];
   greeting?: string;
   insight?: string;
   [key: string]: unknown;
 }
 
-export interface GoalPlanMergeResult {
-  plan: GoalPlanData;
+export interface GoalPlanMergeResult<TPlan extends GoalPlanData = GoalPlanData> {
+  plan: TPlan;
   inserted: boolean;
   task: GoalPlanTask;
 }
@@ -53,14 +60,14 @@ export function buildGoalPlanTask(
   };
 }
 
-export function mergeGoalTaskIntoPlan(
-  plan: Partial<GoalPlanData> | null | undefined,
+export function mergeGoalTaskIntoPlan<TPlan extends Partial<GoalPlanData>>(
+  plan: TPlan | null | undefined,
   pick: InjectableGoalTask,
   dateKey: string,
   createdAt = Date.now(),
-): GoalPlanMergeResult {
+): GoalPlanMergeResult<TPlan & GoalPlanData> {
   const task = buildGoalPlanTask(pick, dateKey, createdAt);
-  const existingTasks = Array.isArray(plan?.tasks) ? plan!.tasks : [];
+  const existingTasks: GoalPlanTaskRecord[] = Array.isArray(plan?.tasks) ? plan.tasks : [];
   const alreadyPresent = existingTasks.some((candidate) => {
     return (
       candidate.id === task.id ||
@@ -68,18 +75,18 @@ export function mergeGoalTaskIntoPlan(
     );
   });
 
-  const base: GoalPlanData = {
+  const base = {
     ...(plan || {}),
     date: plan?.date || dateKey,
     tasks: [...existingTasks],
-  };
+  } as TPlan & GoalPlanData;
 
   if (alreadyPresent) {
     return { plan: base, inserted: false, task };
   }
 
   return {
-    plan: { ...base, tasks: [...base.tasks, task] },
+    plan: { ...base, tasks: [...base.tasks, task] } as TPlan & GoalPlanData,
     inserted: true,
     task,
   };
