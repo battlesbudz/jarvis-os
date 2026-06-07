@@ -4,6 +4,7 @@ export * from "./runtimeDryRun";
 export * from "./runtimeEventAdapter";
 export * from "./runtimeFeatureFlags";
 export * from "./runtimeGoldenFixtures";
+export * from "./runtimePreviewFormatter";
 export * from "./runtimePreviewReport";
 export * from "./runtimeToolPreflight";
 export * from "./runtimeTypes";
