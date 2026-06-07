@@ -1,6 +1,6 @@
 import { Blob } from "node:buffer";
 import { getProviderEnvValue, isDirectOpenAIDisabled } from "./agent/providers/env";
-import type { AudioFormat } from "./replit_integrations/audio/client";
+import type { AudioFormat } from "./integrations/audioClient";
 import { speechToText } from "./integrations/audioClient";
 import { isWorkerOnline, queueAudioTranscriptionJob } from "./lib/localWorkerQueue";
 

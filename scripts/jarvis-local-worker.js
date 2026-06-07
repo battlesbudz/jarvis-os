@@ -4,7 +4,7 @@
  *
  * Run this script on your PC to give Jarvis a local fallback for fetching
  * YouTube transcripts. When all server-side strategies fail (because YouTube
- * blocks Replit's cloud IPs), the server forwards the job here and your
+ * blocks cloud-hosted IPs), the server forwards the job here and your
  * machine fetches it instead.
  *
  * Two strategies are tried in order:

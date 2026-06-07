@@ -248,7 +248,7 @@ export async function describeFrames(frames: Keyframe[]): Promise<VisualObservat
   if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) return [];
 
   try {
-    const { openai } = await import("../replit_integrations/audio/client");
+    const { openai } = await import("../integrations/audioClient");
     const BATCH_SIZE = 10;
     const observations: VisualObservation[] = [];
 

@@ -251,7 +251,7 @@ async function processVoiceUtterance(
   let transcript: string;
   try {
     const wavBuffer = await opusChunksToWav(opusChunks);
-    const { speechToText } = await import("../replit_integrations/audio/client");
+    const { speechToText } = await import("../integrations/audioClient");
     transcript = (await speechToText(wavBuffer, "wav")).trim();
     console.log(`[VoiceBridge] STT result for guild=${guildId}: "${transcript.slice(0, 80)}"`);
   } catch (sttErr) {
@@ -326,14 +326,14 @@ async function generateTtsAudio(userId: string, text: string): Promise<Buffer> {
 
   if (!isOpenAiVoice && process.env.ELEVENLABS_API_KEY) {
     try {
-      const { elevenlabsTts } = await import("../replit_integrations/audio/client");
+      const { elevenlabsTts } = await import("../integrations/audioClient");
       return await elevenlabsTts(trimmed, voice);
     } catch (err) {
       console.warn("[VoiceBridge] ElevenLabs TTS failed, falling back to OpenAI:", err instanceof Error ? err.message : err);
     }
   }
 
-      const { textToSpeech } = await import("../integrations/audioClient");
+  const { textToSpeech } = await import("../integrations/audioClient");
   const openaiVoice = isOpenAiVoice ? (voice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer") : "nova";
   return await textToSpeech(trimmed, openaiVoice, "mp3");
 }
