@@ -1,5 +1,6 @@
 import { buildRuntimeApprovalPreview, type RuntimeApprovalPreview } from "./runtimeApprovalPreview";
 import { parseRuntimeDecision, type RuntimeDecision, type RuntimeRiskTier } from "../protocol";
+import { assertRuntimeLiveExecutionDisabled, getRuntimeFeatureFlags, type RuntimeFeatureFlagEnv } from "./runtimeFeatureFlags";
 import { summarizeRuntimePreview, type RuntimePreviewReport } from "./runtimePreviewReport";
 import {
   previewRuntimePreflightFromAgentTools,
@@ -14,6 +15,13 @@ export interface RuntimeDryRunResult {
   report: RuntimePreviewReport;
   approvalPreview: RuntimeApprovalPreview | null;
 }
+
+export interface RuntimeDryRunDisabledResult {
+  disabled: true;
+  reason: string;
+}
+
+export type RuntimeDryRunAttemptResult = RuntimeDryRunResult | RuntimeDryRunDisabledResult;
 
 const RISK_ORDER: RuntimeRiskTier[] = ["T0", "T1", "T2", "T3", "T4", "T5"];
 
@@ -62,4 +70,16 @@ export function runRuntimeDryRun(input: RuntimeToolPreflightInput): RuntimeDryRu
 
 export function runRuntimeDryRunFromAgentTools(input: RuntimeAgentToolPreflightInput): RuntimeDryRunResult {
   return dryRunFromPreview(previewRuntimePreflightFromAgentTools(input));
+}
+
+export function tryRunRuntimeDryRun(input: RuntimeToolPreflightInput, env?: RuntimeFeatureFlagEnv): RuntimeDryRunAttemptResult {
+  const flags = getRuntimeFeatureFlags(env);
+  assertRuntimeLiveExecutionDisabled(flags);
+  if (!flags.dryRunEnabled) {
+    return {
+      disabled: true,
+      reason: "Runtime dry run is disabled. Set JARVIS_RUNTIME_DRY_RUN=1 to enable preview-only dry runs.",
+    };
+  }
+  return runRuntimeDryRun(input);
 }
