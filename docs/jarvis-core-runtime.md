@@ -153,6 +153,10 @@ Runtime preview and dry-run integration must be explicitly gated. The feature fl
 
 Guarded dry run checks runtime feature flags before composing preview output. If dry run is disabled, callers get an explicit disabled result. If live execution is enabled, the helper throws because the current runtime slices are preview-only.
 
+## Runtime Preview Formatter
+
+Runtime preview reports can be formatted into deterministic text for logs, diagnostics, or simple UI panels. Formatting consumes derived preview/report/approval objects only and does not inspect secrets or execute tools.
+
 ## Non-Goals
 
 - no broad folder restructuring
