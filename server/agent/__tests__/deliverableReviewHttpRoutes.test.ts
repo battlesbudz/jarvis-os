@@ -279,6 +279,78 @@ async function run(): Promise<void> {
       .limit(1);
     assert.equal(originalJobAfter.status, "delivered", "revision route closes the original complete job");
 
+    const revisionRoot = await insertDeliverable(db, user.id, {
+      type: "document",
+      status: "approved",
+      title: "Revision family root",
+      body: "Root body.",
+    });
+    const revisionOne = await insertDeliverable(db, user.id, {
+      type: "document",
+      status: "pending_approval",
+      title: "Revision family first child",
+      body: "First child body.",
+      meta: {
+        revisionOfDeliverableId: revisionRoot.id,
+        revisionInstructions: "Tighten the plan.",
+      },
+    });
+    const revisionSibling = await insertDeliverable(db, user.id, {
+      type: "document",
+      status: "pending_approval",
+      title: "Revision family sibling child",
+      body: "Sibling child body.",
+      meta: {
+        revisionOfDeliverableId: revisionRoot.id,
+        revisionInstructions: "Try a different structure.",
+      },
+    });
+    const revisionGrandchild = await insertDeliverable(db, user.id, {
+      type: "document",
+      status: "pending_approval",
+      title: "Revision family grandchild",
+      body: "Grandchild body.",
+      meta: {
+        revisionOfDeliverableId: revisionOne.id,
+        revisionInstructions: "Add owners.",
+      },
+    });
+    const unrelatedDeliverable = await insertDeliverable(db, user.id, {
+      type: "document",
+      status: "pending_approval",
+      title: "Unrelated revision family",
+      body: "Unrelated body.",
+    });
+
+    const revisionsResponse = await requestJson(
+      port,
+      "GET",
+      `/api/deliverables/${revisionOne.id}/revisions`,
+      token,
+    );
+    assert.equal(revisionsResponse.status, 200, "HTTP route returns deliverable revision comparisons");
+    const comparison = revisionsResponse.body.comparison as {
+      current: { id: string; isCurrent: boolean };
+      original: { id: string; isOriginal: boolean } | null;
+      revisions: Array<{ id: string; parentId: string | null; instructions: string | null }>;
+      totalCount: number;
+    };
+    assert.equal(comparison.current.id, revisionOne.id, "revision comparison marks requested deliverable current");
+    assert.equal(comparison.current.isCurrent, true);
+    assert.equal(comparison.original?.id, revisionRoot.id, "revision comparison finds the original ancestor");
+    assert.equal(comparison.original?.isOriginal, true);
+    assert.equal(comparison.totalCount, 4, "revision comparison counts the whole revision family");
+    const revisionIds = new Set(comparison.revisions.map((revision) => revision.id));
+    assert.deepEqual(revisionIds, new Set([
+      revisionRoot.id,
+      revisionSibling.id,
+      revisionGrandchild.id,
+    ]), "revision comparison includes original, sibling, and descendant revisions");
+    assert.equal(revisionIds.has(unrelatedDeliverable.id), false, "revision comparison excludes unrelated deliverables");
+    const siblingSummary = comparison.revisions.find((revision) => revision.id === revisionSibling.id);
+    assert.equal(siblingSummary?.parentId, revisionRoot.id, "sibling revision keeps parent metadata");
+    assert.equal(siblingSummary?.instructions, "Try a different structure.");
+
     console.log("All deliverable review HTTP route assertions passed.");
   } finally {
     await db.delete(deliverables).where(eq(deliverables.userId, user.id));

@@ -23,6 +23,36 @@ export interface DeliverableReviewRoutesDeps {
 }
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
+type DeliverableRow = typeof schema.deliverables.$inferSelect;
+
+function deliverableMeta(deliverable: DeliverableRow): Record<string, unknown> {
+  const meta = deliverable.meta;
+  return meta && typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {};
+}
+
+function revisionParentId(deliverable: DeliverableRow): string | null {
+  const value = deliverableMeta(deliverable).revisionOfDeliverableId;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function compareDeliverableCreatedAt(left: DeliverableRow, right: DeliverableRow): number {
+  return new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+}
+
+function revisionSummary(deliverable: DeliverableRow, currentId: string, originalId: string) {
+  const meta = deliverableMeta(deliverable);
+  return {
+    id: deliverable.id,
+    title: deliverable.title,
+    body: deliverable.body,
+    createdAt: deliverable.createdAt,
+    status: deliverable.status,
+    parentId: revisionParentId(deliverable),
+    instructions: meta.revisionInstructions ?? null,
+    isCurrent: deliverable.id === currentId,
+    isOriginal: deliverable.id === originalId,
+  };
+}
 
 async function defaultApproveGate(gateId: string, userId: string): Promise<void> {
   const { approveGate } = await import("./agentApproval");
@@ -328,6 +358,71 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
     } catch (err) {
       console.error("Error requesting deliverable revision:", err);
       res.status(500).json({ error: "Failed to request revision" });
+    }
+  });
+
+  app.get("/api/deliverables/:id/revisions", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+
+      const [target] = await db
+        .select()
+        .from(schema.deliverables)
+        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+        .limit(1);
+
+      if (!target) return res.status(404).json({ error: "Deliverable not found" });
+
+      const userDeliverables = await db
+        .select()
+        .from(schema.deliverables)
+        .where(eq(schema.deliverables.userId, userId));
+      const byId = new Map(userDeliverables.map((deliverable) => [deliverable.id, deliverable]));
+
+      let original = target;
+      const ancestors = new Set<string>();
+      for (;;) {
+        const parentId = revisionParentId(original);
+        if (!parentId || ancestors.has(parentId)) break;
+        const parent = byId.get(parentId);
+        if (!parent) break;
+        ancestors.add(original.id);
+        original = parent;
+      }
+
+      const familyIds = new Set<string>([original.id]);
+      for (let changed = true; changed;) {
+        changed = false;
+        for (const deliverable of userDeliverables) {
+          const parentId = revisionParentId(deliverable);
+          if (parentId && familyIds.has(parentId) && !familyIds.has(deliverable.id)) {
+            familyIds.add(deliverable.id);
+            changed = true;
+          }
+        }
+      }
+
+      const family = userDeliverables
+        .filter((deliverable) => familyIds.has(deliverable.id))
+        .sort(compareDeliverableCreatedAt);
+      const current = revisionSummary(target, target.id, original.id);
+
+      res.json({
+        ok: true,
+        comparison: {
+          current,
+          original: original.id === target.id ? null : revisionSummary(original, target.id, original.id),
+          revisions: family
+            .filter((deliverable) => deliverable.id !== target.id)
+            .map((deliverable) => revisionSummary(deliverable, target.id, original.id)),
+          totalCount: family.length,
+        },
+      });
+    } catch (err) {
+      console.error("Error fetching deliverable revisions:", err);
+      res.status(500).json({ error: "Failed to fetch revisions" });
     }
   });
 
