@@ -68,6 +68,7 @@ const tests = [
   { file: "server/agent/__tests__/providerFallback.assert.ts" },
   { file: "server/agent/__tests__/routedChatCompletion.assert.ts" },
   { file: "server/agent/__tests__/providerEnv.assert.ts" },
+  { file: "server/agent/__tests__/coachRunLifecycle.test.ts" },
   { file: "server/agent/__tests__/composioConnections.assert.ts" },
   { file: "server/agent/__tests__/composioConnectedAccounts.assert.ts" },
   { file: "server/agent/__tests__/composioRouteContract.assert.ts" },
