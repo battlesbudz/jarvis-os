@@ -73,7 +73,7 @@ import { setupNamedAgentTool } from "./setupNamedAgent";
 import { queueBackgroundJobTool } from "./queueBackgroundJob";
 import { setupContentPipelineTool } from "./setupContentPipeline";
 import { setupDiscordWorkspaceTool } from "./setupDiscordWorkspace";
-import { memorySearchTool, memoryGetTool } from "./memorySearch";
+import { memorySearchTool, memoryGetTool, memorySaveTool } from "./memorySearch";
 import { webFetchTool } from "./webFetch";
 import { weatherLookupTool } from "./weatherLookup";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool, sessionsCancelTool } from "./sessionTools";
@@ -149,7 +149,7 @@ export type ToolGroup =
   | "coaching"    // manage_tasks, queue_background_job, daemon_action
   | "calendar"    // fetch_calendar, create_calendar_event  (Google-gated)
   | "email"       // gmail_action, create_gmail_draft (Google-gated), send_email, fetch_emails
-  | "memory"      // memory_search, memory_get
+  | "memory"      // memory_search, memory_get, memory_save
   | "documents"   // create/list/read_document, drive_* (Google-gated)
   | "research"    // web_search, research_topic, web_fetch, youtube_search, x_search
   | "discord"     // discord_post, discord_manage, schedule_channel_report, setup_content_pipeline
@@ -323,6 +323,7 @@ export {
   setupDiscordWorkspaceTool,
   memorySearchTool,
   memoryGetTool,
+  memorySaveTool,
   webFetchTool,
   weatherLookupTool,
   sessionsListTool,

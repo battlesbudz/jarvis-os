@@ -52,7 +52,7 @@ export function resolveToolsForAction(decision: ActionOntologyDecision): ToolRes
     case "jarvis_read":
       return resolution({
         requiredToolNames: CONNECTED_ACCOUNT_TOOLS,
-        optionalToolNames: ["memory_search", "memory_get", "search_web", "research_topic", "browser_navigate"],
+        optionalToolNames: ["memory_search", "memory_get", "memory_save", "search_web", "research_topic", "browser_navigate"],
         blockedToolNames: LEGACY_EXTERNAL_WRITE_TOOLS.filter((tool) => tool !== "fetch_emails" && tool !== "fetch_calendar"),
         approvalRequired: decision.approvalRequired,
         reason: "Read-only connected-account work should use the connected account discovery and execute path with read-capable schemas.",
@@ -61,7 +61,7 @@ export function resolveToolsForAction(decision: ActionOntologyDecision): ToolRes
     case "jarvis_draft":
       return resolution({
         requiredToolNames: CONNECTED_ACCOUNT_TOOLS,
-        optionalToolNames: ["memory_search", "memory_get"],
+        optionalToolNames: ["memory_search", "memory_get", "memory_save"],
         blockedToolNames: ["send_email", "gmail_action"],
         approvalRequired: decision.approvalRequired,
         reason: "Drafting can use connected-account context but should not expose direct send tools.",

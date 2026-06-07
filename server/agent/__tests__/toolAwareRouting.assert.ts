@@ -91,13 +91,19 @@ assertRoute(
   "what do you remember about my work hours?",
   "memory",
   ["memory"],
-  ["memory_search", "memory_get"],
+  ["memory_search", "memory_get", "memory_save"],
 );
 assertRoute(
   "What's my name?",
   "memory",
   ["memory"],
   ["memory_search", "memory_get"],
+);
+assertRoute(
+  "Remember that Justin Battles is my personal name.",
+  "memory",
+  ["memory"],
+  ["memory_save"],
 );
 assertRoute(
   "open github.com in the browser",

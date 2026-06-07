@@ -63,6 +63,16 @@ async function main(): Promise<void> {
     (err) => err instanceof PermissionDeniedError && err.flag === "can_create_email_drafts",
   );
 
+  const memoryAgent = makeAgent({ can_access_global_memory: true });
+  assert.doesNotThrow(() => checkPermission(memoryAgent, "memory_save"));
+  assert.ok(getPermittedToolNames(memoryAgent).includes("memory_save"));
+
+  const noMemoryAgent = makeAgent({ can_access_global_memory: false });
+  assert.throws(
+    () => checkPermission(noMemoryAgent, "memory_save"),
+    (err) => err instanceof PermissionDeniedError && err.flag === "can_access_global_memory",
+  );
+
   console.log("approval consistency assertions passed");
 }
 
