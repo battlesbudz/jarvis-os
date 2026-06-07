@@ -111,6 +111,10 @@ Existing `AgentTool` objects can be adapted into Tool Gateway descriptors withou
 
 This adapter is intentionally metadata-only. It does not call `execute`, mutate the tool list, or grant provider access.
 
+## Runtime AgentTool Preflight
+
+Runtime Tool Preflight can accept existing `AgentTool`-shaped metadata through the descriptor adapter. This convenience path allows preview callers to pass the current tool surface without importing `ALL_TOOLS` inside core runtime and without calling tool `execute` handlers.
+
 ## Non-Goals
 
 - no broad folder restructuring

@@ -79,6 +79,22 @@ import { toolDescriptorFromAgentTool, toolDescriptorsFromAgentTools } from "../i
 }
 
 {
+  const descriptor = toolDescriptorFromAgentTool(
+    { name: "approval_gated_action" },
+    {
+      provider: "runtime",
+      riskTier: "T3",
+      approvalRequired: true,
+    },
+  );
+
+  assert.equal(descriptor.provider, "runtime");
+  assert.deepEqual(descriptor.requiredScopes, []);
+  assert.equal(descriptor.approvalRequired, true);
+  console.log("OK: Agent tool adapter does not inherit stale scopes after provider override");
+}
+
+{
   const descriptors = toolDescriptorsFromAgentTools([
     { name: "memory_search" },
     { name: "send_email" },

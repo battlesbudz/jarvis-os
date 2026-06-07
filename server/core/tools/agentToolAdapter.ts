@@ -74,12 +74,16 @@ export function toolDescriptorFromAgentTool(
 ): ToolGatewayToolDescriptor {
   const normalizedName = tool.name.toLowerCase();
   const inferredProvider = inferProvider(normalizedName);
+  const provider = options.provider ?? inferredProvider.provider;
+  const requiredScopes =
+    options.requiredScopes ??
+    (options.provider && options.provider !== inferredProvider.provider ? [] : inferredProvider.scopes);
   const approvalRequired = options.approvalRequired ?? inferApprovalRequired(normalizedName);
 
   return {
     name: tool.name,
-    provider: options.provider ?? inferredProvider.provider,
-    requiredScopes: options.requiredScopes ?? inferredProvider.scopes,
+    provider,
+    requiredScopes,
     riskTier: options.riskTier ?? inferRiskTier(normalizedName, approvalRequired),
     approvalRequired,
   };
