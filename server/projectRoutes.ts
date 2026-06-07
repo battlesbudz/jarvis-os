@@ -13,7 +13,7 @@ import {
 } from "./agent/projectRunner";
 import { answerAppProjectQuestion, resumeAppProject, startAppProject } from "./agent/appProjectRunner";
 import { normalizeCreateProjectRequest, isSafeProjectFilePath } from "./agent/projectCreateRequest";
-import { generateDownloadToken } from "./agent/appDelivery";
+import { ensureProjectArchiveAvailable, generateDownloadToken } from "./agent/appDelivery";
 import { authMiddleware } from "./auth";
 import { getGitHubSettings, createGitHubRepo, pushWorkspaceToGitHub } from "./integrations/github";
 import { getPublicBaseUrl } from "./publicUrl";
@@ -107,7 +107,7 @@ export function registerProjectRoutes(app: Express): void {
       await hydrateProjectWorkspace(id, project.workspaceDir).catch(() => undefined);
       const root = path.resolve(project.workspaceDir);
       const blocked = new Set([".git", "node_modules", ".next", ".expo", "dist", "build"]);
-      const files: Array<{ path: string; name: string; type: "file" | "directory"; size: number; updatedAt: string }> = [];
+      const files: { path: string; name: string; type: "file" | "directory"; size: number; updatedAt: string }[] = [];
       const walk = (dir: string, depth: number) => {
         if (depth > 4 || files.length >= 250) return;
         for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -188,7 +188,9 @@ export function registerProjectRoutes(app: Express): void {
       const zipPath = path.join(getProjectDownloadsDir(), `${id}.zip`);
       if (!fs.existsSync(zipPath)) {
         const archive = await readProjectArchive(id);
-        if (!archive) return res.status(404).json({ error: "Project zip not yet available" });
+        if (!archive) {
+          await ensureProjectArchiveAvailable(id);
+        }
       }
 
       const token = generateDownloadToken(id);

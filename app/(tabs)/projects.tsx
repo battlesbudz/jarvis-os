@@ -91,6 +91,43 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: keyof 
   failed: { label: "Failed", color: "#EF4444", icon: "close-circle-outline" },
 };
 
+function formatSessionSummary(summary: string | null | undefined, fallback: string): string {
+  if (!summary?.trim()) return fallback;
+
+  const trimmed = summary.trim();
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      type?: string;
+      tool_calls?: { name?: string; arguments?: Record<string, unknown> }[];
+    };
+    if (parsed.type === "tool_calls" && Array.isArray(parsed.tool_calls)) {
+      const fileWrites = parsed.tool_calls
+        .filter((call) => call.name === "daemon_action" && call.arguments?.action === "file_write")
+        .map((call) => String(call.arguments?.path ?? ""))
+        .filter(Boolean);
+
+      if (fileWrites.length > 0) {
+        const shown = fileWrites.slice(0, 3).join(", ");
+        const more = fileWrites.length > 3 ? ` and ${fileWrites.length - 3} more` : "";
+        return `Jarvis wrote project files: ${shown}${more}.`;
+      }
+
+      const toolNames = [...new Set(parsed.tool_calls.map((call) => call.name).filter(Boolean))];
+      if (toolNames.length > 0) {
+        return `Jarvis ran project tools: ${toolNames.join(", ")}.`;
+      }
+
+      return "Jarvis performed project workspace actions.";
+    }
+  } catch {
+    if (trimmed.includes('"type":"tool_calls"') || trimmed.includes('"tool_calls"')) {
+      return "Jarvis performed project workspace actions.";
+    }
+  }
+
+  return trimmed;
+}
+
 function useProjects() {
   return useQuery<Project[]>({
     queryKey: ["/api/projects"],
@@ -209,7 +246,7 @@ function ProjectCard({ project, onPress }: { project: Project; onPress: () => vo
         <View style={[styles.sessionSummaryBanner, { backgroundColor: colors.background, borderColor: colors.border }]}>
           <Ionicons name="time-outline" size={13} color={colors.textTertiary} />
           <Text style={[styles.sessionSummaryText, { color: colors.textSecondary }]} numberOfLines={2}>
-            {project.lastSessionSummary}
+            {formatSessionSummary(project.lastSessionSummary, "Jarvis is working on this project.")}
           </Text>
         </View>
       )}
@@ -883,7 +920,7 @@ function ProjectDetailView({ projectId, onBack }: { projectId: string; onBack: (
               <View key={s.id} style={[styles.sessionRow, { borderBottomColor: colors.border }]}>
                 <Text style={[styles.sessionNum, { color: colors.textTertiary }]}>Session {s.sessionNumber}</Text>
                 <Text style={[styles.sessionSummary, { color: colors.textSecondary }]} numberOfLines={2}>
-                  {s.summary ?? `${s.stepsCompleted} step(s) completed`}
+                  {formatSessionSummary(s.summary, `${s.stepsCompleted} step(s) completed`)}
                 </Text>
               </View>
             ))}
