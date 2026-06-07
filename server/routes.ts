@@ -65,6 +65,7 @@ import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes"
 import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
 import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryRoutes";
 import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./routes/platformRoutes";
+import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
 import {
   registerAuthenticatedCoachRuntimeRoutes,
   registerPublicCoachRuntimeRoutes,
@@ -4319,6 +4320,7 @@ Return ONLY JSON: { "hasCommitment": boolean, "commitment": "the thing they comm
   });
 
   registerAuthenticatedCoachRuntimeRoutes(app);
+  registerRuntimeDiagnosticsRoutes(app);
   registerInboxRoutes(app);
 
   app.post("/api/coach/weekly-review", async (req: Request, res: Response) => {
