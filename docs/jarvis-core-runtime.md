@@ -139,7 +139,7 @@ Runtime dry run composes the preview pieces into one result: runtime/tool prefli
 
 ## Runtime Golden Dry Runs
 
-Golden dry-run fixtures cover stable runtime expectations for general answers, memory lookup, approval-required email action, research queue, and invalid-event fail-closed behavior. These fixtures are small smoke cases for keeping the protocol, runtime gate, tool preflight, report, and approval preview aligned.
+Golden dry-run fixtures cover stable runtime expectations for general answers, memory lookup, approval-required email action, diagnostics-route approval preview, research queue, and invalid-event fail-closed behavior. These fixtures are small smoke cases for keeping the protocol, runtime gate, tool preflight, report, and approval preview aligned.
 
 ## Runtime Event Adapter
 
@@ -154,6 +154,16 @@ The route integration checklist lives in `docs/runtime-preview-integration-check
 ## Guarded Runtime Dry Run
 
 Guarded dry run checks runtime feature flags before composing preview output. If dry run is disabled, callers get an explicit disabled result. If live execution is enabled, the helper throws because the current runtime slices are preview-only.
+
+## Runtime Diagnostics Route
+
+`POST /api/runtime/dry-run` is the first preview route integration. It adapts an authenticated request message into `JarvisEvent`, runs `tryRunRuntimeDryRun`, and returns a report, optional approval preview, and deterministic formatted text.
+
+The route is read-only. It ignores body-supplied user ids, accepts only explicit metadata snapshots for tool/auth/policy preflight, and does not import live tool registries, execute tools, write memory, enqueue jobs, create approval records, or persist audit rows.
+
+## Runtime Diagnostics UI
+
+Settings > Diagnostics includes a Runtime Preview panel backed by `/api/runtime/dry-run`. The panel shows the latest preview status, formatted preview output, and a short client-local log. It does not persist previews and it does not change live app behavior.
 
 ## Runtime Preview Formatter
 

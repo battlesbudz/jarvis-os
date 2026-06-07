@@ -101,6 +101,10 @@ Errors should be traceable and recoverable whenever possible.
 - A daemon may expose a capability; device policy decides whether Jarvis may use it.
 - Invalid protocol output must become `blocked` or `degraded`, never direct execution.
 
+## Diagnostics Output
+
+Runtime diagnostics routes should expose derived preview summaries, not raw execution authority. The current dry-run route returns `RuntimePreviewReport`, optional redacted `RuntimeApprovalPreview`, and formatted text. Those objects are advisory and must not be treated as approval records, persisted traces, memory writes, jobs, or executed tool calls.
+
 ## v0.1 Adapter
 
 The first adapter converts existing Mind Trace records into protocol decisions. This gives Jarvis a seed trace format without changing the harness.
