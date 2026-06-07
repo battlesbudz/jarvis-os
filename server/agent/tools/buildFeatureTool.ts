@@ -1,7 +1,7 @@
 import type { AgentTool, ToolResult, JsonSchema } from "../types";
 import { db } from "../../db";
 import { and, desc, eq, isNotNull } from "drizzle-orm";
-import { openclawBuildLog } from "@shared/schema";
+import { agentBuildLog } from "@shared/schema";
 import {
   checkCircuitBreaker,
   recordAutonomousWrite,
@@ -277,7 +277,7 @@ export const buildFeatureTool: AgentTool = {
       smokeTestArgs?: Record<string, unknown> | null
     ) => {
       try {
-        await db.insert(openclawBuildLog).values({
+        await db.insert(agentBuildLog).values({
           userId: ctx.userId,
           featureName,
           description,
@@ -303,16 +303,16 @@ export const buildFeatureTool: AgentTool = {
     let priorPassingArgs: Record<string, unknown> | null = null;
     try {
       const priorRows = await db
-        .select({ smokeTestArgs: openclawBuildLog.smokeTestArgs })
-        .from(openclawBuildLog)
+        .select({ smokeTestArgs: agentBuildLog.smokeTestArgs })
+        .from(agentBuildLog)
         .where(
           and(
-            eq(openclawBuildLog.userId, ctx.userId),
-            eq(openclawBuildLog.featureName, featureName),
-            eq(openclawBuildLog.smokeTestPassed, true)
+            eq(agentBuildLog.userId, ctx.userId),
+            eq(agentBuildLog.featureName, featureName),
+            eq(agentBuildLog.smokeTestPassed, true)
           )
         )
-        .orderBy(desc(openclawBuildLog.createdAt))
+        .orderBy(desc(agentBuildLog.createdAt))
         .limit(1);
       const stored = priorRows[0]?.smokeTestArgs;
       if (stored && typeof stored === "object" && !Array.isArray(stored)) {
@@ -518,17 +518,17 @@ export const testToolTool: AgentTool = {
     let priorPassingArgs: Record<string, unknown> | null = null;
     try {
       const priorRows = await db
-        .select({ smokeTestArgs: openclawBuildLog.smokeTestArgs })
-        .from(openclawBuildLog)
+        .select({ smokeTestArgs: agentBuildLog.smokeTestArgs })
+        .from(agentBuildLog)
         .where(
           and(
-            eq(openclawBuildLog.userId, ctx.userId),
-            eq(openclawBuildLog.featureName, toolName),
-            eq(openclawBuildLog.smokeTestPassed, true),
-            isNotNull(openclawBuildLog.smokeTestArgs)
+            eq(agentBuildLog.userId, ctx.userId),
+            eq(agentBuildLog.featureName, toolName),
+            eq(agentBuildLog.smokeTestPassed, true),
+            isNotNull(agentBuildLog.smokeTestArgs)
           )
         )
-        .orderBy(desc(openclawBuildLog.createdAt))
+        .orderBy(desc(agentBuildLog.createdAt))
         .limit(1);
       const stored = priorRows[0]?.smokeTestArgs;
       if (stored && typeof stored === "object" && !Array.isArray(stored)) {
@@ -581,7 +581,7 @@ export const testToolTool: AgentTool = {
       const isInternalCall = Boolean(args._internal);
       if (callerArgs !== null && !isInternalCall) {
         try {
-          await db.insert(openclawBuildLog).values({
+          await db.insert(agentBuildLog).values({
             userId: ctx.userId,
             featureName: toolName,
             description: "manual test",

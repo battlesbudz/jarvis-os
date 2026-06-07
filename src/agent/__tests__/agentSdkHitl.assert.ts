@@ -32,6 +32,8 @@ assert.equal(matchesAgentSdkEmailWorkflow("send a calendar invite"), false);
 assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("Draft a reply to this email."), true);
 assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("write an email draft but do not send it"), true);
 assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("draft and send an email to sam@example.com"), false);
+assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("reply with FAST ROUTE OK"), false);
+assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("please reply with hello world"), false);
 assert.equal(matchesAgentSdkEmailDraftOnlyWorkflow("check my inbox"), false);
 assert.equal(matchesAgentSdkReminderWorkflow("Remind me in an hour to call the company."), true);
 assert.equal(matchesAgentSdkReminderWorkflow("Set a reminder tomorrow morning to follow up with Bill."), true);

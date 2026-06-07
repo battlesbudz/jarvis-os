@@ -57,7 +57,7 @@
       [
         "expo-router",
         {
-          "origin": "https://replit.com/"
+          "origin": "https://gameplanjarvisai.up.railway.app/"
         }
       ],
       "expo-font",
@@ -69,7 +69,7 @@
     },
     "extra": {
       "router": {
-        "origin": "https://replit.com/"
+        "origin": "https://gameplanjarvisai.up.railway.app/"
       },
       "eas": {
         "projectId": "8d5e2929-109d-43f4-ad23-45ef5731dfc3"

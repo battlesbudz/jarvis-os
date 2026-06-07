@@ -20,6 +20,13 @@ export async function runPreListenBoot(): Promise<void> {
   }
 
   try {
+    const { seedCrewAgentsForAllUsers } = await import("../agent/crewSeed");
+    await seedCrewAgentsForAllUsers();
+  } catch (err) {
+    console.warn("[Startup] crew agent seeding failed (non-fatal):", err);
+  }
+
+  try {
     const { seedConfirmTokenCache } = await import("../agent/discordConfirmStore");
     await seedConfirmTokenCache();
   } catch (err) {

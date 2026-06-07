@@ -1,6 +1,8 @@
 # Jarvis Memory OS Temporal Graph Plan
 
-Status: proposed architecture plan.
+Status: active implementation plan.
+
+Last updated: 2026-06-05.
 
 This plan hardens the existing Jarvis memory system instead of replacing it.
 
@@ -26,6 +28,46 @@ Redis hot state
 -> user-visible memory review and provenance
 ```
 
+## Current Implementation Status
+
+The first G-Brain slices are now implemented as a derived second-brain layer on top of the canonical `user_memories` ledger.
+
+Detailed G-Brain docs:
+
+- `gbrain-implementation-plan.md`
+- `gbrain-spec-sheet.md`
+
+Landed:
+
+- Temporal parsing exists in `server/time/temporalContext.ts` with tests.
+- G-Brain derived storage exists under `server/brain/*`.
+- Approved memories project into G-Brain pages, chunks, links, and versions.
+- People rows project into duplicate-safe person pages.
+- Memory pages link deterministically to person pages when names match known people.
+- Daily G-Brain maintenance runs from the scheduler after embedding backfill.
+- `brain_content_chunks` now has optional pgvector support via `embedding_vector vector(1536)`.
+- Brain vector retrieval is feature-flagged by `JARVIS_BRAIN_VECTOR_RETRIEVAL=1`.
+- Brain retrieval falls back to FTS/JSONB embedding rerank when pgvector is unavailable.
+- G-Brain chunk-vector live DB verification passed against Railway Postgres on 2026-06-05 via `npm.cmd run jarvis:verify:brain-vector-db`.
+- `user_memories` now has optional canonical pgvector support via `embedding_vector vector(1536)`.
+- Canonical memory vector retrieval is feature-flagged by `JARVIS_MEMORY_VECTOR_RETRIEVAL=1`.
+- Canonical memory vector write/query failures fall back to JSONB/FTS behavior.
+- Canonical vector search is scoped to approved memories: `pending_review = FALSE`, `review_status IN ('active', 'kept', 'edited')`.
+- Canonical memory vector live DB verification passed against Railway Postgres on 2026-06-05 via `npm.cmd run jarvis:verify:memory-vector-db`.
+- A deterministic memory auto-review daemon exists in `server/memory/autoReview.ts`.
+- Auto-review keeps only high-confidence, low-risk pending memories and leaves sensitive/ambiguous memories pending.
+- Auto-kept memories are marked with the same state as manual keep: `pending_review = FALSE`, `review_status = 'kept'`.
+- Telegram fast-lane turns now persist into normal chat history/session state so immediate recall does not depend on a separate history action.
+
+Still planned:
+
+- A unified `server/memory/memoryOs.ts` read/write facade.
+- Redis hot state.
+- Graphiti temporal graph adapter.
+- Full temporal query UX and provenance display.
+
+Roadmap cross-reference: this plan overlaps `JARVIS_ROADMAP.md` Phase 4.1. The vector-index work now covers derived G-Brain chunk vectors and canonical `user_memories.embedding_vector` support, the targeted Memory OS read facade is implemented, and production embedding-health monitoring now feeds diagnostics health. Redis hot state is the next Memory OS infrastructure slice for packable autonomy.
+
 ## Product Goal
 
 Jarvis should understand time as a first-class part of memory.
@@ -41,9 +83,9 @@ The target behavior is not just semantic recall. It is temporal recall with prov
 
 ## Source Reality
 
-Current `user_memories.embedding` is JSONB. The code comments explicitly avoid requiring pgvector today. Retrieval in `server/memory/retrieve.ts` combines Postgres full-text search, optional OpenAI embeddings, cosine scoring in TypeScript, relevance, tier recency, and access count.
+Current `user_memories.embedding` remains JSONB for portability, with optional `user_memories.embedding_vector` pgvector support where the extension is available. Retrieval in `server/memory/retrieve.ts` combines Postgres full-text search, optional OpenAI embeddings, cosine scoring in TypeScript, relevance, tier recency, and access count, and can prefer pgvector candidates when `JARVIS_MEMORY_VECTOR_RETRIEVAL=1`.
 
-That is a useful baseline, but it will not scale as memory grows because vector similarity is computed outside the database over a limited candidate set.
+That gives Jarvis a scalable semantic candidate path while preserving the current fallback when pgvector is unavailable.
 
 Graphiti is a good fit for the temporal layer because it is designed for dynamic agent memory, temporal relationships, episodes/provenance, and hybrid semantic/keyword/graph retrieval. It should not be treated as the only source of truth. Jarvis still needs Postgres as the canonical reviewable memory ledger.
 
@@ -65,13 +107,13 @@ Tables/classes to keep using:
 - `life_context`
 - deliverables, jobs, approvals, and interaction logs
 
-Add pgvector as a real index layer:
+Current pgvector index layer:
 
 - install/enable `vector` extension where supported
 - add `embedding_vector vector(1536)` to `user_memories`
 - backfill from existing JSONB embeddings
-- keep JSONB embedding temporarily during migration
-- add HNSW or IVFFlat index after backfill
+- keep JSONB embedding during migration as the portable fallback
+- add IVFFlat index after backfill
 - make retrieval prefer pgvector when available and fall back to current JSONB/FTS behavior
 
 Do not remove memory review gates. All durable user-facing memories still require provenance, status, confidence, tier, and deletion/correction behavior.
@@ -358,7 +400,7 @@ Jarvis stops treating time phrases as vague text.
 
 ### Phase 2: pgvector Baseline
 
-Implement:
+Implemented:
 
 - schema migration with `embedding_vector vector(1536)`
 - pgvector capability probe
@@ -370,9 +412,13 @@ Outcome:
 
 Approved memories become scalable semantic recall.
 
+Status note, 2026-06-05: the G-Brain chunk side of this baseline and the canonical `user_memories.embedding_vector` migration/backfill/retrieval/capability/fallback slice are live-DB verified. Production embedding-health monitoring is implemented through `server/memory/embeddingHealth.ts` and diagnostics health now reports pgvector availability, JSON/vector coverage, vector-path errors, and memory subsystem degradation.
+
 ### Phase 3: Memory OS Facade
 
-Implement:
+Status note, 2026-06-05: the targeted read-path facade baseline is implemented. It routes the `memory_search` tool, coach context, daily command context, Agent SDK global memory context, and G-Brain-backed retrieval through `server/memory/memoryOs.ts` with structured source/provenance fields and fallback uncertainty. Legacy direct memory reads outside those named contexts, write-path episode capture, user-facing explanation/correction, Redis hot state, and Graphiti remain later phases.
+
+Implemented:
 
 - `server/memory/memoryOs.ts`
 - route existing `memory_search`, daily command, Agent SDK read context, and coach context through it
@@ -381,7 +427,7 @@ Implement:
 
 Outcome:
 
-Jarvis has one memory read/write API instead of scattered calls.
+Jarvis has one facade for the roadmap-named memory read contexts instead of continuing to route those contexts through scattered calls. Broader read consolidation and the write API remain planned for later Memory OS slices.
 
 ### Phase 4: Redis Hot State
 

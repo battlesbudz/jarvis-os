@@ -556,7 +556,7 @@ CREATE TABLE "nervous_system_watches" (
 	"created_at" timestamp DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE TABLE "openclaw_build_log" (
+CREATE TABLE "agent_build_log" (
 	"id" varchar PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" varchar NOT NULL,
 	"feature_name" varchar NOT NULL,
@@ -865,7 +865,7 @@ ALTER TABLE "morning_voice_notes" ADD CONSTRAINT "morning_voice_notes_user_id_us
 ALTER TABLE "nervous_system_signals" ADD CONSTRAINT "nervous_system_signals_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "nervous_system_signals" ADD CONSTRAINT "nervous_system_signals_watch_id_nervous_system_watches_id_fk" FOREIGN KEY ("watch_id") REFERENCES "public"."nervous_system_watches"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "nervous_system_watches" ADD CONSTRAINT "nervous_system_watches_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "openclaw_build_log" ADD CONSTRAINT "openclaw_build_log_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "agent_build_log" ADD CONSTRAINT "agent_build_log_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "orchestration_traces" ADD CONSTRAINT "orchestration_traces_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "people" ADD CONSTRAINT "people_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "plan_snapshots" ADD CONSTRAINT "plan_snapshots_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

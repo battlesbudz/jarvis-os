@@ -44,7 +44,7 @@ export async function loadChatHistory(agentId: string): Promise<ChatMessage[]> {
 
 /**
  * Cross-runtime base64 decode. React Native 0.71+ exposes `atob` globally via JSI;
- * older runtimes may not. We fall back to `Buffer` (available in Node/Hermes via
+ * older runtimes may not. We fall back to `Buffer` when the runtime provides it via
  * the `buffer` polyfill) and finally return `null` so callers can degrade gracefully.
  */
 export function safeAtob(base64: string): string | null {

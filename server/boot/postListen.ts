@@ -205,11 +205,25 @@ function startDiagnosticsBoot(): void {
     });
   }, 30_000);
 
-  import("playwright").then(({ chromium }) => {
-    chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] })
-      .then((b) => b.close().then(() => log("[Browser] Chromium ready")))
-      .catch((err: Error) => console.error("[Browser] Chromium unavailable - run `npx playwright install chromium`:", err.message.split("\n")[0]));
-  }).catch(() => {});
+  if (process.env.JARVIS_BROWSER_DIAGNOSTIC === "true") {
+    import("playwright").then(({ chromium }) => {
+      chromium.launch({ args: ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"] })
+        .then((b) => b.close().then(() => log("[Browser] Chromium ready")))
+        .catch((err: Error) => console.warn("[Browser] Chromium diagnostic unavailable:", err.message.split("\n")[0]));
+    }).catch(() => {});
+  }
+}
+
+function startMemoryVectorRepairBoot(): void {
+  setTimeout(() => {
+    import("../jobs/backfillEmbeddings").then(({ runBackfillEmbeddings }) => {
+      runBackfillEmbeddings().catch((err: Error) => {
+        console.error("[Startup] memory embedding backfill failed:", err.message);
+      });
+    }).catch((err: Error) => {
+      console.warn("[Startup] memory embedding backfill module unavailable:", err.message);
+    });
+  }, 60_000);
 }
 
 export function startPostListenBoot(): void {
@@ -218,4 +232,5 @@ export function startPostListenBoot(): void {
   startProactiveEngines();
   startWorkspaceBoot();
   startDiagnosticsBoot();
+  startMemoryVectorRepairBoot();
 }

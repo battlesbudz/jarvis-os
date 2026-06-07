@@ -1,7 +1,17 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+const vector1536 = customType<{ data: number[] | null }>({
+  dataType() {
+    return "vector(1536)";
+  },
+  toDriver(value) {
+    if (!Array.isArray(value)) return null;
+    return `[${value.map((entry) => Number(entry) || 0).join(",")}]`;
+  },
+});
 
 export const users = pgTable("users", {
   id: varchar("id")
@@ -185,9 +195,10 @@ export const userMemories = pgTable("user_memories", {
   sourceRef: varchar("source_ref"),
   lastReferencedAt: timestamp("last_referenced_at"),
   // Cached OpenAI text-embedding-3-small vector (1536 floats) used by the
-  // hybrid retrieval helper in server/memory/retrieve.ts. Stored as jsonb
-  // so we don't require the pgvector extension; FTS handles primary recall.
-  embedding: jsonb("embedding"),
+  // hybrid retrieval helper in server/memory/retrieve.ts. JSONB remains the
+  // portable fallback; embeddingVector is the optional pgvector index column.
+  embedding: jsonb("embedding").$type<number[] | null>(),
+  embeddingVector: vector1536("embedding_vector"),
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
   // Biomimetic memory tier & type system (Phase 5).
   // tier: working (minutes) | short_term (hours/days) | long_term (permanent)
@@ -294,6 +305,7 @@ export const brainContentChunks = pgTable("brain_content_chunks", {
   chunkIndex: integer("chunk_index").notNull(),
   content: text("content").notNull(),
   embedding: jsonb("embedding").$type<number[] | null>(),
+  embeddingVector: vector1536("embedding_vector"),
   provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -1263,11 +1275,11 @@ export const jarvisActionLog = pgTable("jarvis_action_log", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// ── OpenClaw Build Log ────────────────────────────────────────────────────────
-// Persisted record of every openclaw_build_feature call. Lets users review
+// ── Agent Build Log ───────────────────────────────────────────────────────────
+// Persisted record of every build_feature call. Lets users review
 // past self-improvement attempts, re-apply previous tools, or see when a
 // capability was added.
-export const openclawBuildLog = pgTable("openclaw_build_log", {
+export const agentBuildLog = pgTable("agent_build_log", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   featureName: varchar("feature_name").notNull(),
@@ -1641,7 +1653,7 @@ export const writeBudgetWarnings = pgTable("write_budget_warnings", {
   warnedAt: timestamp("warned_at").notNull().default(sql`'1970-01-01'`),
 });
 
-// Chat integration tables — used by server/replit_integrations/chat
+// Chat integration tables — used by server/integrations/chatStorage
 export const conversations = pgTable("conversations", {
   id: serial("id").primaryKey(),
   title: text("title").notNull().default("New Chat"),

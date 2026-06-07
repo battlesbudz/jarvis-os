@@ -29,6 +29,11 @@ import { createDriveBinaryFile } from "../integrations/googleDrive";
 import { normalizeApprovalReceipt } from "./approvalReceipt";
 import { decideJobFailureRecovery } from "./jobObservability";
 import { buildWorkerRuntimeEvent, resolveWorkerType, withWorkerRuntimeEvent } from "./workerRuntime";
+import {
+  buildFeatureProgressLabel,
+  buildFeatureProgressPercent,
+  type BuildFeatureProgressInput,
+} from "./buildFeatureJobCore";
 
 // Re-export from the shared client so existing callers don't break.
 export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
@@ -1558,6 +1563,28 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const sendBuildPing = (text: string): Promise<void> =>
         notifyJobComplete(job.userId, "build_feature", job.title, text, originChannel, originDiscordChannelId);
 
+      const recordBuildProgress = async (input: BuildFeatureProgressInput): Promise<void> => {
+        const currentStep = buildFeatureProgressLabel(input);
+        jobInput = await appendWorkerProgressToJob({
+          jobId: job.id,
+          agentType: job.agentType,
+          title: job.title,
+          input: jobInput,
+          currentStep,
+          percent: buildFeatureProgressPercent(input),
+          metadata: {
+            phase: input.phase,
+            stepIndex: input.stepIndex,
+            stepCount: input.stepCount,
+            stepLabel: input.stepLabel,
+            attempt: input.attempt,
+          },
+        }).catch((err) => {
+          console.warn(`[JobQueue] build_feature progress append failed for ${job.id}:`, err);
+          return jobInput;
+        });
+      };
+
       const baseFeatureDescription = String(jobInput.feature_description ?? job.prompt);
       const conversationContext = jobInput.conversationContext ? String(jobInput.conversationContext) : "";
       const featureDescription = conversationContext
@@ -1571,6 +1598,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       // Max wait: 5 minutes, then proceed without research.
       let researchBody = String(jobInput.researchBody ?? "");
       if (Boolean(jobInput.research_required ?? false) && !researchBody) {
+        await recordBuildProgress({ phase: "research" });
         let researchJobId = String(jobInput.researchJobId ?? "");
 
         if (!researchJobId) {
@@ -1582,6 +1610,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
             input: { parentJobId: job.id, originChannel, originDiscordChannelId },
           })).id;
           await persistProgress({ researchJobId });
+          await recordBuildProgress({ phase: "research" });
           await sendBuildPing(`🔍 Background research queued (job ${researchJobId.slice(0, 8)}…) — waiting up to 5 min`);
         }
 
@@ -1598,6 +1627,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
             .limit(1);
           researchStatus = row?.status ?? "unknown";
           if (researchStatus === "complete" || researchStatus === "failed") break;
+          await recordBuildProgress({ phase: "research" });
           await new Promise((r) => setTimeout(r, RESEARCH_POLL_INTERVAL_MS));
         }
 
@@ -1610,10 +1640,12 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
           if (deliv?.body) {
             researchBody = deliv.body.slice(0, 4000);
             await persistProgress({ researchBody });
+            await recordBuildProgress({ phase: "planning" });
             console.log(`[JobQueue] build_feature job ${job.id} — research complete (${researchBody.length} chars)`);
           }
         } else {
           console.warn(`[JobQueue] build_feature job ${job.id} — research job ${researchJobId} did not complete (status=${researchStatus}), proceeding without research`);
+          await recordBuildProgress({ phase: "planning" });
         }
       }
 
@@ -1629,6 +1661,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       let plan = (jobInput.plan as BuildStep[] | null) ?? null;
 
       if (!plan) {
+        await recordBuildProgress({ phase: "planning" });
         const planCtx = [
           featureDescription,
           researchBody ? `\n\nResearch findings:\n${researchBody}` : "",
@@ -1695,6 +1728,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         }
 
         await persistProgress({ plan, currentStepIndex: 0, completedSteps: [] });
+        await recordBuildProgress({ phase: "step_started", stepIndex: 0, stepCount: plan.length, stepLabel: plan[0]?.label });
         console.log(`[JobQueue] build_feature job ${job.id} — plan with ${plan.length} step(s)`);
         await sendBuildPing(`📋 Build plan ready (${plan.length} step${plan.length === 1 ? "" : "s"}) — beginning implementation`);
       }
@@ -1727,6 +1761,13 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         );
 
         for (let attempt = 0; attempt <= MAX_STEP_RETRIES; attempt++) {
+          await recordBuildProgress({
+            phase: "step_started",
+            stepIndex: stepIdx,
+            stepCount: plan.length,
+            stepLabel: step.label,
+            attempt,
+          });
           const workerPrompt = [
             `Implement build step: "${step.label}"`,
             ``,
@@ -1765,6 +1806,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           const workerOutput = workerResult.reply || "(no output)";
 
           // b. Mechanical gate: TypeScript type_check must pass before AI review
+          await recordBuildProgress({ phase: "type_check", stepIndex: stepIdx, stepCount: plan.length, stepLabel: step.label });
           const typeCheckResult = await buildShellTool.execute({ command: "type_check" }, buildCtx);
 
           if (!typeCheckResult.ok) {
@@ -1805,6 +1847,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
               : "",
           ].filter(Boolean).join("\n");
 
+          await recordBuildProgress({ phase: "verifying", stepIndex: stepIdx, stepCount: plan.length, stepLabel: step.label });
           const verification = await verifyJobOutput({
             agentType: "build_feature",
             originalPrompt: `Step: ${step.label}\nAcceptance criteria: ${step.acceptance_criteria}`,
@@ -1858,6 +1901,12 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           verificationPassed: stepPassed,
           verificationRetries: stepRetries,
         });
+        await recordBuildProgress({
+          phase: "step_completed",
+          stepIndex: stepIdx,
+          stepCount: plan.length,
+          stepLabel: step.label,
+        });
 
         // If all retries exhausted and step still failed → abort the build
         if (!stepPassed) {
@@ -1901,11 +1950,13 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       }
 
       // ── Phase 4: Final type-check + smoke tests + Codex OAuth synthesis ────────
+      await recordBuildProgress({ phase: "final_check" });
       const finalTypeCheck = await buildShellTool.execute({ command: "type_check" }, buildCtx);
 
       // Run the test suite as a smoke test (non-fatal — used only to enrich the summary)
       let finalTestResult: { ok: boolean; content: string } | null = null;
       try {
+        await recordBuildProgress({ phase: "smoke_tests" });
         finalTestResult = await buildShellTool.execute({ command: "run_tests" }, buildCtx);
         console.log(
           `[JobQueue] build_feature job ${job.id} — smoke tests: ${finalTestResult.ok ? "✅ passed" : "❌ failed"}`
@@ -1920,6 +1971,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
 
       let synthesis = stepSummaryLines.join("\n");
       try {
+        await recordBuildProgress({ phase: "synthesis" });
         const synthResp = await routeModelTurn({
           tier: "smart",
           maxCompletionTokens: 600,

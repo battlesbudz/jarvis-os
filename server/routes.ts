@@ -106,8 +106,15 @@ import {
   isCodexDelegationEnabled,
 } from "./agent/codexDelegation";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
+import { buildToolExecutionPolicy } from "./agent/toolExecutionPolicy";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
+import {
+  TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildTurnProgressEvent,
+  buildVisibleTurnProgressMessage,
+  shouldEmitVisibleProgressUpdate,
+} from "./agent/turnProgress";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import {
@@ -315,18 +322,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { getYtdlpStatus, ensureYtdlpUpgraded } = await import("./lib/transcriptCache");
 
       // Check Gemini key status (do NOT call Gemini)
-      const geminiDirectKey = process.env.GOOGLE_GEMINI_API_KEY;
-      const geminiProxyKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-      const geminiKeyConfigured = !!(geminiDirectKey || geminiProxyKey);
-      const geminiKeyType = geminiDirectKey ? "direct" : geminiProxyKey ? "proxy" : "none";
+      const geminiKeyConfigured = !!process.env.GOOGLE_GEMINI_API_KEY;
+      const geminiKeyType = geminiKeyConfigured ? "direct" : "none";
       const geminiResult = {
         keyConfigured: geminiKeyConfigured,
         keyType: geminiKeyType,
         note: geminiKeyConfigured
-          ? geminiKeyType === "direct"
-            ? "Will attempt transcription as Phase 0 (direct Google AI Studio key)"
-            : "Will attempt transcription as Phase 0 (proxy key — may have quota limits)"
-          : "Phase 0 skipped — no Gemini key configured. Set GOOGLE_GEMINI_API_KEY at https://aistudio.google.com/apikey",
+          ? "Will attempt transcription as Phase 0 (direct Google AI Studio key)"
+          : "Phase 0 skipped - no Gemini key configured. Set GOOGLE_GEMINI_API_KEY at https://aistudio.google.com/apikey",
       };
 
       // Check Supadata key + native captions
@@ -378,7 +381,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         cmd: ytdlpStatus.cmd,
         reason: ytdlpStatus.available
           ? "yt-dlp is installed and responding"
-          : "yt-dlp is not available — audio transcription and caption download will fail. Note: Replit datacenter IPs are blocked by YouTube, so yt-dlp success rates are very low even when installed.",
+          : "yt-dlp is not available — audio transcription and caption download will fail. Note: cloud datacenter IPs are often blocked by YouTube, so yt-dlp success rates may be very low even when installed.",
       };
 
       // Build recommendation
@@ -393,7 +396,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       } else if (supadataKey) {
         recommendation = "Only Supadata AI generation is viable. Takes 5-10 min for long videos. Recommend enabling Gemini with GOOGLE_GEMINI_API_KEY.";
       } else {
-        recommendation = "No cloud transcript methods available. Only local yt-dlp/Whisper pipeline (IP-blocked on Replit). Enable Gemini or Supadata.";
+        recommendation = "No cloud transcript methods available. Only local yt-dlp/Whisper pipeline remains, and cloud IPs are often blocked. Enable Gemini or Supadata.";
       }
 
       res.json({
@@ -1733,7 +1736,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const errorParts: string[] = [];
               if (phaseErrors?.gemini) errorParts.push(`Gemini error: ${phaseErrors.gemini}`);
               if (phaseErrors?.supadata) errorParts.push(`Supadata error: ${phaseErrors.supadata}`);
-              const geminiKey = process.env.GOOGLE_GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+              const geminiKey = process.env.GOOGLE_GEMINI_API_KEY;
               const supadataKey = process.env.SUPADATA_API_KEY;
               let detail = `Could not retrieve transcript for video '${resolvedId}'.`;
               if (errorParts.length > 0) {
@@ -2073,6 +2076,7 @@ Answer (yes/no):`,
     let userId: string | null | undefined;
     let cleanupRun: () => void = () => {};
     let stopKeepalive: () => void = () => {};
+    let stopVisibleProgress: () => void = () => {};
     try {
       const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId, originChannel: rawOriginChannel } = req.body;
       const originChannel: string = (typeof rawOriginChannel === "string" && rawOriginChannel.trim()) ? rawOriginChannel.trim().toLowerCase() : "appchat";
@@ -2081,6 +2085,124 @@ Answer (yes/no):`,
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
+
+      const turnStartedAtMs = Date.now();
+      let lastVisibleUpdateAtMs = turnStartedAtMs;
+      let visibleProgressUpdateCount = 0;
+      let latestVisibleProgressPhase = "";
+      let visibleProgressInterval: ReturnType<typeof setInterval> | null = null;
+
+      const ensureCoachSseOpen = () => {
+        if (res.headersSent) return;
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('X-Accel-Buffering', 'no');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.flushHeaders();
+      };
+
+      const emitVisibleProgress = (phase?: string) => {
+        if (phase) latestVisibleProgressPhase = phase;
+        if (res.writableEnded || res.destroyed) return;
+        const nowMs = Date.now();
+        ensureCoachSseOpen();
+        const message = buildVisibleTurnProgressMessage({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          latestPhase: latestVisibleProgressPhase,
+        });
+        const event = buildTurnProgressEvent({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          source: "server",
+          stage: "idle_visible_update",
+          message,
+          detail: latestVisibleProgressPhase || undefined,
+          meaningful: false,
+        });
+        visibleProgressUpdateCount += 1;
+        lastVisibleUpdateAtMs = nowMs;
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          console.log(`[Coach/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"} phase=${latestVisibleProgressPhase || "auto"}`);
+        } catch {}
+      };
+
+      const emitMeaningfulProgress = (input: {
+        source: string;
+        stage: string;
+        message: string;
+        detail?: string;
+      }) => {
+        if (res.writableEnded || res.destroyed) return;
+        const nowMs = Date.now();
+        ensureCoachSseOpen();
+        const event = buildTurnProgressEvent({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: visibleProgressUpdateCount,
+          source: input.source,
+          stage: input.stage,
+          message: input.message,
+          detail: input.detail,
+          meaningful: true,
+        });
+        visibleProgressUpdateCount += 1;
+        latestVisibleProgressPhase = input.message;
+        lastVisibleUpdateAtMs = nowMs;
+        try {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+          console.log(`[Coach/SSE] meaningful progress source=${input.source} stage=${input.stage} elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"}`);
+        } catch {}
+      };
+
+      const touchVisibleProgress = (phase?: string) => {
+        if (phase) latestVisibleProgressPhase = phase;
+        lastVisibleUpdateAtMs = Date.now();
+      };
+
+      const startVisibleProgress = () => {
+        if (visibleProgressInterval) return;
+        visibleProgressInterval = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return;
+          const nowMs = Date.now();
+          if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+          emitVisibleProgress();
+        }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
+      };
+
+      stopVisibleProgress = () => {
+        if (visibleProgressInterval) {
+          clearInterval(visibleProgressInterval);
+          visibleProgressInterval = null;
+        }
+      };
+      res.on("close", stopVisibleProgress);
+      res.on("finish", stopVisibleProgress);
+
+      // Register the run before any expensive context loading so a visible
+      // progress event can open SSE without preventing X-Run-Id from being set.
+      const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
+      const abortController = new AbortController();
+      const { signal } = abortController;
+      let clientDisconnected = false;
+      let hasDaemonActions = false;
+      activeCoachRuns.set(runId, { controller: abortController, userId: userId ?? '' });
+      cleanupRun = () => {
+        abortController.abort();
+        activeCoachRuns.delete(runId);
+      };
+      req.on('close', cleanupRun);
+      req.on('close', () => {
+        if (!res.writableEnded) clientDisconnected = true;
+      });
+      res.on("finish", cleanupRun);
+
+      res.setHeader('X-Run-Id', runId);
+      res.setHeader('Access-Control-Expose-Headers', 'X-Run-Id');
+      startVisibleProgress();
 
       if (userId) {
         const latestUserMessage = [...messages].reverse().find((m: any) => m?.role === "user")?.content ?? "";
@@ -2110,11 +2232,8 @@ Answer (yes/no):`,
           },
         });
         if (coreRuntimeResult.handled) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Returning response");
           res.write(`data: ${JSON.stringify({
             content: coreRuntimeResult.reply,
             agentSdkRunId: coreRuntimeResult.sdkRunId,
@@ -2157,11 +2276,8 @@ Answer (yes/no):`,
           originChannel,
         });
         if (agentSdkReminderResult.handled) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Scheduling reminder");
           res.write(`data: ${JSON.stringify({
             content: agentSdkReminderResult.reply,
             agentSdkRunId: agentSdkReminderResult.runId,
@@ -2181,11 +2297,8 @@ Answer (yes/no):`,
           && agentSdkResult.status === "failed"
           && /OPENROUTER_API_KEY|provider|configured/i.test(agentSdkResult.error || agentSdkResult.reply || "");
         if (agentSdkResult.handled && !agentSdkSetupFailure) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Preparing email workflow response");
           res.write(`data: ${JSON.stringify({
             content: agentSdkResult.reply,
             agentSdkRunId: agentSdkResult.runId,
@@ -2203,11 +2316,8 @@ Answer (yes/no):`,
           channel: originChannel,
         });
         if (directEmailApprovalResult.handled) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Preparing approval request");
           res.write(`data: ${JSON.stringify({
             content: directEmailApprovalResult.reply,
             status: "awaiting_approval",
@@ -2225,11 +2335,8 @@ Answer (yes/no):`,
           channel: originChannel,
         });
         if (directReminderResult.handled) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
+          ensureCoachSseOpen();
+          touchVisibleProgress("Scheduling reminder");
           res.write(`data: ${JSON.stringify({ content: directReminderResult.reply })}\n\n`);
           if (directReminderResult.toolResult) {
             res.write(`data: ${JSON.stringify({
@@ -2271,11 +2378,8 @@ Answer (yes/no):`,
       );
 
       if (autonomyResult.handled && autonomyResult.reply) {
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.flushHeaders();
+        ensureCoachSseOpen();
+        touchVisibleProgress("Returning response");
         res.write(`data: ${JSON.stringify({ content: autonomyResult.reply })}\n\n`);
         if (autonomyResult.jobId) {
           res.write(`data: ${JSON.stringify({ type: "background_job", jobId: autonomyResult.jobId, agentType: autonomyResult.decision.agentType })}\n\n`);
@@ -2577,27 +2681,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       // Track whether the client disconnected mid-stream (e.g. switched to camera app).
       // If so, the full streamed response is saved to DB so it survives the disconnect.
-      // Per-run abort support: register an AbortController so the client can stop mid-stream
-      const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
-      const abortController = new AbortController();
-      const { signal } = abortController;
-      activeCoachRuns.set(runId, { controller: abortController, userId: userId ?? '' });
-      cleanupRun = () => {
-        abortController.abort();
-        activeCoachRuns.delete(runId);
-      };
-      req.on('close', cleanupRun);
-
-      // Expose runId to client via response header (set before first flushHeaders call)
-      res.setHeader('X-Run-Id', runId);
-      res.setHeader('Access-Control-Expose-Headers', 'X-Run-Id');
-
-      let clientDisconnected = false;
-      let hasDaemonActions = false;
-      req.on('close', () => {
-        if (!res.writableEnded) clientDisconnected = true;
-      });
-
       // SSE keepalive: once the SSE stream is open, send a comment every 10s so
       // the connection isn't killed by proxies or the Android OS while daemon ops run.
       // Declared here (outer scope) so stopKeepalive() is reachable in the catch block
@@ -2707,10 +2790,18 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           focusedToolNames.add("jarvis_self_diagnose");
         }
         toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
-        const modelRequestTools =
+        const focusedRequestTools =
           toolAwareRoute.shouldPreferTool
             ? requestTools.filter((tool) => focusedToolNames.has(tool.function.name))
             : requestTools;
+        const firstTurnToolPolicy = buildToolExecutionPolicy({
+          route: toolAwareRoute,
+          tools: focusedRequestTools,
+          maxTurns: MAX_TOOL_TURNS,
+          getToolName: (tool) => tool.function.name,
+          forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest,
+        });
+        const modelRequestTools = firstTurnToolPolicy.tools;
 
         // Shared MCP tool context (pendingAttachments accumulate across turns)
         const mcpToolCtx: import("./agent/types").ToolContext = {
@@ -2727,6 +2818,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 res.setHeader('Access-Control-Allow-Origin', '*');
                 res.flushHeaders();
               }
+              touchVisibleProgress(msg);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_progress",
+                message: msg,
+              });
               try { res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: msg })}\n\n`); } catch {}
             },
           },
@@ -2740,14 +2837,19 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             ...baseMessages,
             ...toolMessages,
           ];
+          emitMeaningfulProgress({
+            source: "model",
+            stage: turn === 0 ? "model_route" : "model_continue",
+            message: turn === 0 ? "Choosing the response path" : "Continuing after tool results",
+            detail: useToolFocusedLoop ? "Tool-focused route selected" : "Full coach context route selected",
+          });
           const phase1StartedAt = Date.now();
           const phase1 = await runCoachModelTurn({
             messages: currentMessages,
             tools: modelRequestTools,
-            // Force a tool call on turn 0 for requests where a plain-text guess
-            // is especially likely to repeat stale chat history.
-            // Subsequent turns use "auto" so the model can stop and respond.
-            toolChoice: (turn === 0 && (isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest || toolAwareRoute.shouldPreferTool)) ? "required" : "auto",
+            // Router-selected tool routes are enforced outside the model:
+            // turn 0 must call one of the narrowed tools, later turns may stop.
+            toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
             maxCompletionTokens: 2048,
             signal,
             userId: userId ?? undefined,
@@ -2765,6 +2867,21 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           const phase1ToolCalls = (choice.message.tool_calls ?? []).filter(
             (tc): tc is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => tc.type === "function",
           );
+          if (phase1ToolCalls.length > 0) {
+            emitMeaningfulProgress({
+              source: "model",
+              stage: "tool_selection",
+              message: `Model selected ${phase1ToolCalls.length} tool${phase1ToolCalls.length === 1 ? "" : "s"}`,
+              detail: phase1ToolCalls.map((tc) => tc.function.name).join(", "),
+            });
+          } else if (choice.message.content) {
+            emitMeaningfulProgress({
+              source: "model",
+              stage: "model_answer",
+              message: "Model produced a response",
+              detail: `finish_reason=${choice.finish_reason ?? "unknown"}`,
+            });
+          }
           const phase1Usage = estimateModelUsage({
             messages: currentMessages,
             tools: modelRequestTools,
@@ -2897,6 +3014,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             res.setHeader('X-Accel-Buffering', 'no');
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.flushHeaders();
+            touchVisibleProgress("Searching the web");
+            emitMeaningfulProgress({
+              source: "tool",
+              stage: "tool_call",
+              message: "Searching the web",
+              detail: choice.message.tool_calls.map((tc) => tc.type === "function" ? tc.function.name : tc.type).join(", "),
+            });
             res.write(`data: ${JSON.stringify({ type: 'searching' })}\n\n`);
           }
 
@@ -2981,6 +3105,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 notify: 'Sending you a notification...',
               };
               const workingMsg = actionLabel[String(args.action || '')] || 'Working on your phone...';
+              touchVisibleProgress(workingMsg);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_call",
+                message: workingMsg,
+                detail: `daemon_action:${String(args.action || "")}`,
+              });
               res.write(`data: ${JSON.stringify({ type: 'working', message: workingMsg })}\n\n`);
               startKeepalive();
             }
@@ -3016,6 +3147,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 return parts.length >= 2 ? parts[1].replace(/_/g, ' ') : 'MCP';
               })();
               plainMcpServerName = mcpServerDisplayName;
+              touchVisibleProgress(`Calling ${mcpServerDisplayName}...`);
+              emitMeaningfulProgress({
+                source: "tool",
+                stage: "tool_call",
+                message: `Calling ${mcpServerDisplayName}...`,
+                detail: tc.function.name,
+              });
               res.write(`data: ${JSON.stringify({ type: 'working', message: `Calling ${mcpServerDisplayName}...` })}\n\n`);
               try {
                 const toolResult = await mcpAgentTool.execute(args, mcpToolCtx);
@@ -3273,6 +3411,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             const screenshotUrl = actionResults.find(a => a.screenshotUrl)?.screenshotUrl;
             savePendingCoachResponse(userId, loopFinalText, screenshotUrl).catch(() => {});
           }
+          touchVisibleProgress("Returning response");
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
@@ -3337,6 +3476,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         if (content) {
           fullStreamedReply += content;
           if (!clientDisconnected) {
+            touchVisibleProgress("Streaming response");
             try { res.write(`data: ${JSON.stringify({ content })}\n\n`); } catch {}
           }
         }
@@ -3417,6 +3557,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
     } catch (error) {
       stopKeepalive();
+      stopVisibleProgress();
       cleanupRun();
       // Graceful abort — user pressed Stop
       if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted'))) {
@@ -3859,7 +4000,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         return res.status(400).json({ error: "audio (base64) is required" });
       }
 
-      const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+      const { speechToText, detectAudioFormat } = await import('./integrations/audioClient');
       const rawBuffer = Buffer.from(audio, 'base64');
 
       // Size guards: skip silent/empty clips, reject huge files
@@ -3907,7 +4048,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
         resolvedVoice = OPENAI_VOICES.has(prefs.voice) ? prefs.voice : 'nova';
       }
 
-      const { textToSpeech } = await import('./replit_integrations/audio/client');
+      const { textToSpeech } = await import('./integrations/audioClient');
       const audioBuffer = await textToSpeech(trimmedText, (resolvedVoice ?? "nova") as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer", 'mp3');
       res.json({ audio: audioBuffer.toString('base64') });
     } catch (error) {
@@ -3976,7 +4117,7 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
     req.on('close', () => streamAbort.abort());
 
     try {
-      const { textToSpeechStream, elevenlabsTtsStream } = await import('./replit_integrations/audio/client');
+      const { textToSpeechStream, elevenlabsTtsStream } = await import('./integrations/audioClient');
 
       const openaiVoice = OPENAI_VOICES.has(resolvedVoice)
         ? resolvedVoice as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"
@@ -5613,9 +5754,9 @@ Extract up to 8 memories per batch.`;
     try {
       const rows = await db
         .select()
-        .from(schema.openclawBuildLog)
-        .where(eq(schema.openclawBuildLog.userId, userId))
-        .orderBy(desc(schema.openclawBuildLog.createdAt))
+        .from(schema.agentBuildLog)
+        .where(eq(schema.agentBuildLog.userId, userId))
+        .orderBy(desc(schema.agentBuildLog.createdAt))
         .limit(50);
       res.json({ builds: rows });
     } catch (err) {
@@ -6293,8 +6434,7 @@ Extract up to 8 memories per batch.`;
       const hasServerCredential = (integration: string) => {
         switch (integration) {
           case "google":
-            return Boolean((process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID) && process.env.GOOGLE_CLIENT_SECRET)
-              || Boolean(process.env.REPLIT_CONNECTORS_HOST || process.env.REPL_ID);
+            return Boolean((process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID) && process.env.GOOGLE_CLIENT_SECRET);
           case "outlook":
             return Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET);
           case "telegram":
@@ -6588,7 +6728,7 @@ Extract up to 8 memories per batch.`;
    */
   app.post("/api/conversations", authMiddleware, async (req: Request, res: Response) => {
     try {
-      const { chatStorage } = await import('./replit_integrations/chat/storage');
+      const { chatStorage } = await import('./integrations/chatStorage');
       const { title } = req.body || {};
       const conversation = await chatStorage.createConversation(title || 'Voice Session');
       res.status(201).json(conversation);
@@ -6610,7 +6750,7 @@ Extract up to 8 memories per batch.`;
       if (!Array.isArray(entries) || entries.length === 0) {
         return res.status(400).json({ error: 'entries array is required' });
       }
-      const { chatStorage } = await import('./replit_integrations/chat/storage');
+      const { chatStorage } = await import('./integrations/chatStorage');
       for (const entry of entries) {
         if (entry.role && entry.text) {
           await chatStorage.createMessage(conversationId, entry.role, entry.text);

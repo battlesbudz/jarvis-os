@@ -85,7 +85,7 @@ export function registerLocalWorkerRoutes(app: Express): void {
         return res.status(413).json({ error: "Audio chunk exceeds 25 MB Whisper limit - split into smaller chunks" });
       }
 
-      const { openai } = await import("../replit_integrations/audio/client");
+      const { openai } = await import("../integrations/audioClient");
       const { toFile } = await import("openai");
       const safeFormat = ["mp3", "wav", "m4a", "webm", "mp4", "ogg"].includes(format) ? format : "mp3";
       const file = await toFile(audioBuffer, `audio.${safeFormat}`, { type: `audio/${safeFormat}` });

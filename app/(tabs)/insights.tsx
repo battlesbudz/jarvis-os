@@ -2126,6 +2126,12 @@ export default function InsightsScreen() {
                   setIsWorkingOnPhone(true);
                   setPhoneWorkingMessage(progressMsg);
                 }
+              } else if (parsed.type === 'working') {
+                const progressMsg = String(parsed.message || '');
+                if (progressMsg) {
+                  setIsWorkingOnPhone(true);
+                  setPhoneWorkingMessage(progressMsg);
+                }
               } else if (parsed.type === 'background_job' && parsed.jobId) {
                 const jobId = String(parsed.jobId);
                 const agentType = String(parsed.agentType || 'background');

@@ -9,15 +9,15 @@ branch. Older commits are not patched.
 | Branch | Supported |
 |---|---|
 | `codex/replit-main-continuation` | ✅ |
-| `minimax` (and any `minimax-pr-*` branches) | ✅ while under review |
+| `minimax` (and any `minimax-pr-*` branches) | ❌ |
 | Anything else | ❌ |
 
 ## Reporting a vulnerability
 
 **Please do not file a public GitHub issue for security bugs.**
 
-Email security concerns to **security@battlesbudz.example** (replace with
-the real address before publishing). Include:
+Use GitHub private vulnerability reporting for this repository, or contact
+the repository owner directly if private reporting is unavailable. Include:
 
 1. A short description of the issue
 2. A reproducer — minimal code, request, or steps

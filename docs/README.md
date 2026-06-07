@@ -13,6 +13,9 @@ This folder contains the context future agents should read before changing Jarvi
 
 - `../JARVIS_ROADMAP.md` - main autonomous-agent roadmap and current remaining work.
 - `jarvis-wearable-os-master-roadmap.md` - wearable/spatial/ambient OS roadmap, reviewed against the current implementation.
+- `gbrain-implementation-plan.md` - active implementation plan for the derived G-Brain second-brain layer.
+- `gbrain-spec-sheet.md` - implementation spec and contract sheet for G-Brain tables, adapter behavior, projection, retrieval, and maintenance.
+- `memory-os-temporal-graph-plan.md` - broader Memory OS and temporal graph plan that G-Brain feeds into.
 - `superpowers/plans/2026-05-15-jarvis-os-foundation.md` - completed Jarvis OS foundation implementation plan and follow-up status.
 
 ## Integrations And Deployment

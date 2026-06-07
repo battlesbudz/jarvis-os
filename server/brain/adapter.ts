@@ -1,8 +1,11 @@
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../db";
 import * as schema from "@shared/schema";
+import { embedText } from "../memory/retrieve";
 import { chunkText } from "./chunk";
-import { memoryPageSlug } from "./slug";
+import { extractBrainLinks, type PersonLinkHint } from "./links";
+import { memoryPageSlug, personPageSlug } from "./slug";
+import { rankBrainChunkCandidates, type BrainChunkCandidate } from "./vector";
 import type {
   BrainLinkInput,
   BrainScope,
@@ -21,6 +24,37 @@ function assertWritableApproval(input: Pick<UpsertEvidenceInput, "approvalMode">
 
 function toDate(value: string | undefined): Date | null {
   return value ? new Date(value) : null;
+}
+
+function compactPersonTruth(person: typeof schema.people.$inferSelect): string {
+  const parts = [`Name: ${person.name}.`];
+  if (person.email) parts.push(`Email: ${person.email}.`);
+  if (person.relationship) parts.push(`Relationship: ${person.relationship}.`);
+  if (person.notes) parts.push(`Notes: ${person.notes}.`);
+  if (person.interactionCount > 0) parts.push(`Interaction count: ${person.interactionCount}.`);
+  if (person.lastInteractionAt) parts.push(`Last interaction: ${person.lastInteractionAt.toISOString()}.`);
+  if (person.nextInteractionAt) parts.push(`Next interaction: ${person.nextInteractionAt.toISOString()}.`);
+  if (person.upcomingCount > 0) parts.push(`Upcoming shared events: ${person.upcomingCount}.`);
+  return parts.join(" ");
+}
+
+function personSlugMap(people: Array<Pick<typeof schema.people.$inferSelect, "id" | "name">>): Map<string, string> {
+  const nameCounts = new Map<string, number>();
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const key = name.toLocaleLowerCase();
+    nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+  }
+
+  const slugs = new Map<string, string>();
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name) continue;
+    const hasDuplicateName = (nameCounts.get(name.toLocaleLowerCase()) ?? 0) > 1;
+    slugs.set(person.id, personPageSlug(name, hasDuplicateName ? person.id : undefined));
+  }
+  return slugs;
 }
 
 async function replaceChunks(page: {
@@ -158,6 +192,53 @@ async function retireOrphanedProjectedMemories(userId: string): Promise<void> {
   await clearProjectedPageEdges(orphanedPages.map((page) => page.id));
 }
 
+async function retireStaleProjectedPersonSlugs(person: { id: string; userId: string; slug: string }): Promise<void> {
+  const pages = await db
+    .update(schema.brainPages)
+    .set({
+      reviewStatus: "discarded",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(schema.brainPages.userId, person.userId),
+        eq(schema.brainPages.sourceKind, "people"),
+        eq(schema.brainPages.sourceId, person.id),
+        ne(schema.brainPages.slug, person.slug),
+      ),
+    )
+    .returning({ id: schema.brainPages.id });
+
+  await clearProjectedPageEdges(pages.map((page) => page.id));
+}
+
+async function retireOrphanedProjectedPeople(userId: string): Promise<void> {
+  const orphanedPages = await db
+    .select({ id: schema.brainPages.id })
+    .from(schema.brainPages)
+    .leftJoin(schema.people, eq(schema.people.id, schema.brainPages.sourceId))
+    .where(
+      and(
+        eq(schema.brainPages.userId, userId),
+        eq(schema.brainPages.sourceKind, "people"),
+        sql`${schema.people.id} IS NULL`,
+        sql`${schema.brainPages.reviewStatus} <> 'discarded'`,
+      ),
+    );
+
+  if (orphanedPages.length === 0) return;
+
+  await db
+    .update(schema.brainPages)
+    .set({
+      reviewStatus: "discarded",
+      updatedAt: new Date(),
+    })
+    .where(inArray(schema.brainPages.id, orphanedPages.map((page) => page.id)));
+
+  await clearProjectedPageEdges(orphanedPages.map((page) => page.id));
+}
+
 export async function upsertEvidence(input: UpsertEvidenceInput): Promise<{ pageId: string; versionId?: string }> {
   assertWritableApproval(input);
 
@@ -219,6 +300,19 @@ export async function projectApprovedMemories(
 ): Promise<{ scanned: number; projected: number; skipped: number }> {
   await retireOrphanedProjectedMemories(userId);
 
+  const people = await db
+    .select({ id: schema.people.id, name: schema.people.name })
+    .from(schema.people)
+    .where(eq(schema.people.userId, userId));
+  const personSlugs = personSlugMap(people);
+  const personHints: PersonLinkHint[] = people
+    .map((person) => {
+      const name = person.name.trim();
+      const toSlug = personSlugs.get(person.id);
+      return name && toSlug ? { name, toSlug } : null;
+    })
+    .filter((hint): hint is PersonLinkHint => hint !== null);
+
   const memories = await db
     .select({
       id: schema.userMemories.id,
@@ -271,6 +365,7 @@ export async function projectApprovedMemories(
       sourceKind: "user_memory",
       sourceId: memory.id,
       provenance,
+      links: extractBrainLinks(memory.content, personHints),
     });
     await retireStaleProjectedMemorySlugs({ id: memory.id, userId, slug });
     projected += 1;
@@ -279,45 +374,91 @@ export async function projectApprovedMemories(
   return { scanned: memories.length, projected, skipped };
 }
 
+export async function projectPeopleIntoBrain(
+  userId: string,
+  limit = 100,
+): Promise<{ scanned: number; projected: number; skipped: number }> {
+  await retireOrphanedProjectedPeople(userId);
+
+  const people = await db
+    .select()
+    .from(schema.people)
+    .where(eq(schema.people.userId, userId))
+    .limit(limit);
+
+  let projected = 0;
+  let skipped = 0;
+  const personSlugs = personSlugMap(people);
+
+  for (const person of people) {
+    const name = person.name.trim();
+    if (!name) {
+      skipped += 1;
+      continue;
+    }
+
+    const slug = personSlugs.get(person.id) ?? personPageSlug(name);
+    const compiledTruth = compactPersonTruth(person);
+    const [existing] = await db
+      .select({
+        compiledTruth: schema.brainPages.compiledTruth,
+        sourceKind: schema.brainPages.sourceKind,
+        sourceId: schema.brainPages.sourceId,
+      })
+      .from(schema.brainPages)
+      .where(and(eq(schema.brainPages.userId, userId), eq(schema.brainPages.slug, slug)))
+      .limit(1);
+
+    if (
+      existing?.compiledTruth === compiledTruth &&
+      existing.sourceKind === "people" &&
+      existing.sourceId === person.id
+    ) {
+      skipped += 1;
+      continue;
+    }
+
+    await upsertEvidence({
+      userId,
+      actorId: "brain-people-projection",
+      pageType: "person",
+      slug,
+      title: name,
+      compiledTruth,
+      sourceKind: "people",
+      sourceId: person.id,
+      provenance: [
+        {
+          kind: "people",
+          id: person.id,
+          timestamp: person.updatedAt.toISOString(),
+        },
+      ],
+    });
+    await retireStaleProjectedPersonSlugs({ id: person.id, userId, slug });
+    projected += 1;
+  }
+
+  return { scanned: people.length, projected, skipped };
+}
+
 type QueryRow = {
   page_slug: string;
   page_title: string;
   page_provenance: ProvenanceRef[];
   chunk_content: string;
   chunk_provenance: ProvenanceRef[];
+  chunk_embedding: number[] | null;
   score: number;
 };
 
-export async function queryBrain(input: QueryBrainInput): Promise<QueryBrainResult> {
-  const topK = Math.max(1, Math.min(input.topK ?? 10, 50));
-  const approvalPredicate =
-    input.approvalFilter === "include_pending"
-      ? sql`AND ${schema.brainPages.reviewStatus} IN ('active', 'pending', 'kept', 'edited')`
-      : sql`AND ${schema.brainPages.reviewStatus} IN ('active', 'kept', 'edited')`;
+type BrainEmbedder = (content: string) => Promise<number[] | null>;
 
-  const result = await db.execute(sql`
-    SELECT
-      ${schema.brainPages.slug} AS page_slug,
-      ${schema.brainPages.title} AS page_title,
-      ${schema.brainPages.provenance} AS page_provenance,
-      ${schema.brainContentChunks.content} AS chunk_content,
-      ${schema.brainContentChunks.provenance} AS chunk_provenance,
-      ts_rank_cd(
-        to_tsvector('english', ${schema.brainContentChunks.content}),
-        websearch_to_tsquery('english', ${input.query})
-      ) AS score
-    FROM ${schema.brainContentChunks}
-    INNER JOIN ${schema.brainPages}
-      ON ${schema.brainPages.id} = ${schema.brainContentChunks.pageId}
-    WHERE ${schema.brainPages.userId} = ${input.userId}
-      ${approvalPredicate}
-      AND to_tsvector('english', ${schema.brainContentChunks.content})
-        @@ websearch_to_tsquery('english', ${input.query})
-    ORDER BY score DESC, ${schema.brainPages.updatedAt} DESC
-    LIMIT ${topK}
-  `);
-  const rows = (result as unknown as { rows: QueryRow[] }).rows;
+function vectorLiteral(vector: number[]): string {
+  return `[${vector.map((value) => Number(value) || 0).join(",")}]`;
+}
 
+function mapRowsToResult(rows: QueryRow[]): QueryBrainResult {
   const pagesBySlug = new Map<string, QueryBrainResult["pages"][number]>();
   const chunks: QueryBrainResult["chunks"] = [];
 
@@ -342,10 +483,159 @@ export async function queryBrain(input: QueryBrainInput): Promise<QueryBrainResu
   return { pages: [...pagesBySlug.values()], chunks };
 }
 
-export async function refreshIndex(
-  _scope: BrainScope & { staleOnly?: boolean },
+export async function queryBrainWithEmbedder(
+  input: QueryBrainInput,
+  queryEmbedder: BrainEmbedder,
+): Promise<QueryBrainResult> {
+  const topK = Math.max(1, Math.min(input.topK ?? 10, 50));
+  const approvalPredicate =
+    input.approvalFilter === "include_pending"
+      ? sql`AND ${schema.brainPages.reviewStatus} IN ('active', 'pending', 'kept', 'edited')`
+      : sql`AND ${schema.brainPages.reviewStatus} IN ('active', 'kept', 'edited')`;
+  const queryEmbedding = await queryEmbedder(input.query);
+
+  if (queryEmbedding && process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL === "1") {
+    try {
+      const literal = vectorLiteral(queryEmbedding);
+      const vectorResult = await db.execute(sql`
+        SELECT
+          ${schema.brainPages.slug} AS page_slug,
+          ${schema.brainPages.title} AS page_title,
+          ${schema.brainPages.provenance} AS page_provenance,
+          ${schema.brainContentChunks.content} AS chunk_content,
+          ${schema.brainContentChunks.provenance} AS chunk_provenance,
+          ${schema.brainContentChunks.embedding} AS chunk_embedding,
+          ts_rank_cd(
+            to_tsvector('english', ${schema.brainContentChunks.content}),
+            websearch_to_tsquery('english', ${input.query})
+          ) AS score
+        FROM ${schema.brainContentChunks}
+        INNER JOIN ${schema.brainPages}
+          ON ${schema.brainPages.id} = ${schema.brainContentChunks.pageId}
+        WHERE ${schema.brainPages.userId} = ${input.userId}
+          ${approvalPredicate}
+          AND ${schema.brainContentChunks.embeddingVector} IS NOT NULL
+        ORDER BY ${schema.brainContentChunks.embeddingVector} <=> ${literal}::vector ASC,
+          score DESC,
+          ${schema.brainPages.updatedAt} DESC
+        LIMIT ${Math.min(topK * 3, 100)}
+      `);
+      const vectorRows = (vectorResult as unknown as { rows: QueryRow[] }).rows;
+      const candidates: BrainChunkCandidate[] = vectorRows.map((row) => ({
+        pageSlug: row.page_slug,
+        pageTitle: row.page_title,
+        content: row.chunk_content,
+        pageProvenance: row.page_provenance ?? [],
+        chunkProvenance: row.chunk_provenance ?? [],
+        ftsScore: Number(row.score),
+        embedding: row.chunk_embedding,
+      }));
+      if (candidates.length > 0) {
+        return rankBrainChunkCandidates(candidates, queryEmbedding, topK);
+      }
+    } catch (err) {
+      console.warn("[Brain] vector retrieval unavailable; falling back to FTS candidate rerank:", err);
+    }
+  }
+
+  const result = await db.execute(sql`
+    SELECT
+      ${schema.brainPages.slug} AS page_slug,
+      ${schema.brainPages.title} AS page_title,
+      ${schema.brainPages.provenance} AS page_provenance,
+      ${schema.brainContentChunks.content} AS chunk_content,
+      ${schema.brainContentChunks.provenance} AS chunk_provenance,
+      ${schema.brainContentChunks.embedding} AS chunk_embedding,
+      ts_rank_cd(
+        to_tsvector('english', ${schema.brainContentChunks.content}),
+        websearch_to_tsquery('english', ${input.query})
+      ) AS score
+    FROM ${schema.brainContentChunks}
+    INNER JOIN ${schema.brainPages}
+      ON ${schema.brainPages.id} = ${schema.brainContentChunks.pageId}
+    WHERE ${schema.brainPages.userId} = ${input.userId}
+      ${approvalPredicate}
+      AND to_tsvector('english', ${schema.brainContentChunks.content})
+        @@ websearch_to_tsquery('english', ${input.query})
+    ORDER BY score DESC, ${schema.brainPages.updatedAt} DESC
+    LIMIT ${queryEmbedding ? Math.min(topK * 5, 100) : topK}
+  `);
+  const rows = (result as unknown as { rows: QueryRow[] }).rows;
+
+  if (queryEmbedding) {
+    const candidates: BrainChunkCandidate[] = rows.map((row) => ({
+      pageSlug: row.page_slug,
+      pageTitle: row.page_title,
+      content: row.chunk_content,
+      pageProvenance: row.page_provenance ?? [],
+      chunkProvenance: row.chunk_provenance ?? [],
+      ftsScore: Number(row.score),
+      embedding: row.chunk_embedding,
+    }));
+    return rankBrainChunkCandidates(candidates, queryEmbedding, topK);
+  }
+
+  return mapRowsToResult(rows);
+}
+
+export async function queryBrain(input: QueryBrainInput): Promise<QueryBrainResult> {
+  const queryEmbedder = process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL === "1" ? embedText : async () => null;
+  return queryBrainWithEmbedder(input, queryEmbedder);
+}
+
+export async function refreshIndexWithEmbedder(
+  scope: BrainScope & { staleOnly?: boolean; limit?: number },
+  embedder: BrainEmbedder,
 ): Promise<{ embedded: number; linked: number }> {
-  return { embedded: 0, linked: 0 };
+  const limit = Math.max(1, Math.min(scope.limit ?? 25, 100));
+  const staleOnly = scope.staleOnly ?? true;
+  const where = staleOnly
+    ? and(eq(schema.brainContentChunks.userId, scope.userId), sql`${schema.brainContentChunks.embedding} IS NULL`)
+    : eq(schema.brainContentChunks.userId, scope.userId);
+
+  const chunks = await db
+    .select({
+      id: schema.brainContentChunks.id,
+      content: schema.brainContentChunks.content,
+    })
+    .from(schema.brainContentChunks)
+    .where(where)
+    .limit(limit);
+
+  let embedded = 0;
+  for (const chunk of chunks) {
+    const embedding = await embedder(chunk.content);
+    if (!embedding) continue;
+
+    try {
+      await db
+        .update(schema.brainContentChunks)
+        .set({
+          embedding,
+          embeddingVector: embedding,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.brainContentChunks.id, chunk.id));
+    } catch (err) {
+      console.warn("[Brain] embeddingVector update unavailable; storing JSON embedding only:", err);
+      await db
+        .update(schema.brainContentChunks)
+        .set({
+          embedding,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.brainContentChunks.id, chunk.id));
+    }
+    embedded += 1;
+  }
+
+  return { embedded, linked: 0 };
+}
+
+export async function refreshIndex(
+  scope: BrainScope & { staleOnly?: boolean; limit?: number },
+): Promise<{ embedded: number; linked: number }> {
+  return refreshIndexWithEmbedder(scope, embedText);
 }
 
 export async function queueMaintenance(
@@ -357,6 +647,7 @@ export async function queueMaintenance(
 export const jarvisBrainAdapter: JarvisBrainAdapter = {
   upsertEvidence,
   projectApprovedMemories,
+  projectPeopleIntoBrain,
   query: queryBrain,
   refreshIndex,
   queueMaintenance,

@@ -1,0 +1,70 @@
+Build a YouTube transcript retrieval module for my Telegram AI assistant.
+
+Do not rely only on Playwright browser automation, because YouTube may block datacenter IPs and bot-like browser access.
+
+Implement a layered transcript fetch system:
+
+1. Parse and validate YouTube URLs.
+Support:
+- youtube.com/watch?v=
+- youtu.be/
+- youtube.com/shorts/
+- youtube.com/live/
+- playlist URLs should reject or ask for one video URL
+
+2. Try transcript methods in this order:
+A. Existing transcript library/API if already installed.
+B. yt-dlp subtitle extraction:
+   - --skip-download
+   - --write-subs
+   - --write-auto-subs
+   - --sub-langs "en.*,en"
+   - --convert-subs srt or vtt
+C. Playwright only as a fallback, not the primary method.
+D. If all fail, return a clean Telegram message explaining why.
+
+3. Add error handling for:
+- no captions available
+- auto captions disabled
+- private video
+- age-restricted video
+- members-only video
+- livestream with no transcript yet
+- Shorts with no captions
+- bot/IP block
+- rate limit
+- invalid URL
+- transcript too long for Telegram
+- yt-dlp missing or outdated
+- timeout
+- network failure
+
+4. If transcript is too long:
+- split into Telegram-safe chunks
+- or save as .txt and send as a file
+- optionally summarize first, then offer full transcript
+
+5. Add a clean internal function:
+getYouTubeTranscript(url, options)
+
+Return:
+{
+  success: true/false,
+  videoId,
+  title,
+  source: "yt-dlp" | "api" | "playwright" | "manual_required",
+  language,
+  transcriptText,
+  errorType,
+  errorMessage
+}
+
+6. Add logging but do not expose stack traces to Telegram.
+
+7. Add a local-worker fallback design:
+If Replit gets blocked, allow the transcript job to be forwarded to a local worker running on my PC. The local worker should receive the URL, fetch the transcript, and return the result back to the bot.
+
+8. Make this integrate with my existing Telegram command flow:
+When I send a YouTube URL, the assistant should detect it automatically, fetch the transcript, and reply with either the transcript, a text file, or a clear failure message.
+
+Do not build anything intended to bypass YouTube security or evade restrictions. Build a reliable layered transcript retrieval system with graceful fallbacks.

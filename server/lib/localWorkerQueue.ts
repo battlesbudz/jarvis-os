@@ -4,7 +4,7 @@
  * Allows a user to register a local agent running on their own PC.
  * When all server-side transcript strategies fail, the job is forwarded
  * to the local worker which can run yt-dlp (or any other tool) without
- * Replit's IP ever touching YouTube.
+ * the cloud host's IP ever touching YouTube.
  *
  * Architecture (no DB required — fully in-process):
  *   1. User calls GET /api/local-worker/token (requires auth) → gets a stable token

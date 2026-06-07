@@ -121,8 +121,11 @@ export function matchesAgentSdkEmailWorkflow(message: string): boolean {
 
 export function matchesAgentSdkEmailDraftOnlyWorkflow(message: string): boolean {
   const text = String(message || "").toLowerCase();
-  if (!/\b(email|reply)\b/.test(text)) return false;
-  if (!/\b(draft|write|compose|reply)\b/.test(text)) return false;
+  const explicitEmailContext =
+    /\b(email|e-mail|gmail|outlook|inbox|mail|thread)\b/.test(text)
+    || /\b(reply|respond)\s+to\b/.test(text);
+  if (!explicitEmailContext) return false;
+  if (!/\b(draft|write|compose)\b/.test(text) && !/\b(reply|respond)\s+to\b/.test(text)) return false;
   if (/\b(send|sent)\b/.test(text) && !/\b(do not send|don't send|dont send|draft only|just draft)\b/.test(text)) {
     return false;
   }

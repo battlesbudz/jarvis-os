@@ -39,6 +39,17 @@ const MAX_CONSECUTIVE_ERRORS = 3;
 
 const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
 
+function isCodexRuntimeUnavailableError(err: unknown): boolean {
+  const text = err instanceof Error
+    ? `${err.message}\n${err.stack ?? ""}\n${err.cause instanceof Error ? err.cause.message : ""}`
+    : String(err);
+  return (
+    text.includes("Codex OAuth provider has no available runtime") ||
+    text.includes("No active Desktop Daemon with Shell Execution is available") ||
+    text.includes("JARVIS_CODEX_RUNTIME")
+  );
+}
+
 // ── Phase → tool groups ────────────────────────────────────────────────────────
 
 function appToolGroupsForPhase(phase: string): ToolGroup[] {
@@ -1050,6 +1061,26 @@ Use project_shell for ALL file system operations and commands. Never touch Jarvi
     } catch (err) {
       console.error(`[AppProjectRunner] step "${step.label}" threw error:`, err);
       const newErrors = (project.consecutiveErrors ?? 0) + 1;
+      if (isCodexRuntimeUnavailableError(err)) {
+        const summary =
+          "Paused: Codex runtime is unavailable. Connect the Desktop Daemon with Shell Execution or configure the Codex gateway before resuming.";
+        await db
+          .update(schema.jarvisProjects)
+          .set({
+            status: "paused",
+            autonomousMode: false,
+            nextRunAt: null,
+            consecutiveErrors: newErrors,
+            updatedAt: new Date(),
+          })
+          .where(eq(schema.jarvisProjects.id, projectId));
+        await sendAppProjectMessage(
+          project.userId,
+          project.originChannel ?? undefined,
+          `⚠️ **App Project: ${project.title}** paused because the Codex runtime is unavailable.\n\nConnect the Desktop Daemon with Shell Execution or configure the Codex gateway, then resume the project.`,
+        );
+        return { status: "paused", stepsCompleted: completedLabels.length, summary };
+      }
       if (newErrors >= MAX_CONSECUTIVE_ERRORS) {
         await db
           .update(schema.jarvisProjects)
@@ -1103,6 +1134,35 @@ Use project_shell for ALL file system operations and commands. Never touch Jarvi
 
     // ── Mark step complete ──────────────────────────────────────────────────
     const extractSummary = (text: string): string => {
+      const trimmed = text.trim();
+      try {
+        const parsed = JSON.parse(trimmed) as {
+          type?: string;
+          tool_calls?: { name?: string; arguments?: Record<string, unknown> }[];
+        };
+        if (parsed.type === "tool_calls" && Array.isArray(parsed.tool_calls)) {
+          const fileWrites = parsed.tool_calls
+            .filter((call) => call.name === "daemon_action" && call.arguments?.action === "file_write")
+            .map((call) => String(call.arguments?.path ?? ""))
+            .filter(Boolean);
+
+          if (fileWrites.length > 0) {
+            const shown = fileWrites.slice(0, 3).join(", ");
+            const more = fileWrites.length > 3 ? ` and ${fileWrites.length - 3} more` : "";
+            return `Wrote project files: ${shown}${more}.`;
+          }
+
+          const toolNames = [...new Set(parsed.tool_calls.map((call) => call.name).filter(Boolean))];
+          return toolNames.length > 0
+            ? `Ran project tools: ${toolNames.join(", ")}.`
+            : "Performed project workspace actions.";
+        }
+      } catch {
+        if (trimmed.includes('"type":"tool_calls"') || trimmed.includes('"tool_calls"')) {
+          return "Performed project workspace actions.";
+        }
+      }
+
       const match = text.match(/## Step Output Summary\s*([\s\S]*?)(?:\n##|$)/);
       return match ? match[1].trim().slice(0, 500) : text.slice(0, 300);
     };
@@ -1337,4 +1397,32 @@ export async function answerAppProjectQuestion(projectId: string, answer: string
     prompt: `Continue building app project ${projectId}. User answered the pending question.`,
     input: { projectId, userAnswer: answer },
   });
+}
+
+export async function resumeAppProject(projectId: string): Promise<void> {
+  await db
+    .update(schema.jarvisProjects)
+    .set({
+      status: "building",
+      consecutiveErrors: 0,
+      nextRunAt: null,
+      updatedAt: new Date(),
+    })
+    .where(eq(schema.jarvisProjects.id, projectId));
+
+  const [project] = await db
+    .select()
+    .from(schema.jarvisProjects)
+    .where(eq(schema.jarvisProjects.id, projectId))
+    .limit(1);
+
+  if (project) {
+    await submitAgentJob({
+      userId: project.userId,
+      agentType: "app_project",
+      title: `Build: ${project.title} (resumed)`,
+      prompt: `Continue building app project ${projectId}`,
+      input: { projectId },
+    });
+  }
 }

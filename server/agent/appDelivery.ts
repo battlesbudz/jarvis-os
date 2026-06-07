@@ -26,6 +26,27 @@ import { hydrateProjectWorkspace, saveProjectArchive, snapshotProjectWorkspace }
 const DOWNLOADS_DIR = getProjectDownloadsDir();
 const ZIP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
+function isTransientDatabaseError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /database system is (in recovery mode|starting up)|connection terminated unexpectedly|terminating connection/i.test(message);
+}
+
+async function withTransientDbRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientDatabaseError(err) || attempt === 5) break;
+      const delayMs = attempt * 1500;
+      console.warn(`[AppDelivery] ${label} hit transient database error; retrying in ${delayMs}ms (attempt ${attempt}/5)`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 // ── Download token registry ──────────────────────────────────────────────────
 // Maps projectId → { token, expiresAt } for time-limited, signed download URLs
 // that work from Telegram/Discord without requiring Auth headers.
@@ -108,7 +129,7 @@ function getDosDateTime(date: Date): { time: number; date: number } {
 
 function createZipArchive(sourceDir: string, zipPath: string): void {
   const root = path.resolve(sourceDir);
-  const files: Array<{ relativePath: string; fullPath: string; stat: fs.Stats }> = [];
+  const files: { relativePath: string; fullPath: string; stat: fs.Stats }[] = [];
 
   const walk = (dir: string) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -293,11 +314,9 @@ function runProductionBuild(workspaceDir: string, framework: string): void {
   }
 }
 
-export async function packageAndDeliverApp(
+export async function ensureProjectArchiveAvailable(
   projectId: string,
-  userId: string,
-  originChannel?: string,
-): Promise<{ downloadUrl: string; zipSizeMb: number }> {
+): Promise<{ zipSizeMb: number; fileCount: number; framework: string }> {
   const [project] = await db
     .select()
     .from(schema.jarvisProjects)
@@ -343,10 +362,29 @@ export async function packageAndDeliverApp(
   }
 
   scheduleZipCleanup(zipPath);
-  await saveProjectArchive(projectId, zipPath);
+  await withTransientDbRetry("save project archive", () => saveProjectArchive(projectId, zipPath));
 
   const zipSizeMb = getZipSizeMb(zipPath);
   const fileCount = countFiles(workspaceDir);
+  console.log(`[AppDelivery] project ${projectId} packaged: ${zipSizeMb}MB, ${fileCount} files, framework=${framework}`);
+
+  return { zipSizeMb, fileCount, framework };
+}
+
+export async function packageAndDeliverApp(
+  projectId: string,
+  userId: string,
+  originChannel?: string,
+): Promise<{ downloadUrl: string; zipSizeMb: number }> {
+  const [project] = await db
+    .select()
+    .from(schema.jarvisProjects)
+    .where(eq(schema.jarvisProjects.id, projectId))
+    .limit(1);
+
+  if (!project) throw new Error(`Project ${projectId} not found`);
+
+  const { zipSizeMb, fileCount, framework } = await ensureProjectArchiveAvailable(projectId);
 
   // Generate a signed, time-limited download token so the link works from
   // Telegram/Discord without requiring bearer auth headers.
@@ -355,8 +393,6 @@ export async function packageAndDeliverApp(
   // Build an absolute URL so the link is usable in Telegram/Discord notifications.
   const baseUrl = getPublicBaseUrl();
   const downloadUrl = `${baseUrl}/api/downloads/project/${projectId}?token=${signedToken}`;
-
-  console.log(`[AppDelivery] project ${projectId} packaged: ${zipSizeMb}MB, ${fileCount} files, framework=${framework}`);
 
   // Fall back to the channel stored on the project record (set when the project was
   // first created) if no channel is supplied by the caller.  This ensures the

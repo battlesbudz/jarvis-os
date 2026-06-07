@@ -2,7 +2,7 @@ import { db } from "../db";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getSoulPromptBlock } from "./soul";
-import { retrieveRelevantMemories } from "./retrieve";
+import { retrieveMemoryContext } from "./memoryOs";
 import { getEmotionalState, buildEmotionalStatePromptBlock } from "../intelligence/emotional-state";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { buildBudgetedContextBlock, BUDGET_PRESETS } from "./contextBuilder";
@@ -98,7 +98,13 @@ export async function buildAiContextSections(
   try {
     const trimmed = (seedQuery || "").trim();
     if (trimmed.length > 0) {
-      const mems = await retrieveRelevantMemories(userId, trimmed, 6);
+      const memoryContext = await retrieveMemoryContext({
+        userId,
+        query: trimmed,
+        limit: 6,
+        caller: "coach_context",
+      });
+      const mems = memoryContext.items.map((item) => item.memory);
       if (mems.length > 0) {
         out.memorySection = buildBudgetedContextBlock({
           title: "Relevant memories",

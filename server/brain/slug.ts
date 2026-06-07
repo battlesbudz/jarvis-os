@@ -19,6 +19,7 @@ export function memoryPageSlug(memoryId: string, content: string): string {
   return `memory/${slugify(content)}-${shortId(memoryId)}`;
 }
 
-export function personPageSlug(name: string): string {
-  return `person/${slugify(name)}`;
+export function personPageSlug(name: string, id?: string): string {
+  const suffix = id ? `-${shortId(id)}` : "";
+  return `person/${slugify(name)}${suffix}`;
 }

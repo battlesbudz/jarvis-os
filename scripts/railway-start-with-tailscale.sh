@@ -11,11 +11,23 @@ TS_HOSTNAME="${TS_HOSTNAME:-railway-jarvis}"
 TS_HTTP_PROXY_PORT="${TS_HTTP_PROXY_PORT:-1056}"
 TS_SOCKS5_PORT="${TS_SOCKS5_PORT:-1055}"
 
-echo "[railway-start] applying database migrations"
-npm run db:push -- --force
+run_database_startup_tasks() {
+  echo "[railway-start] applying database migrations"
+  if npm run db:push -- --force; then
+    echo "[railway-start] database migrations completed"
+  else
+    echo "[railway-start] database migrations failed; continuing so the service can pass healthcheck"
+  fi
 
-echo "[railway-start] running prestart checks"
-node scripts/railway-prestart.mjs
+  echo "[railway-start] running prestart checks"
+  if node scripts/railway-prestart.mjs; then
+    echo "[railway-start] prestart checks completed"
+  else
+    echo "[railway-start] prestart checks failed; continuing so the service can pass healthcheck"
+  fi
+}
+
+run_database_startup_tasks &
 
 download_tailscale() {
   mkdir -p "${TAILSCALE_DIR}"

@@ -16,14 +16,11 @@ import {
 } from "../../integrations/googleDrive";
 import type { AgentTool } from "../types";
 
-// Chat/text completions — routes through the Replit AI integration proxy.
+// Chat/text completions use the configured Jarvis model provider.
 const openai = new OpenAI(getOpenAIClientConfig());
 
-// Image generation — must bypass the Replit proxy, which only supports
-// chat/text models and returns "Unknown model" for gpt-image-1 / dall-e-3.
-// Only uses a real OPENAI_API_KEY (sk-...). The Replit AI integration proxy
-// key must NOT be used here — it only works with the proxy base URL and
-// will return "Unknown model" when hitting api.openai.com directly.
+// Image generation uses a direct OpenAI API key because image models require
+// provider-native API access.
 const imageOpenai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ?? "no-direct-openai-key",
   // No baseURL — image requests go to api.openai.com directly.
@@ -151,8 +148,7 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
       if (/auth|unauthorized|permission|quota|rate.?limit|billing/i.test(msg)) {
         throw new Error(
           "Image generation requires a direct OpenAI API key. " +
-          "The Replit AI integration proxy does not support image models. " +
-          "Add your own OPENAI_API_KEY as a Railway variable to enable image generation. " +
+          "Add OPENAI_API_KEY to enable image generation. " +
           `(Original error: ${msg})`
         );
       }
@@ -187,8 +183,7 @@ async function generateGptImage(prompt: string, size: GptImage1Size): Promise<st
     // actionable guidance regardless of the specific error type.
     throw new Error(
       "Image generation requires a direct OpenAI API key — " +
-      "the Replit AI integration proxy only supports chat/text models. " +
-      "Add your own OPENAI_API_KEY as a Railway variable to enable image generation. " +
+      "Add OPENAI_API_KEY to enable image generation. " +
       `(Error: ${msg})`
     );
   }

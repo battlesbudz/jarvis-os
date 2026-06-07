@@ -23,6 +23,7 @@ import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { DiagnosticSubsystem, DiagnosticSeverity } from "@shared/schema";
 import { routeModelTurn } from "../agent/modelRouter";
+import type { MemoryEmbeddingHealthReport } from "../memory/embeddingHealth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -58,6 +59,7 @@ export interface HealthReport {
   stuckWorkflowCount: number;
   memoryWriteErrors15m: number;
   memoryReadErrors15m: number;
+  memoryEmbeddingHealth: MemoryEmbeddingHealthReport | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -447,15 +449,25 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
   let openAiLatencyMs: number | null = null;
   const openAiProbeStart = Date.now();
   try {
-    await routeModelTurn({
-      tier: "cheap",
-      messages: [{ role: "user", content: "ping" }],
-      toolChoice: "none",
-      maxCompletionTokens: 8,
-      stream: false,
-      userId,
-      logPrefix: "[DiagnosticsProviderProbe]",
-    });
+    const { hasCodexOAuthProvider, isDirectOpenAIDisabled } = await import("../agent/providers/env");
+    if (hasCodexOAuthProvider() && isDirectOpenAIDisabled()) {
+      const { runProviderHealthChecks } = await import("../agent/providers/healthCheck");
+      const report = await runProviderHealthChecks();
+      if (!report.allOk) {
+        const failed = report.results.filter((result) => !result.ok);
+        throw new Error(failed.map((result) => `${result.provider}: ${result.error ?? "failed"}`).join("; "));
+      }
+    } else {
+      await routeModelTurn({
+        tier: "cheap",
+        messages: [{ role: "user", content: "ping" }],
+        toolChoice: "none",
+        maxCompletionTokens: 8,
+        stream: false,
+        userId,
+        logPrefix: "[DiagnosticsProviderProbe]",
+      });
+    }
     openAiLatencyMs = Date.now() - openAiProbeStart;
   } catch (probeErr) {
     openAiReachable = false;
@@ -599,14 +611,6 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     sinceMinutes: 60,
     excludePatternDetected: true,
   });
-  const degradedSubsystems = subsystems
-    .filter((s) => s.status !== "healthy" && s.status !== "unknown")
-    .map((s) => s.name);
-
-  let overallStatus: HealthReport["overallStatus"] = "healthy";
-  if (subsystems.some((s) => s.status === "down")) overallStatus = "down";
-  else if (degradedSubsystems.length > 0) overallStatus = "degraded";
-
   // Memory pipeline split: write-path (learning/ingestion) vs read-path (recall/retrieval).
   const MEMORY_WRITE_OPS = [
     "extractAndStore",
@@ -628,6 +632,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
 
   let memoryWriteErrors15m = 0;
   let memoryReadErrors15m = 0;
+  let memoryEmbeddingHealth: MemoryEmbeddingHealthReport | null = null;
   try {
     const memWriteConditions: SQL<unknown>[] = [
       eq(schema.diagnosticEvents.subsystem, "memory"),
@@ -663,11 +668,33 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     // Best-effort — leave counts at 0
   }
 
+  try {
+    const { getMemoryEmbeddingHealth } = await import("../memory/embeddingHealth");
+    memoryEmbeddingHealth = await getMemoryEmbeddingHealth();
+    if (memoryEmbeddingHealth.status === "down" || memoryEmbeddingHealth.status === "degraded") {
+      const s = subsystems.find((subsystem) => subsystem.name === "memory");
+      if (s) {
+        s.status = memoryEmbeddingHealth.status === "down" ? "down" : "degraded";
+        s.lastEvent = memoryEmbeddingHealth.alerts[0]?.message ?? s.lastEvent;
+      }
+    }
+  } catch {
+    // Best-effort: diagnostics should still return if the optional monitor cannot load.
+  }
+
+  const finalDegradedSubsystems = subsystems
+    .filter((s) => s.status !== "healthy" && s.status !== "unknown")
+    .map((s) => s.name);
+
+  let finalOverallStatus: HealthReport["overallStatus"] = "healthy";
+  if (subsystems.some((s) => s.status === "down")) finalOverallStatus = "down";
+  else if (finalDegradedSubsystems.length > 0) finalOverallStatus = "degraded";
+
   return {
-    overallStatus,
+    overallStatus: finalOverallStatus,
     subsystems: Array.isArray(subsystems) ? subsystems : [],
     recentErrors: Array.isArray(recentErrors) ? recentErrors : [],
-    degradedSubsystems: Array.isArray(degradedSubsystems) ? degradedSubsystems : [],
+    degradedSubsystems: Array.isArray(finalDegradedSubsystems) ? finalDegradedSubsystems : [],
     generatedAt: now,
     openAiReachable,
     openAiLatencyMs,
@@ -678,6 +705,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     stuckWorkflowCount,
     memoryWriteErrors15m,
     memoryReadErrors15m,
+    memoryEmbeddingHealth,
   };
 }
 

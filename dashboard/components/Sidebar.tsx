@@ -103,6 +103,8 @@ export default function Sidebar() {
             <Link
               key={item.href}
               href={item.href}
+              data-testid={`dashboard-nav-${item.label.toLowerCase().replace(/\s+/g, "-")}`}
+              aria-current={active ? "page" : undefined}
               style={{
                 display: "flex",
                 alignItems: "center",

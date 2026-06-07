@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { pool } from "../db";
+import { ensureModelUsageEventsTable, pool } from "../db";
 
 interface UsageEstimateParams {
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
@@ -112,39 +112,54 @@ export function estimateModelUsage(params: UsageEstimateParams): Omit<ModelUsage
 export async function recordModelUsage(input: ModelUsageRecordInput): Promise<void> {
   if (!input.userId || !input.model || !input.provider) return;
 
+  const insertUsage = () => pool.query(
+    `
+      INSERT INTO model_usage_events (
+        user_id,
+        provider,
+        model,
+        source,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens,
+        duration_ms,
+        success,
+        estimated,
+        metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+    `,
+    [
+      input.userId,
+      input.provider,
+      input.model,
+      input.source || "unknown",
+      Math.max(0, Math.round(input.promptTokens || 0)),
+      Math.max(0, Math.round(input.completionTokens || 0)),
+      Math.max(0, Math.round(input.totalTokens || 0)),
+      Math.max(0, Math.round(input.durationMs || 0)),
+      input.success ?? true,
+      input.estimated ?? true,
+      JSON.stringify(input.metadata ?? {}),
+    ],
+  );
+
   try {
-    await pool.query(
-      `
-        INSERT INTO model_usage_events (
-          user_id,
-          provider,
-          model,
-          source,
-          prompt_tokens,
-          completion_tokens,
-          total_tokens,
-          duration_ms,
-          success,
-          estimated,
-          metadata
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
-      `,
-      [
-        input.userId,
-        input.provider,
-        input.model,
-        input.source || "unknown",
-        Math.max(0, Math.round(input.promptTokens || 0)),
-        Math.max(0, Math.round(input.completionTokens || 0)),
-        Math.max(0, Math.round(input.totalTokens || 0)),
-        Math.max(0, Math.round(input.durationMs || 0)),
-        input.success ?? true,
-        input.estimated ?? true,
-        JSON.stringify(input.metadata ?? {}),
-      ],
-    );
+    await insertUsage();
   } catch (err) {
+    const code = typeof err === "object" && err && "code" in err ? String((err as { code?: unknown }).code) : "";
+    if (code === "42P01") {
+      try {
+        await ensureModelUsageEventsTable();
+        await insertUsage();
+        console.log("[model-usage] repaired missing model_usage_events table and recorded usage");
+        return;
+      } catch (repairErr) {
+        const repairMsg = repairErr instanceof Error ? repairErr.message : String(repairErr);
+        console.warn(`[model-usage] failed after table repair attempt: ${repairMsg.slice(0, 200)}`);
+        return;
+      }
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[model-usage] failed to record usage: ${msg.slice(0, 200)}`);
   }

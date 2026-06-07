@@ -44,6 +44,12 @@ import {
   cancelTelegramCoachMessageBatches,
   enqueueTelegramCoachMessageBatch,
 } from "./telegramMessageBatcher";
+import { shouldTryTelegramAgentSdkWorkflow } from "./telegramWorkflowIntent";
+import {
+  TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildVisibleTurnProgressMessage,
+  shouldEmitVisibleProgressUpdate,
+} from "./agent/turnProgress";
 
 const openai = new OpenAI(getOpenAIClientConfig());
 
@@ -197,6 +203,7 @@ async function deliverCoachText(
 
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   const runGuard = createTelegramRunGuard(userId);
+  const turnStartedAtMs = Date.now();
 
   // Pre-fetch TTS prefs — used to decide between streaming (text) and voice paths.
   const ttsPrefs = await getUserTtsPrefs(userId).catch(() => ({ enabled: false, voice: "" as string }));
@@ -233,13 +240,38 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
   // Guard: once the final reply delivery begins we must stop any in-flight
   // token edits from overwriting the completed message (e.g. leaving " ▌").
   let streamClosed = false;
+  let progressUpdateCount = 0;
+  let latestProgressPhase = "";
+  let lastVisibleUpdateAtMs = turnStartedAtMs;
+  let visibleProgressTimer: ReturnType<typeof setInterval> | null = null;
 
   let onToken: ((chunk: string) => void) | undefined;
 
   if (!ttsPrefs.enabled) {
     placeholderMsgId = await sendMessageGetId(chatId, "Working on it…").catch(() => null);
+    lastVisibleUpdateAtMs = Date.now();
+    visibleProgressTimer = setInterval(() => {
+      if (streamClosed || !placeholderMsgId || streamBuf.trim()) return;
+      const nowMs = Date.now();
+      if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+      runGuard.touch("auto_progress", latestProgressPhase || "Still running");
+      const progressText = buildVisibleTurnProgressMessage({
+        startedAtMs: turnStartedAtMs,
+        nowMs,
+        updateCount: progressUpdateCount,
+        latestPhase: latestProgressPhase,
+      });
+      progressUpdateCount += 1;
+      lastVisibleUpdateAtMs = nowMs;
+      editMessage(chatId, placeholderMsgId, progressText)
+        .then((result) => {
+          console.log(`[Telegram] visible progress ok=${result.ok} elapsedMs=${nowMs - turnStartedAtMs} chatId=${chatId}`);
+        })
+        .catch(() => {});
+    }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
     onToken = (chunk: string) => {
       if (streamClosed) return;
+      runGuard.touch("model_token", "Streaming model response");
       streamBuf += chunk;
       const now = Date.now();
       // Only edit once we have a meaningful snippet (≥10 chars) and the interval has elapsed.
@@ -268,6 +300,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
           }
         }).catch(() => {});
         lastEditAt = now;
+        lastVisibleUpdateAtMs = now;
       }
     };
   } else {
@@ -279,6 +312,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
 
   const clearTimers = () => {
     clearInterval(typingInterval);
+    if (visibleProgressTimer !== null) clearInterval(visibleProgressTimer);
     if (ttsStillThinkingTimer !== null) clearTimeout(ttsStillThinkingTimer);
   };
 
@@ -300,13 +334,25 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     // (mirrors the Discord pattern: if streaming content is already visible,
     // the user can see progress without an additional status edit).
     const onProgressMessage = (msg: string) => {
+      latestProgressPhase = msg;
+      runGuard.touch("progress", msg);
       if (placeholderMsgId && !streamBuf) {
-        editMessage(chatId, placeholderMsgId, `⏳ ${msg}`).catch(() => {});
+        const nowMs = Date.now();
+        lastVisibleUpdateAtMs = nowMs;
+        editMessage(chatId, placeholderMsgId, buildVisibleTurnProgressMessage({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: progressUpdateCount,
+          latestPhase: msg,
+        })).then((result) => {
+          console.log(`[Telegram] routed progress ok=${result.ok} elapsedMs=${nowMs - turnStartedAtMs} chatId=${chatId} phase=${msg}`);
+        }).catch(() => {});
+        progressUpdateCount += 1;
       }
     };
 
     const storedSessionId = await getCoachSession(userId, "Telegram");
-    console.log(`[Telegram] starting coach turn with timeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
+    console.log(`[Telegram] starting coach turn with inactivityTimeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
     const { reply, attachments, sdkSessionId } = await runGuard.race(
       runCoachAgent({
         userId,
@@ -429,8 +475,8 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       return;
     }
     if (isTelegramRunTimeoutError(error)) {
-      const timeoutMessage = "I couldn't finish that within 10 seconds, so I stopped the turn instead of leaving you hanging.";
-      console.warn(`[Telegram] coach turn timed out after ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
+      const timeoutMessage = "I stopped this Telegram turn because I did not see meaningful progress for a long time. Send it again or ask me to delegate it as a background job.";
+      console.warn(`[Telegram] coach turn inactive for ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
           sendMessage(chatId, timeoutMessage).catch(() => {});
@@ -814,7 +860,7 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
           return;
         }
-        const { detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const { detectAudioFormat } = await import('./integrations/audioClient');
         const format = detectAudioFormat(file.buffer);
         let linkedUserId: string | null = null;
 
@@ -882,7 +928,7 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Sorry, I couldn't download that video. Could you try again or share the YouTube URL instead?");
           return;
         }
-        const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const { speechToText, detectAudioFormat } = await import('./integrations/audioClient');
         const format = detectAudioFormat(file.buffer);
         const transcript = await speechToText(file.buffer, format === 'unknown' ? 'mp4' : format);
         if (!transcript || !transcript.trim()) {
@@ -1697,12 +1743,7 @@ async function processUpdate(update: any): Promise<void> {
         }
       }
 
-      const shouldTryAgentSdkWorkflow =
-        /\b(remind\s+me|set\s+(?:a\s+)?reminder|reminder)\b/i.test(rawUserText)
-        || (
-          /\b(email|reply)\b/i.test(rawUserText)
-          && /\b(send|sent|draft|write|compose|reply)\b/i.test(rawUserText)
-        );
+      const shouldTryAgentSdkWorkflow = shouldTryTelegramAgentSdkWorkflow(rawUserText);
 
       const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
       if (shouldTryAgentSdkWorkflow) {

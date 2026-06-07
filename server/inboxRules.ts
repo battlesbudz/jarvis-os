@@ -240,7 +240,7 @@ export async function createRuleFromText(
 { "senders": [], "subjectKeywords": [], "domains": [], "locationKeywords": [] }
 
 Examples:
-- "suppress Replit notifications" → { "senders": ["replit"], "subjectKeywords": ["replit"], "domains": ["replit.com"], "locationKeywords": [] }
+- "suppress deployment notifications" -> { "senders": ["deploy"], "subjectKeywords": ["deployment"], "domains": [], "locationKeywords": [] }
 - "always surface New York events" → { "senders": [], "subjectKeywords": ["new york"], "domains": [], "locationKeywords": ["new york", "nyc", "manhattan"] }
 - "suppress newsletters" → { "senders": [], "subjectKeywords": ["newsletter", "unsubscribe"], "domains": [], "locationKeywords": [] }`,
         },

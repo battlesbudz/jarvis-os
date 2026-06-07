@@ -9,6 +9,7 @@ import { db } from "../db";
 import { discordAgents } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import type { DiscordAgent } from "@shared/schema";
+import { seedCrewAgentsForUser } from "./crewSeed";
 
 /** Crew role tags recognised by the router. */
 export const CREW_ROLES = [
@@ -34,6 +35,19 @@ const NAME_TO_ROLE: Record<string, CrewRole> = {
   ECHO: "memory",
 };
 
+async function findSpecialistByRole(userId: string, crewRole: string): Promise<DiscordAgent | null> {
+  const allAgents = await db
+    .select()
+    .from(discordAgents)
+    .where(and(eq(discordAgents.userId, userId), eq(discordAgents.isActive, 1)));
+
+  return allAgents.find((a) => {
+    const cfg = (a.configJson ?? {}) as Record<string, unknown>;
+    if (cfg.crewRole === "orchestrator") return false;
+    return cfg.crewRole === crewRole && cfg.isCrewMember === true;
+  }) ?? null;
+}
+
 /**
  * Resolve a specialist agent for a given `assignTo` value (agent name or role)
  * and userId.
@@ -53,17 +67,12 @@ export async function resolveSpecialist(
   const crewRole: string = NAME_TO_ROLE[normalised] ?? assignTo.toLowerCase();
 
   try {
-    const allAgents = await db
-      .select()
-      .from(discordAgents)
-      .where(and(eq(discordAgents.userId, userId), eq(discordAgents.isActive, 1)));
+    let match = await findSpecialistByRole(userId, crewRole);
 
-    const match = allAgents.find((a) => {
-      const cfg = (a.configJson ?? {}) as Record<string, unknown>;
-      // Never route to the orchestrator agent (PRIME) as a sub-task specialist
-      if (cfg.crewRole === "orchestrator") return false;
-      return cfg.crewRole === crewRole && cfg.isCrewMember === true;
-    });
+    if (!match && normalised in NAME_TO_ROLE) {
+      await seedCrewAgentsForUser(userId);
+      match = await findSpecialistByRole(userId, crewRole);
+    }
 
     if (match) {
       console.log(`[crewRouter] resolved "${assignTo}" → ${match.name} (${match.id})`);

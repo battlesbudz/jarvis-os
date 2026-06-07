@@ -263,7 +263,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
         }).catch(() => {});
       }
       try {
-        await db.insert(schema.userMemories).values({
+        const [inserted] = await db.insert(schema.userMemories).values({
           userId,
           content: text,
           category,
@@ -277,7 +277,15 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
           expiresAt: expiresAt ?? undefined,
           pendingReview,
           reviewStatus,
-        });
+        }).returning({ id: schema.userMemories.id });
+        if (embedding && inserted?.id) {
+          try {
+            const { upsertMemoryEmbedding } = await import("./vectorStore");
+            await upsertMemoryEmbedding(inserted.id, embedding);
+          } catch (err) {
+            console.error("[Memory] embeddingVector write failed:", err);
+          }
+        }
         seen.add(norm);
         stored.push({ content: text, category, confidence, tier, memoryType });
         console.log(`[Memory] +${sourceType} [${category} ${tier}/${memoryType} c=${confidence}${embedding ? " e" : ""}${expiresAt ? " ttl" : ""}] ${text.slice(0, 70)}`);

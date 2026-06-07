@@ -8,7 +8,7 @@
   },
   "scripts": {
     "postinstall": "patch-package",
-    "expo:dev": "EXPO_PACKAGER_PROXY_URL=https://$REPLIT_DEV_DOMAIN REACT_NATIVE_PACKAGER_HOSTNAME=$REPLIT_DEV_DOMAIN EXPO_PUBLIC_DOMAIN=$REPLIT_DEV_DOMAIN:5000 npx expo start --localhost",
+    "expo:dev": "npx expo start --localhost",
     "server:dev": "NODE_ENV=development tsx server/index.ts",
     "expo:start:static:build": "npx expo start --no-dev --minify --localhost",
     "expo:static:build": "node scripts/build.js",
@@ -39,6 +39,8 @@
     "jarvis:qa:agent-sdk-hitl": "tsx scripts/agent-sdk-hitl-smoke.ts",
     "jarvis:qa:agent-sdk-golden": "tsx scripts/agent-sdk-golden-workflows.ts",
     "jarvis:qa:cleanup": "node scripts/deployed-jarvis-qa-cleanup.mjs",
+    "jarvis:verify:brain-vector-db": "tsx scripts/verify-brain-vector-db.ts",
+    "jarvis:verify:memory-vector-db": "tsx scripts/verify-memory-vector-db.ts",
     "jarvis:check": "npm run jarvis:doctor && npm test",
     "test": "node scripts/run-agent-tests.mjs"
   },
@@ -56,7 +58,6 @@
     "@playwright/mcp": "^0.0.70",
     "@playwright/test": "^1.59.1",
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@replit/connectors-sdk": "^0.4.0",
     "@stardazed/streams-text-encoding": "^1.0.2",
     "@supadata/js": "^1.4.0",
     "@tanstack/react-query": "^5.83.0",
@@ -64,7 +65,7 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/pdf-parse": "^1.1.5",
     "@types/pdfkit": "^0.17.6",
-    "@ungap/structured-clone": "^1.3.0",
+    "@ungap/structured-clone": "^1.3.1",
     "bcryptjs": "^3.0.3",
     "cheerio": "^1.2.0",
     "discord.js": "^14.26.3",
@@ -126,8 +127,8 @@
     "ws": "^8.18.0",
     "youtube-transcript": "^1.3.0",
     "yt-search": "^2.13.1",
-    "zod": "^3.25.76",
-    "zod-validation-error": "^3.5.4"
+    "zod": "^4.4.3",
+    "zod-validation-error": "^5.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -141,5 +142,12 @@
     "patch-package": "^8.0.0",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "undici@<=7.26.0": "7.26.0",
+    "tar@<=7.5.16": "7.5.16",
+    "uuid@<=11.1.1": "11.1.1",
+    "picomatch@<=4.0.4": "4.0.4",
+    "@expo/spawn-async@<=1.8.0": "1.8.0"
+  }
 }

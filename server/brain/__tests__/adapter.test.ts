@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { eq, sql } from "drizzle-orm";
 import { pool } from "../../db";
 import { db } from "../../db";
-import { jarvisBrainAdapter } from "../adapter";
+import { jarvisBrainAdapter, queryBrainWithEmbedder, refreshIndexWithEmbedder } from "../adapter";
 import * as schema from "@shared/schema";
 
 const TEST_USER_ID = "adapter-test-user";
@@ -11,6 +11,7 @@ async function cleanup(): Promise<void> {
   await db.delete(schema.brainPages).where(eq(schema.brainPages.userId, TEST_USER_ID));
   await db.delete(schema.brainIngestLog).where(eq(schema.brainIngestLog.userId, TEST_USER_ID));
   await db.delete(schema.brainConfig).where(eq(schema.brainConfig.userId, TEST_USER_ID));
+  await db.delete(schema.people).where(eq(schema.people.userId, TEST_USER_ID));
   await db.delete(schema.userMemories).where(eq(schema.userMemories.userId, TEST_USER_ID));
   await db.delete(schema.users).where(eq(schema.users.id, TEST_USER_ID));
 }
@@ -31,6 +32,206 @@ async function main(): Promise<void> {
     job: "compact",
   });
   assert.deepEqual(queued, { jobId: "not-queued-first-slice" });
+
+  await db.insert(schema.people).values({
+    id: "adapter-person-jean",
+    userId: TEST_USER_ID,
+    name: "Jean Smith",
+    email: "jean@example.com",
+    relationship: "client",
+    notes: "Owns a Watertown coffee shop.",
+    interactionCount: 3,
+    lastInteractionAt: new Date("2026-01-01T00:00:00.000Z"),
+  });
+
+  const peopleProjection = await jarvisBrainAdapter.projectPeopleIntoBrain(TEST_USER_ID);
+  assert.deepEqual(peopleProjection, { scanned: 1, projected: 1, skipped: 0 });
+
+  const [personPage] = await db
+    .select({
+      slug: schema.brainPages.slug,
+      pageType: schema.brainPages.pageType,
+      compiledTruth: schema.brainPages.compiledTruth,
+      sourceKind: schema.brainPages.sourceKind,
+      sourceId: schema.brainPages.sourceId,
+    })
+    .from(schema.brainPages)
+    .where(eq(schema.brainPages.sourceId, "adapter-person-jean"));
+  assert.equal(personPage.slug, "person/jean-smith");
+  assert.equal(personPage.pageType, "person");
+  assert.equal(personPage.sourceKind, "people");
+  assert.match(personPage.compiledTruth, /Jean Smith/);
+  assert.match(personPage.compiledTruth, /jean@example\.com/);
+
+  const linkedMemoryId = "adapter-person-linked-memory";
+  await db.insert(schema.userMemories).values({
+    id: linkedMemoryId,
+    userId: TEST_USER_ID,
+    content: "Follow up with Jean Smith about the Watertown website proposal.",
+    category: "fact",
+    reviewStatus: "active",
+    pendingReview: false,
+  });
+
+  const linkedProjection = await jarvisBrainAdapter.projectApprovedMemories(TEST_USER_ID);
+  assert.equal(linkedProjection.projected, 1);
+
+  const [linkedPage] = await db
+    .select({ id: schema.brainPages.id })
+    .from(schema.brainPages)
+    .where(eq(schema.brainPages.sourceId, linkedMemoryId));
+  const [personLink] = await db
+    .select({ toSlug: schema.brainLinks.toSlug, verb: schema.brainLinks.verb })
+    .from(schema.brainLinks)
+    .where(eq(schema.brainLinks.fromPageId, linkedPage.id));
+  assert.deepEqual(personLink, { toSlug: "person/jean-smith", verb: "mentions" });
+  await db.delete(schema.userMemories).where(eq(schema.userMemories.id, linkedMemoryId));
+  await jarvisBrainAdapter.projectApprovedMemories(TEST_USER_ID);
+
+  await db
+    .update(schema.people)
+    .set({ name: "Jean Brown", updatedAt: new Date("2026-01-02T00:00:00.000Z") })
+    .where(eq(schema.people.id, "adapter-person-jean"));
+  const renamedPeopleProjection = await jarvisBrainAdapter.projectPeopleIntoBrain(TEST_USER_ID);
+  assert.deepEqual(renamedPeopleProjection, { scanned: 1, projected: 1, skipped: 0 });
+
+  const renamedPages = await db
+    .select({
+      slug: schema.brainPages.slug,
+      reviewStatus: schema.brainPages.reviewStatus,
+    })
+    .from(schema.brainPages)
+    .where(eq(schema.brainPages.sourceId, "adapter-person-jean"));
+  assert.deepEqual(
+    renamedPages.sort((a, b) => a.slug.localeCompare(b.slug)),
+    [
+      { slug: "person/jean-brown", reviewStatus: "active" },
+      { slug: "person/jean-smith", reviewStatus: "discarded" },
+    ],
+  );
+
+  await db.insert(schema.people).values([
+    {
+      id: "sam-alpha-1",
+      userId: TEST_USER_ID,
+      name: "Sam Taylor",
+      email: "sam.alpha@example.com",
+    },
+    {
+      id: "sam-bravo-2",
+      userId: TEST_USER_ID,
+      name: "Sam Taylor",
+      email: "sam.bravo@example.com",
+    },
+  ]);
+  const duplicatePeopleProjection = await jarvisBrainAdapter.projectPeopleIntoBrain(TEST_USER_ID);
+  assert.deepEqual(duplicatePeopleProjection, { scanned: 3, projected: 2, skipped: 1 });
+
+  const duplicatePersonPages = await db
+    .select({
+      slug: schema.brainPages.slug,
+      sourceId: schema.brainPages.sourceId,
+    })
+    .from(schema.brainPages)
+    .where(eq(schema.brainPages.sourceKind, "people"));
+  assert.deepEqual(
+    duplicatePersonPages
+      .filter((page) => page.slug.startsWith("person/sam-taylor"))
+      .sort((a, b) => a.slug.localeCompare(b.slug)),
+    [
+      { slug: "person/sam-taylor-samalpha", sourceId: "sam-alpha-1" },
+      { slug: "person/sam-taylor-sambravo", sourceId: "sam-bravo-2" },
+    ],
+  );
+
+  const duplicateLinkedMemoryId = "adapter-duplicate-person-linked-memory";
+  await db.insert(schema.userMemories).values({
+    id: duplicateLinkedMemoryId,
+    userId: TEST_USER_ID,
+    content: "Sam Taylor asked for a duplicate-name follow-up.",
+    category: "fact",
+    reviewStatus: "active",
+    pendingReview: false,
+  });
+  await jarvisBrainAdapter.projectApprovedMemories(TEST_USER_ID);
+  const [duplicateLinkedPage] = await db
+    .select({ id: schema.brainPages.id })
+    .from(schema.brainPages)
+    .where(eq(schema.brainPages.sourceId, duplicateLinkedMemoryId));
+  const duplicatePersonLinks = await db
+    .select({ toSlug: schema.brainLinks.toSlug, verb: schema.brainLinks.verb })
+    .from(schema.brainLinks)
+    .where(eq(schema.brainLinks.fromPageId, duplicateLinkedPage.id));
+  assert.deepEqual(
+    duplicatePersonLinks.sort((a, b) => a.toSlug.localeCompare(b.toSlug)),
+    [
+      { toSlug: "person/sam-taylor-samalpha", verb: "mentions" },
+      { toSlug: "person/sam-taylor-sambravo", verb: "mentions" },
+    ],
+  );
+  await db.delete(schema.userMemories).where(eq(schema.userMemories.id, duplicateLinkedMemoryId));
+  await jarvisBrainAdapter.projectApprovedMemories(TEST_USER_ID);
+
+  await db.delete(schema.people).where(eq(schema.people.id, "sam-alpha-1"));
+  await jarvisBrainAdapter.projectPeopleIntoBrain(TEST_USER_ID);
+  const [deletedPersonPage] = await db
+    .select({ reviewStatus: schema.brainPages.reviewStatus })
+    .from(schema.brainPages)
+    .where(eq(schema.brainPages.sourceId, "sam-alpha-1"));
+  assert.equal(deletedPersonPage.reviewStatus, "discarded");
+
+  const vectorPage = await jarvisBrainAdapter.upsertEvidence({
+    userId: TEST_USER_ID,
+    actorId: "adapter-test",
+    pageType: "memory",
+    slug: "memory/vector-refresh",
+    title: "Vector refresh memory",
+    compiledTruth: "The brain adapter should embed stale chunks during index refresh.",
+    sourceKind: "test",
+    sourceId: "vector-refresh",
+    provenance: [{ kind: "user_memory", id: "vector-refresh" }],
+  });
+
+  const vectorRefresh = await refreshIndexWithEmbedder(
+    {
+      userId: TEST_USER_ID,
+      actorId: "adapter-test",
+    },
+    async (content) =>
+      content.includes("stale chunks")
+        ? Array.from({ length: 1536 }, (_, index) => (index === 0 ? 0.25 : 0.75))
+        : null,
+  );
+  assert.deepEqual(vectorRefresh, { embedded: 1, linked: 0 });
+
+  const [embeddedChunk] = await db
+    .select({ embedding: schema.brainContentChunks.embedding })
+    .from(schema.brainContentChunks)
+    .where(eq(schema.brainContentChunks.pageId, vectorPage.pageId));
+  assert.equal(embeddedChunk.embedding?.length, 1536);
+  assert.equal(embeddedChunk.embedding?.[0], 0.25);
+  assert.equal(embeddedChunk.embedding?.[1], 0.75);
+
+  const previousVectorFlag = process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL;
+  process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL = "1";
+  try {
+    const semanticResult = await queryBrainWithEmbedder(
+      {
+        userId: TEST_USER_ID,
+        actorId: "adapter-test",
+        query: "no lexical overlap",
+        topK: 1,
+      },
+      async () => Array.from({ length: 1536 }, (_, index) => (index === 0 ? 0.25 : 0.75)),
+    );
+    assert.equal(semanticResult.chunks[0]?.pageSlug, "memory/vector-refresh");
+  } finally {
+    if (previousVectorFlag === undefined) {
+      delete process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL;
+    } else {
+      process.env.JARVIS_BRAIN_VECTOR_RETRIEVAL = previousVectorFlag;
+    }
+  }
 
   await assert.rejects(
     () =>

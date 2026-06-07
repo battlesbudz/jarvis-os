@@ -37,9 +37,9 @@ function isWorkspaceEmpty(workspaceDir: string): boolean {
   return entries.length === 0;
 }
 
-function listSnapshotFiles(workspaceDir: string): Array<{ filePath: string; fullPath: string; sizeBytes: number }> {
+function listSnapshotFiles(workspaceDir: string): { filePath: string; fullPath: string; sizeBytes: number }[] {
   const root = path.resolve(workspaceDir);
-  const files: Array<{ filePath: string; fullPath: string; sizeBytes: number }> = [];
+  const files: { filePath: string; fullPath: string; sizeBytes: number }[] = [];
   let totalBytes = 0;
 
   const walk = (dir: string) => {
@@ -95,15 +95,16 @@ export async function snapshotProjectWorkspace(projectId: string, workspaceDir: 
   }
 
   if (seenPaths.length === 0) {
-    await db.delete(schema.jarvisProjectFiles).where(eq(schema.jarvisProjectFiles.projectId, projectId));
-  } else {
-    await db
-      .delete(schema.jarvisProjectFiles)
-      .where(and(
-        eq(schema.jarvisProjectFiles.projectId, projectId),
-        notInArray(schema.jarvisProjectFiles.filePath, seenPaths),
-      ));
+    console.warn(`[ProjectArtifacts] skipped empty snapshot for project ${projectId}; preserving stored files`);
+    return;
   }
+
+  await db
+    .delete(schema.jarvisProjectFiles)
+    .where(and(
+      eq(schema.jarvisProjectFiles.projectId, projectId),
+      notInArray(schema.jarvisProjectFiles.filePath, seenPaths),
+    ));
 }
 
 export async function hydrateProjectWorkspace(projectId: string, workspaceDir: string): Promise<boolean> {
@@ -130,13 +131,13 @@ export async function hydrateProjectWorkspace(projectId: string, workspaceDir: s
   return true;
 }
 
-export async function listProjectSnapshot(projectId: string): Promise<Array<{
+export async function listProjectSnapshot(projectId: string): Promise<{
   path: string;
   name: string;
   type: "file";
   size: number;
   updatedAt: string;
-}>> {
+}[]> {
   const rows = await db
     .select()
     .from(schema.jarvisProjectFiles)

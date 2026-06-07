@@ -24,6 +24,8 @@ import { DIGEST_CHANNEL_KEY } from './discord/workspace';
 import { getUserDriveSettings } from './driveRoutes';
 import { createDriveTextFile } from './integrations/googleDrive';
 import { runBackfillEmbeddings } from './jobs/backfillEmbeddings';
+import { runBrainMaintenanceForAllUsers } from './brain/maintenance';
+import { runMemoryAutoReviewForAllUsers } from './memory/autoReview';
 import { shouldExecuteScheduledTask } from './jarvisScheduledTaskSemantics';
 
 // ---------------------------------------------------------------------------
@@ -437,7 +439,7 @@ async function runDueScheduledTasks(now: Date): Promise<void> {
  * a proactive notification, but ONLY when:
  *   a) The given notificationType targets Telegram in the user's channel prefs
  *   b) The user has an active Telegram link
- *   c) REPLIT_DOMAINS is set (production / staging environment)
+ *   c) a public base URL is configured for production / staging
  *
  * This is best-effort — errors are logged but never surfaced to the caller.
  */
@@ -835,9 +837,12 @@ export function startScheduler() {
     // run every day without risk of overwhelming the API.
     if (h === 6 && m === 0) {
       console.log('[Scheduler] Running nightly embedding backfill...');
-      runBackfillEmbeddings().catch((err) =>
-        console.error('[Scheduler] Embedding backfill failed:', err),
-      );
+      runBackfillEmbeddings()
+        .catch((err) => console.error('[Scheduler] Embedding backfill failed:', err))
+        .then(() => runMemoryAutoReviewForAllUsers(now))
+        .catch((err) => console.error('[Scheduler] Memory auto-review failed:', err))
+        .then(() => runBrainMaintenanceForAllUsers(now))
+        .catch((err) => console.error('[Scheduler] G-Brain maintenance failed:', err));
     }
 
     // Discord channel schedules — check every minute

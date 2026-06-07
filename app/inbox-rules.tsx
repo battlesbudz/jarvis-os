@@ -217,7 +217,7 @@ export default function InboxRulesScreen() {
               <Text style={styles.fieldLabel}>Describe in plain English</Text>
               <TextInput
                 style={styles.textInput}
-                placeholder="e.g., suppress Replit notifications"
+                placeholder="e.g., suppress deployment notifications"
                 placeholderTextColor={Colors.textTertiary}
                 value={newPattern}
                 onChangeText={setNewPattern}

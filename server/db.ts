@@ -17,6 +17,34 @@ pool.on("error", (error) => {
 
 export const db = drizzle(pool, { schema });
 
+export async function ensureModelUsageEventsTable() {
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS model_usage_events (
+      id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider VARCHAR NOT NULL,
+      model TEXT NOT NULL,
+      source VARCHAR NOT NULL DEFAULT 'unknown',
+      prompt_tokens INTEGER NOT NULL DEFAULT 0,
+      completion_tokens INTEGER NOT NULL DEFAULT 0,
+      total_tokens INTEGER NOT NULL DEFAULT 0,
+      duration_ms INTEGER NOT NULL DEFAULT 0,
+      success BOOLEAN NOT NULL DEFAULT TRUE,
+      estimated BOOLEAN NOT NULL DEFAULT TRUE,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    )
+  `);
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS model_usage_events_user_created_idx
+      ON model_usage_events (user_id, created_at DESC)
+  `).catch(() => {});
+  await db.execute(sql`
+    CREATE INDEX IF NOT EXISTS model_usage_events_user_model_idx
+      ON model_usage_events (user_id, model, created_at DESC)
+  `).catch(() => {});
+}
+
 export async function ensureTablesExist() {
   try {
     await db.execute(sql`CREATE EXTENSION IF NOT EXISTS pgcrypto`);
@@ -87,31 +115,7 @@ export async function ensureTablesExist() {
       )
     `);
 
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS model_usage_events (
-        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        provider VARCHAR NOT NULL,
-        model TEXT NOT NULL,
-        source VARCHAR NOT NULL DEFAULT 'unknown',
-        prompt_tokens INTEGER NOT NULL DEFAULT 0,
-        completion_tokens INTEGER NOT NULL DEFAULT 0,
-        total_tokens INTEGER NOT NULL DEFAULT 0,
-        duration_ms INTEGER NOT NULL DEFAULT 0,
-        success BOOLEAN NOT NULL DEFAULT TRUE,
-        estimated BOOLEAN NOT NULL DEFAULT TRUE,
-        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMP NOT NULL DEFAULT NOW()
-      )
-    `);
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS model_usage_events_user_created_idx
-        ON model_usage_events (user_id, created_at DESC)
-    `).catch(() => {});
-    await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS model_usage_events_user_model_idx
-        ON model_usage_events (user_id, model, created_at DESC)
-    `).catch(() => {});
+    await ensureModelUsageEventsTable();
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS life_context (
@@ -1098,9 +1102,9 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
 
-    // openclaw_build_log — created via migration 005; ensure new columns exist
+    // agent_build_log — created via migration 005; ensure new columns exist
     await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS openclaw_build_log (
+      CREATE TABLE IF NOT EXISTS agent_build_log (
         id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id         VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         feature_name    VARCHAR NOT NULL,
@@ -1112,11 +1116,11 @@ export async function ensureTablesExist() {
       )
     `).catch(() => {});
     await db.execute(sql`
-      CREATE INDEX IF NOT EXISTS openclaw_build_log_user_created_idx
-        ON openclaw_build_log (user_id, created_at DESC)
+      CREATE INDEX IF NOT EXISTS agent_build_log_user_created_idx
+        ON agent_build_log (user_id, created_at DESC)
     `).catch(() => {});
     await db.execute(sql`
-      ALTER TABLE openclaw_build_log ADD COLUMN IF NOT EXISTS smoke_test_args JSONB
+      ALTER TABLE agent_build_log ADD COLUMN IF NOT EXISTS smoke_test_args JSONB
     `).catch(() => {});
 
     // integration_status — pre-flight validator cache written every 30 min
@@ -1408,7 +1412,7 @@ export async function ensureTablesExist() {
         ON user_skills (user_id, name) WHERE is_built_in = TRUE
     `).catch(() => {});
 
-    // Chat integration tables (used by server/replit_integrations/chat)
+    // Chat integration tables (used by server/integrations/chatStorage)
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS conversations (
         id SERIAL PRIMARY KEY,
@@ -1517,7 +1521,7 @@ export async function ensureTablesExist() {
         ON webchat_invite_tokens (token)
     `).catch(() => {});
 
-    // ── Gateway devices — OpenClaw-style scoped browser/node pairing ─────────
+    // ── Gateway devices — scoped browser/node pairing ─────────
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS gateway_device_pairing_requests (
         id               VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1699,6 +1703,27 @@ export async function ensureTablesExist() {
     // ── Memory Review Gate (Phase 6) ─────────────────────────────────────────
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS pending_review BOOLEAN NOT NULL DEFAULT FALSE`).catch(() => {});
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS review_status VARCHAR NOT NULL DEFAULT 'active'`).catch(() => {});
+    // Optional pgvector index for canonical user_memories. If the extension is
+    // unavailable, JSONB embeddings and FTS retrieval remain the fallback path.
+    await db.execute(sql`CREATE EXTENSION IF NOT EXISTS vector`).catch(() => {});
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS embedding_vector vector(1536)`).catch(() => {});
+    await db.execute(sql`
+      UPDATE user_memories
+      SET embedding_vector = embedding::text::vector(1536)
+      WHERE embedding_vector IS NULL
+        AND embedding IS NOT NULL
+        AND jsonb_typeof(embedding) = 'array'
+        AND jsonb_array_length(embedding) = 1536
+    `).catch(() => {});
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS user_memories_embedding_vector_idx
+      ON user_memories
+      USING ivfflat (embedding_vector vector_cosine_ops)
+      WITH (lists = 100)
+      WHERE embedding_vector IS NOT NULL
+        AND pending_review = FALSE
+        AND review_status IN ('active', 'kept', 'edited')
+    `).catch(() => {});
 
     // ── Skill Candidates (Task #872) ─────────────────────────────────────────
     await db.execute(sql`

@@ -1371,6 +1371,19 @@
 
               if (event.type === 'aborted') break;
 
+              if (event.type === 'progress' || event.type === 'mcp_progress' || event.type === 'working') {
+                const progressText = String(event.message || 'Working...');
+                setStatus(progressText.split('\n')[0] || 'Working...');
+                if (botBubble === null && !botText) {
+                  removeTypingIndicator();
+                  botBubble = appendBubble('bot', progressText);
+                } else if (botBubble !== null && !botText) {
+                  botBubble.textContent = progressText;
+                }
+                scrollBottom();
+                continue;
+              }
+
               if (typeof event.content === 'string' && event.content) {
                 if (botBubble === null) {
                   removeTypingIndicator();

@@ -1,7 +1,7 @@
 /**
  * OutboundMiddlewareRegistry — composable message_sending middleware.
  *
- * Inspired by OpenClaw's `message_sending` hook. Any module can register a
+ * Outbound message middleware. Any module can register a
  * handler that transforms or cancels an outbound reply before it reaches the
  * channel. Handlers run in descending priority order and receive a mutable
  * context object (platform, text, agentName…). A handler may:

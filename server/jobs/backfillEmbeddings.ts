@@ -1,5 +1,7 @@
 /**
- * Backfill embedding vectors for user_memories rows that have no embedding.
+ * Backfill embedding vectors for user_memories rows that have no JSONB
+ * embedding, and mirror existing JSONB embeddings into pgvector when the
+ * optional vector extension is available.
  *
  * Runs incrementally in batches so it does not overwhelm the DB or the
  * embeddings API.  A short inter-item delay keeps rate-limit pressure low.
@@ -13,6 +15,7 @@
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { backfillEmbedding, embedText } from "../memory/retrieve";
+import { syncExistingMemoryEmbeddingVectors } from "../memory/vectorStore";
 import { emit } from "../diagnostics/diagnosticsService";
 
 const BATCH_SIZE = 50;
@@ -51,7 +54,7 @@ async function fetchUnembedded(limit: number): Promise<MemoryStub[]> {
     WHERE embedding IS NULL
       AND content IS NOT NULL
       AND content != ''
-    ORDER BY created_at ASC
+    ORDER BY extracted_at ASC
     LIMIT ${limit}
   `);
   return rows.rows ?? [];
@@ -88,6 +91,11 @@ export async function runBackfillEmbeddings(): Promise<void> {
   let batchNumber = 0;
 
   try {
+    const vectorSync = await syncExistingMemoryEmbeddingVectors(BATCH_SIZE);
+    if (vectorSync.updated > 0) {
+      console.log(`[BackfillEmbeddings] Mirrored ${vectorSync.updated} existing JSON embedding(s) into pgvector`);
+    }
+
     const totalPending = await countUnembedded();
     if (totalPending === 0) {
       console.log("[BackfillEmbeddings] No unembedded memories — nothing to do");

@@ -1,7 +1,7 @@
 /**
  * ToolCallHookRegistry — composable before_tool_call hook system.
  *
- * Inspired by OpenClaw's `before_tool_call` hook. Any module can register a
+ * Tool-call middleware. Any module can register a
  * handler that inspects an upcoming tool call and returns one of:
  *   • { block: true, blockReason? }   — cancel the call; model sees a refusal
  *   • { params: {...} }               — silently rewrite tool parameters

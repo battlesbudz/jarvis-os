@@ -19,7 +19,7 @@
 // during these tests, but the Pool constructor requires a valid connection string.
 if (!process.env.DATABASE_URL) {
   console.error(
-    "buildDirectNotification.assert.ts: DATABASE_URL not set — please run in the Replit environment.",
+    "buildDirectNotification.assert.ts: DATABASE_URL not set — please run with a configured DATABASE_URL.",
   );
   process.exit(1);
 }

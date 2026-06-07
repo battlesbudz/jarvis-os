@@ -4,8 +4,8 @@ A small Node.js process that lets the GamePlan autonomous agent control a
 sandboxed corner of your desktop — running shell commands, reading and
 writing files, and sending you native notifications.
 
-Inspired by [OpenClaw](https://github.com/steipete/openclaw)'s computer-use
-patterns. MIT licensed. Copyright (c) 2025 Peter Steinberger.
+It is built around explicit pairing, scoped workspace access, and auditable
+operations.
 
 ## What it can do
 

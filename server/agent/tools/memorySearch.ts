@@ -1,6 +1,7 @@
 import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
-import { retrieveRelevantMemories, batchIncrementAccessCount } from "../../memory/retrieve";
+import { batchIncrementAccessCount } from "../../memory/retrieve";
 import type { RetrievedMemory } from "../../memory/retrieve";
+import { retrieveMemoryContext, memoryContextItemsToRetrievedMemories, type MemoryContext } from "../../memory/memoryOs";
 import { db } from "../../db";
 import { eq, sql } from "drizzle-orm";
 import { users } from "@shared/schema";
@@ -17,7 +18,14 @@ interface MemoryRow {
 }
 
 interface MemorySearchDeps {
-  retrieveMemories: (
+  retrieveMemoryContext?: (input: {
+    userId: string;
+    query: string;
+    limit?: number;
+    caller: string;
+    skipAccessUpdate?: boolean;
+  }) => Promise<MemoryContext>;
+  retrieveMemories?: (
     userId: string,
     query: string,
     limit: number,
@@ -80,7 +88,23 @@ async function executeMemorySearch(
   const shouldIncludeProfileFallback = isIdentityFallbackQuery(query);
 
   try {
-    let memories = await deps.retrieveMemories(ctx.userId, query, limit * 2, true);
+    let memories: RetrievedMemory[];
+    let uncertainty: string[] = [];
+    if (deps.retrieveMemoryContext) {
+      const memoryContext = await deps.retrieveMemoryContext({
+        userId: ctx.userId,
+        query,
+        limit: limit * 2,
+        caller: "memory_search",
+        skipAccessUpdate: true,
+      });
+      memories = memoryContextItemsToRetrievedMemories(memoryContext.items);
+      uncertainty = memoryContext.uncertainty;
+    } else if (deps.retrieveMemories) {
+      memories = await deps.retrieveMemories(ctx.userId, query, limit * 2, true);
+    } else {
+      throw new Error("No memory retrieval dependency configured.");
+    }
 
     if (category) {
       memories = memories.filter(
@@ -102,6 +126,16 @@ async function executeMemorySearch(
     deps.incrementAccessCount(top.map((m) => m.id));
 
     if (top.length === 0) {
+      const retrievalFailure = uncertainty.find((note) => note.startsWith("Memory retrieval failed:"));
+      if (retrievalFailure) {
+        return {
+          ok: false,
+          content: retrievalFailure,
+          label: "Memory search error",
+          detail: retrievalFailure,
+        };
+      }
+
       return {
         ok: true,
         content: appendProfileIdentityFallback(
@@ -153,7 +187,7 @@ export function executeMemorySearchForTest(
 }
 
 const defaultMemorySearchDeps: MemorySearchDeps = {
-  retrieveMemories: retrieveRelevantMemories,
+  retrieveMemoryContext,
   incrementAccessCount: batchIncrementAccessCount,
   fetchProfileIdentity,
 };

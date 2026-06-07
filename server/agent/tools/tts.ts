@@ -8,7 +8,7 @@ import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { sendVoice } from "../../integrations/telegram";
-import { textToSpeech, elevenlabsTts } from "../../replit_integrations/audio/client";
+import { textToSpeech, elevenlabsTts } from "../../integrations/audioClient";
 import type { AgentTool } from "../types";
 
 /**

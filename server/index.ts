@@ -23,10 +23,31 @@ import { startPostListenBoot } from "./boot/postListen";
 const app = express();
 const log = console.log;
 
-(async () => {
-  await ensureTablesExist();
-  await runPreListenBoot();
+async function verifyDatabaseTablesInBackground(): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await ensureTablesExist();
+      return;
+    } catch (err) {
+      lastErr = err;
+      const delayMs = attempt * 2000;
+      console.warn(`[Startup] database table verification failed (attempt ${attempt}/5); retrying in ${delayMs}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
 
+  console.error("[Startup] database table verification failed after retries; continuing with existing schema", lastErr);
+}
+
+async function startRuntimeBootAfterListen(): Promise<void> {
+  await verifyDatabaseTablesInBackground();
+  await runPreListenBoot();
+  startWorkerBoot();
+  startPostListenBoot();
+}
+
+(async () => {
   logTelegramStatus();
 
   setupCors(app);
@@ -43,7 +64,6 @@ const log = console.log;
   const server = await registerRoutes(app);
 
   registerRealtimeBoot(app, server);
-  startWorkerBoot();
   setupErrorHandler(app);
 
   const port = parseInt(process.env.PORT || "5000", 10);
@@ -56,7 +76,9 @@ const log = console.log;
     },
     () => {
       log(`express server serving on ${host}:${port}`);
-      startPostListenBoot();
+      startRuntimeBootAfterListen().catch((err) => {
+        console.error("[Startup] runtime boot tasks crashed unexpectedly:", err);
+      });
     },
   );
 })();

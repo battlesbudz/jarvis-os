@@ -17,16 +17,6 @@ export function setupCors(app: express.Application) {
     const origins = new Set<string>();
     origins.add(getPublicBaseUrl());
 
-    if (process.env.REPLIT_DEV_DOMAIN) {
-      origins.add(`https://${process.env.REPLIT_DEV_DOMAIN}`);
-    }
-
-    if (process.env.REPLIT_DOMAINS) {
-      process.env.REPLIT_DOMAINS.split(",").forEach((d) => {
-        origins.add(`https://${d.trim()}`);
-      });
-    }
-
     const origin = req.header("origin");
     const isLocalhost =
       origin?.startsWith("http://localhost:") ||

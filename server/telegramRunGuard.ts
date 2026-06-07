@@ -1,7 +1,21 @@
 import crypto from "crypto";
 import { activeCoachRuns } from "./runRegistry";
 
-export const TELEGRAM_REPLY_TIMEOUT_MS = Number(process.env.TELEGRAM_REPLY_TIMEOUT_MS || 60_000);
+export const MIN_TELEGRAM_TURN_TIMEOUT_MS = 900_000;
+
+const NON_MEANINGFUL_ACTIVITY_KINDS = new Set([
+  "auto_progress",
+  "keepalive",
+  "typing",
+]);
+
+export function resolveTelegramReplyTimeoutMs(raw = process.env.TELEGRAM_REPLY_TIMEOUT_MS): number {
+  const parsed = Number(raw || MIN_TELEGRAM_TURN_TIMEOUT_MS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return MIN_TELEGRAM_TURN_TIMEOUT_MS;
+  return Math.max(parsed, MIN_TELEGRAM_TURN_TIMEOUT_MS);
+}
+
+export const TELEGRAM_REPLY_TIMEOUT_MS = resolveTelegramReplyTimeoutMs();
 
 export class TelegramRunAbortedError extends Error {
   constructor(message = "Telegram turn was aborted.") {
@@ -12,7 +26,7 @@ export class TelegramRunAbortedError extends Error {
 
 export class TelegramRunTimeoutError extends Error {
   constructor(timeoutMs: number) {
-    super(`Telegram turn timed out after ${timeoutMs}ms.`);
+    super(`Telegram turn had no meaningful activity for ${timeoutMs}ms.`);
     this.name = "TelegramRunTimeoutError";
   }
 }
@@ -28,7 +42,15 @@ export function isTelegramRunTimeoutError(error: unknown): error is TelegramRunT
 export function createTelegramRunGuard(userId: string) {
   const runId = `telegram_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
   const controller = new AbortController();
+  let lastMeaningfulActivityAtMs = Date.now();
+  let rescheduleInactivityTimer: (() => void) | null = null;
   activeCoachRuns.set(runId, { controller, userId });
+
+  const touch = (kind = "progress", _message?: string) => {
+    if (NON_MEANINGFUL_ACTIVITY_KINDS.has(kind)) return;
+    lastMeaningfulActivityAtMs = Date.now();
+    rescheduleInactivityTimer?.();
+  };
 
   const finish = () => {
     const active = activeCoachRuns.get(runId);
@@ -46,9 +68,13 @@ export function createTelegramRunGuard(userId: string) {
 
     return new Promise<T>((resolve, reject) => {
       let settled = false;
+      let timeout: ReturnType<typeof setTimeout>;
       const cleanup = () => {
         settled = true;
         clearTimeout(timeout);
+        if (rescheduleInactivityTimer === scheduleTimeout) {
+          rescheduleInactivityTimer = null;
+        }
         controller.signal.removeEventListener("abort", onAbort);
       };
       const onAbort = () => {
@@ -56,15 +82,23 @@ export function createTelegramRunGuard(userId: string) {
         cleanup();
         reject(controller.signal.reason instanceof Error ? controller.signal.reason : new TelegramRunAbortedError());
       };
-      const timeout = setTimeout(() => {
+      const onTimeout = () => {
         if (settled) return;
         const error = new TelegramRunTimeoutError(timeoutMs);
         cleanup();
         controller.abort(error);
         reject(error);
-      }, timeoutMs);
+      };
+      const scheduleTimeout = () => {
+        clearTimeout(timeout);
+        const elapsedSinceMeaningfulActivity = Date.now() - lastMeaningfulActivityAtMs;
+        const remainingMs = Math.max(0, timeoutMs - elapsedSinceMeaningfulActivity);
+        timeout = setTimeout(onTimeout, remainingMs);
+      };
 
       controller.signal.addEventListener("abort", onAbort, { once: true });
+      rescheduleInactivityTimer = scheduleTimeout;
+      scheduleTimeout();
       promise.then(
         (value) => {
           if (settled) return;
@@ -85,5 +119,6 @@ export function createTelegramRunGuard(userId: string) {
     signal: controller.signal,
     finish,
     race,
+    touch,
   };
 }
