@@ -121,6 +121,12 @@ Preview output can be summarized into a compact readiness report for logs, route
 
 The report is derived from preview objects only. It does not execute tools, persist traces, create approvals, or alter runtime decisions.
 
+## Runtime Redaction
+
+Runtime protocol objects can contain tool argument previews, provider metadata, or trace-like payloads. Redaction helpers sanitize sensitive keys such as tokens, API keys, authorization headers, passwords, cookies, sessions, and private keys before preview data is shown in reports or logs.
+
+Redaction returns new protocol-shaped objects and does not mutate the original runtime decision.
+
 ## Non-Goals
 
 - no broad folder restructuring
