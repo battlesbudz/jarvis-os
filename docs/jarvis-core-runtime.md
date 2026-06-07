@@ -133,6 +133,10 @@ Approval-required runtime decisions can be transformed into a redacted approval 
 
 This is not an approval record and it does not notify, persist, approve, reject, or execute anything.
 
+## Runtime Dry Run
+
+Runtime dry run composes the preview pieces into one result: runtime/tool preflight preview, readiness report, and optional approval preview. It is the safest integration surface for route experiments because all outputs are derived and no side effects occur.
+
 ## Non-Goals
 
 - no broad folder restructuring
