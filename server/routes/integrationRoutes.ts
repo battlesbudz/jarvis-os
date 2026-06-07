@@ -5,8 +5,8 @@ import * as schema from "@shared/schema";
 import { db } from "../db";
 import { getOpenAIClientConfig } from "../agent/providers/env";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "../utils/gmailSourceId";
-import { getGoogleCalendarEvents, checkGoogleCalendarConnection } from "../integrations/googleCalendar";
-import { getOutlookCalendarEvents, checkOutlookConnection } from "../integrations/outlook";
+import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
+import { getOutlookCalendarEvents } from "../integrations/outlook";
 import { checkGmailConnection, getRecentEmailCommitments, createGmailDraft } from "../integrations/gmail";
 import { getSlackMessages } from "../integrations/slack";
 import { isIntegrationOwner, claimIntegrationOwnership } from "../integrationOwner";
@@ -25,21 +25,8 @@ export function registerIntegrationRoutes(app: Express): void {
         getValidMicrosoftToken(userId),
       ]);
 
-      let googleConnected = googleTokens.length > 0;
-      let outlookConnected = !!microsoftToken;
-
-      if (!googleConnected || !outlookConnected) {
-        const isOwner = await isIntegrationOwner(userId);
-        if (isOwner) {
-          const [projGoogle, projOutlook] = await Promise.all([
-            googleConnected ? true : checkGoogleCalendarConnection(),
-            outlookConnected ? true : checkOutlookConnection(),
-          ]);
-          googleConnected = googleConnected || projGoogle;
-          outlookConnected = outlookConnected || projOutlook;
-          if (projGoogle || projOutlook) await claimIntegrationOwnership(userId);
-        }
-      }
+      const googleConnected = googleTokens.length > 0;
+      const outlookConnected = !!microsoftToken;
 
       res.json({ google: googleConnected, outlook: outlookConnected });
     } catch (error) {
