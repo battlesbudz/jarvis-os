@@ -1,4 +1,5 @@
 export * from "./executeRuntimeEvent";
+export * from "./runtimeAuditEvent";
 export * from "./runtimeApprovalPreview";
 export * from "./runtimeDryRun";
 export * from "./runtimeEventAdapter";
