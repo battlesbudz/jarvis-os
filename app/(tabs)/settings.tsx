@@ -47,6 +47,7 @@ import { getApiUrl, apiRequest } from '@/lib/query-client';
 import { useAuth, authFetch } from '@/lib/auth-context';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
+import RuntimeDiagnosticsPanel from '@/components/RuntimeDiagnosticsPanel';
 import {
   CONNECTION_APPS,
   getConnectionStatusLabel,
@@ -3503,6 +3504,9 @@ export default function SettingsScreen() {
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── DIAGNOSTICS ── */}
         <SectionHeader label="DIAGNOSTICS" accent="#10B981" />
+        <View style={[styles.card, { marginBottom: 12 }]}>
+          <RuntimeDiagnosticsPanel />
+        </View>
         <View style={[styles.card, { gap: 0 }]}>
           <View style={drStyles.headerRow}>
             <View style={{ flex: 1, gap: 2 }}>
