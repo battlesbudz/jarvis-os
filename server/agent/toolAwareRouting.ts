@@ -94,6 +94,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     intent: "memory",
     patterns: [
       /\b(memory|remember|recall|what do you know about me|what have i told you|preferences?|living context)\b/i,
+      /\b(save|store|add|write)\b.{0,60}\b(memory|memories)\b/i,
+      /\bremember\s+(that|this)\b/i,
       /\b(my work hours|my goals|my routines|my projects|about me)\b/i,
       /\bwhat('?s|\s+is)\s+my\s+(name|nickname)\b/i,
       /\bwhat\s+(name|nickname)\s+should\s+you\s+call\s+me\b/i,
@@ -102,8 +104,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     ],
     capabilityIds: ["memory"],
     toolGroups: ["memory"],
-    priorityToolNames: ["memory_search", "memory_get", "living_context_update"],
-    guidance: "For memory or preference questions, search memory/living context before claiming not to know.",
+    priorityToolNames: ["memory_search", "memory_get", "memory_save", "living_context_update"],
+    guidance: "For memory or preference questions, search memory/living context before claiming not to know. When the user explicitly asks Jarvis to remember, save, or correct a fact, call memory_save with the stated content.",
   },
   {
     intent: "research",
