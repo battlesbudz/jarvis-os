@@ -82,7 +82,7 @@ import { buildMindTrace } from "../../../agent/mindTrace";
       userId: "user-1",
       intent: "email_action",
       confidence: 0.8,
-      riskTier: "T3",
+      riskTier: "T0",
       responseMode: "answer",
       tools: [],
       approval: {

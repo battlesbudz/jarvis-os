@@ -106,9 +106,8 @@ export type RuntimeDecision = z.infer<typeof RuntimeDecisionSchema>;
 
 export function parseRuntimeDecision(value: unknown): RuntimeDecision {
   const decision = RuntimeDecisionSchema.parse(value);
-  if (decision.approval.required && decision.responseMode === "answer" && decision.riskTier !== "T0") {
+  if (decision.approval.required && decision.responseMode === "answer") {
     throw new Error("RuntimeDecision fails closed: approval-required decisions cannot use answer responseMode.");
   }
   return decision;
 }
-
