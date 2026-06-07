@@ -11,6 +11,7 @@ This checklist describes what can be wired after the Core Runtime preview stack 
 - Use `runRuntimeCapabilityPreview` only with explicit AgentTool-shaped metadata.
 - Display `RuntimePreviewReport`, `RuntimeApprovalPreview`, `RuntimeAuditEvent`, or `formatRuntimePreview` output.
 - Treat all preview output as advisory. Existing app routes, harness, tools, memory, jobs, and approvals remain the source of live behavior.
+- Use the authenticated request user as the runtime `userId`; do not trust a body-supplied user id.
 
 ## Still Forbidden
 
@@ -21,16 +22,20 @@ This checklist describes what can be wired after the Core Runtime preview stack 
 - Do not merge runtime decisions back into the live harness without a dedicated integration PR.
 - Do not enable `JARVIS_RUNTIME_LIVE_EXECUTION` until a runtime-owned executor exists with tests.
 
-## First Live Integration Candidate
+## Current Preview Integration
 
-The safest first route experiment is a read-only diagnostics endpoint guarded by `JARVIS_RUNTIME_DRY_RUN=1`. It should:
+The first route experiment is `POST /api/runtime/dry-run`. It is authenticated, read-only, and guarded by `JARVIS_RUNTIME_DRY_RUN=1`. It:
 
-- accept a message and user id
-- adapt the input to `JarvisEvent`
-- run guarded dry run
-- return the preview report and formatted text
-- avoid tool registry imports unless passing explicit metadata
-- avoid persistence
+- accepts a message plus optional `source`, `channel`, `eventId`, `createdAt`, `metadata`, `availableTools`, `auth`, and `policy` snapshots
+- ignores body-supplied `userId` and uses `req.userId`
+- adapts the input to `JarvisEvent`
+- runs guarded dry run
+- returns disabled output when `JARVIS_RUNTIME_DRY_RUN` is off
+- returns `RuntimePreviewReport`, redacted `RuntimeApprovalPreview`, and `formatRuntimePreview` text when enabled
+- avoids live tool registry imports unless the caller passes explicit metadata snapshots
+- avoids persistence, tool execution, memory writes, job enqueueing, and approval record creation
+
+The Settings Diagnostics screen mounts a Runtime Preview panel backed by this route. Its log is client-local only.
 
 ## Rollback
 
