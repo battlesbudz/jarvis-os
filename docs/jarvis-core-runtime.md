@@ -127,6 +127,12 @@ Runtime protocol objects can contain tool argument previews, provider metadata, 
 
 Redaction returns new protocol-shaped objects and does not mutate the original runtime decision.
 
+## Runtime Approval Preview
+
+Approval-required runtime decisions can be transformed into a redacted approval preview object. The preview includes the event, user, intent, risk tier, reason, and approval-required tools with sanitized argument previews.
+
+This is not an approval record and it does not notify, persist, approve, reject, or execute anything.
+
 ## Non-Goals
 
 - no broad folder restructuring
