@@ -177,6 +177,10 @@ Dry-run results can be transformed into structured audit event payloads containi
 
 Runtime audit events can be linked to existing orchestration traces or adapted Mind Trace records with a persistable, preview-only payload. The link carries IDs, status, risk, approval, route, and task metadata only; it does not write the trace table, create audit rows, or execute any runtime work.
 
+## Runtime Read-Only Executor
+
+The first runtime-owned executor handles only `inline_answer` decisions with `answer` response mode and no approval requirement. It returns a deterministic read-only response envelope, records zero executed tools and zero side effects, and declines or blocks anything that needs approval, queueing, tool execution, or invalid-event recovery.
+
 ## Tool Capability Summary
 
 Tool Gateway descriptors can be summarized into provider, scope, approval, and maximum-risk metadata. This helps preview callers understand the available tool surface before attempting preflight.

@@ -20,7 +20,7 @@ This checklist describes what can be wired after the Core Runtime preview stack 
 - Do not enqueue jobs from preview output.
 - Do not create approval records from `RuntimeApprovalPreview`.
 - Do not merge runtime decisions back into the live harness without a dedicated integration PR.
-- Do not enable `JARVIS_RUNTIME_LIVE_EXECUTION` until a runtime-owned executor exists with tests.
+- Do not enable `JARVIS_RUNTIME_LIVE_EXECUTION` for routes until a dedicated live-route integration PR proves the runtime-owned executor boundary with tests.
 
 ## Current Preview Integration
 
@@ -36,6 +36,10 @@ The first route experiment is `POST /api/runtime/dry-run`. It is authenticated, 
 - avoids persistence, tool execution, memory writes, job enqueueing, and approval record creation
 
 The Settings Diagnostics screen mounts a Runtime Preview panel backed by this route. Its log is client-local only.
+
+## Runtime-Owned Read-Only Executor
+
+`executeRuntimeReadOnly` is the first runtime-owned executor. It handles only safe `inline_answer` decisions, returns a deterministic response envelope, and records zero executed tools and zero side effects. It declines approval-required, queued, tool-candidate, and non-answer decisions. It is not wired into live app routes yet.
 
 ## Rollback
 
