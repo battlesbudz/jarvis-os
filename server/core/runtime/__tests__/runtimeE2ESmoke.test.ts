@@ -309,6 +309,10 @@ async function run(): Promise<void> {
 
       assert.equal(memoryPreview.approvalRequired, true);
       assert.equal(memoryPreview.writeAllowed, false);
+      assert.equal(memoryPreview.memoryOsCorrection.recorded, false);
+      assert.equal(memoryPreview.memoryOsCorrection.reviewOnly, true);
+      assert.equal(memoryPreview.memoryOsCorrection.status, "review_required");
+      assert.equal(memoryPreview.memoryOsCorrection.source?.eventId, "rte2e-09");
       assert.equal(memoryPreview.currentMemory?.confidence?.normalized, 0.8);
       assertNoSensitiveLeak(memoryPreview);
       coveredPlanCases.add("RTE2E-09");

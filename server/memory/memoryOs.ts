@@ -1,4 +1,4 @@
-import { retrieveRelevantMemories, type RetrievedMemory } from "./retrieve";
+import type { RetrievedMemory } from "./retrieve";
 
 export type MemoryOsCaller =
   | "memory_search"
@@ -10,10 +10,48 @@ export type MemoryOsCaller =
   | "other";
 
 export type MemoryProvenanceRef = {
-  kind: "user_memory" | "brain_chunk" | "hot_state";
+  kind: "user_memory" | "brain_chunk" | "hot_state" | "runtime_event";
   id: string;
-  source: "canonical" | "gbrain" | "hot_state";
+  source: "canonical" | "gbrain" | "hot_state" | "runtime";
   label?: string;
+};
+
+export type MemoryCorrectionOperation = "correct_existing_memory" | "propose_new_memory";
+export type MemoryCorrectionStatus = "review_required" | "invalid";
+
+export type MemoryCorrectionInput = {
+  userId: string;
+  operation: MemoryCorrectionOperation;
+  proposedContent: string;
+  reason?: string | null;
+  confidence?: number | null;
+  currentMemoryId?: string | null;
+  currentMemoryContent?: string | null;
+  source: {
+    kind: "runtime_memory_calibration";
+    eventId: string;
+    eventSource: string;
+    channel?: string | null;
+    previewId?: string;
+    createdAt?: string;
+  };
+  provenance?: MemoryProvenanceRef[];
+};
+
+export type MemoryCorrectionReview = {
+  recorded: false;
+  reviewOnly: true;
+  status: MemoryCorrectionStatus;
+  operation: MemoryCorrectionOperation;
+  userId: string;
+  currentMemoryId: string | null;
+  proposedContent: string;
+  reason: string;
+  correctionReason: string | null;
+  confidence: number | null;
+  source: MemoryCorrectionInput["source"] | null;
+  provenance: MemoryProvenanceRef[];
+  uncertainty: string[];
 };
 
 export type MemoryContextItem = {
@@ -53,7 +91,10 @@ export type MemoryOsDeps = {
 };
 
 const defaultDeps: MemoryOsDeps = {
-  retrieveMemories: retrieveRelevantMemories,
+  retrieveMemories: async (userId, query, limit, skipAccessUpdate) => {
+    const { retrieveRelevantMemories } = await import("./retrieve");
+    return retrieveRelevantMemories(userId, query, limit, skipAccessUpdate);
+  },
 };
 
 function emptyContext(input: RetrieveMemoryContextInput, uncertainty: string[] = []): MemoryContext {
@@ -82,6 +123,68 @@ function uniqueRefs(refs: MemoryProvenanceRef[]): MemoryProvenanceRef[] {
     out.push(ref);
   }
   return out;
+}
+
+export function buildMemoryCorrectionReview(input?: MemoryCorrectionInput): MemoryCorrectionReview {
+  if (!input) {
+    return {
+      recorded: false,
+      reviewOnly: true,
+      status: "invalid",
+      operation: "propose_new_memory",
+      userId: "",
+      currentMemoryId: null,
+      proposedContent: "",
+      reason: "Memory correction flows are planned for a later slice.",
+      correctionReason: null,
+      confidence: null,
+      source: null,
+      provenance: [],
+      uncertainty: ["No memory correction input was provided."],
+    };
+  }
+
+  const proposedContent = input.proposedContent.trim();
+  const provenance = uniqueRefs([
+    {
+      kind: "runtime_event",
+      id: input.source.eventId,
+      source: "runtime",
+      label: input.source.channel ?? input.source.eventSource,
+    },
+    ...(input.currentMemoryId
+      ? [{
+          kind: "user_memory" as const,
+          id: input.currentMemoryId,
+          source: "canonical" as const,
+          label: input.operation,
+        }]
+      : []),
+    ...(input.provenance ?? []),
+  ]);
+
+  const uncertainty: string[] = [];
+  if (!input.userId.trim()) uncertainty.push("No user id was provided for memory correction.");
+  if (!proposedContent) uncertainty.push("No proposed memory correction content was provided.");
+  if (input.operation === "correct_existing_memory" && !input.currentMemoryId) {
+    uncertainty.push("Correction operation was requested without an existing memory id.");
+  }
+
+  return {
+    recorded: false,
+    reviewOnly: true,
+    status: uncertainty.length > 0 ? "invalid" : "review_required",
+    operation: input.operation,
+    userId: input.userId,
+    currentMemoryId: input.currentMemoryId ?? null,
+    proposedContent,
+    reason: "Memory OS correction provenance is captured for review only; durable correction writes are planned for a later slice.",
+    correctionReason: input.reason ?? null,
+    confidence: typeof input.confidence === "number" && Number.isFinite(input.confidence) ? input.confidence : null,
+    source: input.source,
+    provenance,
+    uncertainty,
+  };
 }
 
 function provenanceForMemory(memory: RetrievedMemory): MemoryProvenanceRef[] {
@@ -173,6 +276,6 @@ export async function explainMemoryAnswer(): Promise<{ available: false; reason:
   return { available: false, reason: "User-facing memory explanation is planned for a later slice." };
 }
 
-export async function recordMemoryCorrection(): Promise<{ recorded: false; reason: string }> {
-  return { recorded: false, reason: "Memory correction flows are planned for a later slice." };
+export async function recordMemoryCorrection(input?: MemoryCorrectionInput): Promise<MemoryCorrectionReview> {
+  return buildMemoryCorrectionReview(input);
 }
