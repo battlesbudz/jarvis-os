@@ -8,6 +8,8 @@ import {
 
 const now = new Date("2026-06-08T13:00:00.000Z");
 
+assert.ok(RUNTIME_GOLDEN_DRY_RUN_FIXTURES.length >= 10, "runtime golden fixtures cover the documented workflow set");
+
 for (const fixture of RUNTIME_GOLDEN_DRY_RUN_FIXTURES) {
   const event = jarvisEventFromMessage({
     eventId: `event-${fixture.id}`,
