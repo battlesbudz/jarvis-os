@@ -37,6 +37,7 @@ export const RUNTIME_GOLDEN_DRY_RUN_FIXTURES: RuntimeGoldenDryRunFixture[] = [
     message: "What memory do you have about morning planning?",
     expectedIntent: "memory_query",
     expectedStatus: "ready",
+    expectedRuntimeOwner: "core_runtime",
   },
   {
     id: "memory-provenance-lookup",
@@ -55,6 +56,7 @@ export const RUNTIME_GOLDEN_DRY_RUN_FIXTURES: RuntimeGoldenDryRunFixture[] = [
     expectedResponseMode: "answer",
     expectedGateOutcome: "inline_answer",
     expectedApprovalRequired: false,
+    expectedRuntimeOwner: "core_runtime",
   },
   {
     id: "email-approval",
@@ -120,6 +122,7 @@ export const RUNTIME_GOLDEN_DRY_RUN_FIXTURES: RuntimeGoldenDryRunFixture[] = [
     expectedResponseMode: "answer",
     expectedGateOutcome: "inline_answer",
     expectedApprovalRequired: false,
+    expectedRuntimeOwner: "core_runtime",
   },
   {
     id: "diagnose-feature-failure",

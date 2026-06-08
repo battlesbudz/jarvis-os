@@ -46,7 +46,7 @@ The Settings Diagnostics screen mounts a Runtime Preview panel backed by this ro
 
 `preflightRuntimeLiveRoute` lets a future live route ask whether Core Runtime or the existing route owner should handle a request. Runtime ownership is allowed only when `JARVIS_RUNTIME_LIVE_EXECUTION=1`, `executeRuntimeReadOnly` completes, and the matched workflow id is listed in `JARVIS_RUNTIME_LIVE_WORKFLOWS`.
 
-The first live workflow id is `general-answer`. Approval-required, queued, tool-candidate, non-allowlisted, and non-matching requests continue through the existing route owner; invalid runtime events block instead of falling through.
+The runtime-owned read-only workflow ids are `general-answer`, `memory-lookup`, `email-draft-reply`, and `next-meeting-brief`. Approval-required, queued, tool-candidate, non-allowlisted, and non-matching requests continue through the existing route owner; invalid runtime events block instead of falling through.
 
 ## Runtime Read-Only Route
 

@@ -149,7 +149,7 @@ Golden dry-run fixtures cover stable runtime expectations for general answers, m
 
 The fixture set now maps the documented golden workflow prompts for daily planning, email drafting, reminders/approvals, research, goal handoff, meeting prep, memory lookup, diagnostics, and invalid-event handling. Most workflows still remain owned by existing Jarvis modules; the runtime fixtures protect classification, gate outcome, approval, and response-mode contracts.
 
-Exactly one fixture is marked runtime-owned in this slice: the general read-only answer. That fixture must pass through `executeRuntimeReadOnly` with zero executed tools and zero side effects. All higher-risk, tool-backed, queued, approval-required, or stateful workflows remain existing-Jarvis owned until their adapters have real execution and approval tests.
+The first migrated runtime-owned fixture was the general read-only answer. Runtime v0.1 now also marks memory lookup, draft-only email reply, and next-meeting brief as runtime-owned read-only candidates. These fixtures must pass through `executeRuntimeReadOnly` with zero executed tools and zero side effects. All higher-risk, tool-backed, queued, approval-required, or stateful workflows remain existing-Jarvis owned until their adapters have real execution and approval tests.
 
 ## Runtime Event Adapter
 
@@ -201,7 +201,7 @@ The first runtime-owned executor handles only `inline_answer` decisions with `an
 
 Live routes can preflight a request against the runtime before choosing an owner. With `JARVIS_RUNTIME_LIVE_EXECUTION` off, the gate returns the existing route owner. With it on, only completed read-only runtime executions that match an allowlisted `JARVIS_RUNTIME_LIVE_WORKFLOWS` id become `core_runtime` owned; approval-required, queued, tool-candidate, and non-allowlisted decisions continue through the legacy route owner, while invalid runtime events block.
 
-The first live allowlisted workflow id is `general-answer`, which covers the low-risk general answer golden workflow with zero executed tools and zero side effects.
+The runtime-owned read-only workflow ids are `general-answer`, `memory-lookup`, `email-draft-reply`, and `next-meeting-brief`. A workflow is live-owned only when its id is explicitly present in `JARVIS_RUNTIME_LIVE_WORKFLOWS`.
 
 ## Runtime Read-Only Route
 
