@@ -61,3 +61,5 @@ The first live workflow id is `general-answer`. Approval-required, queued, tool-
 ## Rollback
 
 Rollback remains disabling `JARVIS_RUNTIME_DRY_RUN`, disabling `JARVIS_RUNTIME_LIVE_EXECUTION`, or removing the workflow id from `JARVIS_RUNTIME_LIVE_WORKFLOWS`. No runtime preview or read-only helper owns durable state.
+
+Runtime persistence records are storage-neutral until a caller supplies an explicit writer. Rollback for this slice is removing that writer or leaving it unconfigured.

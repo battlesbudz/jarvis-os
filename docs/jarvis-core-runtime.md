@@ -187,6 +187,12 @@ Dry-run results can be transformed into structured audit event payloads containi
 
 Runtime audit events can be linked to existing orchestration traces or adapted Mind Trace records with a persistable, preview-only payload. The link carries IDs, status, risk, approval, route, and task metadata only; it does not write the trace table, create audit rows, or execute any runtime work.
 
+## Runtime Persistence Record
+
+Runtime events and decisions can be shaped into a storage-neutral persistence record. The record includes event id, decision id, user id, status, intent, risk, response mode, approval id/status, execution status, owner, gate outcome, trace id, and redacted event/decision payloads.
+
+`persistRuntimeRecord` requires an explicit writer dependency. Without a writer it returns a non-persisted result, which keeps Core Runtime safe to use in tests and route experiments before a database-backed audit table is introduced.
+
 ## Runtime Read-Only Executor
 
 The first runtime-owned executor handles only `inline_answer` decisions with `answer` response mode and no approval requirement. It returns a deterministic read-only response envelope, records zero executed tools and zero side effects, and declines or blocks anything that needs approval, queueing, tool execution, or invalid-event recovery.
