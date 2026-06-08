@@ -126,6 +126,7 @@ const tests = [
   { file: "server/brain/__tests__/slug.test.ts" },
   { file: "server/brain/__tests__/chunk.test.ts" },
   { file: "server/brain/__tests__/links.test.ts" },
+  { file: "server/brain/__tests__/benchmarks.test.ts" },
   { file: "server/brain/__tests__/adapter.test.ts", requiresDatabase: true },
   { file: "server/brain/__tests__/maintenance.test.ts" },
   { file: "server/brain/__tests__/vector.test.ts" },
