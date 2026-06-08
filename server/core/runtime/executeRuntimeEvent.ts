@@ -1,8 +1,6 @@
 import { z } from "zod";
 import {
-  decideContextPacks,
   type ContextPackDecision,
-  type ContextPackId,
   type ContextRiskLevel,
   type ContextToolAllowance,
 } from "../../agent/contextPacks";
@@ -10,48 +8,21 @@ import {
   ContextPacketSchema,
   JarvisEventSchema,
   parseRuntimeDecision,
-  type ContextPacket,
-  type ContextSource,
   type JarvisEvent,
   type RuntimeDecision,
   type RuntimeRiskTier,
   type ToolIntent,
 } from "../protocol";
+import {
+  adaptRuntimeContextPacketFromEvent,
+  runtimeProtocolSafeId,
+} from "./runtimeContextPacketAdapter";
 import type { ExecuteRuntimeEventInput, ExecuteRuntimeEventResult, RuntimeGateOutcome } from "./runtimeTypes";
 
 const READ_ONLY_TOOLS = new Set<ContextToolAllowance>(["read_context", "draft_only", "search"]);
 
 function isoNow(now?: Date): string {
   return (now ?? new Date()).toISOString();
-}
-
-function protocolSafeId(prefix: string, raw: string): string {
-  const safe = raw.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-").slice(0, 72);
-  return `${prefix}-${safe || "unknown"}`;
-}
-
-function sourceKindForPack(pack: ContextPackId): ContextSource["kind"] {
-  switch (pack) {
-    case "daily_planning_context":
-      return "goals";
-    case "memory_context":
-    case "brain_context":
-      return "memory";
-    case "email_context":
-      return "email";
-    case "calendar_context":
-      return "calendar";
-    case "research_context":
-    case "daemon_context":
-    case "self_healing_context":
-      return "tool";
-    case "business_context":
-    case "code_work_context":
-    case "always_on_kernel":
-      return "workspace";
-    default:
-      return "unknown";
-  }
 }
 
 function riskTierForDecision(decision: ContextPackDecision): RuntimeRiskTier {
@@ -108,24 +79,6 @@ function toolIntentForAllowance(tool: ContextToolAllowance, decision: ContextPac
   };
 }
 
-function contextPacketFromDecision(event: JarvisEvent, decision: ContextPackDecision, createdAt: string): ContextPacket {
-  return ContextPacketSchema.parse({
-    packetId: protocolSafeId("packet", event.eventId),
-    userId: event.userId,
-    query: event.message,
-    createdAt,
-    sources: decision.requiredContextPacks.map((pack) => ({
-      kind: sourceKindForPack(pack),
-      id: pack,
-      label: pack,
-      confidence: pack === "always_on_kernel" ? 0.95 : 0.75,
-    })),
-    provenance: ["server/agent/contextPacks.ts"],
-    uncertainty: decision.reasons.length === 0 ? ["No classifier reasons were produced."] : [],
-    omissions: ["Runtime Gate v0.2 does not retrieve live context or execute tools."],
-  });
-}
-
 function runtimeDecisionFromContextDecision(
   event: JarvisEvent,
   decision: ContextPackDecision,
@@ -133,7 +86,7 @@ function runtimeDecisionFromContextDecision(
 ): RuntimeDecision {
   const approvalRequired = decision.approvalRequired;
   return parseRuntimeDecision({
-    decisionId: protocolSafeId("decision", event.eventId),
+    decisionId: runtimeProtocolSafeId("decision", event.eventId),
     eventId: event.eventId,
     userId: event.userId,
     intent: decision.taskType,
@@ -144,7 +97,7 @@ function runtimeDecisionFromContextDecision(
     approval: {
       required: approvalRequired,
       status: approvalRequired ? "pending" : "not_required",
-      gateId: approvalRequired ? protocolSafeId("gate", event.eventId) : null,
+      gateId: approvalRequired ? runtimeProtocolSafeId("gate", event.eventId) : null,
       reason: approvalRequired ? "Context classifier marked this request as approval-gated." : undefined,
     },
     modelRoute: {
@@ -154,7 +107,7 @@ function runtimeDecisionFromContextDecision(
       fallbackAllowed: true,
     },
     trace: {
-      traceId: protocolSafeId("runtime", event.eventId),
+      traceId: runtimeProtocolSafeId("runtime", event.eventId),
       source: "runtime",
       routeChosen: decision.route,
       taskTypeDetected: decision.taskType,
@@ -241,12 +194,14 @@ export function executeRuntimeEvent(input: ExecuteRuntimeEventInput): ExecuteRun
     return invalidEventResult(parsed.error, createdAt);
   }
 
-  const event = parsed.data;
-  const contextDecision = decideContextPacks({
-    userMessage: event.message,
-    channel: event.channel,
+  const {
+    event,
+    decision: contextDecision,
+    contextPacket,
+  } = adaptRuntimeContextPacketFromEvent({
+    event: parsed.data,
+    createdAt,
   });
-  const contextPacket = contextPacketFromDecision(event, contextDecision, createdAt);
   const decision = runtimeDecisionFromContextDecision(event, contextDecision, createdAt);
 
   return {
