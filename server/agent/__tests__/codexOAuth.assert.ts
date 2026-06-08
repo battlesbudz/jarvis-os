@@ -5,6 +5,7 @@ import {
   buildCodexOAuthProviderPrompt,
   CodexOAuthProvider,
   codexGatewayFailureMessage,
+  getCodexOAuthRuntimeStatus,
   missingCodexGatewayMessage,
   parseCodexOAuthOrchestratorOutput,
 } from "../providers/codexOAuth";
@@ -136,6 +137,105 @@ async function main() {
     else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
   }
   console.log("OK: Codex OAuth provider reports missing runtime when gateway and daemon are unavailable");
+}
+
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+  const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
+  process.env.JARVIS_CODEX_GATEWAY_URL = "https://gateway.example.test";
+  delete process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+  delete process.env.JARVIS_CODEX_RUNTIME;
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  try {
+    const status = await getCodexOAuthRuntimeStatus("user-1");
+    assert.equal(status.available, false);
+    assert.equal(status.selectedRuntime, "gateway");
+    assert.equal(status.gatewayConfigured, true);
+    assert.equal(status.gatewayTokenConfigured, false);
+    assert.match(status.reason, /TOKEN/);
+  } finally {
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousToken == null) delete process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+    else process.env.JARVIS_CODEX_GATEWAY_TOKEN = previousToken;
+    if (previousRuntime == null) delete process.env.JARVIS_CODEX_RUNTIME;
+    else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+  }
+  console.log("OK: Codex OAuth runtime status reports a gateway URL without a token as unavailable");
+}
+
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+  const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
+  delete process.env.JARVIS_CODEX_GATEWAY_URL;
+  delete process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+  process.env.JARVIS_CODEX_RUNTIME = "daemon";
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  try {
+    _setCodexOAuthDaemonBridgeForTesting({
+      isDesktopDaemonActive: (userId) => userId === "user-1",
+      isDaemonActionAllowed: async () => false,
+      sendDaemonOp: async () => ({ ok: true, data: { content: "" } }),
+    });
+    const status = await getCodexOAuthRuntimeStatus("user-1");
+    assert.equal(status.available, false);
+    assert.equal(status.selectedRuntime, "daemon");
+    assert.equal(status.daemonActive, true);
+    assert.equal(status.daemonShellAllowed, false);
+    assert.match(status.reason, /Shell Execution/);
+  } finally {
+    _setCodexOAuthDaemonBridgeForTesting(null);
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousToken == null) delete process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+    else process.env.JARVIS_CODEX_GATEWAY_TOKEN = previousToken;
+    if (previousRuntime == null) delete process.env.JARVIS_CODEX_RUNTIME;
+    else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+  }
+  console.log("OK: Codex OAuth runtime status reports connected daemons without Shell Execution as unavailable");
+}
+
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousToken = process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+  const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
+  delete process.env.JARVIS_CODEX_GATEWAY_URL;
+  delete process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+  process.env.JARVIS_CODEX_RUNTIME = "daemon";
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  try {
+    _setCodexOAuthDaemonBridgeForTesting({
+      isDesktopDaemonActive: (userId) => userId === "user-1",
+      isDaemonActionAllowed: async (userId, action) => userId === "user-1" && action === "shell",
+      sendDaemonOp: async () => ({ ok: true, data: { content: "" } }),
+    });
+    const status = await getCodexOAuthRuntimeStatus("user-1");
+    assert.equal(status.available, true);
+    assert.equal(status.selectedRuntime, "daemon");
+    assert.equal(status.daemonActive, true);
+    assert.equal(status.daemonShellAllowed, true);
+    assert.equal(status.resolvedUserId, "user-1");
+  } finally {
+    _setCodexOAuthDaemonBridgeForTesting(null);
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousToken == null) delete process.env.JARVIS_CODEX_GATEWAY_TOKEN;
+    else process.env.JARVIS_CODEX_GATEWAY_TOKEN = previousToken;
+    if (previousRuntime == null) delete process.env.JARVIS_CODEX_RUNTIME;
+    else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+  }
+  console.log("OK: Codex OAuth runtime status reports active daemon Shell Execution as available");
 }
 
 {

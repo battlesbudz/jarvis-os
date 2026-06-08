@@ -4,6 +4,7 @@ param(
   [string]$Root = (Join-Path $env:USERPROFILE "jarvis-workspace"),
   [string]$RepoRoot,
   [string]$StatePath = (Join-Path $env:APPDATA "Jarvis\desktop-daemon-state.json"),
+  [string]$CodexCommand = "",
   [string]$PairCode = "",
   [switch]$NoStart
 )
@@ -56,7 +57,32 @@ function Quote-PowerShellArg {
   return "`"$($Value -replace '"', '\"')`""
 }
 
+function Resolve-CodexCommand {
+  if ($CodexCommand) {
+    return $CodexCommand
+  }
+
+  $command = Get-Command codex.cmd -ErrorAction SilentlyContinue
+  if ($command -and $command.Source) {
+    return $command.Source
+  }
+
+  $command = Get-Command codex.exe -ErrorAction SilentlyContinue
+  if ($command -and $command.Source) {
+    return $command.Source
+  }
+
+  $command = Get-Command codex -ErrorAction SilentlyContinue
+  if ($command -and $command.Source) {
+    return $command.Source
+  }
+
+  return ""
+}
+
 Stop-ExistingDesktopDaemonRuntime
+
+$ResolvedCodexCommand = Resolve-CodexCommand
 
 $RunnerArgs = @(
   "-NoProfile",
@@ -67,6 +93,10 @@ $RunnerArgs = @(
   "-RepoRoot $(Quote-PowerShellArg $RepoRoot)",
   "-StatePath $(Quote-PowerShellArg $StatePath)"
 ) -join " "
+
+if ($ResolvedCodexCommand) {
+  $RunnerArgs = "$RunnerArgs -CodexCommand $(Quote-PowerShellArg $ResolvedCodexCommand)"
+}
 
 $Action = New-ScheduledTaskAction `
   -Execute "powershell.exe" `

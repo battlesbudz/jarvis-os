@@ -8,6 +8,7 @@ const require = createRequire(import.meta.url);
 const daemon = require("../../../daemon/jarvis-daemon.js") as {
   handleOp(op: Record<string, unknown>): Promise<Record<string, unknown>>;
   buildCodexSpawnCommand(command: string, args: string[]): { command: string; args: string[] };
+  findInstalledCodexCommand(command?: string): string;
   loadDaemonReconnectState(statePath: string): Record<string, unknown> | null;
   saveDaemonReconnectState(statePath: string, state: Record<string, unknown>): void;
   clearDaemonReconnectState(statePath: string): void;
@@ -236,6 +237,26 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function main() {
+  {
+    const previousCommand = process.env.JARVIS_CODEX_COMMAND;
+    const previousFallback = process.env.CODEX_COMMAND;
+    const configuredCommand = process.platform === "win32"
+      ? "C:\\Users\\justi\\AppData\\Roaming\\npm\\codex.cmd"
+      : "/usr/local/bin/codex";
+    process.env.JARVIS_CODEX_COMMAND = configuredCommand;
+    delete process.env.CODEX_COMMAND;
+    try {
+      assert.equal(daemon.findInstalledCodexCommand("codex"), configuredCommand);
+      assert.equal(daemon.findInstalledCodexCommand(), configuredCommand);
+    } finally {
+      if (previousCommand == null) delete process.env.JARVIS_CODEX_COMMAND;
+      else process.env.JARVIS_CODEX_COMMAND = previousCommand;
+      if (previousFallback == null) delete process.env.CODEX_COMMAND;
+      else process.env.CODEX_COMMAND = previousFallback;
+    }
+    console.log("OK: Desktop daemon honors configured Codex command for bare codex requests");
+  }
+
   {
     const command = daemon.buildCodexSpawnCommand("C:\\Users\\justi\\AppData\\Roaming\\npm\\codex.cmd", ["exec"]);
     if (process.platform === "win32") {
