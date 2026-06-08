@@ -2,6 +2,7 @@ export * from "./executeRuntimeEvent";
 export * from "./runtimeAuditEvent";
 export * from "./runtimeApprovalGateBridge";
 export * from "./runtimeApprovalPreview";
+export * from "./runtimeAuditTraceLink";
 export * from "./runtimeCapabilityPreview";
 export * from "./runtimeContextPacketAdapter";
 export * from "./runtimeDryRun";
