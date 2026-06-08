@@ -49,6 +49,10 @@ The Settings Diagnostics screen mounts a Runtime Preview panel backed by this ro
 
 `POST /api/runtime/read-only` is the first runtime-owned workflow route. It is authenticated, requires `JARVIS_RUNTIME_LIVE_EXECUTION=1` before returning a runtime-owned execution, ignores body-supplied `userId`, and returns only execution and decision summaries. It does not return request metadata snapshots and does not execute tools.
 
+## Approval Workflow Preview And Resume
+
+`buildRuntimeApprovalWorkflow` and `buildRuntimeApprovalWorkflowFromGate` describe approval-required work without executing it. Pending approvals return redacted preview data, approved gates return a `ready_to_resume` handoff for the existing owner, and rejected or expired gates remain non-resumable.
+
 ## Rollback
 
 Rollback remains deleting the preview route or disabling `JARVIS_RUNTIME_DRY_RUN`. No runtime preview helper owns durable state.
