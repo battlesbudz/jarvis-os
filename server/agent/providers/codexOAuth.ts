@@ -44,6 +44,23 @@ export interface CodexOAuthDaemonBridge {
   ): Promise<{ ok: boolean; data?: unknown; error?: string }>;
 }
 
+type CodexOAuthRuntimePreference = "auto" | "gateway" | "daemon";
+type CodexOAuthSelectedRuntime = "gateway" | "daemon" | null;
+
+export interface CodexOAuthRuntimeStatus {
+  available: boolean;
+  runtimePreference: CodexOAuthRuntimePreference;
+  selectedRuntime: CodexOAuthSelectedRuntime;
+  gatewayConfigured: boolean;
+  gatewayTokenConfigured: boolean;
+  daemonEnabled: boolean;
+  daemonActive: boolean;
+  daemonShellAllowed: boolean;
+  resolvedUserId: string | null;
+  reason: string;
+  action: string;
+}
+
 let daemonBridgeForTesting: CodexOAuthDaemonBridge | null = null;
 
 export function _setCodexOAuthDaemonBridgeForTesting(bridge: CodexOAuthDaemonBridge | null): void {
@@ -189,11 +206,166 @@ function isUnknownDaemonOpError(result: { ok: boolean; data?: unknown; error?: s
   return /unknown op type codex_oauth_app_server_prompt/i.test(message);
 }
 
-function getCodexRuntimePreference(): "auto" | "gateway" | "daemon" {
+function getCodexRuntimePreference(): CodexOAuthRuntimePreference {
   const raw = process.env.JARVIS_CODEX_RUNTIME?.trim().toLowerCase();
   if (raw === "daemon" || raw === "desktop-daemon" || raw === "desktop_daemon") return "daemon";
   if (raw === "gateway" || raw === "tailscale-gateway" || raw === "tailscale_gateway") return "gateway";
   return "auto";
+}
+
+function buildRuntimeStatus(params: Partial<CodexOAuthRuntimeStatus> = {}): CodexOAuthRuntimeStatus {
+  return {
+    available: false,
+    runtimePreference: getCodexRuntimePreference(),
+    selectedRuntime: null,
+    gatewayConfigured: !!getCodexGatewayUrl(),
+    gatewayTokenConfigured: !!getCodexGatewayToken(),
+    daemonEnabled: isCodexDaemonRuntimeEnabled(),
+    daemonActive: false,
+    daemonShellAllowed: false,
+    resolvedUserId: null,
+    reason: "Codex OAuth provider has no available runtime.",
+    action: "Connect the Desktop Daemon with Shell Execution enabled, or configure a Codex gateway URL and token.",
+    ...params,
+  };
+}
+
+function formatCodexRuntimeStatusMessage(status: CodexOAuthRuntimeStatus): string {
+  return `${missingCodexGatewayMessage()} ${status.reason} ${status.action}`.replace(/\s+/g, " ").trim();
+}
+
+export async function getCodexOAuthRuntimeStatus(userId?: string): Promise<CodexOAuthRuntimeStatus> {
+  const runtimePreference = getCodexRuntimePreference();
+  const gatewayUrl = getCodexGatewayUrl();
+  const gatewayToken = getCodexGatewayToken();
+  const gatewayConfigured = !!gatewayUrl;
+  const gatewayTokenConfigured = !!gatewayToken;
+  const daemonEnabled = isCodexDaemonRuntimeEnabled();
+
+  if (runtimePreference === "gateway" || (runtimePreference === "auto" && gatewayConfigured)) {
+    if (!gatewayConfigured) {
+      return buildRuntimeStatus({
+        runtimePreference,
+        selectedRuntime: "gateway",
+        gatewayConfigured,
+        gatewayTokenConfigured,
+        daemonEnabled,
+        reason: "JARVIS_CODEX_RUNTIME=gateway was selected but JARVIS_CODEX_GATEWAY_URL is missing.",
+        action: "Set JARVIS_CODEX_GATEWAY_URL and JARVIS_CODEX_GATEWAY_TOKEN, or set JARVIS_CODEX_RUNTIME=daemon.",
+      });
+    }
+    if (!gatewayTokenConfigured) {
+      return buildRuntimeStatus({
+        runtimePreference,
+        selectedRuntime: "gateway",
+        gatewayConfigured,
+        gatewayTokenConfigured,
+        daemonEnabled,
+        reason: "JARVIS_CODEX_GATEWAY_URL is set but JARVIS_CODEX_GATEWAY_TOKEN is missing.",
+        action: "Set JARVIS_CODEX_GATEWAY_TOKEN, or remove the gateway URL and use the Desktop Daemon runtime.",
+      });
+    }
+    return buildRuntimeStatus({
+      available: true,
+      runtimePreference,
+      selectedRuntime: "gateway",
+      gatewayConfigured,
+      gatewayTokenConfigured,
+      daemonEnabled,
+      reason: "Codex gateway runtime is configured.",
+      action: "No action required.",
+    });
+  }
+
+  if (!daemonEnabled) {
+    return buildRuntimeStatus({
+      runtimePreference,
+      gatewayConfigured,
+      gatewayTokenConfigured,
+      daemonEnabled,
+      reason: "Desktop daemon Codex OAuth runtime is disabled by JARVIS_CODEX_DAEMON_ENABLED.",
+      action: "Enable JARVIS_CODEX_DAEMON_ENABLED or configure a Codex gateway URL and token.",
+    });
+  }
+
+  const bridge = await getCodexOAuthDaemonBridge();
+  let resolvedUserId = userId?.trim() || null;
+  if (!resolvedUserId && bridge.listPairedUsers) {
+    const activeDesktopUsers = bridge.listPairedUsers().filter((candidateUserId) =>
+      bridge.isDesktopDaemonActive(candidateUserId),
+    );
+    if (activeDesktopUsers.length === 1) {
+      resolvedUserId = activeDesktopUsers[0];
+    } else if (activeDesktopUsers.length > 1) {
+      return buildRuntimeStatus({
+        runtimePreference,
+        selectedRuntime: "daemon",
+        gatewayConfigured,
+        gatewayTokenConfigured,
+        daemonEnabled,
+        daemonActive: true,
+        reason: "Multiple Desktop Daemons are active and no userId was supplied.",
+        action: "Route the chat turn with a userId so Jarvis can select the right Desktop Daemon.",
+      });
+    }
+  }
+
+  if (!resolvedUserId) {
+    return buildRuntimeStatus({
+      runtimePreference,
+      selectedRuntime: "daemon",
+      gatewayConfigured,
+      gatewayTokenConfigured,
+      daemonEnabled,
+      reason: "No user-scoped Desktop Daemon could be selected for the chat turn.",
+      action: "Sign in, connect the Desktop Daemon for this account, or configure a Codex gateway URL and token.",
+    });
+  }
+
+  const daemonActive = bridge.isDesktopDaemonActive(resolvedUserId);
+  if (!daemonActive) {
+    return buildRuntimeStatus({
+      runtimePreference,
+      selectedRuntime: "daemon",
+      gatewayConfigured,
+      gatewayTokenConfigured,
+      daemonEnabled,
+      daemonActive,
+      resolvedUserId,
+      reason: "The Desktop Daemon is not currently connected for this user.",
+      action: "Open the Desktop Daemon and reconnect it from Profile -> Connected Channels.",
+    });
+  }
+
+  const daemonShellAllowed = await bridge.isDaemonActionAllowed(resolvedUserId, "shell").catch(() => false);
+  if (!daemonShellAllowed) {
+    return buildRuntimeStatus({
+      runtimePreference,
+      selectedRuntime: "daemon",
+      gatewayConfigured,
+      gatewayTokenConfigured,
+      daemonEnabled,
+      daemonActive,
+      daemonShellAllowed,
+      resolvedUserId,
+      reason: "The Desktop Daemon is connected, but Shell Execution is disabled.",
+      action: "Enable Shell Execution in Profile -> Connected Channels -> Desktop Daemon, then retry chat.",
+    });
+  }
+
+  return buildRuntimeStatus({
+    available: true,
+    runtimePreference,
+    selectedRuntime: "daemon",
+    gatewayConfigured,
+    gatewayTokenConfigured,
+    daemonEnabled,
+    daemonActive,
+    daemonShellAllowed,
+    resolvedUserId,
+    reason: "Desktop daemon Codex OAuth runtime is ready.",
+    action: "No action required.",
+  });
 }
 
 function missingCodexDaemonMessage(userId?: string): string {
@@ -586,31 +758,27 @@ export class CodexOAuthProvider extends BaseProvider {
 
   async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
     const prompt = buildCodexOAuthProviderPrompt(params);
-    const gatewayUrl = getCodexGatewayUrl();
-    const runtime = getCodexRuntimePreference();
+    const runtimeStatus = await getCodexOAuthRuntimeStatus(params.userId);
+    if (!runtimeStatus.available) {
+      throw new Error(formatCodexRuntimeStatusMessage(runtimeStatus));
+    }
+
     let answer: string;
-    if (runtime === "daemon") {
+    if (runtimeStatus.selectedRuntime === "daemon") {
       try {
-        answer = await runDaemonCodexOAuthPrompt(params.userId, prompt, params.signal);
+        answer = await runDaemonCodexOAuthPrompt(runtimeStatus.resolvedUserId ?? params.userId, prompt, params.signal);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(`${missingCodexGatewayMessage()} ${detail}`, { cause: error });
+        throw new Error(`${formatCodexRuntimeStatusMessage(runtimeStatus)} ${detail}`, { cause: error });
       }
-    } else if (runtime === "gateway") {
+    } else if (runtimeStatus.selectedRuntime === "gateway") {
+      const gatewayUrl = getCodexGatewayUrl();
       if (!gatewayUrl) throw new Error("JARVIS_CODEX_RUNTIME=gateway requires JARVIS_CODEX_GATEWAY_URL.");
       answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
-    } else if (gatewayUrl) {
-      answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
-    } else if (isCodexDaemonRuntimeEnabled()) {
-      try {
-        answer = await runDaemonCodexOAuthPrompt(params.userId, prompt, params.signal);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(`${missingCodexGatewayMessage()} ${detail}`, { cause: error });
-      }
     } else {
-      throw new Error(missingCodexGatewayMessage());
+      throw new Error(formatCodexRuntimeStatusMessage(runtimeStatus));
     }
+
     const parsed = parseCodexOAuthOrchestratorOutput(answer);
 
     if (parsed.type === "tool_calls") {

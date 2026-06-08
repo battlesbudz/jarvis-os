@@ -18,6 +18,7 @@ import { OpenAIProvider } from "./openai";
 import { accumulateTurn } from "./base";
 import type { ProviderQueryParams, ProviderTurnResult } from "./base";
 import { hasCodexOAuthProvider, isDirectOpenAIDisabled } from "./env";
+import { getCodexOAuthRuntimeStatus } from "./codexOAuth";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -51,11 +52,21 @@ async function checkCodexOAuth(): Promise<ProviderHealthResult> {
   const providerName = "CodexOAuthProvider";
   const t0 = Date.now();
   if (hasCodexOAuthProvider()) {
+    const runtime = await getCodexOAuthRuntimeStatus();
+    if (!runtime.available) {
+      return {
+        provider: providerName,
+        ok: false,
+        durationMs: Date.now() - t0,
+        error: `${runtime.reason} ${runtime.action}`,
+      };
+    }
+
     return {
       provider: providerName,
       ok: true,
       durationMs: Date.now() - t0,
-      result: { textContent: "configured", finishReason: "config_check" },
+      result: { textContent: `${runtime.selectedRuntime ?? "unknown"} ready`, finishReason: "config_check" },
     };
   }
   return {

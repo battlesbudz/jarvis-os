@@ -598,7 +598,9 @@ function cancelCodexOAuthPrompts() {
 }
 
 function findInstalledCodexCommand(command) {
-  const configured = String(command || process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND || "").trim();
+  const requested = String(command || "").trim();
+  const envConfigured = String(process.env.JARVIS_CODEX_COMMAND || process.env.CODEX_COMMAND || "").trim();
+  const configured = requested && requested !== "codex" ? requested : envConfigured;
   if (configured && configured !== "codex") return configured;
 
   const candidates = [];
