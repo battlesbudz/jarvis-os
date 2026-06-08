@@ -8,6 +8,7 @@ export * from "./runtimeFeatureFlags";
 export * from "./runtimeGoldenFixtures";
 export * from "./runtimePreviewFormatter";
 export * from "./runtimePreviewReport";
+export * from "./runtimeShadowPreview";
 export * from "./runtimeToolPreflight";
 export * from "./runtimeTypes";
 export * from "./runRuntimeEvent";
