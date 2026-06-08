@@ -181,6 +181,10 @@ Runtime audit events can be linked to existing orchestration traces or adapted M
 
 The first runtime-owned executor handles only `inline_answer` decisions with `answer` response mode and no approval requirement. It returns a deterministic read-only response envelope, records zero executed tools and zero side effects, and declines or blocks anything that needs approval, queueing, tool execution, or invalid-event recovery.
 
+## Runtime Live Route Preflight Gate
+
+Live routes can preflight a request against the runtime before choosing an owner. With `JARVIS_RUNTIME_LIVE_EXECUTION` off, the gate returns the existing route owner. With it on, only completed read-only runtime executions become `core_runtime` owned; approval-required, queued, and tool-candidate decisions continue through the legacy route owner, while invalid runtime events block.
+
 ## Tool Capability Summary
 
 Tool Gateway descriptors can be summarized into provider, scope, approval, and maximum-risk metadata. This helps preview callers understand the available tool surface before attempting preflight.

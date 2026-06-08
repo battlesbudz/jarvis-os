@@ -41,6 +41,10 @@ The Settings Diagnostics screen mounts a Runtime Preview panel backed by this ro
 
 `executeRuntimeReadOnly` is the first runtime-owned executor. It handles only safe `inline_answer` decisions, returns a deterministic response envelope, and records zero executed tools and zero side effects. It declines approval-required, queued, tool-candidate, and non-answer decisions. It is not wired into live app routes yet.
 
+## Live Route Preflight Gate
+
+`preflightRuntimeLiveRoute` lets a future live route ask whether Core Runtime or the existing route owner should handle a request. Runtime ownership is allowed only when `JARVIS_RUNTIME_LIVE_EXECUTION=1` and `executeRuntimeReadOnly` completes. Approval-required, queued, and tool-candidate requests continue through the existing route owner; invalid runtime events block instead of falling through.
+
 ## Rollback
 
 Rollback remains deleting the preview route or disabling `JARVIS_RUNTIME_DRY_RUN`. No runtime preview helper owns durable state.
