@@ -48,11 +48,15 @@ async function run(): Promise<void> {
   const previousDryRun = process.env.JARVIS_RUNTIME_DRY_RUN;
   const previousLive = process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
   const previousLiveWorkflows = process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
+  const previousDefaultReadOnly = process.env.JARVIS_RUNTIME_DEFAULT_READ_ONLY;
+  const previousKillSwitch = process.env.JARVIS_RUNTIME_KILL_SWITCH;
 
   try {
     delete process.env.JARVIS_RUNTIME_DRY_RUN;
     delete process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
     delete process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
+    delete process.env.JARVIS_RUNTIME_DEFAULT_READ_ONLY;
+    delete process.env.JARVIS_RUNTIME_KILL_SWITCH;
     const disabled = await requestJson(port, { message: "What can you do?" });
     assert.equal(disabled.status, 200);
     assert.equal(disabled.body.disabled, true);
@@ -191,6 +195,27 @@ async function run(): Promise<void> {
     assert.doesNotMatch(JSON.stringify(readOnlyAllowed.body), /body-user-should-not-win/);
     assert.doesNotMatch(JSON.stringify(readOnlyAllowed.body), /read-only-secret-token/);
 
+    delete process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
+    process.env.JARVIS_RUNTIME_DEFAULT_READ_ONLY = "1";
+    const readOnlyDefault = await requestJson(port, {
+      eventId: "event-read-only-route-default",
+      message: "Prepare me for my next meeting.",
+    }, "/api/runtime/read-only");
+    assert.equal(readOnlyDefault.status, 200);
+    assert.equal(readOnlyDefault.body.runtimeOwned, true);
+    assert.equal(readOnlyDefault.body.runtimeWorkflowId, "next-meeting-brief");
+
+    process.env.JARVIS_RUNTIME_KILL_SWITCH = "1";
+    const readOnlyKilled = await requestJson(port, {
+      eventId: "event-read-only-route-killed",
+      message: "What can you do?",
+    }, "/api/runtime/read-only");
+    assert.equal(readOnlyKilled.status, 200);
+    assert.equal(readOnlyKilled.body.runtimeOwned, false);
+    assert.equal(readOnlyKilled.body.disabled, true);
+    assert.match(String(readOnlyKilled.body.reason), /kill switch/);
+    delete process.env.JARVIS_RUNTIME_KILL_SWITCH;
+
     const readOnlyDeclined = await requestJson(port, {
       message: "Send an email to Bill.",
     }, "/api/runtime/read-only");
@@ -205,6 +230,7 @@ async function run(): Promise<void> {
 
     delete process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
     delete process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
+    delete process.env.JARVIS_RUNTIME_DEFAULT_READ_ONLY;
 
     const unauthenticated = await startServer();
     try {
@@ -231,6 +257,16 @@ async function run(): Promise<void> {
       delete process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
     } else {
       process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS = previousLiveWorkflows;
+    }
+    if (previousDefaultReadOnly === undefined) {
+      delete process.env.JARVIS_RUNTIME_DEFAULT_READ_ONLY;
+    } else {
+      process.env.JARVIS_RUNTIME_DEFAULT_READ_ONLY = previousDefaultReadOnly;
+    }
+    if (previousKillSwitch === undefined) {
+      delete process.env.JARVIS_RUNTIME_KILL_SWITCH;
+    } else {
+      process.env.JARVIS_RUNTIME_KILL_SWITCH = previousKillSwitch;
     }
     await closeServer(server);
   }

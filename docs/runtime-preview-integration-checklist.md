@@ -20,7 +20,7 @@ This checklist describes what can be wired after the Core Runtime preview stack 
 - Do not enqueue jobs from preview output.
 - Do not create approval records from `RuntimeApprovalPreview`.
 - Do not merge runtime decisions back into the live harness without a dedicated integration PR.
-- Do not enable `JARVIS_RUNTIME_LIVE_EXECUTION` without also setting a narrow `JARVIS_RUNTIME_LIVE_WORKFLOWS` allowlist.
+- Do not enable `JARVIS_RUNTIME_LIVE_EXECUTION` without either setting a narrow `JARVIS_RUNTIME_LIVE_WORKFLOWS` allowlist or deliberately enabling `JARVIS_RUNTIME_DEFAULT_READ_ONLY`.
 - Do not call injected runtime tool executors unless `executeRuntimeDecisionToolsThroughGateway` reports every tool intent as preflight-ready.
 
 ## Current Preview Integration
@@ -44,7 +44,7 @@ The Settings Diagnostics screen mounts a Runtime Preview panel backed by this ro
 
 ## Live Route Preflight Gate
 
-`preflightRuntimeLiveRoute` lets a future live route ask whether Core Runtime or the existing route owner should handle a request. Runtime ownership is allowed only when `JARVIS_RUNTIME_LIVE_EXECUTION=1`, `executeRuntimeReadOnly` completes, and the matched workflow id is listed in `JARVIS_RUNTIME_LIVE_WORKFLOWS`.
+`preflightRuntimeLiveRoute` lets a future live route ask whether Core Runtime or the existing route owner should handle a request. Runtime ownership is allowed only when `JARVIS_RUNTIME_LIVE_EXECUTION=1`, `executeRuntimeReadOnly` completes, and the matched workflow id is listed in `JARVIS_RUNTIME_LIVE_WORKFLOWS` or `JARVIS_RUNTIME_DEFAULT_READ_ONLY=1`.
 
 The runtime-owned read-only workflow ids are `general-answer`, `memory-lookup`, `email-draft-reply`, and `next-meeting-brief`. Approval-required, queued, tool-candidate, non-allowlisted, and non-matching requests continue through the existing route owner; invalid runtime events block instead of falling through.
 
@@ -60,6 +60,6 @@ The runtime-owned read-only workflow ids are `general-answer`, `memory-lookup`, 
 
 ## Rollback
 
-Rollback remains disabling `JARVIS_RUNTIME_DRY_RUN`, disabling `JARVIS_RUNTIME_LIVE_EXECUTION`, or removing the workflow id from `JARVIS_RUNTIME_LIVE_WORKFLOWS`. No runtime preview or read-only helper owns durable state.
+Rollback remains disabling `JARVIS_RUNTIME_DRY_RUN`, disabling `JARVIS_RUNTIME_LIVE_EXECUTION`, disabling `JARVIS_RUNTIME_DEFAULT_READ_ONLY`, removing the workflow id from `JARVIS_RUNTIME_LIVE_WORKFLOWS`, or setting `JARVIS_RUNTIME_KILL_SWITCH=1`. No runtime preview or read-only helper owns durable state.
 
 Runtime persistence records are storage-neutral until a caller supplies an explicit writer. Rollback for this slice is removing that writer or leaving it unconfigured.
