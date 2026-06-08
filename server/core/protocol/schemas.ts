@@ -24,6 +24,7 @@ export const JarvisEventSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).default({}),
 });
 export type JarvisEvent = z.infer<typeof JarvisEventSchema>;
+export type RuntimeEvent = JarvisEvent;
 
 export const ContextSourceSchema = z.object({
   kind: z.enum(["hot_state", "memory", "people", "goals", "calendar", "email", "tool", "workspace", "soul", "trace", "unknown"]),
@@ -44,6 +45,7 @@ export const ContextPacketSchema = z.object({
   omissions: z.array(z.string()).default([]),
 });
 export type ContextPacket = z.infer<typeof ContextPacketSchema>;
+export type RuntimeContextPacket = ContextPacket;
 
 export const ToolIntentSchema = z.object({
   toolName: z.string().min(1),
@@ -55,6 +57,17 @@ export const ToolIntentSchema = z.object({
 });
 export type ToolIntent = z.infer<typeof ToolIntentSchema>;
 
+export interface RuntimeToolRequest {
+  requestId: string;
+  eventId: string;
+  userId: string;
+  toolName: string;
+  argsPreview?: unknown;
+  riskTier: RuntimeRiskTier;
+  approvalRequired: boolean;
+  reason?: string;
+}
+
 export const ApprovalRequirementSchema = z.object({
   required: z.boolean(),
   status: z.enum(["not_required", "pending", "approved", "rejected", "blocked"]),
@@ -62,6 +75,17 @@ export const ApprovalRequirementSchema = z.object({
   reason: z.string().optional(),
 });
 export type ApprovalRequirement = z.infer<typeof ApprovalRequirementSchema>;
+
+export interface RuntimeApprovalDecision {
+  gateId?: string | null;
+  eventId: string;
+  userId: string;
+  status: ApprovalRequirement["status"];
+  approved: boolean;
+  reason?: string;
+  decidedAt: string;
+  decidedBy?: "user" | "policy" | "system";
+}
 
 export const ModelRouteSchema = z.object({
   provider: z.string().default("unknown"),
@@ -78,6 +102,19 @@ export const MindTraceRefSchema = z.object({
   taskTypeDetected: z.string().optional(),
 });
 export type MindTraceRef = z.infer<typeof MindTraceRefSchema>;
+
+export interface RuntimeTrace {
+  traceId: string;
+  eventId: string;
+  userId: string;
+  source: MindTraceRef["source"];
+  routeChosen?: string;
+  taskTypeDetected?: string;
+  modelRoute?: ModelRoute;
+  toolRequests?: RuntimeToolRequest[];
+  errors?: RuntimeError[];
+  createdAt: string;
+}
 
 export const RuntimeErrorSchema = z.object({
   code: z.string().min(1),
@@ -103,6 +140,35 @@ export const RuntimeDecisionSchema = z.object({
   createdAt: z.string().datetime(),
 });
 export type RuntimeDecision = z.infer<typeof RuntimeDecisionSchema>;
+
+export interface ModelAdapter {
+  adapterId: string;
+  provider: string;
+  defaultModel?: string;
+  health?(): Promise<{ ok: boolean; reason?: string }>;
+  complete(input: {
+    messages: Array<{ role: string; content: string }>;
+    model?: string;
+    temperature?: number;
+    maxTokens?: number;
+    trace?: RuntimeTrace;
+  }): Promise<{
+    content: string;
+    model: string;
+    usage?: Record<string, number>;
+    finishReason?: string;
+  }>;
+}
+
+export interface ToolGatewayAdapter {
+  adapterId: string;
+  listTools(input: { userId: string; event?: RuntimeEvent }): Promise<ToolIntent[]>;
+  preflight(request: RuntimeToolRequest): Promise<{
+    status: ToolIntent["status"];
+    approvalRequired: boolean;
+    reason: string;
+  }>;
+}
 
 export function parseRuntimeDecision(value: unknown): RuntimeDecision {
   const decision = RuntimeDecisionSchema.parse(value);
