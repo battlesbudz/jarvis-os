@@ -185,6 +185,10 @@ The first runtime-owned executor handles only `inline_answer` decisions with `an
 
 Live routes can preflight a request against the runtime before choosing an owner. With `JARVIS_RUNTIME_LIVE_EXECUTION` off, the gate returns the existing route owner. With it on, only completed read-only runtime executions become `core_runtime` owned; approval-required, queued, and tool-candidate decisions continue through the legacy route owner, while invalid runtime events block.
 
+## Runtime Read-Only Route
+
+`POST /api/runtime/read-only` is the first route that can return a runtime-owned execution envelope. It requires authentication and `JARVIS_RUNTIME_LIVE_EXECUTION=1`, ignores body-supplied user ids, returns only sanitized execution and decision summaries, and declines back to the existing route owner for approval-required, queued, or tool-candidate work.
+
 ## Tool Capability Summary
 
 Tool Gateway descriptors can be summarized into provider, scope, approval, and maximum-risk metadata. This helps preview callers understand the available tool surface before attempting preflight.
