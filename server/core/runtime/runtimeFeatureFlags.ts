@@ -2,6 +2,8 @@ export interface RuntimeFeatureFlags {
   previewEnabled: boolean;
   dryRunEnabled: boolean;
   liveExecutionEnabled: boolean;
+  defaultReadOnlyEnabled: boolean;
+  killSwitchEnabled: boolean;
   liveWorkflowIds: string[];
 }
 
@@ -24,6 +26,8 @@ export function getRuntimeFeatureFlags(env: RuntimeFeatureFlagEnv = process.env)
     previewEnabled: envFlag(env.JARVIS_RUNTIME_PREVIEW),
     dryRunEnabled: envFlag(env.JARVIS_RUNTIME_DRY_RUN),
     liveExecutionEnabled: envFlag(env.JARVIS_RUNTIME_LIVE_EXECUTION),
+    defaultReadOnlyEnabled: envFlag(env.JARVIS_RUNTIME_DEFAULT_READ_ONLY),
+    killSwitchEnabled: envFlag(env.JARVIS_RUNTIME_KILL_SWITCH),
     liveWorkflowIds: envList(env.JARVIS_RUNTIME_LIVE_WORKFLOWS),
   };
 }

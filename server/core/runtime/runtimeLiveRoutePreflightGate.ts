@@ -24,6 +24,18 @@ export function preflightRuntimeLiveRoute(
   env: RuntimeFeatureFlagEnv = process.env,
 ): RuntimeLiveRoutePreflightGate {
   const flags = getRuntimeFeatureFlags(env);
+  if (flags.killSwitchEnabled) {
+    return {
+      status: "runtime_disabled",
+      routeOwner: "legacy_route",
+      reason: "Runtime kill switch is enabled; continue with the existing route owner.",
+      shouldUseRuntime: false,
+      shouldContinueLegacy: true,
+      runtime: null,
+      runtimeWorkflowId: null,
+    };
+  }
+
   if (!flags.liveExecutionEnabled) {
     return {
       status: "runtime_disabled",
@@ -39,7 +51,12 @@ export function preflightRuntimeLiveRoute(
   const runtime = executeRuntimeReadOnly(input);
   if (runtime.execution.status === "completed") {
     const workflow = matchRuntimeOwnedGoldenWorkflow(runtime);
-    if (!workflow || !isRuntimeOwnedGoldenWorkflowAllowed(workflow.workflowId, flags.liveWorkflowIds)) {
+    const workflowAllowed = Boolean(workflow) && (
+      flags.defaultReadOnlyEnabled ||
+      isRuntimeOwnedGoldenWorkflowAllowed(workflow.workflowId, flags.liveWorkflowIds)
+    );
+
+    if (!workflow || !workflowAllowed) {
       return {
         status: "legacy_route_allowed",
         routeOwner: "legacy_route",

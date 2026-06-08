@@ -157,7 +157,7 @@ Simple route or channel inputs can be adapted into validated `JarvisEvent` objec
 
 ## Runtime Feature Flags
 
-Runtime preview, dry-run, and live workflow integration must be explicitly gated. The feature flag helper reads `JARVIS_RUNTIME_PREVIEW`, `JARVIS_RUNTIME_DRY_RUN`, `JARVIS_RUNTIME_LIVE_EXECUTION`, and `JARVIS_RUNTIME_LIVE_WORKFLOWS`, defaulting all capabilities off. Dry-run helpers still fail closed if broad live execution is enabled.
+Runtime preview, dry-run, and live workflow integration must be explicitly gated. The feature flag helper reads `JARVIS_RUNTIME_PREVIEW`, `JARVIS_RUNTIME_DRY_RUN`, `JARVIS_RUNTIME_LIVE_EXECUTION`, `JARVIS_RUNTIME_DEFAULT_READ_ONLY`, `JARVIS_RUNTIME_KILL_SWITCH`, and `JARVIS_RUNTIME_LIVE_WORKFLOWS`, defaulting all capabilities off. Dry-run helpers still fail closed if broad live execution is enabled.
 
 The route integration checklist lives in `docs/runtime-preview-integration-checklist.md`.
 
@@ -199,9 +199,9 @@ The first runtime-owned executor handles only `inline_answer` decisions with `an
 
 ## Runtime Live Route Preflight Gate
 
-Live routes can preflight a request against the runtime before choosing an owner. With `JARVIS_RUNTIME_LIVE_EXECUTION` off, the gate returns the existing route owner. With it on, only completed read-only runtime executions that match an allowlisted `JARVIS_RUNTIME_LIVE_WORKFLOWS` id become `core_runtime` owned; approval-required, queued, tool-candidate, and non-allowlisted decisions continue through the legacy route owner, while invalid runtime events block.
+Live routes can preflight a request against the runtime before choosing an owner. With `JARVIS_RUNTIME_LIVE_EXECUTION` off, the gate returns the existing route owner. With it on, only completed read-only runtime executions that match an allowlisted `JARVIS_RUNTIME_LIVE_WORKFLOWS` id become `core_runtime` owned. `JARVIS_RUNTIME_DEFAULT_READ_ONLY=1` allows all migrated runtime-owned read-only workflow ids. `JARVIS_RUNTIME_KILL_SWITCH=1` wins over every live/default flag and routes back to the existing owner.
 
-The runtime-owned read-only workflow ids are `general-answer`, `memory-lookup`, `email-draft-reply`, and `next-meeting-brief`. A workflow is live-owned only when its id is explicitly present in `JARVIS_RUNTIME_LIVE_WORKFLOWS`.
+The runtime-owned read-only workflow ids are `general-answer`, `memory-lookup`, `email-draft-reply`, and `next-meeting-brief`. A workflow is live-owned only when its id is explicitly present in `JARVIS_RUNTIME_LIVE_WORKFLOWS` or default read-only ownership is enabled. Approval-required, queued, tool-candidate, and non-matching decisions continue through the legacy route owner, while invalid runtime events block.
 
 ## Runtime Read-Only Route
 
