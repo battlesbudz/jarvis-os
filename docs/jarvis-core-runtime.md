@@ -189,6 +189,10 @@ Live routes can preflight a request against the runtime before choosing an owner
 
 `POST /api/runtime/read-only` is the first route that can return a runtime-owned execution envelope. It requires authentication and `JARVIS_RUNTIME_LIVE_EXECUTION=1`, ignores body-supplied user ids, returns only sanitized execution and decision summaries, and declines back to the existing route owner for approval-required, queued, or tool-candidate work.
 
+## Runtime Approval Workflow
+
+Approval-required runtime decisions and existing approval gates can be shaped into workflow previews. Pending gates expose a redacted approval preview; approved gates become a resume handoff for the existing route/tool owner; rejected or expired gates cannot resume. Runtime does not execute the approved tool in this slice.
+
 ## Tool Capability Summary
 
 Tool Gateway descriptors can be summarized into provider, scope, approval, and maximum-risk metadata. This helps preview callers understand the available tool surface before attempting preflight.
