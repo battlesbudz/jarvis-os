@@ -96,6 +96,7 @@ const tests = [
   { file: "server/core/runtime/__tests__/runtimeContextPacketAdapter.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeDiagnosticsRoutes.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeDryRun.test.ts" },
+  { file: "server/core/runtime/__tests__/runtimeE2ESmoke.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeEventAdapter.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeFeatureFlags.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeGoldenDryRun.test.ts" },
