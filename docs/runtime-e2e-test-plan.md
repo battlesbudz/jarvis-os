@@ -279,6 +279,7 @@ Expected:
 - A pending memory/review item appears when the existing app decides to save or correct memory.
 - Runtime calibration preview has `approvalRequired: true`.
 - Runtime calibration preview has `writeAllowed: false`.
+- Runtime calibration preview includes a Memory OS correction review result with `recorded: false`, `reviewOnly: true`, and runtime event provenance.
 - Confidence is normalized if the input is percent-shaped.
 - Secret metadata is redacted.
 - Runtime does not directly update canonical memory.

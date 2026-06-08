@@ -1,4 +1,9 @@
 import { JarvisEventSchema, redactRuntimeValue, type JarvisEvent, type RuntimeRiskTier } from "../protocol";
+import {
+  buildMemoryCorrectionReview,
+  type MemoryCorrectionReview,
+  type MemoryProvenanceRef,
+} from "../../memory/memoryOs";
 
 export type RuntimeMemoryCalibrationStatus = "review_required" | "invalid";
 export type RuntimeMemoryCalibrationOperation = "correct_existing_memory" | "propose_new_memory";
@@ -62,6 +67,7 @@ export interface RuntimeMemoryCalibrationPreview {
     source: RuntimeMemoryCalibrationCorrection["source"];
     metadata: Record<string, unknown>;
   };
+  memoryOsCorrection: MemoryCorrectionReview;
   reviewReasons: string[];
   errors: string[];
   createdAt: string;
@@ -114,6 +120,31 @@ function buildCurrentMemory(memory: RuntimeMemoryCalibrationMemory | null | unde
   };
 }
 
+function memoryOsProvenance(input: {
+  event: JarvisEvent;
+  currentMemory: RuntimeMemoryCalibrationPreview["currentMemory"];
+}): MemoryProvenanceRef[] {
+  const refs: MemoryProvenanceRef[] = [
+    {
+      kind: "runtime_event",
+      id: input.event.eventId,
+      source: "runtime",
+      label: input.event.channel ?? input.event.source,
+    },
+  ];
+
+  if (input.currentMemory?.id) {
+    refs.push({
+      kind: "user_memory",
+      id: input.currentMemory.id,
+      source: "canonical",
+      label: input.currentMemory.category ?? input.currentMemory.memoryType ?? "runtime_memory_calibration",
+    });
+  }
+
+  return refs;
+}
+
 function reviewReasons(input: {
   event: JarvisEvent;
   currentMemory: RuntimeMemoryCalibrationPreview["currentMemory"];
@@ -144,12 +175,33 @@ export function buildRuntimeMemoryCalibrationPreview(input: RuntimeMemoryCalibra
   const trimmedContent = content.trim();
   const errors = trimmedContent ? [] : ["Memory correction content is required."];
   const createdAt = input.createdAt ?? event.createdAt;
+  const previewId = `runtime-memory-calibration-${event.eventId}`;
+  const operation: RuntimeMemoryCalibrationOperation = currentMemory?.id ? "correct_existing_memory" : "propose_new_memory";
+  const proposedConfidence = normalizeConfidence(input.correction.confidence, input.correction.confidenceScale);
+  const memoryOsCorrection = buildMemoryCorrectionReview({
+    userId: event.userId,
+    operation,
+    proposedContent: trimmedContent,
+    reason: input.correction.reason ?? null,
+    confidence: proposedConfidence?.normalized ?? null,
+    currentMemoryId: currentMemory?.id ?? null,
+    currentMemoryContent: currentMemory?.content ?? null,
+    source: {
+      kind: "runtime_memory_calibration",
+      eventId: event.eventId,
+      eventSource: event.source,
+      channel: event.channel ?? null,
+      previewId,
+      createdAt,
+    },
+    provenance: memoryOsProvenance({ event, currentMemory }),
+  });
 
   return {
-    previewId: `runtime-memory-calibration-${event.eventId}`,
+    previewId,
     eventId: event.eventId,
     userId: event.userId,
-    operation: currentMemory?.id ? "correct_existing_memory" : "propose_new_memory",
+    operation,
     status: errors.length > 0 ? "invalid" : "review_required",
     riskTier: "T2",
     approvalRequired: true,
@@ -158,10 +210,11 @@ export function buildRuntimeMemoryCalibrationPreview(input: RuntimeMemoryCalibra
     proposedMemory: {
       content: trimmedContent,
       reason: input.correction.reason ?? null,
-      confidence: normalizeConfidence(input.correction.confidence, input.correction.confidenceScale),
+      confidence: proposedConfidence,
       source: input.correction.source ?? "user",
       metadata: redactedRecord(input.correction.metadata),
     },
+    memoryOsCorrection,
     reviewReasons: reviewReasons({ event, currentMemory, proposedContent: content }),
     errors,
     createdAt,

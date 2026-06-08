@@ -418,11 +418,14 @@ Status note, 2026-06-05: the G-Brain chunk side of this baseline and the canonic
 
 Status note, 2026-06-05: the targeted read-path facade baseline is implemented. It routes the `memory_search` tool, coach context, daily command context, Agent SDK global memory context, and G-Brain-backed retrieval through `server/memory/memoryOs.ts` with structured source/provenance fields and fallback uncertainty. Legacy direct memory reads outside those named contexts, write-path episode capture, user-facing explanation/correction, Redis hot state, and Graphiti remain later phases.
 
+Status note, 2026-06-08: Jarvis Core Runtime memory calibration previews now hand correction proposals to the Memory OS correction/provenance facade as review-only artifacts. The bridge records runtime event provenance and existing-memory citations but still returns `recorded: false`; durable Memory OS correction writes remain a later slice.
+
 Implemented:
 
 - `server/memory/memoryOs.ts`
 - route existing `memory_search`, daily command, Agent SDK read context, and coach context through it
 - return structured provenance and uncertainty
+- expose review-only correction/provenance results for runtime memory calibration previews
 - keep current behavior as fallback
 
 Outcome:

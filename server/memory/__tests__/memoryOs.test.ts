@@ -20,7 +20,12 @@ function memory(overrides: Partial<RetrievedMemory> = {}): RetrievedMemory {
 }
 
 async function main(): Promise<void> {
-  const { retrieveMemoryContext, memoryContextItemsToRetrievedMemories } = await import("../memoryOs");
+  const {
+    retrieveMemoryContext,
+    memoryContextItemsToRetrievedMemories,
+    recordMemoryCorrection,
+    buildMemoryCorrectionReview,
+  } = await import("../memoryOs");
 
   const context = await retrieveMemoryContext(
     {
@@ -100,6 +105,71 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(failed.items, []);
   assert.match(failed.uncertainty[0] ?? "", /database unavailable/);
+
+  const correction = await recordMemoryCorrection({
+    userId: "memory-os-user",
+    operation: "correct_existing_memory",
+    currentMemoryId: "memory-os-1",
+    currentMemoryContent: "The user starts daily planning at 9:00.",
+    proposedContent: " The user starts daily planning at 8:30. ",
+    reason: "User corrected the previous schedule.",
+    confidence: 0.94,
+    source: {
+      kind: "runtime_memory_calibration",
+      eventId: "runtime-memory-event-1",
+      eventSource: "app",
+      channel: "settings-runtime-preview",
+      previewId: "runtime-memory-calibration-runtime-memory-event-1",
+      createdAt: "2026-06-08T21:00:00.000Z",
+    },
+    provenance: [
+      {
+        kind: "runtime_event",
+        id: "runtime-memory-event-1",
+        source: "runtime",
+        label: "settings-runtime-preview",
+      },
+      {
+        kind: "user_memory",
+        id: "memory-os-1",
+        source: "canonical",
+        label: "preferences",
+      },
+    ],
+  });
+
+  assert.equal(correction.recorded, false);
+  assert.equal(correction.reviewOnly, true);
+  assert.equal(correction.status, "review_required");
+  assert.equal(correction.operation, "correct_existing_memory");
+  assert.equal(correction.currentMemoryId, "memory-os-1");
+  assert.equal(correction.proposedContent, "The user starts daily planning at 8:30.");
+  assert.equal(correction.source?.eventId, "runtime-memory-event-1");
+  assert.deepEqual(
+    correction.provenance.map((ref) => `${ref.kind}:${ref.source}:${ref.id}`),
+    [
+      "runtime_event:runtime:runtime-memory-event-1",
+      "user_memory:canonical:memory-os-1",
+    ],
+  );
+
+  const invalidCorrection = buildMemoryCorrectionReview({
+    userId: "",
+    operation: "correct_existing_memory",
+    proposedContent: "   ",
+    source: {
+      kind: "runtime_memory_calibration",
+      eventId: "runtime-memory-event-invalid",
+      eventSource: "app",
+    },
+  });
+
+  assert.equal(invalidCorrection.recorded, false);
+  assert.equal(invalidCorrection.reviewOnly, true);
+  assert.equal(invalidCorrection.status, "invalid");
+  assert.match(invalidCorrection.uncertainty.join(" "), /No user id/);
+  assert.match(invalidCorrection.uncertainty.join(" "), /No proposed memory correction content/);
+  assert.match(invalidCorrection.uncertainty.join(" "), /without an existing memory id/);
 
   console.log("OK: Memory OS facade normalizes memories, provenance, and fallback uncertainty");
 }

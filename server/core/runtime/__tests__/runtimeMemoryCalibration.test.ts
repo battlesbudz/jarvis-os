@@ -15,6 +15,7 @@ async function run(): Promise<void> {
         source: "app",
         userId: "user-memory-calibration",
         message: "Actually, remember my planning block starts at 8:30 now.",
+        channel: "settings-runtime-preview",
         createdAt: now,
       },
       currentMemory: {
@@ -44,9 +45,23 @@ async function run(): Promise<void> {
     assert.equal(preview.proposedMemory.confidence?.normalized, 0.94);
     assert.equal(preview.currentMemory?.metadata.accessToken, "[redacted]");
     assert.equal(preview.proposedMemory.metadata.sourceCookie, "[redacted]");
+    assert.equal(preview.memoryOsCorrection.recorded, false);
+    assert.equal(preview.memoryOsCorrection.reviewOnly, true);
+    assert.equal(preview.memoryOsCorrection.status, "review_required");
+    assert.equal(preview.memoryOsCorrection.operation, "correct_existing_memory");
+    assert.equal(preview.memoryOsCorrection.currentMemoryId, "mem-planning");
+    assert.equal(preview.memoryOsCorrection.source?.eventId, "event-memory-calibration");
+    assert.equal(preview.memoryOsCorrection.source?.channel, "settings-runtime-preview");
+    assert.deepEqual(
+      preview.memoryOsCorrection.provenance.map((ref) => `${ref.kind}:${ref.source}:${ref.id}`),
+      [
+        "runtime_event:runtime:event-memory-calibration",
+        "user_memory:canonical:mem-planning",
+      ],
+    );
     assert.doesNotMatch(JSON.stringify(preview), /secret-token|secret-cookie/);
     assert.match(preview.reviewReasons.join(" "), /memory review\/write controls/);
-    console.log("OK: Runtime memory calibration preview redacts and requires review for corrections");
+    console.log("OK: Runtime memory calibration preview redacts and carries Memory OS provenance for corrections");
   }
 
   {
@@ -67,6 +82,13 @@ async function run(): Promise<void> {
 
     assert.equal(preview.operation, "propose_new_memory");
     assert.equal(preview.status, "review_required");
+    assert.equal(preview.memoryOsCorrection.recorded, false);
+    assert.equal(preview.memoryOsCorrection.reviewOnly, true);
+    assert.equal(preview.memoryOsCorrection.operation, "propose_new_memory");
+    assert.deepEqual(
+      preview.memoryOsCorrection.provenance.map((ref) => `${ref.kind}:${ref.source}:${ref.id}`),
+      ["runtime_event:runtime:event-memory-calibration-new"],
+    );
     assert.equal(preview.proposedMemory.confidence?.normalized, 0.97);
     assert.match(preview.reviewReasons.join(" "), /channel provenance/);
     console.log("OK: Runtime memory calibration preview handles new memory proposals with provenance reasons");
@@ -87,6 +109,9 @@ async function run(): Promise<void> {
     });
 
     assert.equal(preview.status, "invalid");
+    assert.equal(preview.memoryOsCorrection.status, "invalid");
+    assert.equal(preview.memoryOsCorrection.reviewOnly, true);
+    assert.match(preview.memoryOsCorrection.uncertainty.join(" "), /No proposed memory correction content/);
     assert.deepEqual(preview.errors, ["Memory correction content is required."]);
     console.log("OK: Runtime memory calibration preview fails closed on empty correction content");
   }
