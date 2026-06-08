@@ -12,6 +12,7 @@ export * from "./runtimeEventAdapter";
 export * from "./runtimeFeatureFlags";
 export * from "./runtimeGoldenFixtures";
 export * from "./runtimeLiveRoutePreflightGate";
+export * from "./runtimeMemoryCalibration";
 export * from "./runtimeOwnedGoldenWorkflow";
 export * from "./runtimePersistenceRecord";
 export * from "./runtimePreviewFormatter";
