@@ -89,6 +89,7 @@ const tests = [
   { file: "server/core/runtime/__tests__/runtimeAuditEvent.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeApprovalPreview.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeCapabilityPreview.test.ts" },
+  { file: "server/core/runtime/__tests__/runtimeContextPacketAdapter.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeDiagnosticsRoutes.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeDryRun.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeEventAdapter.test.ts" },
