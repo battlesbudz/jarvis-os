@@ -14,7 +14,15 @@ const DOWNLOADS_DIR = getProjectDownloadsDir();
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
 function getFallbackUrl(): string | null {
-  return process.env.ANDROID_APK_URL ?? null;
+  const releaseBase = (
+    process.env.JARVIS_ANDROID_DAEMON_UPDATE_RELEASE_BASE ||
+    "https://github.com/battlesbudz/Gameplanjarvisai/releases/download/android-daemon-latest"
+  ).replace(/\/+$/, "");
+  return (
+    process.env.JARVIS_ANDROID_DAEMON_APK_URL ??
+    process.env.ANDROID_APK_URL ??
+    `${releaseBase}/jarvis-daemon.apk`
+  );
 }
 
 export function registerDownloadRoutes(app: Express): void {

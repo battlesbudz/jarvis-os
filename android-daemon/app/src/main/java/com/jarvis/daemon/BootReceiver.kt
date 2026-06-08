@@ -15,7 +15,11 @@ class BootReceiver : BroadcastReceiver() {
         ) return
 
         val prefs = context.getSharedPreferences(WebSocketService.PREFS_NAME, Context.MODE_PRIVATE)
-        val serverUrl = prefs.getString(WebSocketService.PREF_SERVER_URL, "") ?: ""
+        val rawServerUrl = prefs.getString(WebSocketService.PREF_SERVER_URL, "") ?: ""
+        val serverUrl = JarvisConfig.normalizeServerUrl(rawServerUrl)
+        if (rawServerUrl != serverUrl) {
+            prefs.edit().putString(WebSocketService.PREF_SERVER_URL, serverUrl).apply()
+        }
         val daemonId = prefs.getString(WebSocketService.PREF_DAEMON_ID, "") ?: ""
         val reconnectSecret = prefs.getString(WebSocketService.PREF_RECONNECT_SECRET, "") ?: ""
 

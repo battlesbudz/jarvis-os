@@ -2,8 +2,9 @@ name: Build Android Daemon APK
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/replit-main-continuation]
     paths:
+      - '.github/workflows/build-android-apk.yml'
       - 'android-daemon/**'
   workflow_dispatch:
 

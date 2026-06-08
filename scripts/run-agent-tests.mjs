@@ -12,6 +12,7 @@ loadEnvFiles(projectRoot);
 const tests = [
   { file: "scripts/__tests__/testEnv.test.mjs" },
   { file: "scripts/__tests__/noReplitRuntimeDeps.test.mjs" },
+  { file: "scripts/__tests__/androidDaemonUpdateConfig.test.mjs" },
   { file: "scripts/__tests__/dashboardProjectsNavigation.test.mjs" },
   { file: "scripts/__tests__/oauthGatewayDoctor.test.mjs" },
   { file: "scripts/__tests__/desktopDaemonWatchdog.test.mjs" },

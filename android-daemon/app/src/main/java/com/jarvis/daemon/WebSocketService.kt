@@ -113,7 +113,11 @@ class WebSocketService : Service() {
         // startForeground() is only valid when the service is started via
         // startForegroundService(), not when it is only bound.
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        serverUrl = prefs.getString(PREF_SERVER_URL, "") ?: ""
+        val rawServerUrl = prefs.getString(PREF_SERVER_URL, "") ?: ""
+        serverUrl = JarvisConfig.normalizeServerUrl(rawServerUrl)
+        if (rawServerUrl != serverUrl) {
+            prefs.edit().putString(PREF_SERVER_URL, serverUrl).apply()
+        }
         daemonId = prefs.getString(PREF_DAEMON_ID, "") ?: ""
         reconnectSecret = prefs.getString(PREF_RECONNECT_SECRET, "") ?: ""
     }
@@ -131,7 +135,7 @@ class WebSocketService : Service() {
         startForegroundCompat()
         when (intent?.action) {
             ACTION_CONNECT -> {
-                val url = intent.getStringExtra(EXTRA_SERVER_URL) ?: return START_STICKY
+                val url = JarvisConfig.normalizeServerUrl(intent.getStringExtra(EXTRA_SERVER_URL))
                 val code = intent.getStringExtra(EXTRA_PAIR_CODE) ?: return START_STICKY
                 serverUrl = url
                 pairCode = code
@@ -145,13 +149,15 @@ class WebSocketService : Service() {
             }
             ACTION_RECONNECT -> {
                 // Boot or restart reconnect — use persisted credentials
-                val url = intent.getStringExtra(EXTRA_SERVER_URL) ?: serverUrl
+                val url = JarvisConfig.normalizeServerUrl(intent.getStringExtra(EXTRA_SERVER_URL) ?: serverUrl)
                 val id = intent.getStringExtra(EXTRA_DAEMON_ID) ?: daemonId
                 val secret = intent.getStringExtra(EXTRA_RECONNECT_SECRET) ?: reconnectSecret
                 if (url.isNotEmpty() && id.isNotEmpty() && secret.isNotEmpty()) {
                     serverUrl = url
                     daemonId = id
                     reconnectSecret = secret
+                    getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().putString(PREF_SERVER_URL, url).apply()
                     reconnectEnabled = true
                     connect(useDaemonId = true)
                 } else {
@@ -237,7 +243,7 @@ class WebSocketService : Service() {
     }
 
     private fun buildWsUrl(serverUrl: String): String {
-        val base = serverUrl.trimEnd('/')
+        val base = JarvisConfig.normalizeServerUrl(serverUrl).trimEnd('/')
         return when {
             base.startsWith("https://") -> base.replace("https://", "wss://") + "/api/daemon/ws"
             base.startsWith("http://") -> base.replace("http://", "ws://") + "/api/daemon/ws"
