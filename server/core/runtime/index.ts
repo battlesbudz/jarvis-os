@@ -10,3 +10,4 @@ export * from "./runtimePreviewFormatter";
 export * from "./runtimePreviewReport";
 export * from "./runtimeToolPreflight";
 export * from "./runtimeTypes";
+export * from "./runRuntimeEvent";
