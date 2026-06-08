@@ -107,6 +107,7 @@ const tests = [
   { file: "server/core/runtime/__tests__/runtimeReadOnlyExecutor.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeShadowPreview.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeShadowTraceComparison.test.ts" },
+  { file: "server/core/runtime/__tests__/runtimeToolExecutionGateway.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeToolPreflight.test.ts" },
   { file: "server/core/runtime/__tests__/runRuntimeEvent.test.ts" },
   { file: "server/core/tools/__tests__/agentToolAdapter.test.ts" },

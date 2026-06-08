@@ -18,6 +18,7 @@ export * from "./runtimePreviewReport";
 export * from "./runtimeReadOnlyExecutor";
 export * from "./runtimeShadowPreview";
 export * from "./runtimeShadowTraceComparison";
+export * from "./runtimeToolExecutionGateway";
 export * from "./runtimeToolPreflight";
 export * from "./runtimeTypes";
 export * from "./runRuntimeEvent";
