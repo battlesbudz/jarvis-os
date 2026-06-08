@@ -173,6 +173,10 @@ Runtime preview reports can be formatted into deterministic text for logs, diagn
 
 Dry-run results can be transformed into structured audit event payloads containing event, decision, status, risk, response mode, approval, and tool-count metadata. The builder returns a payload only; it does not write logs, persist records, or emit events.
 
+## Runtime Audit Trace Link
+
+Runtime audit events can be linked to existing orchestration traces or adapted Mind Trace records with a persistable, preview-only payload. The link carries IDs, status, risk, approval, route, and task metadata only; it does not write the trace table, create audit rows, or execute any runtime work.
+
 ## Tool Capability Summary
 
 Tool Gateway descriptors can be summarized into provider, scope, approval, and maximum-risk metadata. This helps preview callers understand the available tool surface before attempting preflight.
