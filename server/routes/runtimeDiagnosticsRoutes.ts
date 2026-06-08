@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import {
   formatRuntimePreview,
   jarvisEventFromMessage,
+  preflightRuntimeLiveRoute,
   tryRunRuntimeDryRun,
 } from "../core/runtime";
 import type { JarvisEvent, RuntimeRiskTier } from "../core/protocol";
@@ -105,25 +106,32 @@ function isInputError(error: unknown): boolean {
   );
 }
 
+function runtimeEventFromRequestBody(body: Record<string, unknown>, userId: string, defaultChannel: string): JarvisEvent {
+  const message = optionalString(body.message ?? body.userRequest ?? body.prompt);
+  if (!message) {
+    throw new Error("message is required");
+  }
+
+  return jarvisEventFromMessage({
+    eventId: optionalString(body.eventId),
+    source: eventSource(body.source),
+    userId,
+    message,
+    channel: optionalString(body.channel) ?? defaultChannel,
+    createdAt: optionalString(body.createdAt),
+    metadata: asRecord(body.metadata),
+  });
+}
+
 export function registerRuntimeDiagnosticsRoutes(app: Express): void {
   app.post("/api/runtime/dry-run", (req: Request, res: Response) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
 
     const body = asRecord(req.body);
-    const message = optionalString(body.message ?? body.userRequest ?? body.prompt);
-    if (!message) return res.status(400).json({ error: "message is required" });
 
     try {
-      const event = jarvisEventFromMessage({
-        eventId: optionalString(body.eventId),
-        source: eventSource(body.source),
-        userId,
-        message,
-        channel: optionalString(body.channel) ?? "runtime-diagnostics",
-        createdAt: optionalString(body.createdAt),
-        metadata: asRecord(body.metadata),
-      });
+      const event = runtimeEventFromRequestBody(body, userId, "runtime-diagnostics");
       const result = tryRunRuntimeDryRun({
         event,
         now: new Date(event.createdAt),
@@ -152,6 +160,9 @@ export function registerRuntimeDiagnosticsRoutes(app: Express): void {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (message === "message is required") {
+        return res.status(400).json({ error: "message is required" });
+      }
       if (message.includes("live execution is not supported")) {
         return res.status(409).json({ error: message });
       }
@@ -161,6 +172,80 @@ export function registerRuntimeDiagnosticsRoutes(app: Express): void {
 
       console.error("[runtime-diagnostics] dry run failed:", error);
       return res.status(500).json({ error: "Runtime dry run failed" });
+    }
+  });
+
+  app.post("/api/runtime/read-only", (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+
+    const body = asRecord(req.body);
+
+    try {
+      const event = runtimeEventFromRequestBody(body, userId, "runtime-read-only");
+      const gate = preflightRuntimeLiveRoute({
+        event,
+        now: new Date(event.createdAt),
+      }, process.env);
+
+      if (gate.status === "runtime_disabled") {
+        return res.json({
+          ok: true,
+          runtimeOwned: false,
+          disabled: true,
+          routeOwner: gate.routeOwner,
+          reason: gate.reason,
+        });
+      }
+
+      if (gate.status === "runtime_readonly_allowed" && gate.runtime) {
+        return res.json({
+          ok: true,
+          runtimeOwned: true,
+          disabled: false,
+          routeOwner: gate.routeOwner,
+          gateStatus: gate.status,
+          execution: gate.runtime.execution,
+          decision: {
+            decisionId: gate.runtime.decision.decisionId,
+            eventId: gate.runtime.decision.eventId,
+            userId: gate.runtime.decision.userId,
+            intent: gate.runtime.decision.intent,
+            responseMode: gate.runtime.decision.responseMode,
+            riskTier: gate.runtime.decision.riskTier,
+            approvalRequired: gate.runtime.decision.approval.required,
+          },
+        });
+      }
+
+      if (gate.status === "blocked") {
+        return res.status(400).json({
+          ok: false,
+          runtimeOwned: false,
+          routeOwner: gate.routeOwner,
+          gateStatus: gate.status,
+          reason: gate.reason,
+        });
+      }
+
+      return res.status(409).json({
+        ok: false,
+        runtimeOwned: false,
+        routeOwner: gate.routeOwner,
+        gateStatus: gate.status,
+        reason: gate.reason,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message === "message is required") {
+        return res.status(400).json({ error: "message is required" });
+      }
+      if (isInputError(error)) {
+        return res.status(400).json({ error: "Invalid runtime read-only request", detail: message });
+      }
+
+      console.error("[runtime-diagnostics] read-only execution failed:", error);
+      return res.status(500).json({ error: "Runtime read-only execution failed" });
     }
   });
 }

@@ -6,8 +6,9 @@ import { registerRuntimeDiagnosticsRoutes } from "../../../routes/runtimeDiagnos
 async function requestJson(
   port: number,
   payload: Record<string, unknown>,
+  path = "/api/runtime/dry-run",
 ) {
-  const response = await fetch(`http://127.0.0.1:${port}/api/runtime/dry-run`, {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -146,6 +147,45 @@ async function run(): Promise<void> {
     assert.equal(policyBlocked.status, 200);
     assert.equal((policyBlocked.body.report as { status?: string }).status, "blocked");
     assert.match(String(policyBlocked.body.formatted), /runtime policy/);
+
+    delete process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
+    const readOnlyDisabled = await requestJson(port, { message: "What can you do?" }, "/api/runtime/read-only");
+    assert.equal(readOnlyDisabled.status, 200);
+    assert.equal(readOnlyDisabled.body.runtimeOwned, false);
+    assert.equal(readOnlyDisabled.body.disabled, true);
+    assert.equal(readOnlyDisabled.body.routeOwner, "legacy_route");
+
+    process.env.JARVIS_RUNTIME_LIVE_EXECUTION = "1";
+    const readOnlyExecuted = await requestJson(port, {
+      eventId: "event-read-only-route",
+      userId: "body-user-should-not-win",
+      message: "What can you do?",
+      metadata: {
+        token: "read-only-secret-token",
+      },
+    }, "/api/runtime/read-only");
+    assert.equal(readOnlyExecuted.status, 200);
+    assert.equal(readOnlyExecuted.body.runtimeOwned, true);
+    assert.equal(readOnlyExecuted.body.routeOwner, "core_runtime");
+    assert.equal((readOnlyExecuted.body.execution as { status?: string }).status, "completed");
+    assert.equal((readOnlyExecuted.body.execution as { executedToolCount?: number }).executedToolCount, 0);
+    assert.equal((readOnlyExecuted.body.decision as { userId?: string }).userId, "user-runtime-route");
+    assert.doesNotMatch(JSON.stringify(readOnlyExecuted.body), /body-user-should-not-win/);
+    assert.doesNotMatch(JSON.stringify(readOnlyExecuted.body), /read-only-secret-token/);
+
+    const readOnlyDeclined = await requestJson(port, {
+      message: "Send an email to Bill.",
+    }, "/api/runtime/read-only");
+    assert.equal(readOnlyDeclined.status, 409);
+    assert.equal(readOnlyDeclined.body.runtimeOwned, false);
+    assert.equal(readOnlyDeclined.body.routeOwner, "legacy_route");
+    assert.equal(readOnlyDeclined.body.gateStatus, "legacy_route_allowed");
+
+    const readOnlyMissingMessage = await requestJson(port, { channel: "test" }, "/api/runtime/read-only");
+    assert.equal(readOnlyMissingMessage.status, 400);
+    assert.equal(readOnlyMissingMessage.body.error, "message is required");
+
+    delete process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
 
     const unauthenticated = await startServer();
     try {
