@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import {
+  executeRuntimeReadOnly,
   formatRuntimePreview,
   jarvisEventFromMessage,
   RUNTIME_GOLDEN_DRY_RUN_FIXTURES,
@@ -9,6 +10,8 @@ import {
 const now = new Date("2026-06-08T13:00:00.000Z");
 
 assert.ok(RUNTIME_GOLDEN_DRY_RUN_FIXTURES.length >= 10, "runtime golden fixtures cover the documented workflow set");
+const runtimeOwnedFixtures = RUNTIME_GOLDEN_DRY_RUN_FIXTURES.filter((fixture) => fixture.expectedRuntimeOwner === "core_runtime");
+assert.equal(runtimeOwnedFixtures.length, 1, "exactly one golden fixture is runtime-owned in this slice");
 
 for (const fixture of RUNTIME_GOLDEN_DRY_RUN_FIXTURES) {
   const event = jarvisEventFromMessage({
@@ -35,6 +38,12 @@ for (const fixture of RUNTIME_GOLDEN_DRY_RUN_FIXTURES) {
   }
   if (fixture.expectedApprovalRequired !== undefined) {
     assert.equal(result.report.approvalRequired, fixture.expectedApprovalRequired, `${fixture.id} approval flag`);
+  }
+  if (fixture.expectedRuntimeOwner === "core_runtime") {
+    const execution = executeRuntimeReadOnly({ event, now });
+    assert.equal(execution.execution.status, "completed", `${fixture.id} runtime execution status`);
+    assert.equal(execution.execution.owner, "core_runtime", `${fixture.id} runtime owner`);
+    assert.equal(execution.execution.executedToolCount, 0, `${fixture.id} executed tool count`);
   }
   if (fixture.id === "diagnostics-route-approval-preview") {
     assert.equal(result.preview.event.channel, "settings-runtime-preview");

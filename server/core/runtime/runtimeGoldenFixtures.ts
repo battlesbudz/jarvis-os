@@ -13,6 +13,7 @@ export interface RuntimeGoldenDryRunFixture {
   expectedResponseMode?: RuntimeDecision["responseMode"];
   expectedGateOutcome?: RuntimeGateOutcome;
   expectedApprovalRequired?: boolean;
+  expectedRuntimeOwner?: "core_runtime" | "existing_jarvis";
 }
 
 export const RUNTIME_GOLDEN_DRY_RUN_FIXTURES: RuntimeGoldenDryRunFixture[] = [
@@ -29,6 +30,7 @@ export const RUNTIME_GOLDEN_DRY_RUN_FIXTURES: RuntimeGoldenDryRunFixture[] = [
     message: "What can you do?",
     expectedIntent: "general",
     expectedStatus: "ready",
+    expectedRuntimeOwner: "core_runtime",
   },
   {
     id: "memory-lookup",
