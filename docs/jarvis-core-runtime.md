@@ -105,6 +105,12 @@ The first Tool Gateway slice is preflight-only. It accepts protocol `ToolIntent`
 
 This layer does not import the live tool registry and never executes tools. It is the policy vocabulary that future runtime adapters can use before handing execution back to the existing tool owners.
 
+## Runtime Tool Execution Gateway
+
+Runtime-owned tool execution must pass through Tool Gateway preflight before any injected tool executor can run. The execution gateway preflights every tool intent first, blocks the whole decision if any intent needs approval/auth/scope/provider recovery or is policy-blocked, and only then hands ready intents to an existing tool owner callback.
+
+Core Runtime still does not import the live tool registry or directly execute approved tools. The gateway records `executedByRuntime: false` to make that boundary explicit.
+
 ## Agent Tool Descriptor Adapter
 
 Existing `AgentTool` objects can be adapted into Tool Gateway descriptors without importing the live registry. The adapter accepts tool-name shaped objects and optional explicit overrides, then infers conservative provider, scope, risk, and approval metadata for preflight.

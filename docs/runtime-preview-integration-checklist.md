@@ -21,6 +21,7 @@ This checklist describes what can be wired after the Core Runtime preview stack 
 - Do not create approval records from `RuntimeApprovalPreview`.
 - Do not merge runtime decisions back into the live harness without a dedicated integration PR.
 - Do not enable `JARVIS_RUNTIME_LIVE_EXECUTION` without also setting a narrow `JARVIS_RUNTIME_LIVE_WORKFLOWS` allowlist.
+- Do not call injected runtime tool executors unless `executeRuntimeDecisionToolsThroughGateway` reports every tool intent as preflight-ready.
 
 ## Current Preview Integration
 
