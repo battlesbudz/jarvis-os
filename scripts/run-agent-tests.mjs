@@ -100,6 +100,7 @@ const tests = [
   { file: "server/core/runtime/__tests__/runtimeGuardedDryRun.test.ts" },
   { file: "server/core/runtime/__tests__/runtimePreviewFormatter.test.ts" },
   { file: "server/core/runtime/__tests__/runtimePreviewReport.test.ts" },
+  { file: "server/core/runtime/__tests__/runtimeReadOnlyExecutor.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeShadowPreview.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeShadowTraceComparison.test.ts" },
   { file: "server/core/runtime/__tests__/runtimeToolPreflight.test.ts" },

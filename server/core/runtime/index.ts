@@ -11,6 +11,7 @@ export * from "./runtimeFeatureFlags";
 export * from "./runtimeGoldenFixtures";
 export * from "./runtimePreviewFormatter";
 export * from "./runtimePreviewReport";
+export * from "./runtimeReadOnlyExecutor";
 export * from "./runtimeShadowPreview";
 export * from "./runtimeShadowTraceComparison";
 export * from "./runtimeToolPreflight";
