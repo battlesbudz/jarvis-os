@@ -143,6 +143,8 @@ Golden dry-run fixtures cover stable runtime expectations for general answers, m
 
 The fixture set now maps the documented golden workflow prompts for daily planning, email drafting, reminders/approvals, research, goal handoff, meeting prep, memory lookup, diagnostics, and invalid-event handling. Most workflows still remain owned by existing Jarvis modules; the runtime fixtures protect classification, gate outcome, approval, and response-mode contracts.
 
+Exactly one fixture is marked runtime-owned in this slice: the general read-only answer. That fixture must pass through `executeRuntimeReadOnly` with zero executed tools and zero side effects. All higher-risk, tool-backed, queued, approval-required, or stateful workflows remain existing-Jarvis owned until their adapters have real execution and approval tests.
+
 ## Runtime Event Adapter
 
 Simple route or channel inputs can be adapted into validated `JarvisEvent` objects with consistent IDs, timestamps, channel, and metadata defaults. The adapter validates through `JarvisEventSchema` and can feed dry-run previews without wiring any live route behavior.
