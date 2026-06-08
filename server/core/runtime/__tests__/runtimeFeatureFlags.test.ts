@@ -7,6 +7,7 @@ import { assertRuntimeLiveExecutionDisabled, getRuntimeFeatureFlags } from "../i
   assert.equal(flags.previewEnabled, false);
   assert.equal(flags.dryRunEnabled, false);
   assert.equal(flags.liveExecutionEnabled, false);
+  assert.deepEqual(flags.liveWorkflowIds, []);
   assert.doesNotThrow(() => assertRuntimeLiveExecutionDisabled(flags));
   console.log("OK: Runtime feature flags default to disabled");
 }
@@ -15,12 +16,14 @@ import { assertRuntimeLiveExecutionDisabled, getRuntimeFeatureFlags } from "../i
   const flags = getRuntimeFeatureFlags({
     JARVIS_RUNTIME_PREVIEW: "1",
     JARVIS_RUNTIME_DRY_RUN: "true",
+    JARVIS_RUNTIME_LIVE_WORKFLOWS: "general-answer, memory-lookup",
   });
 
   assert.equal(flags.previewEnabled, true);
   assert.equal(flags.dryRunEnabled, true);
   assert.equal(flags.liveExecutionEnabled, false);
-  console.log("OK: Runtime feature flags parse preview and dry-run flags");
+  assert.deepEqual(flags.liveWorkflowIds, ["general-answer", "memory-lookup"]);
+  console.log("OK: Runtime feature flags parse preview, dry-run, and workflow allowlist flags");
 }
 
 {

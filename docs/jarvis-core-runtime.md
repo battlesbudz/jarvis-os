@@ -151,7 +151,7 @@ Simple route or channel inputs can be adapted into validated `JarvisEvent` objec
 
 ## Runtime Feature Flags
 
-Runtime preview and dry-run integration must be explicitly gated. The feature flag helper reads `JARVIS_RUNTIME_PREVIEW`, `JARVIS_RUNTIME_DRY_RUN`, and `JARVIS_RUNTIME_LIVE_EXECUTION`, defaulting all capabilities off. Current preview slices fail closed if live execution is enabled because no runtime-owned execution path exists yet.
+Runtime preview, dry-run, and live workflow integration must be explicitly gated. The feature flag helper reads `JARVIS_RUNTIME_PREVIEW`, `JARVIS_RUNTIME_DRY_RUN`, `JARVIS_RUNTIME_LIVE_EXECUTION`, and `JARVIS_RUNTIME_LIVE_WORKFLOWS`, defaulting all capabilities off. Dry-run helpers still fail closed if broad live execution is enabled.
 
 The route integration checklist lives in `docs/runtime-preview-integration-checklist.md`.
 
@@ -187,11 +187,13 @@ The first runtime-owned executor handles only `inline_answer` decisions with `an
 
 ## Runtime Live Route Preflight Gate
 
-Live routes can preflight a request against the runtime before choosing an owner. With `JARVIS_RUNTIME_LIVE_EXECUTION` off, the gate returns the existing route owner. With it on, only completed read-only runtime executions become `core_runtime` owned; approval-required, queued, and tool-candidate decisions continue through the legacy route owner, while invalid runtime events block.
+Live routes can preflight a request against the runtime before choosing an owner. With `JARVIS_RUNTIME_LIVE_EXECUTION` off, the gate returns the existing route owner. With it on, only completed read-only runtime executions that match an allowlisted `JARVIS_RUNTIME_LIVE_WORKFLOWS` id become `core_runtime` owned; approval-required, queued, tool-candidate, and non-allowlisted decisions continue through the legacy route owner, while invalid runtime events block.
+
+The first live allowlisted workflow id is `general-answer`, which covers the low-risk general answer golden workflow with zero executed tools and zero side effects.
 
 ## Runtime Read-Only Route
 
-`POST /api/runtime/read-only` is the first route that can return a runtime-owned execution envelope. It requires authentication and `JARVIS_RUNTIME_LIVE_EXECUTION=1`, ignores body-supplied user ids, returns only sanitized execution and decision summaries, and declines back to the existing route owner for approval-required, queued, or tool-candidate work.
+`POST /api/runtime/read-only` is the first route that can return a runtime-owned execution envelope. It requires authentication, `JARVIS_RUNTIME_LIVE_EXECUTION=1`, and a matching `JARVIS_RUNTIME_LIVE_WORKFLOWS` id, ignores body-supplied user ids, returns only sanitized execution and decision summaries, and declines back to the existing route owner for approval-required, queued, tool-candidate, or non-allowlisted work.
 
 ## Runtime Approval Workflow
 
