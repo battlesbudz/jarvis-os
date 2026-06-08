@@ -9,6 +9,7 @@ export * from "./runtimeDryRun";
 export * from "./runtimeEventAdapter";
 export * from "./runtimeFeatureFlags";
 export * from "./runtimeGoldenFixtures";
+export * from "./runtimeLiveRoutePreflightGate";
 export * from "./runtimePreviewFormatter";
 export * from "./runtimePreviewReport";
 export * from "./runtimeReadOnlyExecutor";
