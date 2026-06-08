@@ -7,8 +7,10 @@ import {
 import type { ApprovalNotificationPayload } from "./approvalNotifications";
 import type { ApprovalGate } from "./agentApproval";
 import type { AppCoachChatAutonomyResult } from "./appCoachChatAutonomy";
+import { decideContextPacks, type ContextPackDecision, type ContextTaskType } from "./contextPacks";
 import { getCoachAppAgentId } from "./coreAgentIds";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
+import { buildMindTrace, type JarvisMindTrace, type MindTraceToolInput } from "./mindTrace";
 
 export interface AutonomyRuntimeInput {
   userId: string;
@@ -188,6 +190,13 @@ export interface PrimeRuntimeResult {
   decision: PrimeRuntimeDecision;
 }
 
+export interface PrimeRuntimeMindTraceObservation {
+  input: PrimeRuntimeInput;
+  result: PrimeRuntimeResult;
+  trace: JarvisMindTrace;
+  durationMs: number;
+}
+
 export interface PrimeRuntimeApprovalInput {
   gate: ApprovalGate;
   approved: boolean;
@@ -257,6 +266,7 @@ export interface PrimeRuntimeDeps extends AutonomyRuntimeDeps {
   }) => Promise<unknown>;
   isAgentSdkApprovalGate?: (gate: ApprovalGate) => boolean | Promise<boolean>;
   appAutonomyDeps?: Record<string, unknown>;
+  observePrimeDecision?: (observation: PrimeRuntimeMindTraceObservation) => void | Promise<void>;
 }
 
 export type JarvisInputChannel = PrimeRuntimeChannel;
@@ -596,31 +606,203 @@ function isAgentSdkSetupFailure(result: AgentSdkRunnerResult): boolean {
     && /provider|configured/i.test(result.error || result.reply || "");
 }
 
+function mapPrimeTaskType(taskType: string, fallback: ContextTaskType): ContextTaskType {
+  if (taskType === "email") return "email_action";
+  if (taskType === "reminder") return "calendar_action";
+  if (taskType === "approval_resume") return "general";
+  if (taskType === "app_chat") return fallback;
+  return fallback;
+}
+
+function primeTraceDecision(input: PrimeRuntimeInput, result: PrimeRuntimeResult): ContextPackDecision {
+  const base = decideContextPacks({
+    userMessage: input.message,
+    channel: input.channel,
+  });
+  return {
+    ...base,
+    taskType: mapPrimeTaskType(result.decision.taskTypeDetected, base.taskType),
+    route: result.decision.routeChosen,
+    riskLevel: result.decision.riskLevel,
+    approvalRequired: result.decision.approvalRequired,
+    reasons: [
+      ...base.reasons,
+      `PRIME runtime decision: ${result.decision.reason}`,
+    ],
+  };
+}
+
+function primeTraceTools(result: PrimeRuntimeResult): MindTraceToolInput[] {
+  const tools: MindTraceToolInput[] = [];
+  if (result.toolAction) {
+    tools.push({
+      name: result.toolAction.tool,
+      status: result.toolAction.result === "success" ? "ok" : result.toolAction.result === "queued" ? "skipped" : "failed",
+      result: result.toolAction,
+      approvalRequired: result.decision.approvalRequired,
+    });
+  }
+  if (result.approvalRequest) {
+    tools.push({
+      name: "prime_approval_request",
+      status: "blocked",
+      result: result.approvalRequest,
+      approvalRequired: true,
+    });
+  }
+  if (result.backgroundJob) {
+    tools.push({
+      name: "submit_agent_job",
+      status: "ok",
+      result: result.backgroundJob,
+      approvalRequired: false,
+    });
+  }
+  return tools;
+}
+
+export function buildPrimeRuntimeMindTrace(
+  input: PrimeRuntimeInput,
+  result: PrimeRuntimeResult,
+  now = new Date(),
+): JarvisMindTrace {
+  return buildMindTrace({
+    traceId: `prime-${now.getTime()}-${Math.random().toString(36).slice(2, 8)}`,
+    userId: input.userId ?? undefined,
+    userRequest: input.message,
+    channel: input.channel,
+    contextDecision: primeTraceDecision(input, result),
+    contextLoaded: ["prime_runtime"],
+    toolsCalled: primeTraceTools(result),
+    approvalRequired: result.decision.approvalRequired,
+    approvalGateId: result.approvalRequest?.gateId ?? null,
+    jobCreated: result.backgroundJob
+      ? {
+          id: result.backgroundJob.jobId,
+          type: result.backgroundJob.agentType,
+          status: "queued",
+          title: result.decision.taskTypeDetected,
+        }
+      : null,
+    confidenceNotes: [
+      `PRIME kind=${result.kind}; handled=${String(result.handled)}; modelRouting=${result.decision.modelRouting}.`,
+    ],
+    uncertaintyNotes: result.handled ? [] : ["PRIME did not handle this request; legacy channel path remains owner."],
+    blockedSetupIssues: result.blockedSetup ? [result.blockedSetup.reason] : [],
+    errors: result.status === "failed" ? [result.reply ?? "PRIME runtime failed."] : [],
+    now,
+  });
+}
+
+function primeTraceRecord(
+  trace: JarvisMindTrace,
+  input: PrimeRuntimeInput,
+  result: PrimeRuntimeResult,
+  durationMs: number,
+) {
+  return {
+    traceId: trace.traceId,
+    userId: input.userId ?? "",
+    userRequest: input.message.slice(0, 1000),
+    subtasks: [
+      {
+        type: "prime_runtime_decision",
+        channel: input.channel,
+        kind: result.kind,
+        route: result.decision.routeChosen,
+        taskType: result.decision.taskTypeDetected,
+        riskLevel: result.decision.riskLevel,
+        handled: result.handled,
+      },
+    ],
+    results: [
+      {
+        type: "mind_trace",
+        trace,
+      },
+      {
+        type: "prime_runtime_result",
+        handled: result.handled,
+        kind: result.kind,
+        status: result.status,
+        route: result.decision.routeChosen,
+      },
+    ],
+    finalAnswer: (result.reply ?? "").slice(0, 2000),
+    totalRetries: 0,
+    completedAt: new Date(),
+    durationMs,
+  };
+}
+
+async function defaultObservePrimeDecision(observation: PrimeRuntimeMindTraceObservation): Promise<void> {
+  if (!process.env.DATABASE_URL || !observation.input.userId) return;
+
+  const [{ db }, schema] = await Promise.all([
+    import("../db"),
+    import("@shared/schema"),
+  ]);
+  await db.insert(schema.orchestrationTraces).values(
+    primeTraceRecord(
+      observation.trace,
+      observation.input,
+      observation.result,
+      observation.durationMs,
+    ),
+  );
+}
+
+async function observePrimeRuntimeDecision(
+  deps: PrimeRuntimeDeps,
+  input: PrimeRuntimeInput,
+  result: PrimeRuntimeResult,
+  startedAt: number,
+): Promise<void> {
+  const trace = buildPrimeRuntimeMindTrace(input, result);
+  const observer = deps.observePrimeDecision ?? defaultObservePrimeDecision;
+  try {
+    await observer({
+      input,
+      result,
+      trace,
+      durationMs: Date.now() - startedAt,
+    });
+  } catch (err) {
+    console.warn("[autonomyRuntime] PRIME mind trace capture failed:", err);
+  }
+}
+
 export async function handlePrimeInput(
   input: PrimeRuntimeInput,
   deps: PrimeRuntimeDeps = {},
 ): Promise<PrimeRuntimeResult> {
+  const startedAt = Date.now();
+  const finish = async (result: PrimeRuntimeResult): Promise<PrimeRuntimeResult> => {
+    await observePrimeRuntimeDecision(deps, input, result, startedAt);
+    return result;
+  };
+
   if (!isPrimeRuntimeEnabled()) {
-    return {
+    return finish({
       handled: false,
       kind: "not_handled",
       decision: primeDecision({
         reason: "ENABLE_PRIME_RUNTIME/ENABLE_JARVIS_CORE_RUNTIME is not true; existing channel behavior remains active.",
       }),
-    };
+    });
   }
 
   const userId = input.userId?.trim();
   const message = input.message.trim();
   const channel = input.channel.trim().toLowerCase() || "unknown";
   if (!userId || !message) {
-    return {
+    return finish({
       handled: false,
       kind: "not_handled",
       decision: primeDecision({
         reason: "PRIME runtime requires an authenticated user and a non-empty message.",
       }),
-    };
+    });
   }
 
   const messages = latestPrimeMessages(input);
@@ -636,7 +818,7 @@ export async function handlePrimeInput(
     originChannelId,
   });
   if (reminderSdk.handled) {
-    return sdkResultToPrime(reminderSdk, "jarvis_agent_sdk_reminder", "reminder");
+    return finish(sdkResultToPrime(reminderSdk, "jarvis_agent_sdk_reminder", "reminder"));
   }
 
   const runEmail = deps.runAgentSdkEmailWorkflow ?? defaultRunAgentSdkEmailWorkflow;
@@ -648,7 +830,7 @@ export async function handlePrimeInput(
     originChannelId,
   });
   if (emailSdk.handled && !isAgentSdkSetupFailure(emailSdk)) {
-    return sdkResultToPrime(emailSdk, "jarvis_agent_sdk_email", "email");
+    return finish(sdkResultToPrime(emailSdk, "jarvis_agent_sdk_email", "email"));
   }
 
   const directEmailApproval = await (deps.handleDirectEmailApprovalRequest ?? defaultHandleDirectEmailApprovalRequest)({
@@ -657,7 +839,7 @@ export async function handlePrimeInput(
     channel,
   });
   if (directEmailApproval.handled) {
-    return {
+    return finish({
       handled: true,
       kind: "approval_request",
       reply: directEmailApproval.reply,
@@ -671,7 +853,7 @@ export async function handlePrimeInput(
         modelRouting: "none",
         reason: "PRIME runtime routed an explicit email send request to a deterministic approval gate before sending.",
       }),
-    };
+    });
   }
 
   const directReminder = await (deps.handleDirectReminderRequest ?? defaultHandleDirectReminderRequest)({
@@ -680,7 +862,7 @@ export async function handlePrimeInput(
     channel,
   });
   if (directReminder.handled) {
-    return {
+    return finish({
       handled: true,
       kind: "tool_action",
       reply: directReminder.reply,
@@ -700,7 +882,7 @@ export async function handlePrimeInput(
         modelRouting: "none",
         reason: "PRIME runtime routed clear natural-language reminder text to the existing scheduled-task tool.",
       }),
-    };
+    });
   }
 
   if (channel === "appchat" || channel === "app" || channel === "app_chat") {
@@ -709,7 +891,7 @@ export async function handlePrimeInput(
       deps.appAutonomyDeps,
     );
     if (autonomy.handled && autonomy.reply) {
-      return {
+      return finish({
         handled: true,
         kind: autonomy.jobId ? "background_job" : "direct_response",
         reply: autonomy.reply,
@@ -724,11 +906,11 @@ export async function handlePrimeInput(
           modelRouting: "existing_jarvis",
           reason: autonomy.decision.reason || "PRIME runtime delegated app chat to the existing app autonomy route.",
         }),
-      };
+      });
     }
   }
 
-  return {
+  return finish({
     handled: false,
     kind: "not_handled",
     decision: primeDecision({
@@ -736,7 +918,7 @@ export async function handlePrimeInput(
       modelRouting: "existing_jarvis",
       reason: "No PRIME runtime proof route matched; caller should continue through the existing channel path.",
     }),
-  };
+  });
 }
 
 export const handleJarvisInput = handlePrimeInput;
