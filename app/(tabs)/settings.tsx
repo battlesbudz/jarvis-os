@@ -273,6 +273,7 @@ export default function SettingsScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const { scrollTo } = useLocalSearchParams<{ scrollTo?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
+  const diagnosticsYRef = useRef(0);
   const [highlightedIntegration, setHighlightedIntegration] = useState<string | null>(null);
 
   // ── Auth state ──
@@ -1333,8 +1334,17 @@ export default function SettingsScreen() {
   // Scroll to the CONNECTIONS section and highlight the integration when
   // the screen is opened with a `scrollTo` route param (e.g. from the
   // IntegrationErrorCard "Go to Settings → Connections" CTA).
+  const scrollToDiagnostics = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    scrollViewRef.current?.scrollTo({ y: Math.max(0, diagnosticsYRef.current - 8), animated: true });
+  }, []);
+
   useEffect(() => {
     if (!scrollTo) return;
+    if (scrollTo === 'diagnostics' || scrollTo === 'runtime') {
+      const timer = setTimeout(scrollToDiagnostics, 400);
+      return () => clearTimeout(timer);
+    }
     setHighlightedIntegration(scrollTo);
     // CONNECTIONS is the first section, so scroll to top to reveal it.
     const timer = setTimeout(() => {
@@ -1346,7 +1356,7 @@ export default function SettingsScreen() {
       clearTimeout(timer);
       clearTimeout(clearTimer);
     };
-  }, [scrollTo]);
+  }, [scrollTo, scrollToDiagnostics]);
 
   // ── Helpers ──
   // Triggers an immediate server-side re-validation for the current user so
@@ -1604,6 +1614,28 @@ export default function SettingsScreen() {
         contentContainerStyle={[styles.scrollContent, { paddingBottom: (Platform.OS === 'web' ? 34 : insets.bottom) + 90 }]}
         showsVerticalScrollIndicator={false}
       >
+
+        <View style={styles.quickNavCard}>
+          <View style={styles.quickNavHeader}>
+            <View style={[styles.quickNavIconWrap, { backgroundColor: '#10B98120' }]}>
+              <Ionicons name="pulse-outline" size={18} color="#10B981" />
+            </View>
+            <View style={styles.quickNavCopy}>
+              <Text style={styles.quickNavTitle}>Runtime checks</Text>
+              <Text style={styles.quickNavSubtitle}>Jump to Runtime Preview and configuration diagnostics.</Text>
+            </View>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Jump to Runtime Preview diagnostics"
+            testID="settings-runtime-diagnostics-jump"
+            style={styles.quickNavButton}
+            onPress={scrollToDiagnostics}
+          >
+            <Text style={styles.quickNavButtonText}>Runtime Preview</Text>
+            <Ionicons name="arrow-down-outline" size={15} color="#10B981" />
+          </Pressable>
+        </View>
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── CONNECTIONS ── */}
@@ -3503,6 +3535,12 @@ export default function SettingsScreen() {
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── DIAGNOSTICS ── */}
+        <View
+          testID="settings-diagnostics-section"
+          onLayout={(event) => {
+            diagnosticsYRef.current = event.nativeEvent.layout.y;
+          }}
+        >
         <SectionHeader label="DIAGNOSTICS" accent="#10B981" />
         <View style={[styles.card, { marginBottom: 12 }]}>
           <RuntimeDiagnosticsPanel />
@@ -3584,6 +3622,7 @@ export default function SettingsScreen() {
               <Text style={drStyles.emptyHintText}>Tap Run to check your Jarvis configuration</Text>
             </View>
           )}
+        </View>
         </View>
 
         </ErrorBoundary>
@@ -3960,6 +3999,59 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     overflow: 'hidden',
+  },
+  quickNavCard: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    padding: 14,
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+  },
+  quickNavHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  quickNavIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickNavCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  quickNavTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  quickNavSubtitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 16,
+  },
+  quickNavButton: {
+    minHeight: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#10B98155',
+    backgroundColor: '#10B98114',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  quickNavButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: '#10B981',
   },
   // Connection rows
   connRow: {
