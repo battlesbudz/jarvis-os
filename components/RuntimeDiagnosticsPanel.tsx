@@ -10,62 +10,41 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { apiRequest } from '@/lib/query-client';
-
-type RuntimePreviewStatus = 'ready' | 'needs_approval' | 'blocked' | 'degraded' | string;
-
-interface RuntimePreviewReport {
-  status: RuntimePreviewStatus;
-  eventId: string;
-  userId: string;
-  intent: string;
-  responseMode: string;
-  riskTier: string;
-  readyToolCount: number;
-  blockedToolCount: number;
-  approvalRequired: boolean;
-  reasons: string[];
-}
-
-interface RuntimeDiagnosticsResponse {
-  ok?: boolean;
-  previewOnly?: boolean;
-  disabled?: boolean;
-  reason?: string;
-  eventId?: string;
-  report?: RuntimePreviewReport;
-  approvalPreview?: {
-    approvalId: string;
-    reason: string;
-  } | null;
-  formatted?: string;
-}
+import {
+  buildRuntimeDiagnosticRequest,
+  RUNTIME_DIAGNOSTIC_PROBES,
+  runtimeDiagnosticStatusFromResponse,
+  runtimeDiagnosticStatusLabel,
+  summarizeRuntimeDiagnosticResponse,
+  type RuntimeDiagnosticProbe,
+  type RuntimeDiagnosticsResponse,
+  type RuntimeDiagnosticsRoute,
+  type RuntimeDiagnosticsStatus,
+} from '@/lib/runtimeDiagnosticsUx';
 
 interface RuntimeLogEntry {
   id: string;
   message: string;
   at: string;
+  probeId: RuntimeDiagnosticProbe['id'];
+  route: RuntimeDiagnosticsRoute;
   result?: RuntimeDiagnosticsResponse;
   error?: string;
 }
 
-function statusColor(status: RuntimePreviewStatus | undefined, disabled?: boolean): string {
-  if (disabled) return Colors.textTertiary;
+function statusColor(status: RuntimeDiagnosticsStatus): string {
+  if (status === 'disabled' || status === 'idle') return Colors.textTertiary;
   if (status === 'ready') return Colors.success;
   if (status === 'blocked') return Colors.error;
-  if (status === 'needs_approval' || status === 'degraded') return Colors.warning;
+  if (status === 'approval') return Colors.warning;
   return Colors.textSecondary;
 }
 
-function statusLabel(entry: RuntimeLogEntry | null): string {
-  if (!entry) return 'Idle';
-  if (entry.error) return 'Error';
-  if (entry.result?.disabled) return 'Disabled';
-  const status = entry.result?.report?.status;
-  if (status === 'needs_approval') return 'Approval';
-  if (status === 'ready') return 'Ready';
-  if (status === 'blocked') return 'Blocked';
-  if (status === 'degraded') return 'Degraded';
-  return status ?? 'Ready';
+function probeIcon(id: RuntimeDiagnosticProbe['id']): keyof typeof Ionicons.glyphMap {
+  if (id === 'ready-auth') return 'shield-checkmark-outline';
+  if (id === 'approval-tool') return 'construct-outline';
+  if (id === 'blocked-policy') return 'ban-outline';
+  return 'albums-outline';
 }
 
 function formatTime(value: string): string {
@@ -81,38 +60,50 @@ function errorText(error: unknown): string {
 }
 
 export default function RuntimeDiagnosticsPanel() {
-  const [message, setMessage] = useState('What can you do?');
+  const [selectedProbeId, setSelectedProbeId] = useState<RuntimeDiagnosticProbe['id']>('ready-auth');
+  const selectedProbe = RUNTIME_DIAGNOSTIC_PROBES.find((probe) => probe.id === selectedProbeId) ?? RUNTIME_DIAGNOSTIC_PROBES[0];
+  const [message, setMessage] = useState(selectedProbe.message);
   const [running, setRunning] = useState(false);
   const [log, setLog] = useState<RuntimeLogEntry[]>([]);
   const latest = log[0] ?? null;
-  const latestColor = statusColor(latest?.result?.report?.status, latest?.result?.disabled);
+  const latestStatus = runtimeDiagnosticStatusFromResponse(latest?.result, latest?.error);
+  const latestColor = statusColor(latestStatus);
   const canRun = message.trim().length > 0 && !running;
+  const snapshotLabels = useMemo(() => {
+    const tools = selectedProbe.body.availableTools?.length ?? 0;
+    const providers = selectedProbe.body.auth?.connectedProviders?.length ?? 0;
+    const policy = [
+      selectedProbe.body.policy?.blockedTools?.length ? 'blocked' : null,
+      selectedProbe.body.policy?.approvalRequiredTools?.length ? 'approval' : null,
+      selectedProbe.body.policy?.maxAllowedRiskTier ? selectedProbe.body.policy.maxAllowedRiskTier : null,
+    ].filter(Boolean).join(' / ') || 'open';
+    return [`${providers} auth`, `${tools} tools`, policy];
+  }, [selectedProbe]);
 
   const summary = useMemo(() => {
-    if (!latest) return 'No preview yet';
-    if (latest.error) return latest.error;
-    if (latest.result?.disabled) return latest.result.reason ?? 'Runtime dry run disabled';
-    const report = latest.result?.report;
-    if (!report) return 'No report returned';
-    return `${report.intent} / ${report.riskTier} / ${report.readyToolCount} ready / ${report.blockedToolCount} blocked`;
+    return summarizeRuntimeDiagnosticResponse(latest?.result, latest?.error);
   }, [latest]);
+
+  function selectProbe(probe: RuntimeDiagnosticProbe) {
+    setSelectedProbeId(probe.id);
+    setMessage(probe.message);
+  }
 
   async function runPreview() {
     const trimmed = message.trim();
     if (!trimmed) return;
     setRunning(true);
+    const request = buildRuntimeDiagnosticRequest(selectedProbeId, trimmed);
     const entryBase = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       message: trimmed,
       at: new Date().toISOString(),
+      probeId: selectedProbeId,
+      route: request.route,
     };
 
     try {
-      const res = await apiRequest('POST', '/api/runtime/dry-run', {
-        message: trimmed,
-        source: 'app',
-        channel: 'settings-runtime-preview',
-      });
+      const res = await apiRequest('POST', request.route, request.body);
       const result = await res.json() as RuntimeDiagnosticsResponse;
       setLog((items) => [{ ...entryBase, result }, ...items].slice(0, 5));
     } catch (err) {
@@ -133,8 +124,37 @@ export default function RuntimeDiagnosticsPanel() {
           <Text style={styles.subtitle} numberOfLines={1}>{summary}</Text>
         </View>
         <View style={[styles.statusPill, { borderColor: `${latestColor}66`, backgroundColor: `${latestColor}18` }]}>
-          <Text style={[styles.statusText, { color: latestColor }]}>{statusLabel(latest)}</Text>
+          <Text style={[styles.statusText, { color: latestColor }]}>{runtimeDiagnosticStatusLabel(latestStatus)}</Text>
         </View>
+      </View>
+
+      <View style={styles.probeGrid}>
+        {RUNTIME_DIAGNOSTIC_PROBES.map((probe) => {
+          const selected = probe.id === selectedProbeId;
+          return (
+            <Pressable
+              key={probe.id}
+              onPress={() => selectProbe(probe)}
+              disabled={running}
+              style={({ pressed }) => [
+                styles.probeButton,
+                selected && styles.probeButtonSelected,
+                (pressed || running) && styles.buttonDimmed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel={`Runtime ${probe.label} probe`}
+            >
+              <Ionicons
+                name={probeIcon(probe.id)}
+                size={14}
+                color={selected ? Colors.cyan : Colors.textSecondary}
+              />
+              <Text style={[styles.probeText, selected && styles.probeTextSelected]} numberOfLines={1}>
+                {probe.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       <View style={styles.inputBlock}>
@@ -146,6 +166,13 @@ export default function RuntimeDiagnosticsPanel() {
           multiline
           style={styles.input}
         />
+        <View style={styles.snapshotRow}>
+          {snapshotLabels.map((label) => (
+            <View key={label} style={styles.snapshotChip}>
+              <Text style={styles.snapshotText} numberOfLines={1}>{label}</Text>
+            </View>
+          ))}
+        </View>
         <View style={styles.actionRow}>
           <Pressable
             onPress={runPreview}
@@ -160,7 +187,7 @@ export default function RuntimeDiagnosticsPanel() {
             ) : (
               <Ionicons name="play-outline" size={15} color={Colors.cyan} />
             )}
-            <Text style={styles.primaryButtonText}>{running ? 'Running' : 'Dry Run'}</Text>
+            <Text style={styles.primaryButtonText}>{running ? 'Running' : 'Probe'}</Text>
           </Pressable>
           <Pressable
             onPress={() => setLog([])}
@@ -189,11 +216,13 @@ export default function RuntimeDiagnosticsPanel() {
         <View style={styles.logBlock}>
           <Text style={styles.logTitle}>Log</Text>
           {log.map((entry) => {
-            const color = entry.error ? Colors.error : statusColor(entry.result?.report?.status, entry.result?.disabled);
+            const color = statusColor(runtimeDiagnosticStatusFromResponse(entry.result, entry.error));
             const meta = entry.error
               ? entry.error
               : entry.result?.disabled
                 ? entry.result.reason ?? 'disabled'
+                : entry.result?.runtimeOwned || entry.result?.runtimeWorkflowId
+                  ? summarizeRuntimeDiagnosticResponse(entry.result)
                 : entry.result?.report
                   ? `${entry.result.report.responseMode} / ${entry.result.report.riskTier}`
                   : 'no report';
@@ -205,7 +234,9 @@ export default function RuntimeDiagnosticsPanel() {
                     <Text style={styles.logMessage} numberOfLines={1}>{entry.message}</Text>
                     <Text style={styles.logTime}>{formatTime(entry.at)}</Text>
                   </View>
-                  <Text style={[styles.logMeta, { color }]} numberOfLines={1}>{meta}</Text>
+                  <Text style={[styles.logMeta, { color }]} numberOfLines={1}>
+                    {runtimeDiagnosticStatusLabel(runtimeDiagnosticStatusFromResponse(entry.result, entry.error))} / {entry.route} / {meta}
+                  </Text>
                 </View>
               </View>
             );
@@ -262,6 +293,36 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_700Bold',
     textTransform: 'uppercase',
   },
+  probeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  probeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    minWidth: 86,
+    minHeight: 32,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    backgroundColor: Colors.surfaceAlt,
+    paddingHorizontal: 9,
+  },
+  probeButtonSelected: {
+    borderColor: `${Colors.cyan}66`,
+    backgroundColor: Colors.cyanDim,
+  },
+  probeText: {
+    color: Colors.textSecondary,
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+  },
+  probeTextSelected: {
+    color: Colors.cyan,
+  },
   inputBlock: {
     gap: 9,
   },
@@ -278,6 +339,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontFamily: 'Inter_400Regular',
     textAlignVertical: 'top',
+  },
+  snapshotRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  snapshotChip: {
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 7,
+    backgroundColor: Colors.bg,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    maxWidth: 118,
+  },
+  snapshotText: {
+    color: Colors.textTertiary,
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    textTransform: 'uppercase',
   },
   actionRow: {
     flexDirection: 'row',

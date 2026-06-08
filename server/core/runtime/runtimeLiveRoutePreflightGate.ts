@@ -51,10 +51,10 @@ export function preflightRuntimeLiveRoute(
   const runtime = executeRuntimeReadOnly(input);
   if (runtime.execution.status === "completed") {
     const workflow = matchRuntimeOwnedGoldenWorkflow(runtime);
-    const workflowAllowed = Boolean(workflow) && (
+    const workflowAllowed = workflow ? (
       flags.defaultReadOnlyEnabled ||
       isRuntimeOwnedGoldenWorkflowAllowed(workflow.workflowId, flags.liveWorkflowIds)
-    );
+    ) : false;
 
     if (!workflow || !workflowAllowed) {
       return {
