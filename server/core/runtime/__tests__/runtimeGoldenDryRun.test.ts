@@ -11,7 +11,11 @@ const now = new Date("2026-06-08T13:00:00.000Z");
 
 assert.ok(RUNTIME_GOLDEN_DRY_RUN_FIXTURES.length >= 10, "runtime golden fixtures cover the documented workflow set");
 const runtimeOwnedFixtures = RUNTIME_GOLDEN_DRY_RUN_FIXTURES.filter((fixture) => fixture.expectedRuntimeOwner === "core_runtime");
-assert.equal(runtimeOwnedFixtures.length, 1, "exactly one golden fixture is runtime-owned in this slice");
+assert.deepEqual(
+  runtimeOwnedFixtures.map((fixture) => fixture.id).sort(),
+  ["email-draft-reply", "general-answer", "memory-lookup", "next-meeting-brief"],
+  "runtime-owned golden fixtures stay limited to the migrated read-only batch",
+);
 
 for (const fixture of RUNTIME_GOLDEN_DRY_RUN_FIXTURES) {
   const event = jarvisEventFromMessage({

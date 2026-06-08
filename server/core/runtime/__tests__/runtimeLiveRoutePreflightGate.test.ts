@@ -78,6 +78,29 @@ function event(message: string, eventId = "event-live-gate") {
 }
 
 {
+  const blocked = preflightRuntimeLiveRoute(
+    { event: event("What memory do you have about morning planning?", "event-live-memory"), now },
+    {
+      JARVIS_RUNTIME_LIVE_EXECUTION: "1",
+      JARVIS_RUNTIME_LIVE_WORKFLOWS: "general-answer",
+    },
+  );
+  const allowed = preflightRuntimeLiveRoute(
+    { event: event("What memory do you have about morning planning?", "event-live-memory-allowed"), now },
+    {
+      JARVIS_RUNTIME_LIVE_EXECUTION: "1",
+      JARVIS_RUNTIME_LIVE_WORKFLOWS: "memory-lookup",
+    },
+  );
+
+  assert.equal(blocked.status, "legacy_route_allowed");
+  assert.equal(blocked.runtimeWorkflowId, "memory-lookup");
+  assert.equal(allowed.status, "runtime_readonly_allowed");
+  assert.equal(allowed.runtimeWorkflowId, "memory-lookup");
+  console.log("OK: Runtime live-route preflight requires per-workflow allowlist for migrated workflows");
+}
+
+{
   const gate = preflightRuntimeLiveRoute(
     {
       event: {

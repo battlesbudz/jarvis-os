@@ -1,6 +1,10 @@
 import type { ExecuteRuntimeEventResult } from "./runtimeTypes";
 
-export type RuntimeOwnedGoldenWorkflowId = "general-answer";
+export type RuntimeOwnedGoldenWorkflowId =
+  | "general-answer"
+  | "memory-lookup"
+  | "email-draft-reply"
+  | "next-meeting-brief";
 
 export interface RuntimeOwnedGoldenWorkflowMatch {
   workflowId: RuntimeOwnedGoldenWorkflowId;
@@ -18,21 +22,51 @@ function hasOnlyReadOnlyGeneralTools(runtime: ExecuteRuntimeEventResult): boolea
   ));
 }
 
+function isSafeReadOnlyAnswer(runtime: ExecuteRuntimeEventResult): boolean {
+  return (
+    runtime.decision.responseMode === "answer" &&
+    runtime.gateResult.outcome === "inline_answer" &&
+    !runtime.decision.approval.required &&
+    hasOnlyReadOnlyGeneralTools(runtime)
+  );
+}
+
 export function matchRuntimeOwnedGoldenWorkflow(
   runtime: ExecuteRuntimeEventResult,
 ): RuntimeOwnedGoldenWorkflowMatch | null {
   if (
     runtime.decision.intent === "general" &&
-    runtime.decision.responseMode === "answer" &&
     runtime.decision.riskTier === "T0" &&
-    runtime.gateResult.outcome === "inline_answer" &&
-    !runtime.decision.approval.required &&
-    hasOnlyReadOnlyGeneralTools(runtime)
+    isSafeReadOnlyAnswer(runtime)
   ) {
     return {
       workflowId: "general-answer",
       owner: "core_runtime",
       reason: "General read-only answer matches the runtime-owned golden workflow allowlist boundary.",
+    };
+  }
+
+  if (runtime.decision.intent === "memory_query" && isSafeReadOnlyAnswer(runtime)) {
+    return {
+      workflowId: "memory-lookup",
+      owner: "core_runtime",
+      reason: "Memory lookup matches a runtime-owned read-only golden workflow boundary.",
+    };
+  }
+
+  if (runtime.decision.intent === "email_draft" && isSafeReadOnlyAnswer(runtime)) {
+    return {
+      workflowId: "email-draft-reply",
+      owner: "core_runtime",
+      reason: "Email draft reply matches a runtime-owned draft-only golden workflow boundary.",
+    };
+  }
+
+  if (runtime.decision.intent === "calendar_query" && isSafeReadOnlyAnswer(runtime)) {
+    return {
+      workflowId: "next-meeting-brief",
+      owner: "core_runtime",
+      reason: "Next meeting brief matches a runtime-owned read-only golden workflow boundary.",
     };
   }
 
