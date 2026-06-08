@@ -187,6 +187,12 @@ Dry-run results can be transformed into structured audit event payloads containi
 
 Runtime audit events can be linked to existing orchestration traces or adapted Mind Trace records with a persistable, preview-only payload. The link carries IDs, status, risk, approval, route, and task metadata only; it does not write the trace table, create audit rows, or execute any runtime work.
 
+## Runtime Daemon Audit Envelope
+
+Daemon tool attempts can be shaped into a runtime audit envelope without importing the live daemon bridge or executing device actions. The envelope records event, tool, surface, status, risk, approval requirement, top-level payload keys, and redacted payload fingerprints.
+
+Core Runtime does not store raw daemon args or daemon output in this slice. Shell commands, Android tap/type payloads, browser actions, stdout, stderr, tokens, cookies, and session values remain with the existing daemon/tool owner.
+
 ## Runtime Persistence Record
 
 Runtime events and decisions can be shaped into a storage-neutral persistence record. The record includes event id, decision id, user id, status, intent, risk, response mode, approval id/status, execution status, owner, gate outcome, trace id, and redacted event/decision payloads.

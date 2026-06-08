@@ -8,6 +8,7 @@ export * from "./runtimeAuditTraceLink";
 export * from "./runtimeCapabilityPreview";
 export * from "./runtimeContextPacketAdapter";
 export * from "./runtimeDryRun";
+export * from "./runtimeDaemonAuditEnvelope";
 export * from "./runtimeEventAdapter";
 export * from "./runtimeFeatureFlags";
 export * from "./runtimeGoldenFixtures";
