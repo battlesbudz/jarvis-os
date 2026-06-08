@@ -193,6 +193,12 @@ Runtime events and decisions can be shaped into a storage-neutral persistence re
 
 `persistRuntimeRecord` requires an explicit writer dependency. Without a writer it returns a non-persisted result, which keeps Core Runtime safe to use in tests and route experiments before a database-backed audit table is introduced.
 
+## Runtime Memory Calibration Preview
+
+Memory corrections can be shaped into a storage-neutral runtime preview before they reach the existing memory owner. The preview records the event, target memory, proposed corrected content, normalized confidence, provenance review reasons, and redacted metadata.
+
+Core Runtime v0.2 does not write canonical memory. Memory calibration previews always set `approvalRequired: true` and `writeAllowed: false`; an explicit writer dependency is required even to persist the preview envelope.
+
 ## Runtime Read-Only Executor
 
 The first runtime-owned executor handles only `inline_answer` decisions with `answer` response mode and no approval requirement. It returns a deterministic read-only response envelope, records zero executed tools and zero side effects, and declines or blocks anything that needs approval, queueing, tool execution, or invalid-event recovery.
