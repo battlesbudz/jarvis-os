@@ -38,6 +38,8 @@ The first route experiment is `POST /api/runtime/dry-run`. It is authenticated, 
 
 The Settings Diagnostics screen mounts a Runtime Preview panel backed by this route. Its log is client-local only.
 
+The end-to-end user journey plan lives in `docs/runtime-e2e-test-plan.md`.
+
 ## Runtime-Owned Read-Only Executor
 
 `executeRuntimeReadOnly` is the first runtime-owned executor. It handles only safe `inline_answer` decisions, returns a deterministic response envelope, and records zero executed tools and zero side effects. It declines approval-required, queued, tool-candidate, and non-answer decisions. It is not wired into live app routes yet.
