@@ -19,6 +19,7 @@ export * from "./runtimePersistenceRecord";
 export * from "./runtimePreviewFormatter";
 export * from "./runtimePreviewReport";
 export * from "./runtimeReadOnlyExecutor";
+export * from "./runtimeScheduledTaskPreview";
 export * from "./runtimeShadowPreview";
 export * from "./runtimeShadowTraceComparison";
 export * from "./runtimeToolExecutionGateway";

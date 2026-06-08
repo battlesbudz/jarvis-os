@@ -205,6 +205,12 @@ Memory corrections can be shaped into a storage-neutral runtime preview before t
 
 Core Runtime v0.2 does not write canonical memory. Memory calibration previews always set `approvalRequired: true` and `writeAllowed: false`; an explicit writer dependency is required even to persist the preview envelope.
 
+## Runtime Scheduled Task Preview
+
+Scheduled task and reminder intents can be shaped into a runtime persistence preview before they reach the existing scheduler. The preview records the event, source tool, task title, normalized task kind, recurrence, dedupe scope, execution eligibility, and policy reasons.
+
+Core Runtime v0.2 does not enqueue scheduled tasks or insert rows. Personal reminders remain `user_task` and non-executable, executable `jarvis_action` jobs remain with the existing scheduler and approval/tool policy path, and shell command text is represented only by a redacted fingerprint.
+
 ## Runtime Read-Only Executor
 
 The first runtime-owned executor handles only `inline_answer` decisions with `answer` response mode and no approval requirement. It returns a deterministic read-only response envelope, records zero executed tools and zero side effects, and declines or blocks anything that needs approval, queueing, tool execution, or invalid-event recovery.
