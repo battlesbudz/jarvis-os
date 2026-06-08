@@ -11,6 +11,7 @@ export * from "./runtimeEventAdapter";
 export * from "./runtimeFeatureFlags";
 export * from "./runtimeGoldenFixtures";
 export * from "./runtimeLiveRoutePreflightGate";
+export * from "./runtimeOwnedGoldenWorkflow";
 export * from "./runtimePreviewFormatter";
 export * from "./runtimePreviewReport";
 export * from "./runtimeReadOnlyExecutor";

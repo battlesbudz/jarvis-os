@@ -194,6 +194,7 @@ export function registerRuntimeDiagnosticsRoutes(app: Express): void {
           runtimeOwned: false,
           disabled: true,
           routeOwner: gate.routeOwner,
+          runtimeWorkflowId: gate.runtimeWorkflowId,
           reason: gate.reason,
         });
       }
@@ -205,6 +206,7 @@ export function registerRuntimeDiagnosticsRoutes(app: Express): void {
           disabled: false,
           routeOwner: gate.routeOwner,
           gateStatus: gate.status,
+          runtimeWorkflowId: gate.runtimeWorkflowId,
           execution: gate.runtime.execution,
           decision: {
             decisionId: gate.runtime.decision.decisionId,
@@ -224,6 +226,7 @@ export function registerRuntimeDiagnosticsRoutes(app: Express): void {
           runtimeOwned: false,
           routeOwner: gate.routeOwner,
           gateStatus: gate.status,
+          runtimeWorkflowId: gate.runtimeWorkflowId,
           reason: gate.reason,
         });
       }
@@ -233,6 +236,7 @@ export function registerRuntimeDiagnosticsRoutes(app: Express): void {
         runtimeOwned: false,
         routeOwner: gate.routeOwner,
         gateStatus: gate.status,
+        runtimeWorkflowId: gate.runtimeWorkflowId,
         reason: gate.reason,
       });
     } catch (error) {

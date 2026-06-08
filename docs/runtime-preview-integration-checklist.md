@@ -7,7 +7,7 @@ This checklist describes what can be wired after the Core Runtime preview stack 
 - Use `jarvisEventFromMessage` to adapt route or channel input into `JarvisEvent`.
 - Use `tryRunRuntimeDryRun` for gated preview-only route experiments.
 - Require `JARVIS_RUNTIME_DRY_RUN=1` before returning dry-run output from a route.
-- Keep `JARVIS_RUNTIME_LIVE_EXECUTION` unset. Current runtime slices fail closed when it is enabled.
+- Keep `JARVIS_RUNTIME_LIVE_EXECUTION` unset unless deliberately testing a named runtime-owned workflow.
 - Use `runRuntimeCapabilityPreview` only with explicit AgentTool-shaped metadata.
 - Display `RuntimePreviewReport`, `RuntimeApprovalPreview`, `RuntimeAuditEvent`, or `formatRuntimePreview` output.
 - Treat all preview output as advisory. Existing app routes, harness, tools, memory, jobs, and approvals remain the source of live behavior.
@@ -20,7 +20,7 @@ This checklist describes what can be wired after the Core Runtime preview stack 
 - Do not enqueue jobs from preview output.
 - Do not create approval records from `RuntimeApprovalPreview`.
 - Do not merge runtime decisions back into the live harness without a dedicated integration PR.
-- Do not enable `JARVIS_RUNTIME_LIVE_EXECUTION` for routes until a dedicated live-route integration PR proves the runtime-owned executor boundary with tests.
+- Do not enable `JARVIS_RUNTIME_LIVE_EXECUTION` without also setting a narrow `JARVIS_RUNTIME_LIVE_WORKFLOWS` allowlist.
 
 ## Current Preview Integration
 
@@ -43,11 +43,13 @@ The Settings Diagnostics screen mounts a Runtime Preview panel backed by this ro
 
 ## Live Route Preflight Gate
 
-`preflightRuntimeLiveRoute` lets a future live route ask whether Core Runtime or the existing route owner should handle a request. Runtime ownership is allowed only when `JARVIS_RUNTIME_LIVE_EXECUTION=1` and `executeRuntimeReadOnly` completes. Approval-required, queued, and tool-candidate requests continue through the existing route owner; invalid runtime events block instead of falling through.
+`preflightRuntimeLiveRoute` lets a future live route ask whether Core Runtime or the existing route owner should handle a request. Runtime ownership is allowed only when `JARVIS_RUNTIME_LIVE_EXECUTION=1`, `executeRuntimeReadOnly` completes, and the matched workflow id is listed in `JARVIS_RUNTIME_LIVE_WORKFLOWS`.
+
+The first live workflow id is `general-answer`. Approval-required, queued, tool-candidate, non-allowlisted, and non-matching requests continue through the existing route owner; invalid runtime events block instead of falling through.
 
 ## Runtime Read-Only Route
 
-`POST /api/runtime/read-only` is the first runtime-owned workflow route. It is authenticated, requires `JARVIS_RUNTIME_LIVE_EXECUTION=1` before returning a runtime-owned execution, ignores body-supplied `userId`, and returns only execution and decision summaries. It does not return request metadata snapshots and does not execute tools.
+`POST /api/runtime/read-only` is the first runtime-owned workflow route. It is authenticated, requires `JARVIS_RUNTIME_LIVE_EXECUTION=1` and `JARVIS_RUNTIME_LIVE_WORKFLOWS=general-answer` before returning the first runtime-owned execution, ignores body-supplied `userId`, and returns only execution and decision summaries. It does not return request metadata snapshots and does not execute tools.
 
 ## Approval Workflow Preview And Resume
 
@@ -55,4 +57,4 @@ The Settings Diagnostics screen mounts a Runtime Preview panel backed by this ro
 
 ## Rollback
 
-Rollback remains deleting the preview route or disabling `JARVIS_RUNTIME_DRY_RUN`. No runtime preview helper owns durable state.
+Rollback remains disabling `JARVIS_RUNTIME_DRY_RUN`, disabling `JARVIS_RUNTIME_LIVE_EXECUTION`, or removing the workflow id from `JARVIS_RUNTIME_LIVE_WORKFLOWS`. No runtime preview or read-only helper owns durable state.

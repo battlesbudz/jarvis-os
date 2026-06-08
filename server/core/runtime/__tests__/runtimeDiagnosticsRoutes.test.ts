@@ -47,10 +47,12 @@ async function run(): Promise<void> {
   const { server, port } = await startServer("user-runtime-route");
   const previousDryRun = process.env.JARVIS_RUNTIME_DRY_RUN;
   const previousLive = process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
+  const previousLiveWorkflows = process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
 
   try {
     delete process.env.JARVIS_RUNTIME_DRY_RUN;
     delete process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
+    delete process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
     const disabled = await requestJson(port, { message: "What can you do?" });
     assert.equal(disabled.status, 200);
     assert.equal(disabled.body.disabled, true);
@@ -156,6 +158,7 @@ async function run(): Promise<void> {
     assert.equal(readOnlyDisabled.body.routeOwner, "legacy_route");
 
     process.env.JARVIS_RUNTIME_LIVE_EXECUTION = "1";
+    delete process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
     const readOnlyExecuted = await requestJson(port, {
       eventId: "event-read-only-route",
       userId: "body-user-should-not-win",
@@ -164,14 +167,29 @@ async function run(): Promise<void> {
         token: "read-only-secret-token",
       },
     }, "/api/runtime/read-only");
-    assert.equal(readOnlyExecuted.status, 200);
-    assert.equal(readOnlyExecuted.body.runtimeOwned, true);
-    assert.equal(readOnlyExecuted.body.routeOwner, "core_runtime");
-    assert.equal((readOnlyExecuted.body.execution as { status?: string }).status, "completed");
-    assert.equal((readOnlyExecuted.body.execution as { executedToolCount?: number }).executedToolCount, 0);
-    assert.equal((readOnlyExecuted.body.decision as { userId?: string }).userId, "user-runtime-route");
-    assert.doesNotMatch(JSON.stringify(readOnlyExecuted.body), /body-user-should-not-win/);
-    assert.doesNotMatch(JSON.stringify(readOnlyExecuted.body), /read-only-secret-token/);
+    assert.equal(readOnlyExecuted.status, 409);
+    assert.equal(readOnlyExecuted.body.runtimeOwned, false);
+    assert.equal(readOnlyExecuted.body.routeOwner, "legacy_route");
+    assert.equal(readOnlyExecuted.body.runtimeWorkflowId, "general-answer");
+
+    process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS = "general-answer";
+    const readOnlyAllowed = await requestJson(port, {
+      eventId: "event-read-only-route-allowed",
+      userId: "body-user-should-not-win",
+      message: "What can you do?",
+      metadata: {
+        token: "read-only-secret-token",
+      },
+    }, "/api/runtime/read-only");
+    assert.equal(readOnlyAllowed.status, 200);
+    assert.equal(readOnlyAllowed.body.runtimeOwned, true);
+    assert.equal(readOnlyAllowed.body.routeOwner, "core_runtime");
+    assert.equal(readOnlyAllowed.body.runtimeWorkflowId, "general-answer");
+    assert.equal((readOnlyAllowed.body.execution as { status?: string }).status, "completed");
+    assert.equal((readOnlyAllowed.body.execution as { executedToolCount?: number }).executedToolCount, 0);
+    assert.equal((readOnlyAllowed.body.decision as { userId?: string }).userId, "user-runtime-route");
+    assert.doesNotMatch(JSON.stringify(readOnlyAllowed.body), /body-user-should-not-win/);
+    assert.doesNotMatch(JSON.stringify(readOnlyAllowed.body), /read-only-secret-token/);
 
     const readOnlyDeclined = await requestJson(port, {
       message: "Send an email to Bill.",
@@ -186,6 +204,7 @@ async function run(): Promise<void> {
     assert.equal(readOnlyMissingMessage.body.error, "message is required");
 
     delete process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
+    delete process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
 
     const unauthenticated = await startServer();
     try {
@@ -207,6 +226,11 @@ async function run(): Promise<void> {
       delete process.env.JARVIS_RUNTIME_LIVE_EXECUTION;
     } else {
       process.env.JARVIS_RUNTIME_LIVE_EXECUTION = previousLive;
+    }
+    if (previousLiveWorkflows === undefined) {
+      delete process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS;
+    } else {
+      process.env.JARVIS_RUNTIME_LIVE_WORKFLOWS = previousLiveWorkflows;
     }
     await closeServer(server);
   }

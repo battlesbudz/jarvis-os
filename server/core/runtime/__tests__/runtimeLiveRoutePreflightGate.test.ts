@@ -33,13 +33,33 @@ function event(message: string, eventId = "event-live-gate") {
     { JARVIS_RUNTIME_LIVE_EXECUTION: "1" },
   );
 
+  assert.equal(gate.status, "legacy_route_allowed");
+  assert.equal(gate.routeOwner, "legacy_route");
+  assert.equal(gate.shouldUseRuntime, false);
+  assert.equal(gate.shouldContinueLegacy, true);
+  assert.equal(gate.runtime?.execution.status, "completed");
+  assert.equal(gate.runtimeWorkflowId, "general-answer");
+  assert.match(gate.reason, /not enabled/);
+  console.log("OK: Runtime live-route preflight requires explicit workflow allowlist");
+}
+
+{
+  const gate = preflightRuntimeLiveRoute(
+    { event: event("What can you do?", "event-live-readonly-allowed"), now },
+    {
+      JARVIS_RUNTIME_LIVE_EXECUTION: "1",
+      JARVIS_RUNTIME_LIVE_WORKFLOWS: "general-answer",
+    },
+  );
+
   assert.equal(gate.status, "runtime_readonly_allowed");
   assert.equal(gate.routeOwner, "core_runtime");
   assert.equal(gate.shouldUseRuntime, true);
   assert.equal(gate.shouldContinueLegacy, false);
   assert.equal(gate.runtime?.execution.status, "completed");
   assert.equal(gate.runtime?.execution.executedToolCount, 0);
-  console.log("OK: Runtime live-route preflight allows read-only runtime ownership");
+  assert.equal(gate.runtimeWorkflowId, "general-answer");
+  console.log("OK: Runtime live-route preflight allows explicit golden workflow ownership");
 }
 
 {
