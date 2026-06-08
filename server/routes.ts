@@ -67,6 +67,7 @@ import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
 import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryRoutes";
 import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./routes/platformRoutes";
 import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
+import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
   registerAuthenticatedCoachRuntimeRoutes,
   registerPublicCoachRuntimeRoutes,
@@ -2213,6 +2214,17 @@ Answer (yes/no):`,
 
       if (userId) {
         const latestUserMessage = [...messages].reverse().find((m: any) => m?.role === "user")?.content ?? "";
+        previewRuntimeShadowForMessage({
+          userId,
+          message: String(latestUserMessage),
+          channel: originChannel,
+        }).then((shadow) => {
+          if (shadow.enabled) {
+            console.info(`[RuntimeShadow] ${formatRuntimeShadowPreviewSummary(shadow)}`);
+          }
+        }).catch((error) => {
+          console.warn("[RuntimeShadow] preview failed:", error);
+        });
         const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
         const primeRuntimeEnabled = isPrimeRuntimeEnabled();
         const coreRuntimeResult = await handlePrimeInput({
