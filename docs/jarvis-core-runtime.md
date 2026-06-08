@@ -199,6 +199,12 @@ The first live allowlisted workflow id is `general-answer`, which covers the low
 
 Approval-required runtime decisions and existing approval gates can be shaped into workflow previews. Pending gates expose a redacted approval preview; approved gates become a resume handoff for the existing route/tool owner; rejected or expired gates cannot resume. Runtime does not execute the approved tool in this slice.
 
+## Runtime Approval Request Bridge
+
+Approval-required runtime decisions can now be adapted into the existing `agentApproval.requestApproval` request shape. The bridge redacts runtime tool argument previews, stores runtime decision/event metadata in the gate args, and returns the same approval workflow preview/resume object used by existing gates.
+
+Approved runtime-created gates still resume as `legacy_route` handoffs. Core Runtime does not execute the approved tool in this slice.
+
 ## Tool Capability Summary
 
 Tool Gateway descriptors can be summarized into provider, scope, approval, and maximum-risk metadata. This helps preview callers understand the available tool surface before attempting preflight.

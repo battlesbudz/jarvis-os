@@ -55,6 +55,8 @@ The first live workflow id is `general-answer`. Approval-required, queued, tool-
 
 `buildRuntimeApprovalWorkflow` and `buildRuntimeApprovalWorkflowFromGate` describe approval-required work without executing it. Pending approvals return redacted preview data, approved gates return a `ready_to_resume` handoff for the existing owner, and rejected or expired gates remain non-resumable.
 
+`openRuntimeApprovalGate` is the first bridge from a runtime approval decision into the existing Jarvis approval gate system. It creates an `agentApproval.requestApproval` request with redacted runtime metadata and returns a pending runtime approval workflow. Approval resume still hands back to the existing route/tool owner; runtime does not execute approved tools yet.
+
 ## Rollback
 
 Rollback remains disabling `JARVIS_RUNTIME_DRY_RUN`, disabling `JARVIS_RUNTIME_LIVE_EXECUTION`, or removing the workflow id from `JARVIS_RUNTIME_LIVE_WORKFLOWS`. No runtime preview or read-only helper owns durable state.
