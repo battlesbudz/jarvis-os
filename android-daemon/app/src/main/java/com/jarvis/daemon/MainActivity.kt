@@ -94,7 +94,11 @@ class MainActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences("jarvis_daemon", Context.MODE_PRIVATE)
 
-        val savedUrl = prefs.getString("server_url", JarvisConfig.SERVER_URL) ?: JarvisConfig.SERVER_URL
+        val rawSavedUrl = prefs.getString("server_url", JarvisConfig.SERVER_URL)
+        val savedUrl = JarvisConfig.normalizeServerUrl(rawSavedUrl)
+        if (rawSavedUrl != savedUrl) {
+            prefs.edit().putString("server_url", savedUrl).apply()
+        }
         binding.etServerUrl.setText(savedUrl)
 
         binding.etServerUrl.addTextChangedListener(object : TextWatcher {
@@ -106,11 +110,15 @@ class MainActivity : AppCompatActivity() {
         })
 
         binding.btnPair.setOnClickListener {
-            val url = binding.etServerUrl.text.toString().trim()
+            val rawUrl = binding.etServerUrl.text.toString().trim()
+            val url = JarvisConfig.normalizeServerUrl(rawUrl)
             val code = binding.etPairCode.text.toString().trim().uppercase()
             if (url.isEmpty()) {
                 Toast.makeText(this, "Enter the Jarvis server URL first", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
+            }
+            if (rawUrl != url) {
+                binding.etServerUrl.setText(url)
             }
             if (code.length != 8) {
                 Toast.makeText(this, "Pairing code must be 8 characters", Toast.LENGTH_SHORT).show()
@@ -207,9 +215,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startDaemonService(serverUrl: String, pairCode: String) {
+        val normalizedServerUrl = JarvisConfig.normalizeServerUrl(serverUrl)
         val intent = Intent(this, WebSocketService::class.java).apply {
             action = WebSocketService.ACTION_CONNECT
-            putExtra(WebSocketService.EXTRA_SERVER_URL, serverUrl)
+            putExtra(WebSocketService.EXTRA_SERVER_URL, normalizedServerUrl)
             putExtra(WebSocketService.EXTRA_PAIR_CODE, pairCode)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -217,7 +226,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(intent)
         }
-        prefs.edit().putString("server_url", serverUrl).apply()
+        prefs.edit().putString("server_url", normalizedServerUrl).apply()
         Toast.makeText(this, "Connecting to Jarvis…", Toast.LENGTH_SHORT).show()
     }
 
