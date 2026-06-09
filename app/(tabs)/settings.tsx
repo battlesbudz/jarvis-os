@@ -1595,7 +1595,9 @@ export default function SettingsScreen() {
       }
       setOpenAILoginUrl(data.loginUrl);
       setOpenAIAuthMessage(data.instructions ?? 'Open the login URL. Paste the callback URL here if localhost cannot load.');
-      await openHostedConnectionLink(data.loginUrl);
+      if (Platform.OS !== 'web') {
+        await openHostedConnectionLink(data.loginUrl);
+      }
     } catch (error: any) {
       const message = error?.message?.includes('openai_oauth_not_configured')
         ? 'OpenAI OAuth needs client configuration on the server before Jarvis can open the login page.'
@@ -1606,6 +1608,15 @@ export default function SettingsScreen() {
       setOpenAIAuthBusy(false);
     }
   }, [openHostedConnectionLink]);
+
+  const openOpenAILoginUrl = useCallback(async () => {
+    if (!openAILoginUrl) return;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(openAILoginUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    await openHostedConnectionLink(openAILoginUrl);
+  }, [openAILoginUrl, openHostedConnectionLink]);
 
   const saveOpenAIApiKey = useCallback(async () => {
     const apiKey = openAIApiKeyInput.trim();
@@ -2977,16 +2988,27 @@ export default function SettingsScreen() {
             </View>
 
             {openAILoginUrl ? (
-              <Pressable
-                onPress={async () => {
-                  await Clipboard.setStringAsync(openAILoginUrl);
-                  setOpenAIAuthMessage('OpenAI login URL copied.');
-                }}
-                style={providerAuthStyles.copyLoginRow}
-              >
-                <Ionicons name="copy-outline" size={14} color="#2563EB" />
-                <Text style={providerAuthStyles.copyLoginText}>Copy login URL</Text>
-              </Pressable>
+              <View style={providerAuthStyles.loginLinkActions}>
+                {Platform.OS === 'web' ? (
+                  <Pressable
+                    onPress={openOpenAILoginUrl}
+                    style={providerAuthStyles.copyLoginRow}
+                  >
+                    <Ionicons name="open-outline" size={14} color="#2563EB" />
+                    <Text style={providerAuthStyles.copyLoginText}>Open login URL</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  onPress={async () => {
+                    await Clipboard.setStringAsync(openAILoginUrl);
+                    setOpenAIAuthMessage('OpenAI login URL copied.');
+                  }}
+                  style={providerAuthStyles.copyLoginRow}
+                >
+                  <Ionicons name="copy-outline" size={14} color="#2563EB" />
+                  <Text style={providerAuthStyles.copyLoginText}>Copy login URL</Text>
+                </Pressable>
+              </View>
             ) : null}
 
             {openAIAuthMessage ? (
@@ -4620,6 +4642,10 @@ const providerAuthStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingVertical: 4,
+  },
+  loginLinkActions: {
+    alignItems: 'flex-start',
+    gap: 4,
   },
   copyLoginText: {
     color: '#2563EB',
