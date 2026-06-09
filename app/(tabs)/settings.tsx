@@ -1609,6 +1609,16 @@ export default function SettingsScreen() {
     }
   }, [openHostedConnectionLink]);
 
+  const openOpenAILoginUrl = useCallback(async () => {
+    if (!openAILoginUrl) return;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const opened = window.open(openAILoginUrl, '_blank', 'noopener,noreferrer');
+      if (!opened) window.location.assign(openAILoginUrl);
+      return;
+    }
+    await openHostedConnectionLink(openAILoginUrl);
+  }, [openAILoginUrl, openHostedConnectionLink]);
+
   const saveOpenAIApiKey = useCallback(async () => {
     const apiKey = openAIApiKeyInput.trim();
     if (!apiKey) return;
@@ -2979,16 +2989,27 @@ export default function SettingsScreen() {
             </View>
 
             {openAILoginUrl ? (
-              <Pressable
-                onPress={async () => {
-                  await Clipboard.setStringAsync(openAILoginUrl);
-                  setOpenAIAuthMessage('OpenAI login URL copied.');
-                }}
-                style={providerAuthStyles.copyLoginRow}
-              >
-                <Ionicons name="copy-outline" size={14} color="#2563EB" />
-                <Text style={providerAuthStyles.copyLoginText}>Copy login URL</Text>
-              </Pressable>
+              <View style={providerAuthStyles.loginLinkActions}>
+                {Platform.OS === 'web' ? (
+                  <Pressable
+                    onPress={openOpenAILoginUrl}
+                    style={providerAuthStyles.copyLoginRow}
+                  >
+                    <Ionicons name="open-outline" size={14} color="#2563EB" />
+                    <Text style={providerAuthStyles.copyLoginText}>Open login URL</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  onPress={async () => {
+                    await Clipboard.setStringAsync(openAILoginUrl);
+                    setOpenAIAuthMessage('OpenAI login URL copied.');
+                  }}
+                  style={providerAuthStyles.copyLoginRow}
+                >
+                  <Ionicons name="copy-outline" size={14} color="#2563EB" />
+                  <Text style={providerAuthStyles.copyLoginText}>Copy login URL</Text>
+                </Pressable>
+              </View>
             ) : null}
 
             {openAIAuthMessage ? (
@@ -4622,6 +4643,10 @@ const providerAuthStyles = StyleSheet.create({
     alignItems: 'center',
     gap: 6,
     paddingVertical: 4,
+  },
+  loginLinkActions: {
+    alignItems: 'flex-start',
+    gap: 4,
   },
   copyLoginText: {
     color: '#2563EB',

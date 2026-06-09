@@ -38,6 +38,7 @@ assert.match(template, /\/api\/auth\/providers\/\$\{encodeURIComponent\(provider
 
 assert.match(template, /setupBtn\.addEventListener\('click', openSetupSheet\)/);
 assert.match(template, /emptySetupBtn\.addEventListener\('click', openSetupSheet\)/);
+assert.match(template, /restoredEmptySetupBtn\.addEventListener\('click', openSetupSheet\)/);
 assert.match(template, /openAILoginLink\.style\.display\s*=\s*'flex'/);
 assert.match(template, /openAILoginLink\.focus\(\)/);
 assert.doesNotMatch(template, /window\.open\(data\.loginUrl/);
@@ -49,6 +50,9 @@ assert.match(template, /Provider setup is only available to the Jarvis owner/);
 
 assert.match(settingsScreen, /setOpenAILoginUrl\(data\.loginUrl\)/);
 assert.match(settingsScreen, /Platform\.OS !== 'web'[\s\S]*openHostedConnectionLink\(data\.loginUrl\)/);
+assert.match(settingsScreen, /openOpenAILoginUrl/);
+assert.match(settingsScreen, /window\.open\(openAILoginUrl, '_blank', 'noopener,noreferrer'\)/);
+assert.match(settingsScreen, /Open login URL/);
 assert.match(settingsScreen, /Copy login URL/);
 
 console.log("OK: webchat exposes owner-only model and OpenAI provider setup controls");

@@ -2268,7 +2268,14 @@
             <div class="suggestion-chip">Summarise my emails</div>
             <div class="suggestion-chip">Help me plan my week</div>
             <div class="suggestion-chip">What should I focus on?</div>
-          </div>`;
+          </div>
+          <button class="empty-setup-btn" id="empty-setup-btn" type="button">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 0 1-4 0v-.09a1.7 1.7 0 0 0-1-.51 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 0 1 0-4h.09a1.7 1.7 0 0 0 .51-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 0 1 4 0v.09a1.7 1.7 0 0 0 1 .51 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.35.38.7.6 1h.09a2 2 0 0 1 0 4H20a1.7 1.7 0 0 0-.6 1z"/>
+            </svg>
+            Models and keys
+          </button>`;
         empty.querySelectorAll('.suggestion-chip').forEach(chip => {
           chip.addEventListener('click', () => {
             msgInput.value = chip.textContent;
@@ -2276,6 +2283,11 @@
             sendMessage();
           });
         });
+        const restoredEmptySetupBtn = empty.querySelector('#empty-setup-btn');
+        if (restoredEmptySetupBtn) {
+          restoredEmptySetupBtn.style.display = isGuest ? 'none' : 'inline-flex';
+          restoredEmptySetupBtn.addEventListener('click', openSetupSheet);
+        }
         messagesEl.appendChild(empty);
       });
 
