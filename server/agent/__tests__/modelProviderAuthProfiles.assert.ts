@@ -75,6 +75,24 @@ async function main() {
     assert.equal(defaultCredential?.accountId, "acct_123");
     assert.equal(defaultCredential?.email, "person@example.com");
 
+    await saveOpenAIOAuthProfile({
+      repo,
+      userId: "user-1",
+      accessToken: "oauth-access-token-reconnected",
+      expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+      accountId: "acct_123",
+      email: "person@example.com",
+      isDefault: true,
+    });
+    const reconnectedCredential = await getProviderCredential({
+      repo,
+      userId: "user-1",
+      provider: "openai",
+      preferredAuthType: "oauth",
+    });
+    assert.equal(reconnectedCredential?.credential, "oauth-access-token-reconnected");
+    assert.equal(reconnectedCredential?.refreshToken, "oauth-refresh-token");
+
     await assert.rejects(
       () => getProviderCredential({
         repo,

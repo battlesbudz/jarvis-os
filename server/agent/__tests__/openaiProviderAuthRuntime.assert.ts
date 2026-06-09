@@ -82,26 +82,6 @@ async function main() {
     await collect(provider);
     assert.equal(clientConfigs[1].apiKey, "env-openai-key");
 
-    _setOpenAIProviderCredentialResolverForTesting(async (input) => {
-      resolverCalls.push(input);
-      if (input.preferredAuthType) return null;
-      return {
-        provider: "openai",
-        authType: "api_key",
-        credential: "user-api-key",
-        refreshToken: null,
-        expiresAt: null,
-        accountId: "acct_api_key",
-        email: "apikey@example.com",
-      };
-    });
-    await collect(provider, "user-api-key");
-    assert.equal(clientConfigs[2].apiKey, "user-api-key");
-    assert.equal(resolverCalls.at(-2).preferredAuthType, "oauth");
-    assert.equal(resolverCalls.at(-2).allowAuthTypeFallback, false);
-    assert.equal(resolverCalls.at(-1).preferredAuthType, undefined);
-    assert.equal(resolverCalls.at(-1).allowAuthTypeFallback, false);
-
     process.env.JARVIS_OPENAI_AUTH_FALLBACK_ENABLED = "true";
     _setOpenAIProviderCredentialResolverForTesting(async (input) => {
       resolverCalls.push(input);
@@ -111,7 +91,6 @@ async function main() {
     assert.equal(resolverCalls.at(-1).allowAuthTypeFallback, true);
 
     console.log("OK: OpenAI provider resolves user-scoped provider credentials before env config");
-    console.log("OK: OpenAI provider honors a saved default profile before env fallback when the preferred type is absent");
     console.log("OK: OpenAI provider keeps OAuth/API-key fallback disabled unless explicitly enabled");
   } finally {
     _setOpenAIProviderClientFactoryForTesting(null);

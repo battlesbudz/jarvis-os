@@ -51,6 +51,8 @@ getProviderCredential(userId, "openai", preferredAuthType)
 
 Jarvis does not silently switch between OAuth and API-key auth. Set `JARVIS_OPENAI_AUTH_FALLBACK_ENABLED=true` only when an explicit fallback policy is wanted.
 
+Leave `JARVIS_OPENAI_PREFERRED_AUTH_TYPE` unset to honor the user's selected default profile from Settings. Set it only when the deployment should require a specific OpenAI auth type globally, such as `oauth` or `api_key`.
+
 ## Probe
 
 ```powershell

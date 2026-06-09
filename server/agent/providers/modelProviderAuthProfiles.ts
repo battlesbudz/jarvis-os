@@ -81,7 +81,9 @@ export class InMemoryModelProviderAuthProfileRepository implements ModelProvider
       provider: input.provider,
       authType: input.authType,
       accessTokenEncrypted: input.accessTokenEncrypted ?? null,
-      refreshTokenEncrypted: input.refreshTokenEncrypted ?? null,
+      refreshTokenEncrypted: input.refreshTokenEncrypted === undefined
+        ? existing?.refreshTokenEncrypted ?? null
+        : input.refreshTokenEncrypted,
       apiKeyEncrypted: input.apiKeyEncrypted ?? null,
       expiresAt: input.expiresAt ?? null,
       accountId: input.accountId ?? null,
@@ -212,7 +214,10 @@ export class DatabaseModelProviderAuthProfileRepository implements ModelProvider
       )
       ON CONFLICT (user_id, provider, auth_type) DO UPDATE SET
         access_token_encrypted = EXCLUDED.access_token_encrypted,
-        refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
+        refresh_token_encrypted = COALESCE(
+          EXCLUDED.refresh_token_encrypted,
+          model_provider_auth_profiles.refresh_token_encrypted
+        ),
         api_key_encrypted = EXCLUDED.api_key_encrypted,
         expires_at = EXCLUDED.expires_at,
         account_id = EXCLUDED.account_id,
@@ -354,7 +359,7 @@ export async function saveOpenAIOAuthProfile(
     provider: "openai",
     authType: "oauth",
     accessTokenEncrypted: encryptProviderSecret(accessToken),
-    refreshTokenEncrypted: input.refreshToken?.trim() ? encryptProviderSecret(input.refreshToken) : null,
+    refreshTokenEncrypted: input.refreshToken?.trim() ? encryptProviderSecret(input.refreshToken) : undefined,
     apiKeyEncrypted: null,
     expiresAt: input.expiresAt ?? null,
     accountId: input.accountId ?? null,
