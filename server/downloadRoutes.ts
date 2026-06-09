@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
@@ -25,8 +27,40 @@ function getFallbackUrl(): string | null {
   );
 }
 
+async function proxyFallbackApk(fallbackUrl: string, res: Response): Promise<void> {
+  const remote = await fetch(fallbackUrl, {
+    headers: {
+      Accept: "application/vnd.android.package-archive, application/octet-stream, */*",
+      "User-Agent": "JarvisAPKDownloader/1.0",
+    },
+  });
+
+  if (!remote.ok) {
+    res.status(502).json({
+      error: "Hosted APK unavailable",
+      status: remote.status,
+    });
+    return;
+  }
+
+  res.setHeader(
+    "Content-Type",
+    remote.headers.get("content-type") || "application/vnd.android.package-archive",
+  );
+  res.setHeader("Content-Disposition", 'attachment; filename="jarvis-daemon.apk"');
+  const contentLength = remote.headers.get("content-length");
+  if (contentLength) res.setHeader("Content-Length", contentLength);
+  res.setHeader("Cache-Control", "public, max-age=300");
+  if (!remote.body) {
+    res.status(502).json({ error: "Hosted APK response did not include a body" });
+    return;
+  }
+
+  await pipeline(Readable.fromWeb(remote.body as any), res);
+}
+
 export function registerDownloadRoutes(app: Express): void {
-  app.get("/api/download/apk", (_req: Request, res: Response) => {
+  app.get("/api/download/apk", async (_req: Request, res: Response) => {
     if (fs.existsSync(APK_PATH)) {
       const stat = fs.statSync(APK_PATH);
       res.setHeader("Content-Type", "application/vnd.android.package-archive");
@@ -39,7 +73,14 @@ export function registerDownloadRoutes(app: Express): void {
 
     const fallback = getFallbackUrl();
     if (fallback) {
-      res.redirect(302, fallback);
+      try {
+        await proxyFallbackApk(fallback, res);
+      } catch (error) {
+        console.error("[DownloadRoutes] failed to proxy hosted daemon APK:", error);
+        if (!res.headersSent) {
+          res.status(502).json({ error: "Failed to download hosted APK" });
+        }
+      }
       return;
     }
 

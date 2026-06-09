@@ -90,6 +90,26 @@ assert.match(
 );
 assert.match(
   downloadRoutes,
+  /proxyFallbackApk/,
+  "APK download endpoint should proxy hosted APKs through Railway",
+);
+assert.match(
+  downloadRoutes,
+  /pipeline\(Readable\.fromWeb/,
+  "APK download endpoint should stream proxied APKs instead of buffering them",
+);
+assert.doesNotMatch(
+  downloadRoutes,
+  /Buffer\.from\(await remote\.arrayBuffer\(\)\)/,
+  "APK download endpoint should not buffer hosted APKs in Railway memory",
+);
+assert.doesNotMatch(
+  downloadRoutes,
+  /res\.redirect\(302,\s*fallback\)/,
+  "APK download endpoint should not make Android clients follow GitHub release redirects",
+);
+assert.match(
+  downloadRoutes,
   /ANDROID_APK_URL/,
   "APK download endpoint should keep the legacy APK URL env fallback",
 );
