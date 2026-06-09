@@ -56,6 +56,7 @@ export interface ModelRoutingDecision {
 
 export interface RoutedModelTurnParams {
   tier: ModelExecutionTier;
+  requestedModel?: string;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
   toolChoice?: "auto" | "required" | "none";
@@ -118,11 +119,17 @@ function parseModelSpec(spec: string | undefined): FallbackChainEntry | null {
   if (colonIdx > 0) {
     const provider = raw.slice(0, colonIdx).trim() as ProviderName;
     const model = raw.slice(colonIdx + 1).trim();
-    if ((provider === "openai" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth") && model) {
+    if ((provider === "openai" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth" || provider === "anthropic" || provider === "google") && model) {
       return { providerName: provider, model };
     }
   }
 
+  if (raw.startsWith("anthropic/")) {
+    return { providerName: "anthropic", model: raw.slice("anthropic/".length) };
+  }
+  if (raw.startsWith("google/")) {
+    return { providerName: "google", model: raw.slice("google/".length) };
+  }
   if (raw.startsWith("openai/")) {
     return { providerName: "openai", model: raw.slice("openai/".length) };
   }
@@ -147,6 +154,47 @@ function parseModelSpec(spec: string | undefined): FallbackChainEntry | null {
   }
 
   return { providerName: "openai-compatible", model: `openai-compatible/${raw}` };
+}
+
+function parseRequestedModelSpec(spec: string | undefined): FallbackChainEntry | null {
+  const raw = spec?.trim();
+  if (!raw) return null;
+  const normalized = raw.toLowerCase();
+
+  const colonIdx = normalized.indexOf(":");
+  if (colonIdx > 0) {
+    const provider = normalized.slice(0, colonIdx).trim();
+    if (
+      provider === "openai" ||
+      provider === "openai-compatible" ||
+      provider === "chatgpt-codex-oauth" ||
+      provider === "anthropic" ||
+      provider === "google"
+    ) {
+      return parseModelSpec(raw);
+    }
+  }
+
+  if (
+    normalized.startsWith("openai/") ||
+    normalized.startsWith("anthropic/") ||
+    normalized.startsWith("google/") ||
+    normalized.startsWith("chatgpt-codex-oauth/") ||
+    normalized.startsWith("codex-oauth/") ||
+    normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("openai-compatible/") ||
+    normalized.startsWith("openrouter/") ||
+    normalized.startsWith("groq/") ||
+    normalized.startsWith("together/") ||
+    normalized.startsWith("fireworks/") ||
+    normalized.startsWith("cerebras/") ||
+    normalized.startsWith("nvidia/") ||
+    normalized.startsWith("deepseek/")
+  ) {
+    return parseModelSpec(raw);
+  }
+
+  return null;
 }
 
 function envModelForExecutionTier(tier: ModelExecutionTier): FallbackChainEntry | null {
@@ -530,7 +578,10 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
-  const chain = (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix)) ?? getModelRouteChain(params.tier);
+  const requestedEntry = parseRequestedModelSpec(params.requestedModel);
+  const chain = requestedEntry
+    ? [requestedEntry]
+    : (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix)) ?? getModelRouteChain(params.tier);
   if (chain.length === 0) {
     throw new Error(
       "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable.",

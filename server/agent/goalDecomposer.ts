@@ -157,6 +157,7 @@ Decompose it now.`;
 
   const resp = await openai.chat.completions.create({
     model,
+    user: userId,
     messages: [
       { role: "system", content: system },
       { role: "user", content: userMsg },

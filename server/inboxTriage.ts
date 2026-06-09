@@ -56,7 +56,7 @@ Content preview: ${bodySnippet}`;
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 120,
-    }, { tier: "cheap", logPrefix: "[InboxTriage/deliverable]" });
+    }, { tier: "cheap", logPrefix: "[InboxTriage/deliverable]", userId: d.userId });
     const raw = resp.choices[0]?.message?.content || "{}";
     const result = JSON.parse(raw) as { verdict?: string; note?: string };
     const valid: TriageVerdict[] = ["auto_handle", "escalate", "promote_memory"];
@@ -189,7 +189,7 @@ Jarvis reason: ${item.jarvisReason || "(none)"}`;
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 80,
-    }, { tier: "cheap", logPrefix: "[InboxTriage/item]" });
+    }, { tier: "cheap", logPrefix: "[InboxTriage/item]", userId: item.userId });
     const raw = resp.choices[0]?.message?.content || "{}";
     const result = JSON.parse(raw) as { autoDismiss?: boolean; reason?: string };
     return { autoDismiss: result.autoDismiss === true, reason: result.reason || "" };

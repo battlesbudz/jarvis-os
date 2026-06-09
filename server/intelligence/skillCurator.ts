@@ -218,7 +218,7 @@ If you cannot draft meaningful skills from the clusters, return an empty array: 
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 1200,
-    }, { tier: "balanced", logPrefix: "[SkillCurator/draft]" });
+    }, { tier: "balanced", logPrefix: "[SkillCurator/draft]", userId });
     const raw = resp.choices[0]?.message?.content?.trim() ?? "[]";
     candidates = JSON.parse(raw);
     if (!Array.isArray(candidates)) candidates = [];
@@ -329,7 +329,7 @@ Return ONLY a valid JSON object (no markdown fences):
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 300,
-    }, { tier: "cheap", logPrefix: "[SkillCurator/synthesiser]" });
+    }, { tier: "cheap", logPrefix: "[SkillCurator/synthesiser]", userId });
     const raw = resp.choices[0]?.message?.content?.trim() ?? "{}";
     const data = JSON.parse(raw) as { name?: string; triggerDescription?: string; instructionText?: string };
     if (!data.name || !data.triggerDescription || !data.instructionText) return;

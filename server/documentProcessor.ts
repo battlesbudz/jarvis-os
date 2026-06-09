@@ -150,7 +150,7 @@ async function summarizeText(name: string, text: string, userId: string): Promis
     ],
     temperature: 0.2,
     max_tokens: 1000,
-  }, { tier: "balanced", logPrefix: "[DocumentSummary]" });
+  }, { tier: "balanced", logPrefix: "[DocumentSummary]", userId });
 
   return response.choices[0]?.message?.content || text.slice(0, 3000);
 }

@@ -40,6 +40,8 @@ export function hasDirectOpenAIProvider(): boolean {
 export function hasNonOpenAIRoutableProvider(): boolean {
   return (
     hasCodexOAuthProvider() ||
+    hasProviderEnvValue("ANTHROPIC_API_KEY", "AI_INTEGRATIONS_ANTHROPIC_API_KEY") ||
+    hasProviderEnvValue("GEMINI_API_KEY", "GOOGLE_AI_API_KEY", "AI_INTEGRATIONS_GEMINI_API_KEY") ||
     hasProviderEnvValue("OPENAI_COMPATIBLE_BASE_URL", "AI_INTEGRATIONS_OPENAI_COMPATIBLE_BASE_URL") ||
     hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY") ||
     hasProviderEnvValue("GROQ_API_KEY", "AI_INTEGRATIONS_GROQ_API_KEY") ||

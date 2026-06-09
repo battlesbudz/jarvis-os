@@ -9,6 +9,7 @@ export interface RoutedChatCompletionOptions {
   signal?: AbortSignal;
   tier?: ModelExecutionTier;
   logPrefix?: string;
+  userId?: string;
 }
 
 function maxTokensFromBody(body: ChatCreateBody): number {
@@ -23,6 +24,17 @@ function toolChoiceFromBody(body: ChatCreateBody): "auto" | "required" | "none" 
   return body.tools?.length ? "auto" : "none";
 }
 
+export function getUserIdFromChatBody(body: unknown): string | undefined {
+  if (!body || typeof body !== "object") return undefined;
+  const user = (body as { user?: unknown }).user;
+  if (typeof user === "string" && user.trim()) return user.trim();
+  const metadata = (body as { metadata?: unknown }).metadata;
+  if (!metadata || typeof metadata !== "object") return undefined;
+  const meta = metadata as { userId?: unknown; jarvisUserId?: unknown };
+  const metaUser = meta.userId ?? meta.jarvisUserId;
+  return typeof metaUser === "string" && metaUser.trim() ? metaUser.trim() : undefined;
+}
+
 export async function createRoutedChatCompletion(
   body: ChatCreateBody,
   options: RoutedChatCompletionOptions = {},
@@ -30,11 +42,13 @@ export async function createRoutedChatCompletion(
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
   const result = await runner({
     tier: options.tier ?? "cheap",
+    requestedModel: String(body.model),
     messages: body.messages,
     tools: body.tools,
     toolChoice: toolChoiceFromBody(body),
     maxCompletionTokens: maxTokensFromBody(body),
     stream: false,
+    userId: options.userId ?? getUserIdFromChatBody(body),
     signal: options.signal,
     logPrefix: options.logPrefix,
   });

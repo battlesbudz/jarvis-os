@@ -52,6 +52,10 @@ function getPreferredOpenAIAuthType(): ProviderAuthType | undefined {
   return undefined;
 }
 
+function normalizeOpenAIModel(model: string): string {
+  return model.startsWith("openai/") ? model.slice("openai/".length) : model;
+}
+
 export class OpenAIProvider extends BaseProvider {
   private client: OpenAI | null = null;
 
@@ -114,7 +118,7 @@ export class OpenAIProvider extends BaseProvider {
     const client = await this.getClient(params);
     const completion = await client.chat.completions.create(
       {
-        model: params.model,
+        model: normalizeOpenAIModel(params.model),
         messages: params.messages,
         tools: params.tools,
         tool_choice: params.tools ? params.toolChoice : undefined,
@@ -151,7 +155,7 @@ export class OpenAIProvider extends BaseProvider {
     const client = await this.getClient(params);
     const stream = await client.chat.completions.create(
       {
-        model: params.model,
+        model: normalizeOpenAIModel(params.model),
         messages: params.messages,
         tools: params.tools,
         tool_choice: params.tools ? params.toolChoice : undefined,

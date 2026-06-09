@@ -17,6 +17,8 @@ import { persistHarnessMindTrace } from "./mindTraceRecorder";
 function resolveProviderName(model: string): ProviderName {
   const normalized = model.toLowerCase();
   if (
+    normalized.startsWith("anthropic/") ||
+    normalized.startsWith("google/") ||
     normalized.startsWith("modelrelay/") ||
     normalized.startsWith("chatgpt-codex-oauth/") ||
     normalized.startsWith("codex-oauth/") ||
@@ -29,6 +31,8 @@ function resolveProviderName(model: string): ProviderName {
     normalized.startsWith("nvidia/") ||
     normalized.startsWith("deepseek/")
   ) {
+    if (normalized.startsWith("anthropic/")) return "anthropic";
+    if (normalized.startsWith("google/")) return "google";
     if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
       return "chatgpt-codex-oauth";
     }

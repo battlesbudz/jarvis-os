@@ -761,6 +761,7 @@ async function extractAndWriteMemories(
 
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
+      user: userId,
       messages: [
         {
           role: "system",

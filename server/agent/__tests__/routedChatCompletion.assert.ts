@@ -27,9 +27,59 @@ async function main() {
   const capturedRequest = captured as Record<string, unknown> | null;
   assert.equal(capturedRequest?.tier, "balanced");
   assert.equal(capturedRequest?.maxCompletionTokens, 42);
+  assert.equal(capturedRequest?.requestedModel, "gpt-4o-mini");
   assert.equal(response.model, "chatgpt-codex-oauth/auto");
   assert.equal(response.choices[0]?.message.content, '{"ok":true}');
   console.log("OK: routed chat completion maps OpenAI-style requests through the Jarvis router");
+
+  captured = null;
+  await createRoutedChatCompletion(
+    {
+      model: "anthropic/claude-sonnet-4-5",
+      messages: [{ role: "user", content: "Use Claude" }],
+      max_tokens: 42,
+    },
+    { tier: "balanced", logPrefix: "[TestRoutedClaude]", userId: "user-claude" },
+    async (params): Promise<ProviderTurnResult> => {
+      captured = params as unknown as Record<string, unknown>;
+      return {
+        textContent: "claude ok",
+        textChunks: ["claude ok"],
+        toolCallList: [],
+        finishReason: "stop",
+        providerName: "anthropic",
+        model: "claude-sonnet-4-5",
+      };
+    },
+  );
+  assert.equal((captured as Record<string, unknown> | null)?.requestedModel, "anthropic/claude-sonnet-4-5");
+  assert.equal((captured as Record<string, unknown> | null)?.userId, "user-claude");
+  console.log("OK: routed chat completion preserves explicit provider model requests");
+
+  captured = null;
+  await createRoutedChatCompletion(
+    {
+      model: "google/gemini-2.5-pro",
+      user: "user-gemini",
+      messages: [{ role: "user", content: "Use Gemini" }],
+      max_tokens: 42,
+    },
+    { tier: "balanced", logPrefix: "[TestRoutedGeminiUser]" },
+    async (params): Promise<ProviderTurnResult> => {
+      captured = params as unknown as Record<string, unknown>;
+      return {
+        textContent: "gemini ok",
+        textChunks: ["gemini ok"],
+        toolCallList: [],
+        finishReason: "stop",
+        providerName: "google",
+        model: "gemini-2.5-pro",
+      };
+    },
+  );
+  assert.equal((captured as Record<string, unknown> | null)?.requestedModel, "google/gemini-2.5-pro");
+  assert.equal((captured as Record<string, unknown> | null)?.userId, "user-gemini");
+  console.log("OK: routed chat completion reads user-scoped provider auth from the OpenAI user field");
 
   const shim = createRoutedOpenAIChatShim("[TestShim]");
   assert.equal(typeof shim.chat.completions.create, "function");

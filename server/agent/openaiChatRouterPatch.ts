@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { Completions } from "openai/resources/chat/completions";
 import OpenAI from "openai";
 import { routeModelTurn } from "./modelRouter";
+import { getUserIdFromChatBody } from "./routedChatCompletion";
 import "./providers/envAliases";
 import { hasDirectOpenAIProvider, hasNonOpenAIRoutableProvider } from "./providers/env";
 
@@ -17,21 +18,50 @@ const CLIENT_METHOD_PATCHED = Symbol.for("jarvis.openaiClientMethodRouterPatched
 let routingDepth = 0;
 const require = createRequire(import.meta.url);
 
+function routingExplicitlyDisabled(): boolean {
+  const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
+  return raw === "0" || raw === "false" || raw === "disabled" || raw === "no";
+}
+
 function routingEnabled(): boolean {
   const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
-  if (raw === "0" || raw === "false" || raw === "disabled" || raw === "no") return false;
+  if (routingExplicitlyDisabled()) return false;
   if (raw === "1" || raw === "true" || raw === "enabled" || raw === "yes") return true;
   // Prefer the router whenever an alternate provider is configured. Otherwise an
   // exhausted direct OpenAI key can bypass OpenRouter/Groq/etc. and break chat.
   return hasNonOpenAIRoutableProvider();
 }
 
+function isProviderModelSpec(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return (
+    normalized.startsWith("anthropic/") ||
+    normalized.startsWith("google/") ||
+    normalized.startsWith("openai/") ||
+    normalized.startsWith("openai-compatible/") ||
+    normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("openrouter/") ||
+    normalized.startsWith("groq/") ||
+    normalized.startsWith("together/") ||
+    normalized.startsWith("fireworks/") ||
+    normalized.startsWith("cerebras/") ||
+    normalized.startsWith("nvidia/") ||
+    normalized.startsWith("deepseek/")
+  );
+}
+
 function shouldRoute(body: unknown): body is ChatCreateBody {
-  if (!routingEnabled()) return false;
+  if (routingExplicitlyDisabled()) return false;
   if (routingDepth > 0) return false;
   if (!body || typeof body !== "object") return false;
   const model = (body as { model?: unknown }).model;
-  return typeof model === "string" && model.startsWith("gpt-");
+  if (typeof model !== "string") return false;
+  if (isProviderModelSpec(model)) return true;
+  return routingEnabled() && model.startsWith("gpt-");
+}
+
+export function _shouldRouteOpenAIChatForTesting(body: unknown): boolean {
+  return shouldRoute(body);
 }
 
 function tierForBody(body: ChatCreateBody): "cheap" | "balanced" | "smart" {
@@ -122,11 +152,13 @@ function routeBody(body: ChatCreateBody, signal: AbortSignal | undefined, logPre
   routingDepth++;
   return routeModelTurn({
     tier: tierForBody(body),
+    requestedModel: String(body.model),
     messages: body.messages,
     tools: body.tools,
     toolChoice: (body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto"),
     maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
     stream: false,
+    userId: getUserIdFromChatBody(body),
     signal,
     logPrefix,
   }).then((result) => {

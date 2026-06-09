@@ -62,7 +62,7 @@ Keep each text under 2 sentences. Plain text only — no markdown, no asterisks.
         { role: "user", content: prompt },
       ],
       max_completion_tokens: 800,
-    }, { tier: "balanced", logPrefix: "[MomentumCoach]" });
+    }, { tier: "balanced", logPrefix: "[MomentumCoach]", userId });
 
     const raw = resp.choices[0]?.message?.content || "[]";
     const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();

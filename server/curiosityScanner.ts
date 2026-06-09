@@ -147,7 +147,7 @@ Return only items worth asking about. Return { "questions": [] } if nothing is i
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 800,
-  }, { tier: "balanced", logPrefix: "[CuriosityScanner]" });
+  }, { tier: "balanced", logPrefix: "[CuriosityScanner]", userId });
 
   const content =
     response.choices[0]?.message?.content || '{"questions":[]}';

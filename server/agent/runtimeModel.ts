@@ -16,9 +16,30 @@ export function isCodexOAuthModel(model: string | undefined | null): boolean {
   );
 }
 
+export function isExplicitProviderModel(model: string | undefined | null): boolean {
+  const normalized = String(model ?? "").trim().toLowerCase();
+  return (
+    normalized.startsWith("anthropic/") ||
+    normalized.startsWith("google/") ||
+    normalized.startsWith("openai/") ||
+    normalized.startsWith("openai-compatible/") ||
+    normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("openrouter/") ||
+    normalized.startsWith("groq/") ||
+    normalized.startsWith("together/") ||
+    normalized.startsWith("fireworks/") ||
+    normalized.startsWith("cerebras/") ||
+    normalized.startsWith("nvidia/") ||
+    normalized.startsWith("deepseek/")
+  );
+}
+
 export function resolveRuntimeAgentModel(requestedModel: string): string {
   const normalized = requestedModel.trim().toLowerCase();
   if (isCodexOAuthModel(normalized)) {
+    return requestedModel;
+  }
+  if (isExplicitProviderModel(normalized)) {
     return requestedModel;
   }
 

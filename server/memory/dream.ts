@@ -335,6 +335,7 @@ Output JSON:
     try {
       const resp = await openai.chat.completions.create({
         model,
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 800,
@@ -473,6 +474,7 @@ Rules:
     try {
       const resp = await openai.chat.completions.create({
         model,
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 400,
@@ -749,6 +751,7 @@ ${corpus.text.slice(0, 12000)}`;
   try {
     const resp = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 1200,
