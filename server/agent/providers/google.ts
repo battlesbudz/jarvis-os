@@ -10,6 +10,7 @@ import {
 
 type FetchLike = typeof fetch;
 type CredentialResolver = (input: GetProviderCredentialInput) => Promise<ProviderCredential | null>;
+const GOOGLE_TOOL_CALL_ID_PREFIX = "google-tool:";
 
 let googleFetchForTesting: FetchLike | null = null;
 let googleCredentialResolverForTesting: CredentialResolver | null = null;
@@ -28,6 +29,21 @@ function fetchImpl(): FetchLike {
 
 function normalizeGoogleModel(model: string): string {
   return model.startsWith("google/") ? model.slice("google/".length) : model;
+}
+
+function encodeGoogleToolCallId(index: number, name: string): string {
+  return `${GOOGLE_TOOL_CALL_ID_PREFIX}${index}:${encodeURIComponent(name)}`;
+}
+
+function decodeGoogleToolCallName(toolCallId: string): string {
+  if (!toolCallId.startsWith(GOOGLE_TOOL_CALL_ID_PREFIX)) return toolCallId;
+  const encodedName = toolCallId.slice(GOOGLE_TOOL_CALL_ID_PREFIX.length).split(":").slice(1).join(":");
+  if (!encodedName) return toolCallId;
+  try {
+    return decodeURIComponent(encodedName);
+  } catch {
+    return toolCallId;
+  }
 }
 
 function isFunctionTool(
@@ -62,7 +78,12 @@ function toGoogleRequest(messages: OpenAI.Chat.Completions.ChatCompletionMessage
     if (message.role === "tool") {
       contents.push({
         role: "user",
-        parts: [{ functionResponse: { name: message.tool_call_id, response: { result: textFromContent(message.content) } } }],
+        parts: [{
+          functionResponse: {
+            name: decodeGoogleToolCallName(message.tool_call_id),
+            response: { result: textFromContent(message.content) },
+          },
+        }],
       });
       continue;
     }
@@ -178,7 +199,12 @@ export class GoogleProvider extends BaseProvider {
         yield { type: "text", delta: part.text };
       }
       if (part?.functionCall && typeof part.functionCall.name === "string") {
-        yield { type: "tool_call_start", index: i, id: `google-tool-${i}`, name: part.functionCall.name };
+        yield {
+          type: "tool_call_start",
+          index: i,
+          id: encodeGoogleToolCallId(i, part.functionCall.name),
+          name: part.functionCall.name,
+        };
         yield { type: "tool_call_args", index: i, args: JSON.stringify(part.functionCall.args ?? {}) };
       }
     }

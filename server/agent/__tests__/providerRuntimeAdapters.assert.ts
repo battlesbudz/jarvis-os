@@ -104,6 +104,88 @@ async function testGoogleUsesUserCredential() {
   _setGoogleCredentialResolverForTesting(null);
 }
 
+async function testGoogleToolResponseUsesOriginalFunctionName() {
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  _setGoogleCredentialResolverForTesting(async () => ({
+    provider: "google",
+    authType: "api_key",
+    credential: "gemini-user-key",
+    refreshToken: null,
+    expiresAt: null,
+    accountId: null,
+    email: null,
+  }));
+  _setGoogleFetchForTesting(async (url, init) => {
+    requests.push({ url: String(url), init: init ?? {} });
+    if (requests.length === 1) {
+      return new Response(JSON.stringify({
+        candidates: [{
+          content: {
+            parts: [{
+              functionCall: {
+                name: "lookup_weather",
+                args: { city: "Nashville" },
+              },
+            }],
+          },
+          finishReason: "STOP",
+        }],
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    return new Response(JSON.stringify({
+      candidates: [{
+        content: { parts: [{ text: "It is warm." }] },
+        finishReason: "STOP",
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+
+  const firstTurn = await accumulateTurn(new GoogleProvider().query({
+    model: "google/gemini-2.5-pro",
+    messages: [{ role: "user", content: "Weather?" }],
+    tools: [{
+      type: "function",
+      function: {
+        name: "lookup_weather",
+        description: "Look up weather.",
+        parameters: { type: "object", properties: { city: { type: "string" } } },
+      },
+    }],
+    toolChoice: "auto",
+    maxCompletionTokens: 128,
+    stream: false,
+    userId: "user-gemini",
+  }));
+  assert.equal(firstTurn.toolCallList[0].function.name, "lookup_weather");
+
+  await accumulateTurn(new GoogleProvider().query({
+    model: "google/gemini-2.5-pro",
+    messages: [
+      { role: "user", content: "Weather?" },
+      { role: "assistant", content: null, tool_calls: firstTurn.toolCallList },
+      {
+        role: "tool",
+        tool_call_id: firstTurn.toolCallList[0].id,
+        content: JSON.stringify({ temperature: "78F" }),
+      },
+    ],
+    toolChoice: "none",
+    maxCompletionTokens: 128,
+    stream: false,
+    userId: "user-gemini",
+  }));
+
+  const followUpBody = JSON.parse(String(requests[1].init.body));
+  const functionResponse = followUpBody.contents
+    .flatMap((content: any) => content.parts)
+    .find((part: any) => part.functionResponse)?.functionResponse;
+  assert.equal(functionResponse.name, "lookup_weather");
+  console.log("OK: Google Gemini tool responses preserve the original function name");
+
+  _setGoogleFetchForTesting(null);
+  _setGoogleCredentialResolverForTesting(null);
+}
+
 async function testOpenAICompatibleUsesLocalUserCredential() {
   const clientConfigs: Array<{ baseURL: string; apiKey: string }> = [];
   const requests: Array<{ body: any; options: any }> = [];
@@ -166,6 +248,7 @@ async function testOpenAICompatibleUsesLocalUserCredential() {
 async function main() {
   await testAnthropicUsesUserCredential();
   await testGoogleUsesUserCredential();
+  await testGoogleToolResponseUsesOriginalFunctionName();
   await testOpenAICompatibleUsesLocalUserCredential();
   console.log("\nAll provider runtime adapter assertions passed.");
 }
