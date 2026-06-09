@@ -227,6 +227,7 @@ ${energyText || "(none)"}`;
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 1200,

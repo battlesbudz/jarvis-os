@@ -317,6 +317,7 @@ async function generatePage(userId: string, spec: PageSpec, model: string): Prom
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: promptText }],
       max_completion_tokens: 1000,
     });
@@ -484,6 +485,7 @@ ${pageListForLLM}${lintLogSection}`;
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 800,
     });
@@ -591,6 +593,7 @@ Rules:
 
     const planResponse = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: planPrompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 300,
@@ -729,6 +732,7 @@ Instructions:
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 900,
     });
@@ -800,6 +804,7 @@ export async function fileQuery(
 
     const worthFiling = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [
         {
           role: "user",
@@ -871,6 +876,7 @@ Write a clean wiki page (markdown) that:
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: pagePrompt }],
       max_completion_tokens: 700,
     });
@@ -1026,6 +1032,7 @@ Return {"corrections": []} if no issues found. Only include entries where revisi
 
       const lintResponse = await openai.chat.completions.create({
         model,
+        user: userId,
         messages: [{ role: "user", content: lintPrompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 2000,

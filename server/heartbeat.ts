@@ -246,6 +246,7 @@ Plain text, no markdown asterisks, no preamble.`;
       const briefModel = await getModel(userId, "planning");
       const resp = await openai.chat.completions.create({
         model: briefModel,
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         max_completion_tokens: 600,
       });
@@ -373,6 +374,7 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
       const draftModel = await getModel(userId, "planning");
       const resp = await openai.chat.completions.create({
         model: draftModel,
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 800,
@@ -576,6 +578,7 @@ Return JSON:
     const wrapModel = await getModel(userId, "planning");
     const resp = await openai.chat.completions.create({
       model: wrapModel,
+      user: userId,
       messages: [{ role: "user", content: llmPrompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 600,

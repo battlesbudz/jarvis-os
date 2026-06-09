@@ -2,6 +2,7 @@ import { createRequire } from "node:module";
 import { Completions } from "openai/resources/chat/completions";
 import OpenAI from "openai";
 import { routeModelTurn } from "./modelRouter";
+import { getUserIdFromChatBody } from "./routedChatCompletion";
 import "./providers/envAliases";
 import { hasDirectOpenAIProvider, hasNonOpenAIRoutableProvider } from "./providers/env";
 
@@ -150,6 +151,7 @@ function routeBody(body: ChatCreateBody, signal: AbortSignal | undefined, logPre
     toolChoice: (body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto"),
     maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
     stream: false,
+    userId: getUserIdFromChatBody(body),
     signal,
     logPrefix,
   }).then((result) => {
