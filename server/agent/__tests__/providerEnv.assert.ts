@@ -10,6 +10,7 @@ import {
   hasNonOpenAIRoutableProvider,
 } from "../providers/env";
 import { getModelRouteChain } from "../modelRouter";
+import { _shouldRouteOpenAIChatForTesting } from "../openaiChatRouterPatch";
 import { resolveRuntimeAgentModel } from "../runtimeModel";
 import { _clearProviderCacheForTesting } from "../providers";
 
@@ -33,6 +34,10 @@ const ENV_KEYS = [
   "JARVIS_CODEX_OAUTH_MODEL",
   "CHATGPT_CODEX_OAUTH_MODEL",
   "ANTHROPIC_API_KEY",
+  "AI_INTEGRATIONS_ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_AI_API_KEY",
+  "AI_INTEGRATIONS_GEMINI_API_KEY",
   "AI_INTEGRATIONS_OPENROUTER_API_KEY",
   "AI_INTEGRATIONS_OPENROUTER_BASE_URL",
   "OPENROUTER_API_KEY",
@@ -126,8 +131,31 @@ withCleanEnv({
 }, () => {
   assert.equal(resolveRuntimeAgentModel("anthropic/claude-sonnet-4-5"), "anthropic/claude-sonnet-4-5");
   assert.equal(resolveRuntimeAgentModel("google/gemini-2.5-pro"), "google/gemini-2.5-pro");
+  assert.equal(resolveRuntimeAgentModel("openai/gpt-4.1-mini"), "openai/gpt-4.1-mini");
   assert.equal(resolveRuntimeAgentModel("openai-compatible/llama-local"), "openai-compatible/llama-local");
   console.log("OK: explicit user-selected provider models survive Codex OAuth default routing");
+});
+
+withCleanEnv({
+  JARVIS_CODEX_OAUTH_ENABLED: "false",
+  JARVIS_TEST_ALLOW_DIRECT_PROVIDER: "true",
+  ANTHROPIC_API_KEY: "sk-anthropic",
+}, () => {
+  assert.equal(hasCodexOAuthProvider(), false);
+  assert.equal(hasNonOpenAIRoutableProvider(), true);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "anthropic/claude-sonnet-4-5" }), true);
+  console.log("OK: OpenAI chat patch routes explicit Anthropic models when only Anthropic env auth is configured");
+});
+
+withCleanEnv({
+  JARVIS_CODEX_OAUTH_ENABLED: "false",
+  JARVIS_TEST_ALLOW_DIRECT_PROVIDER: "true",
+  GEMINI_API_KEY: "gemini-key",
+}, () => {
+  assert.equal(hasCodexOAuthProvider(), false);
+  assert.equal(hasNonOpenAIRoutableProvider(), true);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "google/gemini-2.5-pro" }), true);
+  console.log("OK: OpenAI chat patch routes explicit Gemini models when only Gemini env auth is configured");
 });
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {

@@ -31,6 +31,7 @@ function isProviderModelSpec(model: string): boolean {
   return (
     normalized.startsWith("anthropic/") ||
     normalized.startsWith("google/") ||
+    normalized.startsWith("openai/") ||
     normalized.startsWith("openai-compatible/") ||
     normalized.startsWith("modelrelay/") ||
     normalized.startsWith("openrouter/") ||
@@ -49,6 +50,10 @@ function shouldRoute(body: unknown): body is ChatCreateBody {
   if (!body || typeof body !== "object") return false;
   const model = (body as { model?: unknown }).model;
   return typeof model === "string" && (model.startsWith("gpt-") || isProviderModelSpec(model));
+}
+
+export function _shouldRouteOpenAIChatForTesting(body: unknown): boolean {
+  return shouldRoute(body);
 }
 
 function tierForBody(body: ChatCreateBody): "cheap" | "balanced" | "smart" {

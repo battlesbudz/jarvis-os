@@ -21,6 +21,7 @@ export function isExplicitProviderModel(model: string | undefined | null): boole
   return (
     normalized.startsWith("anthropic/") ||
     normalized.startsWith("google/") ||
+    normalized.startsWith("openai/") ||
     normalized.startsWith("openai-compatible/") ||
     normalized.startsWith("modelrelay/") ||
     normalized.startsWith("openrouter/") ||
