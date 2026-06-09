@@ -187,15 +187,19 @@ async function runUserOpenAIProfileRouteAssertion(): Promise<void> {
     _overrideProviderForTesting("openai", new CapturingOpenAIProvider());
     _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
       assert.equal(userId, "user-openai");
+      const openai = {
+        connected: true,
+        defaultAuthType: "oauth" as const,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: true, isDefault: true, email: "profile@example.com" },
+        },
+      };
       return {
+        providers: { openai },
         openai: {
-          connected: true,
-          defaultAuthType: "oauth",
+          ...openai,
           fallbackEnabled: false,
-          authTypes: {
-            api_key: { connected: false, isDefault: false },
-            oauth: { connected: true, isDefault: true, email: "profile@example.com" },
-          },
         },
       };
     });

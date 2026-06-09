@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   InMemoryModelProviderAuthProfileRepository,
   getProviderCredential,
+  saveProviderApiKeyProfile,
 } from "../providers/modelProviderAuthProfiles";
 import {
   DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
@@ -116,6 +117,22 @@ async function main() {
     assert.equal(apiCredential?.authType, "api_key");
     assert.equal(apiCredential?.credential, "sk-user-key");
 
+    await saveProviderApiKeyProfile({
+      repo,
+      userId: "user-3",
+      provider: "anthropic",
+      apiKey: "sk-ant-user-key",
+      isDefault: true,
+    });
+    const anthropicCredential = await getProviderCredential({
+      repo,
+      userId: "user-3",
+      provider: "anthropic",
+      preferredAuthType: "api_key",
+    });
+    assert.equal(anthropicCredential?.provider, "anthropic");
+    assert.equal(anthropicCredential?.credential, "sk-ant-user-key");
+
     assert.throws(
       () => parseOpenAICallbackUrl("http://127.0.0.1:1455/auth/callback?state=missing-code"),
       /callback URL is missing an authorization code/,
@@ -125,6 +142,7 @@ async function main() {
     console.log("OK: OpenAI OAuth config reads the documented plural scopes env var");
     console.log("OK: manual callback URL handling validates state and stores encrypted OAuth profiles");
     console.log("OK: OpenAI API-key request handling trims and stores API-key profiles");
+    console.log("OK: generic provider API keys store per-user provider profiles");
   } finally {
     if (previousSecret == null) delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
     else process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = previousSecret;
