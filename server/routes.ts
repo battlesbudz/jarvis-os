@@ -69,6 +69,10 @@ import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./routes/pla
 import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
+  registerOpenAIProviderAuthRoutes,
+  registerPublicOpenAIProviderAuthCallbackRoutes,
+} from "./routes/openaiProviderAuthRoutes";
+import {
   registerAuthenticatedCoachRuntimeRoutes,
   registerPublicCoachRuntimeRoutes,
 } from "./routes/coachRuntimeRoutes";
@@ -420,6 +424,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerCodexGatewayRoutes(app);
   registerAppUpdateRoutes(app);
   registerPublicConnectionsCallbackRoutes(app);
+  registerPublicOpenAIProviderAuthCallbackRoutes(app);
 
   app.use(authMiddleware);
 
@@ -5961,6 +5966,7 @@ Extract up to 8 memories per batch.`;
   });
 
   registerSettingsRoutes(app);
+  registerOpenAIProviderAuthRoutes(app, { includeCallbackRoutes: false });
 
   // ── Skill endpoints ──────────────────────────────────────────────────────
   app.get("/api/skills", async (req: Request, res: Response) => {

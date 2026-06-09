@@ -101,6 +101,23 @@ interface McpServerInfo {
   envKey?: string | null;
 }
 
+type OpenAIProviderAuthType = 'api_key' | 'oauth';
+interface OpenAIProviderAuthTypeStatus {
+  connected: boolean;
+  isDefault: boolean;
+  email?: string;
+  accountId?: string;
+  expiresAt?: string;
+}
+interface OpenAIProviderAuthStatus {
+  openai: {
+    connected: boolean;
+    defaultAuthType: OpenAIProviderAuthType | null;
+    fallbackEnabled: boolean;
+    authTypes: Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>;
+  };
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Section header component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -329,6 +346,16 @@ export default function SettingsScreen() {
   });
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [savingModel, setSavingModel] = useState<ModelCategory | null>(null);
+
+  // ── OpenAI provider auth ──
+  const [openAIProviderStatus, setOpenAIProviderStatus] = useState<OpenAIProviderAuthStatus | null>(null);
+  const [openAIAuthLoading, setOpenAIAuthLoading] = useState(false);
+  const [openAIAuthBusy, setOpenAIAuthBusy] = useState(false);
+  const [openAIApiKeyVisible, setOpenAIApiKeyVisible] = useState(false);
+  const [openAIApiKeyInput, setOpenAIApiKeyInput] = useState('');
+  const [openAICallbackUrl, setOpenAICallbackUrl] = useState('');
+  const [openAILoginUrl, setOpenAILoginUrl] = useState<string | null>(null);
+  const [openAIAuthMessage, setOpenAIAuthMessage] = useState<string | null>(null);
 
   // ── Orchestrator ──
   const [orchestratorModel, setOrchestratorModel] = useState('claude-opus-4-7');
@@ -1130,6 +1157,21 @@ export default function SettingsScreen() {
     }
   }, []);
 
+  const loadOpenAIProviderStatus = useCallback(async () => {
+    setOpenAIAuthLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/auth/providers/status');
+      if (res.ok) {
+        const data = await res.json();
+        setOpenAIProviderStatus(data);
+      }
+    } catch {
+      setOpenAIProviderStatus(null);
+    } finally {
+      setOpenAIAuthLoading(false);
+    }
+  }, []);
+
   // ── MCP servers ──
   const loadMcpServers = useCallback(async () => {
     setMcpLoading(true);
@@ -1296,7 +1338,8 @@ export default function SettingsScreen() {
       }
     } catch {}
     await loadModels();
-  }, [loadConnections, loadModels]);
+    await loadOpenAIProviderStatus();
+  }, [loadConnections, loadModels, loadOpenAIProviderStatus]);
 
   useFocusEffect(useCallback(() => {
     loadAll();
@@ -1514,6 +1557,88 @@ export default function SettingsScreen() {
     });
   }, []);
 
+  const startOpenAIChatGPTOAuth = useCallback(async () => {
+    setOpenAIAuthBusy(true);
+    setOpenAIAuthMessage(null);
+    try {
+      const res = await apiRequest('POST', '/api/auth/openai-oauth/start', {});
+      const data = await res.json();
+      if (typeof data.loginUrl !== 'string' || !data.loginUrl) {
+        throw new Error(data.message || 'OpenAI OAuth is not configured yet.');
+      }
+      setOpenAILoginUrl(data.loginUrl);
+      setOpenAIAuthMessage(data.instructions ?? 'Open the login URL. Paste the callback URL here if localhost cannot load.');
+      await openHostedConnectionLink(data.loginUrl);
+    } catch (error: any) {
+      const message = error?.message?.includes('openai_oauth_not_configured')
+        ? 'OpenAI OAuth needs client configuration on the server before Jarvis can open the login page.'
+        : error?.message || 'Jarvis could not start OpenAI OAuth.';
+      setOpenAIAuthMessage(message);
+      Alert.alert('Connect ChatGPT Subscription', message);
+    } finally {
+      setOpenAIAuthBusy(false);
+    }
+  }, [openHostedConnectionLink]);
+
+  const saveOpenAIApiKey = useCallback(async () => {
+    const apiKey = openAIApiKeyInput.trim();
+    if (!apiKey) return;
+    setOpenAIAuthBusy(true);
+    try {
+      await apiRequest('POST', '/api/auth/openai-api-key', { apiKey });
+      setOpenAIApiKeyInput('');
+      setOpenAIApiKeyVisible(false);
+      setOpenAIAuthMessage('OpenAI API key saved for this Jarvis account.');
+      await loadOpenAIProviderStatus();
+    } catch (error: any) {
+      Alert.alert('Use OpenAI API Key', error?.message || 'Jarvis could not save the API key.');
+    } finally {
+      setOpenAIAuthBusy(false);
+    }
+  }, [loadOpenAIProviderStatus, openAIApiKeyInput]);
+
+  const submitOpenAICallbackUrl = useCallback(async () => {
+    const callbackUrl = openAICallbackUrl.trim();
+    if (!callbackUrl) return;
+    setOpenAIAuthBusy(true);
+    try {
+      await apiRequest('POST', '/api/auth/openai-oauth/callback-url', { callbackUrl });
+      setOpenAICallbackUrl('');
+      setOpenAIAuthMessage('ChatGPT subscription connected for this Jarvis account.');
+      await loadOpenAIProviderStatus();
+    } catch (error: any) {
+      Alert.alert('Finish OpenAI Login', error?.message || 'Jarvis could not complete OpenAI OAuth.');
+    } finally {
+      setOpenAIAuthBusy(false);
+    }
+  }, [loadOpenAIProviderStatus, openAICallbackUrl]);
+
+  const useJarvisDefaultModel = useCallback(() => {
+    Alert.alert(
+      'Use Jarvis Default Model',
+      'This removes stored OpenAI API-key and OAuth profiles from this Jarvis account.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Use Default',
+          style: 'destructive',
+          onPress: async () => {
+            setOpenAIAuthBusy(true);
+            try {
+              await apiRequest('DELETE', '/api/auth/providers/openai');
+              setOpenAIAuthMessage('Jarvis default model route is active.');
+              await loadOpenAIProviderStatus();
+            } catch (error: any) {
+              Alert.alert('Use Jarvis Default Model', error?.message || 'Jarvis could not reset the OpenAI provider.');
+            } finally {
+              setOpenAIAuthBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [loadOpenAIProviderStatus]);
+
   const connectExternalApp = useCallback(async (appId: ConnectionAppId) => {
     const app = CONNECTION_APPS.find((item) => item.id === appId);
     setConnectionBusyApp(`connect:${appId}`);
@@ -1598,6 +1723,15 @@ export default function SettingsScreen() {
   const xpProgress = xpInfo.progress;
   const availableRewards = getAvailableRewards(lifetimeXp);
   const earnedBadges = (stats.badges ?? []).map(id => ALL_BADGES.find(b => b.id === id)).filter(Boolean);
+  const openAIStatus = openAIProviderStatus?.openai;
+  const openAIApiKeyStatus = openAIStatus?.authTypes.api_key;
+  const openAIOAuthStatus = openAIStatus?.authTypes.oauth;
+  const openAIDefaultLabel =
+    openAIStatus?.defaultAuthType === 'oauth'
+      ? 'ChatGPT subscription'
+      : openAIStatus?.defaultAuthType === 'api_key'
+        ? 'OpenAI API key'
+        : 'Jarvis default model';
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -2456,6 +2590,157 @@ export default function SettingsScreen() {
               </Pressable>
             </View>
           )}
+        </View>
+        </ErrorBoundary>
+
+        <ErrorBoundary FallbackComponent={SectionFallback}>
+        {/* ── MODEL PROVIDER ── */}
+        <SectionHeader label="MODEL PROVIDER" accent="#2563EB" />
+        <View style={styles.card}>
+          <View style={[styles.connRow, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#2563EB20' }]}>
+              <Ionicons name="sparkles-outline" size={18} color="#2563EB" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>OpenAI</Text>
+              <Text style={styles.connSub}>
+                {openAIAuthLoading ? 'Checking provider status...' : openAIDefaultLabel}
+              </Text>
+              {openAIOAuthStatus?.connected && openAIOAuthStatus.email ? (
+                <Text style={styles.connSub}>{openAIOAuthStatus.email}</Text>
+              ) : null}
+            </View>
+            <Pressable onPress={loadOpenAIProviderStatus} style={{ padding: 8 }}>
+              {openAIAuthLoading ? (
+                <ActivityIndicator size="small" color="#2563EB" />
+              ) : (
+                <Ionicons name="refresh-outline" size={18} color={Colors.textSecondary} />
+              )}
+            </Pressable>
+          </View>
+
+          <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 10 }}>
+            <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
+              Uses your ChatGPT/Codex account instead of an API key. If login ends on a localhost error page, copy the URL and paste it back into Jarvis to complete setup.
+            </Text>
+
+            <View style={providerAuthStyles.actionGrid}>
+              <Pressable
+                onPress={startOpenAIChatGPTOAuth}
+                disabled={openAIAuthBusy}
+                style={[
+                  providerAuthStyles.primaryAction,
+                  openAIOAuthStatus?.isDefault && providerAuthStyles.oauthActionActive,
+                  openAIAuthBusy && providerAuthStyles.disabledAction,
+                ]}
+              >
+                <Ionicons name="person-circle-outline" size={16} color={openAIOAuthStatus?.isDefault ? '#fff' : '#2563EB'} />
+                <Text style={[providerAuthStyles.primaryActionText, openAIOAuthStatus?.isDefault && providerAuthStyles.activeActionText]}>
+                  Connect ChatGPT Subscription
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setOpenAIApiKeyVisible((visible) => !visible)}
+                disabled={openAIAuthBusy}
+                style={[
+                  providerAuthStyles.primaryAction,
+                  openAIApiKeyStatus?.isDefault && providerAuthStyles.apiKeyActionActive,
+                  openAIAuthBusy && providerAuthStyles.disabledAction,
+                ]}
+              >
+                <Ionicons name="key-outline" size={16} color={openAIApiKeyStatus?.isDefault ? '#fff' : '#0F766E'} />
+                <Text style={[providerAuthStyles.primaryActionText, openAIApiKeyStatus?.isDefault && providerAuthStyles.activeActionText]}>
+                  Use OpenAI API Key
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={useJarvisDefaultModel}
+                disabled={openAIAuthBusy}
+                style={[
+                  providerAuthStyles.primaryAction,
+                  !openAIStatus?.connected && providerAuthStyles.defaultActionActive,
+                  openAIAuthBusy && providerAuthStyles.disabledAction,
+                ]}
+              >
+                <Ionicons name="radio-outline" size={16} color={!openAIStatus?.connected ? '#fff' : Colors.textSecondary} />
+                <Text style={[providerAuthStyles.primaryActionText, !openAIStatus?.connected && providerAuthStyles.activeActionText]}>
+                  Use Jarvis Default Model
+                </Text>
+              </Pressable>
+            </View>
+
+            {openAIApiKeyVisible ? (
+              <View style={providerAuthStyles.inputBlock}>
+                <TextInput
+                  style={providerAuthStyles.secretInput}
+                  value={openAIApiKeyInput}
+                  onChangeText={setOpenAIApiKeyInput}
+                  placeholder="OPENAI_API_KEY"
+                  placeholderTextColor={Colors.textTertiary}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Pressable
+                  onPress={saveOpenAIApiKey}
+                  disabled={openAIAuthBusy || !openAIApiKeyInput.trim()}
+                  style={[providerAuthStyles.saveButton, (!openAIApiKeyInput.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
+                >
+                  {openAIAuthBusy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="checkmark-outline" size={15} color="#fff" />
+                  )}
+                  <Text style={providerAuthStyles.saveButtonText}>Save</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            <View style={providerAuthStyles.inputBlock}>
+              <TextInput
+                style={providerAuthStyles.callbackInput}
+                value={openAICallbackUrl}
+                onChangeText={setOpenAICallbackUrl}
+                placeholder="http://127.0.0.1:1455/auth/callback?code=abc123&state=xyz"
+                placeholderTextColor={Colors.textTertiary}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Pressable
+                onPress={submitOpenAICallbackUrl}
+                disabled={openAIAuthBusy || !openAICallbackUrl.trim()}
+                style={[providerAuthStyles.saveButton, (!openAICallbackUrl.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
+              >
+                <Ionicons name="log-in-outline" size={15} color="#fff" />
+                <Text style={providerAuthStyles.saveButtonText}>Finish</Text>
+              </Pressable>
+            </View>
+
+            {openAILoginUrl ? (
+              <Pressable
+                onPress={async () => {
+                  await Clipboard.setStringAsync(openAILoginUrl);
+                  setOpenAIAuthMessage('OpenAI login URL copied.');
+                }}
+                style={providerAuthStyles.copyLoginRow}
+              >
+                <Ionicons name="copy-outline" size={14} color="#2563EB" />
+                <Text style={providerAuthStyles.copyLoginText}>Copy login URL</Text>
+              </Pressable>
+            ) : null}
+
+            {openAIAuthMessage ? (
+              <Text style={providerAuthStyles.statusText}>{openAIAuthMessage}</Text>
+            ) : null}
+
+            {openAIStatus?.fallbackEnabled ? (
+              <Text style={[providerAuthStyles.statusText, { color: '#F59E0B' }]}>
+                Explicit OpenAI auth fallback is enabled.
+              </Text>
+            ) : null}
+          </View>
         </View>
         </ErrorBoundary>
 
@@ -3962,6 +4247,112 @@ export default function SettingsScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Styles
 // ─────────────────────────────────────────────────────────────────────────────
+
+const providerAuthStyles = StyleSheet.create({
+  actionGrid: {
+    gap: 8,
+  },
+  primaryAction: {
+    minHeight: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  oauthActionActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  apiKeyActionActive: {
+    backgroundColor: '#0F766E',
+    borderColor: '#0F766E',
+  },
+  defaultActionActive: {
+    backgroundColor: Colors.textSecondary,
+    borderColor: Colors.textSecondary,
+  },
+  disabledAction: {
+    opacity: 0.55,
+  },
+  primaryActionText: {
+    color: Colors.text,
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    textAlign: 'center',
+    flexShrink: 1,
+  },
+  activeActionText: {
+    color: '#fff',
+  },
+  inputBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  secretInput: {
+    flex: 1,
+    minHeight: 42,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    color: Colors.text,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+  },
+  callbackInput: {
+    flex: 1,
+    minHeight: 42,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    color: Colors.text,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 11,
+  },
+  saveButton: {
+    minHeight: 42,
+    borderRadius: 8,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  copyLoginRow: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  copyLoginText: {
+    color: '#2563EB',
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  statusText: {
+    color: Colors.textTertiary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: 'Inter_400Regular',
+  },
+});
 
 const styles = StyleSheet.create({
   root: {

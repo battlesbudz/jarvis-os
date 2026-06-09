@@ -3,6 +3,7 @@ import type { ProviderName } from "./providers";
 import { getGlobalFallbackChain, queryWithFallback, type FallbackChainEntry } from "./providers/fallback";
 import type { ProviderTurnResult } from "./providers/base";
 import { getProviderEnvValue, hasCodexOAuthProvider, hasDirectOpenAIProvider, hasProviderEnvValue } from "./providers/env";
+import { getProviderStatus, type ProviderStatus } from "./providers/modelProviderAuthProfiles";
 import { DEFAULT_CODEX_OAUTH_MODEL, getCodexOAuthModel } from "./runtimeModel";
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
@@ -63,6 +64,16 @@ export interface RoutedModelTurnParams {
   userId?: string;
   signal?: AbortSignal;
   logPrefix?: string;
+}
+
+type OpenAIProviderStatusResolver = (input: { userId: string }) => Promise<ProviderStatus>;
+
+let openAIProviderStatusResolverForTesting: OpenAIProviderStatusResolver | null = null;
+
+export function _setOpenAIProviderStatusResolverForTesting(
+  resolver: OpenAIProviderStatusResolver | null,
+): void {
+  openAIProviderStatusResolverForTesting = resolver;
 }
 
 export const DEFAULT_TIER_MODELS: Record<ModelTier, string> = {
@@ -491,11 +502,35 @@ export function getModelRouteChain(tier: ModelExecutionTier): FallbackChainEntry
   return configuredProviderEntries(tier);
 }
 
+function openAIModelForExecutionTier(tier: ModelExecutionTier): string {
+  if (tier === "smart") return process.env.JARVIS_OPENAI_SMART_MODEL || "gpt-4.1";
+  return process.env.JARVIS_OPENAI_BALANCED_MODEL || "gpt-4.1-mini";
+}
+
+async function getUserOpenAIRouteChain(
+  userId: string | undefined,
+  tier: ModelExecutionTier,
+  logPrefix: string,
+): Promise<FallbackChainEntry[] | null> {
+  if (!userId) return null;
+
+  const resolver = openAIProviderStatusResolverForTesting ?? getProviderStatus;
+  try {
+    const status = await resolver({ userId });
+    if (!status.openai.connected || !status.openai.defaultAuthType) return null;
+    return [{ providerName: "openai", model: openAIModelForExecutionTier(tier) }];
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`${logPrefix} provider_auth_status_unavailable: ${message.slice(0, 160)}`);
+    return null;
+  }
+}
+
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
-  const chain = getModelRouteChain(params.tier);
+  const chain = (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix)) ?? getModelRouteChain(params.tier);
   if (chain.length === 0) {
     throw new Error(
       "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable.",
