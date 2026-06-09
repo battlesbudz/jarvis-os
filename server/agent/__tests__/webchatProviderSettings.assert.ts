@@ -52,6 +52,7 @@ assert.match(settingsScreen, /setOpenAILoginUrl\(data\.loginUrl\)/);
 assert.match(settingsScreen, /Platform\.OS !== 'web'[\s\S]*openHostedConnectionLink\(data\.loginUrl\)/);
 assert.match(settingsScreen, /openOpenAILoginUrl/);
 assert.match(settingsScreen, /window\.open\(openAILoginUrl, '_blank', 'noopener,noreferrer'\)/);
+assert.doesNotMatch(settingsScreen, /window\.location\.assign\(openAILoginUrl\)/);
 assert.match(settingsScreen, /Open login URL/);
 assert.match(settingsScreen, /Copy login URL/);
 

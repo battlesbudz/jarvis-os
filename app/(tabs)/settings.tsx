@@ -1612,8 +1612,7 @@ export default function SettingsScreen() {
   const openOpenAILoginUrl = useCallback(async () => {
     if (!openAILoginUrl) return;
     if (Platform.OS === 'web' && typeof window !== 'undefined') {
-      const opened = window.open(openAILoginUrl, '_blank', 'noopener,noreferrer');
-      if (!opened) window.location.assign(openAILoginUrl);
+      window.open(openAILoginUrl, '_blank', 'noopener,noreferrer');
       return;
     }
     await openHostedConnectionLink(openAILoginUrl);
