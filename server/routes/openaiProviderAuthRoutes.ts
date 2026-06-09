@@ -280,8 +280,10 @@ export async function saveOpenAIApiKeyFromRequest(input: {
   return { ok: true, authType: "api_key" };
 }
 
-function getRequestUserId(req: Request): string | null {
-  return (req as any).userId || null;
+async function getRequestUserId(req: Request): Promise<string | null> {
+  if ((req as any).userId) return (req as any).userId;
+  const { getUserIdFromRequest } = await import("../auth");
+  return getUserIdFromRequest(req);
 }
 
 function escapeHtml(value: string): string {
@@ -339,7 +341,7 @@ export function registerOpenAIProviderAuthRoutes(
 
   app.post("/api/auth/openai-oauth/start", async (req: Request, res: Response) => {
     try {
-      const userId = getRequestUserId(req);
+      const userId = await getRequestUserId(req);
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const config = getConfig();
       if (!config) {
@@ -358,7 +360,7 @@ export function registerOpenAIProviderAuthRoutes(
 
   app.post("/api/auth/openai-oauth/callback-url", async (req: Request, res: Response) => {
     try {
-      const userId = getRequestUserId(req);
+      const userId = await getRequestUserId(req);
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const callbackUrl = typeof req.body?.callbackUrl === "string" ? req.body.callbackUrl : "";
       const { code, state } = parseOpenAICallbackUrl(callbackUrl);
@@ -382,7 +384,7 @@ export function registerOpenAIProviderAuthRoutes(
 
   app.post("/api/auth/openai-api-key", async (req: Request, res: Response) => {
     try {
-      const userId = getRequestUserId(req);
+      const userId = await getRequestUserId(req);
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey : "";
       await saveOpenAIApiKeyFromRequest({ repo: deps.repo, userId, apiKey, isDefault: true });
@@ -395,7 +397,7 @@ export function registerOpenAIProviderAuthRoutes(
 
   app.get("/api/auth/providers/status", async (req: Request, res: Response) => {
     try {
-      const userId = getRequestUserId(req);
+      const userId = await getRequestUserId(req);
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       res.json(await getProviderStatus({ repo: deps.repo, userId }));
     } catch (error) {
@@ -406,7 +408,7 @@ export function registerOpenAIProviderAuthRoutes(
 
   app.delete("/api/auth/providers/openai", async (req: Request, res: Response) => {
     try {
-      const userId = getRequestUserId(req);
+      const userId = await getRequestUserId(req);
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const deleted = await deleteOpenAIProviderProfiles({ repo: deps.repo, userId });
       res.json({ ok: true, deleted, status: await getProviderStatus({ repo: deps.repo, userId }) });
