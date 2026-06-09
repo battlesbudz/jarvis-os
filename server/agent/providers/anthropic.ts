@@ -149,7 +149,7 @@ export class AnthropicProvider extends BaseProvider {
       messages: converted.messages,
     };
     if (converted.system) body.system = converted.system;
-    if (tools?.length) {
+    if (tools?.length && params.toolChoice !== "none") {
       body.tools = tools;
       body.tool_choice = toAnthropicToolChoice(params.toolChoice, true);
     }

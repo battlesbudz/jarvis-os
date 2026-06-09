@@ -46,6 +46,24 @@ function decodeGoogleToolCallName(toolCallId: string): string {
   }
 }
 
+function normalizeGoogleFinishReason(reason: unknown): string | null {
+  if (typeof reason !== "string") return null;
+  switch (reason.toUpperCase()) {
+    case "STOP":
+      return "stop";
+    case "MAX_TOKENS":
+      return "length";
+    case "SAFETY":
+    case "RECITATION":
+    case "BLOCKLIST":
+    case "PROHIBITED_CONTENT":
+    case "SPII":
+      return "content_filter";
+    default:
+      return "stop";
+  }
+}
+
 function isFunctionTool(
   tool: OpenAI.Chat.Completions.ChatCompletionTool,
 ): tool is OpenAI.Chat.Completions.ChatCompletionFunctionTool {
@@ -193,12 +211,14 @@ export class GoogleProvider extends BaseProvider {
 
     const candidate = Array.isArray(data?.candidates) ? data.candidates[0] : null;
     const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
+    let hasFunctionCall = false;
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       if (typeof part?.text === "string") {
         yield { type: "text", delta: part.text };
       }
       if (part?.functionCall && typeof part.functionCall.name === "string") {
+        hasFunctionCall = true;
         yield {
           type: "tool_call_start",
           index: i,
@@ -208,6 +228,9 @@ export class GoogleProvider extends BaseProvider {
         yield { type: "tool_call_args", index: i, args: JSON.stringify(part.functionCall.args ?? {}) };
       }
     }
-    yield { type: "finish", reason: typeof candidate?.finishReason === "string" ? candidate.finishReason : null };
+    yield {
+      type: "finish",
+      reason: hasFunctionCall ? "tool_calls" : normalizeGoogleFinishReason(candidate?.finishReason),
+    };
   }
 }

@@ -55,6 +55,51 @@ async function testAnthropicUsesUserCredential() {
   _setAnthropicCredentialResolverForTesting(null);
 }
 
+async function testAnthropicToolChoiceNoneOmitsTools() {
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  _setAnthropicCredentialResolverForTesting(async () => ({
+    provider: "anthropic",
+    authType: "api_key",
+    credential: "sk-ant-user",
+    refreshToken: null,
+    expiresAt: null,
+    accountId: null,
+    email: null,
+  }));
+  _setAnthropicFetchForTesting(async (url, init) => {
+    requests.push({ url: String(url), init: init ?? {} });
+    return new Response(JSON.stringify({
+      content: [{ type: "text", text: "no tools" }],
+      stop_reason: "end_turn",
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+
+  await accumulateTurn(new AnthropicProvider().query({
+    model: "anthropic/claude-sonnet-4-5",
+    messages: [{ role: "user", content: "Hello" }],
+    tools: [{
+      type: "function",
+      function: {
+        name: "lookup_weather",
+        description: "Look up weather.",
+        parameters: { type: "object", properties: {} },
+      },
+    }],
+    toolChoice: "none",
+    maxCompletionTokens: 128,
+    stream: false,
+    userId: "user-claude",
+  }));
+
+  const body = JSON.parse(String(requests[0].init.body));
+  assert.equal("tools" in body, false);
+  assert.equal("tool_choice" in body, false);
+  console.log("OK: Anthropic provider omits tools when tool choice is none");
+
+  _setAnthropicFetchForTesting(null);
+  _setAnthropicCredentialResolverForTesting(null);
+}
+
 async function testGoogleUsesUserCredential() {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   _setGoogleCredentialResolverForTesting(async (input) => {
@@ -94,6 +139,7 @@ async function testGoogleUsesUserCredential() {
   }));
 
   assert.equal(result.textContent, "hello from gemini");
+  assert.equal(result.finishReason, "stop");
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent");
   assert.equal((requests[0].init.headers as Record<string, string>)["x-goog-api-key"], "gemini-user-key");
@@ -157,6 +203,7 @@ async function testGoogleToolResponseUsesOriginalFunctionName() {
     userId: "user-gemini",
   }));
   assert.equal(firstTurn.toolCallList[0].function.name, "lookup_weather");
+  assert.equal(firstTurn.finishReason, "tool_calls");
 
   await accumulateTurn(new GoogleProvider().query({
     model: "google/gemini-2.5-pro",
@@ -247,6 +294,7 @@ async function testOpenAICompatibleUsesLocalUserCredential() {
 
 async function main() {
   await testAnthropicUsesUserCredential();
+  await testAnthropicToolChoiceNoneOmitsTools();
   await testGoogleUsesUserCredential();
   await testGoogleToolResponseUsesOriginalFunctionName();
   await testOpenAICompatibleUsesLocalUserCredential();
