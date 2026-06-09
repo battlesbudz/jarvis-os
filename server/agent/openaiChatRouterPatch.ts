@@ -18,9 +18,14 @@ const CLIENT_METHOD_PATCHED = Symbol.for("jarvis.openaiClientMethodRouterPatched
 let routingDepth = 0;
 const require = createRequire(import.meta.url);
 
+function routingExplicitlyDisabled(): boolean {
+  const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
+  return raw === "0" || raw === "false" || raw === "disabled" || raw === "no";
+}
+
 function routingEnabled(): boolean {
   const raw = process.env.JARVIS_MODEL_ROUTING?.trim().toLowerCase();
-  if (raw === "0" || raw === "false" || raw === "disabled" || raw === "no") return false;
+  if (routingExplicitlyDisabled()) return false;
   if (raw === "1" || raw === "true" || raw === "enabled" || raw === "yes") return true;
   // Prefer the router whenever an alternate provider is configured. Otherwise an
   // exhausted direct OpenAI key can bypass OpenRouter/Groq/etc. and break chat.
@@ -46,11 +51,13 @@ function isProviderModelSpec(model: string): boolean {
 }
 
 function shouldRoute(body: unknown): body is ChatCreateBody {
-  if (!routingEnabled()) return false;
+  if (routingExplicitlyDisabled()) return false;
   if (routingDepth > 0) return false;
   if (!body || typeof body !== "object") return false;
   const model = (body as { model?: unknown }).model;
-  return typeof model === "string" && (model.startsWith("gpt-") || isProviderModelSpec(model));
+  if (typeof model !== "string") return false;
+  if (isProviderModelSpec(model)) return true;
+  return routingEnabled() && model.startsWith("gpt-");
 }
 
 export function _shouldRouteOpenAIChatForTesting(body: unknown): boolean {

@@ -26,6 +26,7 @@ const ENV_KEYS = [
   "OPENAI_BASE_URL",
   "JARVIS_MODEL_PROVIDER",
   "JARVIS_AI_PROVIDER",
+  "JARVIS_MODEL_ROUTING",
   "JARVIS_CODEX_OAUTH_ENABLED",
   "CHATGPT_CODEX_OAUTH_ENABLED",
   "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
@@ -156,6 +157,19 @@ withCleanEnv({
   assert.equal(hasNonOpenAIRoutableProvider(), true);
   assert.equal(_shouldRouteOpenAIChatForTesting({ model: "google/gemini-2.5-pro" }), true);
   console.log("OK: OpenAI chat patch routes explicit Gemini models when only Gemini env auth is configured");
+});
+
+withCleanEnv({
+  JARVIS_CODEX_OAUTH_ENABLED: "false",
+  JARVIS_TEST_ALLOW_DIRECT_PROVIDER: "true",
+}, () => {
+  assert.equal(hasCodexOAuthProvider(), false);
+  assert.equal(hasNonOpenAIRoutableProvider(), false);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "anthropic/claude-sonnet-4-5", user: "user-claude" }), true);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "google/gemini-2.5-pro", user: "user-gemini" }), true);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "openai/gpt-4.1-mini", user: "user-openai" }), true);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "gpt-4o-mini", user: "user-openai" }), false);
+  console.log("OK: OpenAI chat patch routes explicit provider models without env auth so user-scoped profiles can resolve");
 });
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
