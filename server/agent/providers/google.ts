@@ -86,6 +86,7 @@ function textFromContent(content: OpenAI.Chat.Completions.ChatCompletionMessageP
 function toGoogleRequest(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]) {
   const system: string[] = [];
   const contents: Array<{ role: "user" | "model"; parts: Array<Record<string, unknown>> }> = [];
+  const toolCallNamesById = new Map<string, string>();
 
   for (const message of messages) {
     if (message.role === "system") {
@@ -98,7 +99,7 @@ function toGoogleRequest(messages: OpenAI.Chat.Completions.ChatCompletionMessage
         role: "user",
         parts: [{
           functionResponse: {
-            name: decodeGoogleToolCallName(message.tool_call_id),
+            name: toolCallNamesById.get(message.tool_call_id) ?? decodeGoogleToolCallName(message.tool_call_id),
             response: { result: textFromContent(message.content) },
           },
         }],
@@ -111,6 +112,7 @@ function toGoogleRequest(messages: OpenAI.Chat.Completions.ChatCompletionMessage
       if (text) parts.push({ text });
       for (const toolCall of message.tool_calls ?? []) {
         if (toolCall.type !== "function") continue;
+        toolCallNamesById.set(toolCall.id, toolCall.function.name);
         let args: unknown = {};
         try {
           args = JSON.parse(toolCall.function.arguments || "{}");

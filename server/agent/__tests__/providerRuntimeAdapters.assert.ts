@@ -279,6 +279,66 @@ async function testGoogleToolResponseUsesOriginalFunctionName() {
   _setGoogleCredentialResolverForTesting(null);
 }
 
+async function testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames() {
+  const requests: Array<{ url: string; init: RequestInit }> = [];
+  _setGoogleCredentialResolverForTesting(async () => ({
+    provider: "google",
+    authType: "api_key",
+    credential: "gemini-user-key",
+    refreshToken: null,
+    expiresAt: null,
+    accountId: null,
+    email: null,
+  }));
+  _setGoogleFetchForTesting(async (url, init) => {
+    requests.push({ url: String(url), init: init ?? {} });
+    return new Response(JSON.stringify({
+      candidates: [{
+        content: { parts: [{ text: "It is warm." }] },
+        finishReason: "STOP",
+      }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+
+  await accumulateTurn(new GoogleProvider().query({
+    model: "google/gemini-2.5-pro",
+    messages: [
+      { role: "user", content: "Weather?" },
+      {
+        role: "assistant",
+        content: null,
+        tool_calls: [{
+          id: "call_openai_123",
+          type: "function",
+          function: {
+            name: "lookup_weather",
+            arguments: JSON.stringify({ city: "Nashville" }),
+          },
+        }],
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_openai_123",
+        content: JSON.stringify({ temperature: "78F" }),
+      },
+    ],
+    toolChoice: "none",
+    maxCompletionTokens: 128,
+    stream: false,
+    userId: "user-gemini",
+  }));
+
+  const body = JSON.parse(String(requests[0].init.body));
+  const functionResponse = body.contents
+    .flatMap((content: any) => content.parts)
+    .find((part: any) => part.functionResponse)?.functionResponse;
+  assert.equal(functionResponse.name, "lookup_weather");
+  console.log("OK: Google Gemini tool responses map OpenAI-style tool call IDs to function names");
+
+  _setGoogleFetchForTesting(null);
+  _setGoogleCredentialResolverForTesting(null);
+}
+
 async function testOpenAICompatibleUsesLocalUserCredential() {
   const clientConfigs: Array<{ baseURL: string; apiKey: string }> = [];
   const requests: Array<{ body: any; options: any }> = [];
@@ -344,6 +404,7 @@ async function main() {
   await testAnthropicToolChoiceNoneOmitsTools();
   await testGoogleUsesUserCredential();
   await testGoogleToolResponseUsesOriginalFunctionName();
+  await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();
   await testOpenAICompatibleUsesLocalUserCredential();
   console.log("\nAll provider runtime adapter assertions passed.");
 }
