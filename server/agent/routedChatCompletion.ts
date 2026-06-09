@@ -9,6 +9,7 @@ export interface RoutedChatCompletionOptions {
   signal?: AbortSignal;
   tier?: ModelExecutionTier;
   logPrefix?: string;
+  userId?: string;
 }
 
 function maxTokensFromBody(body: ChatCreateBody): number {
@@ -36,6 +37,7 @@ export async function createRoutedChatCompletion(
     toolChoice: toolChoiceFromBody(body),
     maxCompletionTokens: maxTokensFromBody(body),
     stream: false,
+    userId: options.userId,
     signal: options.signal,
     logPrefix: options.logPrefix,
   });

@@ -39,7 +39,7 @@ async function main() {
       messages: [{ role: "user", content: "Use Claude" }],
       max_tokens: 42,
     },
-    { tier: "balanced", logPrefix: "[TestRoutedClaude]" },
+    { tier: "balanced", logPrefix: "[TestRoutedClaude]", userId: "user-claude" },
     async (params): Promise<ProviderTurnResult> => {
       captured = params as unknown as Record<string, unknown>;
       return {
@@ -53,6 +53,7 @@ async function main() {
     },
   );
   assert.equal((captured as Record<string, unknown> | null)?.requestedModel, "anthropic/claude-sonnet-4-5");
+  assert.equal((captured as Record<string, unknown> | null)?.userId, "user-claude");
   console.log("OK: routed chat completion preserves explicit provider model requests");
 
   const shim = createRoutedOpenAIChatShim("[TestShim]");

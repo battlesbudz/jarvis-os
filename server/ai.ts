@@ -118,7 +118,7 @@ Return ONLY a JSON object with a "steps" array of strings. No other text.`;
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 8192,
-  }, { tier: "balanced", logPrefix: "[AI/resizeTask]" });
+  }, { tier: "balanced", logPrefix: "[AI/resizeTask]", userId });
 
   const content = response.choices[0]?.message?.content || '{"steps":[]}';
   try {
@@ -160,7 +160,7 @@ Return ONLY a JSON object: {"suggestion": "your 2-3 sentence response"}`;
     messages: [{ role: 'user', content: prompt }],
     response_format: { type: 'json_object' },
     max_completion_tokens: 512,
-  }, { tier: "cheap", logPrefix: "[AI/unblockTask]" });
+  }, { tier: "cheap", logPrefix: "[AI/unblockTask]", userId });
 
   try {
     const parsed = JSON.parse(response.choices[0]?.message?.content || '{}');
@@ -272,7 +272,7 @@ Return ONLY a JSON object with "tasks" array and "insight" string. No other text
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 8192,
-  }, { tier: "balanced", logPrefix: "[AI/generateSmartPlan]" });
+  }, { tier: "balanced", logPrefix: "[AI/generateSmartPlan]", userId: req.userId });
 
   const content = response.choices[0]?.message?.content || '{"tasks":[],"insight":""}';
   try {
