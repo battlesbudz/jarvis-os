@@ -157,6 +157,27 @@ export const userOAuthTokens = pgTable("user_oauth_tokens", {
   primaryKey({ columns: [table.userId, table.provider, table.accountEmail] }),
 ]);
 
+export const modelProviderAuthProfiles = pgTable("model_provider_auth_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: varchar("provider").notNull(),
+  authType: varchar("auth_type").notNull(),
+  accessTokenEncrypted: text("access_token_encrypted"),
+  refreshTokenEncrypted: text("refresh_token_encrypted"),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  expiresAt: timestamp("expires_at"),
+  accountId: text("account_id"),
+  email: text("email"),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("model_provider_auth_profiles_user_provider_auth_type_idx")
+    .on(table.userId, table.provider, table.authType),
+  index("model_provider_auth_profiles_user_provider_idx")
+    .on(table.userId, table.provider),
+]);
+
 export const composioConnectedAccounts = pgTable("composio_connected_accounts", {
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   toolkit: varchar("toolkit").notNull(),

@@ -15,13 +15,48 @@ import OpenAI from "openai";
 import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { getOpenAIClientConfig } from "./env";
+import {
+  getProviderCredential,
+  isOpenAIAuthTypeFallbackEnabled,
+  type GetProviderCredentialInput,
+  type ProviderAuthType,
+  type ProviderCredential,
+} from "./modelProviderAuthProfiles";
+
+type OpenAIClientConfig = { apiKey: string; baseURL?: string };
+type OpenAIClientFactory = (config: OpenAIClientConfig) => OpenAI;
+type OpenAIProviderCredentialResolver = (
+  input: GetProviderCredentialInput,
+) => Promise<ProviderCredential | null>;
+
+let openAIClientFactoryForTesting: OpenAIClientFactory | null = null;
+let openAIProviderCredentialResolverForTesting: OpenAIProviderCredentialResolver | null = null;
+
+export function _setOpenAIProviderClientFactoryForTesting(factory: OpenAIClientFactory | null): void {
+  openAIClientFactoryForTesting = factory;
+}
+
+export function _setOpenAIProviderCredentialResolverForTesting(
+  resolver: OpenAIProviderCredentialResolver | null,
+): void {
+  openAIProviderCredentialResolverForTesting = resolver;
+}
+
+function createOpenAIClient(config: OpenAIClientConfig): OpenAI {
+  return openAIClientFactoryForTesting ? openAIClientFactoryForTesting(config) : new OpenAI(config);
+}
+
+function getPreferredOpenAIAuthType(): ProviderAuthType | undefined {
+  const value = process.env.JARVIS_OPENAI_PREFERRED_AUTH_TYPE?.trim().toLowerCase();
+  if (value === "oauth" || value === "api_key") return value;
+  return undefined;
+}
 
 export class OpenAIProvider extends BaseProvider {
-  private client: OpenAI;
+  private client: OpenAI | null = null;
 
   constructor() {
     super();
-    this.client = new OpenAI(getOpenAIClientConfig());
   }
 
   async initialize(): Promise<void> {
@@ -30,6 +65,37 @@ export class OpenAIProvider extends BaseProvider {
 
   async cleanup(): Promise<void> {
     // No persistent resources to release.
+  }
+
+  private getEnvClient(): OpenAI {
+    if (!this.client) {
+      this.client = createOpenAIClient(getOpenAIClientConfig());
+    }
+    return this.client;
+  }
+
+  private async getClient(params: ProviderQueryParams): Promise<OpenAI> {
+    if (!params.userId) return this.getEnvClient();
+
+    const resolver = openAIProviderCredentialResolverForTesting ?? getProviderCredential;
+    const preferredAuthType = getPreferredOpenAIAuthType();
+    const allowAuthTypeFallback = isOpenAIAuthTypeFallbackEnabled();
+    const credential = await resolver({
+      userId: params.userId,
+      provider: "openai",
+      preferredAuthType,
+      allowAuthTypeFallback,
+    });
+
+    if (!credential && preferredAuthType && !allowAuthTypeFallback) {
+      throw new Error(`OpenAI ${preferredAuthType} profile is required but is not connected for this user`);
+    }
+    if (!credential) return this.getEnvClient();
+
+    return createOpenAIClient({
+      ...getOpenAIClientConfig(),
+      apiKey: credential.credential,
+    });
   }
 
   async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
@@ -45,7 +111,8 @@ export class OpenAIProvider extends BaseProvider {
   private async *_completeTurn(
     params: ProviderQueryParams,
   ): AsyncGenerator<ProviderChunk> {
-    const completion = await this.client.chat.completions.create(
+    const client = await this.getClient(params);
+    const completion = await client.chat.completions.create(
       {
         model: params.model,
         messages: params.messages,
@@ -81,7 +148,8 @@ export class OpenAIProvider extends BaseProvider {
   private async *_streamTurn(
     params: ProviderQueryParams,
   ): AsyncGenerator<ProviderChunk> {
-    const stream = await this.client.chat.completions.create(
+    const client = await this.getClient(params);
+    const stream = await client.chat.completions.create(
       {
         model: params.model,
         messages: params.messages,

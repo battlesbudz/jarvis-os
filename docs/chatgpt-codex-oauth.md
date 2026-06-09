@@ -4,6 +4,55 @@ Jarvis can optionally use the same no-OpenAI-API-key bridge that the grow room p
 
 This is not OpenAI Platform API OAuth. The official OpenAI API still authenticates with API keys. This provider shells out to `codex exec` on the gateway host, so it only works where the host has a valid Codex/ChatGPT login.
 
+## Provider credential profiles
+
+Jarvis also has a reusable per-user provider credential layer for OpenAI. It is separate from the local Codex gateway above and stores the provider as `openai` for both supported auth methods:
+
+- `api_key`: the user supplies an OpenAI API key.
+- `oauth`: the user completes the ChatGPT/Codex OAuth-style flow and Jarvis stores encrypted access and refresh tokens.
+
+The provider profile table is `model_provider_auth_profiles`. Tokens and API keys are encrypted at rest with `JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY`, `MODEL_PROVIDER_AUTH_ENCRYPTION_KEY`, or `JWT_SECRET` in local/dev environments. Production should set a dedicated encryption key.
+
+The OpenAI OAuth endpoints are configurable with `JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL`, `JARVIS_OPENAI_OAUTH_TOKEN_URL`, `JARVIS_OPENAI_OAUTH_CLIENT_ID`, and optional `JARVIS_OPENAI_OAUTH_CLIENT_SECRET`. Jarvis does not hard-code an undocumented OpenAI subscription token endpoint; the public OpenAI docs currently describe OAuth + PKCE for ChatGPT app/MCP integrations, not a stable third-party API-token exchange for arbitrary applications.
+
+The Settings screen exposes:
+
+```text
+Connect ChatGPT Subscription
+Use OpenAI API Key
+Use Jarvis Default Model
+```
+
+OAuth starts with PKCE and the default redirect URI:
+
+```text
+http://127.0.0.1:1455/auth/callback
+```
+
+If the browser lands on a localhost error page after login, paste the full callback URL into Jarvis. Jarvis extracts `code`, validates `state`, exchanges the code with the original verifier, and stores the encrypted OAuth profile.
+
+Provider routes:
+
+```text
+POST   /api/auth/openai-oauth/start
+POST   /api/auth/openai-oauth/callback-url
+GET    /api/auth/openai-oauth/callback
+GET    /auth/callback
+POST   /api/auth/openai-api-key
+GET    /api/auth/providers/status
+DELETE /api/auth/providers/openai
+```
+
+Runtime lookup should go through:
+
+```ts
+getProviderCredential(userId, "openai", preferredAuthType)
+```
+
+Jarvis does not silently switch between OAuth and API-key auth. Set `JARVIS_OPENAI_AUTH_FALLBACK_ENABLED=true` only when an explicit fallback policy is wanted.
+
+Leave `JARVIS_OPENAI_PREFERRED_AUTH_TYPE` unset to honor the user's selected default profile from Settings. Set it only when the deployment should require a specific OpenAI auth type globally, such as `oauth` or `api_key`.
+
 ## Probe
 
 ```powershell

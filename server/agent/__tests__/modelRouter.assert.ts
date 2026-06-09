@@ -4,6 +4,7 @@ import {
   classifyTaskComplexity,
   classifyTaskPrivacy,
   routeModelForTask,
+  _setOpenAIProviderStatusResolverForTesting,
 } from "../modelRouter";
 import { BaseProvider, _clearProviderCacheForTesting, _overrideProviderForTesting } from "../providers";
 import type { ProviderChunk, ProviderQueryParams } from "../providers/base";
@@ -157,7 +158,75 @@ async function runLeanContextToolBudgetAssertion(): Promise<void> {
   }
 }
 
-runLeanContextToolBudgetAssertion()
+async function runUserOpenAIProfileRouteAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_OPENAI_SMART_MODEL",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class CapturingOpenAIProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "openai profile route" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_OPENAI_SMART_MODEL = "gpt-user-profile";
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("openai", new CapturingOpenAIProvider());
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-openai");
+      return {
+        openai: {
+          connected: true,
+          defaultAuthType: "oauth",
+          fallbackEnabled: false,
+          authTypes: {
+            api_key: { connected: false, isDefault: false },
+            oauth: { connected: true, isDefault: true, email: "profile@example.com" },
+          },
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "smart",
+      messages: [{ role: "user", content: "Use my connected model profile." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-openai",
+      logPrefix: "[ModelRouterOpenAIProfileTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "openai");
+    assert.equal(result.model, "gpt-user-profile");
+    assert.equal(capturedRequest?.model, "gpt-user-profile");
+    assert.equal(capturedRequest?.userId, "user-openai");
+    console.log("OK: a saved user OpenAI provider profile overrides the default Codex OAuth route");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+runUserOpenAIProfileRouteAssertion()
+  .then(runLeanContextToolBudgetAssertion)
   .then(() => {
     console.log("\nAll model router assertions passed.");
   })
