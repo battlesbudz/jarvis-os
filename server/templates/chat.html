@@ -446,6 +446,220 @@
         margin-right: 2px;
       }
 
+      /* Model setup sheet */
+      #setup-sheet-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.4);
+        z-index: 210;
+        align-items: flex-end;
+        justify-content: center;
+      }
+      #setup-sheet-overlay.open { display: flex; }
+
+      #setup-sheet {
+        background: var(--bg);
+        border-radius: 20px 20px 0 0;
+        padding: 24px 20px 32px;
+        width: 100%;
+        max-width: 760px;
+        max-height: min(86vh, 780px);
+        overflow-y: auto;
+        animation: slideUp 0.22s ease;
+      }
+
+      .setup-sheet-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 18px;
+      }
+
+      .setup-sheet-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      #setup-sheet-close {
+        width: 28px;
+        height: 28px;
+        border: none;
+        background: var(--surface);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        color: var(--text-muted);
+        font-size: 16px;
+        line-height: 1;
+      }
+
+      .setup-section {
+        border-top: 1px solid var(--border);
+        padding-top: 16px;
+        margin-top: 16px;
+      }
+      .setup-section:first-of-type {
+        border-top: none;
+        padding-top: 0;
+        margin-top: 0;
+      }
+
+      .setup-section-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 4px;
+      }
+
+      .setup-copy {
+        font-size: 13px;
+        color: var(--text-muted);
+        margin-bottom: 14px;
+      }
+
+      .setup-status {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 13px;
+        color: var(--text);
+        margin-bottom: 12px;
+      }
+
+      .setup-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+
+      .setup-action-btn {
+        width: 100%;
+        min-height: 42px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: var(--input-bg);
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+      }
+      .setup-action-btn:hover { background: var(--surface); border-color: var(--text-muted); }
+      .setup-action-btn:disabled { opacity: 0.55; cursor: default; }
+      .setup-action-btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--accent-fg);
+      }
+      .setup-action-btn.danger {
+        border-color: #e53e3e;
+        color: #e53e3e;
+      }
+
+      .setup-input-row {
+        display: none;
+        align-items: center;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .setup-input-row.open { display: flex; }
+
+      .setup-input {
+        flex: 1;
+        min-width: 0;
+        height: 42px;
+        border: 1px solid var(--border);
+        background: var(--input-bg);
+        color: var(--text);
+        border-radius: 10px;
+        padding: 0 12px;
+        font-size: 14px;
+        font-family: inherit;
+      }
+
+      .setup-small-btn {
+        flex-shrink: 0;
+        min-height: 42px;
+        border: none;
+        background: var(--accent);
+        color: var(--accent-fg);
+        border-radius: 10px;
+        padding: 0 14px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .setup-small-btn:disabled { opacity: 0.55; cursor: default; }
+
+      #openai-login-link {
+        display: none;
+        color: var(--text);
+        font-size: 13px;
+        font-weight: 600;
+        margin: 8px 0 10px;
+      }
+
+      #setup-message {
+        display: none;
+        margin-top: 12px;
+        font-size: 13px;
+        color: var(--text-muted);
+      }
+      #setup-message.open { display: block; }
+
+      .setup-select-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+        gap: 12px;
+        align-items: center;
+        padding: 10px 0;
+        border-top: 1px solid var(--border);
+      }
+      .setup-select-row:first-child { border-top: none; }
+
+      .setup-select-label {
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      .setup-select-sub {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+      }
+
+      .setup-select {
+        width: 100%;
+        min-height: 38px;
+        border: 1px solid var(--border);
+        background: var(--input-bg);
+        color: var(--text);
+        border-radius: 9px;
+        padding: 0 10px;
+        font-size: 13px;
+        font-family: inherit;
+      }
+
+      .setup-loading,
+      .setup-error {
+        font-size: 13px;
+        color: var(--text-muted);
+        padding: 8px 0;
+      }
+      .setup-error { color: #e53e3e; }
+
+      @media (max-width: 520px) {
+        .setup-select-row { grid-template-columns: 1fr; gap: 8px; }
+        .setup-input-row { align-items: stretch; flex-direction: column; }
+        .setup-small-btn { width: 100%; }
+      }
+
       /* ── Invite sheet modal ───────────────────────────────────────────────────── */
       #invite-sheet-overlay {
         display: none;
@@ -597,6 +811,45 @@
     <!-- Toast -->
     <div id="toast"></div>
 
+    <!-- Model/provider setup sheet -->
+    <div id="setup-sheet-overlay">
+      <div id="setup-sheet" role="dialog" aria-modal="true" aria-labelledby="setup-sheet-title">
+        <div class="setup-sheet-header">
+          <span class="setup-sheet-title" id="setup-sheet-title">Model setup</span>
+          <button id="setup-sheet-close" aria-label="Close">x</button>
+        </div>
+
+        <div class="setup-section">
+          <div class="setup-section-title">AI models</div>
+          <p class="setup-copy">Choose which model route Jarvis uses for chat, planning, memory, research, and orchestration.</p>
+          <div id="model-settings-loading" class="setup-loading">Loading model settings...</div>
+          <div id="model-settings-error" class="setup-error" style="display:none">Could not load model settings.</div>
+          <div id="model-settings-list"></div>
+        </div>
+
+        <div class="setup-section">
+          <div class="setup-section-title">OpenAI authentication</div>
+          <p class="setup-copy">Uses your ChatGPT/Codex account instead of an API key. If login ends on a localhost error page, copy the URL and paste it back into Jarvis to complete setup.</p>
+          <div id="provider-status" class="setup-status">Loading provider status...</div>
+          <div class="setup-actions">
+            <button class="setup-action-btn primary" id="openai-oauth-btn">Connect ChatGPT Subscription</button>
+            <button class="setup-action-btn" id="openai-api-key-toggle-btn">Use OpenAI API Key</button>
+            <button class="setup-action-btn danger" id="openai-default-btn">Use Jarvis Default Model</button>
+          </div>
+          <div class="setup-input-row" id="openai-api-key-row">
+            <input class="setup-input" id="openai-api-key-input" type="password" placeholder="OPENAI_API_KEY" autocomplete="off" />
+            <button class="setup-small-btn" id="openai-api-key-save-btn">Save</button>
+          </div>
+          <a id="openai-login-link" href="#" target="_blank" rel="noopener noreferrer">Open login URL again</a>
+          <div class="setup-input-row open" id="openai-callback-row">
+            <input class="setup-input" id="openai-callback-url-input" type="url" placeholder="Paste full callback URL" autocomplete="off" />
+            <button class="setup-small-btn" id="openai-callback-url-submit-btn">Finish</button>
+          </div>
+          <div id="setup-message"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Invite sheet modal -->
     <div id="invite-sheet-overlay">
       <div id="invite-sheet">
@@ -663,6 +916,12 @@
               <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
             </svg>
           </button>
+          <button class="icon-btn" id="setup-btn" title="Model setup" style="display:none">
+            <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6V20a2 2 0 0 1-4 0v-.09a1.7 1.7 0 0 0-1-.51 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1H4a2 2 0 0 1 0-4h.09a1.7 1.7 0 0 0 .51-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6V4a2 2 0 0 1 4 0v.09a1.7 1.7 0 0 0 1 .51 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9c.2.35.38.7.6 1h.09a2 2 0 0 1 0 4H20a1.7 1.7 0 0 0-.6 1z"/>
+            </svg>
+          </button>
           <button class="icon-btn" id="clear-btn" title="Clear conversation">
             <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
               <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/>
@@ -727,6 +986,11 @@
       let sdkSessionId = null;
       let sseAbortCtrl = null; // AbortController for the background SSE stream
       let isGuest = false; // true when signed in via invite token
+      let setupLoaded = false;
+      let modelPrefs = {};
+      let availableModels = [];
+      let orchestratorModel = '';
+      let availableOrchestratorModels = [];
 
       // ── DOM refs ─────────────────────────────────────────────────────────────
       const initLoading      = document.getElementById('init-loading');
@@ -743,8 +1007,25 @@
       const signoutBtn       = document.getElementById('signout-btn');
       const shareBtn         = document.getElementById('share-btn');
       const shareTtl         = document.getElementById('share-ttl');
+      const setupBtn         = document.getElementById('setup-btn');
       const guestBanner      = document.getElementById('guest-banner');
       const toastEl          = document.getElementById('toast');
+      const setupSheetOverlay = document.getElementById('setup-sheet-overlay');
+      const setupSheetClose   = document.getElementById('setup-sheet-close');
+      const modelSettingsLoading = document.getElementById('model-settings-loading');
+      const modelSettingsError = document.getElementById('model-settings-error');
+      const modelSettingsList = document.getElementById('model-settings-list');
+      const providerStatusEl = document.getElementById('provider-status');
+      const openAIOAuthBtn = document.getElementById('openai-oauth-btn');
+      const openAIApiKeyToggleBtn = document.getElementById('openai-api-key-toggle-btn');
+      const openAIDefaultBtn = document.getElementById('openai-default-btn');
+      const openAIApiKeyRow = document.getElementById('openai-api-key-row');
+      const openAIApiKeyInput = document.getElementById('openai-api-key-input');
+      const openAIApiKeySaveBtn = document.getElementById('openai-api-key-save-btn');
+      const openAILoginLink = document.getElementById('openai-login-link');
+      const openAICallbackUrlInput = document.getElementById('openai-callback-url-input');
+      const openAICallbackUrlSubmitBtn = document.getElementById('openai-callback-url-submit-btn');
+      const setupMessage = document.getElementById('setup-message');
       const inviteErrScreen  = document.getElementById('invite-error-screen');
       const inviteErrTitle   = document.getElementById('invite-error-title');
       const inviteErrMsg     = document.getElementById('invite-error-msg');
@@ -766,6 +1047,314 @@
         clearTimeout(toastTimer);
         toastTimer = setTimeout(() => toastEl.classList.remove('show'), durationMs);
       }
+
+      const MODEL_CATEGORIES = [
+        { key: 'chat', label: 'Chat', description: 'Everyday Jarvis replies in this web chat.' },
+        { key: 'planning', label: 'Planning', description: 'Goal breakdowns, schedules, and project plans.' },
+        { key: 'memory', label: 'Memory', description: 'Recall, summarization, and memory maintenance.' },
+        { key: 'research', label: 'Research', description: 'Web-backed lookups and synthesis.' },
+      ];
+
+      function showSetupMessage(msg) {
+        setupMessage.textContent = msg;
+        setupMessage.classList.add('open');
+      }
+
+      function clearSetupMessage() {
+        setupMessage.textContent = '';
+        setupMessage.classList.remove('open');
+      }
+
+      function setButtonBusy(button, busy, busyText) {
+        if (!button) return;
+        if (!button.dataset.label) button.dataset.label = button.textContent || '';
+        button.disabled = busy;
+        button.textContent = busy ? busyText : button.dataset.label;
+      }
+
+      function setupErrorMessage(error, fallback) {
+        return error && error.message ? error.message : fallback;
+      }
+
+      async function fetchAuthedJson(url, options = {}) {
+        const headers = {
+          ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(options.headers || {}),
+          'Authorization': `Bearer ${jwt}`,
+        };
+        const res = await fetch(url, { ...options, headers });
+        const data = await res.json().catch(() => ({}));
+        if (res.status === 401) {
+          signOut();
+          throw new Error('Authentication required');
+        }
+        if (!res.ok) {
+          throw new Error(data.message || data.error || `Request failed (${res.status})`);
+        }
+        return data;
+      }
+
+      function modelLabel(models, value) {
+        return models.find(m => m.value === value)?.label || value || 'Not set';
+      }
+
+      function createModelSelectRow({ key, label, description, models, currentValue, onChange }) {
+        const row = document.createElement('div');
+        row.className = 'setup-select-row';
+
+        const copy = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'setup-select-label';
+        title.textContent = label;
+        const sub = document.createElement('div');
+        sub.className = 'setup-select-sub';
+        sub.textContent = description;
+        copy.appendChild(title);
+        copy.appendChild(sub);
+
+        const select = document.createElement('select');
+        select.className = 'setup-select';
+        select.disabled = models.length === 0;
+        select.setAttribute('aria-label', `${label} model`);
+        models.forEach((model) => {
+          const option = document.createElement('option');
+          option.value = model.value;
+          option.textContent = model.label || model.value;
+          option.title = model.description || '';
+          select.appendChild(option);
+        });
+        select.value = currentValue || models[0]?.value || '';
+        select.addEventListener('change', async () => {
+          const previous = key === 'orchestrator' ? orchestratorModel : modelPrefs[key];
+          select.disabled = true;
+          try {
+            await onChange(select.value);
+            showSetupMessage(`${label} model saved: ${modelLabel(models, select.value)}.`);
+          } catch (error) {
+            select.value = previous || '';
+            showSetupMessage(setupErrorMessage(error, `Could not save ${label.toLowerCase()} model.`));
+          } finally {
+            select.disabled = false;
+          }
+        });
+
+        row.appendChild(copy);
+        row.appendChild(select);
+        return row;
+      }
+
+      function renderModelSettings() {
+        modelSettingsList.innerHTML = '';
+
+        MODEL_CATEGORIES.forEach((category) => {
+          modelSettingsList.appendChild(createModelSelectRow({
+            ...category,
+            models: availableModels,
+            currentValue: modelPrefs[category.key],
+            onChange: async (model) => {
+              await fetchAuthedJson('/api/settings/models', {
+                method: 'PATCH',
+                body: JSON.stringify({ category: category.key, model }),
+              });
+              modelPrefs[category.key] = model;
+            },
+          }));
+        });
+
+        modelSettingsList.appendChild(createModelSelectRow({
+          key: 'orchestrator',
+          label: 'Orchestrator',
+          description: 'The primary route for coordinating Jarvis runtime work.',
+          models: availableOrchestratorModels,
+          currentValue: orchestratorModel,
+          onChange: async (model) => {
+            await fetchAuthedJson('/api/settings/orchestrator', {
+              method: 'PATCH',
+              body: JSON.stringify({ model }),
+            });
+            orchestratorModel = model;
+          },
+        }));
+      }
+
+      function renderProviderStatus(status) {
+        const openai = status?.openai;
+        const authTypes = openai?.authTypes || {};
+        const oauth = authTypes.oauth;
+        const apiKey = authTypes.api_key;
+        const connected = !!openai?.connected;
+        const defaultAuthType = openai?.defaultAuthType;
+        const labels = [];
+        if (oauth?.connected) labels.push(`ChatGPT subscription${oauth.email ? ` (${oauth.email})` : ''}`);
+        if (apiKey?.connected) labels.push('OpenAI API key');
+
+        if (!connected) {
+          providerStatusEl.textContent = 'Using Jarvis default model route. No OpenAI profile is stored for this account.';
+          return;
+        }
+
+        const active = defaultAuthType === 'oauth'
+          ? 'ChatGPT subscription'
+          : defaultAuthType === 'api_key'
+            ? 'OpenAI API key'
+            : 'OpenAI profile';
+        providerStatusEl.textContent = `Active: ${active}. Connected: ${labels.join(', ')}.`;
+      }
+
+      async function loadProviderStatus() {
+        const status = await fetchAuthedJson('/api/auth/providers/status');
+        renderProviderStatus(status);
+        return status;
+      }
+
+      async function loadSetupData() {
+        if (!jwt || isGuest) return;
+        modelPrefs = {};
+        availableModels = [];
+        orchestratorModel = '';
+        availableOrchestratorModels = [];
+        modelSettingsLoading.style.display = '';
+        modelSettingsError.style.display = 'none';
+        modelSettingsList.innerHTML = '';
+        providerStatusEl.textContent = 'Loading provider status...';
+
+        const [modelsResult, orchestratorResult, providerResult] = await Promise.allSettled([
+          fetchAuthedJson('/api/settings/models'),
+          fetchAuthedJson('/api/settings/orchestrator'),
+          loadProviderStatus(),
+        ]);
+
+        if (modelsResult.status === 'fulfilled') {
+          modelPrefs = modelsResult.value.modelPreferences || {};
+          availableModels = Array.isArray(modelsResult.value.availableModels) ? modelsResult.value.availableModels : [];
+        }
+        if (orchestratorResult.status === 'fulfilled') {
+          orchestratorModel = orchestratorResult.value.orchestratorModel || '';
+          availableOrchestratorModels = Array.isArray(orchestratorResult.value.availableOrchestratorModels)
+            ? orchestratorResult.value.availableOrchestratorModels
+            : [];
+        }
+        modelSettingsLoading.style.display = 'none';
+        if (modelsResult.status === 'rejected' || orchestratorResult.status === 'rejected') {
+          modelSettingsError.style.display = '';
+        }
+        renderModelSettings();
+
+        if (providerResult.status === 'rejected') {
+          providerStatusEl.textContent = setupErrorMessage(providerResult.reason, 'Could not load provider status.');
+        }
+        setupLoaded = true;
+      }
+
+      function openSetupSheet() {
+        if (isGuest) {
+          showToast('Provider setup is only available to the Jarvis owner.');
+          return;
+        }
+        clearSetupMessage();
+        setupSheetOverlay.classList.add('open');
+        if (!setupLoaded) {
+          loadSetupData().catch((error) => {
+            modelSettingsLoading.style.display = 'none';
+            modelSettingsError.style.display = '';
+            providerStatusEl.textContent = setupErrorMessage(error, 'Could not load setup.');
+          });
+        }
+      }
+
+      function closeSetupSheet() {
+        setupSheetOverlay.classList.remove('open');
+      }
+
+      setupBtn.addEventListener('click', openSetupSheet);
+      setupSheetClose.addEventListener('click', closeSetupSheet);
+      setupSheetOverlay.addEventListener('click', function (e) {
+        if (e.target === setupSheetOverlay) closeSetupSheet();
+      });
+
+      openAIApiKeyToggleBtn.addEventListener('click', function () {
+        openAIApiKeyRow.classList.toggle('open');
+        if (openAIApiKeyRow.classList.contains('open')) openAIApiKeyInput.focus();
+      });
+
+      openAIOAuthBtn.addEventListener('click', async function () {
+        setButtonBusy(openAIOAuthBtn, true, 'Opening...');
+        clearSetupMessage();
+        try {
+          const data = await fetchAuthedJson('/api/auth/openai-oauth/start', {
+            method: 'POST',
+            body: JSON.stringify({}),
+          });
+          if (!data.loginUrl) throw new Error(data.message || 'OpenAI OAuth is not configured yet.');
+          openAILoginLink.href = data.loginUrl;
+          openAILoginLink.style.display = 'inline-block';
+          showSetupMessage(data.instructions || 'Open the login URL. Paste the callback URL here if localhost cannot load.');
+          window.open(data.loginUrl, '_blank', 'noopener,noreferrer');
+        } catch (error) {
+          showSetupMessage(setupErrorMessage(error, 'Jarvis could not start OpenAI OAuth.'));
+        } finally {
+          setButtonBusy(openAIOAuthBtn, false);
+        }
+      });
+
+      openAIApiKeySaveBtn.addEventListener('click', async function () {
+        const apiKey = openAIApiKeyInput.value.trim();
+        if (!apiKey) {
+          showSetupMessage('Paste an OPENAI_API_KEY before saving.');
+          return;
+        }
+        setButtonBusy(openAIApiKeySaveBtn, true, 'Saving...');
+        try {
+          await fetchAuthedJson('/api/auth/openai-api-key', {
+            method: 'POST',
+            body: JSON.stringify({ apiKey }),
+          });
+          openAIApiKeyInput.value = '';
+          openAIApiKeyRow.classList.remove('open');
+          showSetupMessage('OpenAI API key saved for this Jarvis account.');
+          await loadProviderStatus();
+        } catch (error) {
+          showSetupMessage(setupErrorMessage(error, 'Jarvis could not save the API key.'));
+        } finally {
+          setButtonBusy(openAIApiKeySaveBtn, false);
+        }
+      });
+
+      openAICallbackUrlSubmitBtn.addEventListener('click', async function () {
+        const callbackUrl = openAICallbackUrlInput.value.trim();
+        if (!callbackUrl) {
+          showSetupMessage('Paste the full OpenAI callback URL before finishing login.');
+          return;
+        }
+        setButtonBusy(openAICallbackUrlSubmitBtn, true, 'Finishing...');
+        try {
+          await fetchAuthedJson('/api/auth/openai-oauth/callback-url', {
+            method: 'POST',
+            body: JSON.stringify({ callbackUrl }),
+          });
+          openAICallbackUrlInput.value = '';
+          showSetupMessage('ChatGPT subscription connected for this Jarvis account.');
+          await loadProviderStatus();
+        } catch (error) {
+          showSetupMessage(setupErrorMessage(error, 'Jarvis could not complete OpenAI OAuth.'));
+        } finally {
+          setButtonBusy(openAICallbackUrlSubmitBtn, false);
+        }
+      });
+
+      openAIDefaultBtn.addEventListener('click', async function () {
+        if (!confirm('Use Jarvis default model route and remove stored OpenAI profiles for this account?')) return;
+        setButtonBusy(openAIDefaultBtn, true, 'Resetting...');
+        try {
+          await fetchAuthedJson('/api/auth/providers/openai', { method: 'DELETE' });
+          showSetupMessage('Jarvis default model route is active.');
+          await loadProviderStatus();
+        } catch (error) {
+          showSetupMessage(setupErrorMessage(error, 'Jarvis could not reset the OpenAI provider.'));
+        } finally {
+          setButtonBusy(openAIDefaultBtn, false);
+        }
+      });
 
       // ── Invite error screen ───────────────────────────────────────────────────
       function showInviteError(title, msg) {
@@ -988,10 +1577,12 @@
         // Owner sees share button; guests see the guest banner instead
         if (isGuest) {
           shareBtn.style.display   = 'none';
+          setupBtn.style.display   = 'none';
           shareTtl.style.display   = 'none';
           guestBanner.style.display = 'block';
         } else {
           shareBtn.style.display   = 'flex';
+          setupBtn.style.display   = 'flex';
           guestBanner.style.display = 'none';
           checkActiveInvite();
           // Refresh TTL badge every 60 s so it stays accurate during long sessions
@@ -1462,6 +2053,8 @@
 
       function signOut() {
         if (sseAbortCtrl) { sseAbortCtrl.abort(); sseAbortCtrl = null; }
+        closeSetupSheet();
+        setupLoaded = false;
         const leavingUserId = currentUserId;
         if (leavingUserId && !isGuest) {
           try { localStorage.removeItem(historyKey(leavingUserId)); } catch {}
