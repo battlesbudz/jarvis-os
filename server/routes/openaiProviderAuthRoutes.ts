@@ -74,7 +74,12 @@ export function getOpenAIOAuthConfigFromEnv(): OpenAIOAuthConfig | null {
   const tokenUrl = readEnv("JARVIS_OPENAI_OAUTH_TOKEN_URL", "OPENAI_OAUTH_TOKEN_URL");
   if (!clientId || !authorizationUrl || !tokenUrl) return null;
 
-  const scopes = readEnv("JARVIS_OPENAI_OAUTH_SCOPES", "OPENAI_OAUTH_SCOPES")
+  const scopes = readEnv(
+    "JARVIS_OPENAI_OAUTH_SCOPES",
+    "OPENAI_OAUTH_SCOPES",
+    "JARVIS_OPENAI_OAUTH_SCOPE",
+    "OPENAI_OAUTH_SCOPE",
+  )
     ?.split(/[,\s]+/)
     .map((scope) => scope.trim())
     .filter(Boolean);

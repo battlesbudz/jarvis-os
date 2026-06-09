@@ -8,15 +8,28 @@ import {
   InMemoryOpenAIOAuthStateStore,
   buildOpenAIOAuthStart,
   completeOpenAIOAuthCallback,
+  getOpenAIOAuthConfigFromEnv,
   parseOpenAICallbackUrl,
   saveOpenAIApiKeyFromRequest,
 } from "../../routes/openaiProviderAuthRoutes";
 
 async function main() {
   const previousSecret = process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
+  const previousClientId = process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID;
+  const previousAuthorizationUrl = process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL;
+  const previousTokenUrl = process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL;
+  const previousScopes = process.env.JARVIS_OPENAI_OAUTH_SCOPES;
+  const previousSingularScope = process.env.JARVIS_OPENAI_OAUTH_SCOPE;
   process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = "test-secret-for-openai-auth-routes";
 
   try {
+    process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID = "client_from_env";
+    process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL = "https://auth.example.test/oauth/authorize";
+    process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL = "https://auth.example.test/oauth/token";
+    process.env.JARVIS_OPENAI_OAUTH_SCOPES = "openid profile email";
+    delete process.env.JARVIS_OPENAI_OAUTH_SCOPE;
+    assert.deepEqual(getOpenAIOAuthConfigFromEnv()?.scopes, ["openid", "profile", "email"]);
+
     const repo = new InMemoryModelProviderAuthProfileRepository();
     const stateStore = new InMemoryOpenAIOAuthStateStore();
 
@@ -109,11 +122,22 @@ async function main() {
     );
 
     console.log("OK: OpenAI OAuth start builds PKCE login URLs with the localhost redirect URI");
+    console.log("OK: OpenAI OAuth config reads the documented plural scopes env var");
     console.log("OK: manual callback URL handling validates state and stores encrypted OAuth profiles");
     console.log("OK: OpenAI API-key request handling trims and stores API-key profiles");
   } finally {
     if (previousSecret == null) delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
     else process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = previousSecret;
+    if (previousClientId == null) delete process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID;
+    else process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID = previousClientId;
+    if (previousAuthorizationUrl == null) delete process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL;
+    else process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL = previousAuthorizationUrl;
+    if (previousTokenUrl == null) delete process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL;
+    else process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL = previousTokenUrl;
+    if (previousScopes == null) delete process.env.JARVIS_OPENAI_OAUTH_SCOPES;
+    else process.env.JARVIS_OPENAI_OAUTH_SCOPES = previousScopes;
+    if (previousSingularScope == null) delete process.env.JARVIS_OPENAI_OAUTH_SCOPE;
+    else process.env.JARVIS_OPENAI_OAUTH_SCOPE = previousSingularScope;
   }
 }
 
