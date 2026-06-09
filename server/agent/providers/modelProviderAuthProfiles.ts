@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
+import { MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
 
 export type ProviderAuthType = "api_key" | "oauth";
 export type ModelProviderName = "openai" | string;
@@ -322,11 +323,30 @@ export interface SaveOpenAIApiKeyProfileInput {
 export async function saveOpenAIApiKeyProfile(
   input: SaveOpenAIApiKeyProfileInput,
 ): Promise<ModelProviderAuthProfileRecord> {
+  return saveProviderApiKeyProfile({ ...input, provider: "openai" });
+}
+
+export interface SaveProviderApiKeyProfileInput {
+  repo?: ModelProviderAuthProfileRepository;
+  userId: string;
+  provider: ModelProviderId;
+  apiKey: string;
+  isDefault?: boolean;
+}
+
+export async function saveProviderApiKeyProfile(
+  input: SaveProviderApiKeyProfileInput,
+): Promise<ModelProviderAuthProfileRecord> {
+  if (!isSupportedModelProvider(input.provider)) throw new Error("Unsupported model provider");
+  const providerConfig = MODEL_PROVIDER_CATALOG.find((provider) => provider.id === input.provider);
+  if (!providerConfig?.credentialKinds.includes("api_key")) {
+    throw new Error(`${providerConfig?.label ?? input.provider} does not support API-key setup`);
+  }
   const apiKey = input.apiKey.trim();
-  if (!apiKey) throw new Error("OpenAI API key is required");
+  if (!apiKey) throw new Error(`${providerConfig.label} API key is required`);
   return (input.repo ?? databaseRepo).upsertProfile({
     userId: input.userId,
-    provider: "openai",
+    provider: input.provider,
     authType: "api_key",
     apiKeyEncrypted: encryptProviderSecret(apiKey),
     accessTokenEncrypted: null,
@@ -523,6 +543,11 @@ export interface ProviderAuthTypeStatus {
 }
 
 export interface ProviderStatus {
+  providers: Record<string, {
+    connected: boolean;
+    defaultAuthType: ProviderAuthType | null;
+    authTypes: Record<ProviderAuthType, ProviderAuthTypeStatus>;
+  }>;
   openai: {
     connected: boolean;
     defaultAuthType: ProviderAuthType | null;
@@ -536,11 +561,6 @@ export async function getProviderStatus(input: {
   userId: string;
 }): Promise<ProviderStatus> {
   const repo = input.repo ?? databaseRepo;
-  const profiles = await repo.listProfiles(input.userId, "openai");
-  const apiProfile = profiles.find((profile) => profile.authType === "api_key") ?? null;
-  const oauthProfile = profiles.find((profile) => profile.authType === "oauth") ?? null;
-  const defaultProfile = profiles.find((profile) => profile.isDefault) ?? null;
-
   const toStatus = (profile: ModelProviderAuthProfileRecord | null): ProviderAuthTypeStatus => ({
     connected: !!profile,
     isDefault: Boolean(profile?.isDefault),
@@ -549,22 +569,46 @@ export async function getProviderStatus(input: {
     ...(profile?.expiresAt ? { expiresAt: profile.expiresAt.toISOString() } : {}),
   });
 
-  return {
-    openai: {
-      connected: profiles.length > 0,
+  const profiles = await repo.listProfiles(input.userId);
+  const providers: ProviderStatus["providers"] = {};
+  for (const providerConfig of MODEL_PROVIDER_CATALOG) {
+    const providerProfiles = profiles.filter((profile) => profile.provider === providerConfig.id);
+    const apiProfile = providerProfiles.find((profile) => profile.authType === "api_key") ?? null;
+    const oauthProfile = providerProfiles.find((profile) => profile.authType === "oauth") ?? null;
+    const defaultProfile = providerProfiles.find((profile) => profile.isDefault) ?? null;
+    providers[providerConfig.id] = {
+      connected: providerProfiles.length > 0,
       defaultAuthType: defaultProfile?.authType ?? null,
-      fallbackEnabled: isOpenAIAuthTypeFallbackEnabled(),
       authTypes: {
         api_key: toStatus(apiProfile),
         oauth: toStatus(oauthProfile),
       },
+    };
+  }
+
+  return {
+    providers,
+    openai: {
+      connected: providers.openai.connected,
+      defaultAuthType: providers.openai.defaultAuthType,
+      fallbackEnabled: isOpenAIAuthTypeFallbackEnabled(),
+      authTypes: providers.openai.authTypes,
     },
   };
+}
+
+export async function deleteProviderProfiles(input: {
+  repo?: ModelProviderAuthProfileRepository;
+  userId: string;
+  provider: ModelProviderId;
+}): Promise<number> {
+  if (!isSupportedModelProvider(input.provider)) throw new Error("Unsupported model provider");
+  return (input.repo ?? databaseRepo).deleteProvider(input.userId, input.provider);
 }
 
 export async function deleteOpenAIProviderProfiles(input: {
   repo?: ModelProviderAuthProfileRepository;
   userId: string;
 }): Promise<number> {
-  return (input.repo ?? databaseRepo).deleteProvider(input.userId, "openai");
+  return deleteProviderProfiles({ ...input, provider: "openai" });
 }

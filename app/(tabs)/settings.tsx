@@ -56,6 +56,7 @@ import {
   type ConnectionAppId,
   type ConnectionsStatus,
 } from '@/lib/connectionUx';
+import { MODEL_PROVIDER_CATALOG } from '@shared/modelProviderCatalog';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -110,12 +111,29 @@ interface OpenAIProviderAuthTypeStatus {
   expiresAt?: string;
 }
 interface OpenAIProviderAuthStatus {
+  providerCatalog?: CatalogProvider[];
+  providers?: Record<string, ProviderAuthProviderStatus>;
   openai: {
     connected: boolean;
     defaultAuthType: OpenAIProviderAuthType | null;
     fallbackEnabled: boolean;
     authTypes: Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>;
   };
+}
+interface ProviderAuthProviderStatus {
+  connected: boolean;
+  defaultAuthType: OpenAIProviderAuthType | null;
+  fallbackEnabled?: boolean;
+  authTypes: Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>;
+}
+interface CatalogProvider {
+  id: string;
+  label: string;
+  shortLabel: string;
+  description: string;
+  credentialKinds: Array<'api_key' | 'oauth' | 'local'>;
+  apiKeyPlaceholder?: string;
+  setupHint: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -340,15 +358,23 @@ export default function SettingsScreen() {
 
   // ── Model Preferences ──
   type ModelCategory = 'chat' | 'planning' | 'memory' | 'research';
-  interface AvailableModel { value: string; label: string; description: string }
+  type ModelCategoryWithOrchestrator = ModelCategory | 'orchestrator';
+  interface AvailableModel { value: string; label: string; description: string; provider?: string; categories?: ModelCategoryWithOrchestrator[] }
   const [modelPrefs, setModelPrefs] = useState<Record<ModelCategory, string>>({
-    chat: 'gpt-5-mini', planning: 'gpt-5-mini', memory: 'gpt-5-mini', research: 'gpt-4o-mini',
+    chat: 'chatgpt-codex-oauth/auto',
+    planning: 'chatgpt-codex-oauth/auto',
+    memory: 'chatgpt-codex-oauth/auto',
+    research: 'chatgpt-codex-oauth/auto',
   });
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [savingModel, setSavingModel] = useState<ModelCategory | null>(null);
 
   // ── OpenAI provider auth ──
   const [openAIProviderStatus, setOpenAIProviderStatus] = useState<OpenAIProviderAuthStatus | null>(null);
+  const [providerCatalog, setProviderCatalog] = useState<CatalogProvider[]>([]);
+  const [providerApiKeyVisible, setProviderApiKeyVisible] = useState<Record<string, boolean>>({});
+  const [providerApiKeyInputs, setProviderApiKeyInputs] = useState<Record<string, string>>({});
+  const [providerAuthMessages, setProviderAuthMessages] = useState<Record<string, string>>({});
   const [openAIAuthLoading, setOpenAIAuthLoading] = useState(false);
   const [openAIAuthBusy, setOpenAIAuthBusy] = useState(false);
   const [openAIApiKeyVisible, setOpenAIApiKeyVisible] = useState(false);
@@ -358,7 +384,7 @@ export default function SettingsScreen() {
   const [openAIAuthMessage, setOpenAIAuthMessage] = useState<string | null>(null);
 
   // ── Orchestrator ──
-  const [orchestratorModel, setOrchestratorModel] = useState('claude-opus-4-7');
+  const [orchestratorModel, setOrchestratorModel] = useState('chatgpt-codex-oauth/auto');
   const [availableOrchestratorModels, setAvailableOrchestratorModels] = useState<AvailableModel[]>([]);
   const [savingOrchestrator, setSavingOrchestrator] = useState(false);
 
@@ -1164,6 +1190,7 @@ export default function SettingsScreen() {
       if (res.ok) {
         const data = await res.json();
         setOpenAIProviderStatus(data);
+        if (Array.isArray(data.providerCatalog)) setProviderCatalog(data.providerCatalog);
       }
     } catch {
       setOpenAIProviderStatus(null);
@@ -1597,6 +1624,57 @@ export default function SettingsScreen() {
     }
   }, [loadOpenAIProviderStatus, openAIApiKeyInput]);
 
+  const setProviderMessage = useCallback((providerId: string, message: string) => {
+    setProviderAuthMessages((prev) => ({ ...prev, [providerId]: message }));
+  }, []);
+
+  const saveProviderApiKey = useCallback(async (providerId: string) => {
+    const apiKey = (providerApiKeyInputs[providerId] ?? '').trim();
+    if (!apiKey) return;
+    setOpenAIAuthBusy(true);
+    try {
+      await apiRequest('POST', '/api/auth/model-provider-api-key', { provider: providerId, apiKey });
+      setProviderApiKeyInputs((prev) => ({ ...prev, [providerId]: '' }));
+      setProviderApiKeyVisible((prev) => ({ ...prev, [providerId]: false }));
+      setProviderMessage(providerId, 'Provider API key saved for this Jarvis account.');
+      await loadOpenAIProviderStatus();
+    } catch (error: any) {
+      const message = error?.message || 'Jarvis could not save this provider key.';
+      setProviderMessage(providerId, message);
+      Alert.alert('Save Provider Key', message);
+    } finally {
+      setOpenAIAuthBusy(false);
+    }
+  }, [loadOpenAIProviderStatus, providerApiKeyInputs, setProviderMessage]);
+
+  const disconnectProvider = useCallback((providerId: string, label: string) => {
+    Alert.alert(
+      `Disconnect ${label}`,
+      `Remove stored credentials for ${label} from this Jarvis account?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: async () => {
+            setOpenAIAuthBusy(true);
+            try {
+              await apiRequest('DELETE', `/api/auth/providers/${encodeURIComponent(providerId)}`);
+              setProviderMessage(providerId, `${label} credentials removed.`);
+              await loadOpenAIProviderStatus();
+            } catch (error: any) {
+              const message = error?.message || `Jarvis could not disconnect ${label}.`;
+              setProviderMessage(providerId, message);
+              Alert.alert(`Disconnect ${label}`, message);
+            } finally {
+              setOpenAIAuthBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [loadOpenAIProviderStatus, setProviderMessage]);
+
   const submitOpenAICallbackUrl = useCallback(async () => {
     const callbackUrl = openAICallbackUrl.trim();
     if (!callbackUrl) return;
@@ -1723,7 +1801,7 @@ export default function SettingsScreen() {
   const xpProgress = xpInfo.progress;
   const availableRewards = getAvailableRewards(lifetimeXp);
   const earnedBadges = (stats.badges ?? []).map(id => ALL_BADGES.find(b => b.id === id)).filter(Boolean);
-  const openAIStatus = openAIProviderStatus?.openai;
+  const openAIStatus = openAIProviderStatus?.providers?.openai ?? openAIProviderStatus?.openai;
   const openAIApiKeyStatus = openAIStatus?.authTypes.api_key;
   const openAIOAuthStatus = openAIStatus?.authTypes.oauth;
   const openAIDefaultLabel =
@@ -1732,6 +1810,7 @@ export default function SettingsScreen() {
       : openAIStatus?.defaultAuthType === 'api_key'
         ? 'OpenAI API key'
         : 'Jarvis default model';
+  const modelProviderCards = providerCatalog.length > 0 ? providerCatalog : MODEL_PROVIDER_CATALOG;
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -2595,7 +2674,186 @@ export default function SettingsScreen() {
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── MODEL PROVIDER ── */}
-        <SectionHeader label="MODEL PROVIDER" accent="#2563EB" />
+        <SectionHeader label="MODEL SETUP" accent="#2563EB" />
+        <View style={styles.card}>
+          <View style={[styles.connRow, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#2563EB20' }]}>
+              <Ionicons name="sparkles-outline" size={18} color="#2563EB" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>Choose a provider</Text>
+              <Text style={styles.connSub}>
+                ChatGPT subscription, OpenAI API key, Claude, Gemini, or a local Llama runtime.
+              </Text>
+            </View>
+            <Pressable onPress={loadOpenAIProviderStatus} style={{ padding: 8 }}>
+              {openAIAuthLoading ? (
+                <ActivityIndicator size="small" color="#2563EB" />
+              ) : (
+                <Ionicons name="refresh-outline" size={18} color={Colors.textSecondary} />
+              )}
+            </Pressable>
+          </View>
+
+          <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 12 }}>
+            {modelProviderCards.map((provider, idx) => {
+              const providerStatus = openAIProviderStatus?.providers?.[provider.id] ?? (provider.id === 'openai' ? openAIStatus : undefined);
+              const apiStatus = providerStatus?.authTypes?.api_key;
+              const oauthStatus = providerStatus?.authTypes?.oauth;
+              const isOpenAI = provider.id === 'openai';
+              const isLocal = provider.id === 'local-llama';
+              const apiVisible = isOpenAI ? openAIApiKeyVisible : Boolean(providerApiKeyVisible[provider.id]);
+              const apiInput = isOpenAI ? openAIApiKeyInput : (providerApiKeyInputs[provider.id] ?? '');
+              const providerMessage = isOpenAI ? openAIAuthMessage : providerAuthMessages[provider.id];
+              const activeLabel =
+                providerStatus?.defaultAuthType === 'oauth'
+                  ? 'ChatGPT subscription connected'
+                  : providerStatus?.defaultAuthType === 'api_key'
+                    ? 'API key connected'
+                    : isLocal
+                      ? 'Ready when your local runtime is running'
+                      : 'Not connected';
+              const iconName =
+                provider.id === 'anthropic' ? 'cube-outline' :
+                provider.id === 'google' ? 'logo-google' :
+                provider.id === 'local-llama' ? 'hardware-chip-outline' :
+                'sparkles-outline';
+
+              return (
+                <View key={provider.id} style={[providerAuthStyles.providerCard, idx > 0 && providerAuthStyles.providerCardBorder]}>
+                  <View style={providerAuthStyles.providerHeader}>
+                    <View style={[styles.connIconWrap, { backgroundColor: providerStatus?.connected ? '#052e16' : '#1a1a1a' }]}>
+                      <Ionicons name={iconName as any} size={18} color={providerStatus?.connected ? '#10B981' : '#2563EB'} />
+                    </View>
+                    <View style={styles.connInfo}>
+                      <Text style={styles.connName}>{provider.label}</Text>
+                      <Text style={styles.connSub}>{activeLabel}</Text>
+                      {oauthStatus?.connected && oauthStatus.email ? <Text style={styles.connSub}>{oauthStatus.email}</Text> : null}
+                      <Text style={providerAuthStyles.providerHint}>{provider.setupHint}</Text>
+                    </View>
+                  </View>
+
+                  <View style={providerAuthStyles.actionGrid}>
+                    {isOpenAI ? (
+                      <Pressable
+                        onPress={startOpenAIChatGPTOAuth}
+                        disabled={openAIAuthBusy}
+                        style={[
+                          providerAuthStyles.primaryAction,
+                          oauthStatus?.isDefault && providerAuthStyles.oauthActionActive,
+                          openAIAuthBusy && providerAuthStyles.disabledAction,
+                        ]}
+                      >
+                        <Ionicons name="person-circle-outline" size={16} color={oauthStatus?.isDefault ? '#fff' : '#2563EB'} />
+                        <Text style={[providerAuthStyles.primaryActionText, oauthStatus?.isDefault && providerAuthStyles.activeActionText]}>
+                          Connect ChatGPT Subscription
+                        </Text>
+                      </Pressable>
+                    ) : null}
+
+                    {provider.credentialKinds.includes('api_key') ? (
+                      <Pressable
+                        onPress={() => {
+                          if (isOpenAI) setOpenAIApiKeyVisible((visible) => !visible);
+                          else setProviderApiKeyVisible((prev) => ({ ...prev, [provider.id]: !prev[provider.id] }));
+                        }}
+                        disabled={openAIAuthBusy}
+                        style={[
+                          providerAuthStyles.primaryAction,
+                          apiStatus?.isDefault && providerAuthStyles.apiKeyActionActive,
+                          openAIAuthBusy && providerAuthStyles.disabledAction,
+                        ]}
+                      >
+                        <Ionicons name="key-outline" size={16} color={apiStatus?.isDefault ? '#fff' : '#0F766E'} />
+                        <Text style={[providerAuthStyles.primaryActionText, apiStatus?.isDefault && providerAuthStyles.activeActionText]}>
+                          {isLocal ? 'Use Local Runtime Key' : `Use ${provider.shortLabel} API Key`}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+
+                    {isLocal ? (
+                      <Pressable
+                        onPress={() => setProviderMessage(provider.id, 'Local Llama is selected from AI Models. Start Ollama, LM Studio, vLLM, or the Jarvis model relay before chatting.')}
+                        disabled={openAIAuthBusy}
+                        style={[providerAuthStyles.primaryAction, openAIAuthBusy && providerAuthStyles.disabledAction]}
+                      >
+                        <Ionicons name="hardware-chip-outline" size={16} color="#2563EB" />
+                        <Text style={providerAuthStyles.primaryActionText}>Use Local Llama</Text>
+                      </Pressable>
+                    ) : null}
+
+                    {providerStatus?.connected ? (
+                      <Pressable
+                        onPress={() => disconnectProvider(provider.id, provider.shortLabel)}
+                        disabled={openAIAuthBusy}
+                        style={[providerAuthStyles.primaryAction, openAIAuthBusy && providerAuthStyles.disabledAction]}
+                      >
+                        <Ionicons name="close-circle-outline" size={16} color={Colors.error} />
+                        <Text style={providerAuthStyles.primaryActionText}>Disconnect</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  {apiVisible ? (
+                    <View style={providerAuthStyles.inputBlock}>
+                      <TextInput
+                        style={providerAuthStyles.secretInput}
+                        value={apiInput}
+                        onChangeText={(value) => {
+                          if (isOpenAI) setOpenAIApiKeyInput(value);
+                          else setProviderApiKeyInputs((prev) => ({ ...prev, [provider.id]: value }));
+                        }}
+                        placeholder={provider.apiKeyPlaceholder ?? 'API key'}
+                        placeholderTextColor={Colors.textTertiary}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      <Pressable
+                        onPress={() => isOpenAI ? saveOpenAIApiKey() : saveProviderApiKey(provider.id)}
+                        disabled={openAIAuthBusy || !apiInput.trim()}
+                        style={[providerAuthStyles.saveButton, (!apiInput.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
+                      >
+                        {openAIAuthBusy ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Ionicons name="checkmark-outline" size={15} color="#fff" />
+                        )}
+                        <Text style={providerAuthStyles.saveButtonText}>Save</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+
+                  {isOpenAI ? (
+                    <View style={providerAuthStyles.inputBlock}>
+                      <TextInput
+                        style={providerAuthStyles.callbackInput}
+                        value={openAICallbackUrl}
+                        onChangeText={setOpenAICallbackUrl}
+                        placeholder="http://127.0.0.1:1455/auth/callback?code=abc123&state=xyz"
+                        placeholderTextColor={Colors.textTertiary}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      <Pressable
+                        onPress={submitOpenAICallbackUrl}
+                        disabled={openAIAuthBusy || !openAICallbackUrl.trim()}
+                        style={[providerAuthStyles.saveButton, (!openAICallbackUrl.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
+                      >
+                        <Ionicons name="log-in-outline" size={15} color="#fff" />
+                        <Text style={providerAuthStyles.saveButtonText}>Finish</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+
+                  {providerMessage ? <Text style={providerAuthStyles.statusText}>{providerMessage}</Text> : null}
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        <SectionHeader label="OPENAI DIRECT SETUP" accent="#2563EB" />
         <View style={styles.card}>
           <View style={[styles.connRow, { paddingVertical: 12 }]}>
             <View style={[styles.connIconWrap, { backgroundColor: '#2563EB20' }]}>
@@ -3375,7 +3633,8 @@ export default function SettingsScreen() {
                   { key: 'research' as ModelCategory, icon: 'search-outline', label: 'Research' },
                 ] as { key: ModelCategory; icon: string; label: string }[]
               ).map(({ key, icon, label }, idx) => {
-                const currentModel = availableModels.find(m => m.value === modelPrefs[key]);
+                const categoryModels = availableModels.filter(m => !m.categories || m.categories.includes(key));
+                const currentModel = categoryModels.find(m => m.value === modelPrefs[key]) ?? availableModels.find(m => m.value === modelPrefs[key]);
                 return (
                   <Pressable
                     key={key}
@@ -3386,7 +3645,7 @@ export default function SettingsScreen() {
                         label,
                         'Choose the AI model for this category',
                         [
-                          ...availableModels.map(m => ({
+                          ...categoryModels.map(m => ({
                             text: `${m.label}  —  ${m.description}`,
                             style: (m.value === modelPrefs[key] ? 'destructive' : 'default') as 'destructive' | 'default',
                             onPress: () => saveModel(key, m.value),
@@ -3429,7 +3688,7 @@ export default function SettingsScreen() {
                 'Orchestrator Model',
                 'Choose the Claude model used for task decomposition and verification',
                 [
-                  ...availableOrchestratorModels.map((m: AvailableModel) => ({
+                  ...availableOrchestratorModels.filter((m: AvailableModel) => !m.categories || m.categories.includes('orchestrator')).map((m: AvailableModel) => ({
                     text: `${m.label}  —  ${m.description}`,
                     style: (m.value === orchestratorModel ? 'destructive' : 'default') as 'destructive' | 'default',
                     onPress: () => saveOrchestratorModel(m.value),
@@ -4249,6 +4508,27 @@ export default function SettingsScreen() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const providerAuthStyles = StyleSheet.create({
+  providerCard: {
+    gap: 10,
+    paddingTop: 10,
+  },
+  providerCardBorder: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: 14,
+  },
+  providerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  providerHint: {
+    color: Colors.textTertiary,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 15,
+    marginTop: 4,
+  },
   actionGrid: {
     gap: 8,
   },

@@ -1,13 +1,16 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import {
+  deleteProviderProfiles,
   deleteOpenAIProviderProfiles,
   getProviderStatus,
   saveOpenAIApiKeyProfile,
   saveOpenAIOAuthProfile,
+  saveProviderApiKeyProfile,
   type ModelProviderAuthProfileRepository,
   type RefreshOAuthTokenResult,
 } from "../agent/providers/modelProviderAuthProfiles";
+import { MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
 
 export const DEFAULT_OPENAI_OAUTH_REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
 
@@ -397,11 +400,37 @@ export function registerOpenAIProviderAuthRoutes(
     }
   });
 
+  app.post("/api/auth/model-provider-api-key", async (req: Request, res: Response) => {
+    try {
+      const userId = await resolveUserId(req);
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+      const provider = typeof req.body?.provider === "string" ? req.body.provider : "";
+      if (!isSupportedModelProvider(provider)) {
+        return res.status(400).json({ error: "unsupported_model_provider", message: "Unsupported model provider" });
+      }
+      const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey : "";
+      await saveProviderApiKeyProfile({
+        repo: deps.repo,
+        userId,
+        provider,
+        apiKey,
+        isDefault: true,
+      });
+      res.json({ ok: true, provider, status: await getProviderStatus({ repo: deps.repo, userId }) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(400).json({ error: "model_provider_api_key_save_failed", message });
+    }
+  });
+
   app.get("/api/auth/providers/status", async (req: Request, res: Response) => {
     try {
       const userId = await resolveUserId(req);
       if (!userId) return res.status(401).json({ error: "Authentication required" });
-      res.json(await getProviderStatus({ repo: deps.repo, userId }));
+      res.json({
+        ...(await getProviderStatus({ repo: deps.repo, userId })),
+        providerCatalog: MODEL_PROVIDER_CATALOG,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: "provider_status_failed", message });
@@ -417,6 +446,22 @@ export function registerOpenAIProviderAuthRoutes(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: "openai_provider_delete_failed", message });
+    }
+  });
+
+  app.delete("/api/auth/providers/:provider", async (req: Request, res: Response) => {
+    try {
+      const userId = await resolveUserId(req);
+      if (!userId) return res.status(401).json({ error: "Authentication required" });
+      const provider = typeof req.params.provider === "string" ? req.params.provider : "";
+      if (!isSupportedModelProvider(provider)) {
+        return res.status(400).json({ error: "unsupported_model_provider", message: "Unsupported model provider" });
+      }
+      const deleted = await deleteProviderProfiles({ repo: deps.repo, userId, provider: provider as ModelProviderId });
+      res.json({ ok: true, deleted, provider, status: await getProviderStatus({ repo: deps.repo, userId }) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: "model_provider_delete_failed", message });
     }
   });
 }

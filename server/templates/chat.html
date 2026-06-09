@@ -463,7 +463,7 @@
         border-radius: 20px 20px 0 0;
         padding: 24px 20px 32px;
         width: 100%;
-        max-width: 760px;
+        max-width: min(960px, calc(100vw - 32px));
         max-height: min(86vh, 780px);
         overflow-y: auto;
         animation: slideUp 0.22s ease;
@@ -521,6 +521,11 @@
         margin-bottom: 14px;
       }
 
+      .setup-content-grid {
+        display: grid;
+        gap: 18px;
+      }
+
       .setup-status {
         background: var(--surface);
         border: 1px solid var(--border);
@@ -529,6 +534,39 @@
         font-size: 13px;
         color: var(--text);
         margin-bottom: 12px;
+      }
+
+      .provider-card {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 12px;
+        margin-bottom: 10px;
+        background: var(--surface);
+      }
+
+      .provider-card-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .provider-card-sub {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 2px;
+      }
+
+      .provider-card-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .provider-card-message {
+        font-size: 12px;
+        color: var(--text-muted);
+        margin-top: 8px;
       }
 
       .setup-actions {
@@ -658,6 +696,19 @@
         .setup-select-row { grid-template-columns: 1fr; gap: 8px; }
         .setup-input-row { align-items: stretch; flex-direction: column; }
         .setup-small-btn { width: 100%; }
+      }
+
+      @media (min-width: 820px) {
+        .setup-content-grid {
+          grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);
+          align-items: start;
+        }
+
+        .setup-content-grid .setup-section {
+          border-top: none;
+          padding-top: 0;
+          margin-top: 0;
+        }
       }
 
       /* ── Invite sheet modal ───────────────────────────────────────────────────── */
@@ -819,33 +870,36 @@
           <button id="setup-sheet-close" aria-label="Close">x</button>
         </div>
 
-        <div class="setup-section">
-          <div class="setup-section-title">AI models</div>
-          <p class="setup-copy">Choose which model route Jarvis uses for chat, planning, memory, research, and orchestration.</p>
-          <div id="model-settings-loading" class="setup-loading">Loading model settings...</div>
-          <div id="model-settings-error" class="setup-error" style="display:none">Could not load model settings.</div>
-          <div id="model-settings-list"></div>
-        </div>
+        <div class="setup-content-grid">
+          <div class="setup-section">
+            <div class="setup-section-title">AI models</div>
+            <p class="setup-copy">Choose which model route Jarvis uses for chat, planning, memory, research, and orchestration.</p>
+            <div id="model-settings-loading" class="setup-loading">Loading model settings...</div>
+            <div id="model-settings-error" class="setup-error" style="display:none">Could not load model settings.</div>
+            <div id="model-settings-list"></div>
+          </div>
 
-        <div class="setup-section">
-          <div class="setup-section-title">OpenAI authentication</div>
-          <p class="setup-copy">Uses your ChatGPT/Codex account instead of an API key. If login ends on a localhost error page, copy the URL and paste it back into Jarvis to complete setup.</p>
-          <div id="provider-status" class="setup-status">Loading provider status...</div>
-          <div class="setup-actions">
-            <button class="setup-action-btn primary" id="openai-oauth-btn">Connect ChatGPT Subscription</button>
-            <button class="setup-action-btn" id="openai-api-key-toggle-btn">Use OpenAI API Key</button>
-            <button class="setup-action-btn danger" id="openai-default-btn">Use Jarvis Default Model</button>
+          <div class="setup-section">
+            <div class="setup-section-title">Provider access</div>
+            <p class="setup-copy">Connect ChatGPT Subscription, API keys, or a local runtime. If ChatGPT login ends on a localhost error page, copy the URL and paste it back here.</p>
+            <div id="provider-status" class="setup-status">Loading provider status...</div>
+            <div id="provider-settings-list"></div>
+            <div class="setup-actions">
+              <button class="setup-action-btn primary" id="openai-oauth-btn">Connect ChatGPT Subscription</button>
+              <button class="setup-action-btn" id="openai-api-key-toggle-btn">Use OpenAI API Key</button>
+              <button class="setup-action-btn danger" id="openai-default-btn">Use Jarvis Default Model</button>
+            </div>
+            <div class="setup-input-row" id="openai-api-key-row">
+              <input class="setup-input" id="openai-api-key-input" type="password" placeholder="OPENAI_API_KEY" autocomplete="off" />
+              <button class="setup-small-btn" id="openai-api-key-save-btn">Save</button>
+            </div>
+            <a id="openai-login-link" href="#" target="_blank" rel="noopener noreferrer">Open login URL again</a>
+            <div class="setup-input-row open" id="openai-callback-row">
+              <input class="setup-input" id="openai-callback-url-input" type="url" placeholder="Paste full callback URL" autocomplete="off" />
+              <button class="setup-small-btn" id="openai-callback-url-submit-btn">Finish</button>
+            </div>
+            <div id="setup-message"></div>
           </div>
-          <div class="setup-input-row" id="openai-api-key-row">
-            <input class="setup-input" id="openai-api-key-input" type="password" placeholder="OPENAI_API_KEY" autocomplete="off" />
-            <button class="setup-small-btn" id="openai-api-key-save-btn">Save</button>
-          </div>
-          <a id="openai-login-link" href="#" target="_blank" rel="noopener noreferrer">Open login URL again</a>
-          <div class="setup-input-row open" id="openai-callback-row">
-            <input class="setup-input" id="openai-callback-url-input" type="url" placeholder="Paste full callback URL" autocomplete="off" />
-            <button class="setup-small-btn" id="openai-callback-url-submit-btn">Finish</button>
-          </div>
-          <div id="setup-message"></div>
         </div>
       </div>
     </div>
@@ -991,6 +1045,8 @@
       let availableModels = [];
       let orchestratorModel = '';
       let availableOrchestratorModels = [];
+      let providerCatalog = [];
+      let providerStatusById = {};
 
       // ── DOM refs ─────────────────────────────────────────────────────────────
       const initLoading      = document.getElementById('init-loading');
@@ -1016,6 +1072,7 @@
       const modelSettingsError = document.getElementById('model-settings-error');
       const modelSettingsList = document.getElementById('model-settings-list');
       const providerStatusEl = document.getElementById('provider-status');
+      const providerSettingsList = document.getElementById('provider-settings-list');
       const openAIOAuthBtn = document.getElementById('openai-oauth-btn');
       const openAIApiKeyToggleBtn = document.getElementById('openai-api-key-toggle-btn');
       const openAIDefaultBtn = document.getElementById('openai-default-btn');
@@ -1053,6 +1110,13 @@
         { key: 'planning', label: 'Planning', description: 'Goal breakdowns, schedules, and project plans.' },
         { key: 'memory', label: 'Memory', description: 'Recall, summarization, and memory maintenance.' },
         { key: 'research', label: 'Research', description: 'Web-backed lookups and synthesis.' },
+      ];
+
+      const FALLBACK_PROVIDER_CATALOG = [
+        { id: 'openai', label: 'OpenAI / ChatGPT', shortLabel: 'OpenAI', credentialKinds: ['oauth', 'api_key'], apiKeyPlaceholder: 'OPENAI_API_KEY', setupHint: 'Connect ChatGPT Subscription or save an OpenAI API key.' },
+        { id: 'anthropic', label: 'Anthropic Claude', shortLabel: 'Claude', credentialKinds: ['api_key'], apiKeyPlaceholder: 'ANTHROPIC_API_KEY', setupHint: 'Paste an Anthropic API key, then choose a Claude model.' },
+        { id: 'google', label: 'Google Gemini', shortLabel: 'Gemini', credentialKinds: ['api_key'], apiKeyPlaceholder: 'GEMINI_API_KEY', setupHint: 'Paste a Gemini API key, then choose a Gemini model.' },
+        { id: 'local-llama', label: 'Local Llama', shortLabel: 'Local', credentialKinds: ['local', 'api_key'], apiKeyPlaceholder: 'Optional local runtime API key', setupHint: 'Run Ollama, LM Studio, vLLM, or Jarvis model relay, then choose Local Llama.' },
       ];
 
       function showSetupMessage(msg) {
@@ -1147,9 +1211,10 @@
         modelSettingsList.innerHTML = '';
 
         MODEL_CATEGORIES.forEach((category) => {
+          const categoryModels = availableModels.filter((model) => !Array.isArray(model.categories) || model.categories.includes(category.key));
           modelSettingsList.appendChild(createModelSelectRow({
             ...category,
-            models: availableModels,
+            models: categoryModels,
             currentValue: modelPrefs[category.key],
             onChange: async (model) => {
               await fetchAuthedJson('/api/settings/models', {
@@ -1165,7 +1230,7 @@
           key: 'orchestrator',
           label: 'Orchestrator',
           description: 'The primary route for coordinating Jarvis runtime work.',
-          models: availableOrchestratorModels,
+          models: availableOrchestratorModels.filter((model) => !Array.isArray(model.categories) || model.categories.includes('orchestrator')),
           currentValue: orchestratorModel,
           onChange: async (model) => {
             await fetchAuthedJson('/api/settings/orchestrator', {
@@ -1178,6 +1243,8 @@
       }
 
       function renderProviderStatus(status) {
+        if (Array.isArray(status?.providerCatalog)) providerCatalog = status.providerCatalog;
+        providerStatusById = status?.providers || (status?.openai ? { openai: status.openai } : {});
         const openai = status?.openai;
         const authTypes = openai?.authTypes || {};
         const oauth = authTypes.oauth;
@@ -1190,6 +1257,7 @@
 
         if (!connected) {
           providerStatusEl.textContent = 'Using Jarvis default model route. No OpenAI profile is stored for this account.';
+          renderProviderSettings();
           return;
         }
 
@@ -1199,6 +1267,41 @@
             ? 'OpenAI API key'
             : 'OpenAI profile';
         providerStatusEl.textContent = `Active: ${active}. Connected: ${labels.join(', ')}.`;
+        renderProviderSettings();
+      }
+
+      function renderProviderSettings() {
+        const catalog = (providerCatalog.length ? providerCatalog : FALLBACK_PROVIDER_CATALOG)
+          .filter((provider) => provider.id !== 'openai');
+        providerSettingsList.innerHTML = '';
+        catalog.forEach((provider) => {
+          const status = providerStatusById[provider.id] || {};
+          const apiStatus = status.authTypes?.api_key;
+          const connected = !!status.connected;
+          const isLocal = provider.id === 'local-llama';
+          const card = document.createElement('div');
+          card.className = 'provider-card';
+          card.dataset.provider = provider.id;
+          card.innerHTML = `
+            <div class="provider-card-title">${provider.label}</div>
+            <div class="provider-card-sub">${connected ? 'API key connected' : isLocal ? 'Ready when your local runtime is running' : 'Not connected'}</div>
+            <div class="provider-card-sub">${provider.setupHint}</div>
+            <div class="provider-card-actions">
+              ${provider.credentialKinds?.includes('api_key') ? `<button class="setup-action-btn" data-provider-action="toggle-key">${isLocal ? 'Use Local Runtime Key' : `Use ${provider.shortLabel} API Key`}</button>` : ''}
+              ${isLocal ? '<button class="setup-action-btn" data-provider-action="local-info">Use Local Llama</button>' : ''}
+              ${connected ? '<button class="setup-action-btn danger" data-provider-action="disconnect">Disconnect</button>' : ''}
+            </div>
+            <div class="setup-input-row" data-provider-key-row>
+              <input class="setup-input" data-provider-key-input type="password" placeholder="${provider.apiKeyPlaceholder || 'API key'}" autocomplete="off" />
+              <button class="setup-small-btn" data-provider-action="save-key">Save</button>
+            </div>
+            <div class="provider-card-message" data-provider-message></div>
+          `;
+          if (apiStatus?.isDefault) {
+            card.querySelector('[data-provider-action="toggle-key"]')?.classList.add('primary');
+          }
+          providerSettingsList.appendChild(card);
+        });
       }
 
       async function loadProviderStatus() {
@@ -1317,6 +1420,72 @@
           showSetupMessage(setupErrorMessage(error, 'Jarvis could not save the API key.'));
         } finally {
           setButtonBusy(openAIApiKeySaveBtn, false);
+        }
+      });
+
+      providerSettingsList.addEventListener('click', async function (event) {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest('[data-provider-action]');
+        if (!button) return;
+        const card = button.closest('.provider-card');
+        const provider = card?.dataset.provider;
+        const action = button.dataset.providerAction;
+        if (!provider || !action) return;
+
+        const messageEl = card.querySelector('[data-provider-message]');
+        const inputRow = card.querySelector('[data-provider-key-row]');
+        const input = card.querySelector('[data-provider-key-input]');
+        const setProviderCardMessage = (message) => {
+          if (messageEl) messageEl.textContent = message;
+        };
+
+        if (action === 'toggle-key') {
+          inputRow?.classList.toggle('open');
+          if (inputRow?.classList.contains('open')) input?.focus();
+          return;
+        }
+
+        if (action === 'local-info') {
+          setProviderCardMessage('Start Ollama, LM Studio, vLLM, or the Jarvis model relay, then select Local Llama from AI models.');
+          return;
+        }
+
+        if (action === 'save-key') {
+          const apiKey = input?.value?.trim() || '';
+          if (!apiKey) {
+            setProviderCardMessage('Paste an API key before saving.');
+            return;
+          }
+          setButtonBusy(button, true, 'Saving...');
+          try {
+            await fetchAuthedJson('/api/auth/model-provider-api-key', {
+              method: 'POST',
+              body: JSON.stringify({ provider, apiKey }),
+            });
+            input.value = '';
+            inputRow?.classList.remove('open');
+            setProviderCardMessage('Provider API key saved for this Jarvis account.');
+            await loadProviderStatus();
+          } catch (error) {
+            setProviderCardMessage(setupErrorMessage(error, 'Jarvis could not save this provider key.'));
+          } finally {
+            setButtonBusy(button, false);
+          }
+          return;
+        }
+
+        if (action === 'disconnect') {
+          if (!confirm('Remove stored credentials for this provider?')) return;
+          setButtonBusy(button, true, 'Disconnecting...');
+          try {
+            await fetchAuthedJson(`/api/auth/providers/${encodeURIComponent(provider)}`, { method: 'DELETE' });
+            setProviderCardMessage('Provider credentials removed.');
+            await loadProviderStatus();
+          } catch (error) {
+            setProviderCardMessage(setupErrorMessage(error, 'Jarvis could not disconnect this provider.'));
+          } finally {
+            setButtonBusy(button, false);
+          }
         }
       });
 
