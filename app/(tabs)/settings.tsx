@@ -1595,7 +1595,9 @@ export default function SettingsScreen() {
       }
       setOpenAILoginUrl(data.loginUrl);
       setOpenAIAuthMessage(data.instructions ?? 'Open the login URL. Paste the callback URL here if localhost cannot load.');
-      await openHostedConnectionLink(data.loginUrl);
+      if (Platform.OS !== 'web') {
+        await openHostedConnectionLink(data.loginUrl);
+      }
     } catch (error: any) {
       const message = error?.message?.includes('openai_oauth_not_configured')
         ? 'OpenAI OAuth needs client configuration on the server before Jarvis can open the login page.'
