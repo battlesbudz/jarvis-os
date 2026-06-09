@@ -156,6 +156,47 @@ function parseModelSpec(spec: string | undefined): FallbackChainEntry | null {
   return { providerName: "openai-compatible", model: `openai-compatible/${raw}` };
 }
 
+function parseRequestedModelSpec(spec: string | undefined): FallbackChainEntry | null {
+  const raw = spec?.trim();
+  if (!raw) return null;
+  const normalized = raw.toLowerCase();
+
+  const colonIdx = normalized.indexOf(":");
+  if (colonIdx > 0) {
+    const provider = normalized.slice(0, colonIdx).trim();
+    if (
+      provider === "openai" ||
+      provider === "openai-compatible" ||
+      provider === "chatgpt-codex-oauth" ||
+      provider === "anthropic" ||
+      provider === "google"
+    ) {
+      return parseModelSpec(raw);
+    }
+  }
+
+  if (
+    normalized.startsWith("openai/") ||
+    normalized.startsWith("anthropic/") ||
+    normalized.startsWith("google/") ||
+    normalized.startsWith("chatgpt-codex-oauth/") ||
+    normalized.startsWith("codex-oauth/") ||
+    normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("openai-compatible/") ||
+    normalized.startsWith("openrouter/") ||
+    normalized.startsWith("groq/") ||
+    normalized.startsWith("together/") ||
+    normalized.startsWith("fireworks/") ||
+    normalized.startsWith("cerebras/") ||
+    normalized.startsWith("nvidia/") ||
+    normalized.startsWith("deepseek/")
+  ) {
+    return parseModelSpec(raw);
+  }
+
+  return null;
+}
+
 function envModelForExecutionTier(tier: ModelExecutionTier): FallbackChainEntry | null {
   const specific =
     tier === "cheap"
@@ -537,7 +578,7 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
-  const requestedEntry = parseModelSpec(params.requestedModel);
+  const requestedEntry = parseRequestedModelSpec(params.requestedModel);
   const chain = requestedEntry
     ? [requestedEntry]
     : (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix)) ?? getModelRouteChain(params.tier);

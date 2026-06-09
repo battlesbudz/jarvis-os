@@ -283,8 +283,67 @@ async function runExplicitProviderModelRouteAssertion(): Promise<void> {
   }
 }
 
+async function runPlainGptRequestUsesConfiguredChainAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  const captured: Array<{ provider: string; params: ProviderQueryParams }> = [];
+  class CapturingProvider extends BaseProvider {
+    constructor(private readonly provider: string) {
+      super();
+    }
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured.push({ provider: this.provider, params });
+      yield { type: "text", delta: `${this.provider} route` };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+    process.env.PROVIDER_FALLBACK_CHAIN = "anthropic:claude-chain,google:gemini-chain";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    _overrideProviderForTesting("anthropic", new CapturingProvider("anthropic"));
+    _overrideProviderForTesting("google", new CapturingProvider("google"));
+    _overrideProviderForTesting("openai-compatible", new CapturingProvider("openai-compatible"));
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Plain GPT request." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      logPrefix: "[ModelRouterPlainGptRequestTest]",
+    });
+
+    assert.equal(result.providerName, "anthropic");
+    assert.equal(result.model, "claude-chain");
+    assert.equal(captured[0]?.provider, "anthropic");
+    assert.equal(captured[0]?.params.model, "claude-chain");
+    console.log("OK: plain GPT requests keep using the configured provider route chain");
+  } finally {
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 runUserOpenAIProfileRouteAssertion()
   .then(runExplicitProviderModelRouteAssertion)
+  .then(runPlainGptRequestUsesConfiguredChainAssertion)
   .then(runLeanContextToolBudgetAssertion)
   .then(() => {
     console.log("\nAll model router assertions passed.");
