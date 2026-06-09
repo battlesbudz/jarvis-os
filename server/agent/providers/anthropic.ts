@@ -30,6 +30,21 @@ function normalizeAnthropicModel(model: string): string {
   return model.startsWith("anthropic/") ? model.slice("anthropic/".length) : model;
 }
 
+function normalizeAnthropicFinishReason(reason: unknown): string | null {
+  if (typeof reason !== "string") return null;
+  switch (reason) {
+    case "tool_use":
+      return "tool_calls";
+    case "max_tokens":
+      return "length";
+    case "end_turn":
+    case "stop_sequence":
+      return "stop";
+    default:
+      return "stop";
+  }
+}
+
 function isFunctionTool(
   tool: OpenAI.Chat.Completions.ChatCompletionTool,
 ): tool is OpenAI.Chat.Completions.ChatCompletionFunctionTool {
@@ -184,6 +199,6 @@ export class AnthropicProvider extends BaseProvider {
         yield { type: "tool_call_args", index: i, args: JSON.stringify(part.input ?? {}) };
       }
     }
-    yield { type: "finish", reason: typeof data?.stop_reason === "string" ? data.stop_reason : null };
+    yield { type: "finish", reason: normalizeAnthropicFinishReason(data?.stop_reason) };
   }
 }

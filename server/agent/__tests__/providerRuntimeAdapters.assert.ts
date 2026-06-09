@@ -45,11 +45,57 @@ async function testAnthropicUsesUserCredential() {
   }));
 
   assert.equal(result.textContent, "hello from claude");
+  assert.equal(result.finishReason, "stop");
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, "https://api.anthropic.com/v1/messages");
   assert.equal((requests[0].init.headers as Record<string, string>)["x-api-key"], "sk-ant-user");
   assert.match(String(requests[0].init.body), /"model":"claude-sonnet-4-5"/);
   console.log("OK: Anthropic provider uses user-scoped API key profiles");
+
+  _setAnthropicFetchForTesting(null);
+  _setAnthropicCredentialResolverForTesting(null);
+}
+
+async function testAnthropicToolUseFinishReasonIsToolCalls() {
+  _setAnthropicCredentialResolverForTesting(async () => ({
+    provider: "anthropic",
+    authType: "api_key",
+    credential: "sk-ant-user",
+    refreshToken: null,
+    expiresAt: null,
+    accountId: null,
+    email: null,
+  }));
+  _setAnthropicFetchForTesting(async () => new Response(JSON.stringify({
+    content: [{
+      type: "tool_use",
+      id: "toolu_123",
+      name: "lookup_weather",
+      input: { city: "Nashville" },
+    }],
+    stop_reason: "tool_use",
+  }), { status: 200, headers: { "content-type": "application/json" } }));
+
+  const result = await accumulateTurn(new AnthropicProvider().query({
+    model: "anthropic/claude-sonnet-4-5",
+    messages: [{ role: "user", content: "Weather?" }],
+    tools: [{
+      type: "function",
+      function: {
+        name: "lookup_weather",
+        description: "Look up weather.",
+        parameters: { type: "object", properties: {} },
+      },
+    }],
+    toolChoice: "auto",
+    maxCompletionTokens: 128,
+    stream: false,
+    userId: "user-claude",
+  }));
+
+  assert.equal(result.finishReason, "tool_calls");
+  assert.equal(result.toolCallList[0].function.name, "lookup_weather");
+  console.log("OK: Anthropic provider normalizes tool-use stops to tool_calls");
 
   _setAnthropicFetchForTesting(null);
   _setAnthropicCredentialResolverForTesting(null);
@@ -294,6 +340,7 @@ async function testOpenAICompatibleUsesLocalUserCredential() {
 
 async function main() {
   await testAnthropicUsesUserCredential();
+  await testAnthropicToolUseFinishReasonIsToolCalls();
   await testAnthropicToolChoiceNoneOmitsTools();
   await testGoogleUsesUserCredential();
   await testGoogleToolResponseUsesOriginalFunctionName();
