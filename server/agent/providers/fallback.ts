@@ -39,6 +39,8 @@ export const DEFAULT_PROVIDER_MODELS: Record<ProviderName, string> = {
   openai: "gpt-4.1-mini",
   "openai-compatible": "modelrelay/auto-fastest",
   "chatgpt-codex-oauth": "chatgpt-codex-oauth/auto",
+  anthropic: "claude-sonnet-4-5",
+  google: "gemini-2.5-pro",
 };
 
 /**
@@ -155,7 +157,7 @@ export function isRetriableProviderError(err: unknown): boolean {
   return false;
 }
 
-const KNOWN_PROVIDERS: ProviderName[] = ["openai", "openai-compatible", "chatgpt-codex-oauth"];
+const KNOWN_PROVIDERS: ProviderName[] = ["openai", "openai-compatible", "chatgpt-codex-oauth", "anthropic", "google"];
 
 /**
  * Reads PROVIDER_FALLBACK_CHAIN from the environment and returns an ordered

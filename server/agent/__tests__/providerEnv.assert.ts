@@ -120,6 +120,16 @@ withCleanEnv({
   console.log("OK: explicit ChatGPT/Codex OAuth provider is the only model route even when other keys exist");
 });
 
+withCleanEnv({
+  JARVIS_MODEL_PROVIDER: "chatgpt-codex-oauth",
+  JARVIS_CODEX_COMMAND: "codex-test",
+}, () => {
+  assert.equal(resolveRuntimeAgentModel("anthropic/claude-sonnet-4-5"), "anthropic/claude-sonnet-4-5");
+  assert.equal(resolveRuntimeAgentModel("google/gemini-2.5-pro"), "google/gemini-2.5-pro");
+  assert.equal(resolveRuntimeAgentModel("openai-compatible/llama-local"), "openai-compatible/llama-local");
+  console.log("OK: explicit user-selected provider models survive Codex OAuth default routing");
+});
+
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
   const chain = getModelRouteChain("balanced");
   assert.deepEqual(chain[0], CODEX_ROUTE);

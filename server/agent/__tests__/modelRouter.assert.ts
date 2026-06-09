@@ -229,7 +229,62 @@ async function runUserOpenAIProfileRouteAssertion(): Promise<void> {
   }
 }
 
+async function runExplicitProviderModelRouteAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class CapturingAnthropicProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "anthropic route" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    _overrideProviderForTesting("anthropic", new CapturingAnthropicProvider());
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "anthropic/claude-sonnet-4-5",
+      messages: [{ role: "user", content: "Use Claude." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-claude",
+      logPrefix: "[ModelRouterExplicitProviderTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "anthropic");
+    assert.equal(result.model, "claude-sonnet-4-5");
+    assert.equal(result.textContent, "anthropic route");
+    assert.equal(capturedRequest?.model, "claude-sonnet-4-5");
+    assert.equal(capturedRequest?.userId, "user-claude");
+    console.log("OK: explicit selected provider model routes directly to that provider");
+  } finally {
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 runUserOpenAIProfileRouteAssertion()
+  .then(runExplicitProviderModelRouteAssertion)
   .then(runLeanContextToolBudgetAssertion)
   .then(() => {
     console.log("\nAll model router assertions passed.");

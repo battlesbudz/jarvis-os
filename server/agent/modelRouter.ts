@@ -56,6 +56,7 @@ export interface ModelRoutingDecision {
 
 export interface RoutedModelTurnParams {
   tier: ModelExecutionTier;
+  requestedModel?: string;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
   toolChoice?: "auto" | "required" | "none";
@@ -118,11 +119,17 @@ function parseModelSpec(spec: string | undefined): FallbackChainEntry | null {
   if (colonIdx > 0) {
     const provider = raw.slice(0, colonIdx).trim() as ProviderName;
     const model = raw.slice(colonIdx + 1).trim();
-    if ((provider === "openai" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth") && model) {
+    if ((provider === "openai" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth" || provider === "anthropic" || provider === "google") && model) {
       return { providerName: provider, model };
     }
   }
 
+  if (raw.startsWith("anthropic/")) {
+    return { providerName: "anthropic", model: raw.slice("anthropic/".length) };
+  }
+  if (raw.startsWith("google/")) {
+    return { providerName: "google", model: raw.slice("google/".length) };
+  }
   if (raw.startsWith("openai/")) {
     return { providerName: "openai", model: raw.slice("openai/".length) };
   }
@@ -530,7 +537,10 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
-  const chain = (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix)) ?? getModelRouteChain(params.tier);
+  const requestedEntry = parseModelSpec(params.requestedModel);
+  const chain = requestedEntry
+    ? [requestedEntry]
+    : (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix)) ?? getModelRouteChain(params.tier);
   if (chain.length === 0) {
     throw new Error(
       "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable.",

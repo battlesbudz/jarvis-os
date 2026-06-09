@@ -30,6 +30,7 @@ export async function createRoutedChatCompletion(
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
   const result = await runner({
     tier: options.tier ?? "cheap",
+    requestedModel: String(body.model),
     messages: body.messages,
     tools: body.tools,
     toolChoice: toolChoiceFromBody(body),

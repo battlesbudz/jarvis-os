@@ -73,6 +73,7 @@ const tests = [
   { file: "server/agent/__tests__/routedChatCompletion.assert.ts" },
   { file: "server/agent/__tests__/providerEnv.assert.ts" },
   { file: "server/agent/__tests__/modelProviderCatalog.assert.ts" },
+  { file: "server/agent/__tests__/providerRuntimeAdapters.assert.ts" },
   { file: "server/agent/__tests__/modelProviderAuthProfiles.assert.ts" },
   { file: "server/agent/__tests__/openaiProviderAuthRoutes.assert.ts" },
   { file: "server/agent/__tests__/openaiProviderAuthRuntime.assert.ts" },

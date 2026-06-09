@@ -26,12 +26,29 @@ function routingEnabled(): boolean {
   return hasNonOpenAIRoutableProvider();
 }
 
+function isProviderModelSpec(model: string): boolean {
+  const normalized = model.trim().toLowerCase();
+  return (
+    normalized.startsWith("anthropic/") ||
+    normalized.startsWith("google/") ||
+    normalized.startsWith("openai-compatible/") ||
+    normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("openrouter/") ||
+    normalized.startsWith("groq/") ||
+    normalized.startsWith("together/") ||
+    normalized.startsWith("fireworks/") ||
+    normalized.startsWith("cerebras/") ||
+    normalized.startsWith("nvidia/") ||
+    normalized.startsWith("deepseek/")
+  );
+}
+
 function shouldRoute(body: unknown): body is ChatCreateBody {
   if (!routingEnabled()) return false;
   if (routingDepth > 0) return false;
   if (!body || typeof body !== "object") return false;
   const model = (body as { model?: unknown }).model;
-  return typeof model === "string" && model.startsWith("gpt-");
+  return typeof model === "string" && (model.startsWith("gpt-") || isProviderModelSpec(model));
 }
 
 function tierForBody(body: ChatCreateBody): "cheap" | "balanced" | "smart" {
@@ -122,6 +139,7 @@ function routeBody(body: ChatCreateBody, signal: AbortSignal | undefined, logPre
   routingDepth++;
   return routeModelTurn({
     tier: tierForBody(body),
+    requestedModel: String(body.model),
     messages: body.messages,
     tools: body.tools,
     toolChoice: (body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto"),

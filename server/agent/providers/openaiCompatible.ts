@@ -21,12 +21,22 @@ import OpenAI from "openai";
 import { BaseProvider } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { getProviderEnvValue } from "./env";
+import {
+  getProviderCredential,
+  type GetProviderCredentialInput,
+  type ProviderCredential,
+} from "./modelProviderAuthProfiles";
 
 type RelayTarget = {
   baseURL: string;
   apiKey: string;
   model: string;
 };
+type OpenAICompatibleClientConfig = { baseURL: string; apiKey: string };
+type OpenAICompatibleClientFactory = (config: OpenAICompatibleClientConfig) => OpenAI;
+type OpenAICompatibleCredentialResolver = (
+  input: GetProviderCredentialInput,
+) => Promise<ProviderCredential | null>;
 
 type OpenAICompatiblePrefix =
   | "modelrelay"
@@ -53,6 +63,27 @@ const PROVIDER_PREFIXES: Array<{ prefix: OpenAICompatiblePrefix; marker: string 
   { prefix: "deepseek", marker: "deepseek/" },
 ];
 
+let openAICompatibleProviderClientFactoryForTesting: OpenAICompatibleClientFactory | null = null;
+let openAICompatibleCredentialResolverForTesting: OpenAICompatibleCredentialResolver | null = null;
+
+export function _setOpenAICompatibleProviderClientFactoryForTesting(
+  factory: OpenAICompatibleClientFactory | null,
+): void {
+  openAICompatibleProviderClientFactoryForTesting = factory;
+}
+
+export function _setOpenAICompatibleCredentialResolverForTesting(
+  resolver: OpenAICompatibleCredentialResolver | null,
+): void {
+  openAICompatibleCredentialResolverForTesting = resolver;
+}
+
+function createOpenAICompatibleClient(config: OpenAICompatibleClientConfig): OpenAI {
+  return openAICompatibleProviderClientFactoryForTesting
+    ? openAICompatibleProviderClientFactoryForTesting(config)
+    : new OpenAI(config);
+}
+
 function trimTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
 }
@@ -71,9 +102,7 @@ function stripKnownPrefix(model: string): { prefix: OpenAICompatiblePrefix; mode
   return { prefix: "openai-compatible", model };
 }
 
-function resolveRelayTarget(model: string): RelayTarget {
-  const parsed = stripKnownPrefix(model);
-
+function resolveRelayTargetFromPrefix(parsed: { prefix: OpenAICompatiblePrefix; model: string }): RelayTarget {
   switch (parsed.prefix) {
     case "openrouter":
       return {
@@ -159,6 +188,33 @@ function resolveRelayTarget(model: string): RelayTarget {
   }
 }
 
+function userCredentialProviderForPrefix(prefix: OpenAICompatiblePrefix): string | null {
+  switch (prefix) {
+    case "modelrelay":
+    case "openai-compatible":
+      return "local-llama";
+    default:
+      return null;
+  }
+}
+
+async function resolveRelayTarget(model: string, userId?: string): Promise<RelayTarget> {
+  const parsed = stripKnownPrefix(model);
+  const envTarget = resolveRelayTargetFromPrefix(parsed);
+  const credentialProvider = userCredentialProviderForPrefix(parsed.prefix);
+  if (!userId || !credentialProvider) return envTarget;
+
+  const resolver = openAICompatibleCredentialResolverForTesting ?? getProviderCredential;
+  const credential = await resolver({
+    userId,
+    provider: credentialProvider,
+    preferredAuthType: "api_key",
+    allowAuthTypeFallback: false,
+  });
+  if (!credential?.credential) return envTarget;
+  return { ...envTarget, apiKey: credential.credential };
+}
+
 export class OpenAICompatibleProvider extends BaseProvider {
   private clients = new Map<string, OpenAI>();
 
@@ -182,13 +238,13 @@ export class OpenAICompatibleProvider extends BaseProvider {
     const key = `${target.baseURL}\n${target.apiKey}`;
     const cached = this.clients.get(key);
     if (cached) return cached;
-    const client = new OpenAI({ baseURL: target.baseURL, apiKey: target.apiKey });
+    const client = createOpenAICompatibleClient({ baseURL: target.baseURL, apiKey: target.apiKey });
     this.clients.set(key, client);
     return client;
   }
 
   private async *_completeTurn(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
-    const target = resolveRelayTarget(params.model);
+    const target = await resolveRelayTarget(params.model, params.userId);
     const client = this.getClient(target);
     const completion = await client.chat.completions.create(
       {
@@ -222,7 +278,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
   }
 
   private async *_streamTurn(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
-    const target = resolveRelayTarget(params.model);
+    const target = await resolveRelayTarget(params.model, params.userId);
     const client = this.getClient(target);
     const stream = await client.chat.completions.create(
       {
