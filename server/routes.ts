@@ -5966,7 +5966,12 @@ Extract up to 8 memories per batch.`;
   });
 
   registerSettingsRoutes(app);
-  registerOpenAIProviderAuthRoutes(app, { includeCallbackRoutes: false });
+  // The provider endpoints keep the /api/auth contract but authMiddleware skips
+  // that prefix, so authenticate them explicitly with the bearer-token helper.
+  registerOpenAIProviderAuthRoutes(app, {
+    includeCallbackRoutes: false,
+    resolveUserId: getUserIdFromRequest,
+  });
 
   // ── Skill endpoints ──────────────────────────────────────────────────────
   app.get("/api/skills", async (req: Request, res: Response) => {

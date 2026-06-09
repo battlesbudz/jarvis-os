@@ -78,13 +78,18 @@ export class OpenAIProvider extends BaseProvider {
     if (!params.userId) return this.getEnvClient();
 
     const resolver = openAIProviderCredentialResolverForTesting ?? getProviderCredential;
+    const preferredAuthType = getPreferredOpenAIAuthType();
+    const allowAuthTypeFallback = isOpenAIAuthTypeFallbackEnabled();
     const credential = await resolver({
       userId: params.userId,
       provider: "openai",
-      preferredAuthType: getPreferredOpenAIAuthType(),
-      allowAuthTypeFallback: isOpenAIAuthTypeFallbackEnabled(),
+      preferredAuthType,
+      allowAuthTypeFallback,
     });
 
+    if (!credential && preferredAuthType && !allowAuthTypeFallback) {
+      throw new Error(`OpenAI ${preferredAuthType} profile is required but is not connected for this user`);
+    }
     if (!credential) return this.getEnvClient();
 
     return createOpenAIClient({

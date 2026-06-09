@@ -82,6 +82,15 @@ async function main() {
     await collect(provider);
     assert.equal(clientConfigs[1].apiKey, "env-openai-key");
 
+    _setOpenAIProviderCredentialResolverForTesting(async (input) => {
+      resolverCalls.push(input);
+      return null;
+    });
+    await assert.rejects(
+      () => collect(provider, "user-missing-oauth"),
+      /OpenAI oauth profile is required but is not connected/,
+    );
+
     process.env.JARVIS_OPENAI_AUTH_FALLBACK_ENABLED = "true";
     _setOpenAIProviderCredentialResolverForTesting(async (input) => {
       resolverCalls.push(input);
