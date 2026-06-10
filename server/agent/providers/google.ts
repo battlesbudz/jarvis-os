@@ -64,6 +64,31 @@ function normalizeGoogleFinishReason(reason: unknown): string | null {
   }
 }
 
+function describeSafetyRatings(ratings: unknown): string[] {
+  if (!Array.isArray(ratings)) return [];
+  return ratings
+    .map((rating) => {
+      if (!rating || typeof rating !== "object") return null;
+      const category = (rating as { category?: unknown }).category;
+      const probability = (rating as { probability?: unknown }).probability;
+      if (typeof category !== "string") return null;
+      return typeof probability === "string" ? `${category}:${probability}` : category;
+    })
+    .filter((value): value is string => Boolean(value));
+}
+
+function describeNoTextResponse(data: any, candidate: any): string {
+  const signals: string[] = [];
+  if (typeof candidate?.finishReason === "string") signals.push(`finishReason=${candidate.finishReason}`);
+  if (typeof data?.promptFeedback?.blockReason === "string") {
+    signals.push(`blockReason=${data.promptFeedback.blockReason}`);
+  }
+  const ratings = describeSafetyRatings(candidate?.safetyRatings);
+  if (ratings.length) signals.push(`safetyRatings=${ratings.join(",")}`);
+  const suffix = signals.length ? ` (${signals.join("; ")})` : "";
+  return `Google Gemini returned no response text${suffix}. Try rephrasing the prompt or choose another connected model.`;
+}
+
 function isFunctionTool(
   tool: OpenAI.Chat.Completions.ChatCompletionTool,
 ): tool is OpenAI.Chat.Completions.ChatCompletionFunctionTool {
@@ -214,9 +239,11 @@ export class GoogleProvider extends BaseProvider {
     const candidate = Array.isArray(data?.candidates) ? data.candidates[0] : null;
     const parts = Array.isArray(candidate?.content?.parts) ? candidate.content.parts : [];
     let hasFunctionCall = false;
+    let hasVisibleText = false;
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       if (typeof part?.text === "string") {
+        if (part.text.trim().length > 0) hasVisibleText = true;
         yield { type: "text", delta: part.text };
       }
       if (part?.functionCall && typeof part.functionCall.name === "string") {
@@ -229,6 +256,9 @@ export class GoogleProvider extends BaseProvider {
         };
         yield { type: "tool_call_args", index: i, args: JSON.stringify(part.functionCall.args ?? {}) };
       }
+    }
+    if (!hasVisibleText && !hasFunctionCall) {
+      throw new Error(describeNoTextResponse(data, candidate));
     }
     yield {
       type: "finish",

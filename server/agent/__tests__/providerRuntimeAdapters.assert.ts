@@ -196,6 +196,47 @@ async function testGoogleUsesUserCredential() {
   _setGoogleCredentialResolverForTesting(null);
 }
 
+async function testGoogleEmptyBlockedResponseIsVisibleFailure() {
+  _setGoogleCredentialResolverForTesting(async () => ({
+    provider: "google",
+    authType: "api_key",
+    credential: "gemini-user-key",
+    refreshToken: null,
+    expiresAt: null,
+    accountId: null,
+    email: null,
+  }));
+  _setGoogleFetchForTesting(async () => new Response(JSON.stringify({
+    promptFeedback: {
+      blockReason: "SAFETY",
+    },
+    candidates: [{
+      content: { parts: [] },
+      finishReason: "SAFETY",
+      safetyRatings: [{
+        category: "HARM_CATEGORY_DANGEROUS_CONTENT",
+        probability: "HIGH",
+      }],
+    }],
+  }), { status: 200, headers: { "content-type": "application/json" } }));
+
+  await assert.rejects(
+    () => accumulateTurn(new GoogleProvider().query({
+      model: "google/gemini-2.5-pro",
+      messages: [{ role: "user", content: "Hello" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-gemini",
+    })),
+    /Google Gemini returned no response text.*SAFETY/i,
+  );
+  console.log("OK: Google Gemini empty blocked responses fail visibly instead of returning blank chat output");
+
+  _setGoogleFetchForTesting(null);
+  _setGoogleCredentialResolverForTesting(null);
+}
+
 async function testGoogleToolResponseUsesOriginalFunctionName() {
   const requests: Array<{ url: string; init: RequestInit }> = [];
   _setGoogleCredentialResolverForTesting(async () => ({
@@ -403,6 +444,7 @@ async function main() {
   await testAnthropicToolUseFinishReasonIsToolCalls();
   await testAnthropicToolChoiceNoneOmitsTools();
   await testGoogleUsesUserCredential();
+  await testGoogleEmptyBlockedResponseIsVisibleFailure();
   await testGoogleToolResponseUsesOriginalFunctionName();
   await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();
   await testOpenAICompatibleUsesLocalUserCredential();
