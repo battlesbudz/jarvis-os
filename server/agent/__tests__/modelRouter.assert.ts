@@ -393,6 +393,303 @@ async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion():
   }
 }
 
+async function runDefaultProviderProfileOverridesStaleCodexSelectionAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class CapturingGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "stale codex bypassed" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  class UnexpectedCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("stale Codex default must not override the connected Gemini profile");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new CapturingGoogleProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new UnexpectedCodexProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-stale-codex-default");
+      return CODEX_MODEL;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-stale-codex-default");
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      const google = {
+        connected: true,
+        defaultAuthType: "api_key" as const,
+        authTypes: {
+          api_key: { connected: true, isDefault: true },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai, google },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Use my connected Gemini profile, not stale Codex." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-stale-codex-default",
+      logPrefix: "[ModelRouterStaleCodexDefaultProfileTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "google");
+    assert.equal(result.model, "gemini-2.5-flash");
+    assert.equal(result.textContent, "stale codex bypassed");
+    assert.equal(capturedRequest?.model, "gemini-2.5-flash");
+    assert.equal(capturedRequest?.userId, "user-stale-codex-default");
+    console.log("OK: a connected default Gemini profile overrides a stale Codex selected-model placeholder");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class UnexpectedGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("explicit Codex selection must not be replaced by Gemini");
+    }
+  }
+
+  class CapturingCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "explicit codex preserved" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new UnexpectedGoogleProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingCodexProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-explicit-codex");
+      return { model: CODEX_MODEL, isExplicit: true };
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-explicit-codex");
+      const openai = {
+        connected: true,
+        defaultAuthType: "oauth" as const,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: true, isDefault: true },
+        },
+      };
+      const google = {
+        connected: true,
+        defaultAuthType: "api_key" as const,
+        authTypes: {
+          api_key: { connected: true, isDefault: true },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai, google },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Use my explicitly selected ChatGPT subscription." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-explicit-codex",
+      logPrefix: "[ModelRouterExplicitCodexSelectionTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "chatgpt-codex-oauth");
+    assert.equal(result.model, CODEX_MODEL);
+    assert.equal(result.textContent, "explicit codex preserved");
+    assert.equal(capturedRequest?.model, CODEX_MODEL);
+    assert.equal(capturedRequest?.userId, "user-explicit-codex");
+    console.log("OK: an explicit ChatGPT/Codex selection overrides other connected provider profiles");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runLegacyCodexSelectionWithOAuthOverridesDefaultProviderProfileAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class UnexpectedGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("legacy Codex selection with OAuth must not be replaced by Gemini");
+    }
+  }
+
+  class CapturingCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "legacy codex preserved" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new UnexpectedGoogleProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingCodexProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-legacy-codex-oauth");
+      return CODEX_MODEL;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-legacy-codex-oauth");
+      const openai = {
+        connected: true,
+        defaultAuthType: "oauth" as const,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: true, isDefault: true },
+        },
+      };
+      const google = {
+        connected: true,
+        defaultAuthType: "api_key" as const,
+        authTypes: {
+          api_key: { connected: true, isDefault: true },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai, google },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Use my legacy selected ChatGPT subscription." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-legacy-codex-oauth",
+      logPrefix: "[ModelRouterLegacyCodexSelectionTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "chatgpt-codex-oauth");
+    assert.equal(result.model, CODEX_MODEL);
+    assert.equal(result.textContent, "legacy codex preserved");
+    assert.equal(capturedRequest?.model, CODEX_MODEL);
+    assert.equal(capturedRequest?.userId, "user-legacy-codex-oauth");
+    console.log("OK: a legacy ChatGPT/Codex selection with OAuth still overrides other connected provider profiles");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function runUserDefaultProviderProfileStreamingRouteAssertion(): Promise<void> {
   const previousEnv = new Map<string, string | undefined>();
   for (const key of [
@@ -756,6 +1053,9 @@ async function runCoachChatSelectedProviderModelAssertion(): Promise<void> {
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
   .then(runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion)
+  .then(runDefaultProviderProfileOverridesStaleCodexSelectionAssertion)
+  .then(runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion)
+  .then(runLegacyCodexSelectionWithOAuthOverridesDefaultProviderProfileAssertion)
   .then(runUserDefaultProviderProfileStreamingRouteAssertion)
   .then(runUserDefaultProviderProfileDoesNotSilentlyFallbackAssertion)
   .then(runExplicitProviderModelRouteAssertion)

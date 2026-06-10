@@ -82,8 +82,23 @@ interface PreparedModelTurn {
   routedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
 }
 
+interface SelectedModelRoute {
+  chain: FallbackChainEntry[];
+  isExplicit: boolean;
+}
+
+interface SelectedModelPreferenceState {
+  model: string | null;
+  isExplicit: boolean;
+}
+
+interface UserProviderProfileRouteState {
+  defaultChain: FallbackChainEntry[] | null;
+  hasOpenAIOAuthProfile: boolean;
+}
+
 type ProviderStatusResolver = (input: { userId: string }) => Promise<ProviderStatus>;
-type UserSelectedModelResolver = (input: { userId: string }) => Promise<string | null>;
+type UserSelectedModelResolver = (input: { userId: string }) => Promise<string | null | SelectedModelPreferenceState>;
 
 let providerStatusResolverForTesting: ProviderStatusResolver | null = null;
 let userSelectedModelResolverForTesting: UserSelectedModelResolver | null = null;
@@ -629,47 +644,88 @@ function defaultRouteForProviderProfile(
   return null;
 }
 
-async function getUserDefaultProviderProfileRouteChain(
-  userId: string | undefined,
-  tier: ModelExecutionTier,
-  logPrefix: string,
-): Promise<FallbackChainEntry[] | null> {
-  if (!userId) return null;
+function isCodexOAuthRouteEntry(entry: FallbackChainEntry | null | undefined): boolean {
+  if (!entry) return false;
+  const model = entry.model.toLowerCase();
+  return entry.providerName === "chatgpt-codex-oauth" ||
+    model.startsWith("chatgpt-codex-oauth/") ||
+    model.startsWith("codex-oauth/");
+}
 
-  const resolver = providerStatusResolverForTesting ?? getProviderStatus;
-  try {
-    const status = await resolver({ userId });
-    for (const providerId of ["google", "anthropic", "local-llama"]) {
-      const provider = status.providers[providerId];
-      if (!provider?.connected || !provider.defaultAuthType) continue;
-      const route = defaultRouteForProviderProfile(providerId, provider.defaultAuthType, tier);
-      // A connected provider profile is a user-level routing choice. Keep this
-      // single-entry so runtime defaults cannot silently switch surfaces back
-      // to Codex/OpenAI when the selected provider has a transient failure.
-      if (route) return [route];
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`${logPrefix} provider_profile_status_unavailable: ${message.slice(0, 160)}`);
+function isCodexOnlyRouteChain(chain: FallbackChainEntry[] | null | undefined): boolean {
+  return !!chain && chain.length === 1 && isCodexOAuthRouteEntry(chain[0]);
+}
+
+function normalizeSelectedModelPreferenceState(
+  value: string | null | SelectedModelPreferenceState,
+): SelectedModelPreferenceState {
+  if (value && typeof value === "object") return value;
+  return { model: value, isExplicit: false };
+}
+
+function hasConnectedOpenAIOAuthProfile(status: ProviderStatus): boolean {
+  return Boolean(status.providers.openai?.authTypes.oauth.connected || status.openai.authTypes.oauth.connected);
+}
+
+function getDefaultProviderProfileRouteChainFromStatus(
+  status: ProviderStatus,
+  tier: ModelExecutionTier,
+): FallbackChainEntry[] | null {
+  for (const providerId of ["google", "anthropic", "local-llama"]) {
+    const provider = status.providers[providerId];
+    if (!provider?.connected || !provider.defaultAuthType) continue;
+    const route = defaultRouteForProviderProfile(providerId, provider.defaultAuthType, tier);
+    // A connected provider profile is a user-level routing choice. Keep this
+    // single-entry so runtime defaults cannot silently switch surfaces back
+    // to Codex/OpenAI when the selected provider has a transient failure.
+    if (route) return [route];
   }
 
   return null;
 }
 
+async function getUserProviderProfileRouteState(
+  userId: string | undefined,
+  tier: ModelExecutionTier,
+  logPrefix: string,
+): Promise<UserProviderProfileRouteState> {
+  if (!userId) return { defaultChain: null, hasOpenAIOAuthProfile: false };
+
+  const resolver = providerStatusResolverForTesting ?? getProviderStatus;
+  try {
+    const status = await resolver({ userId });
+    return {
+      defaultChain: getDefaultProviderProfileRouteChainFromStatus(status, tier),
+      hasOpenAIOAuthProfile: hasConnectedOpenAIOAuthProfile(status),
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`${logPrefix} provider_profile_status_unavailable: ${message.slice(0, 160)}`);
+  }
+
+  return { defaultChain: null, hasOpenAIOAuthProfile: false };
+}
+
 export async function getUserSelectedModelRouteChain(
   userId: string | undefined,
   logPrefix: string,
-): Promise<FallbackChainEntry[] | null> {
+): Promise<SelectedModelRoute | null> {
   if (!userId) return null;
 
   try {
     const resolver = userSelectedModelResolverForTesting ?? (async ({ userId: selectedUserId }) => {
-      const { getSelectedModelPreference } = await import("../lib/modelPrefs");
-      return getSelectedModelPreference(selectedUserId);
+      const { getSelectedModelPreferenceState } = await import("../lib/modelPrefs");
+      return getSelectedModelPreferenceState(selectedUserId);
     });
-    const selectedModel = await resolver({ userId });
+    const selectedState = normalizeSelectedModelPreferenceState(await resolver({ userId }));
+    const selectedModel = selectedState.model;
     const selectedEntry = parseRequestedModelSpec(selectedModel ?? undefined);
-    if (selectedEntry) return [selectedEntry];
+    if (selectedEntry) {
+      return {
+        chain: [selectedEntry],
+        isExplicit: selectedState.isExplicit,
+      };
+    }
     if (selectedModel) {
       console.warn(`${logPrefix} selected_model_unroutable: ${selectedModel}`);
     }
@@ -734,10 +790,25 @@ async function prepareModelTurn(
   const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
   const requestedEntry = parseRequestedModelSpec(params.requestedModel);
-  const selectedChain = await getUserSelectedModelRouteChain(params.userId, logPrefix);
-  const chain = selectedChain
-    ?? (requestedEntry ? [requestedEntry] : null)
-    ?? (await getUserDefaultProviderProfileRouteChain(params.userId, params.tier, logPrefix))
+  const selectedRoute = await getUserSelectedModelRouteChain(params.userId, logPrefix);
+  const selectedChain = selectedRoute?.chain ?? null;
+  const requestedChain = requestedEntry ? [requestedEntry] : null;
+  const selectedCodexMayBeStale = isCodexOnlyRouteChain(selectedChain) && !selectedRoute?.isExplicit;
+  const requestedCodexOnly = isCodexOnlyRouteChain(requestedChain);
+  const needsProviderProfileState =
+    selectedCodexMayBeStale ||
+    (!selectedChain && (!requestedChain || requestedCodexOnly));
+  const providerProfileState = needsProviderProfileState
+    ? await getUserProviderProfileRouteState(params.userId, params.tier, logPrefix)
+    : { defaultChain: null, hasOpenAIOAuthProfile: false };
+  const selectedCodexIsStaleDefault =
+    selectedCodexMayBeStale &&
+    !providerProfileState.hasOpenAIOAuthProfile;
+  const chain = (!selectedCodexIsStaleDefault ? selectedChain : null)
+    ?? (!isCodexOnlyRouteChain(requestedChain) ? requestedChain : null)
+    ?? providerProfileState.defaultChain
+    ?? selectedChain
+    ?? requestedChain
     ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
     ?? getModelRouteChain(params.tier);
   if (chain.length === 0) {
