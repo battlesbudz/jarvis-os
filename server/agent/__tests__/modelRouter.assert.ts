@@ -1050,6 +1050,79 @@ async function runCoachChatSelectedProviderModelAssertion(): Promise<void> {
   }
 }
 
+async function runRequestedProviderModelOverridesAmbientCodexRouteAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class UnexpectedCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("requested Gemini model must not be replaced by ambient Codex route state");
+    }
+  }
+
+  class CapturingGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "requested gemini preserved" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("chatgpt-codex-oauth", new UnexpectedCodexProvider());
+    _overrideProviderForTesting("google", new CapturingGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-requested-gemini");
+      return { model: CODEX_MODEL, isExplicit: true };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "google/gemini-2.5-flash",
+      messages: [{ role: "user", content: "Use my globally selected Gemini provider." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-requested-gemini",
+      logPrefix: "[ModelRouterRequestedProviderWinsTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "google");
+    assert.equal(result.model, "gemini-2.5-flash");
+    assert.equal(result.textContent, "requested gemini preserved");
+    assert.equal(capturedRequest?.model, "gemini-2.5-flash");
+    assert.equal(capturedRequest?.userId, "user-requested-gemini");
+    console.log("OK: concrete requested provider models override ambient Codex route state");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
   .then(runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion)
@@ -1061,6 +1134,7 @@ runUserOpenAIProfileRouteAssertion()
   .then(runExplicitProviderModelRouteAssertion)
   .then(runPlainGptRequestUsesConfiguredChainAssertion)
   .then(runCoachChatSelectedProviderModelAssertion)
+  .then(runRequestedProviderModelOverridesAmbientCodexRouteAssertion)
   .then(runLeanContextToolBudgetAssertion)
   .then(() => {
     console.log("\nAll model router assertions passed.");
