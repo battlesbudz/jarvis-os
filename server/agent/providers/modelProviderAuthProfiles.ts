@@ -1,6 +1,10 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
+import {
+  DEFAULT_CHATGPT_CODEX_OAUTH_CLIENT_ID,
+  DEFAULT_CHATGPT_CODEX_OAUTH_TOKEN_URL,
+} from "./openaiOAuthDefaults";
 
 export type ProviderAuthType = "api_key" | "oauth";
 export type ModelProviderName = "openai" | string;
@@ -434,8 +438,8 @@ function selectProfile(
 }
 
 async function refreshOpenAIOAuthToken(profile: ProviderCredential): Promise<RefreshOAuthTokenResult | null> {
-  const tokenUrl = process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL || process.env.OPENAI_OAUTH_TOKEN_URL;
-  const clientId = process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID || process.env.OPENAI_OAUTH_CLIENT_ID;
+  const tokenUrl = process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL || process.env.OPENAI_OAUTH_TOKEN_URL || DEFAULT_CHATGPT_CODEX_OAUTH_TOKEN_URL;
+  const clientId = process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID || process.env.OPENAI_OAUTH_CLIENT_ID || DEFAULT_CHATGPT_CODEX_OAUTH_CLIENT_ID;
   const clientSecret = process.env.JARVIS_OPENAI_OAUTH_CLIENT_SECRET || process.env.OPENAI_OAUTH_CLIENT_SECRET;
   if (!tokenUrl || !clientId || !profile.refreshToken) return null;
 
