@@ -2722,7 +2722,7 @@ export default function SettingsScreen() {
             <View style={styles.connInfo}>
               <Text style={styles.connName}>Choose a provider</Text>
               <Text style={styles.connSub}>
-                ChatGPT subscription, OpenAI API key, Claude, Gemini, or a local Llama runtime.
+                Claude, Gemini, or a local Llama runtime. OpenAI account and API-key setup lives in the OpenAI section below.
               </Text>
             </View>
             <Pressable onPress={loadOpenAIProviderStatus} style={{ padding: 8 }}>
@@ -2739,14 +2739,13 @@ export default function SettingsScreen() {
               const providerStatus = openAIProviderStatus?.providers?.[provider.id] ?? (provider.id === 'openai' ? openAIStatus : undefined);
               const apiStatus = providerStatus?.authTypes?.api_key;
               const oauthStatus = providerStatus?.authTypes?.oauth;
-              const isOpenAI = provider.id === 'openai';
               const isLocal = provider.id === 'local-llama';
-              const apiVisible = isOpenAI ? openAIApiKeyVisible : Boolean(providerApiKeyVisible[provider.id]);
-              const apiInput = isOpenAI ? openAIApiKeyInput : (providerApiKeyInputs[provider.id] ?? '');
-              const providerMessage = isOpenAI ? openAIAuthMessage : providerAuthMessages[provider.id];
+              const apiVisible = Boolean(providerApiKeyVisible[provider.id]);
+              const apiInput = providerApiKeyInputs[provider.id] ?? '';
+              const providerMessage = providerAuthMessages[provider.id];
               const activeLabel =
                 providerStatus?.defaultAuthType === 'oauth'
-                  ? 'ChatGPT subscription connected'
+                  ? `${provider.shortLabel} OAuth connected`
                   : providerStatus?.defaultAuthType === 'api_key'
                     ? 'API key connected'
                     : isLocal
@@ -2773,28 +2772,10 @@ export default function SettingsScreen() {
                   </View>
 
                   <View style={providerAuthStyles.actionGrid}>
-                    {isOpenAI ? (
-                      <Pressable
-                        onPress={startOpenAIChatGPTOAuth}
-                        disabled={openAIAuthBusy}
-                        style={[
-                          providerAuthStyles.primaryAction,
-                          oauthStatus?.isDefault && providerAuthStyles.oauthActionActive,
-                          openAIAuthBusy && providerAuthStyles.disabledAction,
-                        ]}
-                      >
-                        <Ionicons name="person-circle-outline" size={16} color={oauthStatus?.isDefault ? '#fff' : '#2563EB'} />
-                        <Text style={[providerAuthStyles.primaryActionText, oauthStatus?.isDefault && providerAuthStyles.activeActionText]}>
-                          Connect ChatGPT Subscription
-                        </Text>
-                      </Pressable>
-                    ) : null}
-
                     {provider.credentialKinds.includes('api_key') ? (
                       <Pressable
                         onPress={() => {
-                          if (isOpenAI) setOpenAIApiKeyVisible((visible) => !visible);
-                          else setProviderApiKeyVisible((prev) => ({ ...prev, [provider.id]: !prev[provider.id] }));
+                          setProviderApiKeyVisible((prev) => ({ ...prev, [provider.id]: !prev[provider.id] }));
                         }}
                         disabled={openAIAuthBusy}
                         style={[
@@ -2839,8 +2820,7 @@ export default function SettingsScreen() {
                         style={providerAuthStyles.secretInput}
                         value={apiInput}
                         onChangeText={(value) => {
-                          if (isOpenAI) setOpenAIApiKeyInput(value);
-                          else setProviderApiKeyInputs((prev) => ({ ...prev, [provider.id]: value }));
+                          setProviderApiKeyInputs((prev) => ({ ...prev, [provider.id]: value }));
                         }}
                         placeholder={provider.apiKeyPlaceholder ?? 'API key'}
                         placeholderTextColor={Colors.textTertiary}
@@ -2849,7 +2829,7 @@ export default function SettingsScreen() {
                         autoCorrect={false}
                       />
                       <Pressable
-                        onPress={() => isOpenAI ? saveOpenAIApiKey() : saveProviderApiKey(provider.id)}
+                        onPress={() => saveProviderApiKey(provider.id)}
                         disabled={openAIAuthBusy || !apiInput.trim()}
                         style={[providerAuthStyles.saveButton, (!apiInput.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
                       >
@@ -2859,28 +2839,6 @@ export default function SettingsScreen() {
                           <Ionicons name="checkmark-outline" size={15} color="#fff" />
                         )}
                         <Text style={providerAuthStyles.saveButtonText}>Save</Text>
-                      </Pressable>
-                    </View>
-                  ) : null}
-
-                  {isOpenAI ? (
-                    <View style={providerAuthStyles.inputBlock}>
-                      <TextInput
-                        style={providerAuthStyles.callbackInput}
-                        value={openAICallbackUrl}
-                        onChangeText={setOpenAICallbackUrl}
-                        placeholder="http://127.0.0.1:1455/auth/callback?code=abc123&state=xyz"
-                        placeholderTextColor={Colors.textTertiary}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
-                      <Pressable
-                        onPress={submitOpenAICallbackUrl}
-                        disabled={openAIAuthBusy || !openAICallbackUrl.trim()}
-                        style={[providerAuthStyles.saveButton, (!openAICallbackUrl.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
-                      >
-                        <Ionicons name="log-in-outline" size={15} color="#fff" />
-                        <Text style={providerAuthStyles.saveButtonText}>Finish</Text>
                       </Pressable>
                     </View>
                   ) : null}
