@@ -591,6 +591,105 @@ async function runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion
   }
 }
 
+async function runLegacyCodexSelectionWithOAuthOverridesDefaultProviderProfileAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class UnexpectedGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("legacy Codex selection with OAuth must not be replaced by Gemini");
+    }
+  }
+
+  class CapturingCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "legacy codex preserved" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new UnexpectedGoogleProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingCodexProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-legacy-codex-oauth");
+      return CODEX_MODEL;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-legacy-codex-oauth");
+      const openai = {
+        connected: true,
+        defaultAuthType: "oauth" as const,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: true, isDefault: true },
+        },
+      };
+      const google = {
+        connected: true,
+        defaultAuthType: "api_key" as const,
+        authTypes: {
+          api_key: { connected: true, isDefault: true },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai, google },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Use my legacy selected ChatGPT subscription." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-legacy-codex-oauth",
+      logPrefix: "[ModelRouterLegacyCodexSelectionTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "chatgpt-codex-oauth");
+    assert.equal(result.model, CODEX_MODEL);
+    assert.equal(result.textContent, "legacy codex preserved");
+    assert.equal(capturedRequest?.model, CODEX_MODEL);
+    assert.equal(capturedRequest?.userId, "user-legacy-codex-oauth");
+    console.log("OK: a legacy ChatGPT/Codex selection with OAuth still overrides other connected provider profiles");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function runUserDefaultProviderProfileStreamingRouteAssertion(): Promise<void> {
   const previousEnv = new Map<string, string | undefined>();
   for (const key of [
@@ -956,6 +1055,7 @@ runUserOpenAIProfileRouteAssertion()
   .then(runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion)
   .then(runDefaultProviderProfileOverridesStaleCodexSelectionAssertion)
   .then(runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion)
+  .then(runLegacyCodexSelectionWithOAuthOverridesDefaultProviderProfileAssertion)
   .then(runUserDefaultProviderProfileStreamingRouteAssertion)
   .then(runUserDefaultProviderProfileDoesNotSilentlyFallbackAssertion)
   .then(runExplicitProviderModelRouteAssertion)
