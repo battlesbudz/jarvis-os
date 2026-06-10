@@ -2212,9 +2212,9 @@
                 continue;
               }
 
-              if (event.type === 'error') {
+              if (event.type === 'error' || event.error) {
                 removeTypingIndicator();
-                appendBubble('bot', `Error: ${event.message || 'Unknown error'}`);
+                appendBubble('bot', `Error: ${event.message || event.error || 'Unknown error'}`);
                 break;
               }
 

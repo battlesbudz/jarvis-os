@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 const template = readFileSync(resolve(process.cwd(), "server", "templates", "chat.html"), "utf8");
 const settingsScreen = readFileSync(resolve(process.cwd(), "app", "(tabs)", "settings.tsx"), "utf8");
+const routes = readFileSync(resolve(process.cwd(), "server", "routes.ts"), "utf8");
 
 assert.match(template, /id="setup-btn"/);
 assert.match(template, /Open model and provider setup/);
@@ -53,6 +54,7 @@ assert.match(template, /setupBtn\.style\.display\s*=\s*'flex'/);
 assert.match(template, /emptySetupBtn\.style\.display\s*=\s*'none'/);
 assert.match(template, /emptySetupBtn\.style\.display\s*=\s*'inline-flex'/);
 assert.match(template, /Provider setup is only available to the Jarvis owner/);
+assert.match(template, /event\.type === 'error' \|\| event\.error/);
 
 assert.match(settingsScreen, /setOpenAILoginUrl\(data\.loginUrl\)/);
 assert.match(settingsScreen, /Platform\.OS !== 'web'[\s\S]*openHostedConnectionLink\(data\.loginUrl\)/);
@@ -63,5 +65,8 @@ assert.match(settingsScreen, /data\.requiresDesktopConnector === true/);
 assert.match(settingsScreen, /router\.push\(setupPath as Href\)/);
 assert.match(settingsScreen, /Open login URL/);
 assert.match(settingsScreen, /Copy login URL/);
+
+assert.match(routes, /type:\s*['"]error['"],\s*message:/);
+assert.doesNotMatch(routes, /JSON\.stringify\(\{\s*error:\s*["']Stream interrupted["']/);
 
 console.log("OK: webchat exposes owner-only model and OpenAI provider setup controls");

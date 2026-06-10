@@ -3615,7 +3615,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       if (!res.headersSent) {
         res.status(500).json({ error: "Failed to get coach response" });
       } else {
-        res.write(`data: ${JSON.stringify({ error: "Stream interrupted" })}\n\n`);
+        const message = error instanceof Error && error.message
+          ? error.message.slice(0, 500)
+          : "Stream interrupted";
+        res.write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
         res.end();
       }
     }
