@@ -68,9 +68,14 @@ assert.match(settingsScreen, /Copy login URL/);
 
 assert.match(routes, /type:\s*['"]error['"],\s*message:/);
 assert.doesNotMatch(routes, /JSON\.stringify\(\{\s*error:\s*["']Stream interrupted["']/);
+assert.match(routes, /writeCoachStreamError\(res,\s*error\)/);
 assert.match(routes, /getExplicitCoachRequestedModel\(userId\)/);
 assert.doesNotMatch(routes, /getModel\(userId,\s*["']chat["']\)/);
 assert.match(routes, /requestedModel:\s*coachChatModel/);
-assert.match(routes, /model:\s*coachChatModel\s*\?\?\s*["']gpt-4o-mini["']/);
+assert.match(routes, /streamCoachModelTurn/);
+assert.match(routes, /const finalTurn = await streamCoachModelTurn\(/);
+assert.match(routes, /chunk\.type !== ["']text["']/);
+assert.doesNotMatch(routes, /const stream = await openai\.chat\.completions\.create\(\{\s*model:\s*coachChatModel/s);
+assert.match(routes, /streamedModel\s*=\s*finalTurn\.model\s*\?\?\s*coachChatModel\s*\?\?\s*["']gpt-4o-mini["']/);
 
 console.log("OK: webchat exposes owner-only model and OpenAI provider setup controls");

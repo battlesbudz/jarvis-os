@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   routeModelTurn,
+  streamModelTurn,
   classifyTaskComplexity,
   classifyTaskPrivacy,
   routeModelForTask,
@@ -291,6 +292,298 @@ async function runUserSelectedProviderOverridesRuntimeDefaultsAssertion(): Promi
   }
 }
 
+async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class CapturingGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "default gemini profile route" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  class CapturingCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "codex fallback route" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new CapturingGoogleProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingCodexProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-default-gemini");
+      return null;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-default-gemini");
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      const google = {
+        connected: true,
+        defaultAuthType: "api_key" as const,
+        authTypes: {
+          api_key: { connected: true, isDefault: true },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai, google },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Use the provider I connected in settings." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-default-gemini",
+      logPrefix: "[ModelRouterDefaultProviderProfileTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "google");
+    assert.equal(result.model, "gemini-2.5-flash");
+    assert.equal(result.textContent, "default gemini profile route");
+    assert.equal(capturedRequest?.model, "gemini-2.5-flash");
+    assert.equal(capturedRequest?.userId, "user-default-gemini");
+    console.log("OK: a connected default Gemini profile overrides strict Codex environment defaults");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runUserDefaultProviderProfileStreamingRouteAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  const streamedTextChunks: string[] = [];
+  class StreamingGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      assert.equal(params.stream, true);
+      assert.equal(params.model, "gemini-2.5-flash");
+      yield { type: "text", delta: "live " };
+      yield { type: "text", delta: "gemini stream" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new StreamingGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-default-gemini-stream");
+      return null;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-default-gemini-stream");
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      const google = {
+        connected: true,
+        defaultAuthType: "api_key" as const,
+        authTypes: {
+          api_key: { connected: true, isDefault: true },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai, google },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await streamModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Stream through the provider I connected in settings." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-default-gemini-stream",
+      logPrefix: "[ModelRouterDefaultProviderStreamTest]",
+    }, (chunk) => {
+      if (chunk.type === "text") streamedTextChunks.push(chunk.delta);
+    });
+
+    assert.deepEqual(streamedTextChunks, ["live ", "gemini stream"]);
+    assert.equal(result.providerName, "google");
+    assert.equal(result.model, "gemini-2.5-flash");
+    assert.equal(result.textContent, "live gemini stream");
+    console.log("OK: a connected default Gemini profile can stream routed text chunks");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runUserDefaultProviderProfileDoesNotSilentlyFallbackAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let codexCalled = false;
+  class FailingGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      assert.equal(params.model, "gemini-2.5-flash");
+      const err = new Error("Gemini transient rate limit") as Error & { status?: number };
+      err.status = 429;
+      throw err;
+    }
+  }
+
+  class UnexpectedCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      codexCalled = true;
+      yield { type: "text", delta: "unexpected codex fallback" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new FailingGoogleProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new UnexpectedCodexProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-default-gemini-no-fallback");
+      return null;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-default-gemini-no-fallback");
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      const google = {
+        connected: true,
+        defaultAuthType: "api_key" as const,
+        authTypes: {
+          api_key: { connected: true, isDefault: true },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai, google },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    await assert.rejects(
+      () => routeModelTurn({
+        tier: "balanced",
+        messages: [{ role: "user", content: "Do not silently switch away from my default provider." }],
+        toolChoice: "none",
+        maxCompletionTokens: 64,
+        userId: "user-default-gemini-no-fallback",
+        logPrefix: "[ModelRouterDefaultProviderNoFallbackTest]",
+      }),
+      /Gemini transient rate limit/,
+    );
+
+    assert.equal(codexCalled, false);
+    console.log("OK: a connected default provider does not silently fall back to Codex on retriable errors");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function runExplicitProviderModelRouteAssertion(): Promise<void> {
   const previousEnv = new Map<string, string | undefined>();
   for (const key of [
@@ -462,6 +755,9 @@ async function runCoachChatSelectedProviderModelAssertion(): Promise<void> {
 
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
+  .then(runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion)
+  .then(runUserDefaultProviderProfileStreamingRouteAssertion)
+  .then(runUserDefaultProviderProfileDoesNotSilentlyFallbackAssertion)
   .then(runExplicitProviderModelRouteAssertion)
   .then(runPlainGptRequestUsesConfiguredChainAssertion)
   .then(runCoachChatSelectedProviderModelAssertion)

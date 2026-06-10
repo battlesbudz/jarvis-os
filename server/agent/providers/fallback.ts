@@ -25,7 +25,7 @@
  * per-run option is set the harness behaves exactly as before.
  */
 
-import type { ProviderQueryParams, ProviderTurnResult } from "./base";
+import type { ProviderChunk, ProviderQueryParams, ProviderTurnResult } from "./base";
 import { accumulateTurn } from "./base";
 import { getProvider } from "./index";
 import type { ProviderName } from "./index";
@@ -270,5 +270,73 @@ export async function queryWithFallback(
   }
 
   // Should be unreachable, but TypeScript needs a return path.
+  throw lastError;
+}
+
+export async function queryWithFallbackStreaming(
+  chain: FallbackChainEntry[],
+  params: ProviderQueryParams,
+  logPrefix: string,
+  onChunk: (chunk: ProviderChunk) => void | Promise<void>,
+): Promise<ProviderTurnResult> {
+  if (chain.length === 0) {
+    throw new Error(`${logPrefix} provider fallback chain is empty`);
+  }
+
+  let lastError: unknown;
+
+  for (let i = 0; i < chain.length; i++) {
+    const entry = chain[i];
+    const isFallback = i > 0;
+    let emittedChunk = false;
+
+    if (isFallback) {
+      const prev = chain[i - 1];
+      const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
+      console.warn(
+        `${logPrefix} provider_fallback: primary=${prev.providerName}(${prev.model}) failed ` +
+          `before streaming content - retrying on fallback=${entry.providerName}(${entry.model}). ` +
+          `Error: ${errMsg.slice(0, 200)}`,
+      );
+    } else {
+      console.log(`${logPrefix} provider=${entry.providerName} model=${entry.model}`);
+    }
+
+    try {
+      const provider = getProvider(entry.providerName);
+      const result = await accumulateTurn(
+        provider.query({ ...params, model: entry.model, stream: true }),
+        async (chunk) => {
+          emittedChunk = true;
+          await onChunk(chunk);
+        },
+      );
+      result.providerName = entry.providerName;
+      result.model = entry.model;
+      result.fallbackUsed = isFallback;
+
+      if (isFallback) {
+        console.log(
+          `${logPrefix} provider_fallback: fallback=${entry.providerName}(${entry.model}) succeeded`,
+        );
+      }
+
+      return result;
+    } catch (err) {
+      lastError = err;
+
+      if (err instanceof Error && err.name === "AbortError") {
+        throw err;
+      }
+
+      const hasMore = i < chain.length - 1;
+      if (!emittedChunk && hasMore && isRetriableProviderError(err)) {
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
   throw lastError;
 }

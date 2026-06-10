@@ -62,6 +62,7 @@ const tests = [
   { file: "server/agent/__tests__/toolExecutionPolicy.assert.ts" },
   { file: "server/agent/__tests__/projectCreateRequest.assert.ts" },
   { file: "server/agent/__tests__/modelRouter.assert.ts" },
+  { file: "server/agent/__tests__/coachSseError.assert.ts" },
   { file: "server/agent/__tests__/coachRequestedModel.assert.ts" },
   { file: "server/agent/__tests__/codexOnlyOrchestrator.assert.ts" },
   { file: "server/agent/__tests__/qualityLoopCodexBypass.assert.ts" },
