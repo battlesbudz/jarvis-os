@@ -2078,6 +2078,7 @@ export default function InsightsScreen() {
       let gotConfirmRequired = false;
       let gotPhoneWorking = false;
       let streamAborted = false;
+      let streamErrorMessage = '';
 
       outer: while (true) {
         const { done, value } = await reader.read();
@@ -2097,6 +2098,19 @@ export default function InsightsScreen() {
                 saveCoachSessionId(parsed.sdkSessionId).catch(() => {});
               } else if (parsed.type === 'aborted') {
                 streamAborted = true;
+                break outer;
+              } else if (parsed.type === 'error' || parsed.error) {
+                streamErrorMessage = String(parsed.message || parsed.error || 'Jarvis hit a model provider error.');
+                fullContent = `Error: ${streamErrorMessage}`;
+                setIsSearchingWeb(false);
+                setIsWorkingOnPhone(false);
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], content: fullContent };
+                  saveChatHistory(updated);
+                  return updated;
+                });
                 break outer;
               } else if (parsed.type === 'confirm_required') {
                 gotConfirmRequired = true;
@@ -2224,6 +2238,10 @@ export default function InsightsScreen() {
       }
 
       if (gotConfirmRequired) {
+        return;
+      }
+
+      if (streamErrorMessage) {
         return;
       }
 

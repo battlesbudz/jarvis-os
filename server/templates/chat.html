@@ -1476,13 +1476,6 @@
             method: 'POST',
             body: JSON.stringify({}),
           });
-          if (data.requiresDesktopConnector) {
-            const setupPath = data.setupPath || '/desktop-connector-setup';
-            showSetupMessage(data.instructions || 'Opening Desktop Connector setup for ChatGPT subscription access.');
-            bridgeWebchatAuthToDesktopConnectorSetup();
-            window.location.assign(setupPath);
-            return;
-          }
           if (!data.loginUrl) throw new Error(data.message || 'OpenAI OAuth is not configured yet.');
           openAILoginLink.href = data.loginUrl;
           openAILoginLink.style.display = 'flex';
@@ -2227,7 +2220,12 @@
 
               if (event.type === 'error' || event.error) {
                 removeTypingIndicator();
-                appendBubble('bot', `Error: ${event.message || event.error || 'Unknown error'}`);
+                botText = `Error: ${event.message || event.error || 'Unknown error'}`;
+                if (botBubble === null) {
+                  botBubble = appendBubble('bot', botText);
+                } else {
+                  botBubble.textContent = botText;
+                }
                 break;
               }
 

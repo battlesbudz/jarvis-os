@@ -59,6 +59,7 @@ function shouldRoute(body: unknown): body is ChatCreateBody {
   const model = (body as { model?: unknown }).model;
   if (typeof model !== "string") return false;
   if (isProviderModelSpec(model)) return true;
+  if (model.startsWith("gpt-") && getUserIdFromChatBody(body)) return true;
   return routingEnabled() && model.startsWith("gpt-");
 }
 

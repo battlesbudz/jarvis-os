@@ -405,7 +405,12 @@ export function registerOpenAIProviderAuthRoutes(
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const config = getConfig();
       if (!config) {
-        return res.json(buildOpenAIChatGPTDesktopConnectorFallback());
+        return res.status(503).json({
+          error: "openai_oauth_not_configured",
+          message: "OpenAI OAuth needs client configuration on the server before Jarvis can open the ChatGPT subscription login page.",
+          instructions: "Configure JARVIS_OPENAI_OAUTH_CLIENT_ID, JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL, and JARVIS_OPENAI_OAUTH_TOKEN_URL. Desktop Connector setup is separate and is not used for ChatGPT subscription OAuth.",
+          redirectUri: DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
+        });
       }
       res.json(await buildOpenAIOAuthStart({ userId, stateStore, config }));
     } catch (error) {
