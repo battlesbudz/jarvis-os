@@ -10,9 +10,18 @@ import {
   type ModelProviderAuthProfileRepository,
   type RefreshOAuthTokenResult,
 } from "../agent/providers/modelProviderAuthProfiles";
+import {
+  DEFAULT_CHATGPT_CODEX_OAUTH_AUTHORIZATION_PARAMS,
+  DEFAULT_CHATGPT_CODEX_OAUTH_AUTHORIZATION_URL,
+  DEFAULT_CHATGPT_CODEX_OAUTH_CLIENT_ID,
+  DEFAULT_CHATGPT_CODEX_OAUTH_REDIRECT_URI,
+  DEFAULT_CHATGPT_CODEX_OAUTH_SCOPES,
+  DEFAULT_CHATGPT_CODEX_OAUTH_TOKEN_URL,
+  DEFAULT_CHATGPT_CODEX_OAUTH_USERINFO_URL,
+  DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
+} from "../agent/providers/openaiOAuthDefaults";
 import { CODEX_OAUTH_MODEL, MODEL_OPTIONS, MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
 
-export const DEFAULT_OPENAI_OAUTH_REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
 export const OPENAI_CHATGPT_DESKTOP_CONNECTOR_SETUP_PATH = "/desktop-connector-setup";
 
 export interface OpenAIOAuthConfig {
@@ -23,6 +32,7 @@ export interface OpenAIOAuthConfig {
   userInfoUrl?: string;
   redirectUri?: string;
   scopes?: string[];
+  authorizationParams?: Record<string, string>;
 }
 
 export interface OpenAIOAuthTokenExchangeRequest {
@@ -68,6 +78,16 @@ export class InMemoryOpenAIOAuthStateStore implements OpenAIOAuthStateStore {
 
 const defaultStateStore = new InMemoryOpenAIOAuthStateStore();
 
+export const DEFAULT_CHATGPT_CODEX_OAUTH_CONFIG: OpenAIOAuthConfig = {
+  clientId: DEFAULT_CHATGPT_CODEX_OAUTH_CLIENT_ID,
+  authorizationUrl: DEFAULT_CHATGPT_CODEX_OAUTH_AUTHORIZATION_URL,
+  tokenUrl: DEFAULT_CHATGPT_CODEX_OAUTH_TOKEN_URL,
+  userInfoUrl: DEFAULT_CHATGPT_CODEX_OAUTH_USERINFO_URL,
+  redirectUri: DEFAULT_CHATGPT_CODEX_OAUTH_REDIRECT_URI,
+  scopes: DEFAULT_CHATGPT_CODEX_OAUTH_SCOPES,
+  authorizationParams: DEFAULT_CHATGPT_CODEX_OAUTH_AUTHORIZATION_PARAMS,
+};
+
 function readEnv(...names: string[]): string | undefined {
   for (const name of names) {
     const value = process.env[name]?.trim();
@@ -80,7 +100,6 @@ export function getOpenAIOAuthConfigFromEnv(): OpenAIOAuthConfig | null {
   const clientId = readEnv("JARVIS_OPENAI_OAUTH_CLIENT_ID", "OPENAI_OAUTH_CLIENT_ID");
   const authorizationUrl = readEnv("JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL", "OPENAI_OAUTH_AUTHORIZATION_URL");
   const tokenUrl = readEnv("JARVIS_OPENAI_OAUTH_TOKEN_URL", "OPENAI_OAUTH_TOKEN_URL");
-  if (!clientId || !authorizationUrl || !tokenUrl) return null;
 
   const scopes = readEnv(
     "JARVIS_OPENAI_OAUTH_SCOPES",
@@ -92,14 +111,45 @@ export function getOpenAIOAuthConfigFromEnv(): OpenAIOAuthConfig | null {
     .map((scope) => scope.trim())
     .filter(Boolean);
 
+  const config: OpenAIOAuthConfig = clientId && authorizationUrl && tokenUrl
+    ? {
+        clientId,
+        authorizationUrl,
+        tokenUrl,
+        clientSecret: readEnv("JARVIS_OPENAI_OAUTH_CLIENT_SECRET", "OPENAI_OAUTH_CLIENT_SECRET"),
+        userInfoUrl: readEnv("JARVIS_OPENAI_OAUTH_USERINFO_URL", "OPENAI_OAUTH_USERINFO_URL"),
+        redirectUri: readEnv("JARVIS_OPENAI_OAUTH_REDIRECT_URI", "OPENAI_OAUTH_REDIRECT_URI"),
+        scopes: scopes?.length ? scopes : ["openid", "email", "offline_access"],
+      }
+    : { ...DEFAULT_CHATGPT_CODEX_OAUTH_CONFIG };
+
+  const extraParams = readEnv("JARVIS_OPENAI_OAUTH_AUTHORIZATION_PARAMS", "OPENAI_OAUTH_AUTHORIZATION_PARAMS");
+  if (extraParams) {
+    try {
+      const parsed = JSON.parse(extraParams) as Record<string, unknown>;
+      config.authorizationParams = Object.fromEntries(
+        Object.entries(parsed)
+          .filter(([, value]) => typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+          .map(([key, value]) => [key, String(value)]),
+      );
+    } catch {
+      config.authorizationParams = Object.fromEntries(
+        extraParams
+          .split(/[,&]/)
+          .map((pair) => pair.trim())
+          .filter(Boolean)
+          .map((pair) => {
+            const [key, ...valueParts] = pair.split("=");
+            return [key.trim(), valueParts.join("=").trim()] as const;
+          })
+          .filter(([key, value]) => key && value),
+      );
+    }
+  }
+
   return {
-    clientId,
-    authorizationUrl,
-    tokenUrl,
-    clientSecret: readEnv("JARVIS_OPENAI_OAUTH_CLIENT_SECRET", "OPENAI_OAUTH_CLIENT_SECRET"),
-    userInfoUrl: readEnv("JARVIS_OPENAI_OAUTH_USERINFO_URL", "OPENAI_OAUTH_USERINFO_URL"),
-    redirectUri: readEnv("JARVIS_OPENAI_OAUTH_REDIRECT_URI", "OPENAI_OAUTH_REDIRECT_URI"),
-    scopes: scopes?.length ? scopes : ["openid", "email", "offline_access"],
+    ...config,
+    redirectUri: config.redirectUri || DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
   };
 }
 
@@ -148,6 +198,10 @@ export async function buildOpenAIOAuthStart(input: {
   url.searchParams.set("state", state);
   url.searchParams.set("code_challenge", codeChallenge);
   url.searchParams.set("code_challenge_method", "S256");
+  for (const [key, value] of Object.entries(input.config.authorizationParams ?? {})) {
+    if (!key || value == null || value === "") continue;
+    url.searchParams.set(key, value);
+  }
 
   return {
     loginUrl: url.toString(),

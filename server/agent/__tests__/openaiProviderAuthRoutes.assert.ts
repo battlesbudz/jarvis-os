@@ -7,7 +7,11 @@ import {
   saveProviderApiKeyProfile,
 } from "../providers/modelProviderAuthProfiles";
 import {
+  DEFAULT_CHATGPT_CODEX_OAUTH_REDIRECT_URI,
   DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
+} from "../providers/openaiOAuthDefaults";
+import {
+  DEFAULT_CHATGPT_CODEX_OAUTH_CONFIG,
   InMemoryOpenAIOAuthStateStore,
   buildOpenAIChatGPTDesktopConnectorFallback,
   buildOpenAIOAuthStart,
@@ -36,8 +40,10 @@ async function main() {
   const previousClientId = process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID;
   const previousAuthorizationUrl = process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL;
   const previousTokenUrl = process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL;
+  const previousUserInfoUrl = process.env.JARVIS_OPENAI_OAUTH_USERINFO_URL;
   const previousScopes = process.env.JARVIS_OPENAI_OAUTH_SCOPES;
   const previousSingularScope = process.env.JARVIS_OPENAI_OAUTH_SCOPE;
+  const previousAuthorizationParams = process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_PARAMS;
   process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = "test-secret-for-openai-auth-routes";
 
   try {
@@ -45,36 +51,56 @@ async function main() {
     process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL = "https://auth.example.test/oauth/authorize";
     process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL = "https://auth.example.test/oauth/token";
     process.env.JARVIS_OPENAI_OAUTH_SCOPES = "openid profile email";
+    process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_PARAMS = JSON.stringify({ audience: "jarvis-test", prompt: "login" });
     delete process.env.JARVIS_OPENAI_OAUTH_SCOPE;
     assert.deepEqual(getOpenAIOAuthConfigFromEnv()?.scopes, ["openid", "profile", "email"]);
+    assert.deepEqual(getOpenAIOAuthConfigFromEnv()?.authorizationParams, { audience: "jarvis-test", prompt: "login" });
+
+    delete process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID;
+    delete process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL;
+    delete process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL;
+    delete process.env.JARVIS_OPENAI_OAUTH_USERINFO_URL;
+    delete process.env.JARVIS_OPENAI_OAUTH_SCOPES;
+    delete process.env.JARVIS_OPENAI_OAUTH_SCOPE;
+    delete process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_PARAMS;
+    const defaultConfig = getOpenAIOAuthConfigFromEnv();
+    assert.equal(defaultConfig?.clientId, DEFAULT_CHATGPT_CODEX_OAUTH_CONFIG.clientId);
+    assert.equal(defaultConfig?.authorizationUrl, "https://auth.openai.com/oauth/authorize");
+    assert.equal(defaultConfig?.tokenUrl, "https://auth.openai.com/oauth/token");
+    assert.equal(defaultConfig?.redirectUri, DEFAULT_CHATGPT_CODEX_OAUTH_REDIRECT_URI);
+    assert.deepEqual(defaultConfig?.authorizationParams, DEFAULT_CHATGPT_CODEX_OAUTH_CONFIG.authorizationParams);
 
     const fallback = buildOpenAIChatGPTDesktopConnectorFallback();
     assert.equal(fallback.requiresDesktopConnector, true);
     assert.equal(fallback.setupPath, "/desktop-connector-setup");
     assert.match(fallback.instructions, /Desktop Connector/);
 
-    const fallbackApp = express();
-    fallbackApp.use(express.json());
-    registerOpenAIProviderAuthRoutes(fallbackApp, {
-      getConfig: () => null,
+    const defaultStartApp = express();
+    defaultStartApp.use(express.json());
+    registerOpenAIProviderAuthRoutes(defaultStartApp, {
       includeCallbackRoutes: false,
-      resolveUserId: () => "user-fallback",
+      resolveUserId: () => "user-default-oauth",
     });
-    const fallbackServer = await listen(fallbackApp);
+    const defaultStartServer = await listen(defaultStartApp);
     try {
-      const response = await fetch(`http://127.0.0.1:${fallbackServer.port}/api/auth/openai-oauth/start`, {
+      const response = await fetch(`http://127.0.0.1:${defaultStartServer.port}/api/auth/openai-oauth/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
       const body = await response.json() as any;
-      assert.equal(response.status, 503);
-      assert.equal(body.error, "openai_oauth_not_configured");
+      assert.equal(response.status, 200);
       assert.equal(body.requiresDesktopConnector, undefined);
       assert.equal(body.setupPath, undefined);
-      assert.match(body.instructions, /Desktop Connector setup is separate/);
+      assert.match(body.loginUrl, /^https:\/\/auth\.openai\.com\/oauth\/authorize\?/);
+      assert.match(body.loginUrl, /client_id=app_EMoamEEZ73f0CkXaXp7hrann/);
+      assert.match(body.loginUrl, /redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback/);
+      assert.match(body.loginUrl, /code_challenge_method=S256/);
+      assert.match(body.loginUrl, /codex_cli_simplified_flow=true/);
+      assert.match(body.loginUrl, /id_token_add_organizations=true/);
+      assert.equal(body.redirectUri, DEFAULT_CHATGPT_CODEX_OAUTH_REDIRECT_URI);
     } finally {
-      await fallbackServer.close();
+      await defaultStartServer.close();
     }
 
     const repo = new InMemoryModelProviderAuthProfileRepository();
@@ -309,7 +335,7 @@ async function main() {
     );
 
     console.log("OK: OpenAI OAuth start builds PKCE login URLs with the localhost redirect URI");
-    console.log("OK: missing OpenAI OAuth config fails visibly without Desktop Connector fallback");
+    console.log("OK: ChatGPT subscription OAuth starts with built-in Codex login defaults when env config is absent");
     console.log("OK: OpenAI OAuth config reads the documented plural scopes env var");
     console.log("OK: manual callback URL handling validates state and stores encrypted OAuth profiles");
     console.log("OK: OpenAI API-key request handling trims and stores API-key profiles");
@@ -325,10 +351,14 @@ async function main() {
     else process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL = previousAuthorizationUrl;
     if (previousTokenUrl == null) delete process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL;
     else process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL = previousTokenUrl;
+    if (previousUserInfoUrl == null) delete process.env.JARVIS_OPENAI_OAUTH_USERINFO_URL;
+    else process.env.JARVIS_OPENAI_OAUTH_USERINFO_URL = previousUserInfoUrl;
     if (previousScopes == null) delete process.env.JARVIS_OPENAI_OAUTH_SCOPES;
     else process.env.JARVIS_OPENAI_OAUTH_SCOPES = previousScopes;
     if (previousSingularScope == null) delete process.env.JARVIS_OPENAI_OAUTH_SCOPE;
     else process.env.JARVIS_OPENAI_OAUTH_SCOPE = previousSingularScope;
+    if (previousAuthorizationParams == null) delete process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_PARAMS;
+    else process.env.JARVIS_OPENAI_OAUTH_AUTHORIZATION_PARAMS = previousAuthorizationParams;
   }
 }
 
