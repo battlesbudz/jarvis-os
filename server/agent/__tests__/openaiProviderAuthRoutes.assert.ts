@@ -68,10 +68,11 @@ async function main() {
         body: JSON.stringify({}),
       });
       const body = await response.json() as any;
-      assert.equal(response.status, 200);
-      assert.equal(body.requiresDesktopConnector, true);
-      assert.equal(body.setupPath, "/desktop-connector-setup");
-      assert.equal(body.error, undefined);
+      assert.equal(response.status, 503);
+      assert.equal(body.error, "openai_oauth_not_configured");
+      assert.equal(body.requiresDesktopConnector, undefined);
+      assert.equal(body.setupPath, undefined);
+      assert.match(body.instructions, /Desktop Connector setup is separate/);
     } finally {
       await fallbackServer.close();
     }
@@ -308,7 +309,7 @@ async function main() {
     );
 
     console.log("OK: OpenAI OAuth start builds PKCE login URLs with the localhost redirect URI");
-    console.log("OK: missing OpenAI OAuth config routes ChatGPT subscription setup to Desktop Connector");
+    console.log("OK: missing OpenAI OAuth config fails visibly without Desktop Connector fallback");
     console.log("OK: OpenAI OAuth config reads the documented plural scopes env var");
     console.log("OK: manual callback URL handling validates state and stores encrypted OAuth profiles");
     console.log("OK: OpenAI API-key request handling trims and stores API-key profiles");

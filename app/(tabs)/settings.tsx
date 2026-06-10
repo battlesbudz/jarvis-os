@@ -1600,16 +1600,14 @@ export default function SettingsScreen() {
     setOpenAIAuthBusy(true);
     setOpenAIAuthMessage(null);
     try {
-      const res = await apiRequest('POST', '/api/auth/openai-oauth/start', {});
+      const res = await authFetch(new URL('/api/auth/openai-oauth/start', getApiUrl()).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
       const data = await res.json();
-      if (data.requiresDesktopConnector === true) {
-        const setupPath = typeof data.setupPath === 'string' && data.setupPath
-          ? data.setupPath
-          : '/desktop-connector-setup';
-        setOpenAILoginUrl(null);
-        setOpenAIAuthMessage(data.instructions ?? 'Opening Desktop Connector setup for ChatGPT subscription access.');
-        router.push(setupPath as Href);
-        return;
+      if (!res.ok) {
+        throw new Error(data.message || data.error || 'OpenAI OAuth is not configured yet.');
       }
       if (typeof data.loginUrl !== 'string' || !data.loginUrl) {
         throw new Error(data.message || 'OpenAI OAuth is not configured yet.');
@@ -1626,7 +1624,7 @@ export default function SettingsScreen() {
     } finally {
       setOpenAIAuthBusy(false);
     }
-  }, [openHostedConnectionLink, router]);
+  }, [openHostedConnectionLink]);
 
   const openOpenAILoginUrl = useCallback(async () => {
     if (!openAILoginUrl) return;
@@ -1850,7 +1848,8 @@ export default function SettingsScreen() {
       : openAIStatus?.defaultAuthType === 'api_key'
         ? 'OpenAI API key'
         : 'Jarvis default model';
-  const modelProviderCards = providerCatalog.length > 0 ? providerCatalog : MODEL_PROVIDER_CATALOG;
+  const modelProviderCards = (providerCatalog.length > 0 ? providerCatalog : MODEL_PROVIDER_CATALOG)
+    .filter((provider) => provider.id !== 'openai');
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>

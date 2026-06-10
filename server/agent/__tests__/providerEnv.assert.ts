@@ -168,8 +168,9 @@ withCleanEnv({
   assert.equal(_shouldRouteOpenAIChatForTesting({ model: "anthropic/claude-sonnet-4-5", user: "user-claude" }), true);
   assert.equal(_shouldRouteOpenAIChatForTesting({ model: "google/gemini-2.5-pro", user: "user-gemini" }), true);
   assert.equal(_shouldRouteOpenAIChatForTesting({ model: "openai/gpt-4.1-mini", user: "user-openai" }), true);
-  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "gpt-4o-mini", user: "user-openai" }), false);
-  console.log("OK: OpenAI chat patch routes explicit provider models without env auth so user-scoped profiles can resolve");
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "gpt-4o-mini", user: "user-openai" }), true);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "gpt-4o-mini" }), false);
+  console.log("OK: OpenAI chat patch routes user-scoped GPT calls without env auth so selected profiles can resolve");
 });
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
