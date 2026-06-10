@@ -34,6 +34,8 @@ for (const category of ["chat", "planning", "memory", "research", "orchestrator"
 }
 assert.equal(resolveGlobalModelPreference({ chat: GEMINI_MODEL }), GEMINI_MODEL);
 assert.equal(resolveGlobalModelPreference({ planning: CLAUDE_MODEL }), CLAUDE_MODEL);
+assert.equal(resolveGlobalModelPreference({ chat: CODEX_MODEL }), null);
+assert.equal(resolveGlobalModelPreference({ [GLOBAL_MODEL_PREFERENCE_KEY]: CODEX_MODEL }), CODEX_MODEL);
 console.log("OK: legacy per-category selections are promoted into one global selected model");
 
 assert.equal(DEFAULT_TIER_MODELS.prime, CODEX_MODEL);
