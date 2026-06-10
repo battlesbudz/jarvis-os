@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
 import {
   InMemoryModelProviderAuthProfileRepository,
   getProviderCredential,
@@ -7,12 +9,25 @@ import {
 import {
   DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
   InMemoryOpenAIOAuthStateStore,
+  buildOpenAIChatGPTDesktopConnectorFallback,
   buildOpenAIOAuthStart,
   completeOpenAIOAuthCallback,
   getOpenAIOAuthConfigFromEnv,
   parseOpenAICallbackUrl,
+  registerOpenAIProviderAuthRoutes,
   saveOpenAIApiKeyFromRequest,
 } from "../../routes/openaiProviderAuthRoutes";
+
+async function listen(app: express.Express): Promise<{ port: number; close: () => Promise<void> }> {
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("test server did not bind to a TCP port");
+  return {
+    port: address.port,
+    close: () => new Promise((resolve, reject) => server.close((err) => err ? reject(err) : resolve())),
+  };
+}
 
 async function main() {
   const previousSecret = process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
@@ -30,6 +45,34 @@ async function main() {
     process.env.JARVIS_OPENAI_OAUTH_SCOPES = "openid profile email";
     delete process.env.JARVIS_OPENAI_OAUTH_SCOPE;
     assert.deepEqual(getOpenAIOAuthConfigFromEnv()?.scopes, ["openid", "profile", "email"]);
+
+    const fallback = buildOpenAIChatGPTDesktopConnectorFallback();
+    assert.equal(fallback.requiresDesktopConnector, true);
+    assert.equal(fallback.setupPath, "/desktop-connector-setup");
+    assert.match(fallback.instructions, /Desktop Connector/);
+
+    const fallbackApp = express();
+    fallbackApp.use(express.json());
+    registerOpenAIProviderAuthRoutes(fallbackApp, {
+      getConfig: () => null,
+      includeCallbackRoutes: false,
+      resolveUserId: () => "user-fallback",
+    });
+    const fallbackServer = await listen(fallbackApp);
+    try {
+      const response = await fetch(`http://127.0.0.1:${fallbackServer.port}/api/auth/openai-oauth/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const body = await response.json() as any;
+      assert.equal(response.status, 200);
+      assert.equal(body.requiresDesktopConnector, true);
+      assert.equal(body.setupPath, "/desktop-connector-setup");
+      assert.equal(body.error, undefined);
+    } finally {
+      await fallbackServer.close();
+    }
 
     const repo = new InMemoryModelProviderAuthProfileRepository();
     const stateStore = new InMemoryOpenAIOAuthStateStore();
@@ -139,6 +182,7 @@ async function main() {
     );
 
     console.log("OK: OpenAI OAuth start builds PKCE login URLs with the localhost redirect URI");
+    console.log("OK: missing OpenAI OAuth config routes ChatGPT subscription setup to Desktop Connector");
     console.log("OK: OpenAI OAuth config reads the documented plural scopes env var");
     console.log("OK: manual callback URL handling validates state and stores encrypted OAuth profiles");
     console.log("OK: OpenAI API-key request handling trims and stores API-key profiles");

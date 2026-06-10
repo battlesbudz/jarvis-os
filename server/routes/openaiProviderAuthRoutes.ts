@@ -13,6 +13,7 @@ import {
 import { MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
 
 export const DEFAULT_OPENAI_OAUTH_REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
+export const OPENAI_CHATGPT_DESKTOP_CONNECTOR_SETUP_PATH = "/desktop-connector-setup";
 
 export interface OpenAIOAuthConfig {
   clientId: string;
@@ -151,6 +152,23 @@ export async function buildOpenAIOAuthStart(input: {
     state,
     redirectUri,
     instructions: "Open this login URL. If the browser shows a localhost error after login, copy the full URL and paste it into Jarvis.",
+  };
+}
+
+export function buildOpenAIChatGPTDesktopConnectorFallback(): {
+  requiresDesktopConnector: true;
+  setupPath: string;
+  redirectUri: string;
+  message: string;
+  instructions: string;
+} {
+  const message = "ChatGPT subscription setup uses the Windows Desktop Connector when direct OpenAI OAuth is not configured on this server.";
+  return {
+    requiresDesktopConnector: true,
+    setupPath: OPENAI_CHATGPT_DESKTOP_CONNECTOR_SETUP_PATH,
+    redirectUri: DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
+    message,
+    instructions: `${message} Jarvis will open the connector setup so this account can use Codex through your ChatGPT subscription.`,
   };
 }
 
@@ -350,11 +368,7 @@ export function registerOpenAIProviderAuthRoutes(
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const config = getConfig();
       if (!config) {
-        return res.status(501).json({
-          error: "openai_oauth_not_configured",
-          message: "OpenAI OAuth is not configured. Set JARVIS_OPENAI_OAUTH_CLIENT_ID, JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL, and JARVIS_OPENAI_OAUTH_TOKEN_URL.",
-          redirectUri: DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
-        });
+        return res.json(buildOpenAIChatGPTDesktopConnectorFallback());
       }
       res.json(await buildOpenAIOAuthStart({ userId, stateStore, config }));
     } catch (error) {

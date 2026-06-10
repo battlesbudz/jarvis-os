@@ -1590,6 +1590,15 @@ export default function SettingsScreen() {
     try {
       const res = await apiRequest('POST', '/api/auth/openai-oauth/start', {});
       const data = await res.json();
+      if (data.requiresDesktopConnector === true) {
+        const setupPath = typeof data.setupPath === 'string' && data.setupPath
+          ? data.setupPath
+          : '/desktop-connector-setup';
+        setOpenAILoginUrl(null);
+        setOpenAIAuthMessage(data.instructions ?? 'Opening Desktop Connector setup for ChatGPT subscription access.');
+        router.push(setupPath as Href);
+        return;
+      }
       if (typeof data.loginUrl !== 'string' || !data.loginUrl) {
         throw new Error(data.message || 'OpenAI OAuth is not configured yet.');
       }
@@ -1599,15 +1608,13 @@ export default function SettingsScreen() {
         await openHostedConnectionLink(data.loginUrl);
       }
     } catch (error: any) {
-      const message = error?.message?.includes('openai_oauth_not_configured')
-        ? 'OpenAI OAuth needs client configuration on the server before Jarvis can open the login page.'
-        : error?.message || 'Jarvis could not start OpenAI OAuth.';
+      const message = error?.message || 'Jarvis could not start OpenAI OAuth.';
       setOpenAIAuthMessage(message);
       Alert.alert('Connect ChatGPT Subscription', message);
     } finally {
       setOpenAIAuthBusy(false);
     }
-  }, [openHostedConnectionLink]);
+  }, [openHostedConnectionLink, router]);
 
   const openOpenAILoginUrl = useCallback(async () => {
     if (!openAILoginUrl) return;
