@@ -175,6 +175,8 @@ withCleanEnv({
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
   const chain = getModelRouteChain("balanced");
   assert.deepEqual(chain[0], CODEX_ROUTE);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "chatgpt-codex-oauth/auto" }), true);
+  assert.equal(_shouldRouteOpenAIChatForTesting({ model: "codex-oauth/auto" }), true);
   console.log("OK: ChatGPT/Codex OAuth model specs resolve to the Codex OAuth provider");
 });
 

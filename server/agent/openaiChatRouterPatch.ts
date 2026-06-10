@@ -36,6 +36,8 @@ function isProviderModelSpec(model: string): boolean {
   const normalized = model.trim().toLowerCase();
   return (
     normalized.startsWith("anthropic/") ||
+    normalized.startsWith("chatgpt-codex-oauth/") ||
+    normalized.startsWith("codex-oauth/") ||
     normalized.startsWith("google/") ||
     normalized.startsWith("openai/") ||
     normalized.startsWith("openai-compatible/") ||

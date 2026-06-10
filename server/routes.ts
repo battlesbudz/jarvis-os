@@ -124,6 +124,7 @@ import {
 } from "./agent/turnProgress";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
+import { getModel, MODEL_DEFAULTS } from "./lib/modelPrefs";
 import {
   buildCoachSystemPrompt,
   clearMorningNoteSummary,
@@ -2097,6 +2098,7 @@ Answer (yes/no):`,
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
+      const coachChatModel = userId ? await getModel(userId, "chat") : MODEL_DEFAULTS.chat;
 
       const turnStartedAtMs = Date.now();
       let lastVisibleUpdateAtMs = turnStartedAtMs;
@@ -2878,6 +2880,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             // turn 0 must call one of the narrowed tools, later turns may stop.
             toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
             maxCompletionTokens: 2048,
+            requestedModel: coachChatModel,
             signal,
             userId: userId ?? undefined,
             logPrefix: "[CoachChat]",
@@ -3487,15 +3490,16 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       const streamStartedAt = Date.now();
       const stream = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
+        model: coachChatModel,
         messages: streamMessages,
         stream: true,
         max_completion_tokens: 8192,
+        user: userId ?? undefined,
       }, { signal });
 
       stopKeepalive();
       let fullStreamedReply = '';
-      let streamedModel = "gpt-4o-mini";
+      let streamedModel = coachChatModel;
       for await (const chunk of stream) {
         if (signal.aborted) break;
         if (chunk.model) streamedModel = chunk.model;

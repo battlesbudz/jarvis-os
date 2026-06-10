@@ -68,5 +68,8 @@ assert.match(settingsScreen, /Copy login URL/);
 
 assert.match(routes, /type:\s*['"]error['"],\s*message:/);
 assert.doesNotMatch(routes, /JSON\.stringify\(\{\s*error:\s*["']Stream interrupted["']/);
+assert.match(routes, /getModel\(userId,\s*["']chat["']\)/);
+assert.match(routes, /requestedModel:\s*coachChatModel/);
+assert.match(routes, /model:\s*coachChatModel/);
 
 console.log("OK: webchat exposes owner-only model and OpenAI provider setup controls");

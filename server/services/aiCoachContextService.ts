@@ -12,6 +12,15 @@ export function providerLabelForModel(model: string): string {
   if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
     return "chatgpt-codex-oauth";
   }
+  if (normalized.startsWith("google/") || normalized.startsWith("gemini-")) {
+    return "google";
+  }
+  if (normalized.startsWith("anthropic/") || normalized.startsWith("claude-")) {
+    return "anthropic";
+  }
+  if (normalized.startsWith("openai/") || normalized.startsWith("gpt-")) {
+    return "openai";
+  }
   if (
     normalized.startsWith("modelrelay/") ||
     normalized.startsWith("openai-compatible/") ||
@@ -38,6 +47,7 @@ export async function runCoachModelTurn(
     tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
     toolChoice: "auto" | "required" | "none";
     maxCompletionTokens: number;
+    requestedModel?: string;
     signal?: AbortSignal;
     userId?: string;
     logPrefix: string;
@@ -45,6 +55,7 @@ export async function runCoachModelTurn(
 ): Promise<ProviderTurnResult> {
   return routeModelTurn({
     tier: "balanced",
+    requestedModel: params.requestedModel,
     messages: params.messages,
     tools: params.tools,
     toolChoice: params.toolChoice,
