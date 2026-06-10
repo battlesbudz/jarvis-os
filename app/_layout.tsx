@@ -22,6 +22,7 @@ import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { WakeWordProvider } from "@/lib/wake-word-context";
 import { useAndroidApkUpdateCheck } from "@/lib/app-update";
 import { captureTelegramInitData } from "@/lib/telegram-webapp";
+import { hasDesktopConnectorAuthBridge } from "@/lib/desktop-connector-setup";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -35,9 +36,11 @@ function useProtectedRoute() {
     if (isLoading) return;
 
     const onLoginPage = segments[0] === "login";
+    const onDesktopConnectorSetupPage = segments[0] === "desktop-connector-setup";
+    const allowDesktopConnectorBridge = onDesktopConnectorSetupPage && hasDesktopConnectorAuthBridge();
     const currentRoute = "/" + segments.join("/");
 
-    if (!isAuthenticated && !onLoginPage) {
+    if (!isAuthenticated && !onLoginPage && !allowDesktopConnectorBridge) {
       lastRouteRef.current = currentRoute !== "/" ? currentRoute : "/";
       router.replace("/login");
     } else if (isAuthenticated && onLoginPage) {

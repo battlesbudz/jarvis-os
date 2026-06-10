@@ -22,6 +22,10 @@ function getDesktopConnectorAuthBridgeToken(): string | null {
   }
 }
 
+export function hasDesktopConnectorAuthBridge(): boolean {
+  return getDesktopConnectorAuthBridgeToken() !== null;
+}
+
 export function clearDesktopConnectorAuthBridge(): void {
   if (typeof window === "undefined" || typeof window.localStorage === "undefined") return;
   try {
