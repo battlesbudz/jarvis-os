@@ -119,7 +119,11 @@ if (!source.includes('from "./agent/modelRouter"')) {
   );
 }
 
-if (!source.includes("async function runCoachModelTurn(")) {
+const hasImportedCoachModelTurn =
+  source.includes('from "./services/aiCoachContextService"') &&
+  /\brunCoachModelTurn\b/.test(source);
+
+if (!hasImportedCoachModelTurn && !source.includes("async function runCoachModelTurn(")) {
   const coachHelper = `
 async function runCoachModelTurn(
   params: {
@@ -127,16 +131,22 @@ async function runCoachModelTurn(
     tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
     toolChoice: "auto" | "required" | "none";
     maxCompletionTokens: number;
+    requestedModel?: string;
+    preferRequestedModel?: boolean;
     signal?: AbortSignal;
+    userId?: string;
     logPrefix: string;
   },
 ): Promise<ProviderTurnResult> {
   return routeModelTurn({
     tier: "balanced",
+    requestedModel: params.requestedModel,
+    preferRequestedModel: params.preferRequestedModel,
     messages: params.messages,
     tools: params.tools,
     toolChoice: params.toolChoice,
     maxCompletionTokens: params.maxCompletionTokens,
+    userId: params.userId,
     signal: params.signal,
     logPrefix: params.logPrefix,
   });
