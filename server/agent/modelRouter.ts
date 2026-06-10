@@ -795,6 +795,7 @@ async function prepareModelTurn(
   const requestedChain = requestedEntry ? [requestedEntry] : null;
   const selectedCodexMayBeStale = isCodexOnlyRouteChain(selectedChain) && !selectedRoute?.isExplicit;
   const requestedCodexOnly = isCodexOnlyRouteChain(requestedChain);
+  const requestedNonCodexChain = !requestedCodexOnly ? requestedChain : null;
   const needsProviderProfileState =
     selectedCodexMayBeStale ||
     (!selectedChain && (!requestedChain || requestedCodexOnly));
@@ -804,8 +805,8 @@ async function prepareModelTurn(
   const selectedCodexIsStaleDefault =
     selectedCodexMayBeStale &&
     !providerProfileState.hasOpenAIOAuthProfile;
-  const chain = (!selectedCodexIsStaleDefault ? selectedChain : null)
-    ?? (!isCodexOnlyRouteChain(requestedChain) ? requestedChain : null)
+  const chain = requestedNonCodexChain
+    ?? (!selectedCodexIsStaleDefault ? selectedChain : null)
     ?? providerProfileState.defaultChain
     ?? selectedChain
     ?? requestedChain
