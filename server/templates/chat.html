@@ -1084,6 +1084,7 @@
       const GOOGLE_CLIENT_ID = 'GOOGLE_CLIENT_ID_PLACEHOLDER';
       const TOKEN_KEY      = 'jarvis_web_token';
       const USER_KEY       = 'jarvis_web_userId';
+      const DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY = 'jarvis_web_desktop_connector_auth_bridge';
       function sessionIdKey(userId) {
         return `jarvis_web_sdkSessionId:${userId}`;
       }
@@ -1199,6 +1200,23 @@
 
       function setupErrorMessage(error, fallback) {
         return error && error.message ? error.message : fallback;
+      }
+
+      function bridgeWebchatAuthToDesktopConnectorSetup() {
+        if (!jwt) return;
+        try {
+          localStorage.setItem(DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY, JSON.stringify({
+            token: jwt,
+            userId: currentUserId || null,
+            createdAt: Date.now(),
+          }));
+        } catch {
+          return;
+        }
+      }
+
+      function clearDesktopConnectorAuthBridge() {
+        try { localStorage.removeItem(DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY); } catch {}
       }
 
       async function fetchAuthedJson(url, options = {}) {
@@ -1450,6 +1468,13 @@
             method: 'POST',
             body: JSON.stringify({}),
           });
+          if (data.requiresDesktopConnector) {
+            const setupPath = data.setupPath || '/desktop-connector-setup';
+            showSetupMessage(data.instructions || 'Opening Desktop Connector setup for ChatGPT subscription access.');
+            bridgeWebchatAuthToDesktopConnectorSetup();
+            window.location.assign(setupPath);
+            return;
+          }
           if (!data.loginUrl) throw new Error(data.message || 'OpenAI OAuth is not configured yet.');
           openAILoginLink.href = data.loginUrl;
           openAILoginLink.style.display = 'flex';
@@ -2309,6 +2334,7 @@
         conversation = [];
         sdkSessionId = null;
         isGuest = false;
+        clearDesktopConnectorAuthBridge();
         try { localStorage.removeItem(TOKEN_KEY); } catch {}
         try { localStorage.removeItem(USER_KEY); } catch {}
         if (leavingUserId) { try { localStorage.removeItem(sessionIdKey(leavingUserId)); } catch {} }

@@ -42,6 +42,12 @@ assert.match(template, /restoredEmptySetupBtn\.addEventListener\('click', openSe
 assert.match(template, /openAILoginLink\.style\.display\s*=\s*'flex'/);
 assert.match(template, /openAILoginLink\.focus\(\)/);
 assert.doesNotMatch(template, /window\.open\(data\.loginUrl/);
+assert.match(template, /data\.requiresDesktopConnector/);
+assert.match(template, /DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY = 'jarvis_web_desktop_connector_auth_bridge'/);
+assert.match(template, /bridgeWebchatAuthToDesktopConnectorSetup\(\)/);
+assert.match(template, /localStorage\.removeItem\(DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY\)/);
+assert.doesNotMatch(template, /@gameplan_auth_token/);
+assert.match(template, /window\.location\.assign\(setupPath\)/);
 assert.match(template, /setupBtn\.style\.display\s*=\s*'none'/);
 assert.match(template, /setupBtn\.style\.display\s*=\s*'flex'/);
 assert.match(template, /emptySetupBtn\.style\.display\s*=\s*'none'/);
@@ -53,6 +59,8 @@ assert.match(settingsScreen, /Platform\.OS !== 'web'[\s\S]*openHostedConnectionL
 assert.match(settingsScreen, /openOpenAILoginUrl/);
 assert.match(settingsScreen, /window\.open\(openAILoginUrl, '_blank', 'noopener,noreferrer'\)/);
 assert.doesNotMatch(settingsScreen, /window\.location\.assign\(openAILoginUrl\)/);
+assert.match(settingsScreen, /data\.requiresDesktopConnector === true/);
+assert.match(settingsScreen, /router\.push\(setupPath as Href\)/);
 assert.match(settingsScreen, /Open login URL/);
 assert.match(settingsScreen, /Copy login URL/);
 

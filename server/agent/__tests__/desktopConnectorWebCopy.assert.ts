@@ -13,12 +13,14 @@ const routePath = "app/desktop-connector-setup.tsx";
 const cardPath = "components/desktopConnector/ConnectedWindowsPcCard.tsx";
 const profilePath = "app/(tabs)/profile.tsx";
 const setupClientPath = "lib/desktop-connector-setup.ts";
+const layoutPath = "app/_layout.tsx";
 
 const wizard = read(wizardPath);
 const route = read(routePath);
 const card = read(cardPath);
 const profile = read(profilePath);
 const setupClient = read(setupClientPath);
+const layout = read(layoutPath);
 
 assert.match(wizard, /Use your ChatGPT subscription with Jarvis/);
 assert.match(wizard, /Set it up for me/);
@@ -41,6 +43,14 @@ assert.doesNotMatch(wizard, /JARVIS_PAIR_CODE/i);
 assert.doesNotMatch(wizard, /node jarvis-daemon\.js/i);
 assert.match(route, /WindowsConnectorSetupWizard/);
 assert.match(setupClient, /consentedToDesktopControl:\s*true/);
+assert.match(setupClient, /DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY = "jarvis_web_desktop_connector_auth_bridge"/);
+assert.match(setupClient, /getDesktopConnectorAuthBridgeToken/);
+assert.match(setupClient, /hasDesktopConnectorAuthBridge/);
+assert.match(setupClient, /Authorization:\s*`Bearer \$\{bridgeToken\}`/);
+assert.match(wizard, /clearDesktopConnectorAuthBridge/);
+assert.match(layout, /hasDesktopConnectorAuthBridge/);
+assert.match(layout, /segments\[0\] === "desktop-connector-setup"/);
+assert.match(layout, /allowDesktopConnectorBridge/);
 
 assert.match(card, /Connected Windows PC/);
 assert.match(card, /Check connection/);

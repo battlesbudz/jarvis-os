@@ -2,7 +2,11 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
-import { getDesktopConnectorSetupStatus, startDesktopConnectorSetup } from "@/lib/desktop-connector-setup";
+import {
+  clearDesktopConnectorAuthBridge,
+  getDesktopConnectorSetupStatus,
+  startDesktopConnectorSetup,
+} from "@/lib/desktop-connector-setup";
 import type { DesktopConnectorSetupResponse, DesktopConnectorStatusResponse } from "@shared/desktopConnectorSetup";
 
 type Props = {
@@ -41,6 +45,7 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
   const cancelFlow = useCallback(() => {
     cancelledRef.current = true;
     stopPolling();
+    clearDesktopConnectorAuthBridge();
   }, [stopPolling]);
 
   const handleConnected = useCallback(() => {
@@ -81,6 +86,7 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
       mountedRef.current = false;
       cancelledRef.current = true;
       stopPolling();
+      clearDesktopConnectorAuthBridge();
     };
   }, [stopPolling]);
 
