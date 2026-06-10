@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { BaseProvider } from "./base";
+import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { getProviderEnvValue } from "./env";
 import {
@@ -203,6 +203,7 @@ export class GoogleProvider extends BaseProvider {
       contents: request.contents,
       generationConfig: {
         maxOutputTokens: params.maxCompletionTokens,
+        ...(isJsonObjectResponseFormat(params.responseFormat) ? { responseMimeType: "application/json" } : {}),
       },
     };
     if (request.systemInstruction) body.systemInstruction = request.systemInstruction;

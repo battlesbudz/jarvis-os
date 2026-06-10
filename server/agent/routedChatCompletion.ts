@@ -47,6 +47,7 @@ export async function createRoutedChatCompletion(
     tools: body.tools,
     toolChoice: toolChoiceFromBody(body),
     maxCompletionTokens: maxTokensFromBody(body),
+    responseFormat: body.response_format,
     stream: false,
     userId: options.userId ?? getUserIdFromChatBody(body),
     signal: options.signal,

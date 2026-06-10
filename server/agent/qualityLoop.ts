@@ -76,6 +76,7 @@ export async function preThink(
   const run = async (runSignal: AbortSignal): Promise<string> => {
     const response = await routeModelTurn({
       tier: "smart",
+      requestedModel: orchestratorModel,
       maxCompletionTokens: MAX_TOKENS,
       stream: false,
       toolChoice: "none",
@@ -120,6 +121,7 @@ export async function postCheck(
   const run = async (runSignal: AbortSignal): Promise<PostCheckResult> => {
     const response = await routeModelTurn({
       tier: "smart",
+      requestedModel: orchestratorModel,
       maxCompletionTokens: MAX_TOKENS,
       stream: false,
       toolChoice: "none",

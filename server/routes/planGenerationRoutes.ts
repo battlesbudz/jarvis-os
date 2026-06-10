@@ -1,10 +1,9 @@
 import type { Express, Request, Response } from "express";
-import OpenAI from "openai";
-import { getOpenAIClientConfig } from "../agent/providers/env";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 import { generateSmartPlan, resizeTask, unblockTask } from "../ai";
 import { buildPlanFromInputs } from "../services/planGenerationService";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[PlanGenerationRoutes]", "balanced");
 
 export function registerPlanGenerationRoutes(app: Express): void {
   app.post("/api/ai/resize-task", async (req: Request, res: Response) => {
@@ -143,6 +142,7 @@ Rules:
 
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
+        user: (req as any).userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 600,

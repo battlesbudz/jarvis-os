@@ -253,6 +253,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
         tools: params.tools,
         tool_choice: params.tools ? params.toolChoice : undefined,
         max_completion_tokens: params.maxCompletionTokens,
+        response_format: params.responseFormat,
       },
       { signal: params.signal },
     );
@@ -287,6 +288,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
         tools: params.tools,
         tool_choice: params.tools ? params.toolChoice : undefined,
         max_completion_tokens: params.maxCompletionTokens,
+        response_format: params.responseFormat,
         stream: true,
       },
       { signal: params.signal },

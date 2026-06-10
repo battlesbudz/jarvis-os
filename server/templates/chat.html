@@ -1241,6 +1241,13 @@
         return models.find(m => m.value === value)?.label || value || 'Not set';
       }
 
+      function applySelectedModel(model, responsePrefs) {
+        MODEL_CATEGORIES.forEach((category) => {
+          modelPrefs[category.key] = responsePrefs?.[category.key] || model;
+        });
+        orchestratorModel = responsePrefs?.orchestrator || model;
+      }
+
       function createModelSelectRow({ key, label, description, models, currentValue, onChange }) {
         const row = document.createElement('div');
         row.className = 'setup-select-row';
@@ -1271,8 +1278,11 @@
           const previous = key === 'orchestrator' ? orchestratorModel : modelPrefs[key];
           select.disabled = true;
           try {
-            await onChange(select.value);
-            showSetupMessage(`${label} model saved: ${modelLabel(models, select.value)}.`);
+            const result = await onChange(select.value);
+            const selectedModel = result?.selectedModel || select.value;
+            applySelectedModel(selectedModel, result?.modelPreferences);
+            renderModelSettings();
+            showSetupMessage(`${label} model saved: ${modelLabel(models, selectedModel)}.`);
           } catch (error) {
             select.value = previous || '';
             showSetupMessage(setupErrorMessage(error, `Could not save ${label.toLowerCase()} model.`));
@@ -1296,11 +1306,10 @@
             models: categoryModels,
             currentValue: modelPrefs[category.key],
             onChange: async (model) => {
-              await fetchAuthedJson('/api/settings/models', {
+              return fetchAuthedJson('/api/settings/models', {
                 method: 'PATCH',
                 body: JSON.stringify({ category: category.key, model }),
               });
-              modelPrefs[category.key] = model;
             },
           }));
         });
@@ -1312,11 +1321,10 @@
           models: availableOrchestratorModels.filter((model) => !Array.isArray(model.categories) || model.categories.includes('orchestrator')),
           currentValue: orchestratorModel,
           onChange: async (model) => {
-            await fetchAuthedJson('/api/settings/orchestrator', {
+            return fetchAuthedJson('/api/settings/orchestrator', {
               method: 'PATCH',
               body: JSON.stringify({ model }),
             });
-            orchestratorModel = model;
           },
         }));
       }
@@ -1495,13 +1503,14 @@
         }
         setButtonBusy(openAIApiKeySaveBtn, true, 'Saving...');
         try {
-          await fetchAuthedJson('/api/auth/openai-api-key', {
+          const result = await fetchAuthedJson('/api/auth/openai-api-key', {
             method: 'POST',
             body: JSON.stringify({ apiKey }),
           });
+          if (result?.selectedModel) applySelectedModel(String(result.selectedModel), result.modelPreferences);
           openAIApiKeyInput.value = '';
           openAIApiKeyRow.classList.remove('open');
-          showSetupMessage('OpenAI API key saved for this Jarvis account.');
+          showSetupMessage('OpenAI API key saved and selected for this Jarvis account.');
           await loadProviderStatus();
         } catch (error) {
           showSetupMessage(setupErrorMessage(error, 'Jarvis could not save the API key.'));
@@ -1545,13 +1554,14 @@
           }
           setButtonBusy(button, true, 'Saving...');
           try {
-            await fetchAuthedJson('/api/auth/model-provider-api-key', {
+            const result = await fetchAuthedJson('/api/auth/model-provider-api-key', {
               method: 'POST',
               body: JSON.stringify({ provider, apiKey }),
             });
+            if (result?.selectedModel) applySelectedModel(String(result.selectedModel), result.modelPreferences);
             input.value = '';
             inputRow?.classList.remove('open');
-            setProviderCardMessage('Provider API key saved for this Jarvis account.');
+            setProviderCardMessage('Provider API key saved and selected for this Jarvis account.');
             await loadProviderStatus();
           } catch (error) {
             setProviderCardMessage(setupErrorMessage(error, 'Jarvis could not save this provider key.'));
@@ -1565,7 +1575,8 @@
           if (!confirm('Remove stored credentials for this provider?')) return;
           setButtonBusy(button, true, 'Disconnecting...');
           try {
-            await fetchAuthedJson(`/api/auth/providers/${encodeURIComponent(provider)}`, { method: 'DELETE' });
+            const result = await fetchAuthedJson(`/api/auth/providers/${encodeURIComponent(provider)}`, { method: 'DELETE' });
+            if (result?.selectedModel) applySelectedModel(String(result.selectedModel), result.modelPreferences);
             setProviderCardMessage('Provider credentials removed.');
             await loadProviderStatus();
           } catch (error) {
@@ -1584,12 +1595,13 @@
         }
         setButtonBusy(openAICallbackUrlSubmitBtn, true, 'Finishing...');
         try {
-          await fetchAuthedJson('/api/auth/openai-oauth/callback-url', {
+          const result = await fetchAuthedJson('/api/auth/openai-oauth/callback-url', {
             method: 'POST',
             body: JSON.stringify({ callbackUrl }),
           });
+          if (result?.selectedModel) applySelectedModel(String(result.selectedModel), result.modelPreferences);
           openAICallbackUrlInput.value = '';
-          showSetupMessage('ChatGPT subscription connected for this Jarvis account.');
+          showSetupMessage('ChatGPT subscription connected and selected for this Jarvis account.');
           await loadProviderStatus();
         } catch (error) {
           showSetupMessage(setupErrorMessage(error, 'Jarvis could not complete OpenAI OAuth.'));
@@ -1602,7 +1614,8 @@
         if (!confirm('Use Jarvis default model route and remove stored OpenAI profiles for this account?')) return;
         setButtonBusy(openAIDefaultBtn, true, 'Resetting...');
         try {
-          await fetchAuthedJson('/api/auth/providers/openai', { method: 'DELETE' });
+          const result = await fetchAuthedJson('/api/auth/providers/openai?resetSelectedModel=1', { method: 'DELETE' });
+          if (result?.selectedModel) applySelectedModel(String(result.selectedModel), result.modelPreferences);
           showSetupMessage('Jarvis default model route is active.');
           await loadProviderStatus();
         } catch (error) {

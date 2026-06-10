@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { BaseProvider } from "./base";
+import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { getProviderEnvValue } from "./env";
 import {
@@ -163,7 +163,13 @@ export class AnthropicProvider extends BaseProvider {
       max_tokens: params.maxCompletionTokens,
       messages: converted.messages,
     };
-    if (converted.system) body.system = converted.system;
+    const system = [
+      converted.system,
+      isJsonObjectResponseFormat(params.responseFormat)
+        ? "Return only a single valid JSON object. Do not include markdown, code fences, commentary, or any text outside the JSON object."
+        : "",
+    ].filter(Boolean).join("\n\n");
+    if (system) body.system = system;
     if (tools?.length && params.toolChoice !== "none") {
       body.tools = tools;
       body.tool_choice = toAnthropicToolChoice(params.toolChoice, true);

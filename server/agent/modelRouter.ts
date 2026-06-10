@@ -1,7 +1,7 @@
 import type OpenAI from "openai";
 import type { ProviderName } from "./providers";
 import { getGlobalFallbackChain, queryWithFallback, type FallbackChainEntry } from "./providers/fallback";
-import type { ProviderTurnResult } from "./providers/base";
+import type { ProviderResponseFormat, ProviderTurnResult } from "./providers/base";
 import { getProviderEnvValue, hasCodexOAuthProvider, hasDirectOpenAIProvider, hasProviderEnvValue } from "./providers/env";
 import { getProviderStatus, type ProviderStatus } from "./providers/modelProviderAuthProfiles";
 import { DEFAULT_CODEX_OAUTH_MODEL, getCodexOAuthModel } from "./runtimeModel";
@@ -61,6 +61,7 @@ export interface RoutedModelTurnParams {
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
   toolChoice?: "auto" | "required" | "none";
   maxCompletionTokens: number;
+  responseFormat?: ProviderResponseFormat;
   stream?: boolean;
   userId?: string;
   signal?: AbortSignal;
@@ -68,13 +69,21 @@ export interface RoutedModelTurnParams {
 }
 
 type OpenAIProviderStatusResolver = (input: { userId: string }) => Promise<ProviderStatus>;
+type UserSelectedModelResolver = (input: { userId: string }) => Promise<string | null>;
 
 let openAIProviderStatusResolverForTesting: OpenAIProviderStatusResolver | null = null;
+let userSelectedModelResolverForTesting: UserSelectedModelResolver | null = null;
 
 export function _setOpenAIProviderStatusResolverForTesting(
   resolver: OpenAIProviderStatusResolver | null,
 ): void {
   openAIProviderStatusResolverForTesting = resolver;
+}
+
+export function _setUserSelectedModelResolverForTesting(
+  resolver: UserSelectedModelResolver | null,
+): void {
+  userSelectedModelResolverForTesting = resolver;
 }
 
 export const DEFAULT_TIER_MODELS: Record<ModelTier, string> = {
@@ -379,7 +388,18 @@ export function routeModelForTask(input: ModelRoutingInput): ModelRoutingDecisio
   const text = getLastUserText(input.messages);
   const complexity = classifyTaskComplexity(text);
   const privacyLevel = input.routing?.privacyLevel ?? classifyTaskPrivacy(text);
-  const requestedModel = hasCodexOAuthProvider() ? getCodexOAuthModel() : input.requestedModel;
+  const requestedModel = input.requestedModel;
+
+  if (requestedModel) {
+    return {
+      model: requestedModel,
+      tier: "prime",
+      complexity,
+      privacyLevel,
+      delegated: false,
+      reason: input.explicitModel ? "selected model preserved" : "global selected model preserved",
+    };
+  }
 
   if (!isRoutingEnabled(input.routing)) {
     return {
@@ -574,14 +594,41 @@ async function getUserOpenAIRouteChain(
   }
 }
 
+export async function getUserSelectedModelRouteChain(
+  userId: string | undefined,
+  logPrefix: string,
+): Promise<FallbackChainEntry[] | null> {
+  if (!userId) return null;
+
+  try {
+    const resolver = userSelectedModelResolverForTesting ?? (async ({ userId: selectedUserId }) => {
+      const { getSelectedModelPreference } = await import("../lib/modelPrefs");
+      return getSelectedModelPreference(selectedUserId);
+    });
+    const selectedModel = await resolver({ userId });
+    const selectedEntry = parseRequestedModelSpec(selectedModel ?? undefined);
+    if (selectedEntry) return [selectedEntry];
+    if (selectedModel) {
+      console.warn(`${logPrefix} selected_model_unroutable: ${selectedModel}`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`${logPrefix} selected_model_unavailable: ${message.slice(0, 160)}`);
+  }
+
+  return null;
+}
+
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
   const requestedEntry = parseRequestedModelSpec(params.requestedModel);
-  const chain = requestedEntry
-    ? [requestedEntry]
-    : (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix)) ?? getModelRouteChain(params.tier);
+  const selectedChain = await getUserSelectedModelRouteChain(params.userId, logPrefix);
+  const chain = selectedChain
+    ?? (requestedEntry ? [requestedEntry] : null)
+    ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
+    ?? getModelRouteChain(params.tier);
   if (chain.length === 0) {
     throw new Error(
       "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable.",
@@ -606,6 +653,7 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
       tools: routedMessages !== params.messages ? undefined : params.tools,
       toolChoice: routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),
       maxCompletionTokens: params.maxCompletionTokens,
+      responseFormat: params.responseFormat,
       stream: params.stream ?? false,
       userId: params.userId,
       signal: params.signal,

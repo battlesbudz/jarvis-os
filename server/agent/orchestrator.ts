@@ -16,7 +16,7 @@ import type { ToolContext } from "./types";
 import type { AgentTool } from "./types";
 import { detectTournamentSignals } from "./tournamentRunner";
 import { routeModelTurn } from "./modelRouter";
-import { DEFAULT_CODEX_OAUTH_MODEL, isCodexOAuthModel } from "./runtimeModel";
+import { isCodexOAuthModel } from "./runtimeModel";
 import { getCoachAppAgentId } from "./coreAgentIds";
 import { createSystemApprovalOnBeforeTool } from "./systemApprovalGate";
 
@@ -58,8 +58,10 @@ export async function runFastOrchestratorReply(input: {
 }): Promise<OrchestratorResult> {
   throwIfAborted(input.signal);
   const traceId = `orch-fast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const orchestratorModel = await getModel(input.userId, "orchestrator");
   const finalAnswer = (await routeOrchestratorText({
     label: "fast-reply",
+    orchestratorModel,
     maxCompletionTokens: FAST_REPLY_MAX_TOKENS,
     userId: input.userId,
     signal: input.signal,
@@ -83,6 +85,7 @@ export async function runFastOrchestratorReply(input: {
 
 async function routeOrchestratorText(opts: {
   label: string;
+  orchestratorModel?: string;
   system?: string;
   user: string;
   maxCompletionTokens: number;
@@ -99,6 +102,7 @@ async function routeOrchestratorText(opts: {
 
   const response = await routeModelTurn({
     tier: "smart",
+    requestedModel: opts.orchestratorModel,
     messages,
     toolChoice: "none",
     maxCompletionTokens: opts.maxCompletionTokens,
@@ -208,6 +212,7 @@ async function decomposeRequest(
   userRequest: string,
   systemContext: string,
   userId: string,
+  orchestratorModel: string,
   signal?: AbortSignal,
 ): Promise<SubTask[]> {
   throwIfAborted(signal);
@@ -225,6 +230,7 @@ async function decomposeRequest(
 
   const text = await routeOrchestratorText({
     label: "decompose",
+    orchestratorModel,
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     userId,
     signal,
@@ -288,6 +294,7 @@ async function verifyResult(
     throwIfAborted(signal);
     const text = await routeOrchestratorText({
       label: "verify",
+      orchestratorModel,
       maxCompletionTokens: 512,
       userId,
       signal,
@@ -329,6 +336,7 @@ async function synthesizeFinalAnswer(
   systemContext: string,
   results: SubTaskResult[],
   userId: string,
+  orchestratorModel: string,
   signal?: AbortSignal,
 ): Promise<string> {
   throwIfAborted(signal);
@@ -338,6 +346,7 @@ async function synthesizeFinalAnswer(
 
   const text = await routeOrchestratorText({
     label: "synthesize",
+    orchestratorModel,
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     userId,
     signal,
@@ -360,6 +369,7 @@ async function executeSubTask(
   task: SubTask,
   tools: AgentTool[],
   toolContext: ToolContext,
+  orchestratorModel: string,
   dependencyResults: SubTaskResult[],
   correctionContext?: string,
   maxCompletionTokens?: number,
@@ -402,7 +412,7 @@ async function executeSubTask(
 
   // ── Fallback: bare GPT harness ─────────────────────────────────────────
   const result = await runAgent({
-    model: DEFAULT_CODEX_OAUTH_MODEL,
+    model: orchestratorModel,
     messages: [
       { role: "user", content: instruction },
     ],
@@ -533,7 +543,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   // Step 1: Decompose (crew manifest injected into prompt for specialist routing)
   let rawSubTasks: SubTask[];
   try {
-    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId, signal);
+    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId, orchestratorModel, signal);
   } catch (err) {
     if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
     console.error("[orchestrator] decomposition failed:", err);
@@ -578,7 +588,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       throwIfAborted(signal);
       try {
-        taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens, onProgressMessage, signal);
+        taskResult = await executeSubTask(task, tools, toolContext, orchestratorModel, depResults, correctionContext, maxCompletionTokens, onProgressMessage, signal);
       } catch (err) {
         if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
         taskResult = `Execution error: ${err instanceof Error ? err.message : String(err)}`;
@@ -650,7 +660,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   // Step 3: Synthesize final answer via Claude (always — no single-task bypass)
   let finalAnswer: string;
   try {
-    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, userId, signal);
+    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, userId, orchestratorModel, signal);
   } catch (err) {
     if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
     console.error("[orchestrator] synthesis failed:", err);
@@ -750,6 +760,7 @@ export async function verifyJobOutput(opts: {
   try {
     const verifyPromise = routeModelTurn({
       tier: "smart",
+      requestedModel: opts.orchestratorModel,
       maxCompletionTokens: 512,
       stream: false,
       toolChoice: "none",

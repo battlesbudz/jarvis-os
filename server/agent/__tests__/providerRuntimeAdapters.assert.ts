@@ -40,6 +40,7 @@ async function testAnthropicUsesUserCredential() {
     ],
     toolChoice: "none",
     maxCompletionTokens: 128,
+    responseFormat: { type: "json_object" },
     stream: false,
     userId: "user-claude",
   }));
@@ -50,6 +51,7 @@ async function testAnthropicUsesUserCredential() {
   assert.equal(requests[0].url, "https://api.anthropic.com/v1/messages");
   assert.equal((requests[0].init.headers as Record<string, string>)["x-api-key"], "sk-ant-user");
   assert.match(String(requests[0].init.body), /"model":"claude-sonnet-4-5"/);
+  assert.match(String(requests[0].init.body), /Return only a single valid JSON object/);
   console.log("OK: Anthropic provider uses user-scoped API key profiles");
 
   _setAnthropicFetchForTesting(null);
@@ -180,6 +182,7 @@ async function testGoogleUsesUserCredential() {
     ],
     toolChoice: "none",
     maxCompletionTokens: 128,
+    responseFormat: { type: "json_object" },
     stream: false,
     userId: "user-gemini",
   }));
@@ -190,6 +193,7 @@ async function testGoogleUsesUserCredential() {
   assert.equal(requests[0].url, "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent");
   assert.equal((requests[0].init.headers as Record<string, string>)["x-goog-api-key"], "gemini-user-key");
   assert.match(String(requests[0].init.body), /"maxOutputTokens":128/);
+  assert.match(String(requests[0].init.body), /"responseMimeType":"application\/json"/);
   console.log("OK: Google Gemini provider uses user-scoped API key profiles");
 
   _setGoogleFetchForTesting(null);
@@ -422,6 +426,7 @@ async function testOpenAICompatibleUsesLocalUserCredential() {
     messages: [{ role: "user", content: "Hello" }],
     toolChoice: "none",
     maxCompletionTokens: 128,
+    responseFormat: { type: "json_object" },
     stream: false,
     userId: "user-local",
   }));
@@ -433,6 +438,7 @@ async function testOpenAICompatibleUsesLocalUserCredential() {
   }]);
   assert.equal(requests[0].body.model, "llama-local");
   assert.equal(requests[0].body.max_completion_tokens, 128);
+  assert.deepEqual(requests[0].body.response_format, { type: "json_object" });
   console.log("OK: OpenAI-compatible Local Llama provider uses user-scoped API key profiles");
 
   _setOpenAICompatibleProviderClientFactoryForTesting(null);

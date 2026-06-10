@@ -276,8 +276,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // candidate keys and resolve the broken one via live validator status.
   const toolToIntegrationKey = new Map<string, string[]>();
 
-  const { getModel } = await import("../lib/modelPrefs");
-  const model = resolveRuntimeAgentModel(modelOpt ?? (await getModel(context.userId, "chat")));
+  const { getModel, getSelectedModelPreference } = await import("../lib/modelPrefs");
+  const selectedModel = await getSelectedModelPreference(context.userId);
+  const model = resolveRuntimeAgentModel(selectedModel ?? modelOpt ?? (await getModel(context.userId, "chat")));
 
   const channel = context.channel || "Agent";
   const harnessStartedAt = Date.now();

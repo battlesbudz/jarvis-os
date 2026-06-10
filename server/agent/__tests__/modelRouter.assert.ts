@@ -5,6 +5,7 @@ import {
   classifyTaskPrivacy,
   routeModelForTask,
   _setOpenAIProviderStatusResolverForTesting,
+  _setUserSelectedModelResolverForTesting,
 } from "../modelRouter";
 import { BaseProvider, _clearProviderCacheForTesting, _overrideProviderForTesting } from "../providers";
 import type { ProviderChunk, ProviderQueryParams } from "../providers/base";
@@ -32,58 +33,56 @@ const CODEX_MODEL = "chatgpt-codex-oauth/auto";
 
 {
   const decision = routeModelForTask({
-    requestedModel: "claude-opus-4-6",
+    requestedModel: "google/gemini-2.5-pro",
     explicitModel: false,
     messages: userMessage("Rewrite this to be shorter."),
     toolCount: 0,
     routing: { enabled: true, cheapModel: "groq/llama-3.1-8b-instant" },
   });
-  assert.equal(decision.model, CODEX_MODEL);
-  assert.equal(decision.tier, "free");
-  assert.equal(decision.delegated, true);
-  console.log("OK: easy no-tool task stays on Codex OAuth even when a cheap provider is supplied");
+  assert.equal(decision.model, "google/gemini-2.5-pro");
+  assert.equal(decision.delegated, false);
+  console.log("OK: easy no-tool tasks preserve the selected global provider");
 }
 
 {
   const decision = routeModelForTask({
-    requestedModel: "claude-opus-4-6",
+    requestedModel: "google/gemini-2.5-pro",
     explicitModel: false,
     messages: userMessage("Rewrite this private email."),
     toolCount: 0,
     routing: { enabled: true, privacyLevel: "sensitive" },
   });
-  assert.equal(decision.model, CODEX_MODEL);
+  assert.equal(decision.model, "google/gemini-2.5-pro");
   assert.equal(decision.tier, "prime");
-  assert.equal(decision.delegated, true);
-  console.log("OK: sensitive task stays on Codex OAuth prime tier");
+  assert.equal(decision.delegated, false);
+  console.log("OK: sensitive tasks preserve the selected global provider");
 }
 
 {
   const decision = routeModelForTask({
-    requestedModel: "claude-opus-4-6",
+    requestedModel: "google/gemini-2.5-pro",
     explicitModel: false,
     messages: userMessage("Classify this inbox item."),
     toolCount: 1,
     routing: { enabled: true },
   });
-  assert.equal(decision.model, CODEX_MODEL);
-  assert.equal(decision.delegated, true);
-  assert.match(decision.reason, /tools/);
-  console.log("OK: free-tier delegation is blocked when tools are available and Codex remains selected");
+  assert.equal(decision.model, "google/gemini-2.5-pro");
+  assert.equal(decision.delegated, false);
+  console.log("OK: tool-capable tasks preserve the selected global provider");
 }
 
 {
   const decision = routeModelForTask({
-    requestedModel: "gpt-4.1-mini",
+    requestedModel: "openai/gpt-4.1-mini",
     explicitModel: true,
     messages: userMessage("Rewrite this."),
     toolCount: 0,
     routing: { enabled: true },
   });
-  assert.equal(decision.model, CODEX_MODEL);
-  assert.equal(decision.delegated, true);
-  assert.match(decision.reason, /Codex OAuth/);
-  console.log("OK: explicit direct model choices are replaced by Codex OAuth");
+  assert.equal(decision.model, "openai/gpt-4.1-mini");
+  assert.equal(decision.delegated, false);
+  assert.match(decision.reason, /selected model preserved/);
+  console.log("OK: explicit selected provider models are not replaced by Codex OAuth");
 }
 
 async function runLeanContextToolBudgetAssertion(): Promise<void> {
@@ -221,6 +220,69 @@ async function runUserOpenAIProfileRouteAssertion(): Promise<void> {
     console.log("OK: a saved user OpenAI provider profile overrides the default Codex OAuth route");
   } finally {
     _setOpenAIProviderStatusResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runUserSelectedProviderOverridesRuntimeDefaultsAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class CapturingGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "selected gemini route" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new CapturingGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-selected-gemini");
+      return "google/gemini-2.5-pro";
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "gpt-4o-mini",
+      messages: [{ role: "user", content: "A cron/sleep/dream helper with a legacy GPT model should still use my selected provider." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-selected-gemini",
+      logPrefix: "[ModelRouterSelectedProviderTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "google");
+    assert.equal(result.model, "gemini-2.5-pro");
+    assert.equal(result.textContent, "selected gemini route");
+    assert.equal(capturedRequest?.model, "gemini-2.5-pro");
+    assert.equal(capturedRequest?.userId, "user-selected-gemini");
+    console.log("OK: a user's selected provider overrides runtime defaults and legacy GPT model names");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
     _clearProviderCacheForTesting();
     for (const [key, value] of previousEnv) {
       if (value == null) delete process.env[key];
@@ -399,6 +461,7 @@ async function runCoachChatSelectedProviderModelAssertion(): Promise<void> {
 }
 
 runUserOpenAIProfileRouteAssertion()
+  .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
   .then(runExplicitProviderModelRouteAssertion)
   .then(runPlainGptRequestUsesConfiguredChainAssertion)
   .then(runCoachChatSelectedProviderModelAssertion)
