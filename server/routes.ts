@@ -124,7 +124,6 @@ import {
 } from "./agent/turnProgress";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
-import { getExplicitCoachRequestedModel } from "./services/coachModelSelection";
 import { writeCoachStreamError } from "./services/coachSse";
 import {
   buildCoachSystemPrompt,
@@ -2100,8 +2099,6 @@ Answer (yes/no):`,
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
-      const coachChatModel = await getExplicitCoachRequestedModel(userId);
-
       const turnStartedAtMs = Date.now();
       let lastVisibleUpdateAtMs = turnStartedAtMs;
       let visibleProgressUpdateCount = 0;
@@ -2882,7 +2879,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             // turn 0 must call one of the narrowed tools, later turns may stop.
             toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
             maxCompletionTokens: 2048,
-            requestedModel: coachChatModel,
             signal,
             userId: userId ?? undefined,
             logPrefix: "[CoachChat]",
@@ -3493,7 +3489,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const streamStartedAt = Date.now();
       let fullStreamedReply = "";
       const finalTurn = await streamCoachModelTurn({
-        requestedModel: coachChatModel,
         messages: streamMessages,
         toolChoice: "none",
         maxCompletionTokens: 8192,
@@ -3513,7 +3508,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       stopKeepalive();
       if (!fullStreamedReply && finalTurn.textContent) fullStreamedReply = finalTurn.textContent;
-      let streamedModel = finalTurn.model ?? coachChatModel ?? "gpt-4o-mini";
+      let streamedModel = finalTurn.model ?? "gpt-4o-mini";
 
       // Persist if daemon actions ran — response survives connection drops
       const streamUsage = estimateModelUsage({
