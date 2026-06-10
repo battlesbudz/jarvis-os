@@ -70,6 +70,8 @@ assert.doesNotMatch(settingsScreen, /router\.push\(setupPath as Href\)/);
 assert.match(settingsScreen, /Open login URL/);
 assert.match(settingsScreen, /Copy login URL/);
 assert.match(settingsScreen, /filter\(\(provider\) => provider\.id !== 'openai'\)/);
+assert.equal((settingsScreen.match(/>\s*Connect ChatGPT Subscription\s*<\/Text>/g) ?? []).length, 1);
+assert.doesNotMatch(settingsScreen, /const isOpenAI = provider\.id === 'openai'/);
 assert.match(insightsScreen, /parsed\.type === 'error' \|\| parsed\.error/);
 assert.match(insightsScreen, /streamErrorMessage/);
 assert.match(insightsScreen, /Error: \$\{streamErrorMessage\}/);
