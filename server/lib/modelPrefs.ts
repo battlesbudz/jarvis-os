@@ -50,12 +50,14 @@ export function resolveGlobalModelPreference(
   if (!modelPrefs) return null;
 
   const explicit = modelPrefs[GLOBAL_MODEL_PREFERENCE_KEY];
-  if (isValidModel(explicit)) return explicit;
+  if (isValidModel(explicit) && explicit !== CODEX_OAUTH_MODEL) return explicit;
 
   for (const category of MODEL_CATEGORY_KEYS) {
     const candidate = modelPrefs[category];
     if (isValidModel(candidate) && candidate !== MODEL_DEFAULTS[category]) return candidate;
   }
+
+  if (isValidModel(explicit)) return explicit;
 
   return null;
 }
