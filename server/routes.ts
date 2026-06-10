@@ -103,6 +103,7 @@ import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
+import { getModel } from "./lib/modelPrefs";
 import { runCapabilityGapAnalysis } from "./agent/capabilityGapAnalyzer";
 import { getModelRouteChain, routeModelTurn, type ModelExecutionTier } from "./agent/modelRouter";
 import { isRetriableProviderError } from "./agent/providers/fallback";
@@ -2099,6 +2100,10 @@ Answer (yes/no):`,
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
+      const coachChatSelectedModel = userId ? await getModel(userId, "chat") : undefined;
+      console.info(
+        `[CoachChat] selected_model_seed userId=${userId ?? "anonymous"} authScope=${req.authScope ?? "none"} model=${coachChatSelectedModel ?? "none"}`,
+      );
       const turnStartedAtMs = Date.now();
       let lastVisibleUpdateAtMs = turnStartedAtMs;
       let visibleProgressUpdateCount = 0;
@@ -2879,6 +2884,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             // turn 0 must call one of the narrowed tools, later turns may stop.
             toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
             maxCompletionTokens: 2048,
+            requestedModel: coachChatSelectedModel,
             signal,
             userId: userId ?? undefined,
             logPrefix: "[CoachChat]",
@@ -3489,6 +3495,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const streamStartedAt = Date.now();
       let fullStreamedReply = "";
       const finalTurn = await streamCoachModelTurn({
+        requestedModel: coachChatSelectedModel,
         messages: streamMessages,
         toolChoice: "none",
         maxCompletionTokens: 8192,
@@ -3508,7 +3515,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       stopKeepalive();
       if (!fullStreamedReply && finalTurn.textContent) fullStreamedReply = finalTurn.textContent;
-      let streamedModel = finalTurn.model ?? "gpt-4o-mini";
+      let streamedModel = finalTurn.model ?? coachChatSelectedModel ?? "gpt-4o-mini";
 
       // Persist if daemon actions ran — response survives connection drops
       const streamUsage = estimateModelUsage({
