@@ -22,6 +22,7 @@ export { CODEX_OAUTH_MODEL, MODEL_CATEGORIES, MODEL_DEFAULTS, MODEL_OPTIONS as A
 
 export const ORCHESTRATOR_MODELS = getModelsForCategory("orchestrator");
 export const GLOBAL_MODEL_PREFERENCE_KEY = "selectedModel";
+export const GLOBAL_MODEL_SELECTION_EXPLICIT_KEY = "selectedModelExplicit";
 const MODEL_CATEGORY_KEYS = MODEL_CATEGORIES.map((category) => category.key);
 
 export type AvailableModel = (typeof MODEL_OPTIONS)[number]["value"];
@@ -40,8 +41,17 @@ export function isValidOrchestratorModel(value: unknown): value is OrchestratorM
 export function buildGlobalModelPreferences(model: string): Record<string, string> {
   return {
     [GLOBAL_MODEL_PREFERENCE_KEY]: model,
+    [GLOBAL_MODEL_SELECTION_EXPLICIT_KEY]: "true",
     ...Object.fromEntries(MODEL_CATEGORY_KEYS.map((category) => [category, model])),
   };
+}
+
+export function hasExplicitGlobalModelSelection(
+  modelPrefs: Record<string, unknown> | undefined | null,
+): boolean {
+  if (!modelPrefs) return false;
+  const marker = modelPrefs[GLOBAL_MODEL_SELECTION_EXPLICIT_KEY];
+  return marker === true || marker === "true" || marker === "explicit" || marker === "user";
 }
 
 export function resolveGlobalModelPreference(
@@ -50,7 +60,9 @@ export function resolveGlobalModelPreference(
   if (!modelPrefs) return null;
 
   const explicit = modelPrefs[GLOBAL_MODEL_PREFERENCE_KEY];
-  if (isValidModel(explicit) && explicit !== CODEX_OAUTH_MODEL) return explicit;
+  if (isValidModel(explicit) && (explicit !== CODEX_OAUTH_MODEL || hasExplicitGlobalModelSelection(modelPrefs))) {
+    return explicit;
+  }
 
   for (const category of MODEL_CATEGORY_KEYS) {
     const candidate = modelPrefs[category];
@@ -80,6 +92,20 @@ export async function getSelectedModelPreference(userId: string): Promise<string
     return resolveGlobalModelPreference(await readUserModelPreferences(userId));
   } catch {
     return null;
+  }
+}
+
+export async function getSelectedModelPreferenceState(
+  userId: string,
+): Promise<{ model: string | null; isExplicit: boolean }> {
+  try {
+    const modelPrefs = await readUserModelPreferences(userId);
+    return {
+      model: resolveGlobalModelPreference(modelPrefs),
+      isExplicit: hasExplicitGlobalModelSelection(modelPrefs),
+    };
+  } catch {
+    return { model: null, isExplicit: false };
   }
 }
 

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  GLOBAL_MODEL_SELECTION_EXPLICIT_KEY,
   GLOBAL_MODEL_PREFERENCE_KEY,
   MODEL_DEFAULTS,
   ORCHESTRATOR_MODELS,
@@ -29,6 +30,7 @@ console.log("OK: orchestrator accepts every globally selected provider model");
 
 const globalPrefs = buildGlobalModelPreferences(GEMINI_MODEL);
 assert.equal(globalPrefs[GLOBAL_MODEL_PREFERENCE_KEY], GEMINI_MODEL);
+assert.equal(globalPrefs[GLOBAL_MODEL_SELECTION_EXPLICIT_KEY], "true");
 for (const category of ["chat", "planning", "memory", "research", "orchestrator"] as const) {
   assert.equal(globalPrefs[category], GEMINI_MODEL, `${category} follows the selected global model`);
 }

@@ -82,8 +82,18 @@ interface PreparedModelTurn {
   routedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
 }
 
+interface SelectedModelRoute {
+  chain: FallbackChainEntry[];
+  isExplicit: boolean;
+}
+
+interface SelectedModelPreferenceState {
+  model: string | null;
+  isExplicit: boolean;
+}
+
 type ProviderStatusResolver = (input: { userId: string }) => Promise<ProviderStatus>;
-type UserSelectedModelResolver = (input: { userId: string }) => Promise<string | null>;
+type UserSelectedModelResolver = (input: { userId: string }) => Promise<string | null | SelectedModelPreferenceState>;
 
 let providerStatusResolverForTesting: ProviderStatusResolver | null = null;
 let userSelectedModelResolverForTesting: UserSelectedModelResolver | null = null;
@@ -641,6 +651,13 @@ function isCodexOnlyRouteChain(chain: FallbackChainEntry[] | null | undefined): 
   return !!chain && chain.length === 1 && isCodexOAuthRouteEntry(chain[0]);
 }
 
+function normalizeSelectedModelPreferenceState(
+  value: string | null | SelectedModelPreferenceState,
+): SelectedModelPreferenceState {
+  if (value && typeof value === "object") return value;
+  return { model: value, isExplicit: false };
+}
+
 async function getUserDefaultProviderProfileRouteChain(
   userId: string | undefined,
   tier: ModelExecutionTier,
@@ -671,17 +688,23 @@ async function getUserDefaultProviderProfileRouteChain(
 export async function getUserSelectedModelRouteChain(
   userId: string | undefined,
   logPrefix: string,
-): Promise<FallbackChainEntry[] | null> {
+): Promise<SelectedModelRoute | null> {
   if (!userId) return null;
 
   try {
     const resolver = userSelectedModelResolverForTesting ?? (async ({ userId: selectedUserId }) => {
-      const { getSelectedModelPreference } = await import("../lib/modelPrefs");
-      return getSelectedModelPreference(selectedUserId);
+      const { getSelectedModelPreferenceState } = await import("../lib/modelPrefs");
+      return getSelectedModelPreferenceState(selectedUserId);
     });
-    const selectedModel = await resolver({ userId });
+    const selectedState = normalizeSelectedModelPreferenceState(await resolver({ userId }));
+    const selectedModel = selectedState.model;
     const selectedEntry = parseRequestedModelSpec(selectedModel ?? undefined);
-    if (selectedEntry) return [selectedEntry];
+    if (selectedEntry) {
+      return {
+        chain: [selectedEntry],
+        isExplicit: selectedState.isExplicit,
+      };
+    }
     if (selectedModel) {
       console.warn(`${logPrefix} selected_model_unroutable: ${selectedModel}`);
     }
@@ -746,9 +769,11 @@ async function prepareModelTurn(
   const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
   const requestedEntry = parseRequestedModelSpec(params.requestedModel);
-  const selectedChain = await getUserSelectedModelRouteChain(params.userId, logPrefix);
+  const selectedRoute = await getUserSelectedModelRouteChain(params.userId, logPrefix);
+  const selectedChain = selectedRoute?.chain ?? null;
   const requestedChain = requestedEntry ? [requestedEntry] : null;
-  const chain = (!isCodexOnlyRouteChain(selectedChain) ? selectedChain : null)
+  const selectedCodexIsStaleDefault = isCodexOnlyRouteChain(selectedChain) && !selectedRoute?.isExplicit;
+  const chain = (!selectedCodexIsStaleDefault ? selectedChain : null)
     ?? (!isCodexOnlyRouteChain(requestedChain) ? requestedChain : null)
     ?? (await getUserDefaultProviderProfileRouteChain(params.userId, params.tier, logPrefix))
     ?? selectedChain
