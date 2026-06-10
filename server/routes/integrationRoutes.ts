@@ -1,9 +1,8 @@
 import type { Express, Request, Response } from "express";
-import OpenAI from "openai";
 import { and, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
-import { getOpenAIClientConfig } from "../agent/providers/env";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "../utils/gmailSourceId";
 import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
 import { getOutlookCalendarEvents } from "../integrations/outlook";
@@ -12,7 +11,7 @@ import { getSlackMessages } from "../integrations/slack";
 import { isIntegrationOwner, claimIntegrationOwnership } from "../integrationOwner";
 import { getValidGoogleTokens, getValidMicrosoftToken, getUserTokens, getUserToken } from "../userTokenStore";
 
-const openai = new OpenAI(getOpenAIClientConfig());
+const openai = createRoutedOpenAIChatShim("[IntegrationRoutes]", "balanced");
 
 export function registerIntegrationRoutes(app: Express): void {
   app.get("/api/calendar/status", async (req: Request, res: Response) => {
@@ -210,6 +209,7 @@ Only return the JSON object, no extra text.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 1000,
@@ -417,6 +417,7 @@ Return ONLY the JSON object.`;
 
       const response = await openai.chat.completions.create({
         model: "gpt-4o-mini",
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 300,

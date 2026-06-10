@@ -8,6 +8,7 @@ async function main() {
     {
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: "Return JSON" }],
+      response_format: { type: "json_object" },
       max_tokens: 42,
     },
     { tier: "balanced", logPrefix: "[TestRoutedChat]" },
@@ -28,6 +29,7 @@ async function main() {
   assert.equal(capturedRequest?.tier, "balanced");
   assert.equal(capturedRequest?.maxCompletionTokens, 42);
   assert.equal(capturedRequest?.requestedModel, "gpt-4o-mini");
+  assert.deepEqual(capturedRequest?.responseFormat, { type: "json_object" });
   assert.equal(response.model, "chatgpt-codex-oauth/auto");
   assert.equal(response.choices[0]?.message.content, '{"ok":true}');
   console.log("OK: routed chat completion maps OpenAI-style requests through the Jarvis router");

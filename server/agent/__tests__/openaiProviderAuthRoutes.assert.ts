@@ -12,9 +12,11 @@ import {
   buildOpenAIChatGPTDesktopConnectorFallback,
   buildOpenAIOAuthStart,
   completeOpenAIOAuthCallback,
+  getDefaultModelForProviderAuth,
   getOpenAIOAuthConfigFromEnv,
   parseOpenAICallbackUrl,
   registerOpenAIProviderAuthRoutes,
+  registerPublicOpenAIProviderAuthCallbackRoutes,
   saveOpenAIApiKeyFromRequest,
 } from "../../routes/openaiProviderAuthRoutes";
 
@@ -76,6 +78,10 @@ async function main() {
 
     const repo = new InMemoryModelProviderAuthProfileRepository();
     const stateStore = new InMemoryOpenAIOAuthStateStore();
+
+    assert.equal(getDefaultModelForProviderAuth("openai", "oauth"), "chatgpt-codex-oauth/auto");
+    assert.equal(getDefaultModelForProviderAuth("openai", "api_key"), "openai/gpt-4.1-mini");
+    assert.equal(getDefaultModelForProviderAuth("google", "api_key"), "google/gemini-2.5-flash");
 
     const start = await buildOpenAIOAuthStart({
       userId: "user-1",
@@ -176,6 +182,126 @@ async function main() {
     assert.equal(anthropicCredential?.provider, "anthropic");
     assert.equal(anthropicCredential?.credential, "sk-ant-user-key");
 
+    const activations: Array<{ userId: string; model: string }> = [];
+    let selectedModelForRoute = "chatgpt-codex-oauth/auto";
+    const activationApp = express();
+    activationApp.use(express.json());
+    registerOpenAIProviderAuthRoutes(activationApp, {
+      repo,
+      includeCallbackRoutes: false,
+      resolveUserId: () => "user-route",
+      activateModelPreference: async (userId, model) => {
+        activations.push({ userId, model });
+        selectedModelForRoute = model;
+        return { selectedModel: model, chat: model, planning: model, memory: model, research: model, orchestrator: model };
+      },
+      resolveSelectedModelPreference: async () => selectedModelForRoute,
+    });
+    const activationServer = await listen(activationApp);
+    try {
+      const openAIKeyResponse = await fetch(`http://127.0.0.1:${activationServer.port}/api/auth/openai-api-key`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: "sk-route-openai" }),
+      });
+      const openAIKeyBody = await openAIKeyResponse.json() as any;
+      assert.equal(openAIKeyResponse.status, 200);
+      assert.equal(openAIKeyBody.selectedModel, "openai/gpt-4.1-mini");
+      assert.equal(openAIKeyBody.modelPreferences.chat, "openai/gpt-4.1-mini");
+
+      const geminiKeyResponse = await fetch(`http://127.0.0.1:${activationServer.port}/api/auth/model-provider-api-key`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "google", apiKey: "gemini-route-key" }),
+      });
+      const geminiKeyBody = await geminiKeyResponse.json() as any;
+      assert.equal(geminiKeyResponse.status, 200);
+      assert.equal(geminiKeyBody.selectedModel, "google/gemini-2.5-flash");
+      assert.equal(geminiKeyBody.modelPreferences.orchestrator, "google/gemini-2.5-flash");
+
+      const disconnectOpenAIResponse = await fetch(`http://127.0.0.1:${activationServer.port}/api/auth/providers/openai`, {
+        method: "DELETE",
+      });
+      const disconnectOpenAIBody = await disconnectOpenAIResponse.json() as any;
+      assert.equal(disconnectOpenAIResponse.status, 200);
+      assert.equal(disconnectOpenAIBody.selectedModel, undefined);
+      assert.equal(selectedModelForRoute, "google/gemini-2.5-flash");
+
+      const disconnectGeminiResponse = await fetch(`http://127.0.0.1:${activationServer.port}/api/auth/providers/google`, {
+        method: "DELETE",
+      });
+      const disconnectGeminiBody = await disconnectGeminiResponse.json() as any;
+      assert.equal(disconnectGeminiResponse.status, 200);
+      assert.equal(disconnectGeminiBody.provider, "google");
+      assert.equal(disconnectGeminiBody.selectedModel, "chatgpt-codex-oauth/auto");
+      assert.equal(disconnectGeminiBody.modelPreferences.chat, "chatgpt-codex-oauth/auto");
+
+      const resavedGeminiResponse = await fetch(`http://127.0.0.1:${activationServer.port}/api/auth/model-provider-api-key`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: "google", apiKey: "gemini-route-key-2" }),
+      });
+      assert.equal(resavedGeminiResponse.status, 200);
+
+      const defaultResponse = await fetch(`http://127.0.0.1:${activationServer.port}/api/auth/providers/openai?resetSelectedModel=1`, {
+        method: "DELETE",
+      });
+      const defaultBody = await defaultResponse.json() as any;
+      assert.equal(defaultResponse.status, 200);
+      assert.equal(defaultBody.selectedModel, "chatgpt-codex-oauth/auto");
+
+      assert.deepEqual(activations.map((entry) => entry.model), [
+        "openai/gpt-4.1-mini",
+        "google/gemini-2.5-flash",
+        "chatgpt-codex-oauth/auto",
+        "google/gemini-2.5-flash",
+        "chatgpt-codex-oauth/auto",
+      ]);
+    } finally {
+      await activationServer.close();
+    }
+
+    const publicCallbackStateStore = new InMemoryOpenAIOAuthStateStore();
+    const publicCallbackStart = await buildOpenAIOAuthStart({
+      userId: "user-public-callback",
+      stateStore: publicCallbackStateStore,
+      config: {
+        clientId: "client_public",
+        authorizationUrl: "https://auth.example.test/oauth/authorize",
+        tokenUrl: "https://auth.example.test/oauth/token",
+      },
+    });
+    const publicActivations: Array<{ userId: string; model: string }> = [];
+    const publicCallbackApp = express();
+    registerPublicOpenAIProviderAuthCallbackRoutes(publicCallbackApp, {
+      repo,
+      stateStore: publicCallbackStateStore,
+      activateModelPreference: async (userId, model) => {
+        publicActivations.push({ userId, model });
+        return { selectedModel: model, chat: model, planning: model, memory: model, research: model, orchestrator: model };
+      },
+      exchangeCodeForTokens: async () => ({
+        accessToken: "oauth-public-access-token",
+        refreshToken: "oauth-public-refresh-token",
+        expiresAt: new Date(Date.now() + 3600_000),
+        accountId: "acct_public",
+        email: "public-openai-user@example.com",
+      }),
+    });
+    const publicCallbackServer = await listen(publicCallbackApp);
+    try {
+      const response = await fetch(
+        `http://127.0.0.1:${publicCallbackServer.port}/api/auth/openai-oauth/callback?code=public-code&state=${encodeURIComponent(publicCallbackStart.state)}`,
+      );
+      assert.equal(response.status, 200);
+      assert.deepEqual(publicActivations, [{
+        userId: "user-public-callback",
+        model: "chatgpt-codex-oauth/auto",
+      }]);
+    } finally {
+      await publicCallbackServer.close();
+    }
+
     assert.throws(
       () => parseOpenAICallbackUrl("http://127.0.0.1:1455/auth/callback?state=missing-code"),
       /callback URL is missing an authorization code/,
@@ -187,6 +313,8 @@ async function main() {
     console.log("OK: manual callback URL handling validates state and stores encrypted OAuth profiles");
     console.log("OK: OpenAI API-key request handling trims and stores API-key profiles");
     console.log("OK: generic provider API keys store per-user provider profiles");
+    console.log("OK: provider key, disconnect, and default-model routes activate one global selected model");
+    console.log("OK: public OpenAI OAuth callback activates the ChatGPT/Codex selected model");
   } finally {
     if (previousSecret == null) delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
     else process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = previousSecret;

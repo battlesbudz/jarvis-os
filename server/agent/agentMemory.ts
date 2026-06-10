@@ -134,6 +134,7 @@ export async function summarizeAgentMemory(
     const openai = createRoutedOpenAIChatShim("[AgentMemory]", "balanced");
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
+      user: userId,
       messages: [
         { role: "system", content: "Compress the following agent memories into a concise summary (max 500 words). Preserve key facts, patterns, and context. Output plain text." },
         { role: "user", content: memoryText.slice(0, 8000) },

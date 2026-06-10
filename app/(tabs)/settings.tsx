@@ -1008,23 +1008,35 @@ export default function SettingsScreen() {
     return () => clearInterval(id);
   }, [subsystemSheetVisible, subsystemSheetName, fetchSubsystemEventsBackground]);
 
+  const applySelectedModel = useCallback((model: string, responsePrefs?: Record<string, unknown>) => {
+    const nextPrefs = (['chat', 'planning', 'memory', 'research'] as ModelCategory[]).reduce((acc, key) => {
+      const value = responsePrefs?.[key];
+      acc[key] = typeof value === 'string' ? value : model;
+      return acc;
+    }, {} as Record<ModelCategory, string>);
+    setModelPrefs(nextPrefs);
+    setOrchestratorModel(model);
+  }, []);
+
   const saveModel = useCallback(async (category: ModelCategory, model: string) => {
     setSavingModel(category);
     try {
-      await apiRequest('PATCH', '/api/settings/models', { category, model });
-      setModelPrefs(prev => ({ ...prev, [category]: model }));
+      const res = await apiRequest('PATCH', '/api/settings/models', { category, model });
+      const data = await res.json().catch(() => ({}));
+      applySelectedModel(String(data.selectedModel || model), data.modelPreferences);
     } catch {}
     setSavingModel(null);
-  }, []);
+  }, [applySelectedModel]);
 
   const saveOrchestratorModel = useCallback(async (model: string) => {
     setSavingOrchestrator(true);
     try {
-      await apiRequest('PATCH', '/api/settings/orchestrator', { model });
-      setOrchestratorModel(model);
+      const res = await apiRequest('PATCH', '/api/settings/orchestrator', { model });
+      const data = await res.json().catch(() => ({}));
+      applySelectedModel(String(data.selectedModel || model), data.modelPreferences);
     } catch {}
     setSavingOrchestrator(false);
-  }, []);
+  }, [applySelectedModel]);
 
   // ── Nervous System ──
   interface WatchTopic {
@@ -1630,17 +1642,19 @@ export default function SettingsScreen() {
     if (!apiKey) return;
     setOpenAIAuthBusy(true);
     try {
-      await apiRequest('POST', '/api/auth/openai-api-key', { apiKey });
+      const res = await apiRequest('POST', '/api/auth/openai-api-key', { apiKey });
+      const data = await res.json().catch(() => ({}));
+      if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
       setOpenAIApiKeyInput('');
       setOpenAIApiKeyVisible(false);
-      setOpenAIAuthMessage('OpenAI API key saved for this Jarvis account.');
+      setOpenAIAuthMessage('OpenAI API key saved and selected for this Jarvis account.');
       await loadOpenAIProviderStatus();
     } catch (error: any) {
       Alert.alert('Use OpenAI API Key', error?.message || 'Jarvis could not save the API key.');
     } finally {
       setOpenAIAuthBusy(false);
     }
-  }, [loadOpenAIProviderStatus, openAIApiKeyInput]);
+  }, [applySelectedModel, loadOpenAIProviderStatus, openAIApiKeyInput]);
 
   const setProviderMessage = useCallback((providerId: string, message: string) => {
     setProviderAuthMessages((prev) => ({ ...prev, [providerId]: message }));
@@ -1651,10 +1665,12 @@ export default function SettingsScreen() {
     if (!apiKey) return;
     setOpenAIAuthBusy(true);
     try {
-      await apiRequest('POST', '/api/auth/model-provider-api-key', { provider: providerId, apiKey });
+      const res = await apiRequest('POST', '/api/auth/model-provider-api-key', { provider: providerId, apiKey });
+      const data = await res.json().catch(() => ({}));
+      if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
       setProviderApiKeyInputs((prev) => ({ ...prev, [providerId]: '' }));
       setProviderApiKeyVisible((prev) => ({ ...prev, [providerId]: false }));
-      setProviderMessage(providerId, 'Provider API key saved for this Jarvis account.');
+      setProviderMessage(providerId, 'Provider API key saved and selected for this Jarvis account.');
       await loadOpenAIProviderStatus();
     } catch (error: any) {
       const message = error?.message || 'Jarvis could not save this provider key.';
@@ -1663,7 +1679,7 @@ export default function SettingsScreen() {
     } finally {
       setOpenAIAuthBusy(false);
     }
-  }, [loadOpenAIProviderStatus, providerApiKeyInputs, setProviderMessage]);
+  }, [applySelectedModel, loadOpenAIProviderStatus, providerApiKeyInputs, setProviderMessage]);
 
   const disconnectProvider = useCallback((providerId: string, label: string) => {
     Alert.alert(
@@ -1677,7 +1693,9 @@ export default function SettingsScreen() {
           onPress: async () => {
             setOpenAIAuthBusy(true);
             try {
-              await apiRequest('DELETE', `/api/auth/providers/${encodeURIComponent(providerId)}`);
+              const res = await apiRequest('DELETE', `/api/auth/providers/${encodeURIComponent(providerId)}`);
+              const data = await res.json().catch(() => ({}));
+              if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
               setProviderMessage(providerId, `${label} credentials removed.`);
               await loadOpenAIProviderStatus();
             } catch (error: any) {
@@ -1691,23 +1709,25 @@ export default function SettingsScreen() {
         },
       ],
     );
-  }, [loadOpenAIProviderStatus, setProviderMessage]);
+  }, [applySelectedModel, loadOpenAIProviderStatus, setProviderMessage]);
 
   const submitOpenAICallbackUrl = useCallback(async () => {
     const callbackUrl = openAICallbackUrl.trim();
     if (!callbackUrl) return;
     setOpenAIAuthBusy(true);
     try {
-      await apiRequest('POST', '/api/auth/openai-oauth/callback-url', { callbackUrl });
+      const res = await apiRequest('POST', '/api/auth/openai-oauth/callback-url', { callbackUrl });
+      const data = await res.json().catch(() => ({}));
+      if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
       setOpenAICallbackUrl('');
-      setOpenAIAuthMessage('ChatGPT subscription connected for this Jarvis account.');
+      setOpenAIAuthMessage('ChatGPT subscription connected and selected for this Jarvis account.');
       await loadOpenAIProviderStatus();
     } catch (error: any) {
       Alert.alert('Finish OpenAI Login', error?.message || 'Jarvis could not complete OpenAI OAuth.');
     } finally {
       setOpenAIAuthBusy(false);
     }
-  }, [loadOpenAIProviderStatus, openAICallbackUrl]);
+  }, [applySelectedModel, loadOpenAIProviderStatus, openAICallbackUrl]);
 
   const useJarvisDefaultModel = useCallback(() => {
     Alert.alert(
@@ -1721,7 +1741,9 @@ export default function SettingsScreen() {
           onPress: async () => {
             setOpenAIAuthBusy(true);
             try {
-              await apiRequest('DELETE', '/api/auth/providers/openai');
+              const res = await apiRequest('DELETE', '/api/auth/providers/openai?resetSelectedModel=1');
+              const data = await res.json().catch(() => ({}));
+              if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
               setOpenAIAuthMessage('Jarvis default model route is active.');
               await loadOpenAIProviderStatus();
             } catch (error: any) {
@@ -1733,7 +1755,7 @@ export default function SettingsScreen() {
         },
       ],
     );
-  }, [loadOpenAIProviderStatus]);
+  }, [applySelectedModel, loadOpenAIProviderStatus]);
 
   const connectExternalApp = useCallback(async (appId: ConnectionAppId) => {
     const app = CONNECTION_APPS.find((item) => item.id === appId);

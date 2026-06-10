@@ -10,7 +10,7 @@ import {
   type ModelProviderAuthProfileRepository,
   type RefreshOAuthTokenResult,
 } from "../agent/providers/modelProviderAuthProfiles";
-import { MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
+import { CODEX_OAUTH_MODEL, MODEL_OPTIONS, MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
 
 export const DEFAULT_OPENAI_OAUTH_REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
 export const OPENAI_CHATGPT_DESKTOP_CONNECTOR_SETUP_PATH = "/desktop-connector-setup";
@@ -47,6 +47,8 @@ export interface OpenAIOAuthStateStore {
 }
 
 export type OpenAIProviderAuthUserResolver = (req: Request) => Promise<string | null> | string | null;
+export type ProviderAuthModelPreferenceActivator = (userId: string, model: string) => Promise<Record<string, string> | void>;
+export type ProviderAuthSelectedModelResolver = (userId: string) => Promise<string | null>;
 
 export class InMemoryOpenAIOAuthStateStore implements OpenAIOAuthStateStore {
   private states = new Map<string, OpenAIOAuthStateRecord>();
@@ -303,6 +305,35 @@ export async function saveOpenAIApiKeyFromRequest(input: {
   return { ok: true, authType: "api_key" };
 }
 
+export function getDefaultModelForProviderAuth(provider: ModelProviderId, authType: "api_key" | "oauth" | "local" = "api_key"): string {
+  if (provider === "openai" && authType === "oauth") return CODEX_OAUTH_MODEL;
+  if (provider === "openai") return "openai/gpt-4.1-mini";
+  if (provider === "anthropic") return "anthropic/claude-sonnet-4-5";
+  if (provider === "google") return "google/gemini-2.5-flash";
+  if (provider === "local-llama") return "openai-compatible/llama-local";
+  return CODEX_OAUTH_MODEL;
+}
+
+async function saveDefaultModelPreference(userId: string, model: string): Promise<Record<string, string>> {
+  const { saveSelectedModelPreference } = await import("../lib/modelPrefs");
+  return saveSelectedModelPreference(userId, model);
+}
+
+async function readDefaultSelectedModelPreference(userId: string): Promise<string | null> {
+  const { getSelectedModelPreference } = await import("../lib/modelPrefs");
+  return getSelectedModelPreference(userId);
+}
+
+function providerForSelectedModel(model: string | null | undefined): ModelProviderId | null {
+  if (!model) return null;
+  return MODEL_OPTIONS.find((option) => option.value === model)?.provider ?? null;
+}
+
+function truthyQueryFlag(value: unknown): boolean {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return raw === "1" || raw === "true" || raw === "yes";
+}
+
 function getRequestUserId(req: Request): string | null {
   return (req as any).userId || null;
 }
@@ -356,11 +387,17 @@ export function registerOpenAIProviderAuthRoutes(
     getConfig?: () => OpenAIOAuthConfig | null;
     includeCallbackRoutes?: boolean;
     resolveUserId?: OpenAIProviderAuthUserResolver;
+    activateModelPreference?: ProviderAuthModelPreferenceActivator | null;
+    resolveSelectedModelPreference?: ProviderAuthSelectedModelResolver;
   } = {},
 ): void {
   const stateStore = deps.stateStore ?? defaultStateStore;
   const getConfig = deps.getConfig ?? getOpenAIOAuthConfigFromEnv;
   const resolveUserId = deps.resolveUserId ?? getRequestUserId;
+  const activateModelPreference = deps.activateModelPreference === undefined
+    ? saveDefaultModelPreference
+    : deps.activateModelPreference;
+  const resolveSelectedModelPreference = deps.resolveSelectedModelPreference ?? readDefaultSelectedModelPreference;
 
   app.post("/api/auth/openai-oauth/start", async (req: Request, res: Response) => {
     try {
@@ -390,7 +427,9 @@ export function registerOpenAIProviderAuthRoutes(
         state,
         currentUserId: userId,
       });
-      res.json({ ...result, status: await getProviderStatus({ repo: deps.repo, userId }) });
+      const selectedModel = getDefaultModelForProviderAuth("openai", "oauth");
+      const modelPreferences = await activateModelPreference?.(userId, selectedModel);
+      res.json({ ...result, selectedModel, modelPreferences, status: await getProviderStatus({ repo: deps.repo, userId }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ error: "openai_oauth_callback_failed", message });
@@ -398,7 +437,7 @@ export function registerOpenAIProviderAuthRoutes(
   });
 
   if (deps.includeCallbackRoutes !== false) {
-    registerPublicOpenAIProviderAuthCallbackRoutes(app, { repo: deps.repo, stateStore });
+    registerPublicOpenAIProviderAuthCallbackRoutes(app, { repo: deps.repo, stateStore, activateModelPreference });
   }
 
   app.post("/api/auth/openai-api-key", async (req: Request, res: Response) => {
@@ -407,7 +446,9 @@ export function registerOpenAIProviderAuthRoutes(
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const apiKey = typeof req.body?.apiKey === "string" ? req.body.apiKey : "";
       await saveOpenAIApiKeyFromRequest({ repo: deps.repo, userId, apiKey, isDefault: true });
-      res.json({ ok: true, status: await getProviderStatus({ repo: deps.repo, userId }) });
+      const selectedModel = getDefaultModelForProviderAuth("openai", "api_key");
+      const modelPreferences = await activateModelPreference?.(userId, selectedModel);
+      res.json({ ok: true, selectedModel, modelPreferences, status: await getProviderStatus({ repo: deps.repo, userId }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ error: "openai_api_key_save_failed", message });
@@ -430,7 +471,9 @@ export function registerOpenAIProviderAuthRoutes(
         apiKey,
         isDefault: true,
       });
-      res.json({ ok: true, provider, status: await getProviderStatus({ repo: deps.repo, userId }) });
+      const selectedModel = getDefaultModelForProviderAuth(provider as ModelProviderId, "api_key");
+      const modelPreferences = await activateModelPreference?.(userId, selectedModel);
+      res.json({ ok: true, provider, selectedModel, modelPreferences, status: await getProviderStatus({ repo: deps.repo, userId }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(400).json({ error: "model_provider_api_key_save_failed", message });
@@ -456,7 +499,14 @@ export function registerOpenAIProviderAuthRoutes(
       const userId = await resolveUserId(req);
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const deleted = await deleteOpenAIProviderProfiles({ repo: deps.repo, userId });
-      res.json({ ok: true, deleted, status: await getProviderStatus({ repo: deps.repo, userId }) });
+      let selectedModel: string | undefined;
+      let modelPreferences: Record<string, string> | void | undefined;
+      const currentSelectedModel = await resolveSelectedModelPreference(userId);
+      if (truthyQueryFlag(req.query.resetSelectedModel) || providerForSelectedModel(currentSelectedModel) === "openai") {
+        selectedModel = getDefaultModelForProviderAuth("openai", "oauth");
+        modelPreferences = await activateModelPreference?.(userId, selectedModel);
+      }
+      res.json({ ok: true, deleted, selectedModel, modelPreferences, status: await getProviderStatus({ repo: deps.repo, userId }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: "openai_provider_delete_failed", message });
@@ -472,7 +522,14 @@ export function registerOpenAIProviderAuthRoutes(
         return res.status(400).json({ error: "unsupported_model_provider", message: "Unsupported model provider" });
       }
       const deleted = await deleteProviderProfiles({ repo: deps.repo, userId, provider: provider as ModelProviderId });
-      res.json({ ok: true, deleted, provider, status: await getProviderStatus({ repo: deps.repo, userId }) });
+      let selectedModel: string | undefined;
+      let modelPreferences: Record<string, string> | void | undefined;
+      const currentSelectedModel = await resolveSelectedModelPreference(userId);
+      if (providerForSelectedModel(currentSelectedModel) === provider) {
+        selectedModel = getDefaultModelForProviderAuth("openai", "oauth");
+        modelPreferences = await activateModelPreference?.(userId, selectedModel);
+      }
+      res.json({ ok: true, deleted, provider, selectedModel, modelPreferences, status: await getProviderStatus({ repo: deps.repo, userId }) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       res.status(500).json({ error: "model_provider_delete_failed", message });
@@ -485,9 +542,14 @@ export function registerPublicOpenAIProviderAuthCallbackRoutes(
   deps: {
     repo?: ModelProviderAuthProfileRepository;
     stateStore?: OpenAIOAuthStateStore;
+    activateModelPreference?: ProviderAuthModelPreferenceActivator | null;
+    exchangeCodeForTokens?: (request: OpenAIOAuthTokenExchangeRequest) => Promise<RefreshOAuthTokenResult | null>;
   } = {},
 ): void {
   const stateStore = deps.stateStore ?? defaultStateStore;
+  const activateModelPreference = deps.activateModelPreference === undefined
+    ? saveDefaultModelPreference
+    : deps.activateModelPreference;
 
   async function callback(req: Request, res: Response) {
     try {
@@ -499,7 +561,10 @@ export function registerPublicOpenAIProviderAuthCallbackRoutes(
         stateStore,
         code,
         state,
+        exchangeCodeForTokens: deps.exchangeCodeForTokens,
       });
+      const selectedModel = getDefaultModelForProviderAuth("openai", "oauth");
+      await activateModelPreference?.(result.userId, selectedModel);
       res.type("html").send(successHtml(result.email));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

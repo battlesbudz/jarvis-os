@@ -18,17 +18,27 @@
 
 import type OpenAI from "openai";
 
+export type ProviderResponseFormat =
+  OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"];
+
 export interface ProviderQueryParams {
   model: string;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
   toolChoice: "auto" | "required" | "none";
   maxCompletionTokens: number;
+  responseFormat?: ProviderResponseFormat;
   /** When true, the provider should emit fine-grained text deltas in real time. */
   stream: boolean;
   /** User-scoped runtimes, such as the desktop daemon, need this to find the right connection. */
   userId?: string;
   signal?: AbortSignal;
+}
+
+export function isJsonObjectResponseFormat(responseFormat: ProviderResponseFormat | undefined): boolean {
+  return !!responseFormat
+    && typeof responseFormat === "object"
+    && (responseFormat as { type?: unknown }).type === "json_object";
 }
 
 // ── Chunk types (discriminated union) ──────────────────────────────────────────

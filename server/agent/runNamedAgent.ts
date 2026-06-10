@@ -434,8 +434,10 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
     }
 
     // ── Resolve model (caller override → agent preferredModel → global pref) ──
-    const { getModel, AVAILABLE_MODELS, ORCHESTRATOR_MODELS } = await import("../lib/modelPrefs");
+    const { getModel, getSelectedModelPreference, AVAILABLE_MODELS, ORCHESTRATOR_MODELS } = await import("../lib/modelPrefs");
+    const selectedModel = await getSelectedModelPreference(userId);
     let model =
+      selectedModel ??
       opts.model ??
       agent.preferredModel ??
       (await getModel(userId, "chat"));
@@ -450,26 +452,9 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       console.warn(`[runNamedAgent] agent=${agentId} resolved unknown model "${model}" — continuing`);
     }
 
-    // ── Model enforcement: crew specialists must use approved OpenAI models ──
-    // Crew specialists (crewRole set, isCrewMember=true) MUST run on gpt-4o-mini
-    // or gpt-4.1-mini. Gemini models are strictly forbidden in this path.
-    // If an invalid model is detected, clamp to gpt-4o-mini and warn.
     const configJson = (agent.configJson ?? {}) as Record<string, unknown>;
     const isCrewMember = configJson.isCrewMember === true;
     const crewRole = typeof configJson.crewRole === "string" ? configJson.crewRole : null;
-    if (isCrewMember && crewRole && crewRole !== "orchestrator") {
-      const CREW_APPROVED_MODELS = new Set(["gpt-4o-mini", "gpt-4.1-mini"]);
-      const isGemini = typeof model === "string" && model.toLowerCase().startsWith("gemini");
-      const isApproved = typeof model === "string" && CREW_APPROVED_MODELS.has(model);
-      if (isGemini || !isApproved) {
-        console.warn(
-          `[runNamedAgent] crew specialist ${agent.name} has disallowed model "${model}" — clamping to gpt-4o-mini. ` +
-          `Crew specialists must use gpt-4o-mini or gpt-4.1-mini. Gemini is not permitted in this path.`,
-        );
-        model = "gpt-4o-mini";
-      }
-    }
-
     // ── Crew specialist tool scoping ─────────────────────────────────────────
     // When the agent is a non-orchestrator crew specialist, filter permittedTools
     // to only the tools listed in agents/crew/tools.json for its role. This keeps

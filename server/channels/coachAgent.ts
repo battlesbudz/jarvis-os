@@ -942,7 +942,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     console.error(`[${channelName}] route=full_orchestrator failed durationMs=${Date.now() - orchestratorStartedAt}; falling back to direct harness:`, orchErr);
     const fallbackStartedAt = Date.now();
     const fallback = await runAgent({
-      model: "gpt-4o-mini",
+      model: orchestratorModel,
       messages: baseMessages,
       tools: scopedTools,
       context: agentCtx,
@@ -982,7 +982,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         retried = true;
         try {
           const correction = await runAgent({
-            model: "gpt-4o-mini",
+            model: orchestratorModel,
             messages: correctionMessages,
             tools: scopedTools,
             context: agentCtx,

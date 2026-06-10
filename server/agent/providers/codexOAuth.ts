@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type OpenAI from "openai";
-import { BaseProvider } from "./base";
+import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildCodexSpawnCommand } from "./codexCommand";
 import { getCodexOAuthCommand } from "./env";
@@ -446,11 +446,15 @@ export function buildCodexOAuthProviderPrompt(params: ProviderQueryParams): stri
   });
 
   const hasTools = !!params.tools?.length && params.toolChoice !== "none";
+  const structuredOutputInstruction = isJsonObjectResponseFormat(params.responseFormat)
+    ? "The caller requires response_format=json_object. Return only a single valid JSON object as the assistant message content, with no markdown, code fences, commentary, or text outside the JSON object."
+    : "";
   const statelessInstruction = "This provider request is stateless. Ignore prior messages in this Codex runtime thread and answer only from the latest serialized conversation below.";
   const toolProtocol = hasTools
     ? [
         "You are Jarvis's main brain orchestrator using ChatGPT/Codex OAuth.",
         statelessInstruction,
+        structuredOutputInstruction,
         "You may either answer directly or request Jarvis tool calls.",
         "You do not execute tools yourself. Jarvis executes tool calls after you request them.",
         "Tool result messages in the conversation are authoritative observations from Jarvis. Use them directly, and do not contradict a successful tool result.",
@@ -478,8 +482,9 @@ export function buildCodexOAuthProviderPrompt(params: ProviderQueryParams): stri
     : [
         "You are Jarvis's ChatGPT/Codex OAuth provider bridge.",
         statelessInstruction,
+        structuredOutputInstruction,
         "Answer the latest user request using the conversation below.",
-      ].join("\n");
+      ].filter(Boolean).join("\n");
 
   return [
     toolProtocol,

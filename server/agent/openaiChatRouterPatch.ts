@@ -159,6 +159,7 @@ function routeBody(body: ChatCreateBody, signal: AbortSignal | undefined, logPre
     tools: body.tools,
     toolChoice: (body.tool_choice === "required" ? "required" : body.tool_choice === "none" ? "none" : "auto"),
     maxCompletionTokens: Number(body.max_completion_tokens ?? 1024),
+    responseFormat: body.response_format,
     stream: false,
     userId: getUserIdFromChatBody(body),
     signal,

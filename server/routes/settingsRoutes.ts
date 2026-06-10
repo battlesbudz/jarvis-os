@@ -2,28 +2,33 @@ import type { Express, Request, Response } from "express";
 import { desc, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
-import type { ModelCategory } from "../lib/modelPrefs";
 
 export function registerSettingsRoutes(app: Express): void {
   app.get("/api/settings/models", async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
-      const { AVAILABLE_MODELS, MODEL_DEFAULTS } = await import("../lib/modelPrefs");
+      const {
+        AVAILABLE_MODELS,
+        GLOBAL_MODEL_PREFERENCE_KEY,
+        MODEL_DEFAULTS,
+        buildGlobalModelPreferences,
+        resolveGlobalModelPreference,
+      } = await import("../lib/modelPrefs");
       const rows = await db
         .select({ data: schema.userPreferences.data })
         .from(schema.userPreferences)
         .where(eq(schema.userPreferences.userId, userId))
         .limit(1);
       const prefs = rows[0]?.data as Record<string, unknown> | undefined;
-      const stored = (prefs?.modelPreferences ?? {}) as Record<string, string>;
-      const categories = Object.keys(MODEL_DEFAULTS) as Array<keyof typeof MODEL_DEFAULTS>;
-      const resolved: Record<string, string> = {};
-      for (const cat of categories) {
-        const val = stored[cat];
-        resolved[cat] = AVAILABLE_MODELS.find(m => m.value === val) ? val : MODEL_DEFAULTS[cat];
-      }
-      res.json({ modelPreferences: resolved, availableModels: AVAILABLE_MODELS });
+      const stored = (prefs?.modelPreferences ?? {}) as Record<string, unknown>;
+      const selectedModel = resolveGlobalModelPreference(stored) ?? MODEL_DEFAULTS.chat;
+      res.json({
+        modelPreferences: buildGlobalModelPreferences(selectedModel),
+        selectedModel,
+        globalModelPreferenceKey: GLOBAL_MODEL_PREFERENCE_KEY,
+        availableModels: AVAILABLE_MODELS,
+      });
     } catch (err) {
       console.error("[ModelPrefs] GET failed:", err);
       res.status(500).json({ error: "Failed to fetch model preferences" });
@@ -34,14 +39,14 @@ export function registerSettingsRoutes(app: Express): void {
     try {
       const userId = (req as any).userId as string;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
-      const { isValidModelForCategory, MODEL_DEFAULTS } = await import("../lib/modelPrefs");
+      const { MODEL_DEFAULTS, buildGlobalModelPreferences, isValidModel } = await import("../lib/modelPrefs");
       const { category, model } = req.body as { category?: string; model?: string };
-      const openAiCategories = Object.keys(MODEL_DEFAULTS).filter(c => c !== "orchestrator");
-      if (!category || !openAiCategories.includes(category)) {
+      const categories = Object.keys(MODEL_DEFAULTS);
+      if (!category || !categories.includes(category)) {
         return res.status(400).json({ error: "Invalid category" });
       }
-      if (!isValidModelForCategory(model, category as ModelCategory)) {
-        return res.status(400).json({ error: "Invalid model for this category" });
+      if (!isValidModel(model)) {
+        return res.status(400).json({ error: "Invalid model" });
       }
       const rows = await db
         .select({ data: schema.userPreferences.data })
@@ -50,15 +55,16 @@ export function registerSettingsRoutes(app: Express): void {
         .limit(1);
       const existing = (rows[0]?.data ?? {}) as Record<string, unknown>;
       const existingModelPrefs = (existing.modelPreferences ?? {}) as Record<string, string>;
+      const nextModelPrefs = { ...existingModelPrefs, ...buildGlobalModelPreferences(model) };
       const updated = {
         ...existing,
-        modelPreferences: { ...existingModelPrefs, [category]: model },
+        modelPreferences: nextModelPrefs,
       };
       await db
         .insert(schema.userPreferences)
         .values({ userId, data: updated })
         .onConflictDoUpdate({ target: schema.userPreferences.userId, set: { data: updated } });
-      res.json({ ok: true });
+      res.json({ ok: true, selectedModel: model, modelPreferences: nextModelPrefs });
     } catch (err) {
       console.error("[ModelPrefs] PATCH failed:", err);
       res.status(500).json({ error: "Failed to save model preference" });
@@ -69,18 +75,16 @@ export function registerSettingsRoutes(app: Express): void {
     try {
       const userId = (req as any).userId as string;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
-      const { ORCHESTRATOR_MODELS, MODEL_DEFAULTS } = await import("../lib/modelPrefs");
+      const { ORCHESTRATOR_MODELS, MODEL_DEFAULTS, resolveGlobalModelPreference } = await import("../lib/modelPrefs");
       const rows = await db
         .select({ data: schema.userPreferences.data })
         .from(schema.userPreferences)
         .where(eq(schema.userPreferences.userId, userId))
         .limit(1);
       const prefs = rows[0]?.data as Record<string, unknown> | undefined;
-      const storedModel = (prefs?.modelPreferences as Record<string, string> | undefined)?.orchestrator;
-      const orchestratorModel = ORCHESTRATOR_MODELS.find(m => m.value === storedModel)
-        ? storedModel
-        : MODEL_DEFAULTS.orchestrator;
-      res.json({ orchestratorModel, availableOrchestratorModels: ORCHESTRATOR_MODELS });
+      const stored = (prefs?.modelPreferences ?? {}) as Record<string, unknown>;
+      const orchestratorModel = resolveGlobalModelPreference(stored) ?? MODEL_DEFAULTS.orchestrator;
+      res.json({ orchestratorModel, selectedModel: orchestratorModel, availableOrchestratorModels: ORCHESTRATOR_MODELS });
     } catch (err) {
       console.error("[Orchestrator] GET failed:", err);
       res.status(500).json({ error: "Failed to fetch orchestrator settings" });
@@ -92,7 +96,7 @@ export function registerSettingsRoutes(app: Express): void {
       const userId = (req as any).userId as string;
       if (!userId) return res.status(401).json({ error: "Authentication required" });
       const { model } = req.body as { model?: string };
-      const { ORCHESTRATOR_MODELS, MODEL_DEFAULTS } = await import("../lib/modelPrefs");
+      const { buildGlobalModelPreferences, isValidModel } = await import("../lib/modelPrefs");
       const rows = await db
         .select({ data: schema.userPreferences.data })
         .from(schema.userPreferences)
@@ -102,14 +106,16 @@ export function registerSettingsRoutes(app: Express): void {
       const existingModelPrefs = (existing.modelPreferences ?? {}) as Record<string, string>;
       const update: Record<string, unknown> = { ...existing };
       if (model) {
-        const validModel = ORCHESTRATOR_MODELS.find(m => m.value === model)?.value ?? MODEL_DEFAULTS.orchestrator;
-        update.modelPreferences = { ...existingModelPrefs, orchestrator: validModel };
+        if (!isValidModel(model)) {
+          return res.status(400).json({ error: "Invalid model" });
+        }
+        update.modelPreferences = { ...existingModelPrefs, ...buildGlobalModelPreferences(model) };
       }
       await db
         .insert(schema.userPreferences)
         .values({ userId, data: update })
         .onConflictDoUpdate({ target: schema.userPreferences.userId, set: { data: update } });
-      res.json({ ok: true });
+      res.json({ ok: true, selectedModel: model, modelPreferences: update.modelPreferences });
     } catch (err) {
       console.error("[Orchestrator] PATCH failed:", err);
       res.status(500).json({ error: "Failed to save orchestrator settings" });

@@ -70,7 +70,6 @@ export const MODEL_PROVIDER_CATALOG: CatalogProvider[] = [
 ];
 
 const ALL_CATEGORIES: ModelCategory[] = ["chat", "planning", "memory", "research", "orchestrator"];
-const NON_ORCHESTRATOR_CATEGORIES: ModelCategory[] = ["chat", "planning", "memory", "research"];
 
 export const MODEL_OPTIONS: CatalogModelOption[] = [
   {
@@ -85,56 +84,56 @@ export const MODEL_OPTIONS: CatalogModelOption[] = [
     label: "GPT-4.1 mini",
     description: "Fast OpenAI API-key model for everyday chat and planning.",
     provider: "openai",
-    categories: NON_ORCHESTRATOR_CATEGORIES,
+    categories: ALL_CATEGORIES,
   },
   {
     value: "openai/gpt-4.1",
     label: "GPT-4.1",
     description: "Stronger OpenAI API-key model for harder reasoning.",
     provider: "openai",
-    categories: ["planning", "research"],
+    categories: ALL_CATEGORIES,
   },
   {
     value: "anthropic/claude-sonnet-4-5",
     label: "Claude Sonnet 4.5",
     description: "Claude model for balanced reasoning, coding, and writing.",
     provider: "anthropic",
-    categories: NON_ORCHESTRATOR_CATEGORIES,
+    categories: ALL_CATEGORIES,
   },
   {
     value: "anthropic/claude-opus-4-1",
     label: "Claude Opus 4.1",
     description: "Claude model for heavyweight planning and research.",
     provider: "anthropic",
-    categories: ["planning", "research"],
+    categories: ALL_CATEGORIES,
   },
   {
     value: "google/gemini-2.5-flash",
     label: "Gemini 2.5 Flash",
     description: "Fast Gemini model for quick chat and research passes.",
     provider: "google",
-    categories: NON_ORCHESTRATOR_CATEGORIES,
+    categories: ALL_CATEGORIES,
   },
   {
     value: "google/gemini-2.5-pro",
     label: "Gemini 2.5 Pro",
     description: "Gemini model for deeper research and reasoning.",
     provider: "google",
-    categories: NON_ORCHESTRATOR_CATEGORIES,
+    categories: ALL_CATEGORIES,
   },
   {
     value: "openai-compatible/llama-local",
     label: "Local Llama",
     description: "Local OpenAI-compatible model through Ollama, LM Studio, vLLM, or Jarvis model relay.",
     provider: "local-llama",
-    categories: NON_ORCHESTRATOR_CATEGORIES,
+    categories: ALL_CATEGORIES,
   },
   {
     value: "modelrelay/auto-fastest",
     label: "Jarvis Model Relay",
     description: "Use the fastest available local model relay route.",
     provider: "local-llama",
-    categories: NON_ORCHESTRATOR_CATEGORIES,
+    categories: ALL_CATEGORIES,
   },
 ];
 

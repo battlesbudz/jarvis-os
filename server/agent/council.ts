@@ -106,7 +106,7 @@ export async function runCouncil(
   const succeededCount = agentResponses.filter((r) => r.ok).length;
 
   // Synthesize with the main assistant
-  const synthesis = await synthesizeCouncilResponse(question, agentResponses);
+  const synthesis = await synthesizeCouncilResponse(userId, question, agentResponses);
 
   logAgentEvent({
     event: "council_completed",
@@ -126,6 +126,7 @@ export async function runCouncil(
 // ── synthesizeCouncilResponse ──────────────────────────────────────────────────
 
 async function synthesizeCouncilResponse(
+  userId: string,
   question: string,
   responses: CouncilAgentResponse[],
 ): Promise<string> {
@@ -147,6 +148,7 @@ async function synthesizeCouncilResponse(
 
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
+      user: userId,
       messages: [
         {
           role: "system",
