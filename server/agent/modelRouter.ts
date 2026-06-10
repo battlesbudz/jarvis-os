@@ -629,6 +629,18 @@ function defaultRouteForProviderProfile(
   return null;
 }
 
+function isCodexOAuthRouteEntry(entry: FallbackChainEntry | null | undefined): boolean {
+  if (!entry) return false;
+  const model = entry.model.toLowerCase();
+  return entry.providerName === "chatgpt-codex-oauth" ||
+    model.startsWith("chatgpt-codex-oauth/") ||
+    model.startsWith("codex-oauth/");
+}
+
+function isCodexOnlyRouteChain(chain: FallbackChainEntry[] | null | undefined): boolean {
+  return !!chain && chain.length === 1 && isCodexOAuthRouteEntry(chain[0]);
+}
+
 async function getUserDefaultProviderProfileRouteChain(
   userId: string | undefined,
   tier: ModelExecutionTier,
@@ -735,9 +747,12 @@ async function prepareModelTurn(
   const leanContextApplied = routedMessages !== params.messages;
   const requestedEntry = parseRequestedModelSpec(params.requestedModel);
   const selectedChain = await getUserSelectedModelRouteChain(params.userId, logPrefix);
-  const chain = selectedChain
-    ?? (requestedEntry ? [requestedEntry] : null)
+  const requestedChain = requestedEntry ? [requestedEntry] : null;
+  const chain = (!isCodexOnlyRouteChain(selectedChain) ? selectedChain : null)
+    ?? (!isCodexOnlyRouteChain(requestedChain) ? requestedChain : null)
     ?? (await getUserDefaultProviderProfileRouteChain(params.userId, params.tier, logPrefix))
+    ?? selectedChain
+    ?? requestedChain
     ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
     ?? getModelRouteChain(params.tier);
   if (chain.length === 0) {
