@@ -1084,9 +1084,7 @@
       const GOOGLE_CLIENT_ID = 'GOOGLE_CLIENT_ID_PLACEHOLDER';
       const TOKEN_KEY      = 'jarvis_web_token';
       const USER_KEY       = 'jarvis_web_userId';
-      const APP_AUTH_TOKEN_KEY = '@gameplan_auth_token';
-      const APP_AUTH_USER_ID_KEY = '@gameplan_auth_user_id';
-      const APP_AUTH_BRIDGE_KEY = 'jarvis_web_app_auth_bridge';
+      const DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY = 'jarvis_web_desktop_connector_auth_bridge';
       function sessionIdKey(userId) {
         return `jarvis_web_sdkSessionId:${userId}`;
       }
@@ -1204,59 +1202,21 @@
         return error && error.message ? error.message : fallback;
       }
 
-      function bridgeWebchatAuthToAppStorage() {
+      function bridgeWebchatAuthToDesktopConnectorSetup() {
         if (!jwt) return;
-        let previousToken = null;
-        let previousUserId = null;
-        try { previousToken = localStorage.getItem(APP_AUTH_TOKEN_KEY); } catch {}
-        try { previousUserId = localStorage.getItem(APP_AUTH_USER_ID_KEY); } catch {}
         try {
-          localStorage.setItem(APP_AUTH_BRIDGE_KEY, JSON.stringify({
+          localStorage.setItem(DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY, JSON.stringify({
             token: jwt,
             userId: currentUserId || null,
-            previousToken,
-            previousUserId,
+            createdAt: Date.now(),
           }));
         } catch {
           return;
         }
-        try { localStorage.setItem(APP_AUTH_TOKEN_KEY, jwt); } catch {}
-        if (currentUserId) {
-          try { localStorage.setItem(APP_AUTH_USER_ID_KEY, currentUserId); } catch {}
-        }
       }
 
-      function restoreBridgedAppAuthStorage() {
-        let rawBridge = null;
-        try { rawBridge = localStorage.getItem(APP_AUTH_BRIDGE_KEY); } catch {}
-        if (!rawBridge) return;
-
-        let bridge = null;
-        try { bridge = JSON.parse(rawBridge); } catch {}
-        try { localStorage.removeItem(APP_AUTH_BRIDGE_KEY); } catch {}
-        if (!bridge || typeof bridge !== 'object') return;
-
-        const bridgeToken = typeof bridge.token === 'string' ? bridge.token : null;
-        const bridgeUserId = typeof bridge.userId === 'string' ? bridge.userId : null;
-        let appToken = null;
-        let appUserId = null;
-        try { appToken = localStorage.getItem(APP_AUTH_TOKEN_KEY); } catch {}
-        try { appUserId = localStorage.getItem(APP_AUTH_USER_ID_KEY); } catch {}
-
-        if (bridgeToken && appToken === bridgeToken) {
-          if (typeof bridge.previousToken === 'string') {
-            try { localStorage.setItem(APP_AUTH_TOKEN_KEY, bridge.previousToken); } catch {}
-          } else {
-            try { localStorage.removeItem(APP_AUTH_TOKEN_KEY); } catch {}
-          }
-        }
-        if (bridgeUserId && appUserId === bridgeUserId) {
-          if (typeof bridge.previousUserId === 'string') {
-            try { localStorage.setItem(APP_AUTH_USER_ID_KEY, bridge.previousUserId); } catch {}
-          } else {
-            try { localStorage.removeItem(APP_AUTH_USER_ID_KEY); } catch {}
-          }
-        }
+      function clearDesktopConnectorAuthBridge() {
+        try { localStorage.removeItem(DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY); } catch {}
       }
 
       async function fetchAuthedJson(url, options = {}) {
@@ -1511,7 +1471,7 @@
           if (data.requiresDesktopConnector) {
             const setupPath = data.setupPath || '/desktop-connector-setup';
             showSetupMessage(data.instructions || 'Opening Desktop Connector setup for ChatGPT subscription access.');
-            bridgeWebchatAuthToAppStorage();
+            bridgeWebchatAuthToDesktopConnectorSetup();
             window.location.assign(setupPath);
             return;
           }
@@ -2374,7 +2334,7 @@
         conversation = [];
         sdkSessionId = null;
         isGuest = false;
-        restoreBridgedAppAuthStorage();
+        clearDesktopConnectorAuthBridge();
         try { localStorage.removeItem(TOKEN_KEY); } catch {}
         try { localStorage.removeItem(USER_KEY); } catch {}
         if (leavingUserId) { try { localStorage.removeItem(sessionIdKey(leavingUserId)); } catch {} }
