@@ -124,7 +124,7 @@ import {
 } from "./agent/turnProgress";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
-import { getModel, MODEL_DEFAULTS } from "./lib/modelPrefs";
+import { getExplicitCoachRequestedModel } from "./services/coachModelSelection";
 import {
   buildCoachSystemPrompt,
   clearMorningNoteSummary,
@@ -2098,7 +2098,7 @@ Answer (yes/no):`,
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
-      const coachChatModel = userId ? await getModel(userId, "chat") : MODEL_DEFAULTS.chat;
+      const coachChatModel = await getExplicitCoachRequestedModel(userId);
 
       const turnStartedAtMs = Date.now();
       let lastVisibleUpdateAtMs = turnStartedAtMs;
@@ -3490,7 +3490,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       const streamStartedAt = Date.now();
       const stream = await openai.chat.completions.create({
-        model: coachChatModel,
+        model: coachChatModel ?? "gpt-4o-mini",
         messages: streamMessages,
         stream: true,
         max_completion_tokens: 8192,
@@ -3499,7 +3499,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       stopKeepalive();
       let fullStreamedReply = '';
-      let streamedModel = coachChatModel;
+      let streamedModel = coachChatModel ?? "gpt-4o-mini";
       for await (const chunk of stream) {
         if (signal.aborted) break;
         if (chunk.model) streamedModel = chunk.model;
