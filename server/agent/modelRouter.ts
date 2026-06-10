@@ -72,6 +72,7 @@ export interface RoutedModelTurnParams {
   maxCompletionTokens: number;
   responseFormat?: ProviderResponseFormat;
   stream?: boolean;
+  preferRequestedModel?: boolean;
   userId?: string;
   signal?: AbortSignal;
   logPrefix?: string;
@@ -656,6 +657,11 @@ function isCodexOnlyRouteChain(chain: FallbackChainEntry[] | null | undefined): 
   return !!chain && chain.length === 1 && isCodexOAuthRouteEntry(chain[0]);
 }
 
+function describeRouteChain(chain: FallbackChainEntry[] | null | undefined): string {
+  if (!chain?.length) return "none";
+  return chain.map((entry) => `${entry.providerName}(${entry.model})`).join(" -> ");
+}
+
 function normalizeSelectedModelPreferenceState(
   value: string | null | SelectedModelPreferenceState,
 ): SelectedModelPreferenceState {
@@ -796,6 +802,7 @@ async function prepareModelTurn(
   const selectedCodexMayBeStale = isCodexOnlyRouteChain(selectedChain) && !selectedRoute?.isExplicit;
   const requestedCodexOnly = isCodexOnlyRouteChain(requestedChain);
   const requestedNonCodexChain = !requestedCodexOnly ? requestedChain : null;
+  const preferredRequestedChain = params.preferRequestedModel ? requestedChain : requestedNonCodexChain;
   const needsProviderProfileState =
     selectedCodexMayBeStale ||
     (!selectedChain && (!requestedChain || requestedCodexOnly));
@@ -805,7 +812,10 @@ async function prepareModelTurn(
   const selectedCodexIsStaleDefault =
     selectedCodexMayBeStale &&
     !providerProfileState.hasOpenAIOAuthProfile;
-  const chain = requestedNonCodexChain
+  console.log(
+    `${logPrefix} route_input requested=${params.requestedModel ?? "none"} requestedEntry=${describeRouteChain(requestedChain)} selected=${describeRouteChain(selectedChain)} selectedExplicit=${selectedRoute?.isExplicit ? "true" : "false"} preferRequested=${params.preferRequestedModel ? "true" : "false"}`,
+  );
+  const chain = preferredRequestedChain
     ?? (!selectedCodexIsStaleDefault ? selectedChain : null)
     ?? providerProfileState.defaultChain
     ?? selectedChain

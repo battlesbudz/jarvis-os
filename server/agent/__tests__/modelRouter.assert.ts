@@ -1099,6 +1099,7 @@ async function runRequestedProviderModelOverridesAmbientCodexRouteAssertion(): P
     const result = await routeModelTurn({
       tier: "balanced",
       requestedModel: "google/gemini-2.5-flash",
+      preferRequestedModel: true,
       messages: [{ role: "user", content: "Use my globally selected Gemini provider." }],
       toolChoice: "none",
       maxCompletionTokens: 64,

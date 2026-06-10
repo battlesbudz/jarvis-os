@@ -2885,6 +2885,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
             maxCompletionTokens: 2048,
             requestedModel: coachChatSelectedModel,
+            preferRequestedModel: Boolean(coachChatSelectedModel),
             signal,
             userId: userId ?? undefined,
             logPrefix: "[CoachChat]",
@@ -3496,6 +3497,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       let fullStreamedReply = "";
       const finalTurn = await streamCoachModelTurn({
         requestedModel: coachChatSelectedModel,
+        preferRequestedModel: Boolean(coachChatSelectedModel),
         messages: streamMessages,
         toolChoice: "none",
         maxCompletionTokens: 8192,
