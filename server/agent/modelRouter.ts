@@ -1,9 +1,18 @@
 import type OpenAI from "openai";
 import type { ProviderName } from "./providers";
-import { getGlobalFallbackChain, queryWithFallback, type FallbackChainEntry } from "./providers/fallback";
-import type { ProviderResponseFormat, ProviderTurnResult } from "./providers/base";
+import {
+  getGlobalFallbackChain,
+  queryWithFallback,
+  queryWithFallbackStreaming,
+  type FallbackChainEntry,
+} from "./providers/fallback";
+import type { ProviderChunk, ProviderResponseFormat, ProviderTurnResult } from "./providers/base";
 import { getProviderEnvValue, hasCodexOAuthProvider, hasDirectOpenAIProvider, hasProviderEnvValue } from "./providers/env";
-import { getProviderStatus, type ProviderStatus } from "./providers/modelProviderAuthProfiles";
+import {
+  getProviderStatus,
+  type ProviderAuthType,
+  type ProviderStatus,
+} from "./providers/modelProviderAuthProfiles";
 import { DEFAULT_CODEX_OAUTH_MODEL, getCodexOAuthModel } from "./runtimeModel";
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
@@ -68,16 +77,21 @@ export interface RoutedModelTurnParams {
   logPrefix?: string;
 }
 
-type OpenAIProviderStatusResolver = (input: { userId: string }) => Promise<ProviderStatus>;
+interface PreparedModelTurn {
+  chain: FallbackChainEntry[];
+  routedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+}
+
+type ProviderStatusResolver = (input: { userId: string }) => Promise<ProviderStatus>;
 type UserSelectedModelResolver = (input: { userId: string }) => Promise<string | null>;
 
-let openAIProviderStatusResolverForTesting: OpenAIProviderStatusResolver | null = null;
+let providerStatusResolverForTesting: ProviderStatusResolver | null = null;
 let userSelectedModelResolverForTesting: UserSelectedModelResolver | null = null;
 
 export function _setOpenAIProviderStatusResolverForTesting(
-  resolver: OpenAIProviderStatusResolver | null,
+  resolver: ProviderStatusResolver | null,
 ): void {
-  openAIProviderStatusResolverForTesting = resolver;
+  providerStatusResolverForTesting = resolver;
 }
 
 export function _setUserSelectedModelResolverForTesting(
@@ -582,7 +596,7 @@ async function getUserOpenAIRouteChain(
 ): Promise<FallbackChainEntry[] | null> {
   if (!userId) return null;
 
-  const resolver = openAIProviderStatusResolverForTesting ?? getProviderStatus;
+  const resolver = providerStatusResolverForTesting ?? getProviderStatus;
   try {
     const status = await resolver({ userId });
     if (!status.openai.connected || !status.openai.defaultAuthType) return null;
@@ -592,6 +606,54 @@ async function getUserOpenAIRouteChain(
     console.warn(`${logPrefix} provider_auth_status_unavailable: ${message.slice(0, 160)}`);
     return null;
   }
+}
+
+function defaultRouteForProviderProfile(
+  providerId: string,
+  authType: ProviderAuthType | null,
+  tier: ModelExecutionTier,
+): FallbackChainEntry | null {
+  if (!authType) return null;
+  if (providerId === "google") {
+    return { providerName: "google", model: "gemini-2.5-flash" };
+  }
+  if (providerId === "anthropic") {
+    return { providerName: "anthropic", model: "claude-sonnet-4-5" };
+  }
+  if (providerId === "local-llama") {
+    return { providerName: "openai-compatible", model: "openai-compatible/llama-local" };
+  }
+  if (providerId === "openai") {
+    return { providerName: "openai", model: openAIModelForExecutionTier(tier) };
+  }
+  return null;
+}
+
+async function getUserDefaultProviderProfileRouteChain(
+  userId: string | undefined,
+  tier: ModelExecutionTier,
+  logPrefix: string,
+): Promise<FallbackChainEntry[] | null> {
+  if (!userId) return null;
+
+  const resolver = providerStatusResolverForTesting ?? getProviderStatus;
+  try {
+    const status = await resolver({ userId });
+    for (const providerId of ["google", "anthropic", "local-llama"]) {
+      const provider = status.providers[providerId];
+      if (!provider?.connected || !provider.defaultAuthType) continue;
+      const route = defaultRouteForProviderProfile(providerId, provider.defaultAuthType, tier);
+      // A connected provider profile is a user-level routing choice. Keep this
+      // single-entry so runtime defaults cannot silently switch surfaces back
+      // to Codex/OpenAI when the selected provider has a transient failure.
+      if (route) return [route];
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`${logPrefix} provider_profile_status_unavailable: ${message.slice(0, 160)}`);
+  }
+
+  return null;
 }
 
 export async function getUserSelectedModelRouteChain(
@@ -621,12 +683,61 @@ export async function getUserSelectedModelRouteChain(
 
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
+  const prepared = await prepareModelTurn(params, logPrefix);
+
+  return queryWithFallback(
+    prepared.chain,
+    {
+      model: prepared.chain[0].model,
+      messages: prepared.routedMessages,
+      tools: prepared.routedMessages !== params.messages ? undefined : params.tools,
+      toolChoice: prepared.routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),
+      maxCompletionTokens: params.maxCompletionTokens,
+      responseFormat: params.responseFormat,
+      stream: params.stream ?? false,
+      userId: params.userId,
+      signal: params.signal,
+    },
+    logPrefix,
+  );
+}
+
+export async function streamModelTurn(
+  params: RoutedModelTurnParams,
+  onChunk: (chunk: ProviderChunk) => void | Promise<void>,
+): Promise<ProviderTurnResult> {
+  const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
+  const prepared = await prepareModelTurn(params, logPrefix);
+
+  return queryWithFallbackStreaming(
+    prepared.chain,
+    {
+      model: prepared.chain[0].model,
+      messages: prepared.routedMessages,
+      tools: prepared.routedMessages !== params.messages ? undefined : params.tools,
+      toolChoice: prepared.routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),
+      maxCompletionTokens: params.maxCompletionTokens,
+      responseFormat: params.responseFormat,
+      stream: true,
+      userId: params.userId,
+      signal: params.signal,
+    },
+    logPrefix,
+    onChunk,
+  );
+}
+
+async function prepareModelTurn(
+  params: RoutedModelTurnParams,
+  logPrefix: string,
+): Promise<PreparedModelTurn> {
   const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
   const leanContextApplied = routedMessages !== params.messages;
   const requestedEntry = parseRequestedModelSpec(params.requestedModel);
   const selectedChain = await getUserSelectedModelRouteChain(params.userId, logPrefix);
   const chain = selectedChain
     ?? (requestedEntry ? [requestedEntry] : null)
+    ?? (await getUserDefaultProviderProfileRouteChain(params.userId, params.tier, logPrefix))
     ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
     ?? getModelRouteChain(params.tier);
   if (chain.length === 0) {
@@ -645,19 +756,8 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
     console.log(`${logPrefix} lean_context: omitted ${params.tools.length} tool schema(s)`);
   }
 
-  return queryWithFallback(
+  return {
     chain,
-    {
-      model: chain[0].model,
-      messages: routedMessages,
-      tools: routedMessages !== params.messages ? undefined : params.tools,
-      toolChoice: routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),
-      maxCompletionTokens: params.maxCompletionTokens,
-      responseFormat: params.responseFormat,
-      stream: params.stream ?? false,
-      userId: params.userId,
-      signal: params.signal,
-    },
-    logPrefix,
-  );
+    routedMessages,
+  };
 }

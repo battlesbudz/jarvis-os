@@ -4,8 +4,8 @@ import OpenAI from "openai";
 import { and, desc, eq, gte } from "drizzle-orm";
 import { morningVoiceNotes, userPreferences } from "@shared/schema";
 import { db } from "../db";
-import { routeModelTurn } from "../agent/modelRouter";
-import type { ProviderTurnResult } from "../agent/providers/base";
+import { routeModelTurn, streamModelTurn } from "../agent/modelRouter";
+import type { ProviderChunk, ProviderTurnResult } from "../agent/providers/base";
 
 export function providerLabelForModel(model: string): string {
   const normalized = model.toLowerCase();
@@ -64,6 +64,32 @@ export async function runCoachModelTurn(
     signal: params.signal,
     logPrefix: params.logPrefix,
   });
+}
+
+export async function streamCoachModelTurn(
+  params: {
+    messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+    tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
+    toolChoice: "auto" | "required" | "none";
+    maxCompletionTokens: number;
+    requestedModel?: string;
+    signal?: AbortSignal;
+    userId?: string;
+    logPrefix: string;
+  },
+  onChunk: (chunk: ProviderChunk) => void | Promise<void>,
+): Promise<ProviderTurnResult> {
+  return streamModelTurn({
+    tier: "balanced",
+    requestedModel: params.requestedModel,
+    messages: params.messages,
+    tools: params.tools,
+    toolChoice: params.toolChoice,
+    maxCompletionTokens: params.maxCompletionTokens,
+    userId: params.userId,
+    signal: params.signal,
+    logPrefix: params.logPrefix,
+  }, onChunk);
 }
 
 interface PrimeSections {

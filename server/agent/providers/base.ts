@@ -71,6 +71,7 @@ export interface ProviderTurnResult {
  */
 export async function accumulateTurn(
   gen: AsyncGenerator<ProviderChunk>,
+  onChunk?: (chunk: ProviderChunk) => void | Promise<void>,
 ): Promise<ProviderTurnResult> {
   let textContent = "";
   const textChunks: string[] = [];
@@ -79,6 +80,7 @@ export async function accumulateTurn(
   let finishReason: string | null = null;
 
   for await (const chunk of gen) {
+    if (onChunk) await onChunk(chunk);
     switch (chunk.type) {
       case "text":
         textContent += chunk.delta;

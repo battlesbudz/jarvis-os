@@ -125,6 +125,7 @@ import {
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import { getExplicitCoachRequestedModel } from "./services/coachModelSelection";
+import { writeCoachStreamError } from "./services/coachSse";
 import {
   buildCoachSystemPrompt,
   clearMorningNoteSummary,
@@ -133,6 +134,7 @@ import {
   getUserLocalDate,
   providerLabelForModel,
   runCoachModelTurn,
+  streamCoachModelTurn,
 } from "./services/aiCoachContextService";
 
 async function applyLivingContextReviewToFile(relPath: string | null | undefined, oldBlock: string | null | undefined, newBlock?: string | null): Promise<void> {
@@ -3489,29 +3491,29 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         : chatMessages;
 
       const streamStartedAt = Date.now();
-      const stream = await openai.chat.completions.create({
-        model: coachChatModel ?? "gpt-4o-mini",
+      let fullStreamedReply = "";
+      const finalTurn = await streamCoachModelTurn({
+        requestedModel: coachChatModel,
         messages: streamMessages,
-        stream: true,
-        max_completion_tokens: 8192,
-        user: userId ?? undefined,
-      }, { signal });
+        toolChoice: "none",
+        maxCompletionTokens: 8192,
+        userId: userId ?? undefined,
+        signal,
+        logPrefix: "[CoachChat:final]",
+      }, (chunk) => {
+        if (signal.aborted || chunk.type !== "text") return;
+        const content = chunk.delta;
+        if (!content) return;
+        fullStreamedReply += content;
+        if (!clientDisconnected) {
+          touchVisibleProgress("Streaming response");
+          try { res.write(`data: ${JSON.stringify({ content })}\n\n`); } catch {}
+        }
+      });
 
       stopKeepalive();
-      let fullStreamedReply = '';
-      let streamedModel = coachChatModel ?? "gpt-4o-mini";
-      for await (const chunk of stream) {
-        if (signal.aborted) break;
-        if (chunk.model) streamedModel = chunk.model;
-        const content = chunk.choices[0]?.delta?.content || '';
-        if (content) {
-          fullStreamedReply += content;
-          if (!clientDisconnected) {
-            touchVisibleProgress("Streaming response");
-            try { res.write(`data: ${JSON.stringify({ content })}\n\n`); } catch {}
-          }
-        }
-      }
+      if (!fullStreamedReply && finalTurn.textContent) fullStreamedReply = finalTurn.textContent;
+      let streamedModel = finalTurn.model ?? coachChatModel ?? "gpt-4o-mini";
 
       // Persist if daemon actions ran — response survives connection drops
       const streamUsage = estimateModelUsage({
@@ -3521,7 +3523,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       if (userId) {
         void recordModelUsage({
           userId,
-          provider: providerLabelForModel(streamedModel),
+          provider: finalTurn.providerName ?? providerLabelForModel(streamedModel),
           model: streamedModel,
           source: "app_chat",
           ...streamUsage,
@@ -3619,11 +3621,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       if (!res.headersSent) {
         res.status(500).json({ error: "Failed to get coach response" });
       } else {
-        const message = error instanceof Error && error.message
-          ? error.message.slice(0, 500)
-          : "Stream interrupted";
-        res.write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
-        res.end();
+        writeCoachStreamError(res, error);
       }
     }
   });
