@@ -1084,6 +1084,8 @@
       const GOOGLE_CLIENT_ID = 'GOOGLE_CLIENT_ID_PLACEHOLDER';
       const TOKEN_KEY      = 'jarvis_web_token';
       const USER_KEY       = 'jarvis_web_userId';
+      const APP_AUTH_TOKEN_KEY = '@gameplan_auth_token';
+      const APP_AUTH_USER_ID_KEY = '@gameplan_auth_user_id';
       function sessionIdKey(userId) {
         return `jarvis_web_sdkSessionId:${userId}`;
       }
@@ -1199,6 +1201,14 @@
 
       function setupErrorMessage(error, fallback) {
         return error && error.message ? error.message : fallback;
+      }
+
+      function bridgeWebchatAuthToAppStorage() {
+        if (!jwt) return;
+        try { localStorage.setItem(APP_AUTH_TOKEN_KEY, jwt); } catch {}
+        if (currentUserId) {
+          try { localStorage.setItem(APP_AUTH_USER_ID_KEY, currentUserId); } catch {}
+        }
       }
 
       async function fetchAuthedJson(url, options = {}) {
@@ -1453,6 +1463,7 @@
           if (data.requiresDesktopConnector) {
             const setupPath = data.setupPath || '/desktop-connector-setup';
             showSetupMessage(data.instructions || 'Opening Desktop Connector setup for ChatGPT subscription access.');
+            bridgeWebchatAuthToAppStorage();
             window.location.assign(setupPath);
             return;
           }
@@ -2317,6 +2328,8 @@
         isGuest = false;
         try { localStorage.removeItem(TOKEN_KEY); } catch {}
         try { localStorage.removeItem(USER_KEY); } catch {}
+        try { localStorage.removeItem(APP_AUTH_TOKEN_KEY); } catch {}
+        try { localStorage.removeItem(APP_AUTH_USER_ID_KEY); } catch {}
         if (leavingUserId) { try { localStorage.removeItem(sessionIdKey(leavingUserId)); } catch {} }
         showAuth();
       }

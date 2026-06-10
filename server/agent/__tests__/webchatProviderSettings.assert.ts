@@ -43,6 +43,8 @@ assert.match(template, /openAILoginLink\.style\.display\s*=\s*'flex'/);
 assert.match(template, /openAILoginLink\.focus\(\)/);
 assert.doesNotMatch(template, /window\.open\(data\.loginUrl/);
 assert.match(template, /data\.requiresDesktopConnector/);
+assert.match(template, /APP_AUTH_TOKEN_KEY = '@gameplan_auth_token'/);
+assert.match(template, /bridgeWebchatAuthToAppStorage\(\)/);
 assert.match(template, /window\.location\.assign\(setupPath\)/);
 assert.match(template, /setupBtn\.style\.display\s*=\s*'none'/);
 assert.match(template, /setupBtn\.style\.display\s*=\s*'flex'/);
