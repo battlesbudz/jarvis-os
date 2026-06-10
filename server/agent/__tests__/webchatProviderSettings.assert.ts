@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 const template = readFileSync(resolve(process.cwd(), "server", "templates", "chat.html"), "utf8");
 const settingsScreen = readFileSync(resolve(process.cwd(), "app", "(tabs)", "settings.tsx"), "utf8");
 const routes = readFileSync(resolve(process.cwd(), "server", "routes.ts"), "utf8");
+const coachRoutePatcher = readFileSync(resolve(process.cwd(), "scripts", "patch-coach-route.cjs"), "utf8");
 
 assert.match(template, /id="setup-btn"/);
 assert.match(template, /Open model and provider setup/);
@@ -80,5 +81,8 @@ assert.match(routes, /const finalTurn = await streamCoachModelTurn\(/);
 assert.match(routes, /chunk\.type !== ["']text["']/);
 assert.doesNotMatch(routes, /const stream = await openai\.chat\.completions\.create\(\{\s*model:\s*coachChatModel/s);
 assert.match(routes, /streamedModel\s*=\s*finalTurn\.model\s*\?\?\s*coachChatSelectedModel\s*\?\?\s*["']gpt-4o-mini["']/);
+assert.match(coachRoutePatcher, /hasImportedCoachModelTurn/);
+assert.match(coachRoutePatcher, /requestedModel:\s*params\.requestedModel/);
+assert.match(coachRoutePatcher, /preferRequestedModel:\s*params\.preferRequestedModel/);
 
 console.log("OK: webchat exposes owner-only model and OpenAI provider setup controls");
