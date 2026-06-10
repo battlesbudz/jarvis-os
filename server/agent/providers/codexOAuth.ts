@@ -198,7 +198,7 @@ function isCodexDaemonRuntimeEnabled(): boolean {
 
 function isCodexDaemonAppServerEnabled(): boolean {
   const raw = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED?.trim().toLowerCase();
-  return raw !== "false" && raw !== "0";
+  return raw === "true" || raw === "1" || raw === "yes";
 }
 
 function isUnknownDaemonOpError(result: { ok: boolean; data?: unknown; error?: string }): boolean {
@@ -232,6 +232,18 @@ function buildRuntimeStatus(params: Partial<CodexOAuthRuntimeStatus> = {}): Code
 
 function formatCodexRuntimeStatusMessage(status: CodexOAuthRuntimeStatus): string {
   return `${missingCodexGatewayMessage()} ${status.reason} ${status.action}`.replace(/\s+/g, " ").trim();
+}
+
+function formatCodexRuntimeFailureMessage(status: CodexOAuthRuntimeStatus, detail: string): string {
+  const runtime = status.selectedRuntime === "daemon"
+    ? "Desktop daemon Codex OAuth runtime"
+    : status.selectedRuntime === "gateway"
+      ? "Codex gateway runtime"
+      : "Codex OAuth runtime";
+  const action = status.selectedRuntime === "daemon"
+    ? "Reconnect the Desktop Daemon on the machine where Codex is logged in, then retry."
+    : status.action;
+  return `${runtime} was selected but the request failed. ${detail} ${action}`.replace(/\s+/g, " ").trim();
 }
 
 export async function getCodexOAuthRuntimeStatus(userId?: string): Promise<CodexOAuthRuntimeStatus> {
@@ -774,7 +786,7 @@ export class CodexOAuthProvider extends BaseProvider {
         answer = await runDaemonCodexOAuthPrompt(runtimeStatus.resolvedUserId ?? params.userId, prompt, params.signal);
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(`${formatCodexRuntimeStatusMessage(runtimeStatus)} ${detail}`, { cause: error });
+        throw new Error(formatCodexRuntimeFailureMessage(runtimeStatus, detail), { cause: error });
       }
     } else if (runtimeStatus.selectedRuntime === "gateway") {
       const gatewayUrl = getCodexGatewayUrl();

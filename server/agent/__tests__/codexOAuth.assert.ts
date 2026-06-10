@@ -242,6 +242,111 @@ async function main() {
   const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
   const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
   const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  const previousAppServerEnabled = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+  delete process.env.JARVIS_CODEX_GATEWAY_URL;
+  process.env.JARVIS_CODEX_RUNTIME = "daemon";
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  delete process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+  try {
+    let observedOpType = "";
+    _setCodexOAuthDaemonBridgeForTesting({
+      isDesktopDaemonActive: (userId) => userId === "user-1",
+      isDaemonActionAllowed: async (userId, action) => userId === "user-1" && action === "shell",
+      sendDaemonOp: async (_userId, op) => {
+        observedOpType = op.type;
+        return { ok: true, data: { content: `{"type":"final","content":"Cold daemon by default."}` } };
+      },
+    });
+
+    const provider = new CodexOAuthProvider();
+    const chunks = [];
+    for await (const chunk of provider.query({
+      model: "chatgpt-codex-oauth/auto",
+      messages: [{ role: "user", content: "Hello with default daemon mode" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      stream: false,
+      userId: "user-1",
+    })) {
+      chunks.push(chunk);
+    }
+
+    assert.equal(observedOpType, "codex_oauth_prompt");
+    assert.deepEqual(chunks, [
+      { type: "text", delta: "Cold daemon by default." },
+      { type: "finish", reason: "stop" },
+    ]);
+  } finally {
+    _setCodexOAuthDaemonBridgeForTesting(null);
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousRuntime == null) delete process.env.JARVIS_CODEX_RUNTIME;
+    else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+    if (previousAppServerEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED = previousAppServerEnabled;
+  }
+  console.log("OK: Codex OAuth provider uses the stable daemon prompt by default");
+}
+
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
+  const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
+  const previousAppServerEnabled = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+  delete process.env.JARVIS_CODEX_GATEWAY_URL;
+  process.env.JARVIS_CODEX_RUNTIME = "daemon";
+  process.env.JARVIS_CODEX_DAEMON_ENABLED = "true";
+  delete process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+  try {
+    _setCodexOAuthDaemonBridgeForTesting({
+      isDesktopDaemonActive: (userId) => userId === "user-1",
+      isDaemonActionAllowed: async (userId, action) => userId === "user-1" && action === "shell",
+      sendDaemonOp: async () => ({ ok: false, error: "daemon disconnected" }),
+    });
+
+    const provider = new CodexOAuthProvider();
+    await assert.rejects(
+      async () => {
+        for await (const _chunk of provider.query({
+          model: "chatgpt-codex-oauth/auto",
+          messages: [{ role: "user", content: "Hello with disconnect" }],
+          toolChoice: "none",
+          maxCompletionTokens: 64,
+          stream: false,
+          userId: "user-1",
+        })) {
+          // exhaust generator
+        }
+      },
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.match(message, /runtime was selected but the request failed/);
+        assert.match(message, /daemon disconnected/);
+        assert.doesNotMatch(message, /no available runtime/);
+        assert.doesNotMatch(message, /No action required/);
+        return true;
+      },
+    );
+  } finally {
+    _setCodexOAuthDaemonBridgeForTesting(null);
+    if (previousUrl == null) delete process.env.JARVIS_CODEX_GATEWAY_URL;
+    else process.env.JARVIS_CODEX_GATEWAY_URL = previousUrl;
+    if (previousRuntime == null) delete process.env.JARVIS_CODEX_RUNTIME;
+    else process.env.JARVIS_CODEX_RUNTIME = previousRuntime;
+    if (previousDaemonEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_ENABLED = previousDaemonEnabled;
+    if (previousAppServerEnabled == null) delete process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
+    else process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED = previousAppServerEnabled;
+  }
+  console.log("OK: Codex OAuth daemon disconnect failures do not reuse missing-runtime copy");
+}
+
+{
+  const previousUrl = process.env.JARVIS_CODEX_GATEWAY_URL;
+  const previousDaemonEnabled = process.env.JARVIS_CODEX_DAEMON_ENABLED;
+  const previousRuntime = process.env.JARVIS_CODEX_RUNTIME;
   const previousCommand = process.env.JARVIS_CODEX_COMMAND;
   const previousLegacyCommand = process.env.CODEX_COMMAND;
   const previousAppServerEnabled = process.env.JARVIS_CODEX_DAEMON_APP_SERVER_ENABLED;
