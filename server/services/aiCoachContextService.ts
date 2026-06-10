@@ -48,6 +48,7 @@ export async function runCoachModelTurn(
     toolChoice: "auto" | "required" | "none";
     maxCompletionTokens: number;
     requestedModel?: string;
+    preferRequestedModel?: boolean;
     signal?: AbortSignal;
     userId?: string;
     logPrefix: string;
@@ -56,6 +57,7 @@ export async function runCoachModelTurn(
   return routeModelTurn({
     tier: "balanced",
     requestedModel: params.requestedModel,
+    preferRequestedModel: params.preferRequestedModel,
     messages: params.messages,
     tools: params.tools,
     toolChoice: params.toolChoice,
@@ -73,6 +75,7 @@ export async function streamCoachModelTurn(
     toolChoice: "auto" | "required" | "none";
     maxCompletionTokens: number;
     requestedModel?: string;
+    preferRequestedModel?: boolean;
     signal?: AbortSignal;
     userId?: string;
     logPrefix: string;
@@ -82,6 +85,7 @@ export async function streamCoachModelTurn(
   return streamModelTurn({
     tier: "balanced",
     requestedModel: params.requestedModel,
+    preferRequestedModel: params.preferRequestedModel,
     messages: params.messages,
     tools: params.tools,
     toolChoice: params.toolChoice,

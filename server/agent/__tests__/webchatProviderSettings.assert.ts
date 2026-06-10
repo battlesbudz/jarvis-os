@@ -71,8 +71,9 @@ assert.doesNotMatch(routes, /JSON\.stringify\(\{\s*error:\s*["']Stream interrupt
 assert.match(routes, /writeCoachStreamError\(res,\s*error\)/);
 assert.match(routes, /getModel\(userId,\s*["']chat["']\)/);
 assert.match(routes, /requestedModel:\s*coachChatSelectedModel/);
+assert.match(routes, /preferRequestedModel:\s*Boolean\(coachChatSelectedModel\)/);
 assert.doesNotMatch(routes, /requestedModel:\s*coachChatModel/);
-assert.match(routes, /streamCoachModelTurn\(\{\s*requestedModel:\s*coachChatSelectedModel,\s*messages:\s*streamMessages,/);
+assert.match(routes, /streamCoachModelTurn\(\{\s*requestedModel:\s*coachChatSelectedModel,\s*preferRequestedModel:\s*Boolean\(coachChatSelectedModel\),\s*messages:\s*streamMessages,/);
 assert.match(routes, /userId:\s*userId\s*\?\?\s*undefined/);
 assert.match(routes, /streamCoachModelTurn/);
 assert.match(routes, /const finalTurn = await streamCoachModelTurn\(/);
