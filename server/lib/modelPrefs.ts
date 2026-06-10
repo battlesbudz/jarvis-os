@@ -57,11 +57,6 @@ export function resolveGlobalModelPreference(
     if (isValidModel(candidate) && candidate !== MODEL_DEFAULTS[category]) return candidate;
   }
 
-  for (const category of MODEL_CATEGORY_KEYS) {
-    const candidate = modelPrefs[category];
-    if (isValidModel(candidate)) return candidate;
-  }
-
   return null;
 }
 
