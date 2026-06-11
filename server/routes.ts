@@ -104,6 +104,7 @@ import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
 import { getModel } from "./lib/modelPrefs";
+import { getExplicitCoachRequestedModel } from "./services/coachModelSelection";
 import { runCapabilityGapAnalysis } from "./agent/capabilityGapAnalyzer";
 import { getModelRouteChain, routeModelTurn, type ModelExecutionTier } from "./agent/modelRouter";
 import { isRetriableProviderError } from "./agent/providers/fallback";
@@ -2131,7 +2132,7 @@ Answer (yes/no):`,
       if (!messages || !Array.isArray(messages)) {
         return res.status(400).json({ error: "messages array is required" });
       }
-      const coachChatSelectedModel = userId ? await getModel(userId, "chat") : undefined;
+      const coachChatSelectedModel = await getExplicitCoachRequestedModel(userId);
       console.info(
         `[CoachChat] selected_model_seed userId=${userId ?? "anonymous"} authScope=${req.authScope ?? "none"} model=${coachChatSelectedModel ?? "none"}`,
       );
