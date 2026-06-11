@@ -18,6 +18,8 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_browse",
   "android_screenshot",
   "android_read_screen",
+  "android_screen_context",
+  "android_operator_action",
   "android_tap",
   "android_type",
   "android_swipe",
@@ -50,6 +52,8 @@ function isAndroidAction(value: string): boolean {
 function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_screenshot") return "android_screenshot";
   if (action === "android_read_screen") return "android_read_screen";
+  if (action === "android_screen_context") return "android_read_screen";
+  if (action === "android_operator_action") return "android_tap_type";
   if (action === "android_open_app") return "android_open_app";
   if (action === "android_browse") return "android_browse";
   if (action === "android_file_list") return "android_file_list";
@@ -89,6 +93,8 @@ ANDROID actions (available when an Android device daemon is paired):
   CRITICAL — only screenshot when you have confirmed the target content is visible (via android_read_screen). Never screenshot immediately after navigating; always verify first. After capturing, describe ONLY what is actually visible in the image — never invent or summarise content you cannot directly see.
 - android_read_screen: return the visible text and UI element tree via accessibility.
   Call this immediately after any navigation (android_browse, android_open_app) and after every scroll to understand what is currently on screen before acting.
+- android_screen_context: return a structured accessibility-first screen context with stable per-capture element ids, bounds, traits, redaction, and risk hints. Prefer this for operator-style UI navigation before screenshots.
+- android_operator_action: execute one narrow operator action through the Android daemon. Payload goes in operatorAction and must use one of: tap_element, tap_coordinates, type_text, swipe, press_key, open_app, wait, done.
 - android_tap: tap at x/y pixel coordinates on the screen. Use android_read_screen first to identify the correct coordinates of the element you want to tap.
 - android_type: type text using the accessibility service. After typing a search query into a search bar, always follow immediately with \`android_press_key\` {key: \'enter\'} to submit — do not wait for results to appear on their own. Alternatively, use \`android_search_in_app\` which handles the full open → type → submit flow automatically.
 - android_swipe: swipe from (x1,y1) to (x2,y2). For scrolling DOWN (reveal content below): x1=540, y1=1600, x2=540, y2=400, durationMs=500. For scrolling UP (reveal content above): x1=540, y1=400, x2=540, y2=1600, durationMs=500. Always call android_read_screen after each swipe to check what became visible before deciding to scroll again.
@@ -136,6 +142,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           "shell", "notify", "file_read", "file_write", "file_list",
           "desktop_screenshot", "desktop_read_screen",
           "android_open_app", "android_browse", "android_screenshot", "android_read_screen",
+          "android_screen_context", "android_operator_action",
           "android_tap", "android_type", "android_swipe", "android_press_key",
           "android_file_list", "android_file_read",
           "android_file_search", "android_open_file", "android_copy_to_clipboard",
@@ -179,6 +186,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       message: { type: "string", description: "SMS message body (when action is 'android_sms_send')" },
       fps: { type: "number", description: "Frames per second for screen recording (when action is 'android_screen_record', default 15)" },
       fieldDescription: { type: "string", description: "Human-readable label for the target field — used for logging only (when action is 'android_paste_text')" },
+      operatorAction: { type: "object", description: "Structured operator action payload when action is 'android_operator_action'. Example: { type: 'tap_element', elementId: 3 }" },
     },
     required: ["action"],
   },
@@ -222,6 +230,14 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         op = { type: "android_screenshot" };
       } else if (rawAction === "android_read_screen") {
         op = { type: "android_read_screen" };
+      } else if (rawAction === "android_screen_context") {
+        op = { type: "android_screen_context" };
+      } else if (rawAction === "android_operator_action") {
+        const operatorAction = (args as { operatorAction?: unknown }).operatorAction;
+        if (!operatorAction || typeof operatorAction !== "object" || Array.isArray(operatorAction)) {
+          return { ok: false, content: JSON.stringify({ ok: false, error: "operatorAction object required" }) };
+        }
+        op = { type: "android_operator_action", action: operatorAction as Record<string, unknown> };
       } else if (rawAction === "android_tap") {
         if (typeof args.x !== "number" || typeof args.y !== "number") return { ok: false, content: JSON.stringify({ ok: false, error: "x and y required" }) };
         op = { type: "android_tap", x: args.x, y: args.y };
@@ -347,8 +363,9 @@ Always confirm with the user before tap/type/swipe actions and before android_no
 
       // Media ops return base64 — don't truncate or base64 will be corrupt
       const isMediaOp = rawAction === "android_camera_snap" || rawAction === "android_camera_clip" || rawAction === "android_screen_record";
+      const isStructuredContext = rawAction === "android_screen_context";
       const serialised = JSON.stringify(result);
-      return { ok: !!result.ok, content: isMediaOp ? serialised : serialised.slice(0, 12000) };
+      return { ok: !!result.ok, content: (isMediaOp || isStructuredContext) ? serialised : serialised.slice(0, 12000) };
     }
 
     // ── Desktop actions ────────────────────────────────────────────────────

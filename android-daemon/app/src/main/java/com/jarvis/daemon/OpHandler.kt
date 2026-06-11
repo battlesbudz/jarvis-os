@@ -49,6 +49,8 @@ object OpHandler {
                 "android_return_to_jarvis" -> handleReturnToJarvis(context)
                 "android_screenshot" -> handleScreenshot()
                 "android_read_screen" -> handleReadScreen()
+                "android_screen_context" -> handleScreenContext()
+                "android_operator_action" -> handleOperatorAction(op)
                 "android_tap" -> handleTap(op)
                 "android_type" -> handleType(op)
                 "android_swipe" -> handleSwipe(op)
@@ -392,6 +394,35 @@ object OpHandler {
         } catch (e: Exception) {
             OpResult(false, error = "Read screen error: ${e.message}")
         }
+    }
+
+    private fun handleScreenContext(): OpResult {
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
+        return try {
+            OpResult(true, data = svc.captureScreenContext().toJson())
+        } catch (e: Exception) {
+            OpResult(false, error = "Screen context error: ${e.message}")
+        }
+    }
+
+    private fun handleOperatorAction(op: JSONObject): OpResult {
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
+        val actionJson = op.optJSONObject("action")
+            ?: return OpResult(false, error = "action object required")
+
+        val action = OperatorAction.fromJson(actionJson)
+        val result = OperatorActionExecutor(svc).execute(action)
+        val ok = result.optBoolean("ok", false)
+        val error = if (ok) null else result.optString("error", "operator action failed")
+        return OpResult(
+            ok = ok,
+            data = JSONObject()
+                .put("action", action.toJson())
+                .put("result", result),
+            error = error
+        )
     }
 
     private fun handleTap(op: JSONObject): OpResult {

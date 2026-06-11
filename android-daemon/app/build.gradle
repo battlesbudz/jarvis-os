@@ -59,6 +59,7 @@ dependencies {
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'org.java-websocket:Java-WebSocket:1.5.4'
     implementation 'org.json:json:20231013'
+    testImplementation 'junit:junit:4.13.2'
 
     // FusedLocationProviderClient — on-demand GPS fix with coarse/precise accuracy modes
     implementation 'com.google.android.gms:play-services-location:21.2.0'
