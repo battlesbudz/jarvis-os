@@ -36,6 +36,14 @@ assert.ok(
   "daemon_action tool accepts operatorAction payload",
 );
 assert.ok(
+  daemonToolSrc.includes('operatorActionPermKey(typedOperatorAction)'),
+  "daemon_action tool derives nested permission from operatorAction payload",
+);
+assert.ok(
+  daemonToolSrc.includes('case "open_app": return "android_open_app";'),
+  "daemon_action tool requires android_open_app permission for open_app operator actions",
+);
+assert.ok(
   routesSrc.includes('"android_screen_context"'),
   "routes daemon_action schema lists android_screen_context",
 );
@@ -46,6 +54,14 @@ assert.ok(
 assert.ok(
   routesSrc.includes("operatorAction"),
   "routes daemon_action schema accepts operatorAction payload",
+);
+assert.ok(
+  routesSrc.includes('operatorActionPermKey(typedOperatorAction)'),
+  "routes daemon_action derives nested permission from operatorAction payload",
+);
+assert.ok(
+  routesSrc.includes("case 'open_app': return 'android_open_app';"),
+  "routes daemon_action requires android_open_app permission for open_app operator actions",
 );
 
 console.log("OK: Android screen context and operator daemon actions are exposed with permission gates");
