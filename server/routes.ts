@@ -809,7 +809,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         parameters: {
           type: "object",
           properties: {
-            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait", "android_return_to_jarvis"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons — sends a pop-up banner notification with title and body. 'android_wait' pauses for ms milliseconds (default 1500, max 10000) — use between steps when the phone UI needs time to settle (e.g. after tapping a video to let it load before read_screen). 'android_return_to_jarvis' navigates the phone back to the Jarvis chat in the browser — call this as the LAST step of every multi-step task after the notify banner, to return the user to the conversation." },
+            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_screen_context", "android_operator_action", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait", "android_return_to_jarvis"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons — sends a pop-up banner notification with title and body. 'android_wait' pauses for ms milliseconds (default 1500, max 10000) — use between steps when the phone UI needs time to settle (e.g. after tapping a video to let it load before read_screen). 'android_screen_context' returns structured accessibility context. 'android_operator_action' executes a narrow operatorAction payload. 'android_return_to_jarvis' navigates the phone back to the Jarvis chat in the browser — call this as the LAST step of every multi-step task after the notify banner, to return the user to the conversation." },
             cmd: { type: "string", description: "Shell command (for 'shell' action)" },
             title: { type: "string", description: "Notification title (for 'notify' action)" },
             body: { type: "string", description: "Notification body (for 'notify' action)" },
@@ -828,6 +828,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down", "enter"], description: "System key (for android_press_key). Use 'enter' to press IME Search/Go/Done/Enter on the keyboard." },
             limit: { type: "number", description: "Max notifications to return (for android_notifications_list, default 20)" },
             ms: { type: "number", description: "Milliseconds to wait (for android_wait, default 1500, max 10000). Use 1500–3000ms after tapping a video to let YouTube load." },
+            operatorAction: { type: "object", description: "Structured operator payload for android_operator_action. Example: { type: 'tap_element', elementId: 3 }" },
           },
           required: ["action"],
         },
@@ -1364,7 +1365,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return { result: 'error', label: 'Daemon not connected', detail: 'No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile → Connected Channels.' };
           }
           const isAndroidDaemon = isAndroidDaemonActive(userId);
-          const androidActions = ['android_open_app', 'android_browse', 'android_return_to_jarvis', 'android_screenshot', 'android_read_screen', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'android_wait'];
+          const androidActions = ['android_open_app', 'android_browse', 'android_return_to_jarvis', 'android_screenshot', 'android_read_screen', 'android_screen_context', 'android_operator_action', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'android_wait'];
           const desktopActions = ['shell', 'file_read', 'file_write', 'file_list'];
 
           let op: DaemonOp;
@@ -1377,6 +1378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Check Android permissions
             const permMap: Record<string, AndroidDaemonAction | null> = {
               android_screenshot: 'android_screenshot', android_read_screen: 'android_read_screen',
+              android_screen_context: 'android_read_screen', android_operator_action: 'android_tap_type',
               android_open_app: 'android_open_app', android_browse: 'android_browse',
               android_file_list: 'android_file_list', android_file_read: 'android_file_read',
               android_tap: 'android_tap_type', android_type: 'android_tap_type',
@@ -1405,6 +1407,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
               op = { type: 'android_screenshot' };
             } else if (action === 'android_read_screen') {
               op = { type: 'android_read_screen' };
+            } else if (action === 'android_screen_context') {
+              op = { type: 'android_screen_context' };
+            } else if (action === 'android_operator_action') {
+              const operatorAction = (args as { operatorAction?: unknown }).operatorAction;
+              if (!operatorAction || typeof operatorAction !== 'object' || Array.isArray(operatorAction)) {
+                return { result: 'error', label: 'operatorAction required', detail: 'Provide operatorAction for android_operator_action.' };
+              }
+              op = { type: 'android_operator_action', action: operatorAction as Record<string, unknown> };
             } else if (action === 'android_tap') {
               if (typeof args.x !== 'number' || typeof args.y !== 'number') return { result: 'error', label: 'x,y required', detail: 'Provide x and y for android_tap.' };
               op = { type: 'android_tap', x: args.x, y: args.y };
@@ -1581,6 +1591,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           // instead of blocking the 30s default (which pushes total chat time over 60s).
           const actionTimeouts: Record<string, number> = {
             android_read_screen: 8000,
+            android_screen_context: 10000,
+            android_operator_action: 10000,
             android_tap: 6000,
             android_swipe: 6000,
             android_press_key: 5000,

@@ -605,6 +605,9 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     // ── Read screen — returns compact JSON ──────────────────────────────────
+    fun captureScreenContext(): ScreenContextSnapshot =
+        ScreenContextEngine(this).capture()
+
     fun readScreenContent(): String {
         val root = rootInActiveWindow
         val packageName = root?.packageName?.toString() ?: ""

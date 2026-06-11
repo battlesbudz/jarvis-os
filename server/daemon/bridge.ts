@@ -27,6 +27,8 @@ export type DaemonOp =
   | { type: "android_browse"; url: string }
   | { type: "android_screenshot" }
   | { type: "android_read_screen" }
+  | { type: "android_screen_context" }
+  | { type: "android_operator_action"; action: Record<string, unknown> }
   | { type: "android_tap"; x: number; y: number }
   | { type: "android_type"; text: string; submit?: boolean }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
@@ -562,6 +564,8 @@ export async function sendDaemonOp(
       android_location_get:   "android_location",
       android_sms_send:       "android_sms",
       android_screen_record:  "android_screen_record",
+      android_screen_context: "android_read_screen",
+      android_operator_action: "android_tap_type",
       android_view_hierarchy: "android_read_screen",
       android_pinch:          "android_tap_type",
     };
