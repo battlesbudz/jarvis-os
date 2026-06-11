@@ -333,6 +333,24 @@ export const DEFAULT_ANDROID_DAEMON_PERMISSIONS: AndroidDaemonPermissions = {
   android_screen_record: true,
 };
 
+function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
+  switch (operatorAction.type) {
+    case "open_app":
+      return "android_open_app";
+    case "tap_element":
+    case "tap_coordinates":
+    case "type_text":
+    case "swipe":
+    case "press_key":
+      return "android_tap_type";
+    case "wait":
+    case "done":
+      return null;
+    default:
+      return "android_tap_type";
+  }
+}
+
 // Prefer the real paired row (any non-pending address) over a pre-pairing
 // stub when both exist. If platform is provided, only rows for that platform
 // are considered (matched by metadata.platform).
@@ -565,11 +583,12 @@ export async function sendDaemonOp(
       android_sms_send:       "android_sms",
       android_screen_record:  "android_screen_record",
       android_screen_context: "android_read_screen",
-      android_operator_action: "android_tap_type",
       android_view_hierarchy: "android_read_screen",
       android_pinch:          "android_tap_type",
     };
-    const requiredPerm = OP_PERM_MAP[op.type];
+    const requiredPerm = op.type === "android_operator_action"
+      ? operatorActionPermKey(op.action)
+      : OP_PERM_MAP[op.type];
     if (requiredPerm) {
       const allowed = await isAndroidDaemonActionAllowed(userId, requiredPerm);
       if (!allowed) {

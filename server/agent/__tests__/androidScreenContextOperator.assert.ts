@@ -20,8 +20,16 @@ assert.ok(
   "android_screen_context keeps read_screen permission gate",
 );
 assert.ok(
-  bridgeSrc.includes('android_operator_action: "android_tap_type"'),
-  "android_operator_action keeps tap_type permission gate",
+  bridgeSrc.includes('operatorActionPermKey(op.action)'),
+  "android_operator_action derives nested permission in bridge gate",
+);
+assert.ok(
+  bridgeSrc.includes('case "open_app":') && bridgeSrc.includes('return "android_open_app";'),
+  "android_operator_action bridge gate requires android_open_app for open_app",
+);
+assert.ok(
+  !bridgeSrc.includes('android_operator_action: "android_tap_type"'),
+  "android_operator_action bridge gate is not hard-coded to tap_type",
 );
 assert.ok(
   daemonToolSrc.includes('"android_screen_context"'),
