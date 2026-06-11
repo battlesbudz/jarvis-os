@@ -53,7 +53,6 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_screenshot") return "android_screenshot";
   if (action === "android_read_screen") return "android_read_screen";
   if (action === "android_screen_context") return "android_read_screen";
-  if (action === "android_operator_action") return "android_tap_type";
   if (action === "android_open_app") return "android_open_app";
   if (action === "android_browse") return "android_browse";
   if (action === "android_file_list") return "android_file_list";
@@ -71,6 +70,20 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_paste_text") return "android_tap_type";
   if (action === "android_get_focused_field") return "android_tap_type";
   return null;
+}
+
+function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
+  switch (operatorAction.type) {
+    case "open_app": return "android_open_app";
+    case "tap_element":
+    case "tap_coordinates":
+    case "type_text":
+    case "swipe":
+    case "press_key": return "android_tap_type";
+    case "wait":
+    case "done": return null;
+    default: return "android_tap_type";
+  }
 }
 
 export const daemonActionTool: AgentTool = {
@@ -237,7 +250,12 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         if (!operatorAction || typeof operatorAction !== "object" || Array.isArray(operatorAction)) {
           return { ok: false, content: JSON.stringify({ ok: false, error: "operatorAction object required" }) };
         }
-        op = { type: "android_operator_action", action: operatorAction as Record<string, unknown> };
+        const typedOperatorAction = operatorAction as Record<string, unknown>;
+        const nestedPermKey = operatorActionPermKey(typedOperatorAction);
+        if (nestedPermKey && !(await isAndroidDaemonActionAllowed(ctx.userId, nestedPermKey))) {
+          return { ok: false, content: JSON.stringify({ ok: false, error: `Android operator action '${String(typedOperatorAction.type || "unknown")}' is not permitted. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.` }) };
+        }
+        op = { type: "android_operator_action", action: typedOperatorAction };
       } else if (rawAction === "android_tap") {
         if (typeof args.x !== "number" || typeof args.y !== "number") return { ok: false, content: JSON.stringify({ ok: false, error: "x and y required" }) };
         op = { type: "android_tap", x: args.x, y: args.y };

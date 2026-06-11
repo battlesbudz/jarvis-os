@@ -166,6 +166,20 @@ const openai = new OpenAI(getOpenAIClientConfig());
 
 export { buildPlanForUser, buildPlanFromInputs } from './services/planGenerationService';
 
+function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
+  switch (operatorAction.type) {
+    case 'open_app': return 'android_open_app';
+    case 'tap_element':
+    case 'tap_coordinates':
+    case 'type_text':
+    case 'swipe':
+    case 'press_key': return 'android_tap_type';
+    case 'wait':
+    case 'done': return null;
+    default: return 'android_tap_type';
+  }
+}
+
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth", authRouter);
   app.use("/api/auth/mobile", mobileAuthRouter);
@@ -1378,7 +1392,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             // Check Android permissions
             const permMap: Record<string, AndroidDaemonAction | null> = {
               android_screenshot: 'android_screenshot', android_read_screen: 'android_read_screen',
-              android_screen_context: 'android_read_screen', android_operator_action: 'android_tap_type',
+              android_screen_context: 'android_read_screen',
               android_open_app: 'android_open_app', android_browse: 'android_browse',
               android_file_list: 'android_file_list', android_file_read: 'android_file_read',
               android_tap: 'android_tap_type', android_type: 'android_tap_type',
@@ -1414,7 +1428,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (!operatorAction || typeof operatorAction !== 'object' || Array.isArray(operatorAction)) {
                 return { result: 'error', label: 'operatorAction required', detail: 'Provide operatorAction for android_operator_action.' };
               }
-              op = { type: 'android_operator_action', action: operatorAction as Record<string, unknown> };
+              const typedOperatorAction = operatorAction as Record<string, unknown>;
+              const nestedPermKey = operatorActionPermKey(typedOperatorAction);
+              if (nestedPermKey && !(await isAndroidDaemonActionAllowed(userId, nestedPermKey))) {
+                return { result: 'error', label: 'Permission denied', detail: `Android operator action '${String(typedOperatorAction.type || 'unknown')}' is not permitted. Enable it in Profile → Connected Channels → Android Device → Permissions.` };
+              }
+              op = { type: 'android_operator_action', action: typedOperatorAction };
             } else if (action === 'android_tap') {
               if (typeof args.x !== 'number' || typeof args.y !== 'number') return { result: 'error', label: 'x,y required', detail: 'Provide x and y for android_tap.' };
               op = { type: 'android_tap', x: args.x, y: args.y };

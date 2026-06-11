@@ -20,8 +20,16 @@ assert.ok(
   "android_screen_context keeps read_screen permission gate",
 );
 assert.ok(
-  bridgeSrc.includes('android_operator_action: "android_tap_type"'),
-  "android_operator_action keeps tap_type permission gate",
+  bridgeSrc.includes('operatorActionPermKey(op.action)'),
+  "android_operator_action derives nested permission in bridge gate",
+);
+assert.ok(
+  bridgeSrc.includes('case "open_app":') && bridgeSrc.includes('return "android_open_app";'),
+  "android_operator_action bridge gate requires android_open_app for open_app",
+);
+assert.ok(
+  !bridgeSrc.includes('android_operator_action: "android_tap_type"'),
+  "android_operator_action bridge gate is not hard-coded to tap_type",
 );
 assert.ok(
   daemonToolSrc.includes('"android_screen_context"'),
@@ -36,6 +44,14 @@ assert.ok(
   "daemon_action tool accepts operatorAction payload",
 );
 assert.ok(
+  daemonToolSrc.includes('operatorActionPermKey(typedOperatorAction)'),
+  "daemon_action tool derives nested permission from operatorAction payload",
+);
+assert.ok(
+  daemonToolSrc.includes('case "open_app": return "android_open_app";'),
+  "daemon_action tool requires android_open_app permission for open_app operator actions",
+);
+assert.ok(
   routesSrc.includes('"android_screen_context"'),
   "routes daemon_action schema lists android_screen_context",
 );
@@ -46,6 +62,14 @@ assert.ok(
 assert.ok(
   routesSrc.includes("operatorAction"),
   "routes daemon_action schema accepts operatorAction payload",
+);
+assert.ok(
+  routesSrc.includes('operatorActionPermKey(typedOperatorAction)'),
+  "routes daemon_action derives nested permission from operatorAction payload",
+);
+assert.ok(
+  routesSrc.includes("case 'open_app': return 'android_open_app';"),
+  "routes daemon_action requires android_open_app permission for open_app operator actions",
 );
 
 console.log("OK: Android screen context and operator daemon actions are exposed with permission gates");
