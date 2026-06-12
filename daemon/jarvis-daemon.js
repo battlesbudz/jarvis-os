@@ -978,11 +978,17 @@ const MAX_BACKOFF = 60000;
 // reconnects with reconnectSecret proof-of-possession instead of code.
 let storedDaemonId = ACTIVE_STATE?.daemonId || null;
 let storedReconnectSecret = ACTIVE_STATE?.reconnectSecret || null;
+let connectionGeneration = 0;
+let activeSocketGeneration = 0;
+let activeSocket = null;
 
 function connect() {
   const url = wsUrl(SERVER);
   console.log(`[daemon] connecting to ${url} (${storedDaemonId ? "reconnect" : "pair"})`);
   const ws = new WebSocket(url);
+  const generation = ++connectionGeneration;
+  activeSocketGeneration = generation;
+  activeSocket = ws;
   let paired = false;
   let pingTimer = null;
 
@@ -1063,6 +1069,11 @@ function connect() {
 
   ws.on("close", (code, reason) => {
     if (pingTimer) clearInterval(pingTimer);
+    if (activeSocket !== ws || activeSocketGeneration !== generation) {
+      console.log(`[daemon] stale socket closed (code=${code}, reason=${reason || "n/a"}); current connection is newer`);
+      return;
+    }
+    activeSocket = null;
     console.log(`[daemon] disconnected (code=${code}, reason=${reason || "n/a"}); reconnecting in ${backoffMs}ms`);
     setTimeout(connect, backoffMs);
     backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF);
