@@ -28,10 +28,15 @@ if (runningOnRailway && !args.includes("--force")) {
   args.push("--force");
 }
 
-const child = spawn(npx, ["drizzle-kit", "push", ...args], {
-  stdio: "inherit",
-  shell: false,
-});
+const child = process.platform === "win32"
+  ? spawn("cmd.exe", ["/d", "/s", "/c", npx, "drizzle-kit", "push", ...args], {
+      stdio: "inherit",
+      shell: false,
+    })
+  : spawn(npx, ["drizzle-kit", "push", ...args], {
+      stdio: "inherit",
+      shell: false,
+    });
 
 child.on("exit", (code, signal) => {
   if (signal) {
