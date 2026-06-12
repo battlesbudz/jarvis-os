@@ -84,12 +84,14 @@ export function getRecentPhoneNotifications(userId: string, limit = 20): PhoneNo
 
 interface PendingOp {
   resolve: (r: { ok: boolean; data?: unknown; error?: string }) => void;
+  socket: WebSocket;
   timer: ReturnType<typeof setTimeout>;
 }
 
 // Keyed by `${userId}:${platform}` where platform is "desktop" or "android"
 const userSockets = new Map<string, WebSocket>();
 const pendingByUser = new Map<string, Map<string, PendingOp>>();
+const daemonSocketReplacementLocks = new Set<string>();
 let opCounter = 0;
 
 // Wake word event subscriptions: userId → set of callbacks
@@ -252,6 +254,30 @@ export function listPairedUsers(): string[] {
     if (colonIdx > -1) userIds.add(key.slice(0, colonIdx));
   }
   return [...userIds];
+}
+
+export function shouldProtectPendingDaemonSocket(prior: { readyState: number } | undefined, pendingCount: number): boolean {
+  return !!(prior && prior.readyState === WebSocket.OPEN && pendingCount > 0);
+}
+
+function pendingOpCount(key: string): number {
+  return pendingByUser.get(key)?.size ?? 0;
+}
+
+function isDaemonSocketReplacementLocked(key: string): boolean {
+  return daemonSocketReplacementLocks.has(key);
+}
+
+function rejectDuplicateDaemonSocket(
+  ws: WebSocket,
+  userId: string,
+  platform: string,
+  pendingCount: number,
+): void {
+  const message = "Existing Desktop Daemon operation is still running; keeping the active socket.";
+  try { ws.send(JSON.stringify({ type: "hello", ok: false, error: message })); } catch { /* noop */ }
+  try { ws.close(4004, "daemon busy"); } catch { /* noop */ }
+  console.log(`[daemon] duplicate connection rejected userId=${userId} platform=${platform} pending=${pendingCount}`);
 }
 
 // Forcibly disconnect active daemon socket(s) for this user.
@@ -561,6 +587,10 @@ export async function sendDaemonOp(
     actualPlatform = isAndroidOp ? "android" : "desktop";
   }
   const pendingKey = socketKey(userId, actualPlatform);
+  if (isDaemonSocketReplacementLocked(pendingKey)) {
+    console.log(`[daemon] op SKIPPED - daemon socket replacement in progress userId=${userId} platform=${actualPlatform} op=${op.type}`);
+    return { ok: false, error: "Desktop daemon connection is being refreshed. Retry shortly." };
+  }
 
   // ── Bridge-level Android permission gate ──────────────────────────────────
   // Enforce permission checks at the bridge layer so no code path can bypass
@@ -624,6 +654,7 @@ export async function sendDaemonOp(
       pendingByUser.set(pendingKey, userMap);
     }
     userMap.set(id, {
+      socket: sock,
       resolve: (result) => {
         const durationMs = Date.now() - sentAt;
         if (op.type === "ping") {
@@ -662,6 +693,24 @@ export async function createDaemonPairingCode(userId: string): Promise<string> {
     code, userId, channel: "daemon", expiresAt,
   });
   return code;
+}
+
+async function lookupPairingCodeUserId(code: string): Promise<string | null> {
+  try {
+    const rows = await db.select().from(channelLinkCodes)
+      .where(and(eq(channelLinkCodes.code, code), eq(channelLinkCodes.channel, "daemon")))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
+      await db.delete(channelLinkCodes).where(eq(channelLinkCodes.code, code));
+      return null;
+    }
+    return row.userId;
+  } catch (err) {
+    console.error("[daemon] lookupPairingCodeUserId failed:", err);
+    return null;
+  }
 }
 
 async function consumePairingCode(code: string): Promise<string | null> {
@@ -793,7 +842,6 @@ export function startDaemonBridge(server: HttpServer): void {
             ws.close(4001, "bad secret");
             return;
           }
-          pairedUserId = row.userId;
           if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
           // Update metadata with fresh hostname/platform if provided
           if (rm.hostname) storedMeta.hostname = rm.hostname;
@@ -805,19 +853,37 @@ export function startDaemonBridge(server: HttpServer): void {
           }
           const reconnPlatform = normalizeDaemonPlatform(storedMeta.platform);
           storedMeta.platform = reconnPlatform;
-          await db.update(channelLinks)
-            .set({ metadata: storedMeta, lastSeenAt: new Date() })
-            .where(eq(channelLinks.id, row.id));
-          pairedPlatform = reconnPlatform;
-          const reconnKey = socketKey(pairedUserId, reconnPlatform);
+          const reconnectUserId = row.userId;
+          const reconnKey = socketKey(reconnectUserId, reconnPlatform);
           const prior = userSockets.get(reconnKey);
-          if (prior && prior !== ws) { try { prior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
-          userSockets.set(reconnKey, ws);
-          const hello: HelloMsg = { type: "hello", ok: true, userId: pairedUserId };
-          try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
-          console.log(`[daemon] reconnected userId=${pairedUserId} platform=${reconnPlatform} daemonId=${rm.daemonId}`);
-          // Sync wake/talk settings to daemon after reconnect (fire-and-forget)
-          if (reconnPlatform === "android") setTimeout(() => syncWakeSettingsToDaemon(pairedUserId ?? ""), 1500);
+          const pendingCount = pendingOpCount(reconnKey);
+          if (prior && prior !== ws && shouldProtectPendingDaemonSocket(prior, pendingCount)) {
+            rejectDuplicateDaemonSocket(ws, reconnectUserId, reconnPlatform, pendingCount);
+            return;
+          }
+          daemonSocketReplacementLocks.add(reconnKey);
+          try {
+            await db.update(channelLinks)
+              .set({ metadata: storedMeta, lastSeenAt: new Date() })
+              .where(eq(channelLinks.id, row.id));
+            const currentPrior = userSockets.get(reconnKey);
+            const currentPendingCount = pendingOpCount(reconnKey);
+            if (currentPrior && currentPrior !== ws && shouldProtectPendingDaemonSocket(currentPrior, currentPendingCount)) {
+              rejectDuplicateDaemonSocket(ws, reconnectUserId, reconnPlatform, currentPendingCount);
+              return;
+            }
+            pairedUserId = reconnectUserId;
+            pairedPlatform = reconnPlatform;
+            if (currentPrior && currentPrior !== ws) { try { currentPrior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
+            userSockets.set(reconnKey, ws);
+            const hello: HelloMsg = { type: "hello", ok: true, userId: pairedUserId };
+            try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
+            console.log(`[daemon] reconnected userId=${pairedUserId} platform=${reconnPlatform} daemonId=${rm.daemonId}`);
+            // Sync wake/talk settings to daemon after reconnect (fire-and-forget)
+            if (reconnPlatform === "android") setTimeout(() => syncWakeSettingsToDaemon(pairedUserId ?? ""), 1500);
+          } finally {
+            daemonSocketReplacementLocks.delete(reconnKey);
+          }
         } catch (err) {
           console.error("[daemon] reconnect lookup failed:", err);
           try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "reconnect failed" })); } catch { /* noop */ }
@@ -826,33 +892,59 @@ export function startDaemonBridge(server: HttpServer): void {
       }
 
       if (m.type === "pair") {
-        const userId = await consumePairingCode(m.code);
+        const rawPairPlatform = m.platform || "desktop";
+        const pairPlatform = normalizeDaemonPlatform(rawPairPlatform);
+        const candidateUserId = await lookupPairingCodeUserId(m.code);
+        if (!candidateUserId) {
+          const reply: HelloMsg = { type: "hello", ok: false, error: "invalid or expired code" };
+          try { ws.send(JSON.stringify(reply)); } catch { /* noop */ }
+          ws.close(4002, "invalid code");
+          return;
+        }
+        const pairKey = socketKey(candidateUserId, pairPlatform);
+        const prior = userSockets.get(pairKey);
+        const pendingCount = pendingOpCount(pairKey);
+        if (prior && prior !== ws && shouldProtectPendingDaemonSocket(prior, pendingCount)) {
+          rejectDuplicateDaemonSocket(ws, candidateUserId, pairPlatform, pendingCount);
+          return;
+        }
+        daemonSocketReplacementLocks.add(pairKey);
+        try {
+          const userId = await consumePairingCode(m.code);
         if (!userId) {
           const reply: HelloMsg = { type: "hello", ok: false, error: "invalid or expired code" };
           try { ws.send(JSON.stringify(reply)); } catch { /* noop */ }
           ws.close(4002, "invalid code");
           return;
         }
-        pairedUserId = userId;
+        if (userId !== candidateUserId) {
+          const reply: HelloMsg = { type: "hello", ok: false, error: "invalid or expired code" };
+          try { ws.send(JSON.stringify(reply)); } catch { /* noop */ }
+          ws.close(4002, "invalid code");
+          return;
+        }
         if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
         // Generate cryptographically random daemonId and reconnectSecret server-side.
         // Never trust a client-supplied daemonId — reject any the client sends.
         const daemonId = randomBytes(16).toString("hex");
         const reconnectSecret = randomBytes(32).toString("hex");
         const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
-        const rawPairPlatform = m.platform || "desktop";
-        const pairPlatform = normalizeDaemonPlatform(rawPairPlatform);
-        pairedPlatform = pairPlatform;
         await recordDaemonLink(userId, daemonId, {
           hostname: m.hostname || "unknown",
           platform: pairPlatform,
           ...(rawPairPlatform !== pairPlatform ? { osPlatform: rawPairPlatform } : {}),
           reconnectSecretHash,
         });
+        pairedUserId = userId;
+        pairedPlatform = pairPlatform;
         // Replace any prior socket for the same platform only
-        const pairKey = socketKey(userId, pairPlatform);
-        const prior = userSockets.get(pairKey);
-        if (prior && prior !== ws) { try { prior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
+        const currentPrior = userSockets.get(pairKey);
+        const currentPendingCount = pendingOpCount(pairKey);
+        if (currentPrior && currentPrior !== ws && shouldProtectPendingDaemonSocket(currentPrior, currentPendingCount)) {
+          rejectDuplicateDaemonSocket(ws, userId, pairPlatform, currentPendingCount);
+          return;
+        }
+        if (currentPrior && currentPrior !== ws) { try { currentPrior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
         userSockets.set(pairKey, ws);
         // Send daemonId + one-time plaintext secret to client; never sent again after this
         const hello = { type: "hello", ok: true, userId, daemonId, reconnectSecret };
@@ -860,6 +952,9 @@ export function startDaemonBridge(server: HttpServer): void {
         console.log(`[daemon] paired userId=${userId} hostname=${m.hostname || "unknown"} platform=${pairPlatform}`);
         // Sync wake/talk settings to daemon after initial pair (fire-and-forget)
         if (pairPlatform === "android") setTimeout(() => syncWakeSettingsToDaemon(userId), 1500);
+        } finally {
+          daemonSocketReplacementLocks.delete(pairKey);
+        }
         return;
       }
 
@@ -956,7 +1051,8 @@ export function startDaemonBridge(server: HttpServer): void {
       clearInterval(keepalive);
       if (pairedUserId) {
         const key = socketKey(pairedUserId, pairedPlatform);
-        if (userSockets.get(key) === ws) {
+        const wasRegisteredSocket = userSockets.get(key) === ws;
+        if (wasRegisteredSocket) {
           userSockets.delete(key);
           console.log(`[daemon] disconnected userId=${pairedUserId} platform=${pairedPlatform}`);
         }
@@ -965,11 +1061,12 @@ export function startDaemonBridge(server: HttpServer): void {
         const userMap = pendingByUser.get(pendingKey);
         if (userMap) {
           for (const [id, pending] of userMap) {
+            if (pending.socket !== ws) continue;
             clearTimeout(pending.timer);
             pending.resolve({ ok: false, error: "daemon disconnected" });
             userMap.delete(id);
           }
-          pendingByUser.delete(pendingKey);
+          if (userMap.size === 0) pendingByUser.delete(pendingKey);
         }
       }
       if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
