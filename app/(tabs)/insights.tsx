@@ -2245,7 +2245,9 @@ export default function InsightsScreen() {
         return;
       }
 
-      const finalContent = fullContent;
+      const finalContent = fullContent.trim().length > 0
+        ? fullContent
+        : 'Error: Jarvis did not return a final response. Please retry; if this repeats, check the selected model provider runtime.';
       const finalActions = executedActions;
       setMessages(prev => {
         const updated = [...prev];
