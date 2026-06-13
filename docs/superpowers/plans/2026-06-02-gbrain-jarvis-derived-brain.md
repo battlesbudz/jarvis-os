@@ -17,7 +17,7 @@ This plan implements the minimal high-value integration described in `C:\Users\j
 - Keep Jarvis canonical memory ownership in `shared/schema.ts` table `user_memories`.
 - Add derived tables named with the `brain_` prefix.
 - Add a Jarvis-native adapter in `server/brain/`.
-- Project only approved, non-expired memories into the derived layer.
+- Project only active, approved, non-expired memories into the derived layer.
 - Preserve provenance back to canonical Jarvis records.
 - Add tests for approval filtering, idempotent projection, chunking, link extraction, and fallback retrieval.
 
@@ -779,8 +779,8 @@ export async function projectApprovedMemories(userId: string, limit = 100): Prom
 
   for (const memory of rows) {
     const expired = memory.expiresAt ? memory.expiresAt.getTime() < Date.now() : false;
-    const pending = memory.pendingReview || memory.reviewStatus === "pending" || memory.reviewStatus === "discarded";
-    if (expired || pending) {
+    const inactive = memory.pendingReview || memory.reviewStatus !== "active";
+    if (expired || inactive) {
       skipped += 1;
       continue;
     }
