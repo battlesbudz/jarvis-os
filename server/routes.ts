@@ -10,7 +10,7 @@ import { getOpenAIClientConfig } from "./agent/providers/env";
 import { db } from "./db";
 import { eq, and, desc, sql, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, userDocuments } from "@shared/schema";
+import { userMemories, userPreferences, proactiveQuestionsSent, userDocuments } from "@shared/schema";
 import { processDocument, getUserDocumentContext, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS, MAX_DOCS_PER_USER } from "./documentProcessor";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
@@ -96,6 +96,7 @@ import { registerIntegrationsStatusRoutes } from "./routes/integrationsStatusRou
 import { registerCapabilityGapRoutes } from "./routes/capabilityGapRoutes";
 import { registerSkillCandidateRoutes } from "./routes/skillCandidateRoutes";
 import { registerSkillStoreRoutes } from "./routes/skillStoreRoutes";
+import { registerMorningVoiceNoteRoutes } from "./routes/morningVoiceNoteRoutes";
 import { BUILT_IN_SKILLS } from "./routes/userSkillsCatalog";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
@@ -155,10 +156,8 @@ import { writeCoachStreamError } from "./services/coachSse";
 import { extractReminderSuggestion } from "./services/reminderSuggestion";
 import {
   buildCoachSystemPrompt,
-  clearMorningNoteSummary,
   getMorningNoteSummary,
   getPersonaBlock,
-  getUserLocalDate,
   providerLabelForModel,
   runCoachModelTurn,
   streamCoachModelTurn,
@@ -3919,179 +3918,7 @@ Return ONLY the JSON object.`;
   registerPredictionRoutes(app);
   registerPreferenceRoutes(app);
 
-  app.get("/api/morning-voice-notes", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const limit = parseInt(req.query.limit as string) || 30;
-      const notes = await db.select()
-        .from(morningVoiceNotes)
-        .where(eq(morningVoiceNotes.userId, userId))
-        .orderBy(desc(morningVoiceNotes.recordedAt))
-        .limit(limit);
-      res.json({ notes });
-    } catch (error) {
-      console.error("Error fetching morning voice notes:", error);
-      res.status(500).json({ error: "Failed to fetch morning voice notes" });
-    }
-  });
-
-  app.get("/api/morning-voice-notes/today", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const today = await getUserLocalDate(userId);
-      const notes = await db.select()
-        .from(morningVoiceNotes)
-        .where(and(eq(morningVoiceNotes.userId, userId), eq(morningVoiceNotes.recordedAt, today)))
-        .limit(1);
-      res.json({ note: notes[0] || null });
-    } catch (error) {
-      console.error("Error fetching today's morning voice note:", error);
-      res.status(500).json({ error: "Failed to fetch today's morning voice note" });
-    }
-  });
-
-  async function extractMorningNoteSignals(transcript: string) {
-    const extractionPrompt = `Analyze this morning voice note transcript and extract structured data.
-
-Transcript: "${transcript}"
-
-Extract:
-1. moodSignal: one of "calm", "energized", "stressed", "overwhelmed", "uncertain" — infer from tone and content
-2. themes: up to 5 short topic phrases mentioned (e.g. "client presentation", "exercise", "sleep quality")
-3. blockers: up to 3 things preventing progress (e.g. "waiting on feedback", "too many meetings")
-4. wins: up to 3 positive things mentioned (e.g. "finished report", "good workout")
-5. intention: one sentence capturing what they want to accomplish or focus on today
-
-Return JSON: { "moodSignal": "...", "themes": [...], "blockers": [...], "wins": [...], "intention": "..." }
-Return ONLY the JSON object.`;
-
-    const extraction = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: extractionPrompt }],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 400,
-    });
-
-    const extractionContent = extraction.choices[0]?.message?.content || '{}';
-    let parsed: Record<string, unknown> = {};
-    try { parsed = JSON.parse(extractionContent); } catch {}
-
-    const validMoods = ['calm', 'energized', 'stressed', 'overwhelmed', 'uncertain'];
-    const moodSignal = validMoods.includes(parsed.moodSignal as string) ? (parsed.moodSignal as string) : 'calm';
-    const themes = Array.isArray(parsed.themes) ? parsed.themes.slice(0, 5).map(String) : [];
-    const blockers = Array.isArray(parsed.blockers) ? parsed.blockers.slice(0, 3).map(String) : [];
-    const wins = Array.isArray(parsed.wins) ? parsed.wins.slice(0, 3).map(String) : [];
-    const intention = typeof parsed.intention === 'string' ? parsed.intention : null;
-
-    return { moodSignal, themes, blockers, wins, intention };
-  }
-
-  app.post("/api/morning-voice-notes/extract", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { transcript } = req.body;
-      if (!transcript || typeof transcript !== 'string' || !transcript.trim()) {
-        return res.status(400).json({ error: "transcript is required" });
-      }
-
-      const extracted = await extractMorningNoteSignals(transcript.trim());
-      res.json({ extracted });
-    } catch (error) {
-      console.error("Error extracting morning note signals:", error);
-      res.status(500).json({ error: "Failed to extract signals" });
-    }
-  });
-
-  app.post("/api/morning-voice-notes", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { transcript, extracted: preExtracted } = req.body;
-      if (!transcript || typeof transcript !== 'string' || !transcript.trim()) {
-        return res.status(400).json({ error: "transcript is required" });
-      }
-
-      const today = await getUserLocalDate(userId);
-
-      const existing = await db.select({ id: morningVoiceNotes.id })
-        .from(morningVoiceNotes)
-        .where(and(eq(morningVoiceNotes.userId, userId), eq(morningVoiceNotes.recordedAt, today)))
-        .limit(1);
-      if (existing.length > 0) {
-        return res.status(409).json({ error: "Morning note already recorded today" });
-      }
-
-      const extracted = preExtracted && preExtracted.moodSignal
-        ? preExtracted
-        : await extractMorningNoteSignals(transcript.trim());
-
-      const validMoods = ['calm', 'energized', 'stressed', 'overwhelmed', 'uncertain'];
-      const moodSignal = validMoods.includes(extracted.moodSignal) ? extracted.moodSignal : 'calm';
-      const themes = Array.isArray(extracted.themes) ? extracted.themes.slice(0, 5).map(String) : [];
-      const blockers = Array.isArray(extracted.blockers) ? extracted.blockers.slice(0, 3).map(String) : [];
-      const wins = Array.isArray(extracted.wins) ? extracted.wins.slice(0, 3).map(String) : [];
-      const intention = typeof extracted.intention === 'string' ? extracted.intention : null;
-
-      const [inserted] = await db.insert(morningVoiceNotes).values({
-        userId,
-        recordedAt: today,
-        transcript: transcript.trim(),
-        moodSignal,
-        themes,
-        blockers,
-        wins,
-        intention,
-      }).returning();
-
-      const memorySummary = `Morning note (${today}): Mood=${moodSignal}. Themes: ${themes.join(', ') || 'none'}. ${intention ? `Intention: ${intention}` : ''}`;
-      try {
-        await db.insert(userMemories).values({
-          userId,
-          content: memorySummary,
-          category: 'pattern',
-        });
-      } catch {}
-
-      clearMorningNoteSummary(userId);
-
-      res.json({
-        note: inserted,
-        extracted: { moodSignal, themes, blockers, wins, intention },
-      });
-    } catch (error) {
-      console.error("Error creating morning voice note:", error);
-      res.status(500).json({ error: "Failed to create morning voice note" });
-    }
-  });
-
-  app.post("/api/morning-voice-notes/transcribe", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
-      const { audioBase64, mimeType } = req.body;
-      if (!audioBase64) {
-        return res.status(400).json({ error: "audioBase64 is required" });
-      }
-
-      const buffer = Buffer.from(audioBase64, 'base64');
-      const ext = (mimeType || 'audio/webm').includes('mp4') ? 'mp4' : 'webm';
-      const file = new File([buffer], `recording.${ext}`, { type: mimeType || 'audio/webm' });
-
-      const transcription = await openai.audio.transcriptions.create({
-        model: "whisper-1",
-        file,
-      });
-
-      res.json({ transcript: transcription.text || '' });
-    } catch (error) {
-      console.error("Error transcribing audio:", error);
-      res.status(500).json({ error: "Failed to transcribe audio" });
-    }
-  });
+  registerMorningVoiceNoteRoutes(app);
 
   // ── Jarvis Scheduled Tasks (Mission Control calendar) ──────────────────
   registerScheduledTaskBasicRoutes(app);
