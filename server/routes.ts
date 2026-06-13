@@ -55,6 +55,7 @@ import { registerPlanGenerationRoutes } from "./routes/planGenerationRoutes";
 import { registerPredictionRoutes } from "./routes/predictionRoutes";
 import { registerPreferenceRoutes } from "./routes/preferenceRoutes";
 import { registerJarvisObservabilityRoutes } from "./routes/jarvisObservabilityRoutes";
+import { registerGoalPacingRoutes } from "./routes/goalPacingRoutes";
 import { registerInboxRoutes } from "./routes/inboxRoutes";
 import { registerDailyCommandRoutes } from "./dailyCommand/routes";
 import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
@@ -87,7 +88,6 @@ import {
 import { applyGoalTreeEdit, summarizeGoalTree, type GoalTreeEditAction } from "./goalTreeEditor";
 import { mergeGoalTaskIntoPlan } from "./goalPlanHandoff";
 import { markTasksInjected, type InjectableGoalTask } from "./goalScheduler";
-import { normalizeGoalPacingMode } from "./goalPacing";
 import { createJarvisScheduledTask } from "./jarvisScheduledTasks";
 import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
@@ -4515,54 +4515,7 @@ Return ONLY the JSON object.`;
     }
   });
 
-  app.get("/api/goals/pacing", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const dateKey =
-        typeof req.query.date === "string" && req.query.date.trim()
-          ? req.query.date.trim()
-          : new Date().toISOString().slice(0, 10);
-      const { getGoalPacingDecision } = await import("./goalScheduler");
-      const pacing = await getGoalPacingDecision(userId, dateKey);
-      res.json({ ...pacing, date: dateKey });
-    } catch (err) {
-      console.error("Error fetching goal pacing:", err);
-      res.status(500).json({ error: "Failed to fetch goal pacing" });
-    }
-  });
-
-  app.patch("/api/goals/pacing", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const rawMode = req.body?.mode;
-      const mode = normalizeGoalPacingMode(rawMode);
-      if (rawMode !== mode) return res.status(400).json({ error: "Invalid goal pacing mode" });
-
-      const [existing] = await db
-        .select({ data: schema.userPreferences.data })
-        .from(schema.userPreferences)
-        .where(eq(schema.userPreferences.userId, userId))
-        .limit(1);
-      const current = (existing?.data as Record<string, unknown> | undefined) || {};
-      const data = { ...current, goalPacingMode: mode };
-      await db.insert(schema.userPreferences)
-        .values({ userId, data, updatedAt: new Date() })
-        .onConflictDoUpdate({
-          target: schema.userPreferences.userId,
-          set: { data, updatedAt: new Date() },
-        });
-
-      const { getGoalPacingDecision } = await import("./goalScheduler");
-      const dateKey = new Date().toISOString().slice(0, 10);
-      const pacing = await getGoalPacingDecision(userId, dateKey);
-      res.json({ ...pacing, date: dateKey });
-    } catch (err) {
-      console.error("Error updating goal pacing:", err);
-      res.status(500).json({ error: "Failed to update goal pacing" });
-    }
-  });
+  registerGoalPacingRoutes(app);
 
   app.post("/api/goals/:id/decompose", async (req: Request, res: Response) => {
     try {
