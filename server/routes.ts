@@ -60,6 +60,7 @@ import { registerDeliverableRoutes } from "./routes/deliverableRoutes";
 import { registerWebsiteCrawlRoutes } from "./routes/websiteCrawlRoutes";
 import { registerGutRoutes } from "./routes/gutRoutes";
 import { registerInboxRoutes } from "./routes/inboxRoutes";
+import { registerNervousSystemWatchRoutes } from "./routes/nervousSystemWatchRoutes";
 import { registerDailyCommandRoutes } from "./dailyCommand/routes";
 import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
 import { registerMissionControlQueueRoutes } from "./routes/missionControlQueueRoutes";
@@ -5039,84 +5040,7 @@ Extract up to 8 memories per batch.`;
 
   // ── Nervous System — Watch Topics ────────────────────────────────────────
 
-  app.get("/api/nervous-system/watches", async (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    try {
-      const watches = await db
-        .select()
-        .from(schema.nervousSystemWatches)
-        .where(eq(schema.nervousSystemWatches.userId, userId))
-        .orderBy(schema.nervousSystemWatches.createdAt);
-      res.json(watches);
-    } catch (err) {
-      console.error("[NervousSystem] watches fetch failed:", err);
-      res.status(500).json({ error: "Failed to fetch watches" });
-    }
-  });
-
-  const VALID_NS_CATEGORIES = new Set(["keyword", "company", "person", "industry"]);
-
-  app.post("/api/nervous-system/watches", async (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const { label, category } = req.body as { label?: string; category?: string };
-    if (!label?.trim()) return res.status(400).json({ error: "label is required" });
-    const cat = category && VALID_NS_CATEGORIES.has(category) ? category : "keyword";
-    try {
-      const [watch] = await db
-        .insert(schema.nervousSystemWatches)
-        .values({ userId, label: label.trim(), category: cat })
-        .returning();
-      res.json(watch);
-    } catch (err) {
-      console.error("[NervousSystem] watch create failed:", err);
-      res.status(500).json({ error: "Failed to create watch" });
-    }
-  });
-
-  app.patch("/api/nervous-system/watches/:id", async (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const id = _p(req.params.id);
-    const { active, label, category } = req.body as { active?: boolean; label?: string; category?: string };
-    try {
-      const updates: Partial<typeof schema.nervousSystemWatches.$inferInsert> = {};
-      if (typeof active === "boolean") updates.active = active;
-      if (label?.trim()) updates.label = label.trim();
-      if (category !== undefined) {
-        updates.category = VALID_NS_CATEGORIES.has(category) ? category : "keyword";
-      }
-      if (Object.keys(updates).length === 0) {
-        return res.status(400).json({ error: "No valid fields to update" });
-      }
-      const [updated] = await db
-        .update(schema.nervousSystemWatches)
-        .set(updates)
-        .where(and(eq(schema.nervousSystemWatches.id, id), eq(schema.nervousSystemWatches.userId, userId)))
-        .returning();
-      if (!updated) return res.status(404).json({ error: "Watch not found" });
-      res.json(updated);
-    } catch (err) {
-      console.error("[NervousSystem] watch update failed:", err);
-      res.status(500).json({ error: "Failed to update watch" });
-    }
-  });
-
-  app.delete("/api/nervous-system/watches/:id", async (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const id = _p(req.params.id);
-    try {
-      await db
-        .delete(schema.nervousSystemWatches)
-        .where(and(eq(schema.nervousSystemWatches.id, id), eq(schema.nervousSystemWatches.userId, userId)));
-      res.json({ ok: true });
-    } catch (err) {
-      console.error("[NervousSystem] watch delete failed:", err);
-      res.status(500).json({ error: "Failed to delete watch" });
-    }
-  });
+  registerNervousSystemWatchRoutes(app);
 
   app.get("/api/nervous-system/signals", async (req: Request, res: Response) => {
     const userId = req.userId;
