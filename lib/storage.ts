@@ -424,6 +424,15 @@ async function apiDelete(path: string): Promise<ApiDataResponse> {
   return res.json() as Promise<ApiDataResponse>;
 }
 
+async function getUserPreferencesData(): Promise<UserPreferencesData> {
+  const result = await apiGet('/api/data/user-preferences');
+  return (result.data || {}) as UserPreferencesData;
+}
+
+async function saveUserPreferencesData(prefs: UserPreferencesData): Promise<void> {
+  await apiPut('/api/data/user-preferences', prefs);
+}
+
 const DEFAULT_PLATFORMS: ConnectedPlatform[] = [
   { id: 'google-calendar', name: 'Google Calendar', category: 'calendar', connected: false, icon: 'calendar' },
   { id: 'outlook', name: 'Microsoft Outlook', category: 'calendar', connected: false, icon: 'mail' },
@@ -600,8 +609,7 @@ export type CoachingMode = 'sharp' | 'drill' | 'mentor' | 'strategist' | 'flow';
 
 export async function getCoachingMode(): Promise<CoachingMode> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return (prefs.coachingMode as CoachingMode) || 'sharp';
   } catch {
     return 'sharp';
@@ -610,10 +618,9 @@ export async function getCoachingMode(): Promise<CoachingMode> {
 
 export async function saveCoachingMode(mode: CoachingMode): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.coachingMode = mode;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] saveCoachingMode failed:', e);
   }
@@ -621,8 +628,7 @@ export async function saveCoachingMode(mode: CoachingMode): Promise<void> {
 
 export async function getViewMode(): Promise<ViewMode> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return prefs.viewMode || 'list';
   } catch {
     return 'list';
@@ -631,10 +637,9 @@ export async function getViewMode(): Promise<ViewMode> {
 
 export async function saveViewMode(mode: ViewMode): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.viewMode = mode;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] saveViewMode failed:', e);
   }
@@ -733,8 +738,7 @@ export async function saveCoachSessionId(sdkSessionId: string | null): Promise<v
 
 export async function getDailyCoachNote(): Promise<{ note: string; date: string } | null> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return prefs.dailyCoachNote || null;
   } catch {
     return null;
@@ -744,10 +748,9 @@ export async function getDailyCoachNote(): Promise<{ note: string; date: string 
 export async function saveDailyCoachNote(note: string): Promise<void> {
   try {
     const today = getTodayKey();
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.dailyCoachNote = { note, date: today };
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] saveDailyCoachNote failed:', e);
   }
