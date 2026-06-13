@@ -91,4 +91,19 @@ export function registerScheduledTaskBasicRoutes(app: Express): void {
       res.status(500).json({ error: "Failed to update task" });
     }
   });
+
+  app.delete("/api/jarvis/scheduled-tasks/:id", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      await db
+        .delete(schema.jarvisScheduledTasks)
+        .where(and(eq(schema.jarvisScheduledTasks.id, id), eq(schema.jarvisScheduledTasks.userId, userId)));
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("Error deleting jarvis scheduled task:", err);
+      res.status(500).json({ error: "Failed to delete task" });
+    }
+  });
 }

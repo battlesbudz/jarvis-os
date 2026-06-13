@@ -7,22 +7,6 @@ import { applyGoalTreeEdit, summarizeGoalTree, type GoalTreeEditAction } from ".
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
 
 export function registerGoalTreeCoreRoutes(app: Express): void {
-  app.get("/api/goals", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const [row] = await db
-        .select({ data: schema.goals.data })
-        .from(schema.goals)
-        .where(eq(schema.goals.userId, userId))
-        .limit(1);
-      res.json({ goals: row?.data ?? [] });
-    } catch (err) {
-      console.error("Error fetching goals:", err);
-      res.status(500).json({ error: "Failed to fetch goals" });
-    }
-  });
-
   app.post("/api/goals/:id/decompose", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
