@@ -258,7 +258,7 @@ function createSetupId(): string {
 }
 
 function getInstaller() {
-  const url = process.env.JARVIS_WINDOWS_CONNECTOR_DOWNLOAD_URL || "https://gameplanjarvisai.up.railway.app/downloads/JarvisSetup.exe";
+  const url = process.env.JARVIS_WINDOWS_CONNECTOR_DOWNLOAD_URL || "https://<jarvis-os-production-url>/downloads/JarvisSetup.exe";
   const version = process.env.JARVIS_WINDOWS_CONNECTOR_VERSION || "0.1.0";
   const sha256 = process.env.JARVIS_WINDOWS_CONNECTOR_SHA256 || undefined;
   return { url, version, ...(sha256 ? { sha256 } : {}) };
@@ -729,7 +729,7 @@ export function ConnectedWindowsPcCard({
           <Text style={styles.title}>Connected Windows PC</Text>
           <Text style={styles.subtitle}>
             {connected
-              ? `Connected${computerName ? ` • ${computerName}` : ""}`
+              ? `Connected${computerName ? ` â€¢ ${computerName}` : ""}`
               : "Use your ChatGPT subscription with Jarvis on this computer"}
           </Text>
           {lastSeenAt && <Text style={styles.meta}>Last seen {new Date(lastSeenAt).toLocaleString()}</Text>}
@@ -922,7 +922,7 @@ Create `scripts/jarvis-desktop-connector-awaken.ps1`:
 
 ```powershell
 param(
-  [string]$Server = "https://gameplanjarvisai.up.railway.app",
+  [string]$Server = "https://<jarvis-os-production-url>",
   [string]$SetupId = "",
   [switch]$SkipCodexProbe
 )
@@ -1360,7 +1360,7 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => {
-                        let _ = tauri_plugin_opener::open_url("https://gameplanjarvisai.up.railway.app", None::<&str>);
+                        let _ = tauri_plugin_opener::open_url("https://<jarvis-os-production-url>", None::<&str>);
                     }
                     "check" => {
                         if let Some(window) = app.get_webview_window("main") {
@@ -1450,7 +1450,7 @@ if (action === "start") {
     env: {
       ...process.env,
       JARVIS_DAEMON_PLATFORM: "desktop",
-      JARVIS_SERVER: process.env.JARVIS_SERVER || "https://gameplanjarvisai.up.railway.app",
+      JARVIS_SERVER: process.env.JARVIS_SERVER || "https://<jarvis-os-production-url>",
     },
   });
 } else if (action === "awaken") {

@@ -8,7 +8,7 @@ User request: "Can you do a massive overhaul of the UI and UX of the entire app 
 
 ## Objective
 
-Turn the existing Gameplanjarvisai Expo app into a coherent Jarvis command surface. The app should feel like the control layer for Jarvis, not a generic coach, productivity app, or chatbot.
+Turn the existing jarvis-os Expo app into a coherent Jarvis command surface. The app should feel like the control layer for Jarvis, not a generic coach, productivity app, or chatbot.
 
 The full acronym, JARVIS: Joint Autonomous Runtime Virtual Intelligence System, may appear once in a small introduction or brand detail. It should not drive everyday navigation, headings, or section labels.
 

@@ -1,7 +1,7 @@
 {
   "name": "jarvis-daemon",
   "version": "1.0.0",
-  "description": "GamePlan Jarvis desktop daemon — sandboxed shell/file/notify bridge for the autonomous agent.",
+  "description": "Jarvis OS desktop daemon — sandboxed shell/file/notify bridge for the autonomous agent.",
   "license": "MIT",
   "main": "jarvis-daemon.js",
   "bin": { "jarvis-daemon": "jarvis-daemon.js" },

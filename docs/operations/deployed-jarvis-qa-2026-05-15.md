@@ -1,10 +1,10 @@
 # Deployed Jarvis QA Report - 2026-05-15
 
-Production URL: https://gameplanjarvisai.up.railway.app
+Production URL: https://<jarvis-os-production-url>
 
 Test account: `battlesbudz@gmail.com`
 
-Railway service: `Gameplanjarvisai` in `production`
+Railway service: `jarvis-os` in `production`
 
 Tester note: this was an observe-and-document pass only. No app fixes were made.
 
@@ -400,7 +400,7 @@ Use `npm run jarvis:qa:endpoints` for deployed endpoint QA. The harness is inten
 Required environment:
 
 ```powershell
-$env:JARVIS_QA_BASE_URL = "https://gameplanjarvisai.up.railway.app"
+$env:JARVIS_QA_BASE_URL = "https://<jarvis-os-production-url>"
 $env:JARVIS_QA_AUTH_TOKEN = "<authenticated-owner-bearer-token-without-Bearer-prefix>"
 npm run jarvis:qa:endpoints
 ```
@@ -425,7 +425,7 @@ Token guidance:
 Use `npm run jarvis:qa:cleanup` to inspect the known QA artifacts created during this pass. It defaults to dry-run.
 
 ```powershell
-$env:JARVIS_QA_BASE_URL = "https://gameplanjarvisai.up.railway.app"
+$env:JARVIS_QA_BASE_URL = "https://<jarvis-os-production-url>"
 $env:JARVIS_QA_AUTH_TOKEN = "<authenticated-owner-bearer-token-without-Bearer-prefix>"
 npm run jarvis:qa:cleanup
 ```
@@ -511,7 +511,7 @@ Status: more of the UI-facing QA queue is complete locally. These changes still 
 
 | Finding | Status | Local change | Verification |
 | --- | --- | --- | --- |
-| 1. Google sign-in pop-up failed in Chrome | Code path fixed locally; environment config blocked in production | Web Google login now starts the existing server-side OAuth redirect flow directly instead of using the Google Identity Services popup token flow. A follow-up patch makes the redirect immediate so stale-session cleanup cannot stall the click. | Deployed Chrome confirmation reached Google, but Google rejected the app with `Error 400: redirect_uri_mismatch` for `https://gameplanjarvisai.up.railway.app/api/auth/mobile/callback`. The exact URI must be added to the Google Cloud OAuth client's authorized redirect URIs. |
+| 1. Google sign-in pop-up failed in Chrome | Code path fixed locally; environment config blocked in production | Web Google login now starts the existing server-side OAuth redirect flow directly instead of using the Google Identity Services popup token flow. A follow-up patch makes the redirect immediate so stale-session cleanup cannot stall the click. | Deployed Chrome confirmation reached Google, but Google rejected the app with `Error 400: redirect_uri_mismatch` for `https://<jarvis-os-production-url>/api/auth/mobile/callback`. The exact URI must be added to the Google Cloud OAuth client's authorized redirect URIs. |
 | 3. Old chat failures remain visually noisy | Partially fixed locally | Jarvis chat now hides older repeated failed-response messages behind a divider, auto-anchors to the newest exchange when sending, and persists the Open Commitments collapsed state. | Needs browser confirmation after deploy. |
 | 14. Agent status is split between "active" and "disabled/standby" | Further improved locally | The Agents tab now consumes integration readiness and shows runtime badges like disabled, heartbeat blocked, loop paused, listener, channel ready, or platform blocked on each agent card. | Needs browser confirmation after deploy. |
 
@@ -529,10 +529,10 @@ Status: deployed to Railway and partially confirmed in Chrome. The app starts, t
 
 Deployment:
 
-- Railway service: `Gameplanjarvisai`
-- Production URL: `https://gameplanjarvisai.up.railway.app`
-- Deployment action: `railway up --detach --service Gameplanjarvisai -m "qa: fix web google redirect"`
-- Follow-up deployment action: `railway up --detach --service Gameplanjarvisai -m "qa: clarify google oauth readiness"`
+- Railway service: `jarvis-os`
+- Production URL: `https://<jarvis-os-production-url>`
+- Deployment action: `railway up --detach --service jarvis-os -m "qa: fix web google redirect"`
+- Follow-up deployment action: `railway up --detach --service jarvis-os -m "qa: clarify google oauth readiness"`
 - Latest deployment id: `80aeb379-369e-4f81-abaf-1bab05f20935`
 - Build and healthcheck: passed
 
@@ -545,14 +545,14 @@ Verification:
 | Diff hygiene | Pass with line-ending warnings only | `git diff --check` reported CRLF warnings but no whitespace errors. |
 | Railway startup | Pass with warnings | Server started and `/` healthcheck passed. Doctor reported `4 passed`, `5 warned`, `0 failed`. |
 | Vault/wiki ON CONFLICT constraint | Confirmed improved | Startup logs no longer showed the previous `there is no unique or exclusion constraint matching the ON CONFLICT specification` vault/wiki error. |
-| Google login button | Code path confirmed, provider config blocked | Chrome click reached Google OAuth. Google returned `Error 400: redirect_uri_mismatch` for `https://gameplanjarvisai.up.railway.app/api/auth/mobile/callback`. Railway variable key check also showed `GOOGLE_WEB_CLIENT_ID` is present but `GOOGLE_CLIENT_SECRET` is not present. |
+| Google login button | Code path confirmed, provider config blocked | Chrome click reached Google OAuth. Google returned `Error 400: redirect_uri_mismatch` for `https://<jarvis-os-production-url>/api/auth/mobile/callback`. Railway variable key check also showed `GOOGLE_WEB_CLIENT_ID` is present but `GOOGLE_CLIENT_SECRET` is not present. |
 | Endpoint QA harness | Blocked | `node scripts/deployed-jarvis-endpoint-qa.mjs` exits with `Missing JARVIS_QA_AUTH_TOKEN`. |
 | Google readiness wording | Improved and deployed | Capability checks now understand `GOOGLE_WEB_CLIENT_ID` as the deployed client id. After deployment, Railway startup logs no longer listed calendar/email/drive as unhealthy due to generic missing Google OAuth credentials; the remaining Google blocker is the missing client secret plus redirect URI configuration. |
 
 Follow-up correction:
 
 - Web login now tries the original Google popup token login first. This preserves the path that worked without `GOOGLE_CLIENT_SECRET`.
-- The redirect fallback now reuses the existing Google callback URI, `https://gameplanjarvisai.up.railway.app/api/oauth/google/callback`, instead of introducing `/api/auth/mobile/callback`.
+- The redirect fallback now reuses the existing Google callback URI, `https://<jarvis-os-production-url>/api/oauth/google/callback`, instead of introducing `/api/auth/mobile/callback`.
 - Production fallback URL was checked with `curl.exe -I /api/auth/mobile/start...`; the Google `redirect_uri` is now `/api/oauth/google/callback`.
 - If the popup is blocked and the fallback is used, Railway still needs `GOOGLE_CLIENT_SECRET` to exchange the authorization code.
 
@@ -599,7 +599,7 @@ Status: deployed through the GitHub-linked Railway flow. The direct Railway CLI 
 
 Remaining after this pass:
 
-1. Continue monitoring future startup logs for new schema drift. This pass confirmed `[railway-db-repair] Database compatibility repair complete`, Drizzle `[✓] Changes applied`, and no repeat of the old `active` boolean cast warning or the follow-up `mention_patterns` null error.
+1. Continue monitoring future startup logs for new schema drift. This pass confirmed `[railway-db-repair] Database compatibility repair complete`, Drizzle `[âœ“] Changes applied`, and no repeat of the old `active` boolean cast warning or the follow-up `mention_patterns` null error.
 2. Run `npm run jarvis:qa:endpoints` and `npm run jarvis:qa:cleanup` with a real `JARVIS_QA_AUTH_TOKEN`.
 3. Browser-confirm the mobile/native OAuth fallback on the actual device flow.
 

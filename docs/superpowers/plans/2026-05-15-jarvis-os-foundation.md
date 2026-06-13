@@ -733,7 +733,7 @@ This is the startup and reliability guide for Jarvis as an agent operating syste
 
 Use this repo as the current source of truth:
 
-`C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai`
+`C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os`
 
 ## First Command
 

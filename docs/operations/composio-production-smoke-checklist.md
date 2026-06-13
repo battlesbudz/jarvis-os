@@ -1,11 +1,11 @@
 # Composio Production Smoke Checklist
 
-Production URL: `https://gameplanjarvisai.up.railway.app`
+Production URL: `https://<jarvis-os-production-url>`
 
 Script entrypoint:
 
 ```powershell
-$env:JARVIS_QA_BASE_URL = "https://gameplanjarvisai.up.railway.app"
+$env:JARVIS_QA_BASE_URL = "https://<jarvis-os-production-url>"
 $env:JARVIS_QA_AUTH_TOKEN = "<owner bearer token without Bearer prefix>"
 npm.cmd run jarvis:qa:composio
 ```
