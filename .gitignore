@@ -82,6 +82,7 @@ android-daemon/local.properties
 # -------------------------------------------------------------
 .ytdlp-flags.json
 .jarvis/
+.ops/
 .superpowers/
 .worktrees/
 .cache/
