@@ -67,6 +67,7 @@ import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryR
 import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./routes/platformRoutes";
 import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
 import { registerTranscriptDiagnoseRoutes } from "./routes/transcriptDiagnoseRoutes";
+import { registerDiagnosticsRoutes } from "./routes/diagnosticsRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
   registerOpenAIProviderAuthRoutes,
@@ -93,7 +94,6 @@ import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoul
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
 import { listPeople, deletePerson } from "./memory/people";
 import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
-import { operatorActionPermKey } from "./daemon/operatorActionPermKey";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -141,6 +141,20 @@ import {
 } from "./services/aiCoachContextService";
 
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
+
+function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
+  switch (operatorAction.type) {
+    case 'open_app': return 'android_open_app';
+    case 'tap_element':
+    case 'tap_coordinates':
+    case 'type_text':
+    case 'swipe':
+    case 'press_key': return 'android_tap_type';
+    case 'wait':
+    case 'done': return null;
+    default: return 'android_tap_type';
+  }
+}
 
 const openai = new OpenAI(getOpenAIClientConfig());
 
@@ -6357,75 +6371,7 @@ Extract up to 8 memories per batch.`;
 
   // ── Diagnostics ──────────────────────────────────────────────────────────────
 
-  app.get("/api/diagnostics/health", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const { runHealthCheck } = await import("./diagnostics/diagnosticsService");
-      const report = await runHealthCheck(userId);
-      res.json(report);
-    } catch (err) {
-      console.error("[Diagnostics] GET /api/diagnostics/health failed:", err);
-      res.status(500).json({ error: "Failed to run health check" });
-    }
-  });
-
-  app.post("/api/diagnostics/run", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const { runAIDiagnosis } = await import("./diagnostics/diagnosticsService");
-      const { diagnosis, report } = await runAIDiagnosis(userId);
-      res.json({ diagnosis, report });
-    } catch (err) {
-      console.error("[Diagnostics] POST /api/diagnostics/run failed:", err);
-      res.status(500).json({ error: "Failed to run diagnosis" });
-    }
-  });
-
-  app.get("/api/diagnostics/memory-events", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const { getRecentEvents } = await import("./diagnostics/diagnosticsService");
-      const events = await getRecentEvents({
-        userId,
-        subsystem: "memory",
-        limit: 20,
-        sinceMinutes: 60,
-        excludePatternDetected: true,
-      });
-      res.json(events);
-    } catch (err) {
-      console.error("[Diagnostics] GET /api/diagnostics/memory-events failed:", err);
-      res.status(500).json({ error: "Failed to fetch memory events" });
-    }
-  });
-
-  app.get("/api/diagnostics/events", async (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const subsystem = typeof req.query.subsystem === "string" ? req.query.subsystem : undefined;
-    if (!subsystem) return res.status(400).json({ error: "subsystem query param required" });
-    const validSubsystems: readonly string[] = schema.DIAGNOSTIC_SUBSYSTEMS;
-    if (!validSubsystems.includes(subsystem)) {
-      return res.status(400).json({ error: `Invalid subsystem. Must be one of: ${schema.DIAGNOSTIC_SUBSYSTEMS.join(", ")}` });
-    }
-    try {
-      const { getRecentEvents } = await import("./diagnostics/diagnosticsService");
-      const events = await getRecentEvents({
-        userId,
-        subsystem: subsystem as import("@shared/schema").DiagnosticSubsystem,
-        limit: 20,
-        sinceMinutes: 60,
-        excludePatternDetected: true,
-      });
-      res.json(events);
-    } catch (err) {
-      console.error("[Diagnostics] GET /api/diagnostics/events failed:", err);
-      res.status(500).json({ error: "Failed to fetch subsystem events" });
-    }
-  });
+  registerDiagnosticsRoutes(app);
 
   registerLocalWorkerRoutes(app);
 
