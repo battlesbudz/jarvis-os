@@ -4,7 +4,7 @@ Purpose: keep the current working tree safe after the deployed Projects/job-runn
 
 ## Current Verified Fix Bucket
 
-These files are tied to the deployed fix that was verified against `https://gameplanjarvisai.up.railway.app` in the existing Chrome session:
+These files are tied to the deployed fix that was verified against `https://<jarvis-os-production-url>` in the existing Chrome session:
 
 - `app/(tabs)/index.tsx`
 - `dashboard/components/Sidebar.tsx`

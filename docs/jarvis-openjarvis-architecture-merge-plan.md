@@ -2,7 +2,7 @@
 
 Status: comparison and minimal additive plan.
 
-This document compares OpenJarvis's primitive-based architecture with the existing Gameplan Jarvis architecture. It is not a refactor plan to replace Jarvis behavior, import OpenJarvis, or move existing routes, memory, tools, approvals, jobs, daemons, or agent code.
+This document compares OpenJarvis's primitive-based architecture with the existing Jarvis OS architecture. It is not a refactor plan to replace Jarvis behavior, import OpenJarvis, or move existing routes, memory, tools, approvals, jobs, daemons, or agent code.
 
 ## Source Reality
 

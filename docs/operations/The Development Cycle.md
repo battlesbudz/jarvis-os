@@ -17,10 +17,10 @@ Jarvis should be able to move from idea to verified production change through on
 
 ## Source Of Truth
 
-- GitHub repo: `battlesbudz/Gameplanjarvisai`
+- GitHub repo: `battlesbudz/jarvis-os`
 - Working branch: `codex/replit-main-continuation`
-- Production host: `https://gameplanjarvisai.up.railway.app`
-- Railway service: `Gameplanjarvisai`
+- Production host: `https://<jarvis-os-production-url>`
+- Railway service: `jarvis-os`
 - Railway app service id: `d1267be5-734d-4ba5-adee-994b17dd4d0b`
 - Railway environment id: `4b92f062-e163-4af4-be18-7b3a6c19d44f`
 - Local Codex OAuth gateway: `http://127.0.0.1:5000`
@@ -225,7 +225,7 @@ Known not acceptable:
 Preferred API smoke test for app chat:
 
 ```powershell
-curl.exe -sS -N -m 240 -X POST "https://gameplanjarvisai.up.railway.app/api/coach/chat" -H "Authorization: Bearer <valid-user-token>" -H "Content-Type: application/json" --data "{\"messages\":[{\"role\":\"user\",\"content\":\"Please reply with exactly: LIVE_CHAT_OK\"}],\"coachingMode\":\"sharp\",\"originChannel\":\"appchat\"}"
+curl.exe -sS -N -m 240 -X POST "https://<jarvis-os-production-url>/api/coach/chat" -H "Authorization: Bearer <valid-user-token>" -H "Content-Type: application/json" --data "{\"messages\":[{\"role\":\"user\",\"content\":\"Please reply with exactly: LIVE_CHAT_OK\"}],\"coachingMode\":\"sharp\",\"originChannel\":\"appchat\"}"
 ```
 
 Expected stream:

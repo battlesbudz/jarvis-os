@@ -35,7 +35,7 @@ Backend changes are out of scope unless an existing route is missing data alread
 Before executing any task:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai status -sb
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os status -sb
 ```
 
 Expected branch:
@@ -481,8 +481,8 @@ OK: Jarvis frontend product contract matches approved personal operating layer s
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add constants/jarvisProduct.ts constants/jarvisTheme.ts lib/jarvisCommandCenter.ts scripts/__tests__/jarvisFrontendProductContract.assert.ts
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Add Jarvis frontend product contract"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add constants/jarvisProduct.ts constants/jarvisTheme.ts lib/jarvisCommandCenter.ts scripts/__tests__/jarvisFrontendProductContract.assert.ts
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Add Jarvis frontend product contract"
 ```
 
 ## Task 2: Command Center Shell Components
@@ -844,8 +844,8 @@ OK: Jarvis shell components are present and wired to approved product language
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add components/jarvis/JarvisCards.tsx components/jarvis/JarvisTopBar.tsx components/jarvis/JarvisSidebar.tsx components/jarvis/JarvisContextPanel.tsx components/jarvis/JarvisCommandInput.tsx components/jarvis/JarvisPage.tsx components/jarvis/JarvisAppShell.tsx scripts/__tests__/jarvisShellSource.assert.ts
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Add Jarvis command center shell"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add components/jarvis/JarvisCards.tsx components/jarvis/JarvisTopBar.tsx components/jarvis/JarvisSidebar.tsx components/jarvis/JarvisContextPanel.tsx components/jarvis/JarvisCommandInput.tsx components/jarvis/JarvisPage.tsx components/jarvis/JarvisAppShell.tsx scripts/__tests__/jarvisShellSource.assert.ts
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Add Jarvis command center shell"
 ```
 
 ## Task 3: Navigation And Route IA
@@ -1072,8 +1072,8 @@ OK: Jarvis frontend routes match the approved information architecture
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add 'app/(tabs)/_layout.tsx' app/devices.tsx app/automations.tsx app/approvals.tsx app/activity.tsx app/brain-settings.tsx app/landing.tsx components/jarvis/devices/DevicesScreen.tsx components/jarvis/automations/AutomationsScreen.tsx components/jarvis/approvals/ApprovalsScreen.tsx components/jarvis/activity/ActivityScreen.tsx components/jarvis/brain/BrainSettingsScreen.tsx components/jarvis/landing/JarvisLandingPage.tsx scripts/__tests__/jarvisFrontendRouteContract.assert.ts
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Wire Jarvis personal operating layer routes"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add 'app/(tabs)/_layout.tsx' app/devices.tsx app/automations.tsx app/approvals.tsx app/activity.tsx app/brain-settings.tsx app/landing.tsx components/jarvis/devices/DevicesScreen.tsx components/jarvis/automations/AutomationsScreen.tsx components/jarvis/approvals/ApprovalsScreen.tsx components/jarvis/activity/ActivityScreen.tsx components/jarvis/brain/BrainSettingsScreen.tsx components/jarvis/landing/JarvisLandingPage.tsx scripts/__tests__/jarvisFrontendRouteContract.assert.ts
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Wire Jarvis personal operating layer routes"
 ```
 
 ## Task 4: Home Command Center
@@ -1236,8 +1236,8 @@ OK: Home command center uses approved Jarvis command UX
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add components/jarvis/home/HomeCommandCenter.tsx 'app/(tabs)/index.tsx' scripts/__tests__/jarvisHomeCommandCenter.assert.ts
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Redesign Home as Jarvis command center"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add components/jarvis/home/HomeCommandCenter.tsx 'app/(tabs)/index.tsx' scripts/__tests__/jarvisHomeCommandCenter.assert.ts
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Redesign Home as Jarvis command center"
 ```
 
 ## Task 5: Missions And Memory Screens
@@ -1439,8 +1439,8 @@ OK: Missions and Memory screens use approved Jarvis IA and trust copy
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add components/jarvis/missions/MissionsScreen.tsx components/jarvis/memory/JarvisMemoryScreen.tsx 'app/(tabs)/goals.tsx' 'app/(tabs)/profile.tsx' scripts/__tests__/jarvisMissionsMemory.assert.ts
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Add Jarvis Missions and Memory screens"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add components/jarvis/missions/MissionsScreen.tsx components/jarvis/memory/JarvisMemoryScreen.tsx 'app/(tabs)/goals.tsx' 'app/(tabs)/profile.tsx' scripts/__tests__/jarvisMissionsMemory.assert.ts
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Add Jarvis Missions and Memory screens"
 ```
 
 ## Task 6: Devices, Automations, Skills, And Approvals
@@ -1606,8 +1606,8 @@ OK: Devices, Automations, Skills, and Approvals expose approved trust UX
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add components/jarvis/devices/DevicesScreen.tsx components/jarvis/automations/AutomationsScreen.tsx components/jarvis/skills/SkillsScreen.tsx components/jarvis/approvals/ApprovalsScreen.tsx app/skills.tsx scripts/__tests__/jarvisTrustSurfaces.assert.ts
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Add Jarvis trust and capability surfaces"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add components/jarvis/devices/DevicesScreen.tsx components/jarvis/automations/AutomationsScreen.tsx components/jarvis/skills/SkillsScreen.tsx components/jarvis/approvals/ApprovalsScreen.tsx app/skills.tsx scripts/__tests__/jarvisTrustSurfaces.assert.ts
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Add Jarvis trust and capability surfaces"
 ```
 
 ## Task 7: Activity, Settings, And Brain Settings
@@ -1765,8 +1765,8 @@ OK: Activity, Settings, and Brain Settings match approved Jarvis IA
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add components/jarvis/activity/ActivityScreen.tsx components/jarvis/settings/JarvisSettingsScreen.tsx components/jarvis/brain/BrainSettingsScreen.tsx 'app/(tabs)/settings.tsx' scripts/__tests__/jarvisActivitySettings.assert.ts
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Add Jarvis Activity Settings and Brain Settings"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add components/jarvis/activity/ActivityScreen.tsx components/jarvis/settings/JarvisSettingsScreen.tsx components/jarvis/brain/BrainSettingsScreen.tsx 'app/(tabs)/settings.tsx' scripts/__tests__/jarvisActivitySettings.assert.ts
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Add Jarvis Activity Settings and Brain Settings"
 ```
 
 ## Task 8: First-Run Onboarding And Public Landing
@@ -1892,8 +1892,8 @@ OK: Onboarding and landing use approved Jarvis product story
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add components/jarvis/onboarding/JarvisOnboardingScreen.tsx components/jarvis/landing/JarvisLandingPage.tsx app/onboarding.tsx scripts/__tests__/jarvisOnboardingLanding.assert.ts
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Add Jarvis onboarding and landing story"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add components/jarvis/onboarding/JarvisOnboardingScreen.tsx components/jarvis/landing/JarvisLandingPage.tsx app/onboarding.tsx scripts/__tests__/jarvisOnboardingLanding.assert.ts
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Add Jarvis onboarding and landing story"
 ```
 
 ## Task 9: Verification, Visual QA, And Operations Notes
@@ -2016,8 +2016,8 @@ Date: 2026-06-05
 Run:
 
 ```powershell
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai add docs/operations/jarvis-frontend-redesign-qa.md
-git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-gameplanjarvisai\github-push\Gameplanjarvisai commit -m "Document Jarvis frontend redesign QA"
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os add docs/operations/jarvis-frontend-redesign-qa.md
+git -C C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os commit -m "Document Jarvis frontend redesign QA"
 ```
 
 ## Final Verification Checklist

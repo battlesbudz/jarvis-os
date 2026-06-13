@@ -1,41 +1,67 @@
-# Contributing to GamePlan / Jarvis AI
+# Contributing to Jarvis OS
 
-First off, thank you for considering contributing to GamePlan! It's people like you that make open-source software such a great community.
+Thanks for your interest in contributing. Jarvis OS is an autonomous personal-assistant OS. We welcome bug reports, fixes, docs, and ideas, but please read this guide first so your work has the best chance of landing.
 
-## Where do I go from here?
+## Where To Start
 
-If you've noticed a bug or have a feature request, make sure to check our [Issues](https://github.com/battlesbudz/Gameplanjarvisai/issues) to see if someone else in the community has already created a ticket. If not, go ahead and make one!
+If you noticed a bug or have a feature request, check the [issues](https://github.com/battlesbudz/jarvis-os/issues) first to see whether someone already opened a ticket.
 
-## Fork & create a branch
+For non-trivial changes, open an issue first describing:
 
-If this is something you think you can fix, then fork GamePlan and create a branch with a descriptive name.
+- The problem
+- The proposed approach
+- The risk
 
-A good branch name would be (where issue #325 is the ticket you're working on):
+## Before You Write Code
 
-```sh
+1. Read [`AGENTS.md`](./AGENTS.md). It defines the workflow, safety boundaries, and approval rules every change must respect.
+2. Skim [`docs/architecture.md`](./docs/architecture.md) and [`docs/workspace-map.md`](./docs/workspace-map.md). They explain the routing, auth, and persistence layers.
+3. Search existing issues and PRs to make sure the work is not already in flight.
+
+## Local Development
+
+### Prerequisites
+
+- Node.js 22.x and npm 10.x
+- PostgreSQL 16+
+- Python 3.11+
+- On macOS, Xcode command-line tools
+- On Linux, the dependencies listed in `replit.nix`
+
+### First Run
+
+```bash
+git clone https://github.com/battlesbudz/jarvis-os.git
+cd jarvis-os
+npm install
+cp .env.example .env
+npm run db:push
+npm run server:dev
+npm run expo:dev
+cd dashboard && npm run dev
+```
+
+## Branches
+
+Fork the repo and create a branch with a descriptive name:
+
+```bash
 git checkout -b 325-add-slack-integration
 ```
 
-## Implement your fix or feature
+Keep your branch focused and small enough to review.
 
-At this point, you're ready to make your changes. Feel free to ask for help; everyone is a beginner at first!
+## Pull Requests
 
-## Make a Pull Request
+Before opening a PR:
 
-At this point, you should switch back to your master branch and make sure it's up to date with GamePlan's master branch:
-
-```sh
-git remote add upstream https://github.com/battlesbudz/Gameplanjarvisai.git
-git checkout master
-git pull upstream master
-```
-
-Then update your feature branch from your local copy of master, and push it!
-
-```sh
+```bash
+git remote add upstream https://github.com/battlesbudz/jarvis-os.git
+git checkout main
+git pull upstream main
 git checkout 325-add-slack-integration
-git rebase master
+git rebase main
 git push --set-upstream origin 325-add-slack-integration
 ```
 
-Finally, go to GitHub and make a Pull Request!
+Then open a pull request on GitHub.
