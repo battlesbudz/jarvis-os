@@ -275,10 +275,15 @@ npm.cmd run server:build
 
 Expected: build passes or fails only on unrelated pre-existing issues. If it fails because `index` was already imported or unavailable in the local Drizzle version, adjust the import to match existing Drizzle usage.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Stage And Request Commit Approval**
 
 ```powershell
 git add shared/schema.ts migrations/0008_brain_projection.sql
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: add derived brain schema"
 ```
 
@@ -390,10 +395,15 @@ npm.cmd run server:build
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Stage And Request Commit Approval**
 
 ```powershell
 git add server/brain/types.ts server/brain/index.ts
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: define Jarvis brain adapter contract"
 ```
 
@@ -473,10 +483,15 @@ npm.cmd test -- server/brain/__tests__/slug.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Stage And Request Commit Approval**
 
 ```powershell
 git add server/brain/slug.ts server/brain/__tests__/slug.test.ts
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: add deterministic brain slugs"
 ```
 
@@ -557,10 +572,15 @@ npm.cmd test -- server/brain/__tests__/chunk.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Stage And Request Commit Approval**
 
 ```powershell
 git add server/brain/chunk.ts server/brain/__tests__/chunk.test.ts
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: add brain content chunking"
 ```
 
@@ -636,10 +656,15 @@ npm.cmd test -- server/brain/__tests__/links.test.ts
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Stage And Request Commit Approval**
 
 ```powershell
 git add server/brain/links.ts server/brain/__tests__/links.test.ts
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: add brain link extraction"
 ```
 
@@ -889,10 +914,15 @@ npm.cmd run server:build
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Stage And Request Commit Approval**
 
 ```powershell
 git add server/brain/adapter.ts server/brain/__tests__/adapter.test.ts
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: project approved memories into brain pages"
 ```
 
@@ -927,10 +957,15 @@ npm.cmd run server:build
 
 Expected: PASS.
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: Stage And Request Commit Approval**
 
 ```powershell
 git add server/memory/extractor.ts
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: queue brain projection after memory extraction"
 ```
 
@@ -1011,10 +1046,15 @@ npm.cmd run server:build
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Stage And Request Commit Approval**
 
 ```powershell
 git add server/memory/retrieve.ts server/memory/__tests__/brainRetrievalFallback.test.ts
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: add opt-in derived brain retrieval"
 ```
 
@@ -1054,10 +1094,15 @@ npm.cmd run server:build
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Stage And Request Commit Approval**
 
 ```powershell
 git add server/agent/contextPacks.ts
+```
+
+Then ask for explicit approval before committing with:
+
+```powershell
 git commit -m "feat: route memory tasks through derived brain context"
 ```
 
@@ -1118,7 +1163,7 @@ npm.cmd run server:dev
 
 Ask a memory query and verify the response still works. If derived brain returns no chunks, existing retrieval should continue to answer.
 
-- [ ] **Step 6: Final commit**
+- [ ] **Step 6: Final Staging Review**
 
 ```powershell
 git status --short
@@ -1126,6 +1171,8 @@ git log --oneline -5
 ```
 
 Expected: only planned files changed, no `.env.local`, logs, screenshots, build output, or unrelated `.ops/` files staged.
+
+If the staged diff is correct, ask for explicit approval before creating the final commit for the slice.
 
 ---
 
