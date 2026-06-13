@@ -56,6 +56,7 @@ import { registerPredictionRoutes } from "./routes/predictionRoutes";
 import { registerPreferenceRoutes } from "./routes/preferenceRoutes";
 import { registerJarvisObservabilityRoutes } from "./routes/jarvisObservabilityRoutes";
 import { registerGoalPacingRoutes } from "./routes/goalPacingRoutes";
+import { registerDeliverableRoutes } from "./routes/deliverableRoutes";
 import { registerInboxRoutes } from "./routes/inboxRoutes";
 import { registerDailyCommandRoutes } from "./dailyCommand/routes";
 import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
@@ -4845,46 +4846,7 @@ Return ONLY the JSON object.`;
     }
   });
 
-  app.get("/api/deliverables", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const triageSection = typeof req.query.triageSection === "string" ? req.query.triageSection : null;
-
-      if (triageSection === "auto_handled") {
-        // Return recently auto-handled / promoted-to-memory items (last 48 h)
-        const since = new Date(Date.now() - 48 * 60 * 60 * 1000);
-        const items = await db
-          .select()
-          .from(schema.deliverables)
-          .where(
-            and(
-              eq(schema.deliverables.userId, userId),
-              eq(schema.deliverables.status, "approved"),
-              gte(schema.deliverables.actedAt, since),
-              sql`${schema.deliverables.triageStatus} IN ('auto_handled', 'promoted_memory')`
-            )
-          )
-          .orderBy(desc(schema.deliverables.createdAt))
-          .limit(20);
-        const { attachDeliverableReviewState } = await import("./agent/reviewLoop");
-        return res.json(items.map(attachDeliverableReviewState));
-      }
-
-      const status = typeof req.query.status === "string" ? req.query.status : "pending_approval";
-      const items = await db
-        .select()
-        .from(schema.deliverables)
-        .where(and(eq(schema.deliverables.userId, userId), eq(schema.deliverables.status, status)))
-        .orderBy(desc(schema.deliverables.createdAt))
-        .limit(50);
-      const { attachDeliverableReviewState } = await import("./agent/reviewLoop");
-      res.json(items.map(attachDeliverableReviewState));
-    } catch (err) {
-      console.error("Error listing deliverables:", err);
-      res.status(500).json({ error: "Failed to list deliverables" });
-    }
-  });
+  registerDeliverableRoutes(app);
 
   const { registerDeliverableReviewRoutes } = await import("./agent/deliverableReviewHttpRoutes");
   registerDeliverableReviewRoutes(app, { db });
