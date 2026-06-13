@@ -80,6 +80,7 @@ import { registerEgoRoutes } from "./routes/egoRoutes";
 import { registerDiscordConnectionRoutes } from "./routes/discordConnectionRoutes";
 import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
 import { registerDiscordInteractionRoutes } from "./routes/discordInteractionRoutes";
+import { registerWriteSafetyRoutes } from "./routes/writeSafetyRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
   registerOpenAIProviderAuthRoutes,
@@ -93,7 +94,7 @@ import { applyGoalTreeEdit, summarizeGoalTree, type GoalTreeEditAction } from ".
 import { mergeGoalTaskIntoPlan } from "./goalPlanHandoff";
 import { markTasksInjected, type InjectableGoalTask } from "./goalScheduler";
 import { createJarvisScheduledTask } from "./jarvisScheduledTasks";
-import { isIntegrationOwner, claimIntegrationOwnership } from "./integrationOwner";
+import { claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
 import { driveRouter } from "./driveRoutes";
 import { getValidGoogleTokens, getValidGoogleToken, getValidMicrosoftToken, getUserTokens, getUserToken, getUserOAuthStatus } from "./userTokenStore";
@@ -5835,63 +5836,9 @@ Extract up to 8 memories per batch.`;
   // GET  /api/write-budget        — returns current count, max, and tripped state.
   // POST /api/write-budget/reset  — owner-only; clears the circuit-breaker counter.
 
-  app.get("/api/write-budget", authMiddleware, async (req: Request, res: Response) => {
-    try {
-      const {
-        checkCircuitBreaker,
-        CIRCUIT_MAX_WRITES,
-        writeBudgetSummary,
-      } = await import("./agent/safeWritePolicy");
-      const [status, summary] = await Promise.all([checkCircuitBreaker(), writeBudgetSummary()]);
-      res.json({
-        count:   status.count,
-        max:     CIRCUIT_MAX_WRITES,
-        tripped: status.tripped,
-        resetAt: status.resetAt?.toISOString() ?? null,
-        summary,
-      });
-    } catch (err) {
-      console.error("[write-budget] GET error:", err);
-      res.status(500).json({ error: "Failed to fetch write budget" });
-    }
-  });
-
-  app.post("/api/write-budget/reset", authMiddleware, async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).userId as string;
-      if (!(await isIntegrationOwner(userId))) {
-        return res.status(403).json({ error: "Only the account owner can reset the write budget" });
-      }
-      const { resetCircuitBreaker } = await import("./agent/safeWritePolicy");
-      await resetCircuitBreaker();
-      res.json({ ok: true });
-    } catch (err) {
-      console.error("[write-budget] POST /reset error:", err);
-      res.status(500).json({ error: "Failed to reset write budget" });
-    }
-  });
+  registerWriteSafetyRoutes(app);
 
   // ── Self-heal audit log API ───────────────────────────────────────────────
-  app.get("/api/self-heal-audit", authMiddleware, async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).userId as string;
-      if (!(await isIntegrationOwner(userId))) {
-        return res.status(403).json({ error: "Only the account owner can view the self-heal audit log" });
-      }
-      const parsedLimit = parseInt(String(req.query.limit ?? ""), 10);
-      const limit = Number.isNaN(parsedLimit) ? 50 : Math.max(1, Math.min(parsedLimit, 200));
-      const entries = await db
-        .select()
-        .from(schema.selfHealAuditLog)
-        .orderBy(desc(schema.selfHealAuditLog.createdAt))
-        .limit(limit);
-      res.json({ entries });
-    } catch (err) {
-      console.error("[self-heal-audit] GET error:", err);
-      res.status(500).json({ error: "Failed to fetch self-heal audit log" });
-    }
-  });
-
   // ── Button locations — trained button memory ────────────────────────────
   app.get("/api/button-locations", authMiddleware, async (req: Request, res: Response) => {
     try {
