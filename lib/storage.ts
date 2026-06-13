@@ -1062,8 +1062,7 @@ export async function deleteGoal(id: string): Promise<void> {
 
 export async function getPlatforms(): Promise<ConnectedPlatform[]> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     const saved = prefs.platforms || [];
     if (saved.length === 0) return DEFAULT_PLATFORMS;
     return DEFAULT_PLATFORMS.map(def => {
@@ -1082,10 +1081,9 @@ export async function togglePlatform(id: string): Promise<void> {
     const updated = platforms.map(p =>
       p.id === id ? { ...p, connected: !p.connected } : p
     );
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.platforms = updated;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('Failed to toggle platform:', e);
   }
@@ -1175,13 +1173,12 @@ export async function runMigrations(): Promise<void> {
   try {
     const token = await getAuthToken();
     if (!token) return;
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     const version = prefs.migrationVersion || 0;
     if (version < CURRENT_MIGRATION_VERSION) {
       await resetStats();
       prefs.migrationVersion = CURRENT_MIGRATION_VERSION;
-      await apiPut('/api/data/user-preferences', prefs);
+      await saveUserPreferencesData(prefs);
     }
   } catch (e) {
     console.error('[storage] runMigrations failed:', e);
@@ -1234,8 +1231,7 @@ export async function saveCompletedCalendarId(id: string, completed: boolean): P
 
 export async function getUserName(): Promise<string> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return prefs.userName || '';
   } catch {
     return '';
@@ -1244,10 +1240,9 @@ export async function getUserName(): Promise<string> {
 
 export async function saveUserName(name: string): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.userName = name;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] saveUserName failed:', e);
   }
@@ -1255,8 +1250,7 @@ export async function saveUserName(name: string): Promise<void> {
 
 export async function isOnboardingComplete(): Promise<boolean> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return prefs.onboardingComplete === true;
   } catch {
     return false;
@@ -1265,10 +1259,9 @@ export async function isOnboardingComplete(): Promise<boolean> {
 
 export async function setOnboardingComplete(): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.onboardingComplete = true;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] setOnboardingComplete failed:', e);
   }
@@ -1444,8 +1437,7 @@ export async function getCarryoverTasks(): Promise<Task[]> {
 
 export async function getUserPreferences(): Promise<Record<string, any>> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    return (result.data as Record<string, any>) || {};
+    return await getUserPreferencesData();
   } catch {
     return {};
   }
