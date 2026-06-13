@@ -64,6 +64,7 @@ import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
 import { registerDesktopConnectorRoutes } from "./routes/desktopConnectorRoutes";
 import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
 import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
+import { registerAdminSkillsRoutes } from "./routes/adminSkillsRoutes";
 import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryRoutes";
 import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./routes/platformRoutes";
 import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
@@ -276,58 +277,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * Active sessions pick up the new instructions at their next session start —
    * mid-session injection is intentionally not supported to avoid instability.
    */
-  app.post("/api/admin/skills/publish", async (req: Request, res: Response) => {
-    if (!requireAdminSecret(req, res)) return;
-    try {
-      const { publishSkillPack } = await import("./intelligence/behaviorStore");
-      const body = req.body as {
-        packId?: string;
-        name?: string;
-        instructions?: string;
-        changeNote?: string;
-        description?: string;
-        isStoreVisible?: boolean;
-        heartbeatRules?: schema.PackHeartbeatRules;
-        toolGroups?: schema.PackToolGroups;
-      };
-      const { packId, name, instructions, changeNote, description, isStoreVisible, heartbeatRules, toolGroups } = body;
-      if (!name || !instructions || !changeNote) {
-        return res.status(400).json({ error: "name, instructions, and changeNote are required" });
-      }
-      const pack = await publishSkillPack({
-        packId,
-        name,
-        instructions,
-        changeNote,
-        description,
-        isStoreVisible,
-        heartbeatRules,
-        toolGroups,
-      });
-      console.log(`[Admin/Skills] published pack "${pack.name}" v${pack.version}`);
-      res.json({ ok: true, pack });
-    } catch (err) {
-      console.error("[Admin/Skills] publish failed:", err);
-      res.status(500).json({ error: "Failed to publish skill pack" });
-    }
-  });
-
-  /**
-   * GET /api/admin/skills
-   * List all skill packs with their changelogs and per-user override counts.
-   */
-  app.get("/api/admin/skills", async (req: Request, res: Response) => {
-    if (!requireAdminSecret(req, res)) return;
-    try {
-      const { getAdminPackViews } = await import("./intelligence/behaviorStore");
-      const packs = await getAdminPackViews();
-      res.json({ packs });
-    } catch (err) {
-      console.error("[Admin/Skills] list failed:", err);
-      res.status(500).json({ error: "Failed to list skill packs" });
-    }
-  });
-
+  registerAdminSkillsRoutes(app, requireAdminSecret);
   registerAdminHealthRoutes(app, requireAdminSecret);
 
   /**
