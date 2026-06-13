@@ -565,6 +565,33 @@ Return ONLY a valid JSON array, no explanation, no markdown fences.`,
 // form fields that are below the visible area of the screen.
 // Swipe coordinates are computed as a fraction of the actual screen dimensions
 // so the gesture works correctly on tablets, foldables, and any screen density.
+async function resolveScreenMapElements(
+  userId: string,
+  ctx: object | undefined,
+  toolName: string,
+  maxAge: number,
+): Promise<BuildScreenMapResult> {
+  const cached = screenMapCache.get(userId);
+  if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
+    console.log(`[${toolName}] userId=${userId} using cached ScreenMap`);
+    try {
+      const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
+      const elements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
+      if (elements.length > 0) {
+        return { ok: true, elements };
+      }
+    } catch {
+      // Fall through to a fresh ScreenMap, matching the previous per-tool fallback.
+    }
+  }
+
+  const buildResult = await buildScreenMapElements(userId, ctx);
+  if (!buildResult.ok) return buildResult;
+
+  console.log(`[${toolName}] userId=${userId} fresh ScreenMap: ${buildResult.elements.length} elements`);
+  return buildResult;
+}
+
 const SCROLL_MAX_ATTEMPTS = 3;
 // Fallback coordinates for a typical 1080×1920 px Android phone (used when
 // the display size op is unavailable or the daemon does not support it yet).
@@ -2516,27 +2543,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_swipe_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_swipe_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_swipe_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_swipe_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_swipe_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
     let bestElement: ScreenElement | null = null;
@@ -2940,27 +2951,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_pinch_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_pinch_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_pinch_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_pinch_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_pinch_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
     let bestElement: ScreenElement | null = null;
@@ -3374,27 +3369,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (Vision-based, cache or fresh) ──────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_tap_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_tap_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_tap_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_tap_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_tap_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
     let bestElement: ScreenElement | null = null;
@@ -3828,27 +3807,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_long_press_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_long_press_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_long_press_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_long_press_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_long_press_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
     let bestElement: ScreenElement | null = null;
@@ -4686,27 +4649,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_drag_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_drag_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_drag_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_drag_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_drag_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match source element ────────────────────────────────────────────
     let fromElement: ScreenElement | null = null;
@@ -6277,27 +6224,11 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
 
     // ── Step 1: Resolve ScreenMap (cache or fresh) ────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_type_into_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_type_into_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_type_into_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_type_into_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_type_into_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Step 2: Fuzzy-match the element (with scroll-then-retry for off-screen fields) ──
     let bestElement: ScreenElement | null = null;
