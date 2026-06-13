@@ -33,7 +33,7 @@ export function registerTranscriptDiagnoseRoutes(app: Express, authMiddleware: R
         supadataResult = {
           keyConfigured: false,
           nativeCaptions: null,
-          note: "Phase 0.5 skipped â€” SUPADATA_API_KEY not set. Get a free key at https://dash.supadata.ai",
+          note: "Phase 0.5 skipped - SUPADATA_API_KEY not set. Get a free key at https://dash.supadata.ai",
         };
       } else {
         let nativeCaptions: boolean | null = null;
@@ -48,11 +48,11 @@ export function registerTranscriptDiagnoseRoutes(app: Express, authMiddleware: R
             const content = data.content;
             nativeCaptions = Array.isArray(content) ? content.length > 0 : typeof content === "string" ? content.trim().length > 0 : false;
             supadataNote = nativeCaptions
-              ? "Native captions found â€” fast, no credits. Will return immediately."
-              : "Native captions empty â€” will use AI generation (mode=auto).";
+              ? "Native captions found - fast, no credits. Will return immediately."
+              : "Native captions empty - will use AI generation (mode=auto).";
           } else if (nativeRes.status === 404 || nativeRes.status === 400) {
             nativeCaptions = false;
-            supadataNote = "No native captions â€” will use AI generation (mode=auto). Takes 5-10 min for long videos.";
+            supadataNote = "No native captions - will use AI generation (mode=auto). Takes 5-10 min for long videos.";
           } else {
             const body = await nativeRes.text().catch(() => "");
             supadataNote = `Native caption check returned ${nativeRes.status}: ${body.slice(0, 200)}`;
@@ -74,7 +74,7 @@ export function registerTranscriptDiagnoseRoutes(app: Express, authMiddleware: R
         cmd: ytdlpStatus.cmd,
         reason: ytdlpStatus.available
           ? "yt-dlp is installed and responding"
-          : "yt-dlp is not available â€” audio transcription and caption download will fail. Note: cloud datacenter IPs are often blocked by YouTube, so yt-dlp success rates may be very low even when installed.",
+          : "yt-dlp is not available - audio transcription and caption download will fail. Note: cloud datacenter IPs are often blocked by YouTube, so yt-dlp success rates may be very low even when installed.",
       };
 
       const nativeCaptions = (supadataResult.nativeCaptions as boolean | null);
@@ -82,9 +82,9 @@ export function registerTranscriptDiagnoseRoutes(app: Express, authMiddleware: R
       if (geminiKeyConfigured && nativeCaptions !== false) {
         recommendation = "Gemini (Phase 0) is the fastest option. Supadata native captions also available.";
       } else if (geminiKeyConfigured) {
-        recommendation = "Gemini (Phase 0) is the primary option. Supadata will use AI generation (mode=auto) â€” takes 5-10 min for long videos.";
+        recommendation = "Gemini (Phase 0) is the primary option. Supadata will use AI generation (mode=auto) - takes 5-10 min for long videos.";
       } else if (supadataKey && nativeCaptions === true) {
-        recommendation = "Supadata native captions available â€” fast retrieval.";
+        recommendation = "Supadata native captions available - fast retrieval.";
       } else if (supadataKey) {
         recommendation = "Only Supadata AI generation is viable. Takes 5-10 min for long videos. Recommend enabling Gemini with GOOGLE_GEMINI_API_KEY.";
       } else {

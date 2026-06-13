@@ -237,7 +237,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         if (!checkAndIncrementScreenshotBudget(ctx)) {
           return {
             ok: false,
-            content: jsonErrorContent("Screenshot limit reached for this turn (max 4). Use android_read_screen to read the current screen content as text ??? it returns the accessibility tree without requiring a screenshot.", { label: "daemon_action: turn screenshot limit reached" }),
+            content: jsonErrorContent("Screenshot limit reached for this turn (max 4). Use android_read_screen to read the current screen content as text because it returns the accessibility tree without requiring a screenshot.", { label: "daemon_action: turn screenshot limit reached" }),
           };
         }
         op = { type: "android_screenshot" };
