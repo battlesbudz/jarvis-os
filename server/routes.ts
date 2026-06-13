@@ -93,6 +93,7 @@ import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoul
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
 import { listPeople, deletePerson } from "./memory/people";
 import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
+import { operatorActionPermKey } from "./daemon/operatorActionPermKey";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -143,20 +144,6 @@ const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v
 const openai = new OpenAI(getOpenAIClientConfig());
 
 export { buildPlanForUser, buildPlanFromInputs } from './services/planGenerationService';
-
-function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
-  switch (operatorAction.type) {
-    case 'open_app': return 'android_open_app';
-    case 'tap_element':
-    case 'tap_coordinates':
-    case 'type_text':
-    case 'swipe':
-    case 'press_key': return 'android_tap_type';
-    case 'wait':
-    case 'done': return null;
-    default: return 'android_tap_type';
-  }
-}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth", authRouter);
