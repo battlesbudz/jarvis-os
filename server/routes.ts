@@ -1,7 +1,5 @@
 import "./agent/providers/envAliases";
 import { createHash } from 'crypto';
-import fs from "fs";
-import path from "path";
 import { activeCoachRuns } from "./runRegistry";
 import { registerCoachRunLifecycle } from "./coachRunLifecycle";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
@@ -12,7 +10,7 @@ import { getOpenAIClientConfig } from "./agent/providers/env";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, userDocuments, webchatInviteTokens } from "@shared/schema";
+import { userMemories, morningVoiceNotes, userPreferences, proactiveQuestionsSent, userDocuments } from "@shared/schema";
 import { processDocument, getUserDocumentContext, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS, MAX_DOCS_PER_USER } from "./documentProcessor";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
@@ -62,11 +60,18 @@ import { registerConnectionsRoutes, registerPublicConnectionsCallbackRoutes } fr
 import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
 import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
 import { registerDesktopConnectorRoutes } from "./routes/desktopConnectorRoutes";
-import { registerPublicWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
+import { registerPublicWebchatInviteRoutes, registerWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
 import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
+import { registerAdminSkillsRoutes } from "./routes/adminSkillsRoutes";
 import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryRoutes";
 import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./routes/platformRoutes";
 import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
+import { registerTranscriptDiagnoseRoutes } from "./routes/transcriptDiagnoseRoutes";
+import { registerDiagnosticsRoutes } from "./routes/diagnosticsRoutes";
+import { registerEgoRoutes } from "./routes/egoRoutes";
+import { registerDiscordConnectionRoutes } from "./routes/discordConnectionRoutes";
+import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
+import { registerDiscordInteractionRoutes } from "./routes/discordInteractionRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
   registerOpenAIProviderAuthRoutes,
@@ -127,6 +132,7 @@ import {
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import { writeCoachStreamError } from "./services/coachSse";
+import { extractReminderSuggestion } from "./services/reminderSuggestion";
 import {
   buildCoachSystemPrompt,
   clearMorningNoteSummary,
@@ -138,34 +144,7 @@ import {
   streamCoachModelTurn,
 } from "./services/aiCoachContextService";
 
-async function applyLivingContextReviewToFile(relPath: string | null | undefined, oldBlock: string | null | undefined, newBlock?: string | null): Promise<void> {
-  if (!relPath || !oldBlock) return;
-  if (path.isAbsolute(relPath) || relPath.includes("..")) return;
-  const rootDir = process.cwd();
-  const abs = path.resolve(rootDir, relPath);
-  const allowedRoot = path.resolve(rootDir, "workspaces", "battles");
-  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path.sep))) return;
-  if (path.extname(abs).toLowerCase() !== ".md") return;
-
-  try {
-    let content = await fs.promises.readFile(abs, "utf-8");
-    const replacement = newBlock ? `${newBlock}\n` : "";
-    if (content.includes(oldBlock)) {
-      content = content.replace(oldBlock, replacement).replace(/\n{4,}/g, "\n\n\n");
-      await fs.promises.writeFile(abs, content, "utf-8");
-    } else if (newBlock && !content.includes(newBlock)) {
-      await fs.promises.appendFile(abs, `\n${newBlock}\n`, "utf-8");
-    }
-  } catch {
-    // The database row is the durable source of truth; runtime file sync is best effort.
-  }
-}
-
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
-
-const openai = new OpenAI(getOpenAIClientConfig());
-
-export { buildPlanForUser, buildPlanFromInputs } from './services/planGenerationService';
 
 function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
   switch (operatorAction.type) {
@@ -180,6 +159,10 @@ function operatorActionPermKey(operatorAction: Record<string, unknown>): Android
     default: return 'android_tap_type';
   }
 }
+
+const openai = new OpenAI(getOpenAIClientConfig());
+
+export { buildPlanForUser, buildPlanFromInputs } from './services/planGenerationService';
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.use("/api/auth", authRouter);
@@ -198,46 +181,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * BEFORE authMiddleware because Discord requests do not carry a Bearer JWT.
    * Security is provided by Ed25519 signature verification instead.
    */
-  app.post("/api/discord/interactions", async (req: Request, res: Response) => {
-    try {
-      const publicKey = process.env.DISCORD_PUBLIC_KEY;
-      if (!publicKey) {
-        console.warn("[DiscordInteractions] DISCORD_PUBLIC_KEY not set — rejecting request");
-        return res.status(401).json({ error: "Interactions endpoint not configured" });
-      }
-
-      const signature = req.headers["x-signature-ed25519"] as string | undefined;
-      const timestamp = req.headers["x-signature-timestamp"] as string | undefined;
-
-      if (!signature || !timestamp) {
-        return res.status(401).json({ error: "Missing Discord signature headers" });
-      }
-
-      const rawBody: Buffer = (req as any).rawBody;
-      if (!rawBody) {
-        return res.status(400).json({ error: "Missing raw body" });
-      }
-
-      // Replay-window check: reject interactions timestamped more than 5 minutes ago
-      const tsSeconds = parseInt(timestamp, 10);
-      if (isNaN(tsSeconds) || Math.abs(Date.now() / 1000 - tsSeconds) > 300) {
-        return res.status(401).json({ error: "Request timestamp out of range" });
-      }
-
-      const { verifyDiscordSignature, handleInteraction } = await import("./discord/slashCommands");
-      const valid = verifyDiscordSignature(publicKey, signature, timestamp, rawBody);
-      if (!valid) {
-        return res.status(401).json({ error: "Invalid request signature" });
-      }
-
-      const interaction = req.body;
-      const response = await handleInteraction(interaction);
-      return res.json(response);
-    } catch (err) {
-      console.error("[DiscordInteractions] Unhandled error:", err);
-      return res.status(500).json({ error: "Internal server error" });
-    }
-  });
+  registerDiscordInteractionRoutes(app);
 
   // ── Admin: Skill Pack management (operator publish path) ─────────────────────
   // Auth: x-admin-secret header must match JARVIS_ADMIN_SECRET env var.
@@ -276,167 +220,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
    * Active sessions pick up the new instructions at their next session start —
    * mid-session injection is intentionally not supported to avoid instability.
    */
-  app.post("/api/admin/skills/publish", async (req: Request, res: Response) => {
-    if (!requireAdminSecret(req, res)) return;
-    try {
-      const { publishSkillPack } = await import("./intelligence/behaviorStore");
-      const body = req.body as {
-        packId?: string;
-        name?: string;
-        instructions?: string;
-        changeNote?: string;
-        description?: string;
-        isStoreVisible?: boolean;
-        heartbeatRules?: schema.PackHeartbeatRules;
-        toolGroups?: schema.PackToolGroups;
-      };
-      const { packId, name, instructions, changeNote, description, isStoreVisible, heartbeatRules, toolGroups } = body;
-      if (!name || !instructions || !changeNote) {
-        return res.status(400).json({ error: "name, instructions, and changeNote are required" });
-      }
-      const pack = await publishSkillPack({
-        packId,
-        name,
-        instructions,
-        changeNote,
-        description,
-        isStoreVisible,
-        heartbeatRules,
-        toolGroups,
-      });
-      console.log(`[Admin/Skills] published pack "${pack.name}" v${pack.version}`);
-      res.json({ ok: true, pack });
-    } catch (err) {
-      console.error("[Admin/Skills] publish failed:", err);
-      res.status(500).json({ error: "Failed to publish skill pack" });
-    }
-  });
-
-  /**
-   * GET /api/admin/skills
-   * List all skill packs with their changelogs and per-user override counts.
-   */
-  app.get("/api/admin/skills", async (req: Request, res: Response) => {
-    if (!requireAdminSecret(req, res)) return;
-    try {
-      const { getAdminPackViews } = await import("./intelligence/behaviorStore");
-      const packs = await getAdminPackViews();
-      res.json({ packs });
-    } catch (err) {
-      console.error("[Admin/Skills] list failed:", err);
-      res.status(500).json({ error: "Failed to list skill packs" });
-    }
-  });
-
+  registerAdminSkillsRoutes(app, requireAdminSecret);
   registerAdminHealthRoutes(app, requireAdminSecret);
 
-  /**
-   * GET /api/transcript/diagnose?videoId=VIDEO_ID
-   * Diagnoses the transcript pipeline for a specific video without spending quota.
-   * Reports Gemini key status, Supadata key + native caption check, and yt-dlp availability.
-   * Does NOT call Gemini (costs quota) — only checks key status and Supadata native captions.
-   */
-  app.get("/api/transcript/diagnose", authMiddleware, async (req: Request, res: Response) => {
-    const videoId = String(req.query.videoId ?? "").trim();
-    if (!videoId) {
-      res.status(400).json({ error: "videoId query parameter is required" });
-      return;
-    }
-
-    try {
-      const { getYtdlpStatus, ensureYtdlpUpgraded } = await import("./lib/transcriptCache");
-
-      // Check Gemini key status (do NOT call Gemini)
-      const geminiKeyConfigured = !!process.env.GOOGLE_GEMINI_API_KEY;
-      const geminiKeyType = geminiKeyConfigured ? "direct" : "none";
-      const geminiResult = {
-        keyConfigured: geminiKeyConfigured,
-        keyType: geminiKeyType,
-        note: geminiKeyConfigured
-          ? "Will attempt transcription as Phase 0 (direct Google AI Studio key)"
-          : "Phase 0 skipped - no Gemini key configured. Set GOOGLE_GEMINI_API_KEY at https://aistudio.google.com/apikey",
-      };
-
-      // Check Supadata key + native captions
-      const supadataKey = process.env.SUPADATA_API_KEY;
-      let supadataResult: Record<string, unknown>;
-      if (!supadataKey) {
-        supadataResult = {
-          keyConfigured: false,
-          nativeCaptions: null,
-          note: "Phase 0.5 skipped — SUPADATA_API_KEY not set. Get a free key at https://dash.supadata.ai",
-        };
-      } else {
-        let nativeCaptions: boolean | null = null;
-        let supadataNote = "";
-        try {
-          const nativeUrl = `https://api.supadata.ai/v1/youtube/transcript?videoId=${encodeURIComponent(videoId)}&lang=en&mode=native`;
-          const nativeRes = await fetch(nativeUrl, {
-            headers: { "x-api-key": supadataKey, "Content-Type": "application/json" },
-          });
-          if (nativeRes.ok) {
-            const data = await nativeRes.json() as { content?: unknown[] | string };
-            const content = data.content;
-            nativeCaptions = Array.isArray(content) ? content.length > 0 : typeof content === "string" ? content.trim().length > 0 : false;
-            supadataNote = nativeCaptions
-              ? "Native captions found — fast, no credits. Will return immediately."
-              : "Native captions empty — will use AI generation (mode=auto).";
-          } else if (nativeRes.status === 404 || nativeRes.status === 400) {
-            nativeCaptions = false;
-            supadataNote = "No native captions — will use AI generation (mode=auto). Takes 5-10 min for long videos.";
-          } else {
-            const body = await nativeRes.text().catch(() => "");
-            supadataNote = `Native caption check returned ${nativeRes.status}: ${body.slice(0, 200)}`;
-          }
-        } catch (supadataCheckErr) {
-          supadataNote = `Native caption check failed: ${supadataCheckErr instanceof Error ? supadataCheckErr.message : String(supadataCheckErr)}`;
-        }
-        supadataResult = {
-          keyConfigured: true,
-          nativeCaptions,
-          note: supadataNote,
-        };
-      }
-
-      // Check yt-dlp availability
-      await ensureYtdlpUpgraded().catch(() => null);
-      const ytdlpStatus = getYtdlpStatus();
-      const ytdlpResult = {
-        available: ytdlpStatus.available,
-        cmd: ytdlpStatus.cmd,
-        reason: ytdlpStatus.available
-          ? "yt-dlp is installed and responding"
-          : "yt-dlp is not available — audio transcription and caption download will fail. Note: cloud datacenter IPs are often blocked by YouTube, so yt-dlp success rates may be very low even when installed.",
-      };
-
-      // Build recommendation
-      const nativeCaptions = (supadataResult.nativeCaptions as boolean | null);
-      let recommendation: string;
-      if (geminiKeyConfigured && nativeCaptions !== false) {
-        recommendation = "Gemini (Phase 0) is the fastest option. Supadata native captions also available.";
-      } else if (geminiKeyConfigured) {
-        recommendation = "Gemini (Phase 0) is the primary option. Supadata will use AI generation (mode=auto) — takes 5-10 min for long videos.";
-      } else if (supadataKey && nativeCaptions === true) {
-        recommendation = "Supadata native captions available — fast retrieval.";
-      } else if (supadataKey) {
-        recommendation = "Only Supadata AI generation is viable. Takes 5-10 min for long videos. Recommend enabling Gemini with GOOGLE_GEMINI_API_KEY.";
-      } else {
-        recommendation = "No cloud transcript methods available. Only local yt-dlp/Whisper pipeline remains, and cloud IPs are often blocked. Enable Gemini or Supadata.";
-      }
-
-      res.json({
-        videoId,
-        gemini: geminiResult,
-        supadata: supadataResult,
-        ytdlp: ytdlpResult,
-        recommendation,
-      });
-    } catch (err) {
-      console.error("[transcript/diagnose] failed:", err);
-      res.status(500).json({ error: "Diagnose failed", detail: err instanceof Error ? err.message : String(err) });
-    }
-  });
-
+  registerTranscriptDiagnoseRoutes(app, authMiddleware);
   registerAdminSearchRegistryRoutes(app, requireAdminSecret);
   registerPublicWebchatInviteRoutes(app);
   registerCodexGatewayRoutes(app);
@@ -477,45 +264,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerConnectionsRoutes(app);
   registerDesktopConnectorRoutes(app);
 
-  // ── GET /api/goals — return goals for the authenticated user ───────────────
-  app.get("/api/goals", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const row = await db
-        .select({ data: schema.goals.data })
-        .from(schema.goals)
-        .where(eq(schema.goals.userId, userId))
-        .limit(1);
-      const raw = (row[0]?.data as any[]) ?? [];
-      const goals = raw
-        .map((g: any) => {
-          const current = Number(g.current ?? 0);
-          const target = Number(g.target ?? 0);
-          let status: string;
-          if (target > 0 && current >= target) status = "complete";
-          else if (current > 0) status = "in_progress";
-          else status = "active";
-          return {
-            id: g.id ?? "",
-            title: g.title ?? "",
-            description: g.description ?? null,
-            category: g.category ?? "personal",
-            target,
-            current,
-            unit: g.unit ?? "",
-            status,
-            createdAt: g.createdAt ?? new Date().toISOString(),
-            updatedAt: g.updatedAt ?? null,
-          };
-        })
-        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      res.json(goals);
-    } catch (err) {
-      console.error("[GET /api/goals] error:", err);
-      res.status(500).json({ error: "Failed to fetch goals" });
-    }
-  });
+  registerGoalSummaryRoutes(app);
 
   registerTelegramRoutes(app);
   registerChannelRoutes(app);
@@ -528,114 +277,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerVaultRoutes(app);
   app.use("/api/drive", driveRouter);
 
-  // ── Jarvis Ego — Dashboard API ─────────────────────────────────────────────
-
-  app.get("/api/ego/dashboard", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
-      const { analyseEgo, getISOWeekMonday } = await import("./intelligence/ego");
-      const weekOf = getISOWeekMonday(new Date());
-      const analysis = await analyseEgo(userId, weekOf);
-
-      const latestReport = await db
-        .select()
-        .from(schema.egoWeeklyReports)
-        .where(eq(schema.egoWeeklyReports.userId, userId))
-        .orderBy(desc(schema.egoWeeklyReports.createdAt))
-        .limit(1);
-
-      res.json({
-        analysis,
-        latestReport: latestReport[0] ?? null,
-      });
-    } catch (err) {
-      console.error("[Ego] dashboard failed:", err);
-      res.status(500).json({ error: "Failed to load ego dashboard" });
-    }
-  });
-
-  app.get("/api/ego/reports", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
-      const reports = await db
-        .select()
-        .from(schema.egoWeeklyReports)
-        .where(eq(schema.egoWeeklyReports.userId, userId))
-        .orderBy(desc(schema.egoWeeklyReports.createdAt))
-        .limit(12);
-
-      res.json({ reports });
-    } catch (err) {
-      console.error("[Ego] reports failed:", err);
-      res.status(500).json({ error: "Failed to load reports" });
-    }
-  });
-
-  app.post("/api/ego/trigger", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
-      // Guard: only allow manual trigger in development, or when ?force=true is
-      // explicitly passed. This prevents partial-week reports being locked in
-      // production via early triggering (the scheduler handles Sunday 18:00 UTC).
-      const isDev = process.env.NODE_ENV !== "production";
-      const forceOverride = req.query.force === "true";
-      if (!isDev && !forceOverride) {
-        return res.status(403).json({ error: "Manual trigger not available in production (pass ?force=true to override)" });
-      }
-
-      const { runEgoForUser, getISOWeekMonday } = await import("./intelligence/ego");
-      const weekOf = getISOWeekMonday(new Date());
-      const delivered = await runEgoForUser(userId, weekOf);
-      res.json({ ok: true, delivered, weekOf });
-    } catch (err) {
-      console.error("[Ego] trigger failed:", err);
-      res.status(500).json({ error: "Failed to trigger ego report" });
-    }
-  });
-
-  app.get("/api/discord/status", async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const links = await db.select().from(channelLinks)
-        .where(and(eq(channelLinks.userId, userId), eq(channelLinks.channel, 'discord')));
-      const link = links[0];
-      const meta = link?.metadata as { discordUsername?: string } | undefined;
-      res.json({
-        connected: links.length > 0,
-        discordUsername: meta?.discordUsername ?? null,
-      });
-    } catch (error) {
-      console.error("Error getting Discord status:", error);
-      res.status(500).json({ error: "Failed to get Discord status" });
-    }
-  });
-
-  app.post("/api/discord/link", async (req: Request, res: Response) => {
-    try {
-      const userId = (req as any).userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { code } = req.body as { code?: string };
-      if (!code || code.trim().length === 0) {
-        return res.status(400).json({ error: "Pairing code is required." });
-      }
-      const { completePairing } = await import("./discord/manager");
-      const result = await completePairing(userId, code.trim().toUpperCase());
-      if (!result.ok) {
-        return res.status(400).json({ error: result.error ?? "Pairing failed." });
-      }
-      res.json({ ok: true, discordUsername: result.discordUsername });
-    } catch (error) {
-      console.error("Error completing Discord pairing:", error);
-      res.status(500).json({ error: "Failed to complete Discord pairing." });
-    }
-  });
+  registerEgoRoutes(app);
+  registerDiscordConnectionRoutes(app);
 
   registerPlanGenerationRoutes(app);
 
@@ -3690,85 +3333,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
   // ── Web-chat invite tokens ────────────────────────────────────────────────
   // GET /api/webchat/invite/active — returns the owner's current unexpired token (if any)
-  app.get("/api/webchat/invite/active", authMiddleware, async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId!;
-      const [row] = await db
-        .select()
-        .from(webchatInviteTokens)
-        .where(and(eq(webchatInviteTokens.userId, userId), gte(webchatInviteTokens.expiresAt, new Date())))
-        .limit(1);
-
-      if (!row) return res.json({ active: false });
-
-      const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
-      const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
-      const url = `${protocol}://${host}/chat?invite=${row.token}`;
-
-      return res.json({ active: true, token: row.token, url, expiresAt: row.expiresAt });
-    } catch (error) {
-      console.error("Error fetching active webchat invite token:", error);
-      return res.status(500).json({ error: "Failed to fetch active invite token" });
-    }
-  });
-
-  // POST /api/webchat/invite — owner generates (or retrieves) a 24-hour shareable link token
-  app.post("/api/webchat/invite", authMiddleware, async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId!;
-
-      const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
-      const protocol = req.headers["x-forwarded-proto"] || (req.secure ? "https" : "http");
-
-      // Return existing unexpired token if one already exists
-      const [existing] = await db
-        .select()
-        .from(webchatInviteTokens)
-        .where(and(eq(webchatInviteTokens.userId, userId), gte(webchatInviteTokens.expiresAt, new Date())))
-        .limit(1);
-
-      if (existing) {
-        const url = `${protocol}://${host}/chat?invite=${existing.token}`;
-        return res.json({ token: existing.token, url, expiresAt: existing.expiresAt });
-      }
-
-      const { randomBytes } = await import("crypto");
-      const token = randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 h
-
-      await db.insert(webchatInviteTokens).values({ token, userId, expiresAt });
-
-      const url = `${protocol}://${host}/chat?invite=${token}`;
-      return res.json({ token, url, expiresAt });
-    } catch (error) {
-      console.error("Error creating webchat invite token:", error);
-      return res.status(500).json({ error: "Failed to create invite token" });
-    }
-  });
-
-  // DELETE /api/webchat/invite/:token — owner revokes an active invite link
-  app.delete("/api/webchat/invite/:token", authMiddleware, async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId!;
-      const token = _p(req.params.token);
-
-      const [row] = await db
-        .select()
-        .from(webchatInviteTokens)
-        .where(eq(webchatInviteTokens.token, token))
-        .limit(1);
-
-      if (!row) return res.status(404).json({ error: "Token not found" });
-      if (row.userId !== userId) return res.status(403).json({ error: "Forbidden" });
-
-      await db.delete(webchatInviteTokens).where(eq(webchatInviteTokens.token, token));
-
-      return res.json({ ok: true });
-    } catch (error) {
-      console.error("Error revoking webchat invite token:", error);
-      return res.status(500).json({ error: "Failed to revoke invite token" });
-    }
-  });
+  registerWebchatInviteRoutes(app, authMiddleware);
 
   app.post("/api/coach/execute-confirmed", async (req: Request, res: Response) => {
     try {
@@ -3846,51 +3411,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       return res.json({ content: 'Got it — I\'ll leave that for now.' });
     }
   });
-
-  function titleCaseAction(raw: string): string {
-    const trimmed = raw
-      .replace(/[?.!]+$/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
-    return trimmed ? trimmed.charAt(0).toUpperCase() + trimmed.slice(1) : "Follow up";
-  }
-
-  function extractReminderSuggestion(text: unknown): {
-    type: "reminder";
-    title: string;
-    category: string;
-    priority: "medium";
-    description: string;
-    scheduledAt: string;
-  } | null {
-    if (typeof text !== "string") return null;
-    const source = text.trim();
-    if (!/\b(remind\s+me|set\s+(a\s+)?reminder|reminder)\b/i.test(source)) return null;
-
-    const timeMatch = source.match(/\bin\s+(\d+(?:\.\d+)?|an?|one)\s+(minute|minutes|hour|hours|day|days|week|weeks)\b/i)
-      ?? source.match(/\btomorrow(?:\s+at\s+[^?.!,]+)?\b/i)
-      ?? source.match(/\btoday\s+at\s+[^?.!,]+\b/i)
-      ?? source.match(/\bnext\s+(?:sunday|monday|tuesday|wednesday|thursday|friday|saturday)(?:\s+at\s+[^?.!,]+)?\b/i)
-      ?? source.match(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i);
-    if (!timeMatch) return null;
-
-    const afterTo = source.match(/\b(?:remind\s+me|set\s+(?:a\s+)?reminder)\b[\s\S]*?\bto\s+(.+)$/i)?.[1];
-    const taskText = (afterTo || source)
-      .replace(timeMatch[0], "")
-      .replace(/\b(can you|could you|please|set\s+(?:a\s+)?reminder|remind\s+me|reminder)\b/ig, "")
-      .replace(/\b(to|for)\b\s*$/i, "")
-      .trim();
-    const title = titleCaseAction(taskText || "Follow up");
-
-    return {
-      type: "reminder",
-      title,
-      category: "personal",
-      priority: "medium",
-      description: `Reminder requested from coach chat: ${source}`,
-      scheduledAt: timeMatch[0].trim(),
-    };
-  }
 
   app.post("/api/coach/suggestions", async (req: Request, res: Response) => {
     let deterministicReminder: ReturnType<typeof extractReminderSuggestion> = null;
@@ -6594,75 +6114,7 @@ Extract up to 8 memories per batch.`;
 
   // ── Diagnostics ──────────────────────────────────────────────────────────────
 
-  app.get("/api/diagnostics/health", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const { runHealthCheck } = await import("./diagnostics/diagnosticsService");
-      const report = await runHealthCheck(userId);
-      res.json(report);
-    } catch (err) {
-      console.error("[Diagnostics] GET /api/diagnostics/health failed:", err);
-      res.status(500).json({ error: "Failed to run health check" });
-    }
-  });
-
-  app.post("/api/diagnostics/run", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const { runAIDiagnosis } = await import("./diagnostics/diagnosticsService");
-      const { diagnosis, report } = await runAIDiagnosis(userId);
-      res.json({ diagnosis, report });
-    } catch (err) {
-      console.error("[Diagnostics] POST /api/diagnostics/run failed:", err);
-      res.status(500).json({ error: "Failed to run diagnosis" });
-    }
-  });
-
-  app.get("/api/diagnostics/memory-events", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const { getRecentEvents } = await import("./diagnostics/diagnosticsService");
-      const events = await getRecentEvents({
-        userId,
-        subsystem: "memory",
-        limit: 20,
-        sinceMinutes: 60,
-        excludePatternDetected: true,
-      });
-      res.json(events);
-    } catch (err) {
-      console.error("[Diagnostics] GET /api/diagnostics/memory-events failed:", err);
-      res.status(500).json({ error: "Failed to fetch memory events" });
-    }
-  });
-
-  app.get("/api/diagnostics/events", async (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const subsystem = typeof req.query.subsystem === "string" ? req.query.subsystem : undefined;
-    if (!subsystem) return res.status(400).json({ error: "subsystem query param required" });
-    const validSubsystems: readonly string[] = schema.DIAGNOSTIC_SUBSYSTEMS;
-    if (!validSubsystems.includes(subsystem)) {
-      return res.status(400).json({ error: `Invalid subsystem. Must be one of: ${schema.DIAGNOSTIC_SUBSYSTEMS.join(", ")}` });
-    }
-    try {
-      const { getRecentEvents } = await import("./diagnostics/diagnosticsService");
-      const events = await getRecentEvents({
-        userId,
-        subsystem: subsystem as import("@shared/schema").DiagnosticSubsystem,
-        limit: 20,
-        sinceMinutes: 60,
-        excludePatternDetected: true,
-      });
-      res.json(events);
-    } catch (err) {
-      console.error("[Diagnostics] GET /api/diagnostics/events failed:", err);
-      res.status(500).json({ error: "Failed to fetch subsystem events" });
-    }
-  });
+  registerDiagnosticsRoutes(app);
 
   registerLocalWorkerRoutes(app);
 

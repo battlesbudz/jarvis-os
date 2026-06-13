@@ -351,6 +351,7 @@ Only return the JSON object, no extra text.`;
 
   app.post("/api/notifications/morning-brief", async (req: Request, res: Response) => {
     try {
+      const userId = req.userId;
       const { tasks, calendarEvents, goals, stats, energyLevel } = req.body;
 
       if (typeof energyLevel !== 'number' || energyLevel < 1 || energyLevel > 5) {
