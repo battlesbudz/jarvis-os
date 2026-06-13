@@ -1,5 +1,6 @@
 import { getApiUrl } from '@/lib/query-client';
 import { getAuthToken } from '@/lib/auth-context';
+import { generateId, getGreeting, getTodayKey } from '@/lib/storageHelpers';
 
 export interface Task {
   id: string;
@@ -366,22 +367,6 @@ export interface Commitment {
   extractedAt: string;
   resolvedAt: string | null;
   sourceMessage: string | null;
-}
-
-function generateId(): string {
-  return Date.now().toString() + Math.random().toString(36).substr(2, 9);
-}
-
-function getTodayKey(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
 }
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
