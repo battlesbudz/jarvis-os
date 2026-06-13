@@ -1,7 +1,5 @@
 import "./agent/providers/envAliases";
 import { createHash } from 'crypto';
-import fs from "fs";
-import path from "path";
 import { activeCoachRuns } from "./runRegistry";
 import { registerCoachRunLifecycle } from "./coachRunLifecycle";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
@@ -139,29 +137,6 @@ import {
   runCoachModelTurn,
   streamCoachModelTurn,
 } from "./services/aiCoachContextService";
-
-async function applyLivingContextReviewToFile(relPath: string | null | undefined, oldBlock: string | null | undefined, newBlock?: string | null): Promise<void> {
-  if (!relPath || !oldBlock) return;
-  if (path.isAbsolute(relPath) || relPath.includes("..")) return;
-  const rootDir = process.cwd();
-  const abs = path.resolve(rootDir, relPath);
-  const allowedRoot = path.resolve(rootDir, "workspaces", "battles");
-  if (!(abs === allowedRoot || abs.startsWith(allowedRoot + path.sep))) return;
-  if (path.extname(abs).toLowerCase() !== ".md") return;
-
-  try {
-    let content = await fs.promises.readFile(abs, "utf-8");
-    const replacement = newBlock ? `${newBlock}\n` : "";
-    if (content.includes(oldBlock)) {
-      content = content.replace(oldBlock, replacement).replace(/\n{4,}/g, "\n\n\n");
-      await fs.promises.writeFile(abs, content, "utf-8");
-    } else if (newBlock && !content.includes(newBlock)) {
-      await fs.promises.appendFile(abs, `\n${newBlock}\n`, "utf-8");
-    }
-  } catch {
-    // The database row is the durable source of truth; runtime file sync is best effort.
-  }
-}
 
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
