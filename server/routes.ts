@@ -98,6 +98,7 @@ import { registerSkillCandidateRoutes } from "./routes/skillCandidateRoutes";
 import { registerSkillStoreRoutes } from "./routes/skillStoreRoutes";
 import { registerMorningVoiceNoteRoutes } from "./routes/morningVoiceNoteRoutes";
 import { registerUserSkillLibraryRoutes } from "./routes/userSkillLibraryRoutes";
+import { registerUserSkillMutationRoutes } from "./routes/userSkillMutationRoutes";
 import { registerJarvisSystemStateRoutes } from "./routes/jarvisSystemStateRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
@@ -4170,74 +4171,7 @@ Extract up to 8 memories per batch.`;
   // Active skills are injected into Jarvis's system prompt at session start.
 
   registerUserSkillLibraryRoutes(app);
-
-  /**
-   * PATCH /api/user-skills/:id
-   * Update name, description, instructions, and/or emoji for a custom skill.
-   * Built-in skills cannot be modified via this endpoint.
-   */
-  app.patch("/api/user-skills/:id", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p(req.params.id);
-    const { name, description, instructions, emoji } = req.body as {
-      name?: string; description?: string; instructions?: string; emoji?: string;
-    };
-    try {
-      const { userSkills } = await import("@shared/schema");
-      const { eq, and } = await import("drizzle-orm");
-      const [existing] = await db
-        .select()
-        .from(userSkills)
-        .where(and(eq(userSkills.id, id), eq(userSkills.userId, userId)))
-        .limit(1);
-      if (!existing) return res.status(404).json({ error: "Skill not found" });
-      if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be modified" });
-      const updates: Partial<typeof existing> = {};
-      if (name?.trim()) updates.name = name.trim().slice(0, 80);
-      if (description !== undefined) updates.description = description.trim().slice(0, 200);
-      if (instructions?.trim()) updates.instructions = instructions.trim().slice(0, 3000);
-      if (emoji?.trim()) updates.emoji = emoji.trim().slice(0, 8);
-      if (Object.keys(updates).length === 0) return res.status(400).json({ error: "No fields to update" });
-      const [updated] = await db
-        .update(userSkills)
-        .set(updates)
-        .where(and(eq(userSkills.id, id), eq(userSkills.userId, userId)))
-        .returning();
-      res.json({ skill: updated });
-    } catch (err) {
-      console.error("[UserSkills] PATCH update failed:", err);
-      res.status(500).json({ error: "Failed to update skill" });
-    }
-  });
-
-  /**
-   * DELETE /api/user-skills/:id
-   * Delete a custom skill (built-in skills cannot be deleted).
-   */
-  app.delete("/api/user-skills/:id", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p(req.params.id);
-    try {
-      const { userSkills } = await import("@shared/schema");
-      const { eq, and } = await import("drizzle-orm");
-      const [existing] = await db
-        .select()
-        .from(userSkills)
-        .where(and(eq(userSkills.id, id), eq(userSkills.userId, userId)))
-        .limit(1);
-      if (!existing) return res.status(404).json({ error: "Skill not found" });
-      if (existing.isBuiltIn) return res.status(400).json({ error: "Built-in skills cannot be deleted" });
-      await db
-        .delete(userSkills)
-        .where(and(eq(userSkills.id, id), eq(userSkills.userId, userId)));
-      res.json({ ok: true });
-    } catch (err) {
-      console.error("[UserSkills] DELETE failed:", err);
-      res.status(500).json({ error: "Failed to delete skill" });
-    }
-  });
+  registerUserSkillMutationRoutes(app);
 
   registerSkillCandidateRoutes(app);
 
