@@ -1,17 +1,37 @@
-## Description
-Please include a summary of the change and which issue is fixed. Please also include relevant motivation and context.
+## Summary
 
-Fixes # (issue)
+Describe what changed and why.
 
-## Type of change
-- [ ] Bug fix (non-breaking change which fixes an issue)
-- [ ] New feature (non-breaking change which adds functionality)
-- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
-- [ ] This change requires a documentation update
+## User-Visible Behavior
 
-## Checklist:
-- [ ] My code follows the style guidelines of this project
-- [ ] I have performed a self-review of my own code
-- [ ] I have commented my code, particularly in hard-to-understand areas
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings
+What will a Jarvis OS user, self-hoster, or maintainer notice?
+
+## Safety / Permissions Impact
+
+Check all that apply:
+
+- [ ] No safety-sensitive behavior changed
+- [ ] Provider routing or ChatGPT subscription path changed
+- [ ] Desktop connector, daemon, or Android permissions changed
+- [ ] Approval gates, memory writes, deploys, email/calendar writes, or code-change behavior changed
+- [ ] Secrets, OAuth, webhook, or database handling changed
+
+If any box except "No safety-sensitive behavior changed" is checked, explain the new boundary and how it is tested.
+
+## Verification
+
+List commands run:
+
+- [ ] `npm run server:build`
+- [ ] `npm run jarvis:doctor`
+- [ ] `npm test`
+- [ ] Dashboard build, Android build, connector check, or other targeted test:
+
+## Documentation
+
+- [ ] Docs updated
+- [ ] Docs not needed because:
+
+## Remaining Risk
+
+What still needs human review or follow-up?
