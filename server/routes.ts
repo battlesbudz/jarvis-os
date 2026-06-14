@@ -97,7 +97,7 @@ import { registerCapabilityGapRoutes } from "./routes/capabilityGapRoutes";
 import { registerSkillCandidateRoutes } from "./routes/skillCandidateRoutes";
 import { registerSkillStoreRoutes } from "./routes/skillStoreRoutes";
 import { registerMorningVoiceNoteRoutes } from "./routes/morningVoiceNoteRoutes";
-import { BUILT_IN_SKILLS } from "./routes/userSkillsCatalog";
+import { registerUserSkillLibraryRoutes } from "./routes/userSkillLibraryRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
   registerOpenAIProviderAuthRoutes,
@@ -4244,118 +4244,7 @@ Extract up to 8 memories per batch.`;
   // Built-in library of curated skills + user-authored custom skills.
   // Active skills are injected into Jarvis's system prompt at session start.
 
-  /**
-   * GET /api/user-skills
-   * Returns all skills for this user (built-in seeded + custom). Seeds the
-   * built-in library on first call for new users.
-   */
-  app.get("/api/user-skills", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    try {
-      const { userSkills } = await import("@shared/schema");
-      const { eq } = await import("drizzle-orm");
-
-      const existing = await db.select().from(userSkills).where(eq(userSkills.userId, userId));
-
-      // Seed built-in skills on first visit (idempotent: onConflictDoNothing guards
-      // the partial unique index user_skills_builtin_name_uniq so concurrent
-      // first-time requests cannot create duplicate built-ins).
-      const existingBuiltInNames = new Set(
-        existing.filter((s) => s.isBuiltIn).map((s) => s.name),
-      );
-      const toSeed = BUILT_IN_SKILLS.filter((s) => !existingBuiltInNames.has(s.name));
-      if (toSeed.length > 0) {
-        await db
-          .insert(userSkills)
-          .values(
-            toSeed.map((s) => ({
-              userId,
-              name: s.name,
-              emoji: s.emoji,
-              description: s.description,
-              instructions: s.instructions,
-              isBuiltIn: true,
-              isActive: false,
-            })),
-          )
-          .onConflictDoNothing();
-        const fresh = await db.select().from(userSkills).where(eq(userSkills.userId, userId));
-        return res.json({ skills: fresh });
-      }
-
-      res.json({ skills: existing });
-    } catch (err) {
-      console.error("[UserSkills] GET failed:", err);
-      res.status(500).json({ error: "Failed to list skills" });
-    }
-  });
-
-  /**
-   * POST /api/user-skills
-   * Create a new custom skill.
-   */
-  app.post("/api/user-skills", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const { name, emoji, description, instructions } = req.body as {
-      name?: string;
-      emoji?: string;
-      description?: string;
-      instructions?: string;
-    };
-    if (!name || !instructions) {
-      return res.status(400).json({ error: "name and instructions are required" });
-    }
-    try {
-      const { userSkills } = await import("@shared/schema");
-      const [skill] = await db
-        .insert(userSkills)
-        .values({
-          userId,
-          name: name.trim().slice(0, 80),
-          emoji: (emoji ?? "⚡").slice(0, 8),
-          description: (description ?? "").trim().slice(0, 200),
-          instructions: instructions.trim().slice(0, 3000),
-          isBuiltIn: false,
-          isActive: true,
-        })
-        .returning();
-      res.status(201).json({ skill });
-    } catch (err) {
-      console.error("[UserSkills] POST failed:", err);
-      res.status(500).json({ error: "Failed to create skill" });
-    }
-  });
-
-  /**
-   * PATCH /api/user-skills/:id/toggle
-   * Toggle a skill's isActive state.
-   */
-  app.patch("/api/user-skills/:id/toggle", async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string | undefined;
-    if (!userId) return res.status(401).json({ error: "Unauthorized" });
-    const id = _p(req.params.id);
-    try {
-      const { userSkills } = await import("@shared/schema");
-      const { eq, and } = await import("drizzle-orm");
-      const [existing] = await db
-        .select()
-        .from(userSkills)
-        .where(and(eq(userSkills.id, id), eq(userSkills.userId, userId)))
-        .limit(1);
-      if (!existing) return res.status(404).json({ error: "Skill not found" });
-      const [updated] = await db
-        .update(userSkills)
-        .set({ isActive: !existing.isActive, updatedAt: new Date() })
-        .where(and(eq(userSkills.id, id), eq(userSkills.userId, userId)))
-        .returning();
-      res.json({ skill: updated });
-    } catch (err) {
-      console.error("[UserSkills] PATCH toggle failed:", err);
-      res.status(500).json({ error: "Failed to toggle skill" });
-    }
-  });
+  registerUserSkillLibraryRoutes(app);
 
   /**
    * PATCH /api/user-skills/:id
