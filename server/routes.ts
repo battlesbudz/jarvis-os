@@ -100,6 +100,7 @@ import { registerMorningVoiceNoteRoutes } from "./routes/morningVoiceNoteRoutes"
 import { registerUserSkillLibraryRoutes } from "./routes/userSkillLibraryRoutes";
 import { registerUserSkillMutationRoutes } from "./routes/userSkillMutationRoutes";
 import { registerJarvisSystemStateRoutes } from "./routes/jarvisSystemStateRoutes";
+import { registerVoiceRoutes } from "./routes/voiceRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import {
   registerOpenAIProviderAuthRoutes,
@@ -164,8 +165,6 @@ import {
   runCoachModelTurn,
   streamCoachModelTurn,
 } from "./services/aiCoachContextService";
-
-const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
 function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
   switch (operatorAction.type) {
@@ -4190,175 +4189,13 @@ Extract up to 8 memories per batch.`;
 
   // ── Voice Realtime API ────────────────────────────────────────────────────
 
-  /**
-   * POST /api/voice/codex-turn
-   * Turn-based voice path: local audio transcription, Codex OAuth coach turn,
-   * then device/browser speech output. This avoids direct OpenAI Realtime usage.
-   */
-  app.post("/api/voice/codex-turn", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string;
-    try {
-      const { runCodexVoiceTurn, CodexVoiceTurnError } = await import("./voiceCodexTurn");
-      const body = (req.body || {}) as Record<string, unknown>;
-      const result = await runCodexVoiceTurn({
-        userId,
-        text: body.text,
-        audioBase64: body.audioBase64,
-        mimeType: body.mimeType,
-        sdkSessionId: body.sdkSessionId,
-      });
-      res.json(result);
-    } catch (err) {
-      const { CodexVoiceTurnError } = await import("./voiceCodexTurn");
-      if (err instanceof CodexVoiceTurnError) {
-        return res.status(err.status).json({ error: err.message, code: err.code });
-      }
-      console.error("[voice/codex-turn] Error:", err);
-      res.status(500).json({ error: "Failed to complete Codex voice turn" });
-    }
-  });
+  registerVoiceRoutes(app, authMiddleware);
 
-  /**
-   * GET /api/voice/realtime-session
-   * Returns relay availability status. Lets the mobile client check whether the
-   * server-side WebSocket relay is configured before attempting a connection.
-   */
-  app.get("/api/voice/realtime-session", authMiddleware, (_req: Request, res: Response) => {
-    res.json({
-      mode: "codex-turn",
-      realtime_available: false,
-      relay_available: false,
-      turn_endpoint: "/api/voice/codex-turn",
-      model: "chatgpt-codex-oauth/auto",
-      audio_output: "device",
-    });
-  });
 
-  /**
-   * POST /api/voice/relay-ticket
-   * Issues a short-lived (30 s), single-use relay ticket for the authenticated user.
-   * The native client uses this ticket to open the relay WebSocket without embedding
-   * the long-lived JWT in the WebSocket URL (which would appear in server logs/proxies).
-   */
-  app.post("/api/voice/relay-ticket", authMiddleware, (_req: Request, res: Response) => {
-    res.status(410).json({
-      error: "OpenAI Realtime voice relay is disabled. Use /api/voice/codex-turn.",
-      code: "CODEX_VOICE_TURN_REQUIRED",
-    });
-  });
 
-  /**
-   * POST /api/voice/realtime-session
-   * Mints a short-lived OpenAI Realtime API ephemeral client secret for WebRTC/WebSocket.
-   * The secret expires in ~60 seconds and is scoped to a single session.
-   */
-  app.post("/api/voice/realtime-session", authMiddleware, async (_req: Request, res: Response) => {
-    res.status(410).json({
-      error: "OpenAI Realtime sessions are disabled. Use /api/voice/codex-turn.",
-      code: "CODEX_VOICE_TURN_REQUIRED",
-    });
-  });
 
-  /**
-   * POST /api/voice/tool-call
-   * Executes a named tool from a Realtime voice session and returns the result.
-   * The Realtime API sends function_call events; the client POSTs here and relays
-   * the result back to the session data channel.
-   */
-  app.post("/api/voice/tool-call", authMiddleware, async (req: Request, res: Response) => {
-    const userId = (req as any).userId as string;
-    const { tool_name, arguments: toolArgs } = req.body || {};
-    try {
-      if (tool_name === 'get_today_summary') {
-        const today = new Date().toISOString().slice(0, 10);
-        const tasks = await db
-          .select({
-            id: schema.jarvisScheduledTasks.id,
-            title: schema.jarvisScheduledTasks.title,
-            scheduledAt: schema.jarvisScheduledTasks.scheduledAt,
-            completedAt: schema.jarvisScheduledTasks.completedAt,
-          })
-          .from(schema.jarvisScheduledTasks)
-          .where(
-            and(
-              eq(schema.jarvisScheduledTasks.userId, userId),
-              sql`DATE(${schema.jarvisScheduledTasks.scheduledAt}) = ${today}`,
-            )
-          )
-          .limit(10);
-        return res.json({
-          result: JSON.stringify({
-            date: today,
-            tasks: tasks.map(t => ({
-              title: t.title,
-              scheduledAt: t.scheduledAt,
-              done: !!t.completedAt,
-            })),
-          }),
-        });
-      }
 
-      if (tool_name === 'search_memories') {
-        const query = String((toolArgs as Record<string, unknown>)?.query || '').trim();
-        const { retrieveRelevantMemories } = await import('./memory/retrieve');
-        const memories = await retrieveRelevantMemories(userId, query, 5);
-        return res.json({
-          result: JSON.stringify({
-            memories: memories.map((m: { content: string; category: string }) => ({
-              content: m.content,
-              category: m.category,
-            })),
-          }),
-        });
-      }
 
-      return res.json({ result: JSON.stringify({ error: `Unknown tool: ${tool_name}` }) });
-    } catch (err) {
-      console.error('[voice/tool-call] Error:', err);
-      res.status(500).json({ error: 'Tool execution failed' });
-    }
-  });
-
-  /**
-   * POST /api/conversations
-   * Create a new voice/audio conversation thread.
-   */
-  app.post("/api/conversations", authMiddleware, async (req: Request, res: Response) => {
-    try {
-      const { chatStorage } = await import('./integrations/chatStorage');
-      const { title } = req.body || {};
-      const conversation = await chatStorage.createConversation(title || 'Voice Session');
-      res.status(201).json(conversation);
-    } catch (err) {
-      console.error('[conversations] create error:', err);
-      res.status(500).json({ error: 'Failed to create conversation' });
-    }
-  });
-
-  /**
-   * POST /api/conversations/:id/voice-transcript
-   * Save an array of voice transcript entries to a conversation.
-   * Body: { entries: Array<{ role: 'user' | 'assistant'; text: string }> }
-   */
-  app.post("/api/conversations/:id/voice-transcript", authMiddleware, async (req: Request, res: Response) => {
-    try {
-      const conversationId = parseInt(_p(req.params.id), 10);
-      const entries: Array<{ role: string; text: string }> = req.body?.entries || [];
-      if (!Array.isArray(entries) || entries.length === 0) {
-        return res.status(400).json({ error: 'entries array is required' });
-      }
-      const { chatStorage } = await import('./integrations/chatStorage');
-      for (const entry of entries) {
-        if (entry.role && entry.text) {
-          await chatStorage.createMessage(conversationId, entry.role, entry.text);
-        }
-      }
-      res.json({ ok: true, saved: entries.length });
-    } catch (err) {
-      console.error('[conversations/voice-transcript] error:', err);
-      res.status(500).json({ error: 'Failed to save transcript' });
-    }
-  });
 
   // ── Write-budget endpoints ──────────────────────────────────────────────────
   // GET  /api/write-budget        — returns current count, max, and tripped state.
