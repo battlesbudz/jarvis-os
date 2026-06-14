@@ -24,6 +24,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    env:
+      JARVIS_PUBLIC_DOMAIN: ${{ vars.JARVIS_PUBLIC_DOMAIN }}
 
     steps:
       - name: Checkout repository
@@ -53,9 +55,16 @@ jobs:
       - name: Install Node dependencies
         run: npm ci
 
+      - name: Validate public Jarvis domain
+        run: |
+          if [ -z "$JARVIS_PUBLIC_DOMAIN" ]; then
+            echo "Set repository variable JARVIS_PUBLIC_DOMAIN to the hosted Jarvis OS API domain before building the APK." >&2
+            exit 1
+          fi
+
       - name: Run Expo prebuild
         env:
-          EXPO_PUBLIC_DOMAIN: gameplanjarvisai.up.railway.app
+          EXPO_PUBLIC_DOMAIN: ${{ env.JARVIS_PUBLIC_DOMAIN }}
           EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
         run: npx expo prebuild --platform android --clean
 
@@ -115,7 +124,7 @@ jobs:
       - name: Build release APK
         working-directory: android
         env:
-          EXPO_PUBLIC_DOMAIN: gameplanjarvisai.up.railway.app
+          EXPO_PUBLIC_DOMAIN: ${{ env.JARVIS_PUBLIC_DOMAIN }}
           EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
           KEYSTORE_PASSWORD: ${{ secrets.JARVIS_APP_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.JARVIS_APP_KEY_ALIAS }}
@@ -139,8 +148,8 @@ jobs:
             "platform": "android",
             "versionCode": ${{ github.run_number }},
             "versionName": "1.0.${{ github.run_number }}",
-            "apkUrl": "https://github.com/battlesbudz/Gameplanjarvisai/releases/download/jarvis-app-latest/jarvis-app.apk",
-            "releaseUrl": "https://github.com/battlesbudz/Gameplanjarvisai/releases/tag/jarvis-app-latest",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/jarvis-app-latest/jarvis-app.apk",
+            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/jarvis-app-latest",
             "sha256": "$SHA256",
             "notes": "Jarvis App build ${{ github.run_number }}"
           }
@@ -162,17 +171,17 @@ jobs:
           tag_name: jarvis-app-latest
           name: "Jarvis App v1.0.${{ github.run_number }}"
           body: |
-            Pre-built APK for the Jarvis main app — build ${{ github.run_number }}.
+            Pre-built APK for the Jarvis OS mobile app - build ${{ github.run_number }}.
 
-            Connects to the production server at **gameplanjarvisai.up.railway.app** — no Expo Go required.
+            Connects to the configured Jarvis OS server at **${{ env.JARVIS_PUBLIC_DOMAIN }}**. No Expo Go required.
 
             **First-time install:**
             1. Download `jarvis-app.apk` to your Android phone
-            2. Enable *Settings → Apps → Special app access → Install unknown apps* for your file manager or browser
+            2. Enable *Settings > Apps > Special app access > Install unknown apps* for your file manager or browser
             3. Tap the downloaded file and install
             4. Open the app and sign in
 
-            **Updating:** Download the new APK and install it — Android will update in place without an uninstall because every build is signed with the same key.
+            **Updating:** Download the new APK and install it. Android will update in place without an uninstall because every build is signed with the same key.
           files: |
             dist/jarvis-app.apk
             dist/version.json

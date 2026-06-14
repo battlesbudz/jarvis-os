@@ -7,7 +7,7 @@
 
 ## Vision
 
-Transform Jarvis from a reactive coaching app into a fully autonomous AI agent that works, researches, builds, and acts on your behalf even while you sleep. The target is still OpenClaw-style autonomy, but the current Jarvis implementation is now its own agent OS foundation: Express + Drizzle + Expo, a tool-calling harness, background jobs, reviewable deliverables, memory, channels, and daemon control.
+Transform Jarvis from its original coaching roots into a personal AI operating system that works, researches, builds, remembers, routes, and acts across trusted accounts and devices. Jarvis OS is its own runtime foundation: Express + Drizzle + Expo, a tool-calling harness, background jobs, reviewable deliverables, long-term memory, channels, approval gates, and desktop/Android connector control.
 
 **Core principle:** autonomous work must produce reviewable outputs, respect approval boundaries, and stay observable.
 
@@ -294,7 +294,7 @@ Roadmap cross-reference: the verified G-Brain chunk-vector work, implemented can
 - [ ] Finish slash command coverage and production validation
 - [ ] Improve Slack channel-specific deliverable and approval flows
 
-### 5.3 - Optional Local Daemon (OpenClaw Bridge)
+### 5.3 - Optional Desktop And Android Connectors
 
 - [x] Desktop daemon package exists under `daemon/`
 - [x] Android daemon project exists under `android-daemon/`
@@ -323,9 +323,9 @@ This phase was not in the original roadmap, but the repo now includes meaningful
 
 ---
 
-## OpenClaw Reference Status
+## Runtime Capability Map
 
-| Original reference | Jarvis status |
+| Capability | Jarvis status |
 |---|---|
 | Tool-calling agent loop | Implemented in `server/agent/harness.ts` |
 | Tool harness & permission model | Implemented across `server/agent/tools/`, `agentApproval.ts`, `toolCallHooks.ts`, and approval receipts |
