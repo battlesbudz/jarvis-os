@@ -56,24 +56,24 @@ interface GatewayCapability {
   area: string;
   status: "foundation" | "mapped" | "partial";
   jarvisSurface: string[];
-  openClawSurface: string[];
+  runtimeSurface: string[];
 }
 
-const OPENCLAW_PARITY_CAPABILITIES: GatewayCapability[] = [
-  { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], openClawSurface: ["Gateway health", "Control UI connection", "runtime status"] },
-  { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], openClawSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
-  { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], openClawSurface: ["event bus", "activity timeline", "live control stream"] },
-  { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], openClawSurface: ["nodes", "capability registry", "capability router"] },
-  { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], openClawSurface: ["chat", "talk", "session message"] },
-  { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], openClawSurface: ["agents", "sessions", "chat/talk state"] },
-  { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], openClawSurface: ["channels", "instances", "linked apps"] },
-  { area: "daemon", status: "mapped", jarvisSurface: ["daemon.status", "desktop daemon", "android daemon", "operation audit"], openClawSurface: ["nodes", "device status", "exec approvals"] },
-  { area: "devices", status: "foundation", jarvisSurface: ["devices.pairing.request", "devices.pairing.approve", "devices.list", "devices.revoke", "daemon.ping", "daemon.notify", "daemon.test"], openClawSurface: ["device pairing", "scoped operator tokens", "browser/node trust"] },
-  { area: "automation", status: "mapped", jarvisSurface: ["cron.list", "cron.create", "jobs.create", "jobs.cancel", "jarvis_scheduled_tasks", "agent_workflows", "agent_jobs"], openClawSurface: ["cron", "dreams", "background jobs"] },
-  { area: "approvals", status: "mapped", jarvisSurface: ["approvals.list", "approvals.approve", "approvals.reject", "agent_approval_gates", "agent_approval_policies"], openClawSurface: ["approval gates", "exec/tool approvals"] },
-  { area: "skills", status: "partial", jarvisSurface: ["skills.list", "skill_packs", "user_skills", "mcp_servers"], openClawSurface: ["skills", "plugins", "MCP"] },
-  { area: "config", status: "foundation", jarvisSurface: ["config.get"], openClawSurface: ["runtime config", "secret refs", "model/provider config"] },
-  { area: "logs", status: "mapped", jarvisSurface: ["logs.tail", "diagnostic_events", "self_heal_audit_log"], openClawSurface: ["debug", "logs", "health traces"] },
+const JARVIS_RUNTIME_CAPABILITIES: GatewayCapability[] = [
+  { area: "gateway", status: "foundation", jarvisSurface: ["gateway.health", "gateway.status", "gateway.capabilities"], runtimeSurface: ["Gateway health", "Control UI connection", "runtime status"] },
+  { area: "actions", status: "foundation", jarvisSurface: ["actions.invoke", "capability router dispatch"], runtimeSurface: ["actions.invoke", "node action execution", "routed tool calls"] },
+  { area: "events", status: "foundation", jarvisSurface: ["events.list", "gateway.event"], runtimeSurface: ["event bus", "activity timeline", "live control stream"] },
+  { area: "nodes", status: "foundation", jarvisSurface: ["nodes.list", "capabilities.route"], runtimeSurface: ["nodes", "capability registry", "capability router"] },
+  { area: "chat", status: "foundation", jarvisSurface: ["chat.send", "Gateway coach session"], runtimeSurface: ["chat", "talk", "session message"] },
+  { area: "sessions", status: "mapped", jarvisSurface: ["sessions.list", "coach_channel_sessions", "agent_chat_sessions"], runtimeSurface: ["agents", "sessions", "chat/talk state"] },
+  { area: "channels", status: "mapped", jarvisSurface: ["channels.list", "telegram", "whatsapp", "slack", "discord", "in_app", "webchat"], runtimeSurface: ["channels", "instances", "linked apps"] },
+  { area: "daemon", status: "mapped", jarvisSurface: ["daemon.status", "desktop daemon", "android daemon", "operation audit"], runtimeSurface: ["nodes", "device status", "exec approvals"] },
+  { area: "devices", status: "foundation", jarvisSurface: ["devices.pairing.request", "devices.pairing.approve", "devices.list", "devices.revoke", "daemon.ping", "daemon.notify", "daemon.test"], runtimeSurface: ["device pairing", "scoped operator tokens", "browser/node trust"] },
+  { area: "automation", status: "mapped", jarvisSurface: ["cron.list", "cron.create", "jobs.create", "jobs.cancel", "jarvis_scheduled_tasks", "agent_workflows", "agent_jobs"], runtimeSurface: ["cron", "background work", "scheduled jobs"] },
+  { area: "approvals", status: "mapped", jarvisSurface: ["approvals.list", "approvals.approve", "approvals.reject", "agent_approval_gates", "agent_approval_policies"], runtimeSurface: ["approval gates", "exec/tool approvals"] },
+  { area: "skills", status: "partial", jarvisSurface: ["skills.list", "skill_packs", "user_skills", "mcp_servers"], runtimeSurface: ["skills", "plugins", "MCP"] },
+  { area: "config", status: "foundation", jarvisSurface: ["config.get"], runtimeSurface: ["runtime config", "secret refs", "model/provider config"] },
+  { area: "logs", status: "mapped", jarvisSurface: ["logs.tail", "diagnostic_events", "self_heal_audit_log"], runtimeSurface: ["debug", "logs", "health traces"] },
 ];
 
 function readPackageVersion(): string {
@@ -107,7 +107,7 @@ function publicConfigSnapshot() {
     uptimeSeconds: Math.floor(process.uptime()),
     providers: {
       openai: Boolean(process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY),
-      anthropic: Boolean(process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY),
+      codexOAuth: process.env.JARVIS_CODEX_OAUTH_ENABLED !== "false" && process.env.JARVIS_CODEX_OAUTH_ENABLED !== "0",
       google: Boolean(process.env.GOOGLE_CLIENT_ID || process.env.GOOGLE_WEB_CLIENT_ID),
       microsoft: Boolean(process.env.MICROSOFT_CLIENT_ID),
       supadata: Boolean(process.env.SUPADATA_API_KEY),
@@ -146,7 +146,7 @@ async function gatewayStatus(userId: string | null) {
     authenticated: Boolean(userId),
     activeDaemonUsers: userId ? listPairedUsers() : [],
     recentDiagnostics,
-    capabilities: OPENCLAW_PARITY_CAPABILITIES.map((c) => ({ area: c.area, status: c.status })),
+    capabilities: JARVIS_RUNTIME_CAPABILITIES.map((c) => ({ area: c.area, status: c.status })),
     ...publicConfigSnapshot(),
   };
 }
@@ -244,6 +244,7 @@ async function cronCreate(userId: string, params: RpcParams) {
     scheduledAt,
     recurrence,
     shellCommand,
+    taskKind: "jarvis_action",
   }).returning();
   recordGatewayEvent({
     userId,
@@ -666,7 +667,7 @@ async function handleRpc(req: JsonRpcRequest, ctx: RpcContext, events: RpcEvents
     switch (req.method) {
       case "gateway.health": return ok(req.id, { ok: true, ...publicConfigSnapshot() });
       case "gateway.status": return ok(req.id, await gatewayStatus(userId));
-      case "gateway.capabilities": return ok(req.id, { capabilities: OPENCLAW_PARITY_CAPABILITIES });
+      case "gateway.capabilities": return ok(req.id, { capabilities: JARVIS_RUNTIME_CAPABILITIES });
       case "config.get": return ok(req.id, publicConfigSnapshot());
       case "events.list":
         if (userId) requireGatewayScope(ctx, "operator.read");
@@ -865,7 +866,7 @@ async function onMessage(ws: WebSocket, raw: RawData, ctx: RpcContext) {
 
 export function registerGatewayControlPlane(app: Express, server: HttpServer): void {
   app.get("/api/gateway/health", (_req, res) => res.json({ ok: true, ...publicConfigSnapshot() }));
-  app.get("/api/gateway/capabilities", (_req, res) => res.json({ capabilities: OPENCLAW_PARITY_CAPABILITIES }));
+  app.get("/api/gateway/capabilities", (_req, res) => res.json({ capabilities: JARVIS_RUNTIME_CAPABILITIES }));
   app.post("/api/gateway/rpc", async (req, res) => {
     const ctx = await principalFromRequest(req);
     const payload = req.body as JsonRpcRequest | JsonRpcRequest[];
@@ -890,7 +891,7 @@ export function registerGatewayControlPlane(app: Express, server: HttpServer): v
         authKind: ctx.authKind,
         deviceId: ctx.deviceId,
         scopes: ctx.scopes,
-        methods: OPENCLAW_PARITY_CAPABILITIES.flatMap((c) => c.jarvisSurface),
+        methods: JARVIS_RUNTIME_CAPABILITIES.flatMap((c) => c.jarvisSurface),
       });
       ws.on("message", (raw) => onMessage(ws, raw, ctx).catch((error) => {
         send(ws, err(null, -32000, error instanceof Error ? error.message : String(error)));

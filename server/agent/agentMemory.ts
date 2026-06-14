@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import { agentMemories } from "@shared/schema";
 import type { AgentMemory } from "@shared/schema";
 import { logAgentEvent } from "./agentLogger";
+import { createRoutedOpenAIChatShim } from "./routedChatCompletion";
 
 const MEMORY_SIZE_LIMIT = 500;
 const SUMMARIZATION_THRESHOLD = 400;
@@ -130,13 +131,10 @@ export async function summarizeAgentMemory(
   // LLM summarization
   let summary = "";
   try {
-    const OpenAI = (await import("openai")).default;
-    const openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    const openai = createRoutedOpenAIChatShim("[AgentMemory]", "balanced");
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
+      user: userId,
       messages: [
         { role: "system", content: "Compress the following agent memories into a concise summary (max 500 words). Preserve key facts, patterns, and context. Output plain text." },
         { role: "user", content: memoryText.slice(0, 8000) },

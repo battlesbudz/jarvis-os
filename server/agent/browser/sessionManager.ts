@@ -20,7 +20,6 @@ const LAUNCH_ARGS = [
   "--no-sandbox",
   "--disable-dev-shm-usage",
   "--disable-gpu",
-  "--single-process",
 ];
 
 async function launchSession(userId: string): Promise<BrowserSession> {

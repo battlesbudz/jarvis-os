@@ -2,13 +2,8 @@ import { db } from "./db";
 import * as schema from "@shared/schema";
 import type { MomentumStepData } from "@shared/schema";
 import { eq, and, lt } from "drizzle-orm";
-import OpenAI from "openai";
 import { sendMessageWithButtons, sendMessage } from "./integrations/telegram";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
 
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
 const STEP_DELAY_MS = 3 * 60 * 1000;
@@ -60,14 +55,14 @@ Keep each text under 2 sentences. Plain text only — no markdown, no asterisks.
     const { getModel } = await import("./lib/modelPrefs");
     const model = await getModel(userId, "planning");
 
-    const resp = await openai.chat.completions.create({
+    const resp = await createRoutedChatCompletion({
       model,
       messages: [
         { role: "system", content: "You are an ADHD productivity coach. Respond with valid JSON only." },
         { role: "user", content: prompt },
       ],
       max_completion_tokens: 800,
-    });
+    }, { tier: "balanced", logPrefix: "[MomentumCoach]", userId });
 
     const raw = resp.choices[0]?.message?.content || "[]";
     const cleaned = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();

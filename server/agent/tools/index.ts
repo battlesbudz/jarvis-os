@@ -39,10 +39,18 @@ import { spawnSubagentTool } from "./spawnSubagent";
 import { daemonActionTool } from "./daemon";
 import { daemonShellTool, daemonStatusTool, androidScreenUnderstandTool, androidSearchInAppTool, androidTypeInFieldTool, androidTapElementTool, androidSwipeElementTool, androidPinchElementTool, androidPinchCoordinatesTool, androidTrainButtonTool, androidFindTrainedButtonTool, androidTypeIntoElementTool, androidLongPressElementTool, androidDragElementTool, androidDragCoordinatesTool, androidFillFormTool, androidScrollToTopTool, androidSelectOptionTool } from "./daemonShellTool";
 import { checkConnectionsTool, generateReconnectLinkTool } from "./connections";
+import {
+  connectedAccountsConnectLinkTool,
+  connectedAccountsExecuteTool,
+  connectedAccountsGetToolSchemaTool,
+  connectedAccountsListTool,
+  connectedAccountsSearchToolsTool,
+} from "./connectedAccounts";
 import { createCalendarEventTool } from "./calendarCreate";
 import { sendEmailTool } from "./sendEmail";
 import { fetchEmailsTool } from "./fetchEmails";
 import { connectChannelTool } from "./connectChannel";
+import { startProjectTool } from "./startProject";
 import { discordPostTool } from "./discordPost";
 import { discordCreateChannelTool } from "./discordCreateChannel";
 import { discordRequestConfirmTool } from "./discordRequestConfirm";
@@ -65,8 +73,9 @@ import { setupNamedAgentTool } from "./setupNamedAgent";
 import { queueBackgroundJobTool } from "./queueBackgroundJob";
 import { setupContentPipelineTool } from "./setupContentPipeline";
 import { setupDiscordWorkspaceTool } from "./setupDiscordWorkspace";
-import { memorySearchTool, memoryGetTool } from "./memorySearch";
+import { memorySearchTool, memoryGetTool, memorySaveTool } from "./memorySearch";
 import { webFetchTool } from "./webFetch";
+import { weatherLookupTool } from "./weatherLookup";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool, sessionsCancelTool } from "./sessionTools";
 import { speakTool } from "./tts";
 import { imageGenerateTool } from "./imageGenerate";
@@ -124,11 +133,13 @@ import { applyCodeChangeTool } from "./applyCodeChangeTool";
 import { runShellTool } from "./runShellTool";
 import { selfHealTool } from "./selfHealTool";
 import { workspaceUpdateTool } from "./workspaceUpdateTool";
+import { livingContextUpdateTool } from "./livingContextUpdateTool";
 import { listCustomAgentsTool } from "./listCustomAgents";
 import { runTournamentTool } from "./runTournamentTool";
 import { listGithubPrsTool, getGithubPrTool, mergeGithubPrTool } from "./githubPrTools";
-import { projectShellTool } from "./projectShellTool";
+import { projectShellTool, projectWriteFileTool } from "./projectShellTool";
 import { deployAppTool } from "./deployApp";
+import { delegateToCodexTool } from "./delegateToCodex";
 
 // ── Tool Groups ────────────────────────────────────────────────────────────────
 // Each group represents a functional capability cluster. Channels declare which
@@ -137,8 +148,8 @@ import { deployAppTool } from "./deployApp";
 export type ToolGroup =
   | "coaching"    // manage_tasks, queue_background_job, daemon_action
   | "calendar"    // fetch_calendar, create_calendar_event  (Google-gated)
-  | "email"       // gmail_action, gmail_draft (Google-gated), send_email, fetch_emails
-  | "memory"      // memory_search, memory_get
+  | "email"       // gmail_action, create_gmail_draft (Google-gated), send_email, fetch_emails
+  | "memory"      // memory_search, memory_get, memory_save
   | "documents"   // create/list/read_document, drive_* (Google-gated)
   | "research"    // web_search, research_topic, web_fetch, youtube_search, x_search
   | "discord"     // discord_post, discord_manage, schedule_channel_report, setup_content_pipeline
@@ -151,7 +162,7 @@ export type ToolGroup =
   | "mcp"         // auto-discovered tools from connected MCP servers
   | "compute"     // run_python — sandboxed code execution
   | "github"      // list_github_prs, get_github_pr, merge_github_pr
-  | "app_build"   // project_shell — sandboxed shell for standalone app projects
+  | "app_build"   // project_shell/project_write_file — sandboxed standalone app project tools
 
 // ── Registry-derived data (single source of truth for capability tools) ────────
 // GOOGLE_GATED and TOOL_GROUP_MAP come entirely from the capability registry.
@@ -188,6 +199,7 @@ export const ALL_TOOLS: AgentTool[] = [
   listCustomAgentsTool,
   runTournamentTool,
   projectShellTool,
+  projectWriteFileTool,
   deployAppTool,
 ];
 
@@ -198,6 +210,7 @@ const TOOL_INDEX = new Map(ALL_TOOLS.map((t) => [t.name, t]));
 TOOL_GROUP_MAP[listCustomAgentsTool.name] = ["coaching"];
 TOOL_GROUP_MAP[runTournamentTool.name] = ["system"];
 TOOL_GROUP_MAP[projectShellTool.name] = ["app_build"];
+TOOL_GROUP_MAP[projectWriteFileTool.name] = ["app_build"];
 TOOL_GROUP_MAP[deployAppTool.name] = ["app_build", "coaching"];
 
 // Wire the resolver so testToolTool can look up tools without a circular import.
@@ -279,6 +292,11 @@ export {
   androidFillFormTool,
   checkConnectionsTool,
   generateReconnectLinkTool,
+  connectedAccountsListTool,
+  connectedAccountsConnectLinkTool,
+  connectedAccountsSearchToolsTool,
+  connectedAccountsGetToolSchemaTool,
+  connectedAccountsExecuteTool,
   sendEmailTool,
   fetchEmailsTool,
   connectChannelTool,
@@ -300,11 +318,14 @@ export {
   videoTranscriptTool,
   xSearchTool,
   queueBackgroundJobTool,
+  startProjectTool,
   setupContentPipelineTool,
   setupDiscordWorkspaceTool,
   memorySearchTool,
   memoryGetTool,
+  memorySaveTool,
   webFetchTool,
+  weatherLookupTool,
   sessionsListTool,
   sessionsHistoryTool,
   sessionsSendTool,
@@ -365,11 +386,14 @@ export {
   runShellTool,
   selfHealTool,
   workspaceUpdateTool,
+  livingContextUpdateTool,
   listCustomAgentsTool,
   runTournamentTool,
   listGithubPrsTool,
   getGithubPrTool,
   mergeGithubPrTool,
   projectShellTool,
+  projectWriteFileTool,
   deployAppTool,
+  delegateToCodexTool,
 };

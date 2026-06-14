@@ -32,9 +32,13 @@ const MCP_CLI = path.join(process.cwd(), "node_modules/@playwright/mcp/cli.js");
  * instead of looking for a system "chrome" distribution.
  */
 function findPlaywrightChromium(): string | null {
+  const configuredPath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH || process.env.CHROME_EXECUTABLE_PATH;
+  if (configuredPath && fs.existsSync(configuredPath)) return configuredPath;
+
   const cacheDirs = [
     path.join(process.cwd(), ".cache", "ms-playwright"),
     path.join(os.homedir(), ".cache", "ms-playwright"),
+    path.join(os.homedir(), "AppData", "Local", "ms-playwright"),
   ];
   for (const cacheDir of cacheDirs) {
     if (!fs.existsSync(cacheDir)) continue;
@@ -54,6 +58,12 @@ function findPlaywrightChromium(): string | null {
         }
       }
     } catch { /* ignore */ }
+  }
+  for (const p of [
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  ]) {
+    if (fs.existsSync(p)) return p;
   }
   return null;
 }

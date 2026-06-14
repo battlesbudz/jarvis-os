@@ -1,7 +1,17 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index, customType } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+const vector1536 = customType<{ data: number[] | null }>({
+  dataType() {
+    return "vector(1536)";
+  },
+  toDriver(value) {
+    if (!Array.isArray(value)) return null;
+    return `[${value.map((entry) => Number(entry) || 0).join(",")}]`;
+  },
+});
 
 export const users = pgTable("users", {
   id: varchar("id")
@@ -134,6 +144,55 @@ export const telegramGroupMessages = pgTable("telegram_group_messages", {
   messageDate: timestamp("message_date").defaultNow().notNull(),
 });
 
+export const userOAuthTokens = pgTable("user_oauth_tokens", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: varchar("provider").notNull(),
+  accessToken: text("access_token").notNull(),
+  refreshToken: text("refresh_token"),
+  expiresAt: timestamp("expires_at"),
+  scopes: text("scopes"),
+  accountEmail: text("account_email").notNull().default(""),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.provider, table.accountEmail] }),
+]);
+
+export const modelProviderAuthProfiles = pgTable("model_provider_auth_profiles", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  provider: varchar("provider").notNull(),
+  authType: varchar("auth_type").notNull(),
+  accessTokenEncrypted: text("access_token_encrypted"),
+  refreshTokenEncrypted: text("refresh_token_encrypted"),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  expiresAt: timestamp("expires_at"),
+  accountId: text("account_id"),
+  email: text("email"),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("model_provider_auth_profiles_user_provider_auth_type_idx")
+    .on(table.userId, table.provider, table.authType),
+  index("model_provider_auth_profiles_user_provider_idx")
+    .on(table.userId, table.provider),
+]);
+
+export const composioConnectedAccounts = pgTable("composio_connected_accounts", {
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  toolkit: varchar("toolkit").notNull(),
+  authConfigId: varchar("auth_config_id").notNull(),
+  connectedAccountId: varchar("connected_account_id").notNull(),
+  status: varchar("status").notNull().default("ACTIVE"),
+  accountEmail: text("account_email"),
+  accountName: text("account_name"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.connectedAccountId] }),
+]);
+
 export const commitments = pgTable("commitments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
@@ -157,9 +216,10 @@ export const userMemories = pgTable("user_memories", {
   sourceRef: varchar("source_ref"),
   lastReferencedAt: timestamp("last_referenced_at"),
   // Cached OpenAI text-embedding-3-small vector (1536 floats) used by the
-  // hybrid retrieval helper in server/memory/retrieve.ts. Stored as jsonb
-  // so we don't require the pgvector extension; FTS handles primary recall.
-  embedding: jsonb("embedding"),
+  // hybrid retrieval helper in server/memory/retrieve.ts. JSONB remains the
+  // portable fallback; embeddingVector is the optional pgvector index column.
+  embedding: jsonb("embedding").$type<number[] | null>(),
+  embeddingVector: vector1536("embedding_vector"),
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
   // Biomimetic memory tier & type system (Phase 5).
   // tier: working (minutes) | short_term (hours/days) | long_term (permanent)
@@ -227,6 +287,101 @@ export const people = pgTable("people", {
 // Regenerated on a Sunday cadence (or on demand) from typed memories +
 // life context + people + weekly insights. Optional manualOverride text
 // lets the user pin extra context that survives regeneration.
+export const brainPages = pgTable("brain_pages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageType: varchar("page_type").notNull(),
+  slug: varchar("slug").notNull(),
+  title: text("title").notNull(),
+  compiledTruth: text("compiled_truth").notNull().default(""),
+  sourceKind: varchar("source_kind").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
+  reviewStatus: varchar("review_status").notNull().default("active"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("brain_pages_user_slug_idx").on(table.userId, table.slug),
+  index("brain_pages_user_type_idx").on(table.userId, table.pageType),
+]);
+
+export const brainTimelineEntries = pgTable("brain_timeline_entries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageId: varchar("page_id").notNull().references(() => brainPages.id, { onDelete: "cascade" }),
+  occurredAt: timestamp("occurred_at"),
+  summary: text("summary").notNull(),
+  detail: text("detail"),
+  provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("brain_timeline_user_page_idx").on(table.userId, table.pageId),
+  index("brain_timeline_occurred_idx").on(table.occurredAt),
+]);
+
+export const brainContentChunks = pgTable("brain_content_chunks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageId: varchar("page_id").notNull().references(() => brainPages.id, { onDelete: "cascade" }),
+  chunkIndex: integer("chunk_index").notNull(),
+  content: text("content").notNull(),
+  embedding: jsonb("embedding").$type<number[] | null>(),
+  embeddingVector: vector1536("embedding_vector"),
+  provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("brain_chunks_page_index_idx").on(table.pageId, table.chunkIndex),
+  index("brain_chunks_user_page_idx").on(table.userId, table.pageId),
+]);
+
+export const brainLinks = pgTable("brain_links", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  fromPageId: varchar("from_page_id").notNull().references(() => brainPages.id, { onDelete: "cascade" }),
+  toSlug: varchar("to_slug").notNull(),
+  verb: varchar("verb").notNull(),
+  confidence: integer("confidence").notNull().default(70),
+  provenance: jsonb("provenance").$type<Array<{ kind: string; id: string; sourceType?: string; sourceRef?: string; timestamp?: string }>>().notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("brain_links_unique_idx").on(table.userId, table.fromPageId, table.toSlug, table.verb),
+  index("brain_links_user_to_slug_idx").on(table.userId, table.toSlug),
+]);
+
+export const brainPageVersions = pgTable("brain_page_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  pageId: varchar("page_id").notNull().references(() => brainPages.id, { onDelete: "cascade" }),
+  compiledTruth: text("compiled_truth").notNull(),
+  provenance: jsonb("provenance").notNull().default(sql`'[]'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("brain_page_versions_page_idx").on(table.pageId),
+]);
+
+export const brainIngestLog = pgTable("brain_ingest_log", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  sourceKind: varchar("source_kind").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  contentHash: varchar("content_hash").notNull(),
+  status: varchar("status").notNull().default("processed"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("brain_ingest_log_source_hash_idx").on(table.userId, table.sourceKind, table.sourceId, table.contentHash),
+]);
+
+export const brainConfig = pgTable("brain_config", {
+  userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  data: jsonb("data").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type BrainPage = typeof brainPages.$inferSelect;
+export type BrainContentChunk = typeof brainContentChunks.$inferSelect;
+export type BrainLink = typeof brainLinks.$inferSelect;
+
 export const jarvisSouls = pgTable("jarvis_souls", {
   userId: varchar("user_id").notNull().primaryKey().references(() => users.id, { onDelete: "cascade" }),
   content: text("content").notNull().default(""),
@@ -234,6 +389,27 @@ export const jarvisSouls = pgTable("jarvis_souls", {
   generatedAt: timestamp("generated_at"),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+export const livingContextUpdates = pgTable("living_context_updates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  target: varchar("target").notNull(),
+  path: text("path").notNull(),
+  topic: text("topic").notNull(),
+  learned: text("learned").notNull(),
+  normalizedLearned: text("normalized_learned").notNull(),
+  sourceType: varchar("source_type").notNull().default("conversation"),
+  sourceRef: text("source_ref"),
+  confidence: integer("confidence").notNull().default(70),
+  status: varchar("status").notNull().default("needs_review"),
+  fillsQuestion: text("fills_question"),
+  approvalSensitive: boolean("approval_sensitive").notNull().default(true),
+  notes: text("notes"),
+  block: text("block").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("living_context_updates_user_target_fact_idx").on(table.userId, table.target, table.normalizedLearned),
+]);
 
 export interface WeeklyPattern {
   category: MemoryCategory | "fact";
@@ -440,6 +616,7 @@ export const jarvisScheduledTasks = pgTable("jarvis_scheduled_tasks", {
   description: text("description"),
   scheduledAt: timestamp("scheduled_at").notNull(),
   recurrence: varchar("recurrence"),
+  taskKind: varchar("task_kind").notNull().default("user_task"),
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   shellCommand: text("shell_command"),
@@ -778,7 +955,7 @@ export const discordAgents = pgTable("discord_agents", {
   /**
    * Preferred model for this agent. When set, used instead of the global user
    * model preference. Can be overridden per-call via runNamedAgent opts.model.
-   * Examples: "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-6"
+   * Example: "chatgpt-codex-oauth/auto"
    */
   preferredModel: text("preferred_model"),
   /**
@@ -1119,11 +1296,11 @@ export const jarvisActionLog = pgTable("jarvis_action_log", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// ── OpenClaw Build Log ────────────────────────────────────────────────────────
-// Persisted record of every openclaw_build_feature call. Lets users review
+// ── Agent Build Log ───────────────────────────────────────────────────────────
+// Persisted record of every build_feature call. Lets users review
 // past self-improvement attempts, re-apply previous tools, or see when a
 // capability was added.
-export const openclawBuildLog = pgTable("openclaw_build_log", {
+export const agentBuildLog = pgTable("agent_build_log", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   featureName: varchar("feature_name").notNull(),
@@ -1325,6 +1502,18 @@ export const agentChatSessions = pgTable("agent_chat_sessions", {
 
 export type AgentChatSession = typeof agentChatSessions.$inferSelect;
 
+export const agentChatSessionSummaries = pgTable("agent_chat_session_summaries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  sdkSessionId: varchar("sdk_session_id").notNull().references(() => agentChatSessions.sdkSessionId, { onDelete: "cascade" }),
+  agentId: varchar("agent_id").notNull().references(() => discordAgents.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  summary: text("summary").notNull(),
+  messageCount: integer("message_count").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type AgentChatSessionSummary = typeof agentChatSessionSummaries.$inferSelect;
+
 // ── Coach channel sessions ────────────────────────────────────────────────────
 // Persists the per-user, per-channel sdkSessionId so conversations survive
 // server restarts.  The channel server-handlers use this as a write-through
@@ -1485,7 +1674,7 @@ export const writeBudgetWarnings = pgTable("write_budget_warnings", {
   warnedAt: timestamp("warned_at").notNull().default(sql`'1970-01-01'`),
 });
 
-// Chat integration tables — used by server/replit_integrations/chat
+// Chat integration tables — used by server/integrations/chatStorage
 export const conversations = pgTable("conversations", {
   id: serial("id").primaryKey(),
   title: text("title").notNull().default("New Chat"),
@@ -1698,6 +1887,28 @@ export const jarvisProjectSessions = pgTable("jarvis_project_sessions", {
 });
 
 export type JarvisProjectSession = typeof jarvisProjectSessions.$inferSelect;
+
+export const jarvisProjectFiles = pgTable("jarvis_project_files", {
+  projectId: varchar("project_id").notNull().references(() => jarvisProjects.id, { onDelete: "cascade" }),
+  filePath: text("file_path").notNull(),
+  contentBase64: text("content_base64").notNull(),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.projectId, table.filePath] }),
+]);
+
+export type JarvisProjectFile = typeof jarvisProjectFiles.$inferSelect;
+
+export const jarvisProjectArchives = pgTable("jarvis_project_archives", {
+  projectId: varchar("project_id").primaryKey().references(() => jarvisProjects.id, { onDelete: "cascade" }),
+  zipBase64: text("zip_base64").notNull(),
+  sizeBytes: integer("size_bytes").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type JarvisProjectArchive = typeof jarvisProjectArchives.$inferSelect;
 
 // Each row mirrors one block from server/self-heal-audit.log.  On container
 // restart, selfHealAudit.ts restores the flat file from these rows so audit

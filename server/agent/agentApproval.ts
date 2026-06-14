@@ -14,12 +14,14 @@
  *   4. Original tool was blocking on awaitApproval() — event fires, tool continues
  */
 import { db } from "../db";
-import { agentApprovalGates } from "@shared/schema";
-import { eq, and, lt } from "drizzle-orm";
+import { agentApprovalGates, deliverables } from "@shared/schema";
+import { eq, and, lt, sql } from "drizzle-orm";
 import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
 import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
 import { evaluatePolicyForTool } from "./agentPolicyManager";
+import { requiresApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "./approvalToolRisk";
+export { requiresApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "./approvalToolRisk";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -49,6 +51,8 @@ export interface ApprovalRequest {
   ttlMs?: number;
   /** Whether this action was initiated by the user or by Jarvis autonomously */
   initiatedBy?: 'user' | 'jarvis';
+  /** Background worker job that should surface this gate as a runtime checkpoint. */
+  workerJobId?: string;
 }
 
 // ── Tools that always require approval ────────────────────────────────────────
@@ -63,60 +67,20 @@ export interface ApprovalRequest {
 //   AGENT MGMT     — creating new sub-agents or assigning channels
 //   DAEMON         — any OS-level system action via the daemon bridge
 
-const HIGH_RISK_TOOLS = new Set([
-  // Email
-  "send_email",
-  "gmail_action",
-  "gmail_draft",
-  // Public posting / messaging
-  "discord_post",
-  "connect_channel",
-  "sessions_send",
-  // Voice / call user
-  "speak",
-  // Memory clear (permanent, irreversible)
-  "clear_memory",
-  "agent_memory_clear",
-  // Browser control
-  "browser_navigate",
-  "browser_click",
-  "browser_type",
-  "browser_select",
-  "browser_clear_session",
-  // File / cloud storage
-  "create_document",
-  "drive_create_file",
-  // Agent management (creating new agents)
-  "setup_named_agent",
-  // OS / system actions via daemon
-  "daemon_action",
-]);
-
-/** Return true if this tool requires an approval gate before running. */
-export function requiresApproval(toolName: string): boolean {
-  return HIGH_RISK_TOOLS.has(toolName);
-}
-
-/**
- * Tools that must ALWAYS wait for human approval, even when Jarvis is the
- * initiator.  Everything else in HIGH_RISK_TOOLS can be auto-approved when
- * `initiatedBy === 'jarvis'`.
- *
- * Criteria: external side-effects that cannot be undone (sending messages /
- * emails to other people, OS-level actions, live voice calls).
- */
-export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
-  "send_email",
-  "gmail_action",
-  "daemon_action",
-  "discord_post",
-  "speak",
-  "sessions_send",
-]);
-
 // ── In-memory EventEmitter (for awaitApproval) ────────────────────────────────
 
 const gateEmitter = new EventEmitter();
+
+async function markApprovalDeliverableReviewed(gateId: string, status: "approved" | "rejected"): Promise<void> {
+  await db
+    .update(deliverables)
+    .set({
+      status,
+      actedAt: new Date(),
+      triageStatus: "auto_handled",
+    })
+    .where(sql`${deliverables.meta}->>'gateId' = ${gateId}`);
+}
 gateEmitter.setMaxListeners(200);
 const DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -238,6 +202,19 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
       // Non-fatal: gate still exists and is visible via /api/agents/approvals
       console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
     }
+    if (req.workerJobId) {
+      try {
+        const { appendWorkerApprovalCheckpointToJob } = await import("./workerRuntimeJobEvents");
+        await appendWorkerApprovalCheckpointToJob({
+          jobId: req.workerJobId,
+          gateId: id,
+          toolName: req.toolName,
+          reason: req.description,
+        });
+      } catch (err) {
+        console.warn("[AgentApproval] failed to append worker approval checkpoint:", err);
+      }
+    }
   }
 
   if (autoApprove) {
@@ -339,6 +316,9 @@ export async function approveGate(gateId: string, resolvedBy: string): Promise<b
       // Gate not found or already resolved — no event emitted
       return false;
     }
+    markApprovalDeliverableReviewed(gateId, "approved").catch((err) =>
+      console.warn("[AgentApproval] failed to mark approval deliverable approved:", err),
+    );
     // Only emit AFTER successful DB write
     gateEmitter.emit(gateId, { approved: true });
     logAgentEvent({ event: "tool_approved", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId}` });
@@ -374,6 +354,9 @@ export async function rejectGate(gateId: string, resolvedBy: string): Promise<bo
     if (rows === 0) {
       return false;
     }
+    markApprovalDeliverableReviewed(gateId, "rejected").catch((err) =>
+      console.warn("[AgentApproval] failed to mark approval deliverable rejected:", err),
+    );
     // Only emit AFTER successful DB write
     gateEmitter.emit(gateId, { approved: false, reason: "rejected" });
     logAgentEvent({ event: "tool_blocked", agentId: "unknown", userId: resolvedBy, detail: `gate=${gateId} rejected` });

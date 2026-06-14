@@ -22,7 +22,6 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useFocusEffect, useRouter, useLocalSearchParams } from 'expo-router';
 import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
-import * as Clipboard from 'expo-clipboard';
 import {
   getStats,
   claimReward,
@@ -50,6 +49,16 @@ import { useAuth, authFetch } from '@/lib/auth-context';
 import * as WebBrowser from 'expo-web-browser';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
+import { ConnectedWindowsPcCard } from '@/components/desktopConnector/ConnectedWindowsPcCard';
+import { checkAndroidApkUpdate } from '@/lib/app-update';
+import {
+  CONNECTION_APPS,
+  getConnectionStatusLabel,
+  normalizeConnectionsStatus,
+  normalizeConnectionTestResult,
+  type ConnectionAppId,
+  type ConnectionsStatus,
+} from '@/lib/connectionUx';
 
 interface UserDocument {
   id: string;
@@ -79,11 +88,33 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function getDesktopConnectorErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : '';
+  if (!raw) return fallback;
+
+  const withoutStatus = raw.replace(/^\d+:\s*/, '').trim();
+  try {
+    const parsed = JSON.parse(withoutStatus);
+    if (typeof parsed?.message === 'string') return parsed.message;
+    if (typeof parsed?.error === 'string') return parsed.error;
+  } catch {}
+
+  return withoutStatus || fallback;
+}
+
 interface Memory {
   id: string;
   content: string;
   category: string;
   extractedAt: string;
+  tier?: string;
+  memoryType?: string;
+  confidence?: number;
+  relevanceScore?: number;
+  sourceType?: string;
+  sourceRef?: string | null;
+  trustStatus?: 'pending' | 'active' | 'edited' | 'rejected';
+  whyJarvisLearnedIt?: string;
 }
 
 interface PendingMemory {
@@ -93,7 +124,27 @@ interface PendingMemory {
   memory_type: string;
   tier: string;
   confidence: number;
+  relevance_score?: number;
+  source_type?: string;
+  source_ref?: string | null;
+  trust_status?: 'pending' | 'active' | 'edited' | 'rejected';
+  why_jarvis_learned_it?: string;
   extracted_at: string;
+}
+
+interface PendingLivingContextUpdate {
+  id: string;
+  target: string;
+  path: string;
+  topic: string;
+  learned: string;
+  source_type: string;
+  source_ref: string | null;
+  confidence: number;
+  status: string;
+  fills_question: string | null;
+  approval_sensitive: boolean;
+  created_at: string;
 }
 
 interface MorningVoiceNote {
@@ -128,32 +179,13 @@ function formatNoteDate(dateStr: string): string {
   return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-interface OAuthProviderStatus {
-  connected: boolean;
-  email?: string;
-  accounts?: { email: string; scopes?: string }[];
-}
-
-interface OAuthStatus {
-  google: OAuthProviderStatus;
-  microsoft: OAuthProviderStatus;
-  slack: OAuthProviderStatus;
-}
-
 interface TelegramStatus {
   connected: boolean;
   username: string | null;
   configured: boolean;
+  botUsername: string | null;
   webhookHealthy: boolean | null;
   webhookLastChecked: string | null;
-}
-
-interface PlatformInfo {
-  id: 'google' | 'microsoft' | 'slack';
-  name: string;
-  subtitle: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  color: string;
 }
 
 const TIMEZONES = [
@@ -172,29 +204,100 @@ const TIMEZONES = [
   { label: 'Sydney (AEST)', value: 'Australia/Sydney' },
 ];
 
-const PLATFORMS: PlatformInfo[] = [
+const PROFILE_PANEL = Colors.card;
+const PROFILE_PANEL_MUTED = '#151923';
+const PROFILE_BORDER = Colors.border;
+const PROFILE_BORDER_ACTIVE = Colors.borderGlow;
+const PROFILE_CHIP = '#1B2230';
+const PROFILE_CHIP_MUTED = '#171B24';
+
+type ProfilePanelKey =
+  | 'progress'
+  | 'identity'
+  | 'review'
+  | 'people'
+  | 'memories'
+  | 'notes'
+  | 'connections'
+  | 'agents'
+  | 'settings';
+
+const PROFILE_PANELS: {
+  key: ProfilePanelKey;
+  title: string;
+  subtitle: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  accent: string;
+}[] = [
   {
-    id: 'google',
-    name: 'Google Account',
-    subtitle: 'Calendar + Gmail',
-    icon: 'logo-google',
-    color: '#4285F4',
+    key: 'progress',
+    title: 'Progress',
+    subtitle: 'Achievements and rewards',
+    icon: 'trophy-outline',
+    accent: Colors.primary,
   },
   {
-    id: 'microsoft',
-    name: 'Microsoft Account',
-    subtitle: 'Outlook Calendar',
-    icon: 'logo-windows',
-    color: '#0078D4',
+    key: 'identity',
+    title: 'Identity',
+    subtitle: 'About you and Jarvis Soul',
+    icon: 'person-circle-outline',
+    accent: Colors.violet,
   },
   {
-    id: 'slack',
-    name: 'Slack',
-    subtitle: 'Messages & Channels',
-    icon: 'chatbubbles-outline',
-    color: '#4A154B',
+    key: 'review',
+    title: 'Review',
+    subtitle: 'Memory and context approvals',
+    icon: 'library-outline',
+    accent: Colors.warning,
+  },
+  {
+    key: 'people',
+    title: 'People',
+    subtitle: 'People Jarvis knows',
+    icon: 'people-outline',
+    accent: Colors.cyan,
+  },
+  {
+    key: 'memories',
+    title: 'Memories',
+    subtitle: 'Stored coach memory',
+    icon: 'bulb-outline',
+    accent: Colors.success,
+  },
+  {
+    key: 'notes',
+    title: 'Notes',
+    subtitle: 'Morning notes and dream cycle',
+    icon: 'mic-outline',
+    accent: Colors.secondary,
+  },
+  {
+    key: 'connections',
+    title: 'Connections',
+    subtitle: 'Apps, channels, files, and website',
+    icon: 'git-network-outline',
+    accent: Colors.cyan,
+  },
+  {
+    key: 'agents',
+    title: 'Agents',
+    subtitle: 'Custom agents and learned skills',
+    icon: 'sparkles-outline',
+    accent: Colors.secondary,
+  },
+  {
+    key: 'settings',
+    title: 'Settings',
+    subtitle: 'Notifications, rules, and account',
+    icon: 'settings-outline',
+    accent: Colors.textSecondary,
   },
 ];
+
+const PROFILE_PANEL_META = PROFILE_PANELS.reduce((acc, panel) => {
+  acc[panel.key] = panel;
+  return acc;
+}, {} as Record<ProfilePanelKey, (typeof PROFILE_PANELS)[number]>);
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
@@ -208,17 +311,13 @@ export default function ProfileScreen() {
     streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [],
     dailyXpEarned: { date: '', xp: 0 },
   });
-  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>({
-    google: { connected: false },
-    microsoft: { connected: false },
-    slack: { connected: false },
-  });
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>({
-    connected: false, username: null, configured: false, webhookHealthy: null, webhookLastChecked: null,
+    connected: false, username: null, configured: false, botUsername: null, webhookHealthy: null, webhookLastChecked: null,
   });
   const [webhookResetting, setWebhookResetting] = useState(false);
   const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
+  const [appUpdateChecking, setAppUpdateChecking] = useState(false);
   const [channelData, setChannelData] = useState<{
     channels: { name: string; configured: boolean; connected: boolean }[];
     connected: Record<string, boolean>;
@@ -228,8 +327,10 @@ export default function ProfileScreen() {
     desktop_daemon_connected?: boolean;
     android_daemon_connected?: boolean;
   } | null>(null);
-  const [whatsappCode, setWhatsappCode] = useState<{ code: string; twilioNumber: string | null } | null>(null);
-  const [daemonCode, setDaemonCode] = useState<string | null>(null);
+  const [desktopConnectorMessage, setDesktopConnectorMessage] = useState<{
+    kind: 'success' | 'error';
+    text: string;
+  } | null>(null);
   const [daemonPerms, setDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [daemonPermsBusy, setDaemonPermsBusy] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
@@ -241,12 +342,17 @@ export default function ProfileScreen() {
   const [pendingMemoriesLoading, setPendingMemoriesLoading] = useState(false);
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
   const [editingMemoryText, setEditingMemoryText] = useState('');
+  const [pendingLivingUpdates, setPendingLivingUpdates] = useState<PendingLivingContextUpdate[]>([]);
+  const [pendingLivingUpdatesLoading, setPendingLivingUpdatesLoading] = useState(false);
+  const [editingLivingUpdateId, setEditingLivingUpdateId] = useState<string | null>(null);
+  const [editingLivingUpdateText, setEditingLivingUpdateText] = useState('');
   const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
   const [rewardModalVisible, setRewardModalVisible] = useState(false);
+  const [activeProfilePanel, setActiveProfilePanel] = useState<ProfilePanelKey | null>(null);
   const [lifeContext, setLifeContext] = useState<LifeContext | null>(null);
   const [sheetVisible, setSheetVisible] = useState(false);
   const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
@@ -285,30 +391,6 @@ export default function ProfileScreen() {
   }>({ imported: false });
   const [chatgptImporting, setChatgptImporting] = useState(false);
   const [chatgptImportResult, setChatgptImportResult] = useState<number | null>(null);
-  const [discordBotToken, setDiscordBotToken] = useState('');
-  const [discordBotTokenVisible, setDiscordBotTokenVisible] = useState(false);
-  const [discordPairCode, setDiscordPairCode] = useState('');
-  const [discordShowOwnBot, setDiscordShowOwnBot] = useState(false);
-  const [discordSaving, setDiscordSaving] = useState(false);
-  const [discordPairing, setDiscordPairing] = useState(false);
-  const [discordShowManage, setDiscordShowManage] = useState(false);
-  const [discordGuilds, setDiscordGuilds] = useState<{id: string; name: string}[]>([]);
-  const [discordGuildChannels, setDiscordGuildChannels] = useState<{id: string; name: string}[]>([]);
-  const [discordSelGuildId, setDiscordSelGuildId] = useState('');
-  const [discordSelChannelId, setDiscordSelChannelId] = useState('');
-  const [discordRequireMention, setDiscordRequireMention] = useState(true);
-  const [discordAllowlistBusy, setDiscordAllowlistBusy] = useState(false);
-  const [discordWorkspaceBusy, setDiscordWorkspaceBusy] = useState(false);
-  const [discordWorkspaceGuilds, setDiscordWorkspaceGuilds] = useState<{id: string; name: string}[]>([]);
-  const [discordWorkspaceSelGuild, setDiscordWorkspaceSelGuild] = useState('');
-  const [discordShowWorkspaceSetup, setDiscordShowWorkspaceSetup] = useState(false);
-  const [discordTtsEnabled, setDiscordTtsEnabled] = useState(false);
-  const [ttsChannels, setTtsChannels] = useState<string[]>([]);
-  const [ttsVoice, setTtsVoice] = useState<string>('nova');
-  const [ttsLatencyTier, setTtsLatencyTier] = useState<0 | 2 | 4>(2);
-  const [discordSlashConfig, setDiscordSlashConfig] = useState<{ interactionsUrl: string; publicKeyConfigured: boolean } | null>(null);
-  const [discordShowSlashSetup, setDiscordShowSlashSetup] = useState(false);
-  const [discordUrlCopied, setDiscordUrlCopied] = useState(false);
   const [documents, setDocuments] = useState<UserDocument[]>([]);
   const [documentsLoading, setDocumentsLoading] = useState(false);
   const [documentUploading, setDocumentUploading] = useState(false);
@@ -323,6 +405,10 @@ export default function ProfileScreen() {
   } | null>(null);
   const [driveLoading, setDriveLoading] = useState(false);
   const [driveEnabling, setDriveEnabling] = useState(false);
+  const [connectionsStatus, setConnectionsStatus] = useState<ConnectionsStatus | null>(null);
+  const [connectionsLoading, setConnectionsLoading] = useState(false);
+  const [connectionBusyApp, setConnectionBusyApp] = useState<string | null>(null);
+  const [connectionTestSummary, setConnectionTestSummary] = useState<string | null>(null);
 
   interface CustomAgent {
     id: string;
@@ -506,8 +592,10 @@ export default function ProfileScreen() {
       const res = await apiRequest('GET', '/api/channels');
       const data = await res.json();
       setChannelData(data);
+      return true;
     } catch (err) {
       console.error('[channels] load failed:', err);
+      return false;
     }
   }, []);
 
@@ -519,11 +607,12 @@ export default function ProfileScreen() {
         connected: data.connected ?? false,
         username: data.username ?? null,
         configured: data.configured ?? false,
+        botUsername: data.botUsername ?? null,
         webhookHealthy: data.webhookHealthy ?? null,
         webhookLastChecked: data.webhookLastChecked ?? null,
       });
     } catch {
-      setTelegramStatus({ connected: false, username: null, configured: false, webhookHealthy: null, webhookLastChecked: null });
+      setTelegramStatus({ connected: false, username: null, configured: false, botUsername: null, webhookHealthy: null, webhookLastChecked: null });
     }
   }, []);
 
@@ -544,19 +633,21 @@ export default function ProfileScreen() {
     }
   }, []);
 
-  const loadOAuthStatus = useCallback(async () => {
+
+
+  const loadConnectionStatus = useCallback(async () => {
+    setConnectionsLoading(true);
     try {
-      const res = await apiRequest('GET', '/api/oauth/status');
+      const res = await apiRequest('GET', '/api/connections/status');
       const data = await res.json();
-      setOAuthStatus({
-        google: data.google ?? { connected: false, accounts: [] },
-        microsoft: data.microsoft ?? { connected: false, accounts: [] },
-        slack: data.slack ?? { connected: false, accounts: [] },
-      });
+      setConnectionsStatus(normalizeConnectionsStatus(data));
     } catch {
-      setOAuthStatus({ google: { connected: false, accounts: [] }, microsoft: { connected: false, accounts: [] }, slack: { connected: false, accounts: [] } });
+      setConnectionsStatus(normalizeConnectionsStatus({
+        nextSteps: ['Jarvis could not reach connected app status. Try Refresh.'],
+        error: 'Connections are unavailable.',
+      }));
     } finally {
-      setLoadingStatus(false);
+      setConnectionsLoading(false);
     }
   }, []);
 
@@ -1080,7 +1171,7 @@ export default function ProfileScreen() {
     }
     setNotificationsEnabledState(notifications);
     setUserName(name);
-    await Promise.all([loadOAuthStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadSkills()]);
+    await Promise.all([loadConnectionStatus(), loadMemories(), loadTelegramStatus(), loadMorningNotes(), loadDocuments(), loadSoul(), loadPeople(), loadChannels(), loadDaemonPerms(), loadAndroidDaemonPerms(), loadDriveStatus(), loadDreamInsights(), loadWebsiteCrawl(), loadWriteBudget(), loadCustomAgents(), loadTrainedButtons(), loadPendingMemories(), loadPendingLivingContextUpdates(), loadSkills()]);
     try {
       const importRes = await apiRequest('GET', '/api/chatgpt-import/status');
       const importData = await importRes.json();
@@ -1092,21 +1183,13 @@ export default function ProfileScreen() {
       if (prefs.timezone) setTimezone(prefs.timezone);
       if (typeof prefs.emailAlertsEnabled === 'boolean') setEmailAlertsEnabled(prefs.emailAlertsEnabled);
       if (typeof prefs.dreamEnabled === 'boolean') setDreamEnabled(prefs.dreamEnabled);
-      const channels: string[] = Array.isArray(prefs.ttsChannels)
-        ? prefs.ttsChannels
-        : prefs.ttsEnabled === true ? ['telegram'] : [];
-      setTtsChannels(channels);
-      setDiscordTtsEnabled(channels.includes('discord'));
-      if (prefs.ttsVoice) setTtsVoice(prefs.ttsVoice);
-      if (typeof prefs.ttsLatencyTier === 'number' && [0, 2, 4].includes(prefs.ttsLatencyTier)) {
-        setTtsLatencyTier(prefs.ttsLatencyTier as 0 | 2 | 4);
-      }
     } catch {}
-  // loadDaemonPerms, loadAndroidDaemonPerms, and loadPendingMemories are all
+  // loadDaemonPerms, loadAndroidDaemonPerms, loadPendingMemories, and
+  // loadPendingLivingContextUpdates are all
   // useCallback([], []) / stable refs declared after loadAll — omit from deps
   // to avoid temporal-dead-zone ReferenceErrors at initialisation.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadOAuthStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents, loadSkills]);
+  }, [loadConnectionStatus, loadMemories, loadTelegramStatus, loadMorningNotes, loadDocuments, loadSoul, loadPeople, loadChannels, loadDriveStatus, loadDreamInsights, loadWebsiteCrawl, loadCustomAgents, loadSkills]);
 
   const handleToggleEmailAlerts = useCallback(async () => {
     const newValue = !emailAlertsEnabled;
@@ -1169,62 +1252,7 @@ export default function ProfileScreen() {
     await applyToggle();
   }, [memoryReviewEnabled, pendingMemories]);
 
-  const handleToggleDiscordTts = useCallback(async () => {
-    const next = !discordTtsEnabled;
-    setDiscordTtsEnabled(next);
-    const newChannels = next
-      ? [...ttsChannels.filter(c => c !== 'discord'), 'discord']
-      : ttsChannels.filter(c => c !== 'discord');
-    setTtsChannels(newChannels);
-    try {
-      await apiRequest('PATCH', '/api/preferences', { ttsChannels: newChannels });
-    } catch {}
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [discordTtsEnabled, ttsChannels]);
 
-  const handleSelectVoice = useCallback(async (voiceId: string) => {
-    setTtsVoice(voiceId);
-    try {
-      await apiRequest('PATCH', '/api/preferences', { ttsVoice: voiceId });
-    } catch {}
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, []);
-
-  const handleSelectLatencyTier = useCallback(async (tier: 0 | 2 | 4) => {
-    setTtsLatencyTier(tier);
-    try {
-      await apiRequest('PATCH', '/api/preferences', { ttsLatencyTier: tier });
-    } catch {}
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, []);
-
-  const handleToggleSlashSetup = useCallback(async () => {
-    setDiscordShowSlashSetup(v => !v);
-    if (!discordSlashConfig) {
-      try {
-        const res = await apiRequest('GET', '/api/channels/discord/interactions-config');
-        const data = await res.json();
-        setDiscordSlashConfig(data);
-      } catch {}
-    }
-  }, [discordSlashConfig]);
-
-  const handleRefreshSlashConfig = useCallback(async () => {
-    try {
-      const res = await apiRequest('GET', '/api/channels/discord/interactions-config');
-      const data = await res.json();
-      setDiscordSlashConfig(data);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {}
-  }, []);
-
-  const handleCopyInteractionsUrl = useCallback(async () => {
-    if (!discordSlashConfig?.interactionsUrl) return;
-    await Clipboard.setStringAsync(discordSlashConfig.interactionsUrl);
-    setDiscordUrlCopied(true);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    setTimeout(() => setDiscordUrlCopied(false), 2000);
-  }, [discordSlashConfig]);
 
   const handleTimezoneChange = useCallback(async (tz: string) => {
     setTimezone(tz);
@@ -1360,7 +1388,7 @@ export default function ProfileScreen() {
       if (!res.ok || data.error) {
         const msg = data.error || 'Could not generate link code.';
         if (msg.includes('not configured')) {
-          alert('Telegram bot not set up yet — add your TELEGRAM_BOT_TOKEN in Replit Secrets to enable this.');
+          alert('Telegram bot not set up yet — add your TELEGRAM_BOT_TOKEN in Railway Variables to enable this.');
         } else {
           alert(msg);
         }
@@ -1373,6 +1401,7 @@ export default function ProfileScreen() {
       }
 
       setTelegramLinkCode(data.code);
+      setTelegramStatus(prev => ({ ...prev, botUsername: data.botUsername ?? prev.botUsername ?? null }));
       setTelegramPolling(true);
       setConnectingId(null);
 
@@ -1389,7 +1418,14 @@ export default function ProfileScreen() {
           const statusData = await statusRes.json();
           if (statusData.connected) {
             stopTelegramPolling();
-            setTelegramStatus(statusData);
+            setTelegramStatus({
+              connected: statusData.connected ?? true,
+              username: statusData.username ?? null,
+              configured: statusData.configured ?? true,
+              botUsername: statusData.botUsername ?? data.botUsername ?? null,
+              webhookHealthy: statusData.webhookHealthy ?? null,
+              webhookLastChecked: statusData.webhookLastChecked ?? null,
+            });
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           }
         } catch {}
@@ -1402,41 +1438,81 @@ export default function ProfileScreen() {
     }
   }, [stopTelegramPolling]);
 
-  const handleGenerateWhatsAppCode = useCallback(async () => {
-    setChannelBusy('whatsapp');
-    try {
-      const res = await apiRequest('POST', '/api/channels/whatsapp/code');
-      const data = await res.json();
-      setWhatsappCode({ code: data.code, twilioNumber: data.twilioNumber });
-    } catch (err) {
-      console.error('[whatsapp] code error:', err);
-    } finally {
-      setChannelBusy(null);
-    }
-  }, []);
+  const handleStartWindowsConnectorSetup = useCallback(() => {
+    setDesktopConnectorMessage(null);
+    router.push('/desktop-connector-setup' as any);
+  }, [router]);
 
-  const handleGenerateDaemonCode = useCallback(async () => {
+  const handleCheckWindowsConnector = useCallback(async () => {
+    setDesktopConnectorMessage(null);
     setChannelBusy('desktop-daemon');
     try {
-      const res = await apiRequest('POST', '/api/channels/daemon/code');
-      const data = await res.json();
-      setDaemonCode(data.code);
-    } catch (err) {
-      console.error('[daemon] code error:', err);
+      const refreshed = await loadChannels();
+      setDesktopConnectorMessage({
+        kind: refreshed ? 'success' : 'error',
+        text: refreshed ? 'Connection status refreshed.' : 'Jarvis could not check the desktop connector.',
+      });
     } finally {
       setChannelBusy(null);
     }
-  }, []);
+  }, [loadChannels]);
+
+  const handleReconnectWindowsConnector = useCallback(() => {
+    setDesktopConnectorMessage(null);
+    router.push('/desktop-connector-setup?source=settings' as any);
+  }, [router]);
+
+  const handleVerifyWindowsConnector = useCallback(async () => {
+    setDesktopConnectorMessage(null);
+    setChannelBusy('desktop-daemon');
+    try {
+      const res = await apiRequest('POST', '/api/desktop-connector/verify', {});
+      const data = await res.json().catch(() => null);
+      await loadChannels();
+      if (data?.ok === false) {
+        setDesktopConnectorMessage({
+          kind: 'error',
+          text: typeof data?.result?.error === 'string'
+            ? data.result.error
+            : 'Desktop connector verification failed.',
+        });
+        return;
+      }
+      setDesktopConnectorMessage({
+        kind: 'success',
+        text: data?.ok === true ? 'Desktop connector verified.' : 'Desktop connector verification started.',
+      });
+    } catch (err) {
+      console.error('[desktop-connector] verification failed:', err);
+      setDesktopConnectorMessage({
+        kind: 'error',
+        text: getDesktopConnectorErrorMessage(err, 'Jarvis could not verify the desktop connector.'),
+      });
+    } finally {
+      setChannelBusy(null);
+    }
+  }, [loadChannels]);
 
   const loadDaemonPerms = useCallback(async () => {
     try {
       const res = await apiRequest('GET', '/api/channels/daemon/permissions');
       const data = await res.json();
       setDaemonPerms(data.permissions || null);
+      return true;
     } catch (err) {
       console.error('[daemon] permissions load error:', err);
+      return false;
     }
   }, []);
+
+  const handleOpenDesktopConnectorTroubleshooting = useCallback(async () => {
+    setDesktopConnectorMessage(null);
+    const loaded = await loadDaemonPerms();
+    setDesktopConnectorMessage({
+      kind: loaded ? 'success' : 'error',
+      text: loaded ? 'Advanced troubleshooting is open below.' : 'Jarvis could not open advanced troubleshooting.',
+    });
+  }, [loadDaemonPerms]);
 
   const handleToggleDaemonPerm = useCallback(async (action: string) => {
     if (!daemonPerms) return;
@@ -1526,6 +1602,34 @@ export default function ProfileScreen() {
     }
   }, []);
 
+  const loadPendingLivingContextUpdates = useCallback(async () => {
+    setPendingLivingUpdatesLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/living-context/pending-review');
+      const data = await res.json();
+      setPendingLivingUpdates(Array.isArray(data) ? data : (data.updates ?? []));
+    } catch (err) {
+      console.error('[living-context-review] load error:', err);
+    } finally {
+      setPendingLivingUpdatesLoading(false);
+    }
+  }, []);
+
+  const handleReviewLivingContextUpdate = useCallback(async (
+    id: string,
+    action: 'keep' | 'edit' | 'discard',
+    editedLearned?: string,
+  ) => {
+    try {
+      await apiRequest('PATCH', `/api/living-context/${id}/review`, { action, updatedLearned: editedLearned });
+      setPendingLivingUpdates((prev) => prev.filter((u) => u.id !== id));
+      setEditingLivingUpdateId(null);
+      setEditingLivingUpdateText('');
+    } catch (err) {
+      console.error('[living-context-review] review error:', err);
+    }
+  }, []);
+
   const handleToggleAndroidDaemonPerm = useCallback(async (action: string) => {
     if (!androidDaemonPerms) return;
     setAndroidDaemonPermsBusy(action);
@@ -1545,137 +1649,28 @@ export default function ProfileScreen() {
     setChannelBusy(channel);
     try {
       await apiRequest('DELETE', `/api/channels/${channel}`);
-      if (channel === 'whatsapp') setWhatsappCode(null);
-      if (channel === 'daemon') { setDaemonCode(null); setAndroidDaemonCode(null); }
-      if (channel === 'desktop-daemon') { setDaemonCode(null); }
+      if (channel === 'daemon') { setAndroidDaemonCode(null); }
       if (channel === 'android-daemon') { setAndroidDaemonCode(null); }
-      if (channel === 'discord') { setDiscordBotToken(''); setDiscordPairCode(''); }
       await loadChannels();
+      return true;
     } catch (err) {
       console.error('[channels] unlink error:', err);
+      return false;
     } finally {
       setChannelBusy(null);
     }
   }, [loadChannels]);
 
-  const handleSaveDiscordToken = useCallback(async () => {
-    if (!discordBotToken.trim()) return;
-    setDiscordSaving(true);
-    try {
-      const res = await apiRequest('POST', '/api/channels/discord/token', { botToken: discordBotToken.trim() });
-      const data = await res.json();
-      if (data.error) { alert(data.error); }
-      else { setDiscordBotToken(''); await loadChannels(); }
-    } catch (err: any) {
-      alert(err?.message || 'Failed to save bot token — check the token and ensure Message Content + Server Members intents are enabled.');
-    }
-    setDiscordSaving(false);
-  }, [discordBotToken, loadChannels]);
+  const handleDisconnectWindowsConnector = useCallback(async () => {
+    setDesktopConnectorMessage(null);
+    const disconnected = await handleUnlinkChannel('desktop-daemon');
+    setDesktopConnectorMessage({
+      kind: disconnected ? 'success' : 'error',
+      text: disconnected ? 'Desktop connector disconnected.' : 'Jarvis could not disconnect the desktop connector.',
+    });
+  }, [handleUnlinkChannel]);
 
-  const handleDiscordPair = useCallback(async () => {
-    if (!discordPairCode.trim()) return;
-    setDiscordPairing(true);
-    try {
-      const res = await apiRequest('POST', '/api/channels/discord/pair', { code: discordPairCode.trim().toUpperCase() });
-      const data = await res.json();
-      if (data.error) { alert(data.error); }
-      else { setDiscordPairCode(''); await loadChannels(); }
-    } catch (err: any) {
-      alert(err?.message || 'Pairing failed — check the code and try again.');
-    }
-    setDiscordPairing(false);
-  }, [discordPairCode, loadChannels]);
 
-  const handleFetchDiscordGuilds = useCallback(async () => {
-    setDiscordAllowlistBusy(true);
-    try {
-      const res = await apiRequest('GET', '/api/channels/discord/guilds');
-      const data = await res.json();
-      setDiscordGuilds(data.guilds || []);
-      setDiscordSelGuildId('');
-      setDiscordGuildChannels([]);
-      setDiscordSelChannelId('');
-    } catch (err) {
-      console.error('[discord] fetch guilds failed:', err);
-    }
-    setDiscordAllowlistBusy(false);
-  }, []);
-
-  const handleFetchDiscordChannels = useCallback(async (guildId: string) => {
-    setDiscordSelGuildId(guildId);
-    setDiscordSelChannelId('');
-    if (!guildId) { setDiscordGuildChannels([]); return; }
-    try {
-      const res = await apiRequest('GET', `/api/channels/discord/channels/${guildId}`);
-      const data = await res.json();
-      setDiscordGuildChannels(data.channels || []);
-    } catch (err) {
-      console.error('[discord] fetch channels failed:', err);
-    }
-  }, []);
-
-  const handleAddDiscordAllowlist = useCallback(async () => {
-    if (!discordSelGuildId || !discordSelChannelId) return;
-    setDiscordAllowlistBusy(true);
-    try {
-      const guild = discordGuilds.find(g => g.id === discordSelGuildId);
-      const chan = discordGuildChannels.find(c => c.id === discordSelChannelId);
-      await apiRequest('PUT', '/api/channels/discord/allowlist', {
-        guildId: discordSelGuildId,
-        guildName: guild?.name || discordSelGuildId,
-        channelId: discordSelChannelId,
-        channelName: chan?.name || discordSelChannelId,
-        requireMention: discordRequireMention,
-      });
-      setDiscordSelGuildId(''); setDiscordSelChannelId(''); setDiscordGuildChannels([]);
-      await loadChannels();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to add channel.');
-    }
-    setDiscordAllowlistBusy(false);
-  }, [discordSelGuildId, discordSelChannelId, discordGuilds, discordGuildChannels, discordRequireMention, loadChannels]);
-
-  const handleRemoveDiscordAllowlist = useCallback(async (guildId: string, channelId: string) => {
-    setDiscordAllowlistBusy(true);
-    try {
-      await apiRequest('DELETE', `/api/channels/discord/allowlist/${guildId}/${channelId}`);
-      await loadChannels();
-    } catch (err: any) {
-      alert(err?.message || 'Failed to remove channel.');
-    }
-    setDiscordAllowlistBusy(false);
-  }, [loadChannels]);
-
-  const handleOpenWorkspaceSetup = useCallback(async () => {
-    setDiscordShowWorkspaceSetup(v => !v);
-    if (!discordShowWorkspaceSetup && discordWorkspaceGuilds.length === 0) {
-      setDiscordWorkspaceBusy(true);
-      try {
-        const res = await apiRequest('GET', '/api/channels/discord/guilds');
-        const data = await res.json();
-        setDiscordWorkspaceGuilds(data.guilds || []);
-      } catch (err: any) {
-        console.error('[discord workspace] fetch guilds failed:', err);
-      }
-      setDiscordWorkspaceBusy(false);
-    }
-  }, [discordShowWorkspaceSetup, discordWorkspaceGuilds.length]);
-
-  const handleSetupWorkspace = useCallback(async (guildId: string) => {
-    setDiscordWorkspaceBusy(true);
-    try {
-      const res = await apiRequest('POST', '/api/channels/discord/workspace/setup', { guildId });
-      const data = await res.json();
-      if (!res.ok) { alert(data.error || 'Setup failed.'); return; }
-      setDiscordShowWorkspaceSetup(false);
-      setDiscordWorkspaceSelGuild('');
-      await loadChannels();
-      alert('✅ Jarvis Workspace created! Check your Discord server for the new channels.');
-    } catch (err: any) {
-      alert(err?.message || 'Setup failed.');
-    }
-    setDiscordWorkspaceBusy(false);
-  }, [loadChannels]);
 
   const MUTE_SENTINEL = '__muted__';
 
@@ -1726,7 +1721,7 @@ export default function ProfileScreen() {
     setConnectingId('telegram');
     try {
       await apiRequest('DELETE', '/api/telegram/disconnect');
-      setTelegramStatus({ connected: false, username: null, configured: true, webhookHealthy: null, webhookLastChecked: null });
+      setTelegramStatus(prev => ({ connected: false, username: null, configured: true, botUsername: prev.botUsername, webhookHealthy: null, webhookLastChecked: null }));
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (e) {
       console.error('Telegram disconnect error:', e);
@@ -1735,46 +1730,94 @@ export default function ProfileScreen() {
     }
   }, []);
 
-  const handleConnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack') => {
-    setConnectingId(provider);
+  const handleCheckAppUpdate = useCallback(async () => {
+    if (appUpdateChecking) return;
+    setAppUpdateChecking(true);
     try {
-      const res = await apiRequest('GET', `/api/oauth/${provider}/authorize`);
-      const data = await res.json();
-      if (!data.url) {
-        if (data.error === 'Microsoft OAuth not configured') {
-          alert('Microsoft OAuth is not yet configured. Add MICROSOFT_CLIENT_ID and MICROSOFT_CLIENT_SECRET to connect Outlook.');
-        } else if (data.error === 'Slack OAuth not configured') {
-          alert('Slack OAuth is not yet configured. Add SLACK_CLIENT_ID and SLACK_CLIENT_SECRET to connect Slack.');
-        }
-        return;
-      }
-      await WebBrowser.openBrowserAsync(data.url, {
-        presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
-      });
-      await loadOAuthStatus();
-    } catch (e: any) {
-      console.error('Connect error:', e);
-      alert('Could not connect. Please try again.');
+      await checkAndroidApkUpdate({ showUpToDateAlert: true });
+    } catch (error) {
+      console.error('App update check error:', error);
+      Alert.alert('Could not check updates', 'Jarvis could not check for a new APK right now. Try again in a minute.');
     } finally {
-      setConnectingId(null);
+      setAppUpdateChecking(false);
     }
-  }, [loadOAuthStatus]);
+  }, [appUpdateChecking]);
 
-  const handleDisconnect = useCallback(async (provider: 'google' | 'microsoft' | 'slack', email?: string) => {
-    setConnectingId(provider + (email || ''));
-    try {
-      const url = email
-        ? `/api/oauth/${provider}/disconnect?email=${encodeURIComponent(email)}`
-        : `/api/oauth/${provider}/disconnect`;
-      await apiRequest('DELETE', url);
-      await loadOAuthStatus();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e) {
-      console.error('Disconnect error:', e);
-    } finally {
-      setConnectingId(null);
+  const openHostedConnectionLink = useCallback(async (url: string) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.assign(url);
+      return;
     }
-  }, [loadOAuthStatus]);
+    await WebBrowser.openBrowserAsync(url, {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+    }).catch(() => {
+      void Linking.openURL(url);
+    });
+  }, []);
+
+  const handleConnectApp = useCallback(async (appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    setConnectionBusyApp(`connect:${appId}`);
+    try {
+      const res = await apiRequest('POST', '/api/connections/connect-link', { appId, app: appId });
+      const data = await res.json();
+      const url = data?.url ?? data?.connectUrl ?? data?.connectLink ?? data?.oauthUrl ?? data?.authUrl ?? data?.link;
+      if (typeof url !== 'string' || !url) {
+        throw new Error('Jarvis could not create a hosted connection link.');
+      }
+      await openHostedConnectionLink(url);
+      setConnectionTestSummary(`${app?.label ?? 'App'} connection opened in your browser.`);
+      await loadConnectionStatus();
+    } catch (error: any) {
+      Alert.alert('Connect app', error?.message || `Jarvis could not start ${app?.label ?? 'that app'} connection.`);
+    } finally {
+      setConnectionBusyApp(null);
+    }
+  }, [loadConnectionStatus, openHostedConnectionLink]);
+
+  const handleDisconnectApp = useCallback((appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    Alert.alert('Disconnect app', `Disconnect ${app?.label ?? 'this app'} from Jarvis?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          setConnectionBusyApp(`disconnect:${appId}`);
+          try {
+            await apiRequest('POST', '/api/connections/disconnect', { appId, app: appId });
+            setConnectionTestSummary(`${app?.label ?? 'App'} disconnected.`);
+            await loadConnectionStatus();
+          } catch (error: any) {
+            Alert.alert('Disconnect app', error?.message || `Jarvis could not disconnect ${app?.label ?? 'that app'}.`);
+          } finally {
+            setConnectionBusyApp(null);
+          }
+        },
+      },
+    ]);
+  }, [loadConnectionStatus]);
+
+  const handleTestConnection = useCallback(async (appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    setConnectionBusyApp(`test:${appId}`);
+    try {
+      const res = await apiRequest('POST', '/api/connections/test', { appId, app: appId });
+      const data = await res.json();
+      const result = normalizeConnectionTestResult(data);
+      setConnectionTestSummary(`${app?.label ?? 'App'}: ${result.summary}`);
+      if (data?.connections || data?.apps || data?.statuses) {
+        setConnectionsStatus(normalizeConnectionsStatus(data));
+      } else {
+        await loadConnectionStatus();
+      }
+      if (result.ok) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      setConnectionTestSummary(`Jarvis could not test ${app?.label ?? 'that app'} right now.`);
+    } finally {
+      setConnectionBusyApp(null);
+    }
+  }, [loadConnectionStatus]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
@@ -1782,6 +1825,7 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (focus !== 'telegram_webhook') return;
+    setActiveProfilePanel('connections');
     const timer = setTimeout(() => {
       const scrollNode = findNodeHandle(scrollViewRef.current);
       if (scrollNode && webhookRowRef.current) {
@@ -1799,19 +1843,7 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (focus !== 'drive') return;
-    const timer = setTimeout(() => {
-      const scrollNode = findNodeHandle(scrollViewRef.current);
-      if (scrollNode && driveRowRef.current) {
-        driveRowRef.current.measureLayout(
-          scrollNode,
-          (_x, y) => {
-            scrollViewRef.current?.scrollTo({ y: Math.max(0, y - 24), animated: true });
-          },
-          () => {}
-        );
-      }
-    }, 600);
-    return () => clearTimeout(timer);
+    setActiveProfilePanel('connections');
   }, [focus]);
 
   const lifetimeXp = getLifetimeXp(stats);
@@ -1859,6 +1891,38 @@ export default function ProfileScreen() {
     setNotificationsEnabledState(newValue);
     await setNotificationsEnabled(newValue);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const activePanelMeta = activeProfilePanel ? PROFILE_PANEL_META[activeProfilePanel] : null;
+  const getProfilePanelBadge = (key: ProfilePanelKey): string => {
+    switch (key) {
+      case 'progress':
+        return `${stats.badges.length}/${ALL_BADGES.length}`;
+      case 'identity':
+        return soul?.content ? 'Soul ready' : lifeContext ? 'Profile set' : 'Start';
+      case 'review': {
+        const reviewCount = pendingMemories.length + pendingLivingUpdates.length;
+        return reviewCount > 0 ? `${reviewCount} waiting` : 'Clear';
+      }
+      case 'people':
+        return `${people.length} known`;
+      case 'memories':
+        return `${memories.length} stored`;
+      case 'notes':
+        return `${morningNotes.length + dreamInsights.length} items`;
+      case 'connections': {
+        const connectedChannels = channelData
+          ? Object.values(channelData.connected).filter(Boolean).length
+          : 0;
+        return `${connectedChannels} live`;
+      }
+      case 'agents':
+        return `${customAgents.length + activeUserSkills.length} active`;
+      case 'settings':
+        return notificationsEnabled ? 'Reminders on' : 'Reminders off';
+      default:
+        return '';
+    }
   };
 
   return (
@@ -1925,6 +1989,68 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+        <Animated.View entering={FadeInDown.duration(400).delay(280)} style={styles.profileHub}>
+          <View style={styles.profileHubHeader}>
+            <Text style={styles.sectionTitle}>Profile sections</Text>
+            <Text style={styles.sectionSubtitle}>Open only the area you need</Text>
+          </View>
+          <View style={styles.profilePanelGrid}>
+            {PROFILE_PANELS.map((panel) => (
+              <Pressable
+                key={panel.key}
+                style={styles.profilePanelCard}
+                onPress={() => setActiveProfilePanel(panel.key)}
+              >
+                <View style={[styles.profilePanelIcon, { backgroundColor: panel.accent + '18' }]}>
+                  <Ionicons name={panel.icon} size={20} color={panel.accent} />
+                </View>
+                <View style={styles.profilePanelText}>
+                  <View style={styles.profilePanelTitleRow}>
+                    <Text style={styles.profilePanelTitle}>{panel.title}</Text>
+                    <View style={styles.profilePanelBadge}>
+                      <Text style={styles.profilePanelBadgeText}>{getProfilePanelBadge(panel.key)}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.profilePanelSubtitle}>{panel.subtitle}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
+              </Pressable>
+            ))}
+          </View>
+        </Animated.View>
+      </ScrollView>
+
+      <Modal
+        visible={activeProfilePanel !== null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setActiveProfilePanel(null)}
+      >
+        <View style={styles.profileModalOverlay}>
+          <Pressable style={styles.profileModalBackdrop} onPress={() => setActiveProfilePanel(null)} />
+          <View style={[styles.profileModalSheet, { paddingTop: Math.max(insets.top, 12) + 12 }]}>
+            <View style={styles.profileModalHeader}>
+              <View style={styles.profileModalTitleWrap}>
+                {activePanelMeta && (
+                  <View style={[styles.profileModalIcon, { backgroundColor: activePanelMeta.accent + '18' }]}>
+                    <Ionicons name={activePanelMeta.icon} size={20} color={activePanelMeta.accent} />
+                  </View>
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.profileModalTitle}>{activePanelMeta?.title ?? 'Profile'}</Text>
+                  <Text style={styles.profileModalSubtitle}>{activePanelMeta?.subtitle ?? ''}</Text>
+                </View>
+              </View>
+              <Pressable style={styles.profileModalClose} onPress={() => setActiveProfilePanel(null)} hitSlop={10}>
+                <Ionicons name="close" size={20} color={Colors.text} />
+              </Pressable>
+            </View>
+            <ScrollView
+              contentContainerStyle={styles.profileModalContent}
+              showsVerticalScrollIndicator={false}
+            >
+        {activeProfilePanel === 'progress' && (
+          <>
         {/* Badges */}
         <Animated.View entering={FadeInDown.duration(400).delay(300)}>
           <Text style={styles.sectionTitle}>Achievements</Text>
@@ -1991,7 +2117,7 @@ export default function ProfileScreen() {
                   onPress={() => canTap ? handleOpenReward(reward) : undefined}
                   disabled={!canTap}
                 >
-                  <View style={[styles.rewardIconCircle, { backgroundColor: permanentlyUnlocked ? tierColor + '22' : '#F1F5F9' }]}>
+                  <View style={[styles.rewardIconCircle, { backgroundColor: permanentlyUnlocked ? tierColor + '22' : PROFILE_CHIP_MUTED }]}>
                     <Ionicons
                       name={reward.icon as any}
                       size={22}
@@ -2052,6 +2178,10 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'identity' && (
+          <>
         {/* About You */}
         <Animated.View entering={FadeInDown.duration(400).delay(400)}>
           <View style={styles.sectionHeaderRow}>
@@ -2288,6 +2418,10 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'review' && (
+          <>
         {/* Memory Review */}
         <Animated.View entering={FadeInDown.duration(400).delay(413)}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
@@ -2349,6 +2483,14 @@ export default function ProfileScreen() {
                       <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
                         <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{mem.category.replace(/_/g, ' ')}</Text>
                       </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{mem.tier.replace(/_/g, ' ')}</Text>
+                      </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>
+                          {mem.confidence}% confidence{typeof mem.relevance_score === 'number' ? ` · ${mem.relevance_score}% relevant` : ''}
+                        </Text>
+                      </View>
                     </View>
                     {editingMemoryId === mem.id ? (
                       <View>
@@ -2390,6 +2532,11 @@ export default function ProfileScreen() {
                     ) : (
                       <View>
                         <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 20, marginBottom: 10 }}>{mem.content}</Text>
+                        {!!mem.why_jarvis_learned_it && (
+                          <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 17, marginBottom: 8 }}>
+                            {mem.why_jarvis_learned_it}
+                          </Text>
+                        )}
                         <View style={{ flexDirection: 'row', gap: 8 }}>
                           <Pressable
                             onPress={() => handleReviewMemory(mem.id, 'keep')}
@@ -2418,6 +2565,8 @@ export default function ProfileScreen() {
                     {mem.extracted_at && (
                       <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }}>
                         Extracted {new Date(mem.extracted_at).toLocaleDateString()}
+                        {mem.source_type ? ` · Source: ${mem.source_type.replace(/_/g, ' ')}` : ''}
+                        {mem.source_ref ? ` · ${mem.source_ref}` : ''}
                       </Text>
                     )}
                   </View>
@@ -2427,6 +2576,139 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+        {/* Living Context Review */}
+        <Animated.View entering={FadeInDown.duration(400).delay(414)}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.sectionTitle}>Living Context Review</Text>
+              {pendingLivingUpdates.length > 0 && (
+                <View style={{ backgroundColor: Colors.primary ?? '#6C63FF', borderRadius: 10, minWidth: 20, paddingHorizontal: 6, paddingVertical: 2, alignItems: 'center' }}>
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{pendingLivingUpdates.length}</Text>
+                </View>
+              )}
+            </View>
+            <Pressable onPress={loadPendingLivingContextUpdates} hitSlop={8} disabled={pendingLivingUpdatesLoading}>
+              {pendingLivingUpdatesLoading
+                ? <ActivityIndicator size="small" color={Colors.textTertiary} />
+                : <Ionicons name="refresh" size={16} color={Colors.textSecondary} />}
+            </Pressable>
+          </View>
+          <Text style={styles.sectionSubtitle}>
+            Source-backed business facts Jarvis captured for the Battles folder-brain
+          </Text>
+          {pendingLivingUpdatesLoading ? (
+            <View style={styles.memoryEmptyCard}>
+              <ActivityIndicator size="small" color={Colors.textTertiary} />
+            </View>
+          ) : pendingLivingUpdates.length === 0 ? (
+            <View style={styles.memoryEmptyCard}>
+              <View style={styles.memoryEmptyIcon}>
+                <Ionicons name="folder-open-outline" size={22} color={Colors.textTertiary} />
+              </View>
+              <Text style={styles.memoryEmptyText}>
+                No living context updates waiting for review
+              </Text>
+            </View>
+          ) : (
+            <View style={styles.memoryList}>
+              {pendingLivingUpdates.map((update, idx) => (
+                <View key={update.id} style={[styles.memoryRow, idx < pendingLivingUpdates.length - 1 && styles.memoryRowBorder]}>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: 'row', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{update.topic}</Text>
+                      </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{update.source_type}</Text>
+                      </View>
+                      <View style={{ backgroundColor: Colors.surface, borderRadius: 6, paddingHorizontal: 7, paddingVertical: 2 }}>
+                        <Text style={{ color: Colors.textSecondary, fontSize: 11, fontWeight: '500' }}>{update.confidence}%</Text>
+                      </View>
+                    </View>
+                    {editingLivingUpdateId === update.id ? (
+                      <View>
+                        <TextInput
+                          value={editingLivingUpdateText}
+                          onChangeText={setEditingLivingUpdateText}
+                          multiline
+                          autoFocus
+                          placeholderTextColor={Colors.textTertiary}
+                          style={{
+                            backgroundColor: Colors.background,
+                            borderRadius: 8,
+                            padding: 10,
+                            color: Colors.text,
+                            fontSize: 14,
+                            lineHeight: 20,
+                            minHeight: 70,
+                            textAlignVertical: 'top',
+                            borderWidth: 1,
+                            borderColor: Colors.border,
+                            marginBottom: 8,
+                          }}
+                        />
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Pressable
+                            onPress={() => handleReviewLivingContextUpdate(update.id, 'edit', editingLivingUpdateText)}
+                            style={{ flex: 1, backgroundColor: Colors.text, padding: 10, borderRadius: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: Colors.background, fontWeight: '600', fontSize: 13 }}>Save & Keep</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => { setEditingLivingUpdateId(null); setEditingLivingUpdateText(''); }}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 10, borderRadius: 8, alignItems: 'center' }}
+                          >
+                            <Text style={{ color: Colors.text, fontWeight: '500', fontSize: 13 }}>Cancel</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ) : (
+                      <View>
+                        <Text style={{ color: Colors.text, fontSize: 14, lineHeight: 20, marginBottom: 8 }}>{update.learned}</Text>
+                        <Text style={{ color: Colors.textTertiary, fontSize: 11, lineHeight: 16, marginBottom: 10 }}>
+                          {update.path}{update.source_ref ? ` · ${update.source_ref}` : ''}
+                        </Text>
+                        <View style={{ flexDirection: 'row', gap: 8 }}>
+                          <Pressable
+                            onPress={() => handleReviewLivingContextUpdate(update.id, 'keep')}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="checkmark" size={14} color={Colors.text} />
+                            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>Keep</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => { setEditingLivingUpdateId(update.id); setEditingLivingUpdateText(update.learned); }}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="create-outline" size={14} color={Colors.text} />
+                            <Text style={{ color: Colors.text, fontWeight: '600', fontSize: 13 }}>Edit</Text>
+                          </Pressable>
+                          <Pressable
+                            onPress={() => handleReviewLivingContextUpdate(update.id, 'discard')}
+                            style={{ flex: 1, backgroundColor: Colors.surface, padding: 9, borderRadius: 8, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 4 }}
+                          >
+                            <Ionicons name="trash-outline" size={14} color="#EF4444" />
+                            <Text style={{ color: '#EF4444', fontWeight: '600', fontSize: 13 }}>Discard</Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    )}
+                    {update.created_at && (
+                      <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }}>
+                        Captured {new Date(update.created_at).toLocaleDateString()}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+        </Animated.View>
+
+          </>
+        )}
+        {activeProfilePanel === 'people' && (
+          <>
         {/* People */}
         <Animated.View entering={FadeInDown.duration(400).delay(415)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>People</Text>
@@ -2482,6 +2764,10 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'memories' && (
+          <>
         {/* Coach Memory */}
         <Animated.View entering={FadeInDown.duration(400).delay(420)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Coach Memory</Text>
@@ -2503,34 +2789,58 @@ export default function ProfileScreen() {
             </View>
           ) : (
             <View style={styles.memoryList}>
-              {memories.map((memory, idx) => (
-                <View
-                  key={memory.id}
-                  style={[styles.memoryRow, idx < memories.length - 1 && styles.memoryRowBorder]}
-                >
-                  <View style={styles.memoryContent}>
-                    <View style={styles.memoryCategoryRow}>
-                      <View style={styles.memoryCategoryPill}>
-                        <Text style={styles.memoryCategoryText}>
-                          {memory.category.toUpperCase()}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={styles.memoryText}>{memory.content}</Text>
-                  </View>
-                  <Pressable
-                    style={styles.memoryDeleteBtn}
-                    onPress={() => handleDeleteMemory(memory.id)}
-                    hitSlop={8}
+              {memories.map((memory, idx) => {
+                const metaBits = [
+                  memory.memoryType || 'semantic',
+                  memory.tier || 'long term',
+                  typeof memory.confidence === 'number' ? `${memory.confidence}% confidence` : null,
+                  typeof memory.relevanceScore === 'number' ? `${memory.relevanceScore}% relevant` : null,
+                  memory.trustStatus ? memory.trustStatus : null,
+                ].filter(Boolean);
+                return (
+                  <View
+                    key={memory.id}
+                    style={[styles.memoryRow, idx < memories.length - 1 && styles.memoryRowBorder]}
                   >
-                    <Ionicons name="trash-outline" size={16} color={Colors.textTertiary} />
-                  </Pressable>
-                </View>
-              ))}
+                    <View style={styles.memoryContent}>
+                      <View style={styles.memoryCategoryRow}>
+                        <View style={styles.memoryCategoryPill}>
+                          <Text style={styles.memoryCategoryText}>
+                            {memory.category.toUpperCase()}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={styles.memoryText}>{memory.content}</Text>
+                      {metaBits.length > 0 && (
+                        <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }}>
+                          {metaBits.join(' · ')}
+                          {memory.sourceType ? ` · Source: ${memory.sourceType.replace(/_/g, ' ')}` : ''}
+                        </Text>
+                      )}
+                      {!!memory.whyJarvisLearnedIt && (
+                        <Text style={{ color: Colors.textSecondary, fontSize: 12, lineHeight: 17, marginTop: 6 }}>
+                          {memory.whyJarvisLearnedIt}
+                        </Text>
+                      )}
+                    </View>
+                    <Pressable
+                      style={styles.memoryDeleteBtn}
+                      onPress={() => handleDeleteMemory(memory.id)}
+                      hitSlop={8}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={Colors.textTertiary} />
+                    </Pressable>
+                  </View>
+                );
+              })}
             </View>
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'notes' && (
+          <>
         {/* Morning Notes */}
         <Animated.View entering={FadeInDown.duration(400).delay(440)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Morning Notes</Text>
@@ -2741,138 +3051,112 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'connections' && (
+          <>
+        <Animated.View entering={FadeInDown.duration(400).delay(420)}>
+          <View style={styles.sectionHeaderRow}>
+            <View>
+              <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Accounts</Text>
+              <Text style={styles.sectionSubtitle}>
+                Connect apps with secure hosted sign-in
+              </Text>
+            </View>
+            <Pressable style={styles.connectionHeaderButton} onPress={loadConnectionStatus}>
+              {connectionsLoading ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <Ionicons name="refresh" size={16} color={Colors.primary} />
+              )}
+              <Text style={styles.connectionHeaderButtonText}>Refresh</Text>
+            </Pressable>
+          </View>
+          <View style={styles.platformsList}>
+            {CONNECTION_APPS.map((app, index) => {
+              const appStatus = connectionsStatus?.apps[app.id];
+              const connected = appStatus?.connected ?? false;
+              const statusLabel = appStatus ? getConnectionStatusLabel(appStatus) : 'Connect';
+              const connectBusy = connectionBusyApp === `connect:${app.id}`;
+              const disconnectBusy = connectionBusyApp === `disconnect:${app.id}`;
+              const testBusy = connectionBusyApp === `test:${app.id}`;
+              const statusText = connected
+                ? appStatus?.accountLabel || 'Connected'
+                : appStatus?.error || (statusLabel === 'Reconnect' ? 'Needs reconnect' : app.description);
+              return (
+                <View key={app.id} style={[styles.platformRow, index < CONNECTION_APPS.length - 1 && styles.platformRowBorder]}>
+                  <View style={[styles.platformIcon, { backgroundColor: app.color + '18' }]}>
+                    <Ionicons name={app.icon as keyof typeof Ionicons.glyphMap} size={20} color={app.color} />
+                  </View>
+                  <View style={styles.platformInfo}>
+                    <View style={styles.platformNameRow}>
+                      <Text style={styles.platformName}>{app.label}</Text>
+                      <View style={[styles.connectionStatusBadge, connected ? styles.connectionStatusBadgeConnected : styles.connectionStatusBadgeAttention]}>
+                        <Text style={[styles.connectionStatusBadgeText, connected ? styles.connectionStatusTextConnected : styles.connectionStatusTextAttention]}>
+                          {connected ? 'Connected' : statusLabel === 'Reconnect' ? 'Reconnect' : 'Not connected'}
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={[styles.platformSubtitle, appStatus?.error && { color: Colors.warning }]}>{statusText}</Text>
+                    <View style={styles.connectionTileActions}>
+                      <Pressable
+                        style={[styles.connectBtn, { borderColor: app.color, opacity: connectBusy ? 0.65 : 1 }]}
+                        onPress={() => handleConnectApp(app.id)}
+                        disabled={connectBusy || disconnectBusy || testBusy}
+                      >
+                        <Text style={[styles.connectBtnText, { color: app.color }]}>
+                          {connectBusy ? 'Opening' : connected ? 'Reconnect' : statusLabel}
+                        </Text>
+                      </Pressable>
+                      {connected ? (
+                        <Pressable
+                          style={[styles.disconnectBtnPill, { opacity: disconnectBusy ? 0.65 : 1 }]}
+                          onPress={() => handleDisconnectApp(app.id)}
+                          disabled={connectBusy || disconnectBusy || testBusy}
+                        >
+                          <Text style={styles.disconnectBtnText}>{disconnectBusy ? 'Disconnecting' : 'Disconnect'}</Text>
+                        </Pressable>
+                      ) : null}
+                      <Pressable
+                        style={[styles.connectionSecondaryButton, { opacity: testBusy ? 0.65 : 1 }]}
+                        onPress={() => handleTestConnection(app.id)}
+                        disabled={connectBusy || disconnectBusy || testBusy}
+                      >
+                        {testBusy ? (
+                          <ActivityIndicator size="small" color={Colors.textSecondary} />
+                        ) : (
+                          <Ionicons name="pulse-outline" size={15} color={Colors.textSecondary} />
+                        )}
+                        <Text style={styles.connectionSecondaryButtonText}>{testBusy ? 'Testing' : 'Test'}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              );
+            })}
+            {connectionsStatus?.error ? <Text style={styles.connectionErrorText}>{connectionsStatus.error}</Text> : null}
+            {connectionTestSummary ? (
+              <View style={styles.connectionTestRow}>
+                <Ionicons name="pulse-outline" size={16} color={Colors.textSecondary} />
+                <Text style={styles.connectionTestText}>{connectionTestSummary}</Text>
+              </View>
+            ) : null}
+            {connectionsStatus?.nextSteps?.length ? (
+              <View style={styles.connectionAdvancedPanel}>
+                {connectionsStatus.nextSteps.map((step, stepIndex) => (
+                  <Text key={`${step}-${stepIndex}`} style={styles.connectionAdvancedText}>{step}</Text>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        </Animated.View>
+
         {/* Connected Apps */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Apps</Text>
           <Text style={styles.sectionSubtitle}>
-            Real data feeds your daily plan and coach
+            Telegram stays native. External accounts connect through the app tiles above.
           </Text>
-          <View style={styles.platformsList}>
-            {PLATFORMS.map((platform, index) => {
-              const status = oauthStatus[platform.id];
-              const accounts = status?.accounts ?? [];
-              const connected = accounts.length > 0 || (status?.connected ?? false);
-              const isLast = index === PLATFORMS.length - 1;
-
-              if (platform.id === 'google' && accounts.length > 0) {
-                return (
-                  <View key={platform.id} style={[!isLast && styles.platformRowBorder]}>
-                    {accounts.map((account, accIdx) => {
-                      const accLoading = connectingId === platform.id + account.email;
-                      const needsCompose = account.scopes && !account.scopes.includes('gmail.compose');
-                      return (
-                        <View
-                          key={account.email || accIdx}
-                          style={[styles.platformRow, accIdx < accounts.length - 1 && styles.platformRowBorder]}
-                        >
-                          <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
-                            <Ionicons name={platform.icon} size={20} color={platform.color} />
-                          </View>
-                          <View style={styles.platformInfo}>
-                            <View style={styles.platformNameRow}>
-                              <Text style={styles.platformName}>{platform.name}</Text>
-                              {account.scopes?.includes('gmail.compose') ? (
-                                <View style={styles.draftsBadge}>
-                                  <Ionicons name="checkmark" size={10} color="#059669" />
-                                  <Text style={styles.draftsBadgeText}>Drafts</Text>
-                                </View>
-                              ) : (
-                                <View style={styles.readOnlyBadge}>
-                                  <Text style={styles.readOnlyBadgeText}>Read only</Text>
-                                </View>
-                              )}
-                            </View>
-                            {account.email ? (
-                              <Text style={styles.platformEmail}>{account.email}</Text>
-                            ) : (
-                              <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
-                            )}
-                            {needsCompose && (
-                              <Pressable onPress={() => handleConnect(platform.id)}>
-                                <Text style={styles.upgradePermText}>Grant draft access</Text>
-                              </Pressable>
-                            )}
-                          </View>
-                          {loadingStatus ? (
-                            <ActivityIndicator size="small" color={Colors.textTertiary} />
-                          ) : accLoading ? (
-                            <ActivityIndicator size="small" color={platform.color} />
-                          ) : (
-                            <Pressable
-                              style={styles.disconnectBtn}
-                              onPress={() => handleDisconnect(platform.id, account.email)}
-                            >
-                              <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                              <Text style={styles.disconnectBtnText}>Disconnect</Text>
-                            </Pressable>
-                          )}
-                        </View>
-                      );
-                    })}
-                    <View style={[styles.platformRow, styles.platformRowBorder]}>
-                      <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
-                        <Ionicons name="add-circle-outline" size={20} color={platform.color} />
-                      </View>
-                      <View style={styles.platformInfo}>
-                        <Text style={[styles.platformName, { color: platform.color }]}>Add Google Account</Text>
-                        <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
-                      </View>
-                      {connectingId === platform.id ? (
-                        <ActivityIndicator size="small" color={platform.color} />
-                      ) : (
-                        <Pressable
-                          style={[styles.connectBtn, { borderColor: platform.color }]}
-                          onPress={() => handleConnect(platform.id)}
-                        >
-                          <Text style={[styles.connectBtnText, { color: platform.color }]}>Add</Text>
-                        </Pressable>
-                      )}
-                    </View>
-                  </View>
-                );
-              }
-
-              const isLoading = connectingId === platform.id;
-              return (
-                <View
-                  key={platform.id}
-                  style={[styles.platformRow, !isLast && styles.platformRowBorder]}
-                >
-                  <View style={[styles.platformIcon, { backgroundColor: platform.color + '18' }]}>
-                    <Ionicons name={platform.icon} size={20} color={platform.color} />
-                  </View>
-                  <View style={styles.platformInfo}>
-                    <Text style={styles.platformName}>{platform.name}</Text>
-                    <Text style={styles.platformSubtitle}>{platform.subtitle}</Text>
-                    {connected && status?.email ? (
-                      <Text style={styles.platformEmail}>{status.email}</Text>
-                    ) : null}
-                  </View>
-                  {loadingStatus ? (
-                    <ActivityIndicator size="small" color={Colors.textTertiary} />
-                  ) : isLoading ? (
-                    <ActivityIndicator size="small" color={platform.color} />
-                  ) : connected ? (
-                    <Pressable
-                      style={styles.disconnectBtn}
-                      onPress={() => handleDisconnect(platform.id)}
-                    >
-                      <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                      <Text style={styles.disconnectBtnText}>Disconnect</Text>
-                    </Pressable>
-                  ) : (
-                    <Pressable
-                      style={[styles.connectBtn, { borderColor: platform.color }]}
-                      onPress={() => handleConnect(platform.id)}
-                    >
-                      <Text style={[styles.connectBtnText, { color: platform.color }]}>Connect</Text>
-                    </Pressable>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-
           {/* Google Drive */}
           <View ref={driveRowRef}>
           {driveStatus?.googleConnected && (
@@ -3044,7 +3328,7 @@ export default function ProfileScreen() {
             <View style={styles.telegramCodeCard}>
               <Text style={styles.telegramCodeTitle}>Link your Telegram</Text>
               <Text style={styles.telegramCodeInstructions}>
-                Open Telegram, search for @GamePlanCoachBot, and send this code:
+                Open Telegram, search for {telegramStatus.botUsername ? `@${telegramStatus.botUsername}` : 'the Jarvis bot'}, and send this code:
               </Text>
               <View style={styles.telegramCodeBox}>
                 <Text style={styles.telegramCodeText}>{telegramLinkCode}</Text>
@@ -3069,774 +3353,30 @@ export default function ProfileScreen() {
           </Text>
         </Animated.View>
 
-        {/* Connected Channels (Phase 5: multi-channel + desktop daemon) */}
+        {/* Native channels and local daemons */}
         <Animated.View entering={FadeInDown.duration(400).delay(450)}>
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Connected Channels</Text>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Native Channels</Text>
           <View style={styles.platformsList}>
             <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
               <Text style={{ fontSize: 13, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 12 }}>
-                Choose where Jarvis reaches you for each kind of nudge — and pair a desktop daemon so the agent can run shell commands, edit files, and pop native notifications on your computer.
+                Choose where Jarvis reaches you for each kind of nudge, connect this Windows PC for ChatGPT-powered desktop work, and pair your Android device when you want phone control.
               </Text>
             </View>
 
-            {/* WhatsApp */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#25D36618' }]}>
-                <Ionicons name="logo-whatsapp" size={20} color="#25D366" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>WhatsApp</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.whatsapp
-                    ? channelData.meta?.whatsapp?.phone || 'Linked'
-                    : 'Get nudges + chat with Jarvis on WhatsApp'}
-                </Text>
-              </View>
-              {channelBusy === 'whatsapp' ? (
-                <ActivityIndicator size="small" color="#25D366" />
-              ) : channelData?.connected.whatsapp ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('whatsapp')}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={styles.disconnectBtnText}>Unlink</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  style={[styles.connectBtn, { borderColor: '#25D366' }]}
-                  onPress={handleGenerateWhatsAppCode}
-                  disabled={!channelData?.channels.find(c => c.name === 'whatsapp')?.configured}
-                >
-                  <Text style={[styles.connectBtnText, { color: '#25D366' }]}>
-                    {channelData?.channels.find(c => c.name === 'whatsapp')?.configured ? 'Get code' : 'Not configured'}
-                  </Text>
-                </Pressable>
-              )}
-            </View>
-            {whatsappCode && (
-              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
-                  Send this code from WhatsApp to {whatsappCode.twilioNumber || 'the GamePlan number'}:
-                </Text>
-                <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#25D366', marginBottom: 6 }}>
-                  {whatsappCode.code}
-                </Text>
-                <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular' }}>
-                  Code expires in 15 minutes.
-                </Text>
-              </View>
-            )}
-
-            {/* Slack */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#4A154B18' }]}>
-                <Ionicons name="logo-slack" size={20} color="#4A154B" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>Slack DM</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.slack ? 'Workspace linked — DM Jarvis or use /jarvis' : 'Connect Slack above to enable DM coaching'}
-                </Text>
-              </View>
-              {channelData?.connected.slack && (
-                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
-              )}
-            </View>
-
-            {/* Discord */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#5865F218' }]}>
-                <Ionicons name="logo-discord" size={20} color="#5865F2" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>Discord</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.connected.discord
-                    ? (channelData.meta?.discord as any)?.discordUsername
-                      ? `Linked as ${(channelData.meta.discord as any).discordUsername}`
-                      : 'Connected — DM Jarvis anytime'
-                    : (channelData?.meta?.discord as any)?.hasBotToken
-                      ? 'Bot saved — DM it to get your pairing code'
-                      : (channelData?.meta?.discord as any)?.sharedBotAvailable
-                        ? 'Add to Discord and start chatting'
-                        : 'Chat with Jarvis via Discord'}
-                </Text>
-              </View>
-              {channelBusy === 'discord' ? (
-                <ActivityIndicator size="small" color="#5865F2" />
-              ) : channelData?.connected.discord ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('discord')}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={styles.disconnectBtnText}>Unlink</Text>
-                </Pressable>
-              ) : (channelData?.meta?.discord as any)?.hasBotToken ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('discord')}>
-                  <Text style={[styles.disconnectBtnText, { color: Colors.textSecondary }]}>Remove</Text>
-                </Pressable>
-              ) : null}
-            </View>
-            {/* Discord setup panel */}
-            {!channelData?.connected.discord && (
-              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.border }}>
-                {/* Pairing instructions — always visible */}
-                {(() => {
-                  const dm = channelData?.meta?.discord as any;
-                  const hasShared = !!dm?.sharedBotAvailable;
-                  const hasTok = !!dm?.hasBotToken;
-                  return (
-                    <>
-                      <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
-                        {hasTok ? 'Pair your Discord account' : 'Connect Discord'}
-                      </Text>
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 10 }}>
-                        {hasTok
-                          ? 'Send any message to your bot on Discord. It will reply with a 6-character code — enter it below.'
-                          : hasShared
-                            ? 'Add the Jarvis bot to your server (or DM it directly), send any message, and enter the 6-character code it replies with.'
-                            : 'Set up your own Discord bot token below, then DM it to get a pairing code.'}
-                      </Text>
-                    </>
-                  );
-                })()}
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <TextInput
-                    value={discordPairCode}
-                    onChangeText={t => setDiscordPairCode(t.toUpperCase())}
-                    placeholder="Pairing code (e.g. AB3X7Y)"
-                    placeholderTextColor={Colors.textTertiary}
-                    style={{
-                      flex: 1, fontSize: 15, fontFamily: 'Inter_600SemiBold', letterSpacing: 3,
-                      color: '#5865F2', borderWidth: 1, borderColor: '#5865F2',
-                      borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
-                      backgroundColor: Colors.card, textAlign: 'center',
-                    }}
-                    autoCapitalize="characters"
-                    autoCorrect={false}
-                    maxLength={6}
-                  />
-                  <Pressable
-                    onPress={handleDiscordPair}
-                    disabled={discordPairing || discordPairCode.trim().length !== 6}
-                    style={{
-                      paddingHorizontal: 14, paddingVertical: 9, borderRadius: 8,
-                      backgroundColor: '#5865F2', opacity: discordPairing || discordPairCode.trim().length !== 6 ? 0.5 : 1,
-                    }}
-                  >
-                    {discordPairing
-                      ? <ActivityIndicator size="small" color="#fff" />
-                      : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Pair</Text>}
-                  </Pressable>
-                </View>
-
-                {/* "Use your own bot" disclosure toggle */}
-                <Pressable
-                  onPress={() => setDiscordShowOwnBot(v => !v)}
-                  style={{ flexDirection: 'row', alignItems: 'center', marginTop: 14, gap: 4 }}
-                >
-                  <Ionicons
-                    name={discordShowOwnBot ? 'chevron-down' : 'chevron-forward'}
-                    size={14}
-                    color={Colors.textSecondary}
-                  />
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>
-                    Use your own bot token instead
-                  </Text>
-                </Pressable>
-
-                {discordShowOwnBot && (
-                  <View style={{ marginTop: 10 }}>
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 17, marginBottom: 8 }}>
-                      1. Go to{' '}
-                      <Text style={{ color: '#5865F2' }}>discord.com/developers/applications</Text>
-                      {'\n'}2. New Application → Bot → Reset Token → copy it
-                      {'\n'}3. Enable <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Message Content</Text> and{' '}
-                      <Text style={{ fontFamily: 'Inter_600SemiBold' }}>Server Members</Text> intents
-                      {'\n'}4. Invite the bot to your server (OAuth2 → URL Generator)
-                    </Text>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                      <TextInput
-                        value={discordBotToken}
-                        onChangeText={setDiscordBotToken}
-                        placeholder="Bot token…"
-                        secureTextEntry={!discordBotTokenVisible}
-                        placeholderTextColor={Colors.textTertiary}
-                        style={{
-                          flex: 1, fontSize: 13, fontFamily: 'Inter_400Regular',
-                          color: Colors.text, borderWidth: 1, borderColor: Colors.border,
-                          borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7,
-                          backgroundColor: Colors.card,
-                        }}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
-                      <Pressable onPress={() => setDiscordBotTokenVisible(v => !v)} style={{ padding: 6 }}>
-                        <Ionicons name={discordBotTokenVisible ? 'eye-off-outline' : 'eye-outline'} size={18} color={Colors.textSecondary} />
-                      </Pressable>
-                    </View>
-                    <Pressable
-                      onPress={handleSaveDiscordToken}
-                      disabled={discordSaving || !discordBotToken.trim()}
-                      style={{
-                        marginTop: 8, paddingVertical: 8, borderRadius: 8, alignItems: 'center',
-                        backgroundColor: '#5865F2', opacity: discordSaving || !discordBotToken.trim() ? 0.5 : 1,
-                      }}
-                    >
-                      {discordSaving
-                        ? <ActivityIndicator size="small" color="#fff" />
-                        : <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Save token & start bot</Text>}
-                    </Pressable>
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* Discord: allowlisted server channels (when connected) */}
-            {channelData?.connected.discord && (
-              <View style={{ borderTopWidth: 1, borderTopColor: Colors.border, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
-                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                    Server channels
-                  </Text>
-                  <Pressable
-                    onPress={() => { setDiscordShowManage(v => !v); if (!discordShowManage) handleFetchDiscordGuilds(); }}
-                    style={{ paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, backgroundColor: '#5865F215' }}
-                  >
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2' }}>
-                      {discordShowManage ? 'Done' : '+ Add'}
-                    </Text>
-                  </Pressable>
-                </View>
-
-                {/* Existing allowlisted channels */}
-                {((channelData.meta?.discord as any)?.allowlistedGuilds || []).length === 0 && !discordShowManage && (
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
-                    No server channels yet — Jarvis responds to DMs only.
-                  </Text>
-                )}
-                {((channelData.meta?.discord as any)?.allowlistedGuilds || []).map((g: any) => (
-                  <View key={`${g.guildId}-${g.channelId}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, gap: 8 }}>
-                    <Ionicons name="grid-outline" size={14} color={Colors.textSecondary} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: Colors.text }}>
-                        {g.channelName} <Text style={{ color: Colors.textSecondary }}>in {g.guildName}</Text>
-                      </Text>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary }}>
-                        {g.requireMention ? '@mention required' : 'Always responds'}
-                      </Text>
-                    </View>
-                    <Pressable onPress={() => handleRemoveDiscordAllowlist(g.guildId, g.channelId)} hitSlop={8}>
-                      <Ionicons name="close-circle" size={18} color={Colors.textTertiary} />
-                    </Pressable>
-                  </View>
-                ))}
-
-                {/* Workspace setup inline banner */}
-                {!(channelData.meta?.discord as any)?.workspace && !discordShowManage && (
-                  <View style={{ marginTop: 6, padding: 10, borderRadius: 10, backgroundColor: '#5865F210', borderWidth: 1, borderColor: '#5865F230' }}>
-                    <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2', marginBottom: 2 }}>
-                      🧠 Jarvis Workspace
-                    </Text>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginBottom: 8 }}>
-                      Let Jarvis organise your life in Discord — topic channels for Finance, Ideas, Business, and more.
-                    </Text>
-                    <Pressable
-                      onPress={handleOpenWorkspaceSetup}
-                      style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2' }}
-                    >
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>
-                        {discordShowWorkspaceSetup ? 'Cancel' : 'Set up Workspace'}
-                      </Text>
-                    </Pressable>
-                    {discordShowWorkspaceSetup && (
-                      <View style={{ marginTop: 10, gap: 6 }}>
-                        {discordWorkspaceBusy && discordWorkspaceGuilds.length === 0 ? (
-                          <ActivityIndicator size="small" color="#5865F2" />
-                        ) : discordWorkspaceGuilds.length === 0 ? (
-                          <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
-                            No servers found — make sure your bot is in a server.
-                          </Text>
-                        ) : (
-                          <>
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>
-                              Pick the server for the workspace:
-                            </Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                              <View style={{ flexDirection: 'row', gap: 6 }}>
-                                {discordWorkspaceGuilds.map(g => (
-                                  <Pressable
-                                    key={g.id}
-                                    onPress={() => setDiscordWorkspaceSelGuild(g.id)}
-                                    style={{
-                                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
-                                      borderWidth: 1,
-                                      borderColor: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.border,
-                                      backgroundColor: discordWorkspaceSelGuild === g.id ? '#5865F215' : Colors.card,
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.text }}>
-                                      {g.name}
-                                    </Text>
-                                  </Pressable>
-                                ))}
-                              </View>
-                            </ScrollView>
-                            {discordWorkspaceSelGuild !== '' && (
-                              <Pressable
-                                onPress={() => handleSetupWorkspace(discordWorkspaceSelGuild)}
-                                disabled={discordWorkspaceBusy}
-                                style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2', opacity: discordWorkspaceBusy ? 0.5 : 1 }}
-                              >
-                                {discordWorkspaceBusy
-                                  ? <ActivityIndicator size="small" color="#fff" />
-                                  : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Create Workspace →</Text>}
-                              </Pressable>
-                            )}
-                          </>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {/* Existing workspace info */}
-                {(channelData.meta?.discord as any)?.workspace && (
-                  <View style={{ marginTop: 6, padding: 10, borderRadius: 10, backgroundColor: '#5865F210', borderWidth: 1, borderColor: '#5865F230' }}>
-                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#5865F2' }}>
-                          🧠 Jarvis Workspace
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 2 }}>
-                          Active in {(channelData.meta.discord as any).workspace.guildName}
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textTertiary, marginTop: 3 }}>
-                          {Object.keys((channelData.meta.discord as any).workspace.channels || {}).map((k: string) => {
-                            const emojis: Record<string, string> = { tasks: '📋', finance: '💰', ideas: '💡', business: '💼', personal: '🌱', thinking: '🧠' };
-                            return (emojis[k] || '') + '#' + k;
-                          }).join('  ')}
-                        </Text>
-                      </View>
-                      <Pressable
-                        onPress={handleOpenWorkspaceSetup}
-                        style={{ paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, backgroundColor: '#5865F215' }}
-                      >
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#5865F2' }}>
-                          {discordShowWorkspaceSetup ? 'Cancel' : 'Reconfigure'}
-                        </Text>
-                      </Pressable>
-                    </View>
-                    {discordShowWorkspaceSetup && (
-                      <View style={{ marginTop: 10, gap: 6 }}>
-                        {discordWorkspaceBusy && discordWorkspaceGuilds.length === 0 ? (
-                          <ActivityIndicator size="small" color="#5865F2" />
-                        ) : discordWorkspaceGuilds.length === 0 ? (
-                          <Text style={{ fontSize: 11, color: Colors.textSecondary }}>No servers found.</Text>
-                        ) : (
-                          <>
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Pick a server:</Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                              <View style={{ flexDirection: 'row', gap: 6 }}>
-                                {discordWorkspaceGuilds.map(g => (
-                                  <Pressable key={g.id} onPress={() => setDiscordWorkspaceSelGuild(g.id)}
-                                    style={{ paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, borderWidth: 1,
-                                      borderColor: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.border,
-                                      backgroundColor: discordWorkspaceSelGuild === g.id ? '#5865F215' : Colors.card }}>
-                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordWorkspaceSelGuild === g.id ? '#5865F2' : Colors.text }}>{g.name}</Text>
-                                  </Pressable>
-                                ))}
-                              </View>
-                            </ScrollView>
-                            {discordWorkspaceSelGuild !== '' && (
-                              <Pressable onPress={() => handleSetupWorkspace(discordWorkspaceSelGuild)} disabled={discordWorkspaceBusy}
-                                style={{ alignSelf: 'flex-start', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, backgroundColor: '#5865F2', opacity: discordWorkspaceBusy ? 0.5 : 1 }}>
-                                {discordWorkspaceBusy ? <ActivityIndicator size="small" color="#fff" /> : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Recreate Workspace →</Text>}
-                              </Pressable>
-                            )}
-                          </>
-                        )}
-                      </View>
-                    )}
-                  </View>
-                )}
-
-                {/* Slash commands setup */}
-                <View style={{ borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Pressable
-                      onPress={handleToggleSlashSetup}
-                      style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 }}
-                    >
-                      <View style={{ flex: 1 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Slash commands</Text>
-                          {discordSlashConfig && !discordSlashConfig.publicKeyConfigured && (
-                            <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, backgroundColor: 'rgba(245,158,11,0.15)' }}>
-                              <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#F59E0B' }}>Setup needed</Text>
-                            </View>
-                          )}
-                          {discordSlashConfig?.publicKeyConfigured && (
-                            <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
-                          )}
-                        </View>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
-                          Enable /jarvis commands in your server
-                        </Text>
-                      </View>
-                      <Ionicons
-                        name={discordShowSlashSetup ? 'chevron-up' : 'chevron-down'}
-                        size={16}
-                        color={Colors.textSecondary}
-                      />
-                    </Pressable>
-                    {discordShowSlashSetup && (
-                      <Pressable onPress={handleRefreshSlashConfig} style={{ paddingLeft: 8, paddingVertical: 10 }} hitSlop={8}>
-                        <Ionicons name="refresh-outline" size={16} color={Colors.textSecondary} />
-                      </Pressable>
-                    )}
-                  </View>
-
-                  {discordShowSlashSetup && (
-                    <View style={{ paddingBottom: 12, gap: 12 }}>
-                      {/* Step 1 — Interactions URL */}
-                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 8 }}>
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
-                          Step 1 — Set Interactions Endpoint URL
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
-                          In the Discord Developer Portal → Your Application → General Information, paste this URL into the{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>Interactions Endpoint URL</Text> field:
-                        </Text>
-                        {discordSlashConfig ? (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                            <Text
-                              selectable
-                              style={{
-                                flex: 1, fontSize: 11, fontFamily: 'Inter_400Regular',
-                                color: '#5865F2', backgroundColor: '#5865F210',
-                                borderRadius: 6, padding: 8, lineHeight: 16,
-                              }}
-                            >
-                              {discordSlashConfig.interactionsUrl}
-                            </Text>
-                            <Pressable
-                              onPress={handleCopyInteractionsUrl}
-                              style={{
-                                padding: 8, borderRadius: 8,
-                                backgroundColor: discordUrlCopied ? '#22C55E20' : '#5865F215',
-                              }}
-                            >
-                              <Ionicons
-                                name={discordUrlCopied ? 'checkmark' : 'copy-outline'}
-                                size={16}
-                                color={discordUrlCopied ? '#22C55E' : '#5865F2'}
-                              />
-                            </Pressable>
-                          </View>
-                        ) : (
-                          <ActivityIndicator size="small" color="#5865F2" />
-                        )}
-                      </View>
-
-                      {/* Step 2 — DISCORD_PUBLIC_KEY */}
-                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 6 }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
-                            Step 2 — Add Public Key secret
-                          </Text>
-                          {discordSlashConfig?.publicKeyConfigured
-                            ? <Ionicons name="checkmark-circle" size={14} color="#22C55E" />
-                            : <Ionicons name="alert-circle-outline" size={14} color="#F59E0B" />}
-                        </View>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
-                          In Discord Developer Portal → General Information, copy the{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>Public Key</Text>{' '}
-                          value. Then in Replit Secrets, add it as{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>DISCORD_PUBLIC_KEY</Text>.
-                        </Text>
-                        {discordSlashConfig?.publicKeyConfigured ? (
-                          <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#22C55E' }}>
-                            ✓ Public key is configured
-                          </Text>
-                        ) : (
-                          <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: '#F59E0B' }}>
-                            Not configured — slash commands will be rejected until this is set
-                          </Text>
-                        )}
-                      </View>
-
-                      {/* Step 3 — Register commands */}
-                      <View style={{ backgroundColor: Colors.card, borderRadius: 10, padding: 12, gap: 6 }}>
-                        <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
-                          Step 3 — Done
-                        </Text>
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 16 }}>
-                          Once the endpoint is saved and the public key is set, restart your server. Jarvis will register{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis chat</Text>,{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis plan</Text>,{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis status</Text>, and{' '}
-                          <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>/jarvis help</Text> automatically.
-                        </Text>
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-                {/* Voice replies toggle */}
-                <View style={{ paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, marginTop: 6 }}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text }}>Voice replies</Text>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 1 }}>
-                        Jarvis sends audio notes to this channel
-                      </Text>
-                    </View>
-                    <Switch
-                      value={discordTtsEnabled}
-                      onValueChange={handleToggleDiscordTts}
-                      trackColor={{ true: '#5865F2', false: Colors.border }}
-                      thumbColor="#fff"
-                    />
-                  </View>
-
-                  {/* Voice picker — always visible so users can set their preferred voice */}
-                  <View style={{ marginTop: 12 }}>
-                    <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 6 }}>Voice</Text>
-                    {/* OpenAI voices */}
-                    <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 4, opacity: 0.7 }}>OpenAI</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 8 }}>
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        {[
-                          { id: 'nova', label: 'Nova' },
-                          { id: 'alloy', label: 'Alloy' },
-                          { id: 'echo', label: 'Echo' },
-                          { id: 'fable', label: 'Fable' },
-                          { id: 'onyx', label: 'Onyx' },
-                          { id: 'shimmer', label: 'Shimmer' },
-                        ].map(v => (
-                          <Pressable
-                            key={v.id}
-                            onPress={() => handleSelectVoice(v.id)}
-                            style={{
-                              paddingHorizontal: 12, paddingVertical: 6,
-                              borderRadius: 16, borderWidth: 1,
-                              borderColor: ttsVoice === v.id ? '#5865F2' : Colors.border,
-                              backgroundColor: ttsVoice === v.id ? 'rgba(88,101,242,0.15)' : 'transparent',
-                            }}
-                          >
-                            <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: ttsVoice === v.id ? '#5865F2' : Colors.textSecondary }}>
-                              {v.label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </ScrollView>
-                    {/* ElevenLabs voices */}
-                    <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 4, opacity: 0.7 }}>ElevenLabs</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        {[
-                          { id: 'EXAVITQu4vr4xnSDxMaL', label: 'Sarah' },
-                          { id: 'FGY2WhTYpPnrIDTdsKH5', label: 'Laura' },
-                          { id: 'IKne3meq5aSn9XLyUdCD', label: 'Charlie' },
-                          { id: 'JBFqnCBsd6RMkjVDRZzb', label: 'George' },
-                          { id: 'N2lVS1w4EtoT3dr4eOWO', label: 'Callum' },
-                          { id: 'SAz9YHcvj6GT2YYXdXww', label: 'River' },
-                          { id: 'Xb7hH8MSUJpSbSDYk0k2', label: 'Alice' },
-                          { id: 'XrExE9yKIg1WjnnlVkGX', label: 'Matilda' },
-                          { id: 'cgSgspJ2msm6clMCkdW9', label: 'Jessica' },
-                          { id: 'cjVigY5qzO86Huf0OWal', label: 'Eric' },
-                          { id: 'nPczCjzI2devNBz1zQrb', label: 'Brian' },
-                          { id: 'onwK4e9ZLuTAKqWW03F9', label: 'Daniel' },
-                          { id: 'pNInz6obpgDQGcFmaJgB', label: 'Adam' },
-                        ].map(v => (
-                          <Pressable
-                            key={v.id}
-                            onPress={() => handleSelectVoice(v.id)}
-                            style={{
-                              paddingHorizontal: 12, paddingVertical: 6,
-                              borderRadius: 16, borderWidth: 1,
-                              borderColor: ttsVoice === v.id ? '#F0A500' : Colors.border,
-                              backgroundColor: ttsVoice === v.id ? 'rgba(240,165,0,0.12)' : 'transparent',
-                            }}
-                          >
-                            <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: ttsVoice === v.id ? '#F0A500' : Colors.textSecondary }}>
-                              {v.label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </ScrollView>
-                  </View>
-
-                  {/* ElevenLabs latency tier — only shown when an ElevenLabs voice is selected */}
-                  {!['nova','alloy','echo','fable','onyx','shimmer'].includes(ttsVoice) && (
-                    <View style={{ marginTop: 12 }}>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary, marginBottom: 6 }}>Response Speed</Text>
-                      <View style={{ flexDirection: 'row', gap: 6 }}>
-                        {([
-                          { tier: 4 as const, label: 'Low Latency' },
-                          { tier: 2 as const, label: 'Balanced' },
-                          { tier: 0 as const, label: 'High Quality' },
-                        ] as { tier: 0 | 2 | 4; label: string }[]).map(({ tier, label }) => (
-                          <Pressable
-                            key={tier}
-                            onPress={() => handleSelectLatencyTier(tier)}
-                            style={{
-                              flex: 1, paddingVertical: 7,
-                              borderRadius: 10, borderWidth: 1, alignItems: 'center',
-                              borderColor: ttsLatencyTier === tier ? '#F0A500' : Colors.border,
-                              backgroundColor: ttsLatencyTier === tier ? 'rgba(240,165,0,0.12)' : 'transparent',
-                            }}
-                          >
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: ttsLatencyTier === tier ? '#F0A500' : Colors.textSecondary }}>
-                              {label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-                    </View>
-                  )}
-                </View>
-
-                {/* Add channel form */}
-                {discordShowManage && (
-                  <View style={{ marginTop: 8, gap: 8 }}>
-                    {discordAllowlistBusy && discordGuilds.length === 0 ? (
-                      <ActivityIndicator size="small" color="#5865F2" />
-                    ) : discordGuilds.length === 0 ? (
-                      <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
-                        No servers found — invite your bot to a server first.
-                      </Text>
-                    ) : (
-                      <>
-                        {/* Guild picker */}
-                        <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Select server:</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
-                          <View style={{ flexDirection: 'row', gap: 6 }}>
-                            {discordGuilds.map(g => (
-                              <Pressable
-                                key={g.id}
-                                onPress={() => handleFetchDiscordChannels(g.id)}
-                                style={{
-                                  paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
-                                  borderWidth: 1,
-                                  borderColor: discordSelGuildId === g.id ? '#5865F2' : Colors.border,
-                                  backgroundColor: discordSelGuildId === g.id ? '#5865F215' : Colors.card,
-                                }}
-                              >
-                                <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordSelGuildId === g.id ? '#5865F2' : Colors.text }}>
-                                  {g.name}
-                                </Text>
-                              </Pressable>
-                            ))}
-                          </View>
-                        </ScrollView>
-
-                        {/* Channel picker */}
-                        {discordSelGuildId !== '' && discordGuildChannels.length > 0 && (
-                          <>
-                            <Text style={{ fontSize: 11, fontFamily: 'Inter_500Medium', color: Colors.textSecondary }}>Select channel:</Text>
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 4 }}>
-                              <View style={{ flexDirection: 'row', gap: 6 }}>
-                                {discordGuildChannels.map(c => (
-                                  <Pressable
-                                    key={c.id}
-                                    onPress={() => setDiscordSelChannelId(c.id)}
-                                    style={{
-                                      paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
-                                      borderWidth: 1,
-                                      borderColor: discordSelChannelId === c.id ? '#5865F2' : Colors.border,
-                                      backgroundColor: discordSelChannelId === c.id ? '#5865F215' : Colors.card,
-                                    }}
-                                  >
-                                    <Text style={{ fontSize: 12, fontFamily: 'Inter_500Medium', color: discordSelChannelId === c.id ? '#5865F2' : Colors.text }}>
-                                      #{c.name}
-                                    </Text>
-                                  </Pressable>
-                                ))}
-                              </View>
-                            </ScrollView>
-                          </>
-                        )}
-
-                        {/* requireMention + Add button */}
-                        {discordSelChannelId !== '' && (
-                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                              <Switch
-                                value={discordRequireMention}
-                                onValueChange={setDiscordRequireMention}
-                                trackColor={{ true: '#5865F2', false: Colors.border }}
-                                thumbColor="#fff"
-                              />
-                              <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary }}>
-                                Require @mention
-                              </Text>
-                            </View>
-                            <Pressable
-                              onPress={handleAddDiscordAllowlist}
-                              disabled={discordAllowlistBusy}
-                              style={{
-                                paddingHorizontal: 14, paddingVertical: 7, borderRadius: 8,
-                                backgroundColor: '#5865F2', opacity: discordAllowlistBusy ? 0.5 : 1,
-                              }}
-                            >
-                              {discordAllowlistBusy
-                                ? <ActivityIndicator size="small" color="#fff" />
-                                : <Text style={{ fontSize: 12, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Add channel</Text>}
-                            </Pressable>
-                          </View>
-                        )}
-                      </>
-                    )}
-                  </View>
-                )}
-              </View>
-            )}
-
-            {/* Desktop Daemon */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#6B72FF18' }]}>
-                <Ionicons name="desktop-outline" size={20} color="#6B72FF" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>Desktop Daemon</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.desktop_daemon_connected
-                    ? `Connected${channelData.meta?.desktop_daemon?.hostname ? ` • ${channelData.meta.desktop_daemon.hostname}` : ''}`
-                    : 'Run the daemon and let the agent control your computer'}
-                </Text>
-              </View>
-              {channelBusy === 'desktop-daemon' ? (
-                <ActivityIndicator size="small" color="#6B72FF" />
-              ) : channelData?.desktop_daemon_connected ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('desktop-daemon')}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={styles.disconnectBtnText}>Unpair</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  style={[styles.connectBtn, { borderColor: '#6B72FF' }]}
-                  onPress={handleGenerateDaemonCode}
-                >
-                  <Text style={[styles.connectBtnText, { color: '#6B72FF' }]}>Pair</Text>
-                </Pressable>
-              )}
-            </View>
-            {daemonCode && (
-              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
-                  Pairing code (valid 15 min):
-                </Text>
-                <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#6B72FF', marginBottom: 8 }}>
-                  {daemonCode}
-                </Text>
-                <Text selectable style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18 }}>
-                  On your computer, install the daemon (`cd daemon && npm install`) then run:
-                </Text>
-                <Text selectable style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.text, backgroundColor: Colors.background, padding: 8, marginTop: 6, borderRadius: 6 }}>
-                  JARVIS_SERVER={'<your-app-url>'} JARVIS_PAIR_CODE={daemonCode} node jarvis-daemon.js
-                </Text>
-              </View>
-            )}
+            {/* Desktop connector */}
+            <ConnectedWindowsPcCard
+              connected={!!channelData?.desktop_daemon_connected}
+              computerName={channelData?.meta?.desktop_daemon?.hostname ?? null}
+              lastSeenAt={channelData?.meta?.desktop_daemon?.lastSeenAt ?? null}
+              busy={channelBusy === 'desktop-daemon'}
+              message={desktopConnectorMessage}
+              onStartSetup={handleStartWindowsConnectorSetup}
+              onCheckConnection={handleCheckWindowsConnector}
+              onReconnect={handleReconnectWindowsConnector}
+              onVerify={handleVerifyWindowsConnector}
+              onTroubleshoot={handleOpenDesktopConnectorTroubleshooting}
+              onDisconnect={handleDisconnectWindowsConnector}
+            />
 
             {/* Daemon per-action permissions — gates what the agent can do on the user's machine */}
             {daemonPerms && (
@@ -3875,7 +3415,7 @@ export default function ProfileScreen() {
                       )}
                     </View>
                     {(p.key === 'shell' || !!daemonPerms[p.key]) && (
-                      <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: '#FFF4E5', borderWidth: 1, borderColor: '#F0B44A' }}>
+                      <View style={{ marginTop: 4, marginBottom: 4, padding: 10, borderRadius: 8, backgroundColor: Colors.warningDim, borderWidth: 1, borderColor: Colors.warning }}>
                         <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#8A5A00', marginBottom: 2 }}>
                           {p.warning.heading}
                         </Text>
@@ -3941,7 +3481,7 @@ export default function ProfileScreen() {
                     Step 1 — Get the app
                   </Text>
                   <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 10 }}>
-                    Download the Jarvis Daemon APK and install it on your Android phone. Enable "Install from unknown sources" when prompted.
+                    Download the Jarvis Daemon APK and install it on your Android phone. Enable &quot;Install from unknown sources&quot; when prompted.
                   </Text>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
                     <View style={{ alignItems: 'center' }}>
@@ -3963,7 +3503,7 @@ export default function ProfileScreen() {
                         <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Download APK</Text>
                       </Pressable>
                       <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 6, lineHeight: 16 }}>
-                        Tap "Pair" above after installing to get your connection code.
+                        Tap &quot;Pair&quot; above after installing to get your connection code.
                       </Text>
                     </View>
                   </View>
@@ -3984,12 +3524,12 @@ export default function ProfileScreen() {
                 <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#34A85312', borderWidth: 1, borderColor: '#34A853', marginBottom: 8 }}>
                   <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#1a6b30', lineHeight: 20 }}>
                     1. Server URL:{'\n'}
-                    <Text style={{ fontFamily: 'Inter_700Bold', letterSpacing: 0.5 }}>https://GameplanAI.replit.app</Text>{'\n\n'}
+                    <Text style={{ fontFamily: 'Inter_700Bold', letterSpacing: 0.5 }}>https://gameplanjarvisai.up.railway.app</Text>{'\n\n'}
                     2. Pairing Code: enter the code above{'\n\n'}
                     3. Tap <Text style={{ fontFamily: 'Inter_700Bold' }}>Pair</Text>. The dot turns green when connected.
                   </Text>
                 </View>
-                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#FFF9E6', borderWidth: 1, borderColor: '#F0C040' }}>
+                <View style={{ padding: 10, borderRadius: 8, backgroundColor: Colors.warningDim, borderWidth: 1, borderColor: Colors.warning }}>
                   <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#7A5A00', marginBottom: 3 }}>
                     Required permissions in the daemon app:
                   </Text>
@@ -4080,7 +3620,7 @@ export default function ProfileScreen() {
                       fixAction: () => Linking.openSettings(),
                     },
                     android_screen_record: {
-                      title: 'One-time device grant required',
+                      title: 'Device grant required',
                       body: 'Open the Jarvis Daemon app on your Android and tap "Allow" next to Screen Recording to grant MediaProjection access. This must be done before screen recording will work.',
                       warn: false,
                       fixLabel: 'How to fix',
@@ -4108,7 +3648,7 @@ export default function ProfileScreen() {
                     </View>
                   );
                   if (hint) {
-                    const bgColor = hint.warn ? '#FFF4E5' : '#EAF4FF';
+                    const bgColor = hint.warn ? Colors.warningDim : Colors.cyanDim;
                     const borderColor = hint.warn ? '#F0B44A' : '#5B9BD5';
                     const textColor = hint.warn ? '#8A5A00' : '#1A4A7A';
                     return (
@@ -4194,7 +3734,7 @@ export default function ProfileScreen() {
                         </View>
                       )}
                       {hasNoActiveChannel && (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#FEF3C7', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, marginLeft: 8 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: Colors.warningDim, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 10, marginLeft: 8 }}>
                           <Ionicons name="warning-outline" size={11} color="#D97706" />
                           <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#D97706' }}>No channel</Text>
                         </View>
@@ -4379,7 +3919,7 @@ export default function ProfileScreen() {
                   gap: 8,
                   paddingVertical: 11,
                   borderRadius: 12,
-                  backgroundColor: documentUploading ? '#E2E8F0' : '#6366F1',
+                  backgroundColor: documentUploading ? PROFILE_CHIP : '#6366F1',
                   opacity: documentUploading || documents.length >= 10 ? 0.6 : 1,
                 }}
                 onPress={handleUploadDocument}
@@ -4470,6 +4010,10 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'agents' && (
+          <>
         {/* Custom Agents */}
         <Animated.View entering={FadeInDown.duration(400).delay(460)}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 28, marginBottom: 4 }}>
@@ -4792,6 +4336,10 @@ export default function ProfileScreen() {
           )}
         </Animated.View>
 
+          </>
+        )}
+        {activeProfilePanel === 'settings' && (
+          <>
         {/* Settings */}
         <Animated.View entering={FadeInDown.duration(400).delay(480)}>
           <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Settings</Text>
@@ -4911,8 +4459,33 @@ export default function ProfileScreen() {
 
         <Animated.View entering={FadeInDown.duration(400).delay(500)} style={styles.versionRow}>
           <Text style={styles.versionText}>GamePlan v1.0.0</Text>
+          {Platform.OS === 'android' && (
+            <Pressable
+              onPress={handleCheckAppUpdate}
+              disabled={appUpdateChecking}
+              style={({ pressed }) => [
+                styles.updateButton,
+                pressed && !appUpdateChecking && styles.updateButtonPressed,
+                appUpdateChecking && styles.updateButtonDisabled,
+              ]}
+            >
+              {appUpdateChecking ? (
+                <ActivityIndicator size="small" color={Colors.primary} />
+              ) : (
+                <Ionicons name="download-outline" size={17} color={Colors.primary} />
+              )}
+              <Text style={styles.updateButtonText}>
+                {appUpdateChecking ? 'Checking...' : 'Check for APK update'}
+              </Text>
+            </Pressable>
+          )}
         </Animated.View>
+          </>
+        )}
       </ScrollView>
+          </View>
+        </View>
+      </Modal>
 
       <RewardClaimModal
         visible={rewardModalVisible}
@@ -5075,10 +4648,13 @@ function formatRelativeDate(iso: string): string {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: Colors.surface,
+    backgroundColor: Colors.background,
   },
   scrollContent: {
     paddingHorizontal: 20,
+    width: '100%',
+    maxWidth: 1120,
+    alignSelf: 'center',
   },
   title: {
     fontSize: 28,
@@ -5086,15 +4662,150 @@ const styles = StyleSheet.create({
     color: Colors.text,
     marginBottom: 20,
   },
+  profileHub: {
+    marginTop: 4,
+    marginBottom: 18,
+  },
+  profileHubHeader: {
+    marginBottom: 12,
+  },
+  profilePanelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  profilePanelCard: {
+    width: Platform.OS === 'web' ? '32%' : '100%',
+    minWidth: Platform.OS === 'web' ? 220 : undefined,
+    flexGrow: 1,
+    minHeight: 88,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: PROFILE_BORDER,
+    backgroundColor: PROFILE_PANEL,
+  },
+  profilePanelIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+  profilePanelText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  profilePanelTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 3,
+  },
+  profilePanelTitle: {
+    flexShrink: 1,
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  profilePanelSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  profilePanelBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: PROFILE_CHIP,
+  },
+  profilePanelBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  profileModalOverlay: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  profileModalBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.58)',
+  },
+  profileModalSheet: {
+    width: '100%',
+    maxHeight: '92%',
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderWidth: 1,
+    borderColor: PROFILE_BORDER,
+    overflow: 'hidden',
+  },
+  profileModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: PROFILE_BORDER,
+    backgroundColor: PROFILE_PANEL,
+  },
+  profileModalTitleWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  profileModalIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  profileModalTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  profileModalSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  profileModalClose: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: PROFILE_CHIP,
+  },
+  profileModalContent: {
+    paddingHorizontal: 20,
+    paddingTop: 18,
+    paddingBottom: Platform.OS === 'web' ? 120 : 48,
+    width: '100%',
+    maxWidth: 1120,
+    alignSelf: 'center',
+  },
 
   /* Level card */
   levelCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 20,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 16,
     padding: 20,
     marginBottom: 28,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER_ACTIVE,
   },
   levelTopRow: {
     flexDirection: 'row',
@@ -5137,7 +4848,7 @@ const styles = StyleSheet.create({
   },
   xpBarTrack: {
     height: 8,
-    backgroundColor: Colors.borderLight,
+    backgroundColor: PROFILE_CHIP,
     borderRadius: 99,
     overflow: 'hidden',
     marginBottom: 6,
@@ -5158,7 +4869,7 @@ const styles = StyleSheet.create({
   },
   divider: {
     height: 1,
-    backgroundColor: Colors.borderLight,
+    backgroundColor: PROFILE_BORDER,
     marginVertical: 16,
   },
   statsRow: {
@@ -5204,11 +4915,11 @@ const styles = StyleSheet.create({
   vaultRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.surface,
+    backgroundColor: PROFILE_PANEL,
     borderRadius: 14,
     padding: 14,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER,
     gap: 12,
     marginTop: 12,
   },
@@ -5244,25 +4955,25 @@ const styles = StyleSheet.create({
   },
   badgeCell: {
     width: '30.5%',
-    backgroundColor: Colors.white,
-    borderRadius: 14,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 12,
     padding: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: Colors.borderLight,
+    borderColor: PROFILE_BORDER,
     position: 'relative',
     opacity: 0.5,
   },
   badgeCellUnlocked: {
     opacity: 1,
     borderColor: Colors.primary + '40',
-    backgroundColor: Colors.primary + '08',
+    backgroundColor: Colors.primary + '10',
   },
   badgeIcon: {
     width: 44,
     height: 44,
     borderRadius: 12,
-    backgroundColor: Colors.surface,
+    backgroundColor: PROFILE_CHIP,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
@@ -5299,10 +5010,10 @@ const styles = StyleSheet.create({
 
   /* Calendars */
   platformsList: {
-    backgroundColor: Colors.white,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER,
     overflow: 'hidden',
   },
   platformRow: {
@@ -5310,9 +5021,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
   },
+  connectionSummaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: Colors.primary + '08',
+  },
   platformRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: PROFILE_BORDER,
   },
   platformIcon: {
     width: 42,
@@ -5373,6 +5090,164 @@ const styles = StyleSheet.create({
     color: Colors.textTertiary,
     textDecorationLine: 'underline',
   },
+  disconnectBtnPill: {
+    borderWidth: 1,
+    borderColor: PROFILE_BORDER,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  connectionHeaderButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary + '44',
+    marginTop: 28,
+  },
+  connectionHeaderButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+  },
+  connectionStatusBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 7,
+  },
+  connectionStatusBadgeConnected: {
+    backgroundColor: Colors.successDim,
+  },
+  connectionStatusBadgeAttention: {
+    backgroundColor: Colors.warningDim,
+  },
+  connectionStatusBadgeIdle: {
+    backgroundColor: PROFILE_CHIP,
+  },
+  connectionStatusBadgeText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  connectionStatusTextConnected: {
+    color: Colors.success,
+  },
+  connectionStatusTextAttention: {
+    color: Colors.warning,
+  },
+  connectionStatusTextIdle: {
+    color: Colors.textTertiary,
+  },
+  connectionErrorText: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.warning,
+    marginTop: 4,
+  },
+  connectionPanel: {
+    padding: 14,
+    gap: 10,
+  },
+  connectionInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  connectionActionsPanelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  connectionTileActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 10,
+  },
+  connectionSecondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  connectionSecondaryButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  connectionKeyPreview: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.success,
+  },
+  connectionTestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: PROFILE_BORDER,
+  },
+  connectionTestText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  connectionAdvancedToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: 13,
+    borderTopWidth: 1,
+    borderTopColor: PROFILE_BORDER,
+  },
+  connectionAdvancedToggleText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  connectionAdvancedPanel: {
+    padding: 14,
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: PROFILE_BORDER,
+    backgroundColor: PROFILE_PANEL_MUTED,
+  },
+  connectionAdvancedText: {
+    fontSize: 12,
+    lineHeight: 17,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  connectionCommandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: PROFILE_CHIP,
+  },
+  connectionCommandText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+  },
   webhookStatusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -5401,9 +5276,9 @@ const styles = StyleSheet.create({
   upgradePermText: {
     fontSize: 11,
     fontFamily: 'Inter_600SemiBold',
-    color: '#D97706',
+    color: Colors.warning,
     marginTop: 3,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: Colors.warningDim,
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -5419,7 +5294,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    backgroundColor: '#ECFDF5',
+    backgroundColor: Colors.successDim,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -5430,7 +5305,7 @@ const styles = StyleSheet.create({
     color: '#059669',
   },
   readOnlyBadge: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: PROFILE_CHIP,
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
@@ -5469,18 +5344,18 @@ const styles = StyleSheet.create({
   aboutEmptyCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.white,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     padding: 16,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER,
     gap: 12,
   },
   aboutEmptyIcon: {
     width: 42,
     height: 42,
     borderRadius: 12,
-    backgroundColor: '#EEF2FF',
+    backgroundColor: Colors.violetDim,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5499,10 +5374,10 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
   aboutFilledCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER,
     overflow: 'hidden',
   },
   aboutRow: {
@@ -5511,7 +5386,7 @@ const styles = StyleSheet.create({
   },
   aboutRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: PROFILE_BORDER,
   },
   aboutLabel: {
     fontSize: 10,
@@ -5533,8 +5408,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 10,
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
-    backgroundColor: Colors.surface,
+    borderTopColor: PROFILE_BORDER,
+    backgroundColor: PROFILE_PANEL_MUTED,
   },
   aboutUpdated: {
     fontSize: 11,
@@ -5547,11 +5422,11 @@ const styles = StyleSheet.create({
     color: Colors.primary,
   },
   memoryEmptyCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     padding: 24,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 10,
@@ -5560,7 +5435,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 12,
-    backgroundColor: Colors.surface,
+    backgroundColor: PROFILE_CHIP,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -5571,10 +5446,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   memoryList: {
-    backgroundColor: Colors.white,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER,
     overflow: 'hidden',
   },
   memoryRow: {
@@ -5585,7 +5460,7 @@ const styles = StyleSheet.create({
   },
   memoryRowBorder: {
     borderBottomWidth: 1,
-    borderBottomColor: Colors.borderLight,
+    borderBottomColor: PROFILE_BORDER,
   },
   memoryContent: {
     flex: 1,
@@ -5626,13 +5501,37 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
   },
+  updateButton: {
+    marginTop: 12,
+    minHeight: 42,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primary + '10',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  updateButtonPressed: {
+    opacity: 0.82,
+  },
+  updateButtonDisabled: {
+    opacity: 0.7,
+  },
+  updateButtonText: {
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
+  },
 
   /* Rewards */
   rewardsList: {
-    backgroundColor: Colors.white,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.border,
+    borderColor: PROFILE_BORDER,
     overflow: 'hidden',
   },
   rewardRow: {
@@ -5641,7 +5540,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
     borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    borderBottomColor: PROFILE_BORDER,
   },
   rewardRowLocked: {
     opacity: 0.6,
@@ -5701,16 +5600,16 @@ const styles = StyleSheet.create({
     marginLeft: 8,
   },
   rewardPillLocked: {
-    backgroundColor: '#F1F5F9',
+    backgroundColor: PROFILE_CHIP,
   },
   rewardPillEarn: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: Colors.warningDim,
   },
   rewardPillSpent: {
-    backgroundColor: '#FEE2E2',
+    backgroundColor: Colors.errorDim,
   },
   rewardPillToday: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: Colors.successDim,
   },
   rewardPillTextLocked: {
     fontSize: 10,
@@ -5742,8 +5641,8 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   telegramCodeCard: {
-    backgroundColor: Colors.white,
-    borderRadius: 16,
+    backgroundColor: PROFILE_PANEL,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: '#229ED940',
     padding: 20,
@@ -5807,7 +5706,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   tzSheet: {
-    backgroundColor: Colors.white,
+    backgroundColor: PROFILE_PANEL,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingHorizontal: 20,

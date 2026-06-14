@@ -1,6 +1,13 @@
-import type { Capability } from "./types";
+﻿import type { Capability } from "./types";
 import { checkConnectionsTool, generateReconnectLinkTool } from "../agent/tools/connections";
 import { connectChannelTool } from "../agent/tools/connectChannel";
+import {
+  connectedAccountsConnectLinkTool,
+  connectedAccountsExecuteTool,
+  connectedAccountsGetToolSchemaTool,
+  connectedAccountsListTool,
+  connectedAccountsSearchToolsTool,
+} from "../agent/tools/connectedAccounts";
 
 /**
  * Connections capability — tools that help users connect integrations.
@@ -16,8 +23,21 @@ export const connectionsCapability: Capability = {
     check_connections:       ["connections", "system"],
     generate_reconnect_link: ["connections", "system"],
     connect_channel:         ["connections", "system"],
+    connected_accounts_list:           ["connections", "system"],
+    connected_accounts_search_tools:   ["connections", "system"],
+    connected_accounts_get_tool_schema:["connections", "system"],
+    connected_accounts_execute:        ["connections", "system"],
   },
-  tools: [checkConnectionsTool, generateReconnectLinkTool, connectChannelTool],
+  tools: [
+    checkConnectionsTool,
+    generateReconnectLinkTool,
+    connectChannelTool,
+    connectedAccountsListTool,
+    connectedAccountsConnectLinkTool,
+    connectedAccountsSearchToolsTool,
+    connectedAccountsGetToolSchemaTool,
+    connectedAccountsExecuteTool,
+  ],
   integrationDependencies: [
     { integrationId: "telegram",  label: "Telegram",                toolNames: [] },
     { integrationId: "slack",     label: "Slack",                   toolNames: [] },

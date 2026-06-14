@@ -20,7 +20,7 @@ at `GET /api/download/apk` (no authentication required).
 2. The workflow at `.github/workflows/build-android-apk.yml` builds the APK on
    every push to `main` that touches `android-daemon/` and publishes it under the
    tag `android-daemon-latest`.
-3. Set the `ANDROID_APK_URL` secret/environment variable in Replit to:
+3. Set the `ANDROID_APK_URL` secret/environment variable in your hosting platform to:
    ```
    https://github.com/<your-org>/<your-repo>/releases/download/android-daemon-latest/jarvis-daemon.apk
    ```

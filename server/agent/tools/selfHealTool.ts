@@ -5,7 +5,7 @@
  * interface (app, Discord, Telegram), this tool runs an autonomous loop:
  *
  *   1. Diagnose  — read recent error logs + relevant source files
- *   2. Fix       — call an inner LLM (Claude) to generate targeted file changes
+ *   2. Fix       — call the Codex OAuth model router to generate targeted file changes
  *   3. Apply     — write the changes via apply_code_change
  *   4. Verify    — run `npx tsc --noEmit` to confirm the change compiles
  *   5. Repeat    — if verification fails, loop back to Diagnose (up to max_iterations)
@@ -21,7 +21,7 @@ import type { AgentTool } from "../types";
 import fs from "fs/promises";
 import path from "path";
 import { isIntegrationOwner } from "../../integrationOwner";
-import { anthropic, ORCHESTRATOR_MODEL } from "../../lib/anthropicClient";
+import { routeModelTurn } from "../modelRouter";
 import { isPathAllowed, isProtectedFile, writeBudgetSummary, PROTECTED_FILES } from "../safeWritePolicy";
 import { readRecentErrorsTool, proposeCodeChangeTool } from "./selfEditTools";
 import { applyCodeChangeTool, recordVerificationResult } from "./applyCodeChangeTool";
@@ -42,9 +42,6 @@ function fileNameToToolName(filename: string): string | null {
 }
 const MAX_FILES       = 8;     // max files included in inner LLM context
 const INNER_MAX_TOKENS = 8192;
-// Use a fast model for the inner LLM loop; fall back to the orchestrator model
-// if a lightweight model is not available on the configured base URL.
-const INNER_LLM_MODEL = "claude-3-5-haiku-20241022";
 
 // ── Inner LLM types ───────────────────────────────────────────────────────────
 
@@ -226,6 +223,7 @@ async function callInnerLLM(
   errorLogs: string,
   files: Array<{ path: string; content: string }>,
   previousTypeCheckOutput: string | null,
+  userId?: string,
 ): Promise<InnerFixPlan> {
   const filesSection =
     files.length > 0
@@ -242,42 +240,27 @@ async function callInnerLLM(
   }
   const userMessage = parts.join("\n\n---\n\n");
 
-  let model = INNER_LLM_MODEL;
-  let response;
-  try {
-    response = await anthropic.messages.create({
-      model,
-      max_tokens: INNER_MAX_TOKENS,
-      system: INNER_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userMessage }],
-    });
-  } catch (err: unknown) {
-    // If the lightweight model is not available on this deployment, fall back
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("model") || msg.includes("not found") || msg.includes("404")) {
-      model = ORCHESTRATOR_MODEL;
-      response = await anthropic.messages.create({
-        model,
-        max_tokens: INNER_MAX_TOKENS,
-        system: INNER_SYSTEM_PROMPT,
-        messages: [{ role: "user", content: userMessage }],
-      });
-    } else {
-      throw err;
-    }
-  }
+  const response = await routeModelTurn({
+    tier: "smart",
+    maxCompletionTokens: INNER_MAX_TOKENS,
+    stream: false,
+    toolChoice: "none",
+    userId,
+    logPrefix: "[SelfHealInner]",
+    messages: [
+      { role: "system", content: INNER_SYSTEM_PROMPT },
+      { role: "user", content: userMessage },
+    ],
+  });
 
-  if (response.stop_reason === "max_tokens") {
+  if (response.finishReason === "max_tokens" || response.finishReason === "length") {
     throw new Error(
       "Inner LLM response was cut off by the token limit. " +
       "Try with fewer or smaller files using the affected_paths parameter.",
     );
   }
 
-  const text = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => (b as { type: "text"; text: string }).text)
-    .join("");
+  const text = response.textContent ?? "";
 
   // Strip any accidental markdown fencing
   const cleaned = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim();
@@ -434,7 +417,7 @@ export const selfHealTool: AgentTool = {
       sendProgress(`[${iterLabel}] Generating fix plan (analysing ${relevantFiles.length} file(s))…`);
       let plan: InnerFixPlan;
       try {
-        plan = await callInnerLLM(description, errorLogs, relevantFiles, lastTypeCheckOutput);
+        plan = await callInnerLLM(description, errorLogs, relevantFiles, lastTypeCheckOutput, ctx.userId);
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         sendProgress(`[${iterLabel}] Inner LLM error: ${errMsg}`);
@@ -761,7 +744,7 @@ export const selfHealTool: AgentTool = {
         ctx.userId,
       ).catch(() => {});
 
-      // ── Phase 4f: Claude Opus AI logic review ─────────────────────────────
+      // ── Phase 4f: Codex OAuth AI logic review ─────────────────────────────
       // Mechanical checks (compile + tests + smoke) confirm the code is valid,
       // but an AI review confirms the change actually addresses the stated problem.
       // Fail-open: timeout/error yields null — Phase 4e "passed" audit entry stands.
@@ -779,6 +762,7 @@ export const selfHealTool: AgentTool = {
           originalPrompt: `Problem: ${description}\n\nDiff applied:\n${changeSummary}`,
           result: `Type-check: PASSED\nTests: PASSED${allToolNames.length > 0 ? `\nSmoke-tests: PASSED (${allToolNames.join(", ")})` : ""}\n\nSummary of changes:\n${changeSummary}`,
           orchestratorModel: orchModel,
+          userId: ctx.userId,
         });
         aiReviewPassed = aiReview.passed;
         aiReviewReason = aiReview.reason;

@@ -2,6 +2,21 @@ name: Build Jarvis App APK
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+      - codex/replit-main-continuation
+    paths:
+      - '.github/workflows/build-jarvis-apk.yml'
+      - 'app/**'
+      - 'assets/**'
+      - 'components/**'
+      - 'lib/**'
+      - 'scripts/patch_gradle.py'
+      - 'app.json'
+      - 'eas.json'
+      - 'package.json'
+      - 'package-lock.json'
 
 permissions:
   contents: write
@@ -40,7 +55,7 @@ jobs:
 
       - name: Run Expo prebuild
         env:
-          EXPO_PUBLIC_DOMAIN: GameplanAI.replit.app
+          EXPO_PUBLIC_DOMAIN: gameplanjarvisai.up.railway.app
           EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
         run: npx expo prebuild --platform android --clean
 
@@ -61,35 +76,27 @@ jobs:
           key: gradle-caches-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: gradle-caches-
 
-      # Generate the keystore ONCE on the first run and commit it back.
-      # Every subsequent run finds it in the repo and skips generation.
-      # Same key → same signature → Android accepts updates without uninstall.
+      # Decode the app signing keystore from GitHub Secrets. Same key means Android accepts updates without uninstall.
       - name: Setup signing keystore
+        env:
+          JARVIS_APP_KEYSTORE_BASE64: ${{ secrets.JARVIS_APP_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.JARVIS_APP_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.JARVIS_APP_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.JARVIS_APP_KEY_PASSWORD }}
         run: |
-          if [ -f jarvis-app.keystore ]; then
-            echo "Keystore already exists — using committed version"
-          else
-            echo "No keystore found — generating and committing for the first time"
-            keytool -genkey -v \
-              -keystore jarvis-app.keystore \
-              -alias your-jarvis-app-key-alias \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 36500 \
-              -storepass your-android-signing-password \
-              -keypass your-android-signing-password \
-              -dname "CN=Jarvis App,O=Jarvis,C=US"
-            git config user.email "actions@github.com"
-            git config user.name "GitHub Actions"
-            git add jarvis-app.keystore
-            git commit -m "chore: add signing keystore for Jarvis app APK updates [skip ci]"
-            git push
-            echo "Keystore committed — all future builds will use this same key"
+          if [ -z "$JARVIS_APP_KEYSTORE_BASE64" ]; then
+            echo "JARVIS_APP_KEYSTORE_BASE64 GitHub Secret is required" >&2
+            exit 1
           fi
+          printf '%s' "$JARVIS_APP_KEYSTORE_BASE64" | base64 --decode > jarvis-app.keystore
+          test -s jarvis-app.keystore
 
       - name: Inject signing config and versionCode into build.gradle
         env:
           KEYSTORE_ABS: ${{ github.workspace }}/jarvis-app.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.JARVIS_APP_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.JARVIS_APP_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.JARVIS_APP_KEY_PASSWORD }}
           GRADLE_FILE: android/app/build.gradle
           RUN_NUMBER: ${{ github.run_number }}
         run: python3 scripts/patch_gradle.py
@@ -107,6 +114,12 @@ jobs:
 
       - name: Build release APK
         working-directory: android
+        env:
+          EXPO_PUBLIC_DOMAIN: gameplanjarvisai.up.railway.app
+          EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
+          KEYSTORE_PASSWORD: ${{ secrets.JARVIS_APP_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.JARVIS_APP_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.JARVIS_APP_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
@@ -119,9 +132,19 @@ jobs:
             echo "No APK found after build" && exit 1
           fi
           cp "$APK" dist/jarvis-app.apk
+          SHA256=$(sha256sum dist/jarvis-app.apk | awk '{print $1}')
           echo "APK ready: $(ls -lh dist/jarvis-app.apk)"
-          printf '{"versionCode":%d,"versionName":"1.0.%d"}' \
-            ${{ github.run_number }} ${{ github.run_number }} > dist/version.json
+          cat > dist/version.json <<JSON
+          {
+            "platform": "android",
+            "versionCode": ${{ github.run_number }},
+            "versionName": "1.0.${{ github.run_number }}",
+            "apkUrl": "https://github.com/battlesbudz/Gameplanjarvisai/releases/download/jarvis-app-latest/jarvis-app.apk",
+            "releaseUrl": "https://github.com/battlesbudz/Gameplanjarvisai/releases/tag/jarvis-app-latest",
+            "sha256": "$SHA256",
+            "notes": "Jarvis App build ${{ github.run_number }}"
+          }
+          JSON
           echo "version.json: $(cat dist/version.json)"
 
       - name: Upload APK artifact
@@ -141,7 +164,7 @@ jobs:
           body: |
             Pre-built APK for the Jarvis main app — build ${{ github.run_number }}.
 
-            Connects to the production server at **GameplanAI.replit.app** — no Expo Go required.
+            Connects to the production server at **gameplanjarvisai.up.railway.app** — no Expo Go required.
 
             **First-time install:**
             1. Download `jarvis-app.apk` to your Android phone

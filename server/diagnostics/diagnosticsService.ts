@@ -11,7 +11,7 @@
  * Degradation clears only when a caller explicitly emits with
  * `metadata.recovery = true`, preventing false clearance from incidental info events.
  *
- * runHealthCheck() actively probes: OpenAI, DB, job queue, channel registry,
+ * runHealthCheck() actively probes: AI provider, DB, job queue, channel registry,
  * workflow engine (stuck count), and integration statuses.
  *
  * Auto-recovery handles: stale queued jobs and stuck workflows.
@@ -22,18 +22,8 @@ import { eq, and, desc, gte, sql as sqlExpr } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { DiagnosticSubsystem, DiagnosticSeverity } from "@shared/schema";
-import OpenAI from "openai";
-import Anthropic from "@anthropic-ai/sdk";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
-
-const anthropic = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
-});
+import { routeModelTurn } from "../agent/modelRouter";
+import type { MemoryEmbeddingHealthReport } from "../memory/embeddingHealth";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -69,6 +59,7 @@ export interface HealthReport {
   stuckWorkflowCount: number;
   memoryWriteErrors15m: number;
   memoryReadErrors15m: number;
+  memoryEmbeddingHealth: MemoryEmbeddingHealthReport | null;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -87,6 +78,24 @@ const SUBSYSTEM_LABELS: Record<DiagnosticSubsystem, string> = {
 // Notification cooldown — only affects notification rate, not degraded state.
 const notifiedDegradedAt = new Map<string, Date>();
 const NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
+
+function buildDiagnosticEventConditions(
+  subsystem: DiagnosticSubsystem,
+  userId?: string,
+  unresolvedProblemOnly = false,
+  excludePatternDetected = false,
+): SQL<unknown>[] {
+  const conditions: SQL<unknown>[] = [eq(schema.diagnosticEvents.subsystem, subsystem)];
+  if (userId) conditions.push(eq(schema.diagnosticEvents.userId, userId));
+  if (unresolvedProblemOnly) {
+    conditions.push(eq(schema.diagnosticEvents.resolved, false));
+    conditions.push(sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`);
+  }
+  if (excludePatternDetected) {
+    conditions.push(sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`);
+  }
+  return conditions;
+}
 
 // ─── Core emit ────────────────────────────────────────────────────────────────
 
@@ -440,11 +449,25 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
   let openAiLatencyMs: number | null = null;
   const openAiProbeStart = Date.now();
   try {
-    await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [{ role: "user", content: "ping" }],
-      max_completion_tokens: 1,
-    });
+    const { hasCodexOAuthProvider, isDirectOpenAIDisabled } = await import("../agent/providers/env");
+    if (hasCodexOAuthProvider() && isDirectOpenAIDisabled()) {
+      const { runProviderHealthChecks } = await import("../agent/providers/healthCheck");
+      const report = await runProviderHealthChecks();
+      if (!report.allOk) {
+        const failed = report.results.filter((result) => !result.ok);
+        throw new Error(failed.map((result) => `${result.provider}: ${result.error ?? "failed"}`).join("; "));
+      }
+    } else {
+      await routeModelTurn({
+        tier: "cheap",
+        messages: [{ role: "user", content: "ping" }],
+        toolChoice: "none",
+        maxCompletionTokens: 8,
+        stream: false,
+        userId,
+        logPrefix: "[DiagnosticsProviderProbe]",
+      });
+    }
     openAiLatencyMs = Date.now() - openAiProbeStart;
   } catch (probeErr) {
     openAiReachable = false;
@@ -454,7 +477,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
       userId,
       subsystem: "agent_harness",
       severity: "error",
-      message: `OpenAI API health check failed: ${detail}`,
+      message: `AI provider health check failed: ${detail}`,
       metadata: { healthCheck: true },
     }).catch(() => {});
   }
@@ -498,14 +521,12 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
       try {
         const errorConditions: SQL<unknown>[] = [
           eq(schema.diagnosticEvents.subsystem, sub),
+          eq(schema.diagnosticEvents.resolved, false),
           gte(schema.diagnosticEvents.createdAt, windowStart),
           sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
           sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
         ];
         if (userId) errorConditions.push(eq(schema.diagnosticEvents.userId, userId));
-
-        const lastEventConditions: SQL<unknown>[] = [eq(schema.diagnosticEvents.subsystem, sub)];
-        if (userId) lastEventConditions.push(eq(schema.diagnosticEvents.userId, userId));
 
         const [recentErrorRows, lastEventRows] = await Promise.all([
           db.select({ count: sqlExpr<number>`count(*)::int` })
@@ -513,7 +534,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
             .where(and(...errorConditions)),
           db.select({ message: schema.diagnosticEvents.message, createdAt: schema.diagnosticEvents.createdAt })
             .from(schema.diagnosticEvents)
-            .where(and(...lastEventConditions))
+            .where(and(...buildDiagnosticEventConditions(sub, userId)))
             .orderBy(desc(schema.diagnosticEvents.createdAt))
             .limit(1),
         ]);
@@ -525,12 +546,29 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
         if (errorCount >= 5 || (sub === "database" && !dbReachable)) status = "down";
         else if (errorCount >= 3 || isDegraded) status = "degraded";
 
+        let displayEventRows = lastEventRows;
+        if (status !== "healthy") {
+          displayEventRows = await db.select({ message: schema.diagnosticEvents.message, createdAt: schema.diagnosticEvents.createdAt })
+            .from(schema.diagnosticEvents)
+            .where(and(...buildDiagnosticEventConditions(sub, userId, true, true)))
+            .orderBy(desc(schema.diagnosticEvents.createdAt))
+            .limit(1);
+          if (displayEventRows.length === 0) {
+            displayEventRows = await db.select({ message: schema.diagnosticEvents.message, createdAt: schema.diagnosticEvents.createdAt })
+              .from(schema.diagnosticEvents)
+              .where(and(...buildDiagnosticEventConditions(sub, userId, true)))
+              .orderBy(desc(schema.diagnosticEvents.createdAt))
+              .limit(1);
+          }
+          if (displayEventRows.length === 0) displayEventRows = lastEventRows;
+        }
+
         return {
           name: sub,
           label: SUBSYSTEM_LABELS[sub],
           status,
-          lastEvent: lastEventRows[0]?.message,
-          lastEventAt: lastEventRows[0]?.createdAt,
+          lastEvent: displayEventRows[0]?.message,
+          lastEventAt: displayEventRows[0]?.createdAt,
           errorCount15m: errorCount,
         };
       } catch {
@@ -573,14 +611,6 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     sinceMinutes: 60,
     excludePatternDetected: true,
   });
-  const degradedSubsystems = subsystems
-    .filter((s) => s.status !== "healthy" && s.status !== "unknown")
-    .map((s) => s.name);
-
-  let overallStatus: HealthReport["overallStatus"] = "healthy";
-  if (subsystems.some((s) => s.status === "down")) overallStatus = "down";
-  else if (degradedSubsystems.length > 0) overallStatus = "degraded";
-
   // Memory pipeline split: write-path (learning/ingestion) vs read-path (recall/retrieval).
   const MEMORY_WRITE_OPS = [
     "extractAndStore",
@@ -602,9 +632,11 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
 
   let memoryWriteErrors15m = 0;
   let memoryReadErrors15m = 0;
+  let memoryEmbeddingHealth: MemoryEmbeddingHealthReport | null = null;
   try {
     const memWriteConditions: SQL<unknown>[] = [
       eq(schema.diagnosticEvents.subsystem, "memory"),
+      eq(schema.diagnosticEvents.resolved, false),
       sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
       gte(schema.diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
@@ -612,6 +644,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     ];
     const memReadConditions: SQL<unknown>[] = [
       eq(schema.diagnosticEvents.subsystem, "memory"),
+      eq(schema.diagnosticEvents.resolved, false),
       sqlExpr`${schema.diagnosticEvents.severity} IN ('error', 'critical')`,
       gte(schema.diagnosticEvents.createdAt, windowStart),
       sqlExpr`(${schema.diagnosticEvents.metadata}->>'type') IS DISTINCT FROM 'pattern_detected'`,
@@ -635,11 +668,33 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     // Best-effort — leave counts at 0
   }
 
+  try {
+    const { getMemoryEmbeddingHealth } = await import("../memory/embeddingHealth");
+    memoryEmbeddingHealth = await getMemoryEmbeddingHealth();
+    if (memoryEmbeddingHealth.status === "down" || memoryEmbeddingHealth.status === "degraded") {
+      const s = subsystems.find((subsystem) => subsystem.name === "memory");
+      if (s) {
+        s.status = memoryEmbeddingHealth.status === "down" ? "down" : "degraded";
+        s.lastEvent = memoryEmbeddingHealth.alerts[0]?.message ?? s.lastEvent;
+      }
+    }
+  } catch {
+    // Best-effort: diagnostics should still return if the optional monitor cannot load.
+  }
+
+  const finalDegradedSubsystems = subsystems
+    .filter((s) => s.status !== "healthy" && s.status !== "unknown")
+    .map((s) => s.name);
+
+  let finalOverallStatus: HealthReport["overallStatus"] = "healthy";
+  if (subsystems.some((s) => s.status === "down")) finalOverallStatus = "down";
+  else if (finalDegradedSubsystems.length > 0) finalOverallStatus = "degraded";
+
   return {
-    overallStatus,
+    overallStatus: finalOverallStatus,
     subsystems: Array.isArray(subsystems) ? subsystems : [],
     recentErrors: Array.isArray(recentErrors) ? recentErrors : [],
-    degradedSubsystems: Array.isArray(degradedSubsystems) ? degradedSubsystems : [],
+    degradedSubsystems: Array.isArray(finalDegradedSubsystems) ? finalDegradedSubsystems : [],
     generatedAt: now,
     openAiReachable,
     openAiLatencyMs,
@@ -650,6 +705,7 @@ export async function runHealthCheck(userId?: string): Promise<HealthReport> {
     stuckWorkflowCount,
     memoryWriteErrors15m,
     memoryReadErrors15m,
+    memoryEmbeddingHealth,
   };
 }
 
@@ -727,36 +783,26 @@ Write a concise report:
 
 Plain text, no markdown headers, 4-6 sentences max. Be calm and informative, not alarmist.`;
 
-  // Try OpenAI first.
+  // Try the Jarvis model router first so Codex OAuth is the primary diagnoser.
   try {
-    const resp = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+    const resp = await routeModelTurn({
+      tier: "cheap",
       messages: [{ role: "user", content: prompt }],
-      max_completion_tokens: 400,
+      toolChoice: "none",
+      maxCompletionTokens: 400,
+      stream: false,
+      userId,
+      logPrefix: "[DiagnosticsDiagnosis]",
     });
-    const diagnosis = resp.choices[0]?.message?.content?.trim();
+    const diagnosis = resp.textContent?.trim();
     if (diagnosis) return { diagnosis, report };
-  } catch (openAiErr) {
-    console.debug("[Diagnostics] OpenAI diagnosis failed, trying Anthropic fallback:", openAiErr instanceof Error ? openAiErr.message : openAiErr);
+  } catch (modelErr) {
+    console.debug("[Diagnostics] routed Codex OAuth diagnosis failed:", modelErr instanceof Error ? modelErr.message : modelErr);
   }
 
-  // Fallback: try Anthropic.
-  try {
-    const msg = await anthropic.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 400,
-      messages: [{ role: "user", content: prompt }],
-    });
-    const block = msg.content.find((b) => b.type === "text");
-    const diagnosis = block && block.type === "text" ? block.text.trim() : null;
-    if (diagnosis) return { diagnosis, report };
-  } catch (anthropicErr) {
-    console.debug("[Diagnostics] Anthropic diagnosis fallback also failed:", anthropicErr instanceof Error ? anthropicErr.message : anthropicErr);
-  }
-
-  // Both AI providers unavailable — return a clear plain-text summary.
+  // AI provider unavailable — return a clear plain-text summary.
   const issueLines: string[] = [];
-  if (!report.openAiReachable) issueLines.push("OpenAI API is unreachable — AI features are temporarily unavailable.");
+  if (!report.openAiReachable) issueLines.push("AI provider is unreachable — AI features are temporarily unavailable.");
   if (!report.dbReachable) issueLines.push("Database is unreachable — all data operations are failing.");
   if (report.staleJobCount > 0) issueLines.push(`${report.staleJobCount} background job(s) appear stuck and have been re-enqueued.`);
   if (report.stuckWorkflowCount > 0) issueLines.push(`${report.stuckWorkflowCount} workflow(s) appear stuck.`);

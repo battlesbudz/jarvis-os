@@ -399,13 +399,13 @@ export async function pushWorkspaceToGitHub(
   const sanitize = (s?: string | null): string =>
     (s ?? "").replace(new RegExp(pat.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g"), "***").slice(0, 500);
 
-  const env: Record<string, string> = {
-    ...(process.env as Record<string, string>),
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
     HOME: os.homedir(),
     GIT_AUTHOR_NAME: "Jarvis",
-    GIT_AUTHOR_EMAIL: "jarvis@replit.app",
+    GIT_AUTHOR_EMAIL: "jarvis@gameplanjarvisai.com",
     GIT_COMMITTER_NAME: "Jarvis",
-    GIT_COMMITTER_EMAIL: "jarvis@replit.app",
+    GIT_COMMITTER_EMAIL: "jarvis@gameplanjarvisai.com",
     GIT_TERMINAL_PROMPT: "0",
   };
 
@@ -432,7 +432,7 @@ export async function pushWorkspaceToGitHub(
     }
   }
 
-  run(["config", "user.email", "jarvis@replit.app"]);
+  run(["config", "user.email", "jarvis@gameplanjarvisai.com"]);
   run(["config", "user.name", "Jarvis"]);
 
   const addResult = run(["add", "--all"]);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -15,19 +15,22 @@ import { useAuth, clearAuthStorage } from "@/lib/auth-context";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getApiUrl } from "@/lib/query-client";
 import { Ionicons } from "@expo/vector-icons";
+import { captureTelegramInitData } from "@/lib/telegram-webapp";
 
 declare global {
   interface Window {
     google?: {
       accounts: {
-        id: {
-          initialize: (config: {
+        oauth2?: {
+          initTokenClient: (config: {
             client_id: string;
-            callback: (response: { credential: string }) => void;
-            auto_select?: boolean;
-          }) => void;
-          prompt: (notification?: (n: { isNotDisplayed: () => boolean; isSkippedMoment: () => boolean }) => void) => void;
-          renderButton: (parent: HTMLElement, options: Record<string, unknown>) => void;
+            scope: string;
+            callback: (response: { access_token?: string; error?: string; error_description?: string }) => void;
+            error_callback?: (error: { type?: string; message?: string }) => void;
+            prompt?: string;
+          }) => {
+            requestAccessToken: (options?: { prompt?: string }) => void;
+          };
         };
       };
     };
@@ -37,11 +40,12 @@ declare global {
 function loadGisScript(): Promise<void> {
   return new Promise((resolve, reject) => {
     if (typeof window === "undefined") return reject(new Error("Not in browser"));
-    if (window.google?.accounts?.id) return resolve();
+    if (window.google?.accounts?.oauth2) return resolve();
 
     const existing = document.querySelector('script[src*="accounts.google.com/gsi/client"]');
     if (existing) {
       existing.addEventListener("load", () => resolve());
+      existing.addEventListener("error", () => reject(new Error("Failed to load Google sign-in")));
       return;
     }
 
@@ -50,9 +54,66 @@ function loadGisScript(): Promise<void> {
     script.async = true;
     script.defer = true;
     script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load Google Identity Services"));
+    script.onerror = () => reject(new Error("Failed to load Google sign-in"));
     document.head.appendChild(script);
   });
+}
+
+function createOauthNonce(length = 48): string {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  const cryptoSource = typeof globalThis !== "undefined" ? globalThis.crypto : undefined;
+
+  if (cryptoSource?.getRandomValues) {
+    const values = new Uint8Array(length);
+    cryptoSource.getRandomValues(values);
+    return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
+  }
+
+  let nonce = "";
+  while (nonce.length < length) {
+    nonce += Math.random().toString(36).slice(2);
+  }
+  return nonce.slice(0, length);
+}
+
+function buildMobileAuthUrls(baseUrl: string) {
+  const sessionId = createOauthNonce(32);
+  const pollSecret = createOauthNonce(48);
+
+  const startUrl = new URL("/api/auth/mobile/start", baseUrl);
+  startUrl.searchParams.set("session_id", sessionId);
+  startUrl.searchParams.set("poll_secret", pollSecret);
+
+  const pollUrl = new URL("/api/auth/mobile/poll", baseUrl);
+  pollUrl.searchParams.set("session_id", sessionId);
+  pollUrl.searchParams.set("poll_secret", pollSecret);
+
+  return {
+    sessionId,
+    startUrl: startUrl.toString(),
+    pollUrl: pollUrl.toString(),
+  };
+}
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isLocalWebPreview(): boolean {
+  if (Platform.OS !== "web" || typeof window === "undefined") return false;
+  return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
+}
+
+function isTelegramWebViewBrowser(): boolean {
+  if (Platform.OS !== "web" || typeof navigator === "undefined") return false;
+  return /\bTelegram(?:Bot)?\b/i.test(navigator.userAgent || "");
+}
+
+function openTelegramOAuthLink(url: string): void {
+  const webApp = typeof window !== "undefined" ? window.Telegram?.WebApp : undefined;
+  if (webApp?.openLink) {
+    webApp.openLink(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 export default function LoginScreen() {
@@ -60,14 +121,54 @@ export default function LoginScreen() {
   const { loginWithGoogle, loginWithToken, isAuthenticated, sessionExpired, clearSessionExpired } = useAuth();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [gisReady, setGisReady] = useState(false);
   const [hasPreviousAccount, setHasPreviousAccount] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [pwLoading, setPwLoading] = useState(false);
-  const gisInitialized = useRef(false);
   const isAuthenticatedRef = useRef(isAuthenticated);
   useEffect(() => { isAuthenticatedRef.current = isAuthenticated; }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    loadGisScript().catch((err) => {
+      console.warn("[GoogleAuth] Could not preload Google sign-in:", err);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined" || isAuthenticated) return;
+    let cancelled = false;
+
+    async function tryTelegramWebAppLogin() {
+      try {
+        const initData = await captureTelegramInitData();
+        if (cancelled) return;
+
+        if (!initData) return;
+
+        setLoading(true);
+        const baseUrl = getApiUrl();
+        const res = await fetch(new URL("/api/auth/telegram-webapp", baseUrl).toString(), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ initData }),
+        });
+        if (!res.ok) {
+          setLoading(false);
+          return;
+        }
+        const data = await res.json() as { token?: string };
+        if (data.token) await loginWithToken(data.token);
+      } catch (err) {
+        console.warn("[TelegramAuth] Web App login unavailable:", err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    tryTelegramWebAppLogin();
+    return () => { cancelled = true; };
+  }, [isAuthenticated, loginWithToken]);
 
   // Detect whether a previous account was signed in (token or email exists in storage)
   useEffect(() => {
@@ -79,56 +180,77 @@ export default function LoginScreen() {
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
 
-  const handleGisCredential = useCallback(
-    async (response: { credential: string }) => {
-      setLoading(true);
-      setError("");
-      try {
-        await loginWithGoogle(response.credential, null);
-      } catch (e: any) {
-        setError(e.message || "Google sign-in failed");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [loginWithGoogle]
-  );
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+
+    loadGisScript()
+      .then(() => {})
+      .catch((err) => {
+        console.warn("[GoogleAuth] Could not preload Google sign-in:", err);
+      });
+  }, []);
 
   useEffect(() => {
     if (Platform.OS !== "web" || typeof window === "undefined") return;
 
-    const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-    if (!clientId) return;
+    const readTokenFromHash = () => {
+      const hash = window.location.hash.startsWith("#")
+        ? window.location.hash.slice(1)
+        : window.location.hash;
+      const params = new URLSearchParams(hash);
+      return params.get("auth_token");
+    };
 
-    loadGisScript()
-      .then(() => {
-        if (gisInitialized.current) return;
-        gisInitialized.current = true;
+    const token = readTokenFromHash();
+    if (!token) return;
 
-        window.google!.accounts.id.initialize({
-          client_id: clientId,
-          callback: handleGisCredential,
-        });
-        setGisReady(true);
+    setLoading(true);
+    window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+    loginWithToken(token)
+      .catch((e: any) => {
+        setError(e.message || "Failed to complete Google sign-in");
       })
-      .catch((err) => {
-        console.error("GIS load error:", err);
+      .finally(() => {
+        setLoading(false);
       });
-  }, [handleGisCredential]);
+  }, [loginWithToken]);
+
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof window === "undefined") return;
+
+    const handleAuthMessage = async (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const token = event.data?.type === "gameplan-auth-token" ? event.data.token : null;
+      if (typeof token !== "string" || !token) return;
+
+      setLoading(true);
+      setError("");
+      try {
+        await loginWithToken(token);
+      } catch (e: any) {
+        setError(e.message || "Failed to complete Google sign-in");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    window.addEventListener("message", handleAuthMessage);
+    return () => window.removeEventListener("message", handleAuthMessage);
+  }, [loginWithToken]);
 
   async function handleNativeGoogleSignIn() {
     // Always clear any stale token before starting a new OAuth flow so the
     // wrong-account session can never silently survive into the new session.
     await clearAuthStorage();
 
-    const sessionId = Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
     const baseUrl = getApiUrl();
-    const startUrl = new URL(`/api/auth/mobile/start?session_id=${sessionId}`, baseUrl).toString();
-    const pollUrl = new URL(`/api/auth/mobile/poll?session_id=${sessionId}`, baseUrl).toString();
+    const { sessionId, startUrl, pollUrl } = buildMobileAuthUrls(baseUrl);
 
     let pollInterval: ReturnType<typeof setInterval> | null = null;
     let succeeded = false;
     let attemptNum = 0;
+    const startedAt = Date.now();
+    const timeoutMs = 2 * 60 * 1000;
 
     const cleanup = () => {
       if (pollInterval) {
@@ -141,7 +263,7 @@ export default function LoginScreen() {
       attemptNum++;
       try {
         console.log(`[GoogleAuth] Poll #${attemptNum} → ${pollUrl}`);
-        const res = await fetch(pollUrl);
+        const res = await fetch(pollUrl, { credentials: "include" });
         console.log(`[GoogleAuth] Poll #${attemptNum} status: ${res.status}`);
         if (res.ok) {
           const data = await res.json();
@@ -172,29 +294,24 @@ export default function LoginScreen() {
 
       pollInterval = setInterval(() => { doPoll(); }, 2000);
 
-      await WebBrowser.openBrowserAsync(startUrl, {
+      WebBrowser.openBrowserAsync(startUrl, {
         showTitle: false,
         toolbarColor: "#0F0F0F",
         secondaryToolbarColor: "#0F0F0F",
+      }).catch((browserErr) => {
+        console.log("[GoogleAuth] Browser sign-in window closed or failed:", browserErr);
       });
 
-      console.log(`[GoogleAuth] Browser closed. succeeded=${succeeded}, isAuth=${isAuthenticatedRef.current}`);
-      cleanup();
+      console.log(`[GoogleAuth] Browser launched. succeeded=${succeeded}, isAuth=${isAuthenticatedRef.current}`);
 
-      if (succeeded || isAuthenticatedRef.current) {
-        setLoading(false);
-        return;
-      }
-
-      const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
-      for (let i = 0; i < 3; i++) {
+      while (Date.now() - startedAt < timeoutMs) {
         if (isAuthenticatedRef.current) {
           setLoading(false);
           return;
         }
         const found = await doPoll();
         if (found) return;
-        await delay(300);
+        await delay(1000);
       }
 
       if (!isAuthenticatedRef.current) {
@@ -209,37 +326,193 @@ export default function LoginScreen() {
     }
   }
 
+  async function handleTelegramGoogleSignIn() {
+    await clearAuthStorage();
+
+    const baseUrl = getApiUrl();
+    const { sessionId, startUrl, pollUrl } = buildMobileAuthUrls(baseUrl);
+    const webStartUrl = new URL(startUrl);
+    webStartUrl.searchParams.set("return_to", "web");
+    webStartUrl.searchParams.set("flow", "implicit");
+
+    let pollInterval: ReturnType<typeof setInterval> | null = null;
+    let attemptNum = 0;
+    const startedAt = Date.now();
+    const timeoutMs = 2 * 60 * 1000;
+
+    const cleanup = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    };
+
+    const doPoll = async (): Promise<boolean> => {
+      attemptNum++;
+      try {
+        console.log(`[GoogleAuth/Telegram] Poll #${attemptNum} session=${sessionId}`);
+        const res = await fetch(pollUrl, { credentials: "include" });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.ready && data.token) {
+            cleanup();
+            await loginWithToken(data.token);
+            setLoading(false);
+            return true;
+          }
+        }
+      } catch (err) {
+        console.log(`[GoogleAuth/Telegram] Poll #${attemptNum} error:`, err);
+      }
+      return false;
+    };
+
+    try {
+      pollInterval = setInterval(() => { doPoll(); }, 2000);
+      openTelegramOAuthLink(webStartUrl.toString());
+
+      while (Date.now() - startedAt < timeoutMs) {
+        if (isAuthenticatedRef.current) {
+          setLoading(false);
+          return;
+        }
+        const found = await doPoll();
+        if (found) return;
+        await delay(1000);
+      }
+
+      if (!isAuthenticatedRef.current) {
+        setError("Google sign-in timed out. Complete the browser sign-in, then return to Jarvis and try again.");
+      }
+    } catch (e: any) {
+      setError(e.message || "Could not open Google sign-in.");
+    } finally {
+      cleanup();
+      setLoading(false);
+    }
+  }
+
+  async function handleWebGoogleTokenSignIn() {
+    if (typeof window === "undefined") {
+      throw new Error("Google sign-in is only available in a browser.");
+    }
+
+    await clearAuthStorage();
+    const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
+    if (!clientId) {
+      throw new Error("Google client ID not configured.");
+    }
+
+    if (!window.google?.accounts.oauth2) {
+      await loadGisScript();
+      throw new Error("Google sign-in finished loading. Please click Sign in with Google again.");
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const timeout = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error("Google sign-in did not finish. Your browser may have blocked the Google pop-up."));
+      }, 30000);
+
+      const finish = (fn: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        fn();
+      };
+
+      const tokenClient = window.google?.accounts.oauth2?.initTokenClient({
+        client_id: clientId,
+        scope: "openid email profile",
+        prompt: "select_account",
+        callback: async (response) => {
+          if (response.error) {
+            finish(() => reject(new Error(response.error_description || response.error || "Google sign-in failed")));
+            return;
+          }
+          if (!response.access_token) {
+            finish(() => reject(new Error("Google did not return an access token. Please try again.")));
+            return;
+          }
+          try {
+            await loginWithGoogle(null, response.access_token);
+            finish(resolve);
+          } catch (e: any) {
+            finish(() => reject(new Error(e.message || "Google sign-in failed")));
+          }
+        },
+        error_callback: (popupError) => {
+          finish(() => {
+            reject(new Error(popupError.message || popupError.type || "Google sign-in could not open."));
+          });
+        },
+      });
+
+      if (!tokenClient) {
+        finish(() => reject(new Error("Google sign-in could not initialize.")));
+        return;
+      }
+
+      try {
+        tokenClient.requestAccessToken({ prompt: "select_account" });
+      } catch (e: any) {
+        finish(() => {
+          reject(new Error(e.message || "Google sign-in could not open."));
+        });
+      }
+    });
+  }
+
+  function handleWebGoogleRedirectSignIn() {
+    if (typeof window === "undefined") {
+      throw new Error("Google sign-in is only available in a browser.");
+    }
+    if (isLocalWebPreview()) {
+      throw new Error(
+        "Google popup sign-in was blocked. For local preview, allow popups for localhost or use Dev Login so you stay on the local app.",
+      );
+    }
+
+    const baseUrl = getApiUrl();
+    const { startUrl } = buildMobileAuthUrls(baseUrl);
+    const webStartUrl = new URL(startUrl);
+    webStartUrl.searchParams.set("return_to", "web");
+    clearAuthStorage().catch((err) => {
+      console.warn("[GoogleAuth] Could not clear stale auth before redirect:", err);
+    });
+    window.location.href = webStartUrl.toString();
+  }
+
+  function googleConfigHelp(errorMessage?: string) {
+    const base = errorMessage || "Google sign-in could not finish.";
+    if (isLocalWebPreview()) return base;
+    return `${base} In Google Cloud Console, make sure this OAuth client allows the JavaScript origin https://gameplanjarvisai.up.railway.app and redirect URI https://gameplanjarvisai.up.railway.app/api/oauth/google/callback.`;
+  }
+
   async function handleGooglePress() {
     setError("");
     if (sessionExpired) clearSessionExpired();
 
     if (Platform.OS === "web") {
-      if (!gisReady) {
-        setLoading(true);
-        try {
-          const clientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
-          if (!clientId) throw new Error("Google client ID not configured");
-          await loadGisScript();
-          if (!gisInitialized.current) {
-            gisInitialized.current = true;
-            window.google!.accounts.id.initialize({
-              client_id: clientId,
-              callback: handleGisCredential,
-            });
-            setGisReady(true);
-          }
-        } catch (e: any) {
-          setError(e.message || "Could not load Google sign-in");
-          setLoading(false);
+      setLoading(true);
+      try {
+        if (isTelegramWebViewBrowser()) {
+          await handleTelegramGoogleSignIn();
           return;
         }
-        setLoading(false);
-      }
-      window.google?.accounts.id.prompt((notification) => {
-        if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-          setError("Google sign-in was dismissed. Please try again.");
+        await handleWebGoogleTokenSignIn();
+      } catch (e: any) {
+        console.warn("[GoogleAuth] Browser popup sign-in failed; trying redirect fallback:", e);
+        try {
+          handleWebGoogleRedirectSignIn();
+        } catch (redirectErr: any) {
+          console.warn("[GoogleAuth] Browser redirect sign-in failed:", redirectErr);
+          setError(googleConfigHelp(redirectErr.message || e.message));
+          setLoading(false);
         }
-      });
+      }
       return;
     }
 
@@ -261,15 +534,22 @@ export default function LoginScreen() {
     setPwLoading(true);
     try {
       const base = getApiUrl();
-      const res = await fetch(`${base}/api/auth/login`, {
+      const res = await fetch(new URL("/api/auth/login", base).toString(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: username.trim(), password }),
       });
-      const data = await res.json();
+      const raw = await res.text();
+      let data: { token?: string; error?: string } = {};
+      try {
+        data = raw ? JSON.parse(raw) : {};
+      } catch {
+        throw new Error("Login returned an unexpected response. Please refresh and try again.");
+      }
       if (!res.ok) {
         setError(data.error || "Invalid username or password.");
       } else {
+        if (!data.token) throw new Error("Login response did not include a token.");
         await loginWithToken(data.token);
       }
     } catch (err: unknown) {
@@ -389,9 +669,22 @@ export default function LoginScreen() {
                 try {
                   const base =
                     typeof window !== "undefined" && window.location.hostname === "localhost"
-                      ? "http://localhost:5000"
+                      ? (process.env.EXPO_PUBLIC_DEV_AUTH_URL || "http://localhost:5001")
                       : getApiUrl();
-                  const res = await fetch(`${base}/api/dev-token`);
+                  const controller = new AbortController();
+                  const timeout = setTimeout(() => controller.abort(), 8000);
+                  let res: Response;
+                  try {
+                    res = await fetch(new URL("/api/dev-token", base).toString(), {
+                      signal: controller.signal,
+                    });
+                  } finally {
+                    clearTimeout(timeout);
+                  }
+                  if (!res.ok) {
+                    const text = await res.text();
+                    throw new Error(text || `Dev login failed with ${res.status}`);
+                  }
                   const { token } = await res.json();
                   await loginWithToken(token);
                 } catch (e: any) {

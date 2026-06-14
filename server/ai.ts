@@ -1,9 +1,5 @@
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import "./agent/providers/envAliases";
+import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
 
 export interface CompletionHistoryItem {
   title: string;
@@ -117,12 +113,12 @@ Return ONLY a JSON object with a "steps" array of strings. No other text.`;
   const { getModel } = await import("./lib/modelPrefs");
   const model = await getModel(userId ?? "", "planning");
 
-  const response = await openai.chat.completions.create({
+  const response = await createRoutedChatCompletion({
     model,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 8192,
-  });
+  }, { tier: "balanced", logPrefix: "[AI/resizeTask]", userId });
 
   const content = response.choices[0]?.message?.content || '{"steps":[]}';
   try {
@@ -159,12 +155,12 @@ Return ONLY a JSON object: {"suggestion": "your 2-3 sentence response"}`;
   const { getModel: getModelUnblock } = await import("./lib/modelPrefs");
   const unblockModel = await getModelUnblock(userId ?? "", "planning");
 
-  const response = await openai.chat.completions.create({
+  const response = await createRoutedChatCompletion({
     model: unblockModel,
     messages: [{ role: 'user', content: prompt }],
     response_format: { type: 'json_object' },
     max_completion_tokens: 512,
-  });
+  }, { tier: "cheap", logPrefix: "[AI/unblockTask]", userId });
 
   try {
     const parsed = JSON.parse(response.choices[0]?.message?.content || '{}');
@@ -271,12 +267,12 @@ Return ONLY a JSON object with "tasks" array and "insight" string. No other text
   const { getModel: getModelPlan } = await import("./lib/modelPrefs");
   const planModel = await getModelPlan(req.userId ?? "", "planning");
 
-  const response = await openai.chat.completions.create({
+  const response = await createRoutedChatCompletion({
     model: planModel,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 8192,
-  });
+  }, { tier: "balanced", logPrefix: "[AI/generateSmartPlan]", userId: req.userId });
 
   const content = response.choices[0]?.message?.content || '{"tasks":[],"insight":""}';
   try {

@@ -1,20 +1,119 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
+import * as crypto from "crypto";
 import { db } from "./db";
 import { users, mobileAuthSessions } from "@shared/schema";
 import { eq, lt } from "drizzle-orm";
 import { generateToken } from "./auth";
+import {
+  createMobileAuthImplicitCallbackHtml,
+  createMobileAuthSuccessHtml,
+  type MobileAuthReturnTarget,
+} from "./auth/mobileAuthHtml";
 
 export const mobileAuthRouter = Router();
 
-function getCallbackUrl(req: Request): string {
+const PENDING_TOKEN_PREFIX = "__PENDING__:";
+const COMPLETE_TOKEN_PREFIX = "__COMPLETE__:";
+const POLL_SECRET_BYTES = 24;
+const BIND_COOKIE_NAME = "mobile_auth_bind";
+const NATIVE_BIND_HASH = "native";
+
+function sha256(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex");
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const aBuffer = Buffer.from(a);
+  const bBuffer = Buffer.from(b);
+  if (aBuffer.length !== bBuffer.length) return false;
+  return crypto.timingSafeEqual(aBuffer, bBuffer);
+}
+
+function readCookie(req: Request, name: string): string | null {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(";")) {
+    const [key, ...value] = part.trim().split("=");
+    if (key === name) return decodeURIComponent(value.join("="));
+  }
+  return null;
+}
+
+function isValidSessionId(value: string): boolean {
+  return /^[A-Za-z0-9_-]{24,128}$/.test(value);
+}
+
+function isValidPollSecret(value: string): boolean {
+  return /^[A-Za-z0-9_-]{32,256}$/.test(value);
+}
+
+function createOauthState(sessionId: string, returnTarget: MobileAuthReturnTarget = "native"): string {
+  const nonce = crypto.randomBytes(POLL_SECRET_BYTES).toString("base64url");
+  return returnTarget === "web" ? `${sessionId}.${nonce}.web` : `${sessionId}.${nonce}`;
+}
+
+function parseOauthState(state: string): { sessionId: string; nonce: string; returnTarget: MobileAuthReturnTarget } | null {
+  const [sessionId, nonce, ...extra] = state.split(".");
+  if (!sessionId || !nonce || extra.length > 1) return null;
+  const returnTarget = extra[0] === "web" ? "web" : "native";
+  if (extra.length === 1 && extra[0] !== "web") return null;
+  if (!isValidSessionId(sessionId) || !isValidSessionId(nonce)) return null;
+  return { sessionId, nonce, returnTarget };
+}
+
+function pendingTokenValue(oauthState: string, pollSecret: string, bindNonce: string): string {
+  return `${PENDING_TOKEN_PREFIX}${sha256(oauthState)}:${sha256(pollSecret)}:${sha256(bindNonce)}`;
+}
+
+function parsePendingTokenValue(token: string): { stateHash: string; pollHash: string; bindHash: string } | null {
+  if (!token.startsWith(PENDING_TOKEN_PREFIX)) return null;
+  const rest = token.slice(PENDING_TOKEN_PREFIX.length);
+  const [stateHash, pollHash, bindHash, ...extra] = rest.split(":");
+  if (!stateHash || !pollHash || !bindHash || extra.length > 0) return null;
+  return { stateHash, pollHash, bindHash };
+}
+
+function completeTokenValue(pollHash: string, bindHash: string, token: string): string {
+  return `${COMPLETE_TOKEN_PREFIX}${pollHash}:${bindHash}:${token}`;
+}
+
+function parseCompleteTokenValue(value: string): { pollHash: string; bindHash: string; token: string } | null {
+  if (!value.startsWith(COMPLETE_TOKEN_PREFIX)) return null;
+  const rest = value.slice(COMPLETE_TOKEN_PREFIX.length);
+  const firstSeparator = rest.indexOf(":");
+  const secondSeparator = rest.indexOf(":", firstSeparator + 1);
+  if (firstSeparator <= 0 || secondSeparator <= firstSeparator) return null;
+  const pollHash = rest.slice(0, firstSeparator);
+  const bindHash = rest.slice(firstSeparator + 1, secondSeparator);
+  const token = rest.slice(secondSeparator + 1);
+  if (!pollHash || !bindHash || !token) return null;
+  return { pollHash, bindHash, token };
+}
+
+function getRequestOrigin(req: Request): string {
   const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol;
   const host = (req.headers["x-forwarded-host"] as string) || req.get("host") || "";
-  return `${proto}://${host}/api/auth/mobile/callback`;
+  return `${proto}://${host}`;
+}
+
+function isTelegramWebView(req: Request): boolean {
+  const ua = req.get("user-agent") || "";
+  return /\bTelegram(?:Bot)?\b/i.test(ua);
+}
+
+export function getMobileAuthCallbackUrl(req: Request): string {
+  return `${getRequestOrigin(req)}/api/oauth/google/callback`;
+}
+
+export function isMobileAuthState(value: string | undefined): boolean {
+  return typeof value === "string" && parseOauthState(value) !== null;
 }
 
 function successHtml(token: string): string {
   const encodedToken = encodeURIComponent(token);
+  const tokenJson = JSON.stringify(token);
+  const originFallback = `/login#auth_token=${encodedToken}`;
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -54,8 +153,19 @@ function successHtml(token: string): string {
   </div>
   <script>
     try {
+      if (window.opener && !window.opener.closed) {
+        window.opener.postMessage({ type: 'gameplan-auth-token', token: ${tokenJson} }, window.location.origin);
+        window.close();
+      }
+    } catch(e) {}
+    try {
       window.location.href = 'gameplan://auth/complete?token=${encodedToken}';
     } catch(e) {}
+    setTimeout(function () {
+      try {
+        window.location.replace('${originFallback}');
+      } catch(e) {}
+    }, 800);
   </script>
 </body>
 </html>`;
@@ -84,34 +194,78 @@ function errorHtml(message: string): string {
 </html>`;
 }
 
-mobileAuthRouter.get("/start", (req: Request, res: Response) => {
-  const { session_id } = req.query as Record<string, string>;
+mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
+  const { session_id, poll_secret, return_to, flow } = req.query as Record<string, string>;
   if (!session_id) return res.status(400).json({ error: "session_id required" });
+  if (!isValidSessionId(session_id)) return res.status(400).json({ error: "invalid session_id" });
+  const returnTarget: MobileAuthReturnTarget = return_to === "web" || isTelegramWebView(req) ? "web" : "native";
 
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   if (!clientId) return res.status(500).json({ error: "Google OAuth not configured" });
 
-  const callbackUrl = getCallbackUrl(req);
+  const oauthState = createOauthState(session_id, returnTarget);
+  const bindNonce = crypto.randomBytes(POLL_SECRET_BYTES).toString("base64url");
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+  if (poll_secret) {
+    if (!isValidPollSecret(poll_secret)) return res.status(400).json({ error: "invalid poll_secret" });
+    await db.insert(mobileAuthSessions).values({
+      sessionId: session_id,
+      token: pendingTokenValue(oauthState, poll_secret, bindNonce),
+      expiresAt,
+    }).onConflictDoUpdate({
+      target: mobileAuthSessions.sessionId,
+      set: {
+        token: pendingTokenValue(oauthState, poll_secret, bindNonce),
+        expiresAt,
+      },
+    });
+  }
+
+  res.cookie(BIND_COOKIE_NAME, bindNonce, {
+    httpOnly: true,
+    secure: req.secure || req.headers["x-forwarded-proto"] === "https",
+    sameSite: "lax",
+    maxAge: 10 * 60 * 1000,
+    path: "/",
+  });
+
+  res.setHeader("Cache-Control", "no-store");
+  const callbackUrl = getMobileAuthCallbackUrl(req);
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: callbackUrl,
-    response_type: "code",
+    response_type: flow === "implicit" ? "token" : "code",
     scope: "openid email profile",
-    state: session_id,
-    access_type: "offline",
+    state: oauthState,
     prompt: "select_account",
-    max_age: "0",
   });
+  if (flow !== "implicit") {
+    params.set("access_type", "offline");
+  }
+  if (flow === "implicit") {
+    params.set("include_granted_scopes", "true");
+  }
+  if (returnTarget === "native") {
+    params.set("max_age", "0");
+  }
 
   res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
 });
 
-mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
-  const { code, state: session_id, error } = req.query as Record<string, string>;
+export async function handleMobileAuthCallback(req: Request, res: Response) {
+  const { code, state, error } = req.query as Record<string, string>;
 
-  if (error || !code || !session_id) {
+  if (error || !code || !state) {
     return res.send(errorHtml(error || "Sign-in was cancelled."));
   }
+
+  const parsedState = parseOauthState(state);
+  if (!parsedState) {
+    return res.send(errorHtml("Invalid sign-in state. Please try again."));
+  }
+  const { sessionId, returnTarget } = parsedState;
+  const effectiveReturnTarget: MobileAuthReturnTarget = returnTarget === "web" || isTelegramWebView(req) ? "web" : "native";
 
   const clientId = process.env.GOOGLE_WEB_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
@@ -119,7 +273,7 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
     return res.send(errorHtml("OAuth credentials not configured on the server."));
   }
 
-  const callbackUrl = getCallbackUrl(req);
+  const callbackUrl = getMobileAuthCallbackUrl(req);
 
   try {
     const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
@@ -191,26 +345,107 @@ mobileAuthRouter.get("/callback", async (req: Request, res: Response) => {
 
     const token = generateToken(user.id);
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    const pendingRows = await db.select().from(mobileAuthSessions)
+      .where(eq(mobileAuthSessions.sessionId, sessionId)).limit(1);
+    const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
+    if (pending && timingSafeEqual(pending.stateHash, sha256(state))) {
+      await db.update(mobileAuthSessions)
+        .set({ token: completeTokenValue(pending.pollHash, NATIVE_BIND_HASH, token), expiresAt })
+        .where(eq(mobileAuthSessions.sessionId, sessionId));
+    }
 
-    await db.insert(mobileAuthSessions).values({
-      sessionId: session_id,
-      token,
-      expiresAt,
-    }).onConflictDoUpdate({
-      target: mobileAuthSessions.sessionId,
-      set: { token, expiresAt },
-    });
-
-    return res.send(successHtml(token));
+    res.setHeader("Cache-Control", "no-store");
+    return res.send(createMobileAuthSuccessHtml(token, { returnTarget: effectiveReturnTarget }));
   } catch (err) {
     console.error("Mobile auth callback error:", err);
     return res.send(errorHtml("An unexpected error occurred. Please try again."));
   }
+}
+
+mobileAuthRouter.get("/callback", handleMobileAuthCallback);
+
+mobileAuthRouter.get("/implicit-callback", (_req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  return res.send(createMobileAuthImplicitCallbackHtml());
+});
+
+mobileAuthRouter.post("/implicit-complete", async (req: Request, res: Response) => {
+  const accessToken = typeof req.body?.accessToken === "string" ? req.body.accessToken : "";
+  const state = typeof req.body?.state === "string" ? req.body.state : "";
+  if (!accessToken || !state) return res.status(400).json({ error: "Missing Google sign-in token." });
+
+  const parsedState = parseOauthState(state);
+  if (!parsedState) return res.status(400).json({ error: "Invalid sign-in state." });
+
+  try {
+    await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, new Date()));
+
+    const pendingRows = await db.select().from(mobileAuthSessions)
+      .where(eq(mobileAuthSessions.sessionId, parsedState.sessionId)).limit(1);
+    const pending = pendingRows.length > 0 ? parsePendingTokenValue(pendingRows[0].token) : null;
+    if (!pending || !timingSafeEqual(pending.stateHash, sha256(state))) {
+      return res.status(400).json({ error: "Sign-in session expired. Return to Jarvis and try again." });
+    }
+
+    const infoRes = await fetch("https://www.googleapis.com/userinfo/v2/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!infoRes.ok) return res.status(401).json({ error: "Google sign-in token was rejected." });
+
+    const googleUser = await infoRes.json() as { id?: string; name?: string; email?: string };
+    if (!googleUser.id) return res.status(401).json({ error: "Could not retrieve Google user info." });
+
+    const existing = await db.select().from(users)
+      .where(eq(users.googleId, googleUser.id)).limit(1);
+
+    let user;
+    if (existing.length > 0) {
+      user = existing[0];
+      const updates: Record<string, string> = {};
+      if (googleUser.name && googleUser.name !== user.displayName) updates.displayName = googleUser.name;
+      if (googleUser.email && googleUser.email !== user.email) updates.email = googleUser.email;
+      if (Object.keys(updates).length > 0) {
+        await db.update(users).set(updates).where(eq(users.id, user.id));
+        user = { ...user, ...updates };
+      }
+    } else {
+      const base = googleUser.email
+        ? googleUser.email.split("@")[0]
+        : `google_${googleUser.id.slice(0, 8)}`;
+      let uniqueUsername = base;
+      const existingUsername = await db.select().from(users)
+        .where(eq(users.username, base)).limit(1);
+      if (existingUsername.length > 0) uniqueUsername = `${base}_${Date.now().toString(36)}`;
+
+      const [newUser] = await db.insert(users).values({
+        username: uniqueUsername,
+        googleId: googleUser.id,
+        displayName: googleUser.name || uniqueUsername,
+        email: googleUser.email || null,
+      }).returning();
+      user = newUser;
+    }
+
+    const token = generateToken(user.id);
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await db.update(mobileAuthSessions)
+      .set({ token: completeTokenValue(pending.pollHash, NATIVE_BIND_HASH, token), expiresAt })
+      .where(eq(mobileAuthSessions.sessionId, parsedState.sessionId));
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("Mobile implicit auth completion error:", err);
+    return res.status(500).json({ error: "Jarvis could not finish sign-in." });
+  }
 });
 
 mobileAuthRouter.get("/poll", async (req: Request, res: Response) => {
-  const { session_id } = req.query as Record<string, string>;
+  const { session_id, poll_secret } = req.query as Record<string, string>;
   if (!session_id) return res.status(400).json({ error: "session_id required" });
+  if (!poll_secret) return res.status(400).json({ error: "poll_secret required" });
+  if (!isValidSessionId(session_id) || !isValidPollSecret(poll_secret)) {
+    return res.status(400).json({ error: "invalid polling credentials" });
+  }
 
   try {
     await db.delete(mobileAuthSessions).where(lt(mobileAuthSessions.expiresAt, new Date()));
@@ -223,10 +458,21 @@ mobileAuthRouter.get("/poll", async (req: Request, res: Response) => {
     }
 
     const session = rows[0];
+    if (parsePendingTokenValue(session.token)) {
+      return res.status(404).json({ ready: false });
+    }
+
+    const completed = parseCompleteTokenValue(session.token);
+    const bindNonce = readCookie(req, BIND_COOKIE_NAME);
+    const bindMatches = Boolean(completed && bindNonce && timingSafeEqual(completed.bindHash, sha256(bindNonce)));
+    const nativeMobileSession = completed?.bindHash === NATIVE_BIND_HASH;
+    if (!completed || !timingSafeEqual(completed.pollHash, sha256(poll_secret)) || (!bindMatches && !nativeMobileSession)) {
+      return res.status(404).json({ ready: false });
+    }
 
     await db.delete(mobileAuthSessions).where(eq(mobileAuthSessions.sessionId, session_id));
 
-    return res.json({ ready: true, token: session.token });
+    return res.json({ ready: true, token: completed.token });
   } catch (err) {
     console.error("Mobile auth poll error:", err);
     return res.status(500).json({ ready: false, error: "Internal error" });

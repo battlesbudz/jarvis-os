@@ -26,18 +26,30 @@ import RAnimated, {
 import { Ionicons } from '@expo/vector-icons';
 import {
   useAudioRecorder,
-  createAudioPlayer,
   setAudioModeAsync,
   requestRecordingPermissionsAsync,
   AudioQuality,
 } from 'expo-audio';
-import type { AudioPlayer } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
+
+type SpeechModule = {
+  stop: () => Promise<void>;
+  speak: (text: string, options?: {
+    rate?: number;
+    pitch?: number;
+    onDone?: () => void;
+    onError?: (error: unknown) => void;
+    onStopped?: () => void;
+  }) => void;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const Speech = require('expo-speech') as SpeechModule;
 
 type SessionState =
   | 'idle'
@@ -53,76 +65,30 @@ interface TranscriptEntry {
   text: string;
 }
 
+interface CodexVoiceTurnResponse {
+  transcript?: string;
+  reply?: string;
+  sdkSessionId?: string;
+  error?: string;
+  code?: string;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function base64ToUint8Array(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const len = binary.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function pcm16ToWav(pcmBytes: Uint8Array, sampleRate: number = 24000): Uint8Array {
-  const numChannels = 1;
-  const bitsPerSample = 16;
-  const dataSize = pcmBytes.length;
-  const buf = new ArrayBuffer(44 + dataSize);
-  const v = new DataView(buf);
-  const str = (offset: number, s: string) => {
-    for (let i = 0; i < s.length; i++) v.setUint8(offset + i, s.charCodeAt(i));
-  };
-  str(0, 'RIFF');
-  v.setUint32(4, 36 + dataSize, true);
-  str(8, 'WAVE');
-  str(12, 'fmt ');
-  v.setUint32(16, 16, true);
-  v.setUint16(20, 1, true);
-  v.setUint16(22, numChannels, true);
-  v.setUint32(24, sampleRate, true);
-  v.setUint32(28, (sampleRate * numChannels * bitsPerSample) / 8, true);
-  v.setUint16(32, (numChannels * bitsPerSample) / 8, true);
-  v.setUint16(34, bitsPerSample, true);
-  str(36, 'data');
-  v.setUint32(40, dataSize, true);
-  new Uint8Array(buf, 44).set(pcmBytes);
-  return new Uint8Array(buf);
-}
-
-function uint8ToBase64(bytes: Uint8Array): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let result = '';
-  const len = bytes.length;
-  for (let i = 0; i < len; i += 3) {
-    const b0 = bytes[i];
-    const b1 = i + 1 < len ? bytes[i + 1] : 0;
-    const b2 = i + 2 < len ? bytes[i + 2] : 0;
-    result += chars[b0 >> 2];
-    result += chars[((b0 & 3) << 4) | (b1 >> 4)];
-    result += i + 1 < len ? chars[((b1 & 15) << 2) | (b2 >> 6)] : '=';
-    result += i + 2 < len ? chars[b2 & 63] : '=';
-  }
-  return result;
-}
-
-/** Sample max PCM16 amplitude from a base64 audio chunk (returns 0–1). */
-function samplePcmAmplitude(base64Chunk: string): number {
-  try {
-    const bytes = base64ToUint8Array(base64Chunk);
-    let max = 0;
-    // PCM16 = 2 bytes per sample
-    const step = Math.max(2, Math.floor(bytes.length / 128) * 2);
-    for (let i = 0; i < bytes.length - 1; i += step) {
-      // Little-endian signed int16
-      let sample = bytes[i] | (bytes[i + 1] << 8);
-      if (sample > 32767) sample -= 65536;
-      const abs = Math.abs(sample);
-      if (abs > max) max = abs;
-    }
-    return Math.min(1, max / 32767);
-  } catch {
-    return 0;
-  }
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read audio blob'));
+    reader.onloadend = () => {
+      const value = typeof reader.result === 'string' ? reader.result : '';
+      resolve(value.includes(',') ? value.split(',').pop() || '' : value);
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 // ── Waveform Bars Component ────────────────────────────────────────────────
@@ -262,7 +228,7 @@ const waveStyles = StyleSheet.create({
 
 // ── State label config ────────────────────────────────────────────────────────
 const STATE_CONFIG: Record<SessionState, { label: string; color: string }> = {
-  idle:       { label: 'Tap to start',   color: Colors.textTertiary },
+  idle:       { label: 'Tap to speak',   color: Colors.textTertiary },
   connecting: { label: 'Connecting…',    color: Colors.textSecondary },
   listening:  { label: 'Listening',      color: Colors.cyan },
   thinking:   { label: 'Thinking…',      color: Colors.violet },
@@ -270,6 +236,8 @@ const STATE_CONFIG: Record<SessionState, { label: string; color: string }> = {
   muted:      { label: 'Muted',          color: Colors.warning },
   ended:      { label: 'Session ended',  color: Colors.textTertiary },
 };
+
+const CODEX_VOICE_TURN_RECORDING_MS = 5000;
 
 // ── Main Component ────────────────────────────────────────────────────────────
 
@@ -282,20 +250,18 @@ export default function VoiceRealtimeScreen() {
   const [currentSpeech, setCurrentSpeech] = useState('');
   const [muted, setMuted] = useState(false);
   const [savingTranscript, setSavingTranscript] = useState(false);
+  const [codexSessionId, setCodexSessionId] = useState<string | null>(null);
 
   // Amplitude ref — written at ~20fps, read by WaveformBars
   const ampRef = useRef(0);
 
-  // ── WebRTC refs (web only) ───────────────────────────────────────────────
-  const pcRef = useRef<RTCPeerConnection | null>(null);
-  const dcRef = useRef<RTCDataChannel | null>(null);
-  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  // ── Web recording refs ───────────────────────────────────────────────────
   const localStreamRef = useRef<MediaStream | null>(null);
+  const webRecorderRef = useRef<MediaRecorder | null>(null);
+  const webChunksRef = useRef<Blob[]>([]);
   const webAnalyserRef = useRef<AnalyserNode | null>(null);
   const webAmpFrameRef = useRef<number | null>(null);
   const webAudioCtxRef = useRef<AudioContext | null>(null);
-  const endSessionRef = useRef<(() => Promise<void>) | null>(null);
-
   // ── Native refs ──────────────────────────────────────────────────────────
   const nativeRecorder = useAudioRecorder({
     extension: '.wav',
@@ -307,10 +273,6 @@ export default function VoiceRealtimeScreen() {
     ios: { audioQuality: AudioQuality.LOW, linearPCMBitDepth: 16, linearPCMIsBigEndian: false, linearPCMIsFloat: false },
     web: { mimeType: 'audio/webm', bitsPerSecond: 48000 },
   });
-  const nativeSoundRef = useRef<AudioPlayer | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const audioPcmChunksRef = useRef<string[]>([]);
-  const currentUserTextRef = useRef('');
   const currentAssistantTextRef = useRef('');
 
   // Metering loop for native mic amplitude
@@ -325,6 +287,8 @@ export default function VoiceRealtimeScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const stateRef = useRef(state);
   stateRef.current = state;
+  const codexSessionIdRef = useRef(codexSessionId);
+  codexSessionIdRef.current = codexSessionId;
 
   useEffect(() => {
     cancelAnimation(ring1Scale);
@@ -372,36 +336,6 @@ export default function VoiceRealtimeScreen() {
     opacity: ring2Opacity.value,
   }));
 
-  // ── Fetch ephemeral token (web WebRTC only) ───────────────────────────────
-  const fetchEphemeralToken = useCallback(async (): Promise<{ clientSecret: string; sessionId: string } | null> => {
-    try {
-      const url = new URL('/api/voice/realtime-session', getApiUrl());
-      const res = await authFetch(url.toString(), { method: 'POST' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      return { clientSecret: data.client_secret?.value ?? data.client_secret, sessionId: data.session_id };
-    } catch (err) {
-      console.error('[voice] Failed to fetch token:', err);
-      return null;
-    }
-  }, []);
-
-  // ── Execute tool call on server ───────────────────────────────────────────
-  const executeToolCall = useCallback(async (toolName: string, toolArgs: unknown): Promise<string> => {
-    try {
-      const url = new URL('/api/voice/tool-call', getApiUrl());
-      const res = await authFetch(url.toString(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tool_name: toolName, arguments: toolArgs }),
-      });
-      const data = await res.json();
-      return data.result ?? JSON.stringify({ error: 'No result' });
-    } catch {
-      return JSON.stringify({ error: 'Tool execution failed' });
-    }
-  }, []);
-
   // ── Web amplitude metering via AnalyserNode ───────────────────────────────
   const startWebAmpMeter = useCallback((stream: MediaStream) => {
     try {
@@ -442,175 +376,19 @@ export default function VoiceRealtimeScreen() {
     ampRef.current = 0;
   }, []);
 
-  // ── WebRTC session (web) ──────────────────────────────────────────────────
-  const startWebSession = useCallback(async () => {
-    setState('connecting');
-
-    const tokenData = await fetchEphemeralToken();
-    if (!tokenData) {
-      Alert.alert('Connection failed', 'Could not create a voice session. Check your connection and try again.');
-      setState('idle');
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      localStreamRef.current = stream;
-      startWebAmpMeter(stream);
-
-      const pc = new RTCPeerConnection();
-      pcRef.current = pc;
-
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
-
-      pc.ontrack = (event) => {
-        if (!audioElRef.current) {
-          const el = document.createElement('audio');
-          el.autoplay = true;
-          document.body.appendChild(el);
-          audioElRef.current = el;
-        }
-        audioElRef.current.srcObject = event.streams[0];
-      };
-
-      const dc = pc.createDataChannel('oai-events');
-      dcRef.current = dc;
-
-      dc.onopen = () => {
-        setState('listening');
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      };
-
-      dc.onmessage = (e) => {
-        try {
-          const evt = JSON.parse(e.data);
-          handleRealtimeEvent(evt, tokenData.clientSecret, dc);
-        } catch {}
-      };
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      const sdpRes = await fetch(
-        `https://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-12-17`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${tokenData.clientSecret}`,
-            'Content-Type': 'application/sdp',
-          },
-          body: offer.sdp,
-        }
-      );
-
-      if (!sdpRes.ok) {
-        throw new Error(`OpenAI SDP error: ${sdpRes.status}`);
-      }
-
-      const answerSdp = await sdpRes.text();
-      await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-    } catch (err) {
-      console.error('[voice] WebRTC setup failed:', err);
-      Alert.alert('Connection failed', 'Could not connect to Jarvis voice. Please try again.');
-      cleanupWebSession();
-      setState('idle');
-    }
-  }, [fetchEphemeralToken, startWebAmpMeter]);
-
-  const handleRealtimeEvent = useCallback(
-    (evt: Record<string, unknown>, clientSecret: string, dc: RTCDataChannel) => {
-      const type = evt.type as string;
-
-      if (type === 'input_audio_buffer.speech_started') {
-        setState('listening');
-      } else if (type === 'input_audio_buffer.speech_stopped') {
-        setState('thinking');
-        ampRef.current = 0;
-      } else if (type === 'response.created') {
-        setState('thinking');
-        currentAssistantTextRef.current = '';
-        ampRef.current = 0;
-      } else if (type === 'response.audio.delta') {
-        setState('speaking');
-        const delta = (evt.delta as string) || '';
-        if (delta) ampRef.current = samplePcmAmplitude(delta);
-      } else if (type === 'response.audio_transcript.delta') {
-        const delta = (evt.delta as string) || '';
-        currentAssistantTextRef.current += delta;
-        setCurrentSpeech(currentAssistantTextRef.current);
-      } else if (type === 'response.audio_transcript.done') {
-        const text = currentAssistantTextRef.current.trim();
-        if (text) {
-          setTranscript(prev => [...prev, { role: 'assistant', text }]);
-        }
-        currentAssistantTextRef.current = '';
-        setCurrentSpeech('');
-        ampRef.current = 0;
-        setState('listening');
-      } else if (type === 'conversation.item.input_audio_transcription.completed') {
-        const text = ((evt.transcript as string) || '').trim();
-        if (text) {
-          setTranscript(prev => [...prev, { role: 'user', text }]);
-        }
-      } else if (type === 'response.function_call_arguments.done') {
-        const callId = evt.call_id as string;
-        const toolName = evt.name as string;
-        let args: unknown = {};
-        try { args = JSON.parse((evt.arguments as string) || '{}'); } catch {}
-
-        executeToolCall(toolName, args).then(result => {
-          dc.send(JSON.stringify({
-            type: 'conversation.item.create',
-            item: {
-              type: 'function_call_output',
-              call_id: callId,
-              output: result,
-            },
-          }));
-          dc.send(JSON.stringify({ type: 'response.create' }));
-        });
-      } else if (type === 'response.cancelled' || type === 'response.done') {
-        ampRef.current = 0;
-        setState('listening');
-      } else if (type === 'error') {
-        console.error('[voice] Realtime error:', evt);
-      }
-    },
-    [executeToolCall]
-  );
-
-  const cleanupWebSession = useCallback(() => {
-    stopWebAmpMeter();
-    localStreamRef.current?.getTracks().forEach(t => t.stop());
-    localStreamRef.current = null;
-    pcRef.current?.close();
-    pcRef.current = null;
-    dcRef.current = null;
-    if (audioElRef.current) {
-      audioElRef.current.srcObject = null;
-      audioElRef.current.remove();
-      audioElRef.current = null;
-    }
-    ampRef.current = 0;
-  }, [stopWebAmpMeter]);
-
   // ── Native metering (mic amplitude while recording) ───────────────────────
   const startNativeMeterLoop = useCallback(() => {
     if (meterLoopRef.current) clearInterval(meterLoopRef.current);
     meterLoopRef.current = setInterval(() => {
-      // Only drive waveform from mic while listening — speaking state uses PCM delta amplitude
       if (stateRef.current !== 'listening') return;
       if (!nativeRecorder.isRecording) return;
       try {
-        // Poll metering from the recorder status (isMeteringEnabled=true provides dBFS)
         const status = nativeRecorder.getStatus();
         const metering = status.metering;
         if (typeof metering === 'number') {
-          // metering is in dBFS (-160 to 0). Map to 0..1 using -60dBFS floor
           const clamped = Math.max(-60, Math.min(0, metering));
           ampRef.current = (clamped + 60) / 60;
         } else {
-          // No metering value yet — quiet idle signal
           ampRef.current = 0.05;
         }
       } catch {
@@ -627,29 +405,111 @@ export default function VoiceRealtimeScreen() {
     ampRef.current = 0;
   }, []);
 
-  // ── Native WebSocket session via server relay ─────────────────────────────
-  const startNativeSession = useCallback(async () => {
-    setState('connecting');
+  const speakCodexReply = useCallback(async (text: string) => {
+    if (muted || !text.trim()) return;
+    ampRef.current = 0.35;
 
-    const { granted } = await requestRecordingPermissionsAsync();
-    if (!granted) {
-      Alert.alert('Microphone needed', 'Please grant microphone access to use voice mode.');
-      setState('idle');
+    if (Platform.OS === 'web') {
+      const synthesis = typeof window !== 'undefined' ? window.speechSynthesis : null;
+      if (!synthesis) return;
+      await new Promise<void>((resolve) => {
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = 0.96;
+        utterance.pitch = 1;
+        utterance.onend = () => resolve();
+        utterance.onerror = () => resolve();
+        synthesis.cancel();
+        synthesis.speak(utterance);
+      });
       return;
     }
 
-    // Obtain a short-lived single-use relay ticket (30s TTL).
-    // This avoids embedding the long-lived JWT in the WebSocket URL.
-    let relayTicket: string | null = null;
+    await new Promise<void>((resolve) => {
+      Speech.stop();
+      Speech.speak(text, {
+        rate: 0.96,
+        pitch: 1,
+        onDone: resolve,
+        onError: () => resolve(),
+        onStopped: resolve,
+      });
+    });
+  }, [muted]);
+
+  const sendCodexVoiceTurn = useCallback(async (payload: { audioBase64?: string; mimeType?: string; text?: string }) => {
+    const url = new URL('/api/voice/codex-turn', getApiUrl());
+    const res = await authFetch(url.toString(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...payload,
+        sdkSessionId: codexSessionIdRef.current,
+      }),
+    });
+    const data = await res.json().catch(() => ({})) as CodexVoiceTurnResponse;
+    if (!res.ok) {
+      throw new Error(data.error || data.code || `Voice turn failed: ${res.status}`);
+    }
+
+    const userText = (data.transcript || '').trim();
+    const reply = (data.reply || '').trim();
+    if (!reply) throw new Error('Jarvis returned an empty voice reply.');
+
+    if (data.sdkSessionId) setCodexSessionId(data.sdkSessionId);
+    if (userText) setTranscript(prev => [...prev, { role: 'user', text: userText }]);
+
+    currentAssistantTextRef.current = reply;
+    setCurrentSpeech(reply);
+    setState('speaking');
     try {
-      const ticketUrl = new URL('/api/voice/relay-ticket', getApiUrl());
-      const ticketRes = await authFetch(ticketUrl.toString(), { method: 'POST' });
-      if (!ticketRes.ok) throw new Error(`Ticket fetch failed: ${ticketRes.status}`);
-      const ticketData = await ticketRes.json();
-      relayTicket = ticketData.ticket;
-    } catch (err) {
-      console.error('[voice] Failed to get relay ticket:', err);
-      Alert.alert('Connection failed', 'Could not start a voice session. Please try again.');
+      await speakCodexReply(reply);
+    } finally {
+      setTranscript(prev => [...prev, { role: 'assistant', text: reply }]);
+      currentAssistantTextRef.current = '';
+      setCurrentSpeech('');
+      ampRef.current = 0;
+      setState('idle');
+    }
+  }, [speakCodexReply]);
+
+  const recordWebCodexTurn = useCallback(async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    localStreamRef.current = stream;
+    startWebAmpMeter(stream);
+
+    const recorder = new MediaRecorder(stream);
+    webRecorderRef.current = recorder;
+    webChunksRef.current = [];
+
+    const stopped = new Promise<Blob>((resolve) => {
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) webChunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => {
+        resolve(new Blob(webChunksRef.current, { type: recorder.mimeType || 'audio/webm' }));
+      };
+    });
+
+    recorder.start();
+    setState('listening');
+    await sleep(CODEX_VOICE_TURN_RECORDING_MS);
+    if (recorder.state !== 'inactive') recorder.stop();
+    const blob = await stopped;
+
+    stream.getTracks().forEach(track => track.stop());
+    localStreamRef.current = null;
+    stopWebAmpMeter();
+    webRecorderRef.current = null;
+
+    const audioBase64 = await blobToBase64(blob);
+    setState('thinking');
+    await sendCodexVoiceTurn({ audioBase64, mimeType: blob.type || 'audio/webm' });
+  }, [sendCodexVoiceTurn, startWebAmpMeter, stopWebAmpMeter]);
+
+  const recordNativeCodexTurn = useCallback(async () => {
+    const { granted } = await requestRecordingPermissionsAsync();
+    if (!granted) {
+      Alert.alert('Microphone needed', 'Please grant microphone access to use voice mode.');
       setState('idle');
       return;
     }
@@ -658,218 +518,69 @@ export default function VoiceRealtimeScreen() {
       allowsRecording: true,
       playsInSilentMode: true,
     });
-
-    // Build relay URL — replace https/http with wss/ws
-    const apiBase = getApiUrl();
-    const relayUrl = apiBase
-      .replace(/^https:\/\//, 'wss://')
-      .replace(/^http:\/\//, 'ws://')
-      .replace(/\/+$/, '');
-    const wsUrl = `${relayUrl}/api/voice/ws?ticket=${encodeURIComponent(relayTicket!)}`;
-
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-    audioPcmChunksRef.current = [];
-
-    ws.onopen = () => {
-      setState('listening');
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      startNativeRecordingLoop();
-    };
-
-    ws.onmessage = (e) => {
-      try {
-        const evt = JSON.parse(e.data as string);
-        handleNativeRealtimeEvent(evt);
-      } catch {}
-    };
-
-    ws.onerror = () => {
-      Alert.alert('Connection error', 'Voice session disconnected. Please try again.');
-      endSessionRef.current?.();
-    };
-
-    ws.onclose = () => {
-      if (stateRef.current !== 'ended') endSessionRef.current?.();
-    };
-  }, []);
-
-  const nativeRecordLoopRef = useRef(false);
-
-  const startNativeRecordingLoop = useCallback(async () => {
-    nativeRecordLoopRef.current = true;
+    await nativeRecorder.prepareToRecordAsync();
+    nativeRecorder.record();
     startNativeMeterLoop();
+    setState('listening');
 
-    while (nativeRecordLoopRef.current && wsRef.current?.readyState === WebSocket.OPEN) {
-      try {
-        await nativeRecorder.prepareToRecordAsync();
-        nativeRecorder.record();
-        await new Promise<void>(r => setTimeout(r, 250));
-
-        if (!nativeRecordLoopRef.current) {
-          if (nativeRecorder.isRecording) await nativeRecorder.stop();
-          break;
-        }
-
-        if (nativeRecorder.isRecording) await nativeRecorder.stop();
-
-        const uri = nativeRecorder.uri;
-        if (!uri || wsRef.current?.readyState !== WebSocket.OPEN) break;
-
-        const fileInfo = await FileSystem.getInfoAsync(uri);
-        if (!fileInfo.exists) continue;
-
-        const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-        FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-
-        // Strip the 44-byte WAV header before sending raw PCM16 to OpenAI.
-        const binaryStr = atob(base64);
-        const wavBytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) wavBytes[i] = binaryStr.charCodeAt(i);
-        const WAV_HEADER_BYTES = 44;
-        const pcmBytes = wavBytes.length > WAV_HEADER_BYTES ? wavBytes.subarray(WAV_HEADER_BYTES) : wavBytes;
-        if (pcmBytes.length === 0) continue;
-        const chunkSize = 8192;
-        let pcmBase64 = '';
-        for (let i = 0; i < pcmBytes.length; i += chunkSize) {
-          pcmBase64 += String.fromCharCode(...pcmBytes.subarray(i, Math.min(i + chunkSize, pcmBytes.length)));
-        }
-        const pcmAudio = btoa(pcmBase64);
-
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
-            type: 'input_audio_buffer.append',
-            audio: pcmAudio,
-          }));
-        }
-      } catch (err) {
-        console.warn('[voice] recording loop error:', err);
-        await new Promise<void>(r => setTimeout(r, 100));
-      }
-    }
+    await sleep(CODEX_VOICE_TURN_RECORDING_MS);
+    if (nativeRecorder.isRecording) await nativeRecorder.stop();
     stopNativeMeterLoop();
-  }, [nativeRecorder, startNativeMeterLoop, stopNativeMeterLoop]);
 
-  const handleNativeRealtimeEvent = useCallback(
-    (evt: Record<string, unknown>) => {
-      const type = evt.type as string;
+    const uri = nativeRecorder.uri;
+    await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    if (!uri) throw new Error('No voice recording was captured.');
 
-      if (type === 'input_audio_buffer.speech_started') {
-        setState('listening');
-        audioPcmChunksRef.current = [];
-        nativeSoundRef.current?.pause();
-      } else if (type === 'input_audio_buffer.speech_stopped') {
-        setState('thinking');
-        ampRef.current = 0;
-      } else if (type === 'response.created') {
-        setState('thinking');
-        currentAssistantTextRef.current = '';
-        audioPcmChunksRef.current = [];
-        ampRef.current = 0;
-      } else if (type === 'response.audio.delta') {
-        const delta = (evt.delta as string) || '';
-        if (delta) {
-          audioPcmChunksRef.current.push(delta);
-          ampRef.current = samplePcmAmplitude(delta);
-        }
-        setState('speaking');
-      } else if (type === 'response.audio.done') {
-        playNativeAudio();
-      } else if (type === 'response.audio_transcript.delta') {
-        const delta = (evt.delta as string) || '';
-        currentAssistantTextRef.current += delta;
-        setCurrentSpeech(currentAssistantTextRef.current);
-      } else if (type === 'response.audio_transcript.done') {
-        const text = currentAssistantTextRef.current.trim();
-        if (text) setTranscript(prev => [...prev, { role: 'assistant', text }]);
-        currentAssistantTextRef.current = '';
-        setCurrentSpeech('');
-        ampRef.current = 0;
-      } else if (type === 'conversation.item.input_audio_transcription.completed') {
-        const text = ((evt.transcript as string) || '').trim();
-        if (text) setTranscript(prev => [...prev, { role: 'user', text }]);
-      } else if (type === 'response.function_call_arguments.done') {
-        const callId = evt.call_id as string;
-        const toolName = evt.name as string;
-        let args: unknown = {};
-        try { args = JSON.parse((evt.arguments as string) || '{}'); } catch {}
+    const audioBase64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+    FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+    setState('thinking');
+    await sendCodexVoiceTurn({ audioBase64, mimeType: 'audio/wav' });
+  }, [nativeRecorder, sendCodexVoiceTurn, startNativeMeterLoop, stopNativeMeterLoop]);
 
-        executeToolCall(toolName, args).then(result => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send(JSON.stringify({
-              type: 'conversation.item.create',
-              item: { type: 'function_call_output', call_id: callId, output: result },
-            }));
-            wsRef.current.send(JSON.stringify({ type: 'response.create' }));
-          }
-        });
-      } else if (type === 'response.cancelled') {
-        audioPcmChunksRef.current = [];
-        ampRef.current = 0;
-        setState('listening');
-      } else if (type === 'response.done') {
-        ampRef.current = 0;
-        setState('listening');
-      }
-    },
-    [executeToolCall]
-  );
-
-  const playNativeAudio = useCallback(async () => {
-    const chunks = audioPcmChunksRef.current;
-    audioPcmChunksRef.current = [];
-    if (!chunks.length || !FileSystem.documentDirectory) return;
-
+  const startCodexTurn = useCallback(async () => {
+    if (
+      stateRef.current === 'connecting' ||
+      stateRef.current === 'listening' ||
+      stateRef.current === 'thinking' ||
+      stateRef.current === 'muted'
+    ) return;
+    setState('connecting');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     try {
-      const allPcm: number[] = [];
-      for (const chunk of chunks) {
-        const decoded = base64ToUint8Array(chunk);
-        allPcm.push(...decoded);
+      if (Platform.OS === 'web') {
+        await recordWebCodexTurn();
+      } else {
+        await recordNativeCodexTurn();
       }
-      const pcmBytes = new Uint8Array(allPcm);
-      const wavBytes = pcm16ToWav(pcmBytes);
-      const wavBase64 = uint8ToBase64(wavBytes);
-      const uri = FileSystem.documentDirectory + `voice_response_${Date.now()}.wav`;
-      await FileSystem.writeAsStringAsync(uri, wavBase64, { encoding: FileSystem.EncodingType.Base64 });
-
-      if (nativeSoundRef.current) {
-        nativeSoundRef.current.remove();
-        nativeSoundRef.current = null;
-      }
-
-      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-      const sound = createAudioPlayer({ uri });
-      nativeSoundRef.current = sound;
-      sound.play();
-
-      sound.addListener('playbackStatusUpdate', async (status) => {
-        if (status.didJustFinish) {
-          sound.remove();
-          nativeSoundRef.current = null;
-          FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
-          await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-          ampRef.current = 0;
-          setState('listening');
-        }
-      });
-    } catch (err) {
-      console.error('[voice] native audio playback failed:', err);
-      setState('listening');
+    } catch (error) {
+      console.error('[voice] Codex turn failed:', error);
+      Alert.alert('Voice turn failed', error instanceof Error ? error.message : 'Could not complete the voice turn.');
+      currentAssistantTextRef.current = '';
+      setCurrentSpeech('');
+      ampRef.current = 0;
+      setState('idle');
     }
-  }, []);
+  }, [recordNativeCodexTurn, recordWebCodexTurn]);
+
+  const cleanupWebSession = useCallback(() => {
+    stopWebAmpMeter();
+    if (webRecorderRef.current?.state && webRecorderRef.current.state !== 'inactive') {
+      webRecorderRef.current.stop();
+    }
+    webRecorderRef.current = null;
+    webChunksRef.current = [];
+    if (typeof window !== 'undefined') window.speechSynthesis?.cancel();
+    localStreamRef.current?.getTracks().forEach(t => t.stop());
+    localStreamRef.current = null;
+    ampRef.current = 0;
+  }, [stopWebAmpMeter]);
 
   const cleanupNativeSession = useCallback(async () => {
-    nativeRecordLoopRef.current = false;
     stopNativeMeterLoop();
     if (nativeRecorder.isRecording) {
       await nativeRecorder.stop().catch(() => {});
     }
-    wsRef.current?.close();
-    wsRef.current = null;
-    if (nativeSoundRef.current) {
-      nativeSoundRef.current.remove();
-      nativeSoundRef.current = null;
-    }
+    Speech.stop();
     await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: false }).catch(() => {});
     ampRef.current = 0;
   }, [nativeRecorder, stopNativeMeterLoop]);
@@ -878,23 +589,14 @@ export default function VoiceRealtimeScreen() {
   const interruptJarvis = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     if (Platform.OS === 'web') {
-      dcRef.current?.send(JSON.stringify({ type: 'response.cancel' }));
-      // Stop web audio element
-      if (audioElRef.current) {
-        audioElRef.current.pause();
-      }
+      if (typeof window !== 'undefined') window.speechSynthesis?.cancel();
     } else {
-      wsRef.current?.send(JSON.stringify({ type: 'response.cancel' }));
-      // Immediately stop any currently-playing native audio
-      if (nativeSoundRef.current) {
-        nativeSoundRef.current.pause();
-        nativeSoundRef.current.remove();
-        nativeSoundRef.current = null;
-      }
+      Speech.stop();
     }
-    audioPcmChunksRef.current = [];
+    currentAssistantTextRef.current = '';
+    setCurrentSpeech('');
     ampRef.current = 0;
-    setState('listening');
+    setState('idle');
   }, []);
 
   // ── Mute toggle ───────────────────────────────────────────────────────────
@@ -903,19 +605,15 @@ export default function VoiceRealtimeScreen() {
     setMuted(newMuted);
     if (Platform.OS === 'web') {
       localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !newMuted; });
-    } else {
-      if (newMuted) {
-        nativeRecordLoopRef.current = false;
-        stopNativeMeterLoop();
-        if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
-        setState('muted');
-      } else {
-        startNativeRecordingLoop();
-        setState('listening');
-      }
+    } else if (newMuted && nativeRecorder.isRecording) {
+      stopNativeMeterLoop();
+      nativeRecorder.stop().catch(() => {});
+    }
+    if (stateRef.current === 'idle' || stateRef.current === 'muted' || stateRef.current === 'listening') {
+      setState(newMuted ? 'muted' : 'idle');
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [muted, nativeRecorder, startNativeRecordingLoop, stopNativeMeterLoop]);
+  }, [muted, nativeRecorder, stopNativeMeterLoop]);
 
   // ── Session end ───────────────────────────────────────────────────────────
   const saveTranscript = useCallback(async (entries: TranscriptEntry[]) => {
@@ -962,20 +660,15 @@ export default function VoiceRealtimeScreen() {
 
     setTimeout(() => router.back(), 2000);
   }, [transcript, cleanupWebSession, cleanupNativeSession, saveTranscript, router]);
-  // Keep ref current so WS handlers with [] deps always call the latest version
-  endSessionRef.current = endSession;
-
   // ── Cleanup on unmount ────────────────────────────────────────────────────
   useEffect(() => {
     return () => {
       if (Platform.OS === 'web') {
         cleanupWebSession();
       } else {
-        nativeRecordLoopRef.current = false;
         stopNativeMeterLoop();
         if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
-        wsRef.current?.close();
-        nativeSoundRef.current?.remove();
+        Speech.stop();
         setAudioModeAsync({ allowsRecording: false, playsInSilentMode: false }).catch(() => {});
       }
     };
@@ -991,15 +684,11 @@ export default function VoiceRealtimeScreen() {
 
   // ── Start session ─────────────────────────────────────────────────────────
   const startSession = useCallback(() => {
-    if (Platform.OS === 'web') {
-      startWebSession();
-    } else {
-      startNativeSession();
-    }
-  }, [startWebSession, startNativeSession]);
+    startCodexTurn();
+  }, [startCodexTurn]);
 
   const cfg = STATE_CONFIG[state];
-  const isActive = state !== 'idle' && state !== 'ended';
+  const isActive = (state !== 'idle' && state !== 'ended') || transcript.length > 0;
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const isSpeaking = state === 'speaking';
 
@@ -1047,8 +736,8 @@ export default function VoiceRealtimeScreen() {
         {transcript.length === 0 && state === 'idle' && (
           <RAnimated.View entering={FadeIn} style={styles.emptyState}>
             <Ionicons name="mic-circle-outline" size={36} color={Colors.textTertiary} />
-            <Text style={styles.emptyText}>Real-time voice conversation with Jarvis</Text>
-            <Text style={styles.emptySubtext}>Tap the orb below to start</Text>
+            <Text style={styles.emptyText}>Codex voice turns with Jarvis</Text>
+            <Text style={styles.emptySubtext}>Tap the orb and speak</Text>
           </RAnimated.View>
         )}
         {transcript.map((entry, i) => (
@@ -1150,8 +839,8 @@ export default function VoiceRealtimeScreen() {
         ) : (
           <Text style={styles.hintText}>
             {Platform.OS === 'web'
-              ? 'Speak naturally — Jarvis will respond in real time'
-              : 'Tap the orb to start a real-time voice session'}
+              ? 'Speak after tapping the orb; Jarvis will answer aloud'
+              : 'Tap the orb to record a Codex voice turn'}
           </Text>
         )}
       </View>

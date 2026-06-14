@@ -1,7 +1,8 @@
 import type { AgentTool } from "../types";
-import { submitAgentJob, type AgentJobType, getModelForJobType } from "../jobQueue";
-import { SUB_AGENT_TYPES, type SubAgentType } from "../subagents";
+import { submitAgentJob, type AgentJobType } from "../jobQueue";
+import { SUB_AGENT_TYPES } from "../subagents";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
+import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
 
 interface QueueJobArgs {
   agent_type?: string;
@@ -15,7 +16,7 @@ interface QueueJobArgs {
  * Agent types that queue_background_job accepts, including the extended
  * "deep_research" and "app_project" types beyond the core SubAgentType set.
  */
-const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research", "app_project"];
+const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research", "app_project", "ephemeral_agent_task"];
 
 /**
  * Commonly confused US city names — bare city name (lower-cased) → list of states.
@@ -170,7 +171,7 @@ IMPORTANT — one job per user message: Do NOT call this tool more than once per
 
 Before calling this tool, use sessions_list (filter: status=queued or status=running) to check whether a recent job already exists for this topic and agent_type. If a matching job is already active, tell the user their request is already in progress rather than queuing a duplicate.
 
-Choose agent_type based on the request:
+Choose agent_type based on the request. Use "ephemeral_agent_task" only for a one-off scoped worker: a specialized temporary worker clone for a bounded task that the main agent should not do inline, runs once with scoped tools, returns a reviewable result, records durable facts/preferences as handoff notes, then is deleted after the task. Do not use it for normal tutoring, quick coaching, simple answers, or work the main agent can do directly:
 - "research"       — single focused topic; results don't depend on each other (e.g. "latest news on OpenAI", "what is the current ETH price")
 - "deep_research"  — complex request where understanding one thing is REQUIRED before properly researching another, OR multiple related topics that should be synthesised into one coherent report (e.g. "compare these two investment theses", "research this startup and its market", "analyse multiple companies in the same space")
 - "writing"        — drafting memos, notes, blog posts, documents, reports
@@ -339,10 +340,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       // Inject per-type model routing so the job queue uses the appropriate
       // GPT mini for each sub-agent workload (research/planning → gpt-4.1-mini,
       // writing/email → gpt-4o-mini).
-      const routedModel = getModelForJobType(agentType as AgentJobType);
-      const jobInput: Record<string, unknown> = routedModel ? { model: routedModel } : {};
-      if (ctx.channel) jobInput.originChannel = ctx.channel;
-      if (ctx.discordChannelId) jobInput.originDiscordChannelId = ctx.discordChannelId;
+      const jobInput = buildQueueBackgroundJobInput(agentType as AgentJobType, ctx);
       const { id: jobId, isDuplicate } = await submitAgentJob({
         userId: ctx.userId,
         agentType,
@@ -392,6 +390,7 @@ function deriveTitle(agentType: AgentJobType, prompt: string): string {
     writing: "Draft:",
     planning: "Plan:",
     email: "Email:",
+    ephemeral_agent_task: "Worker:",
   };
   const prefix = prefixes[agentType] ?? "Task:";
   const snippet = prompt.slice(0, 60).replace(/\s+/g, " ").trim();

@@ -8,17 +8,18 @@ import {
   StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import Colors from '@/constants/colors';
 import VisionSprite from '@/components/VisionSprite';
 import TasksScreen from '@/components/missionControl/TasksScreen';
 import CalendarScreen from '@/components/missionControl/CalendarScreen';
 import MemoryScreen from '@/components/missionControl/MemoryScreen';
-import PlaceholderScreen from '@/components/missionControl/PlaceholderScreen';
 import ProjectsScreen from '@/components/missionControl/ProjectsScreen';
+import UsageScreen from '@/components/missionControl/UsageScreen';
 import VisualOfficeScreen from '@/components/missionControl/VisualOfficeScreen';
 import { apiRequest } from '@/lib/query-client';
 
-const TABS = ['Tasks', 'Calendar', 'Projects', 'Memory', 'Visual'] as const;
+const TABS = ['Tasks', 'Calendar', 'Projects', 'Memory', 'Usage', 'Visual'] as const;
 type TabName = typeof TABS[number];
 
 function usePrimeStatus(): boolean | null {
@@ -64,6 +65,9 @@ function SegmentControl({ active, onChange }: { active: number; onChange: (i: nu
         return (
           <Pressable
             key={tab}
+            testID={`mission-control-tab-${tab.toLowerCase()}`}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
             onPress={() => onChange(i)}
             style={[styles.segmentBtn, isActive && styles.segmentBtnActive]}
           >
@@ -87,6 +91,8 @@ function TabContent({ tab }: { tab: TabName }) {
       return <ProjectsScreen />;
     case 'Memory':
       return <MemoryScreen />;
+    case 'Usage':
+      return <UsageScreen />;
     case 'Visual':
       return <VisualOfficeScreen />;
   }
@@ -94,6 +100,7 @@ function TabContent({ tab }: { tab: TabName }) {
 
 export default function MissionControlScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const primeOnline = usePrimeStatus();
   const [activeTab, setActiveTab] = useState<number>(0);
 
@@ -107,6 +114,18 @@ export default function MissionControlScreen() {
   const statusColor =
     primeOnline === null ? Colors.textTertiary :
     primeOnline ? Colors.green : Colors.error;
+
+  const handleTabChange = (index: number) => {
+    if (TABS[index] === 'Projects') {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        window.location.assign('/projects');
+        return;
+      }
+      router.navigate('/projects');
+      return;
+    }
+    setActiveTab(index);
+  };
 
   return (
     <View style={[styles.root, { paddingTop: topPad, paddingBottom: bottomPad }]}>
@@ -135,7 +154,7 @@ export default function MissionControlScreen() {
       <View style={styles.headerSep} />
 
       {/* ── Segment Control ────────────────────────────── */}
-      <SegmentControl active={activeTab} onChange={setActiveTab} />
+      <SegmentControl active={activeTab} onChange={handleTabChange} />
 
       {/* ── Content ────────────────────────────────────── */}
       <View style={styles.content}>

@@ -1,10 +1,10 @@
 import { db } from "../db";
 import { eq, and, gte, desc, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
 import { normalizeCategory } from "./categories";
 import type { WeeklyPattern, MemoryCategory } from "@shared/schema";
 import { regenerateSoul } from "./soul";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
@@ -21,10 +21,7 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   }
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[WeeklyMemory]", "balanced");
 
 interface ChatMessage {
   role?: string;
@@ -230,6 +227,7 @@ ${energyText || "(none)"}`;
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 1200,

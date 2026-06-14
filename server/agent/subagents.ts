@@ -1,5 +1,9 @@
 import { runAgent } from "./harness";
 import type { AgentTool, ToolContext } from "./types";
+import type { ApprovalReceipt } from "./approvalReceipt";
+import { toolCallHooks } from "./toolCallHooks";
+import "./agentPermissions";
+import "./agentApproval";
 import { db } from "../db";
 import * as schema from "@shared/schema";
 import { and, eq, sql } from "drizzle-orm";
@@ -11,6 +15,7 @@ import {
   readDocumentTool,
   fetchCalendarTool,
 } from "./tools";
+import { buildUntrustedSoulContext, BUDGET_PRESETS } from "../memory/contextBuilder";
 
 export type SubAgentType = "research" | "writing" | "planning" | "email";
 
@@ -210,6 +215,8 @@ export interface RunSubAgentOptions {
    * without replacing the base prompt.
    */
   extraSystemPrompt?: string;
+  /** Scoped receipt from a previously-approved top-level action. */
+  approvalReceipt?: ApprovalReceipt;
 }
 
 /**
@@ -238,7 +245,11 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
       const { getSoulPromptBlock } = await import("../memory/soul");
       const soulText = await getSoulPromptBlock(opts.context.userId);
       if (soulText && soulText.trim()) {
-        enrich.push(`What I know about the sender (JARVIS Soul):\n${soulText.trim()}`);
+        enrich.push(buildUntrustedSoulContext(
+          soulText,
+          "What I know about the sender (JARVIS Soul)",
+          BUDGET_PRESETS.agentTurn.soul,
+        ));
       }
     } catch (err) {
       console.error(`[subagents/email] SOUL enrichment failed for ${opts.context.userId}:`, err);
@@ -284,7 +295,23 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
     tools,
     context: opts.context,
     maxTurns: spec.maxTurns,
-    maxCompletionTokens: 2400,
+    maxCompletionTokens: 1200,
+    onBeforeTool: async (toolName, toolArgs) => {
+      const result = await toolCallHooks.run({
+        toolName,
+        params: toolArgs,
+        agentId: `subagent:${opts.agentType}`,
+        agentName: `${opts.agentType} sub-agent`,
+        userId: opts.context.userId,
+        platform: opts.context.channel,
+        channelId: opts.context.originChannelId ?? opts.context.discordChannelId,
+        workerJobId: opts.context.jobId,
+        initiatedBy: "jarvis",
+        signal: opts.context.signal,
+        approvalReceipt: opts.approvalReceipt,
+      });
+      return { allowed: result.allowed, reason: result.reason, params: result.params };
+    },
   });
 
   const body = (result.reply || "").trim();

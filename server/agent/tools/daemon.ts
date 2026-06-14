@@ -18,6 +18,8 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_browse",
   "android_screenshot",
   "android_read_screen",
+  "android_screen_context",
+  "android_operator_action",
   "android_tap",
   "android_type",
   "android_swipe",
@@ -50,6 +52,7 @@ function isAndroidAction(value: string): boolean {
 function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_screenshot") return "android_screenshot";
   if (action === "android_read_screen") return "android_read_screen";
+  if (action === "android_screen_context") return "android_read_screen";
   if (action === "android_open_app") return "android_open_app";
   if (action === "android_browse") return "android_browse";
   if (action === "android_file_list") return "android_file_list";
@@ -67,6 +70,24 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_paste_text") return "android_tap_type";
   if (action === "android_get_focused_field") return "android_tap_type";
   return null;
+}
+
+function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
+  switch (operatorAction.type) {
+    case "open_app": return "android_open_app";
+    case "tap_element":
+    case "tap_coordinates":
+    case "type_text":
+    case "swipe":
+    case "press_key": return "android_tap_type";
+    case "wait":
+    case "done": return null;
+    default: return "android_tap_type";
+  }
+}
+
+function jsonErrorContent(error: string, extra: Record<string, unknown> = {}): string {
+  return JSON.stringify({ ok: false, error, ...extra });
 }
 
 export const daemonActionTool: AgentTool = {
@@ -89,6 +110,8 @@ ANDROID actions (available when an Android device daemon is paired):
   CRITICAL — only screenshot when you have confirmed the target content is visible (via android_read_screen). Never screenshot immediately after navigating; always verify first. After capturing, describe ONLY what is actually visible in the image — never invent or summarise content you cannot directly see.
 - android_read_screen: return the visible text and UI element tree via accessibility.
   Call this immediately after any navigation (android_browse, android_open_app) and after every scroll to understand what is currently on screen before acting.
+- android_screen_context: return a structured accessibility-first screen context with stable per-capture element ids, bounds, traits, redaction, and risk hints. Prefer this for operator-style UI navigation before screenshots.
+- android_operator_action: execute one narrow operator action through the Android daemon. Payload goes in operatorAction and must use one of: tap_element, tap_coordinates, type_text, swipe, press_key, open_app, wait, done.
 - android_tap: tap at x/y pixel coordinates on the screen. Use android_read_screen first to identify the correct coordinates of the element you want to tap.
 - android_type: type text using the accessibility service. After typing a search query into a search bar, always follow immediately with \`android_press_key\` {key: \'enter\'} to submit — do not wait for results to appear on their own. Alternatively, use \`android_search_in_app\` which handles the full open → type → submit flow automatically.
 - android_swipe: swipe from (x1,y1) to (x2,y2). For scrolling DOWN (reveal content below): x1=540, y1=1600, x2=540, y2=400, durationMs=500. For scrolling UP (reveal content above): x1=540, y1=400, x2=540, y2=1600, durationMs=500. Always call android_read_screen after each swipe to check what became visible before deciding to scroll again.
@@ -136,6 +159,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           "shell", "notify", "file_read", "file_write", "file_list",
           "desktop_screenshot", "desktop_read_screen",
           "android_open_app", "android_browse", "android_screenshot", "android_read_screen",
+          "android_screen_context", "android_operator_action",
           "android_tap", "android_type", "android_swipe", "android_press_key",
           "android_file_list", "android_file_read",
           "android_file_search", "android_open_file", "android_copy_to_clipboard",
@@ -179,6 +203,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       message: { type: "string", description: "SMS message body (when action is 'android_sms_send')" },
       fps: { type: "number", description: "Frames per second for screen recording (when action is 'android_screen_record', default 15)" },
       fieldDescription: { type: "string", description: "Human-readable label for the target field — used for logging only (when action is 'android_paste_text')" },
+      operatorAction: { type: "object", description: "Structured operator action payload when action is 'android_operator_action'. Example: { type: 'tap_element', elementId: 3 }" },
     },
     required: ["action"],
   },
@@ -188,64 +213,73 @@ Always confirm with the user before tap/type/swipe actions and before android_no
     const desktopActive = isDesktopDaemonActive(ctx.userId);
 
     if (!isUserPaired(ctx.userId)) {
-      return { ok: false, content: JSON.stringify({ ok: false, error: "No daemon paired. Ask the user to install and pair either the desktop daemon (Profile → Connected Channels → Desktop Daemon) or the Android daemon APK (Profile → Connected Channels → Android Device)." }) };
+      return { ok: false, content: jsonErrorContent("No daemon paired. Ask the user to install and pair either the desktop daemon (Profile → Connected Channels → Desktop Daemon) or the Android daemon APK (Profile → Connected Channels → Android Device).") };
     }
 
     // ── Android actions ────────────────────────────────────────────────────
     if (isAndroidAction(rawAction)) {
       if (!androidActive) {
-        return { ok: false, content: JSON.stringify({ ok: false, error: "No Android daemon connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device)." }) };
+        return { ok: false, content: jsonErrorContent("No Android daemon connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).") };
       }
       const permKey = androidPermKey(rawAction);
       if (permKey && !(await isAndroidDaemonActionAllowed(ctx.userId, permKey))) {
-        return { ok: false, content: JSON.stringify({ ok: false, error: `Android action '${rawAction}' is not permitted. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.` }) };
+        return { ok: false, content: jsonErrorContent(`Android action '${rawAction}' is not permitted. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.`) };
       }
 
       let op: DaemonOp;
       if (rawAction === "android_open_app") {
-        if (!args.packageName) return { ok: false, content: JSON.stringify({ ok: false, error: "packageName required" }) };
+        if (!args.packageName) return { ok: false, content: jsonErrorContent("packageName required") };
         op = { type: "android_open_app", packageName: String(args.packageName) };
       } else if (rawAction === "android_browse") {
-        if (!args.url) return { ok: false, content: JSON.stringify({ ok: false, error: "url required" }) };
+        if (!args.url) return { ok: false, content: jsonErrorContent("url required") };
         op = { type: "android_browse", url: String(args.url) };
       } else if (rawAction === "android_screenshot") {
         if (!checkAndIncrementScreenshotBudget(ctx)) {
           return {
             ok: false,
-            content: JSON.stringify({
-              ok: false,
-              label: "daemon_action: turn screenshot limit reached",
-              error: "Screenshot limit reached for this turn (max 4). Use android_read_screen to read the current screen content as text — it returns the accessibility tree without requiring a screenshot.",
-            }),
+            content: jsonErrorContent("Screenshot limit reached for this turn (max 4). Use android_read_screen to read the current screen content as text because it returns the accessibility tree without requiring a screenshot.", { label: "daemon_action: turn screenshot limit reached" }),
           };
         }
         op = { type: "android_screenshot" };
       } else if (rawAction === "android_read_screen") {
         op = { type: "android_read_screen" };
+      } else if (rawAction === "android_screen_context") {
+        op = { type: "android_screen_context" };
+      } else if (rawAction === "android_operator_action") {
+        const operatorAction = (args as { operatorAction?: unknown }).operatorAction;
+        if (!operatorAction || typeof operatorAction !== "object" || Array.isArray(operatorAction)) {
+          return { ok: false, content: jsonErrorContent("operatorAction object required") };
+        }
+        const typedOperatorAction = operatorAction as Record<string, unknown>;
+        const nestedPermKey = operatorActionPermKey(typedOperatorAction);
+        if (nestedPermKey && !(await isAndroidDaemonActionAllowed(ctx.userId, nestedPermKey))) {
+          return { ok: false, content: jsonErrorContent(`Android operator action '${String(typedOperatorAction.type || "unknown")}' is not permitted. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.`) };
+        }
+        op = { type: "android_operator_action", action: typedOperatorAction };
       } else if (rawAction === "android_tap") {
-        if (typeof args.x !== "number" || typeof args.y !== "number") return { ok: false, content: JSON.stringify({ ok: false, error: "x and y required" }) };
+        if (typeof args.x !== "number" || typeof args.y !== "number") return { ok: false, content: jsonErrorContent("x and y required") };
         op = { type: "android_tap", x: args.x, y: args.y };
       } else if (rawAction === "android_type") {
-        if (!args.text) return { ok: false, content: JSON.stringify({ ok: false, error: "text required" }) };
+        if (!args.text) return { ok: false, content: jsonErrorContent("text required") };
         op = { type: "android_type", text: String(args.text) };
       } else if (rawAction === "android_swipe") {
         if (typeof args.x1 !== "number" || typeof args.y1 !== "number" || typeof args.x2 !== "number" || typeof args.y2 !== "number") {
-          return { ok: false, content: JSON.stringify({ ok: false, error: "x1, y1, x2, y2 required" }) };
+          return { ok: false, content: jsonErrorContent("x1, y1, x2, y2 required") };
         }
         op = { type: "android_swipe", x1: args.x1, y1: args.y1, x2: args.x2, y2: args.y2, durationMs: typeof args.durationMs === "number" ? args.durationMs : 300 };
       } else if (rawAction === "android_press_key") {
         const validKeys = ["back", "home", "recents", "volume_up", "volume_down", "enter"] as const;
         const key = String(args.key || "back") as typeof validKeys[number];
-        if (!validKeys.includes(key)) return { ok: false, content: JSON.stringify({ ok: false, error: "invalid key" }) };
+        if (!validKeys.includes(key)) return { ok: false, content: jsonErrorContent("invalid key") };
         op = { type: "android_press_key", key: key as "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" };
       } else if (rawAction === "android_file_list") {
-        if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
+        if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
         op = { type: "android_file_list", path: String(args.path) };
       } else if (rawAction === "android_file_read") {
-        if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
+        if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
         op = { type: "android_file_read", path: String(args.path) };
       } else if (rawAction === "android_file_search") {
-        if (!args.query) return { ok: false, content: JSON.stringify({ ok: false, error: "query required" }) };
+        if (!args.query) return { ok: false, content: jsonErrorContent("query required") };
         // Accept both "fileType" (canonical) and legacy "type" alias for compatibility
         const resolvedFileType = args.fileType || (args as any).type;
         op = {
@@ -256,16 +290,16 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           maxDepth: typeof args.maxDepth === "number" ? args.maxDepth : undefined,
         };
       } else if (rawAction === "android_open_file") {
-        if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
+        if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
         op = { type: "android_open_file", path: String(args.path) };
       } else if (rawAction === "android_copy_to_clipboard") {
-        if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
+        if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
         op = { type: "android_copy_to_clipboard", path: String(args.path) };
       } else if (rawAction === "android_notification_reply") {
-        if (!args.notificationKey) return { ok: false, content: JSON.stringify({ ok: false, error: "notificationKey required" }) };
-        if (!args.replyText) return { ok: false, content: JSON.stringify({ ok: false, error: "replyText required" }) };
+        if (!args.notificationKey) return { ok: false, content: jsonErrorContent("notificationKey required") };
+        if (!args.replyText) return { ok: false, content: jsonErrorContent("replyText required") };
         if (!args.approved) {
-          return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before sending. Show the user the exact reply and ask them to approve it: "I'll reply inline with: \"${args.replyText}\". Send it?" — then call this action again with approved: true once they confirm.` }) };
+          return { ok: false, content: jsonErrorContent(`Confirmation required before sending. Show the user the exact reply and ask them to approve it: "I'll reply inline with: \"${args.replyText}\". Send it?" — then call this action again with approved: true once they confirm.`, { requiresApproval: true }) };
         }
         op = { type: "android_notification_reply", notificationKey: String(args.notificationKey), replyText: String(args.replyText) };
       } else if (rawAction === "android_camera_snap") {
@@ -273,7 +307,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         op = { type: "android_camera_snap", facing };
       } else if (rawAction === "android_camera_clip") {
         if (!args.approved) {
-          return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before recording a video clip (privacy-sensitive). Ask the user: "I'll record a ${Math.round((typeof args.durationMs === "number" ? args.durationMs : 5000) / 1000)}s video clip from the ${args.facing || "back"} camera. Is that OK?" — then call again with approved: true.` }) };
+          return { ok: false, content: jsonErrorContent(`Confirmation required before recording a video clip (privacy-sensitive). Ask the user: "I'll record a ${Math.round((typeof args.durationMs === "number" ? args.durationMs : 5000) / 1000)}s video clip from the ${args.facing || "back"} camera. Is that OK?" — then call again with approved: true.`, { requiresApproval: true }) };
         }
         const facing = String(args.facing || "back") as "front" | "back";
         const durationMs = Math.min(typeof args.durationMs === "number" ? args.durationMs : 5000, 30000);
@@ -282,23 +316,23 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         const accuracy = String(args.accuracy || "precise") as "coarse" | "precise";
         op = { type: "android_location_get", accuracy, maxAgeMs: typeof args.maxAgeMs === "number" ? args.maxAgeMs : undefined };
       } else if (rawAction === "android_sms_send") {
-        if (!args.to) return { ok: false, content: JSON.stringify({ ok: false, error: "to (phone number) required" }) };
-        if (!args.message) return { ok: false, content: JSON.stringify({ ok: false, error: "message required" }) };
+        if (!args.to) return { ok: false, content: jsonErrorContent("to (phone number) required") };
+        if (!args.message) return { ok: false, content: jsonErrorContent("message required") };
         if (!args.approved) {
-          return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before sending SMS. Show the user exactly: "Send SMS to ${args.to}: \"${args.message}\"?" — then call again with approved: true once they confirm.` }) };
+          return { ok: false, content: jsonErrorContent(`Confirmation required before sending SMS. Show the user exactly: "Send SMS to ${args.to}: \"${args.message}\"?" — then call again with approved: true once they confirm.`, { requiresApproval: true }) };
         }
         op = { type: "android_sms_send", to: String(args.to), message: String(args.message) };
       } else if (rawAction === "android_screen_record") {
         if (!args.approved) {
           const dur = Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000);
-          return { ok: false, content: JSON.stringify({ ok: false, requiresApproval: true, error: `Confirmation required before recording the screen. Ask the user: "I'll record your screen for ${Math.round(dur / 1000)}s. Is that OK?" — then call again with approved: true.` }) };
+          return { ok: false, content: jsonErrorContent(`Confirmation required before recording the screen. Ask the user: "I'll record your screen for ${Math.round(dur / 1000)}s. Is that OK?" — then call again with approved: true.`, { requiresApproval: true }) };
         }
         const durationMs = Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000);
         op = { type: "android_screen_record", durationMs, fps: typeof args.fps === "number" ? args.fps : 15, audio: !!args.audio };
       } else if (rawAction === "android_view_hierarchy") {
         op = { type: "android_view_hierarchy" };
       } else if (rawAction === "android_paste_text") {
-        if (!args.text) return { ok: false, content: JSON.stringify({ ok: false, error: "text required" }) };
+        if (!args.text) return { ok: false, content: jsonErrorContent("text required") };
         op = {
           type: "android_paste_text",
           text: String(args.text),
@@ -307,7 +341,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       } else if (rawAction === "android_get_focused_field") {
         op = { type: "android_get_focused_field" };
       } else {
-        return { ok: false, content: JSON.stringify({ ok: false, error: `unknown android action ${rawAction}` }) };
+        return { ok: false, content: jsonErrorContent(`unknown android action ${rawAction}`) };
       }
 
       // Camera clip and screen record can take up to 60s + overhead; give generous timeouts
@@ -325,66 +359,67 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       if (!result.ok && typeof result.error === "string") {
         const err = result.error;
         if (err.startsWith("FOREGROUND_REQUIRED")) {
-          return { ok: false, content: JSON.stringify({ ok: false, error: "This action requires the Jarvis Daemon app to be in the foreground on your Android device. Open the Jarvis Daemon app and try again.", code: "FOREGROUND_REQUIRED" }) };
+          return { ok: false, content: jsonErrorContent("This action requires the Jarvis Daemon app to be in the foreground on your Android device. Open the Jarvis Daemon app and try again.", { code: "FOREGROUND_REQUIRED" }) };
         }
         if (err.startsWith("CAMERA_PERMISSION_REQUIRED") || err.startsWith("SCREEN_RECORD_PERMISSION_REQUIRED")) {
           const isScreenRec = err.startsWith("SCREEN_RECORD_PERMISSION_REQUIRED");
           const fixNote = isScreenRec
             ? "Screen recording requires a one-time grant. Open the Jarvis Daemon app on your Android device and tap 'Allow' next to Screen Recording, then try again."
             : "Camera permission is not granted on the Android device. Open the Jarvis Daemon app and tap 'Grant' next to Camera, or go to Settings → Apps → Jarvis Daemon → Permissions → Camera.";
-          return { ok: false, content: JSON.stringify({ ok: false, error: fixNote, code: isScreenRec ? "SCREEN_RECORD_PERMISSION_REQUIRED" : "CAMERA_PERMISSION_REQUIRED" }) };
+          return { ok: false, content: jsonErrorContent(fixNote, { code: isScreenRec ? "SCREEN_RECORD_PERMISSION_REQUIRED" : "CAMERA_PERMISSION_REQUIRED" }) };
         }
         if (err.startsWith("LOCATION_PERMISSION_REQUIRED")) {
-          return { ok: false, content: JSON.stringify({ ok: false, error: "Location permission is not granted. On the Android device go to Settings → Apps → Jarvis Daemon → Permissions → Location and select 'Allow all the time' or 'Allow only while using the app'.", code: "LOCATION_PERMISSION_REQUIRED" }) };
+          return { ok: false, content: jsonErrorContent("Location permission is not granted. On the Android device go to Settings → Apps → Jarvis Daemon → Permissions → Location and select 'Allow all the time' or 'Allow only while using the app'.", { code: "LOCATION_PERMISSION_REQUIRED" }) };
         }
         if (err.startsWith("SMS_PERMISSION_REQUIRED")) {
-          return { ok: false, content: JSON.stringify({ ok: false, error: "SEND_SMS permission is not granted. On the Android device go to Settings → Apps → Jarvis Daemon → Permissions → SMS and enable it.", code: "SMS_PERMISSION_REQUIRED" }) };
+          return { ok: false, content: jsonErrorContent("SEND_SMS permission is not granted. On the Android device go to Settings → Apps → Jarvis Daemon → Permissions → SMS and enable it.", { code: "SMS_PERMISSION_REQUIRED" }) };
         }
         if (err.startsWith("SMS_NOT_SUPPORTED")) {
-          return { ok: false, content: JSON.stringify({ ok: false, error: "This Android device does not support SMS (no SIM / cellular). SMS cannot be sent.", code: "SMS_NOT_SUPPORTED" }) };
+          return { ok: false, content: jsonErrorContent("This Android device does not support SMS (no SIM / cellular). SMS cannot be sent.", { code: "SMS_NOT_SUPPORTED" }) };
         }
       }
 
       // Media ops return base64 — don't truncate or base64 will be corrupt
       const isMediaOp = rawAction === "android_camera_snap" || rawAction === "android_camera_clip" || rawAction === "android_screen_record";
+      const isStructuredContext = rawAction === "android_screen_context";
       const serialised = JSON.stringify(result);
-      return { ok: !!result.ok, content: isMediaOp ? serialised : serialised.slice(0, 12000) };
+      return { ok: !!result.ok, content: (isMediaOp || isStructuredContext) ? serialised : serialised.slice(0, 12000) };
     }
 
     // ── Desktop actions ────────────────────────────────────────────────────
     if (!isDesktopAction(rawAction)) {
-      return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${rawAction}` }) };
+      return { ok: false, content: jsonErrorContent(`unknown action ${rawAction}`) };
     }
 
     if (!desktopActive) {
-      return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${rawAction}' requires the Desktop Daemon, which is not connected. Ask the user to install and pair the desktop daemon (Profile → Connected Channels → Desktop Daemon).` }) };
+      return { ok: false, content: jsonErrorContent(`Action '${rawAction}' requires the Desktop Daemon, which is not connected. Ask the user to install and pair the desktop daemon (Profile → Connected Channels → Desktop Daemon).`) };
     }
 
     const action: DaemonAction = rawAction;
     if (!(await isDaemonActionAllowed(ctx.userId, action))) {
-      return { ok: false, content: JSON.stringify({ ok: false, error: `Action '${action}' is not permitted on this user's daemon. Ask the user to enable it in Profile → Connected Channels → Desktop Daemon → Permissions.` }) };
+      return { ok: false, content: jsonErrorContent(`Action '${action}' is not permitted on this user's daemon. Ask the user to enable it in Profile → Connected Channels → Desktop Daemon → Permissions.`) };
     }
     let op: DaemonOp;
     if (action === "shell") {
-      if (!args.cmd) return { ok: false, content: JSON.stringify({ ok: false, error: "cmd required" }) };
+      if (!args.cmd) return { ok: false, content: jsonErrorContent("cmd required") };
       op = { type: "shell", cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : undefined, timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined };
     } else if (action === "notify") {
       op = { type: "notify", title: String(args.title || "GamePlan"), body: String(args.body || "") };
     } else if (action === "file_read") {
-      if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
+      if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
       op = { type: "file_read", path: String(args.path) };
     } else if (action === "file_write") {
-      if (!args.path || typeof args.content !== "string") return { ok: false, content: JSON.stringify({ ok: false, error: "path and content required" }) };
+      if (!args.path || typeof args.content !== "string") return { ok: false, content: jsonErrorContent("path and content required") };
       op = { type: "file_write", path: String(args.path), content: String(args.content) };
     } else if (action === "file_list") {
-      if (!args.path) return { ok: false, content: JSON.stringify({ ok: false, error: "path required" }) };
+      if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
       op = { type: "file_list", path: String(args.path) };
     } else if (action === "desktop_screenshot") {
       op = { type: "desktop_screenshot" };
     } else if (action === "desktop_read_screen") {
       op = { type: "desktop_read_screen" };
     } else {
-      return { ok: false, content: JSON.stringify({ ok: false, error: `unknown action ${action}` }) };
+      return { ok: false, content: jsonErrorContent(`unknown action ${action}`) };
     }
     const isScreenOp = action === "desktop_screenshot" || action === "desktop_read_screen";
     // desktop_read_screen can take up to 30s for OCR — give bridge a 40s window so

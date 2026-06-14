@@ -53,7 +53,7 @@ function formatTimestamp(ms: number): string {
  *
  * Uses the Playwright MCP browser to fetch YouTube's timedtext API endpoint
  * with real browser cookies and headers — bypasses server-side IP blocks that
- * YouTube applies to cloud providers like Replit.
+ * YouTube applies to many cloud providers.
  *
  * Returns an empty array (not throws) on any failure so callers can degrade
  * gracefully.
@@ -493,7 +493,7 @@ export const youtubeTranscriptTool: AgentTool = {
 
         // ── Strategy 6: local worker ─────────────────────────────────────────
         // If the user has a local agent running on their PC, forward the job to
-        // it — their machine won't be subject to Replit's IP-level blocks.
+        // it — their machine usually will not be subject to cloud-host IP-level blocks.
         if (isWorkerOnline(ctx.userId)) {
           console.log(`[get_youtube_transcript] browser fallback empty — forwarding to local worker`);
           try {

@@ -21,7 +21,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
-import { getApiUrl, apiRequest } from '@/lib/query-client';
+import { apiRequest } from '@/lib/query-client';
+import DailyCommandPlanEditor, {
+  type DailyCommandPlanPatch,
+  type DailyCommandTask,
+} from '@/components/DailyCommandPlanEditor';
+import MindTraceDebugPanel, { type MindTraceDebugRecord } from '@/components/MindTraceDebugPanel';
 
 class DriveApiError extends Error {
   code: string;
@@ -59,9 +64,26 @@ interface AgentJob {
   id: string;
   agentType: string;
   title: string;
+  prompt: string;
+  input?: Record<string, unknown>;
   status: string;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  turns?: number | null;
+  toolCallsCount?: number | null;
   createdAt: string;
   startedAt: string | null;
+  completedAt?: string | null;
+  review?: {
+    stage: string;
+    label: string;
+    nextAction: string;
+    canCancel: boolean;
+    canRetry: boolean;
+    preview: string;
+    originChannel?: string;
+    autonomyPolicy: boolean;
+  };
 }
 
 interface Deliverable {
@@ -78,6 +100,39 @@ interface Deliverable {
   driveLink: string | null;
   createdAt: string;
   actedAt: string | null;
+  review?: {
+    stage: string;
+    label: string;
+    nextAction: string;
+    canApprove: boolean;
+    canEdit: boolean;
+    canRevise: boolean;
+    canDiscard: boolean;
+    canReject: boolean;
+    canSaveToDrive: boolean;
+    preview: string;
+    approvalGateId?: string;
+  };
+}
+
+interface DailyCommandSnapshot {
+  date: string;
+  status: 'working' | 'ready' | 'waiting_approval' | 'blocked' | 'failed' | 'recovering';
+  plan: { tasks?: DailyCommandTask[] } | null;
+  attention: { pendingCount: number };
+  jobs: { active: AgentJob[]; failed: AgentJob[] };
+  deliverables: { pendingCount: number };
+  approvals: { pendingCount: number };
+  reminders: { morningBriefSent: boolean; eveningWrapSent: boolean };
+  dream: { pendingCount: number; latestInsight?: { insightText: string } | null };
+  contextWarnings: { source: string; severity: 'info' | 'warning' | 'error'; message: string }[];
+  statusReasons?: {
+    state: DailyCommandSnapshot['status'];
+    label: string;
+    detail: string;
+    severity: 'info' | 'warning' | 'error';
+    action?: 'retry_available' | 'approval_required' | 'wait' | 'reconnect' | 'generate_plan';
+  }[];
 }
 
 const DELIVERABLE_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
@@ -98,21 +153,61 @@ const DELIVERABLE_LABEL: Record<string, string> = {
 
 const JOB_ICON: Record<string, keyof typeof Ionicons.glyphMap> = {
   research: 'search',
+  deep_research: 'library',
   writing: 'create',
   planning: 'list',
   email: 'mail',
+  app_project: 'code-slash',
+  custom_agent: 'person-circle',
+  named_agent_task: 'people',
   goal_decompose: 'git-branch',
   weekly_pattern: 'analytics',
 };
 
 const JOB_LABEL: Record<string, string> = {
   research: 'Research',
+  deep_research: 'Deep research',
   writing: 'Writing',
   planning: 'Planning',
   email: 'Email',
+  app_project: 'App project',
+  custom_agent: 'Custom agent',
+  named_agent_task: 'Named agent',
   goal_decompose: 'Goal breakdown',
   weekly_pattern: 'Weekly review',
 };
+
+function normalizePreviewText(value: string | null | undefined): string {
+  return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function getDeliverableBody(d: Deliverable): string {
+  const meta = (d.meta as { emailBody?: string } | null) || {};
+  return d.type === 'email_draft' ? (meta.emailBody || d.body) : d.body;
+}
+
+function isLongDeliverable(d: Deliverable): boolean {
+  const body = getDeliverableBody(d);
+  return body.length > 900 || body.split(/\r?\n/).length > 12;
+}
+
+function getDeliverableRevisionInfo(d: Deliverable): {
+  isRevision: boolean;
+  originalDeliverableId?: string;
+  originalJobId?: string;
+  instructions?: string;
+} {
+  const meta = (d.meta || {}) as Record<string, unknown>;
+  const originalDeliverableId = typeof meta.revisionOfDeliverableId === 'string' ? meta.revisionOfDeliverableId : undefined;
+  const originalJobId = typeof meta.revisionOfJobId === 'string' ? meta.revisionOfJobId : undefined;
+  const instructions = typeof meta.revisionInstructions === 'string' ? meta.revisionInstructions : undefined;
+  return {
+    isRevision: meta.revision === true || Boolean(originalDeliverableId || originalJobId || instructions),
+    originalDeliverableId,
+    originalJobId,
+    instructions,
+  };
+}
 
 function formatElapsed(from: string): string {
   const ms = Date.now() - new Date(from).getTime();
@@ -137,6 +232,29 @@ interface EmailDraft {
 function getSenderName(sender: string | null): string {
   if (!sender) return 'Unknown';
   return sender.replace(/<.*>/, '').trim() || sender;
+}
+
+function getDailyCommandStatusConfig(status: DailyCommandSnapshot['status']): {
+  label: string;
+  detail: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  color: string;
+} {
+  switch (status) {
+    case 'working':
+      return { label: 'Jarvis is working', detail: 'Active jobs are moving through the queue.', icon: 'sync-outline', color: Colors.primary };
+    case 'waiting_approval':
+      return { label: 'Waiting approval', detail: 'Review the approval cards before Jarvis acts.', icon: 'shield-checkmark-outline', color: '#F59E0B' };
+    case 'blocked':
+      return { label: 'Blocked', detail: 'A required source or setup path needs attention.', icon: 'alert-circle-outline', color: Colors.error };
+    case 'failed':
+      return { label: 'Needs recovery', detail: 'At least one job failed and can be retried.', icon: 'refresh-circle-outline', color: Colors.error };
+    case 'recovering':
+      return { label: 'Recovering', detail: 'Some jobs failed while other work is still running.', icon: 'construct-outline', color: '#F59E0B' };
+    case 'ready':
+    default:
+      return { label: 'Ready', detail: 'Your daily command loop is clear right now.', icon: 'checkmark-circle-outline', color: Colors.success };
+  }
 }
 
 interface SourceConfig {
@@ -217,6 +335,7 @@ export default function InboxScreen() {
   }, [gutSignals]);
 
   const [gutModalSignal, setGutModalSignal] = useState<GutSignal | null>(null);
+  const [dailyPlanEditorOpen, setDailyPlanEditorOpen] = useState(false);
 
   const respondGutMutation = useMutation({
     mutationFn: async ({ id, response }: { id: string; response: string }) => {
@@ -258,6 +377,80 @@ export default function InboxScreen() {
     },
   });
 
+  const { data: failedJobs = [], refetch: refetchFailedJobs } = useQuery<AgentJob[]>({
+    queryKey: ['/api/agent-jobs?status=failed&limit=10'],
+    refetchInterval: 60000,
+  });
+
+  const { data: dailyCommand, refetch: refetchDailyCommand } = useQuery<DailyCommandSnapshot>({
+    queryKey: ['/api/daily-command/today'],
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'working' || status === 'recovering' || status === 'waiting_approval' ? 10000 : 60000;
+    },
+  });
+
+  const { data: mindTraceData, isLoading: mindTraceLoading, refetch: refetchMindTrace } = useQuery<{ traces: MindTraceDebugRecord[] }>({
+    queryKey: ['/api/mind-trace/recent?limit=5'],
+    refetchInterval: 60000,
+  });
+
+  const refreshDailyPlanMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest('POST', '/api/daily-command/plan/generate', { mode: 'merge' });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
+      if (dailyCommand?.date) {
+        queryClient.invalidateQueries({ queryKey: [`/api/data/plans/${dailyCommand.date}`] });
+      }
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not refresh the daily plan.');
+    },
+  });
+
+  const patchDailyPlanMutation = useMutation({
+    mutationFn: async (patch: DailyCommandPlanPatch | { ops: DailyCommandPlanPatch[] }) => {
+      const res = await apiRequest('PATCH', '/api/daily-command/plan', patch);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
+      if (dailyCommand?.date) {
+        queryClient.invalidateQueries({ queryKey: [`/api/data/plans/${dailyCommand.date}`] });
+      }
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not update the daily plan.');
+    },
+  });
+
+  const refreshAll = useCallback(() => {
+    void Promise.all([
+      refetch(),
+      refetchGut(),
+      refetchDrafts(),
+      refetchDeliverables(),
+      refetchAutoHandled(),
+      refetchActiveJobs(),
+      refetchFailedJobs(),
+      refetchDailyCommand(),
+      refetchMindTrace(),
+    ]);
+  }, [
+    refetch,
+    refetchGut,
+    refetchDrafts,
+    refetchDeliverables,
+    refetchAutoHandled,
+    refetchActiveJobs,
+    refetchFailedJobs,
+    refetchDailyCommand,
+    refetchMindTrace,
+  ]);
+
   const cancelJobMutation = useMutation({
     mutationFn: async (jobId: string) => {
       const res = await apiRequest('POST', `/api/agent-jobs/${jobId}/cancel`, {});
@@ -265,9 +458,26 @@ export default function InboxScreen() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
     },
     onError: () => {
       Alert.alert('Error', 'Could not cancel this job.');
+    },
+  });
+
+  const retryJobMutation = useMutation({
+    mutationFn: async (jobId: string) => {
+      const res = await apiRequest('POST', `/api/agent-jobs/${jobId}/retry`, {});
+      return res.json() as Promise<{ ok: boolean; jobId: string; status: string }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs?status=failed&limit=10'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
+      Alert.alert('Retry queued', 'Jarvis will try this job again.');
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not retry this job.');
     },
   });
 
@@ -279,6 +489,7 @@ export default function InboxScreen() {
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       const approvedItem = deliverables.find(d => d.id === variables);
       if (approvedItem?.type === 'approval_gate') {
         Alert.alert('Approved', 'The action has been approved and will continue.');
@@ -304,6 +515,7 @@ export default function InboxScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
     },
   });
 
@@ -316,6 +528,7 @@ export default function InboxScreen() {
     },
     onSuccess: (data, id) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       if (data.driveLink) {
         Alert.alert('Saved to Drive', 'Your document has been saved to Google Drive.', [
           { text: 'Open', onPress: () => Linking.openURL(data.driveLink) },
@@ -350,6 +563,7 @@ export default function InboxScreen() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
     },
     onError: () => {
       Alert.alert('Error', 'Could not decline this request.');
@@ -357,10 +571,13 @@ export default function InboxScreen() {
   });
 
   const [editingDeliverable, setEditingDeliverable] = useState<Deliverable | null>(null);
+  const [revisingDeliverable, setRevisingDeliverable] = useState<Deliverable | null>(null);
+  const [viewingDeliverable, setViewingDeliverable] = useState<Deliverable | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editBody, setEditBody] = useState('');
   const [editTo, setEditTo] = useState('');
   const [editSubject, setEditSubject] = useState('');
+  const [revisionInstructions, setRevisionInstructions] = useState('');
 
   const openEditDeliverable = useCallback((d: Deliverable) => {
     const meta = (d.meta as { to?: string; subject?: string; emailBody?: string } | null) || {};
@@ -373,6 +590,20 @@ export default function InboxScreen() {
 
   const closeEditDeliverable = useCallback(() => {
     setEditingDeliverable(null);
+  }, []);
+
+  const openReviseDeliverable = useCallback((d: Deliverable) => {
+    setRevisingDeliverable(d);
+    setRevisionInstructions('');
+  }, []);
+
+  const closeReviseDeliverable = useCallback(() => {
+    setRevisingDeliverable(null);
+    setRevisionInstructions('');
+  }, []);
+
+  const closeViewingDeliverable = useCallback(() => {
+    setViewingDeliverable(null);
   }, []);
 
   const editDeliverableMutation = useMutation({
@@ -404,6 +635,32 @@ export default function InboxScreen() {
     }
     editDeliverableMutation.mutate({ id: editingDeliverable.id, payload });
   }, [editingDeliverable, editTitle, editBody, editTo, editSubject, editDeliverableMutation]);
+
+  const reviseDeliverableMutation = useMutation({
+    mutationFn: async (input: { id: string; instructions: string }) => {
+      const res = await apiRequest('POST', `/api/deliverables/${input.id}/revise`, {
+        instructions: input.instructions,
+      });
+      return res.json() as Promise<{ ok: boolean; jobId: string; status: string }>;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+      closeReviseDeliverable();
+      Alert.alert('Revision queued', 'Jarvis will create a new version for review.');
+    },
+    onError: () => {
+      Alert.alert('Error', 'Could not request a revision.');
+    },
+  });
+
+  const submitRevision = useCallback(() => {
+    if (!revisingDeliverable || !revisionInstructions.trim()) return;
+    reviseDeliverableMutation.mutate({
+      id: revisingDeliverable.id,
+      instructions: revisionInstructions.trim(),
+    });
+  }, [revisingDeliverable, revisionInstructions, reviseDeliverableMutation]);
 
   const actionMutation = useMutation({
     mutationFn: async ({ itemId, actionType }: { itemId: string; actionType: string }) => {
@@ -457,8 +714,9 @@ export default function InboxScreen() {
       refetchDeliverables();
       refetchAutoHandled();
       refetchActiveJobs();
+      refetchFailedJobs();
       refetchGut();
-    }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchGut])
+    }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchFailedJobs, refetchGut])
   );
 
   const handleAction = (itemId: string, actionType: string, sourceId?: string, payload?: Record<string, unknown>) => {
@@ -597,6 +855,155 @@ export default function InboxScreen() {
     );
   };
 
+  const renderDailyCommandCard = () => {
+    if (!dailyCommand) return null;
+    const config = getDailyCommandStatusConfig(dailyCommand.status);
+    const tasks = dailyCommand.plan?.tasks || [];
+    const openTasks = tasks.filter((task) => task.completed !== true).length;
+    const warnings = dailyCommand.contextWarnings || [];
+    const activeCount = dailyCommand.jobs?.active?.length ?? 0;
+    const failedCount = dailyCommand.jobs?.failed?.length ?? 0;
+    const approvalCount = dailyCommand.approvals?.pendingCount ?? 0;
+    const attentionCount = dailyCommand.attention?.pendingCount ?? 0;
+    const statusReasons = dailyCommand.statusReasons || [];
+    return (
+      <View style={styles.dailyCommandCard}>
+        <View style={styles.dailyCommandHeader}>
+          <View style={[styles.dailyCommandIcon, { backgroundColor: config.color + '18' }]}>
+            {dailyCommand.status === 'working' ? (
+              <ActivityIndicator size="small" color={config.color} />
+            ) : (
+              <Ionicons name={config.icon} size={18} color={config.color} />
+            )}
+          </View>
+          <View style={styles.dailyCommandHeaderText}>
+            <Text style={styles.dailyCommandTitle}>{config.label}</Text>
+            <Text style={styles.dailyCommandSubtitle} numberOfLines={2}>{config.detail}</Text>
+          </View>
+          <Pressable
+            style={[styles.dailyCommandRefresh, dailyPlanEditorOpen && styles.dailyCommandRefreshActive]}
+            onPress={() => setDailyPlanEditorOpen((open) => !open)}
+            testID="daily-command-toggle-plan-editor"
+          >
+            <Ionicons name={dailyPlanEditorOpen ? 'create' : 'create-outline'} size={17} color={Colors.primary} />
+          </Pressable>
+          <Pressable
+            style={styles.dailyCommandRefresh}
+            onPress={() => refreshDailyPlanMutation.mutate()}
+            disabled={refreshDailyPlanMutation.isPending}
+            testID="daily-command-refresh-plan"
+          >
+            {refreshDailyPlanMutation.isPending ? (
+              <ActivityIndicator size="small" color={Colors.primary} />
+            ) : (
+              <Ionicons name="refresh-outline" size={17} color={Colors.primary} />
+            )}
+          </Pressable>
+        </View>
+
+        <View style={styles.dailyCommandStats}>
+          <View style={styles.dailyCommandStat}>
+            <Text style={styles.dailyCommandStatValue}>{openTasks}</Text>
+            <Text style={styles.dailyCommandStatLabel}>plan</Text>
+          </View>
+          <View style={styles.dailyCommandStat}>
+            <Text style={styles.dailyCommandStatValue}>{attentionCount}</Text>
+            <Text style={styles.dailyCommandStatLabel}>attention</Text>
+          </View>
+          <View style={styles.dailyCommandStat}>
+            <Text style={styles.dailyCommandStatValue}>{activeCount}</Text>
+            <Text style={styles.dailyCommandStatLabel}>working</Text>
+          </View>
+          <View style={styles.dailyCommandStat}>
+            <Text style={[styles.dailyCommandStatValue, failedCount > 0 && { color: Colors.error }]}>{failedCount}</Text>
+            <Text style={styles.dailyCommandStatLabel}>failed</Text>
+          </View>
+          <View style={styles.dailyCommandStat}>
+            <Text style={[styles.dailyCommandStatValue, approvalCount > 0 && { color: '#F59E0B' }]}>{approvalCount}</Text>
+            <Text style={styles.dailyCommandStatLabel}>approval</Text>
+          </View>
+        </View>
+
+        <View style={styles.dailyCommandLoopRow}>
+          <View style={[styles.loopPill, dailyCommand.reminders?.morningBriefSent && styles.loopPillDone]}>
+            <Ionicons
+              name={dailyCommand.reminders?.morningBriefSent ? 'checkmark-circle' : 'ellipse-outline'}
+              size={12}
+              color={dailyCommand.reminders?.morningBriefSent ? Colors.success : Colors.textTertiary}
+            />
+            <Text style={styles.loopPillText}>Morning</Text>
+          </View>
+          <View style={[styles.loopPill, dailyCommand.reminders?.eveningWrapSent && styles.loopPillDone]}>
+            <Ionicons
+              name={dailyCommand.reminders?.eveningWrapSent ? 'checkmark-circle' : 'ellipse-outline'}
+              size={12}
+              color={dailyCommand.reminders?.eveningWrapSent ? Colors.success : Colors.textTertiary}
+            />
+            <Text style={styles.loopPillText}>Evening</Text>
+          </View>
+          <View style={[styles.loopPill, dailyCommand.dream?.pendingCount > 0 && styles.loopPillActive]}>
+            <Ionicons name="moon-outline" size={12} color={dailyCommand.dream?.pendingCount > 0 ? Colors.primary : Colors.textTertiary} />
+            <Text style={styles.loopPillText}>
+              Dream{dailyCommand.dream?.pendingCount > 0 ? ` ${dailyCommand.dream.pendingCount}` : ''}
+            </Text>
+          </View>
+        </View>
+
+        {dailyPlanEditorOpen && (
+          <DailyCommandPlanEditor
+            tasks={tasks}
+            busy={patchDailyPlanMutation.isPending}
+            onPatch={(patch) => patchDailyPlanMutation.mutate(patch)}
+          />
+        )}
+
+        {statusReasons.length > 0 && (
+          <View style={styles.dailyCommandReasons}>
+            {statusReasons.slice(0, 3).map((reason, index) => (
+              <View key={`${reason.state}-${reason.action || 'status'}-${index}`} style={styles.dailyCommandReasonRow}>
+                <Ionicons
+                  name={
+                    reason.severity === 'error'
+                      ? 'alert-circle-outline'
+                      : reason.severity === 'warning'
+                        ? 'shield-checkmark-outline'
+                        : 'checkmark-circle-outline'
+                  }
+                  size={13}
+                  color={reason.severity === 'error' ? Colors.error : reason.severity === 'warning' ? '#F59E0B' : Colors.success}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.dailyCommandReasonLabel}>{reason.label}</Text>
+                  <Text style={styles.dailyCommandReasonText} numberOfLines={2}>{reason.detail}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
+
+        {warnings.length > 0 && (
+          <View style={styles.dailyCommandWarnings}>
+            {warnings.slice(0, 2).map((warning, index) => (
+              <View key={`${warning.source}-${index}`} style={styles.dailyCommandWarningRow}>
+                <Ionicons
+                  name={warning.severity === 'error' ? 'alert-circle-outline' : 'information-circle-outline'}
+                  size={13}
+                  color={warning.severity === 'error' ? Colors.error : '#F59E0B'}
+                />
+                <Text style={styles.dailyCommandWarningText} numberOfLines={2}>{warning.message}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+
+        <MindTraceDebugPanel
+          traces={mindTraceData?.traces ?? []}
+          loading={mindTraceLoading}
+        />
+      </View>
+    );
+  };
+
   const renderDeliverables = () => {
     if (deliverables.length === 0) return null;
     return (
@@ -610,11 +1017,14 @@ export default function InboxScreen() {
         {deliverables.map((d, index) => {
           const icon = DELIVERABLE_ICON[d.type] || 'document-text';
           const typeLabel = DELIVERABLE_LABEL[d.type] || d.type;
+          const review = d.review;
+          const canSaveToDrive = review?.canSaveToDrive !== false;
           const busy =
             (approveDeliverableMutation.isPending && approveDeliverableMutation.variables === d.id) ||
             (discardDeliverableMutation.isPending && discardDeliverableMutation.variables === d.id) ||
             (rejectGateMutation.isPending && rejectGateMutation.variables === d.id) ||
-            (saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id);
+            (saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id) ||
+            (reviseDeliverableMutation.isPending && reviseDeliverableMutation.variables?.id === d.id);
           const meta = d.meta as {
             to?: string;
             subject?: string;
@@ -624,6 +1034,10 @@ export default function InboxScreen() {
           } | null;
           const verificationPassed = meta?.verificationPassed;
           const verificationRetries = meta?.verificationRetries ?? 0;
+          const bodyText = getDeliverableBody(d);
+          const previewText = review?.preview || normalizePreviewText(d.summary) || bodyText;
+          const longDeliverable = isLongDeliverable(d);
+          const revisionInfo = getDeliverableRevisionInfo(d);
           return (
             <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 60)}>
               <View style={styles.draftCard}>
@@ -640,6 +1054,15 @@ export default function InboxScreen() {
                 </View>
 
                 <Text style={styles.subject} numberOfLines={2}>{d.title}</Text>
+
+                {review ? (
+                  <View style={styles.jobStatusRow}>
+                    <View style={[styles.jobTypeBadge, { backgroundColor: Colors.primary + '14' }]}>
+                      <Text style={[styles.jobTypeBadgeText, { color: Colors.primary }]}>{review.label}</Text>
+                    </View>
+                    <Text style={styles.jobStatusText} numberOfLines={1}>{review.nextAction}</Text>
+                  </View>
+                ) : null}
 
                 {d.type === 'email_draft' && meta?.to && (
                   <View style={styles.reasonContainer}>
@@ -660,6 +1083,15 @@ export default function InboxScreen() {
                     </View>
                   );
                 })()}
+
+                {revisionInfo.isRevision && (
+                  <View style={styles.revisionLineageRow}>
+                    <Ionicons name="git-compare-outline" size={13} color={Colors.primary} />
+                    <Text style={styles.revisionLineageText} numberOfLines={2}>
+                      Revision{revisionInfo.instructions ? `: ${revisionInfo.instructions}` : ' of an earlier deliverable'}
+                    </Text>
+                  </View>
+                )}
 
                 {meta?.noSourceUrls && (
                   <View style={styles.noSourcesWarning}>
@@ -695,13 +1127,26 @@ export default function InboxScreen() {
                   </View>
                 )}
 
-                <View style={styles.draftBodyBox}>
+                <Pressable
+                  style={styles.draftBodyBox}
+                  onPress={() => setViewingDeliverable(d)}
+                  testID={`deliverable-open-${d.id}`}
+                >
                   <Text style={styles.draftBodyText} numberOfLines={8}>
-                    {d.summary || d.body}
+                    {previewText}
                   </Text>
-                </View>
+                  <View style={styles.draftBodyFooter}>
+                    <Text style={styles.draftBodyMeta}>
+                      {longDeliverable ? 'Long deliverable' : 'Preview'} · {bodyText.length.toLocaleString()} chars
+                    </Text>
+                    <View style={styles.openDeliverablePill}>
+                      <Ionicons name="reader-outline" size={12} color={Colors.primary} />
+                      <Text style={styles.openDeliverableText}>Open full</Text>
+                    </View>
+                  </View>
+                </Pressable>
 
-                {d.driveLink ? (
+                {canSaveToDrive && d.driveLink ? (
                   <Pressable
                     style={styles.driveLinkRow}
                     onPress={() => Linking.openURL(d.driveLink!)}
@@ -711,7 +1156,7 @@ export default function InboxScreen() {
                     <Text style={styles.driveLinkText}>Open in Drive</Text>
                     <Ionicons name="open-outline" size={13} color={Colors.primary} />
                   </Pressable>
-                ) : (
+                ) : canSaveToDrive ? (
                   <Pressable
                     style={styles.saveToDriveRow}
                     onPress={() => saveToDriveMutation.mutate(d.id)}
@@ -725,7 +1170,7 @@ export default function InboxScreen() {
                     )}
                     <Text style={styles.driveLinkText}>Save to Drive</Text>
                   </Pressable>
-                )}
+                ) : null}
 
                 <View style={styles.actionsRow}>
                   {d.type === 'approval_gate' ? (
@@ -758,6 +1203,14 @@ export default function InboxScreen() {
                         <Text style={styles.actionText}>
                           {d.type === 'email_draft' ? 'Save to Gmail' : 'Save to Documents'}
                         </Text>
+                      </Pressable>
+                      <Pressable
+                        style={[styles.actionButton, styles.actionButtonDismiss]}
+                        onPress={() => openReviseDeliverable(d)}
+                        disabled={busy}
+                        testID={`deliverable-revise-${d.id}`}
+                      >
+                        <Text style={[styles.actionText, styles.actionTextDismiss]}>Revise</Text>
                       </Pressable>
                       <Pressable
                         style={[styles.actionButton, styles.actionButtonDismiss]}
@@ -901,6 +1354,63 @@ export default function InboxScreen() {
     );
   };
 
+  const renderFailedJobs = () => {
+    if (failedJobs.length === 0) return null;
+    return (
+      <View style={styles.draftSection}>
+        <View style={styles.draftHeader}>
+          <Ionicons name="alert-circle-outline" size={16} color={Colors.error} />
+          <Text style={[styles.draftHeaderText, { color: Colors.error }]}>
+            Needs retry - {failedJobs.length} failed job{failedJobs.length === 1 ? '' : 's'}
+          </Text>
+        </View>
+        {failedJobs.map((job, index) => {
+          const icon = JOB_ICON[job.agentType] || 'sparkles';
+          const label = JOB_LABEL[job.agentType] || job.agentType;
+          const busy = retryJobMutation.isPending && retryJobMutation.variables === job.id;
+          const review = job.review;
+          const preview = review?.preview || job.error || job.prompt || 'No details available.';
+          return (
+            <Animated.View key={job.id} entering={FadeInDown.duration(300).delay(index * 60)}>
+              <View style={[styles.jobCard, styles.jobFailedCard]}>
+                <View style={styles.jobCardRow}>
+                  <View style={[styles.sourceIcon, { backgroundColor: Colors.error + '15' }]}>
+                    <Ionicons name={icon} size={18} color={Colors.error} />
+                  </View>
+                  <View style={styles.jobCardMeta}>
+                    <Text style={styles.jobTitle} numberOfLines={2}>{job.title}</Text>
+                    <View style={styles.jobStatusRow}>
+                      <Ionicons name="warning-outline" size={13} color={Colors.error} style={{ marginRight: 3 }} />
+                      <Text style={[styles.jobStatusText, { color: Colors.error }]}>
+                        {review?.label || 'Failed'}{job.completedAt ? ` - ${formatElapsed(job.completedAt)} ago` : ''}
+                      </Text>
+                      <View style={[styles.jobTypeBadge, { backgroundColor: Colors.error + '14' }]}>
+                        <Text style={[styles.jobTypeBadgeText, { color: Colors.error }]}>{label}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.jobPreviewBox}>
+                      <Text style={styles.jobPreviewText} numberOfLines={3}>{preview}</Text>
+                    </View>
+                    <View style={styles.actionsRow}>
+                      <Pressable
+                        style={styles.actionButton}
+                        onPress={() => retryJobMutation.mutate(job.id)}
+                        disabled={busy}
+                        testID={`job-retry-${job.id}`}
+                      >
+                        <Text style={styles.actionText}>{busy ? 'Queuing...' : (review?.nextAction || 'Retry')}</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const renderRunningJobs = () => {
     if (activeJobs.length === 0) return null;
     return (
@@ -914,6 +1424,7 @@ export default function InboxScreen() {
         {activeJobs.map((job, index) => {
           const icon = JOB_ICON[job.agentType] || 'sparkles';
           const label = JOB_LABEL[job.agentType] || job.agentType;
+          const review = job.review;
           const isRunning = job.status === 'running';
           const isCancelling = job.status === 'cancelling';
           const elapsedFrom = isRunning && job.startedAt ? job.startedAt : job.createdAt;
@@ -940,6 +1451,9 @@ export default function InboxScreen() {
                         <Text style={[styles.jobTypeBadgeText, { color: Colors.primary }]}>{label}</Text>
                       </View>
                     </View>
+                    {(review?.preview || job.prompt) ? (
+                      <Text style={styles.jobPromptPreview} numberOfLines={2}>{review?.preview || job.prompt}</Text>
+                    ) : null}
                   </View>
                   <Pressable
                     style={styles.jobCancelBtn}
@@ -992,9 +1506,11 @@ export default function InboxScreen() {
 
   const renderListHeader = () => (
     <View>
+      {renderDailyCommandCard()}
       {renderDeliverables()}
       {renderGutNoticed()}
       {renderRunningJobs()}
+      {renderFailedJobs()}
       {renderAutoHandledDeliverables()}
       {renderDraftQueue()}
     </View>
@@ -1072,6 +1588,7 @@ export default function InboxScreen() {
     if (drafts.length > 0) return null;
     if (deliverables.length > 0) return null;
     if (activeJobs.length > 0) return null;
+    if (failedJobs.length > 0) return null;
     return (
       <View style={styles.emptyContainer}>
         <View style={styles.emptyIcon}>
@@ -1085,13 +1602,19 @@ export default function InboxScreen() {
     );
   };
 
+  const viewingRevisionInfo = viewingDeliverable ? getDeliverableRevisionInfo(viewingDeliverable) : null;
+  const viewingBody = viewingDeliverable ? getDeliverableBody(viewingDeliverable) : '';
+  const viewingTypeLabel = viewingDeliverable
+    ? (DELIVERABLE_LABEL[viewingDeliverable.type] || viewingDeliverable.type)
+    : '';
+
   return (
     <View style={[styles.container, { paddingTop: isWeb ? 67 : insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Inbox</Text>
-        {(items.length + deliverables.length) > 0 && (
+        {(items.length + deliverables.length + activeJobs.length + failedJobs.length) > 0 && (
           <View style={styles.badge}>
-            <Text style={styles.badgeText}>{items.length + deliverables.length}</Text>
+            <Text style={styles.badgeText}>{items.length + deliverables.length + activeJobs.length + failedJobs.length}</Text>
           </View>
         )}
       </View>
@@ -1110,11 +1633,113 @@ export default function InboxScreen() {
           ListHeaderComponent={renderListHeader}
           ListEmptyComponent={renderEmpty}
           refreshControl={
-            <RefreshControl refreshing={false} onRefresh={refetch} tintColor={Colors.primary} />
+            <RefreshControl refreshing={false} onRefresh={refreshAll} tintColor={Colors.primary} />
           }
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      <Modal
+        visible={!!viewingDeliverable}
+        animationType="slide"
+        transparent
+        onRequestClose={closeViewingDeliverable}
+      >
+        <View style={styles.editModalRoot}>
+          <View style={styles.reviewSheet}>
+            <View style={styles.editHeader}>
+              <View style={styles.reviewHeaderText}>
+                <Text style={styles.editTitle}>Review deliverable</Text>
+                <Text style={styles.reviewKicker} numberOfLines={1}>{viewingTypeLabel}</Text>
+              </View>
+              <Pressable onPress={closeViewingDeliverable} testID="deliverable-view-close">
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+
+            {viewingDeliverable && (
+              <ScrollView style={styles.reviewBodyScroll} contentContainerStyle={styles.reviewBodyContent}>
+                <Text style={styles.reviewTitle}>{viewingDeliverable.title}</Text>
+                <View style={styles.reviewMetaGrid}>
+                  <View style={styles.reviewMetaItem}>
+                    <Text style={styles.reviewMetaLabel}>Created</Text>
+                    <Text style={styles.reviewMetaValue}>
+                      {new Date(viewingDeliverable.createdAt).toLocaleString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </Text>
+                  </View>
+                  <View style={styles.reviewMetaItem}>
+                    <Text style={styles.reviewMetaLabel}>Length</Text>
+                    <Text style={styles.reviewMetaValue}>{viewingBody.length.toLocaleString()} chars</Text>
+                  </View>
+                  <View style={styles.reviewMetaItem}>
+                    <Text style={styles.reviewMetaLabel}>Status</Text>
+                    <Text style={styles.reviewMetaValue}>{viewingDeliverable.review?.label || viewingDeliverable.status}</Text>
+                  </View>
+                </View>
+
+                {viewingRevisionInfo?.isRevision && (
+                  <View style={styles.reviewRevisionBox}>
+                    <View style={styles.reviewRevisionHeader}>
+                      <Ionicons name="git-compare-outline" size={14} color={Colors.primary} />
+                      <Text style={styles.reviewRevisionTitle}>Revision history</Text>
+                    </View>
+                    {viewingRevisionInfo.instructions ? (
+                      <Text style={styles.reviewRevisionText}>{viewingRevisionInfo.instructions}</Text>
+                    ) : (
+                      <Text style={styles.reviewRevisionText}>This is a revised version of an earlier deliverable.</Text>
+                    )}
+                    {(viewingRevisionInfo.originalDeliverableId || viewingRevisionInfo.originalJobId) && (
+                      <Text style={styles.reviewRevisionIds} numberOfLines={2}>
+                        Source {viewingRevisionInfo.originalDeliverableId || viewingRevisionInfo.originalJobId}
+                      </Text>
+                    )}
+                  </View>
+                )}
+
+                {viewingDeliverable.summary ? (
+                  <View style={styles.reviewSummaryBox}>
+                    <Text style={styles.reviewSectionLabel}>Summary</Text>
+                    <Text style={styles.reviewSummaryText}>{viewingDeliverable.summary}</Text>
+                  </View>
+                ) : null}
+
+                <Text style={styles.reviewSectionLabel}>Full content</Text>
+                <Text style={styles.reviewBodyText}>{viewingBody}</Text>
+              </ScrollView>
+            )}
+
+            {viewingDeliverable && (
+              <View style={styles.editFooter}>
+                <Pressable
+                  style={[styles.actionButton, styles.actionButtonDismiss]}
+                  onPress={closeViewingDeliverable}
+                  testID="deliverable-view-done"
+                >
+                  <Text style={[styles.actionText, styles.actionTextDismiss]}>Done</Text>
+                </Pressable>
+                {viewingDeliverable.review?.canRevise && (
+                  <Pressable
+                    style={styles.actionButton}
+                    onPress={() => {
+                      const target = viewingDeliverable;
+                      closeViewingDeliverable();
+                      openReviseDeliverable(target);
+                    }}
+                    testID="deliverable-view-revise"
+                  >
+                    <Text style={styles.actionText}>Request revision</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={!!editingDeliverable}
@@ -1207,6 +1832,59 @@ export default function InboxScreen() {
       </Modal>
 
       <Modal
+        visible={!!revisingDeliverable}
+        animationType="slide"
+        transparent
+        onRequestClose={closeReviseDeliverable}
+      >
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          style={styles.editModalRoot}
+        >
+          <View style={styles.editSheet}>
+            <View style={styles.editHeader}>
+              <Text style={styles.editTitle}>Request revision</Text>
+              <Pressable onPress={closeReviseDeliverable} testID="deliverable-revise-close">
+                <Ionicons name="close" size={22} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+            <Text style={styles.reviseItemTitle} numberOfLines={2}>{revisingDeliverable?.title}</Text>
+            <Text style={styles.editLabel}>What should Jarvis change?</Text>
+            <TextInput
+              value={revisionInstructions}
+              onChangeText={setRevisionInstructions}
+              style={[styles.editInput, styles.editBody]}
+              placeholder="Tell Jarvis what to improve, add, remove, or check before sending a new version."
+              placeholderTextColor={Colors.textTertiary}
+              multiline
+              textAlignVertical="top"
+              testID="deliverable-revise-instructions"
+            />
+            <View style={styles.editFooter}>
+              <Pressable
+                style={[styles.actionButton, styles.actionButtonDismiss]}
+                onPress={closeReviseDeliverable}
+                disabled={reviseDeliverableMutation.isPending}
+                testID="deliverable-revise-cancel"
+              >
+                <Text style={[styles.actionText, styles.actionTextDismiss]}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.actionButton}
+                onPress={submitRevision}
+                disabled={!revisionInstructions.trim() || reviseDeliverableMutation.isPending}
+                testID="deliverable-revise-submit"
+              >
+                <Text style={styles.actionText}>
+                  {reviseDeliverableMutation.isPending ? 'Queuing...' : 'Queue revision'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <Modal
         visible={!!gutModalSignal}
         animationType="fade"
         transparent
@@ -1234,7 +1912,7 @@ export default function InboxScreen() {
                 onPress={() => gutModalSignal && respondGutMutation.mutate({ id: gutModalSignal.id, response: 'dismissed' })}
                 disabled={respondGutMutation.isPending}
               >
-                <Text style={styles.gutModalBtnDismissText}>This one's fine</Text>
+                <Text style={styles.gutModalBtnDismissText}>This one is fine</Text>
               </Pressable>
             </View>
           </View>
@@ -1263,6 +1941,15 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     maxHeight: '85%',
   },
+  reviewSheet: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 24,
+    maxHeight: '90%',
+  },
   editHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1273,6 +1960,119 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontFamily: 'Inter_700Bold',
     color: Colors.text,
+  },
+  reviewHeaderText: {
+    flex: 1,
+    paddingRight: 12,
+  },
+  reviewKicker: {
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  reviewBodyScroll: {
+    maxHeight: 620,
+  },
+  reviewBodyContent: {
+    paddingBottom: 8,
+  },
+  reviewTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+    lineHeight: 24,
+    marginBottom: 12,
+  },
+  reviewMetaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 12,
+  },
+  reviewMetaItem: {
+    minWidth: 100,
+    flexGrow: 1,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  reviewMetaLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 3,
+  },
+  reviewMetaValue: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+  },
+  reviewRevisionBox: {
+    backgroundColor: Colors.primary + '10',
+    borderWidth: 1,
+    borderColor: Colors.primary + '25',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+  },
+  reviewRevisionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  reviewRevisionTitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.primary,
+  },
+  reviewRevisionText: {
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  reviewRevisionIds: {
+    marginTop: 6,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
+  },
+  reviewSummaryBox: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 12,
+  },
+  reviewSectionLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: 6,
+  },
+  reviewSummaryText: {
+    fontSize: 13,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  reviewBodyText: {
+    fontSize: 14,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    lineHeight: 21,
+  },
+  reviseItemTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.text,
+    marginBottom: 4,
   },
   editBodyScroll: {
     maxHeight: 480,
@@ -1413,6 +2213,7 @@ const styles = StyleSheet.create({
   },
   actionsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     alignItems: 'center',
   },
@@ -1436,6 +2237,152 @@ const styles = StyleSheet.create({
   neverButton: {
     marginLeft: 'auto' as const,
     padding: 8,
+  },
+  dailyCommandCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  dailyCommandHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  dailyCommandIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dailyCommandHeaderText: {
+    flex: 1,
+  },
+  dailyCommandTitle: {
+    fontSize: 15,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  dailyCommandSubtitle: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  dailyCommandRefresh: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.primary + '10',
+  },
+  dailyCommandRefreshActive: {
+    backgroundColor: Colors.greenDim,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  dailyCommandStats: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  dailyCommandStat: {
+    minWidth: 58,
+    flexGrow: 1,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+  },
+  dailyCommandStatValue: {
+    fontSize: 16,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  dailyCommandStatLabel: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textTertiary,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.4,
+    marginTop: 1,
+  },
+  dailyCommandLoopRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 12,
+  },
+  loopPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    backgroundColor: Colors.surfaceAlt,
+  },
+  loopPillDone: {
+    backgroundColor: Colors.success + '12',
+  },
+  loopPillActive: {
+    backgroundColor: Colors.primary + '12',
+  },
+  loopPillText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  dailyCommandReasons: {
+    marginTop: 10,
+    gap: 6,
+  },
+  dailyCommandReasonRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  dailyCommandReasonLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  dailyCommandReasonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 16,
+    marginTop: 1,
+  },
+  dailyCommandWarnings: {
+    marginTop: 10,
+    gap: 6,
+  },
+  dailyCommandWarningRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: '#FFFBEB',
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+  },
+  dailyCommandWarningText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: '#92400E',
+    lineHeight: 16,
   },
   draftSection: {
     marginBottom: 8,
@@ -1509,6 +2456,23 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     lineHeight: 15,
   },
+  revisionLineageRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+    backgroundColor: Colors.primary + '10',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 7,
+    marginBottom: 8,
+  },
+  revisionLineageText: {
+    flex: 1,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.primary,
+    lineHeight: 16,
+  },
   driveLinkRow: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
@@ -1549,6 +2513,33 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_400Regular',
     color: Colors.text,
     lineHeight: 18,
+  },
+  draftBodyFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    marginTop: 10,
+  },
+  draftBodyMeta: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: 'Inter_500Medium',
+    color: Colors.textTertiary,
+  },
+  openDeliverablePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  openDeliverableText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.primary,
   },
   autoHandledCard: {
     borderColor: Colors.border,
@@ -1609,6 +2600,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.primary + '30',
   },
+  jobFailedCard: {
+    borderColor: Colors.error + '30',
+  },
   jobCardRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1633,6 +2627,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.primary,
+  },
+  jobPromptPreview: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  jobPreviewBox: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  jobPreviewText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
   },
   jobTypeBadge: {
     borderRadius: 5,

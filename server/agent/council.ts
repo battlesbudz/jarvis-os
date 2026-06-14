@@ -11,6 +11,7 @@
 import { runNamedAgent } from "./runNamedAgent";
 import { listAgents } from "./agentManager";
 import { logAgentEvent } from "./agentLogger";
+import { createRoutedOpenAIChatShim } from "./routedChatCompletion";
 
 export interface CouncilAgentResponse {
   agentId: string;
@@ -105,7 +106,7 @@ export async function runCouncil(
   const succeededCount = agentResponses.filter((r) => r.ok).length;
 
   // Synthesize with the main assistant
-  const synthesis = await synthesizeCouncilResponse(question, agentResponses);
+  const synthesis = await synthesizeCouncilResponse(userId, question, agentResponses);
 
   logAgentEvent({
     event: "council_completed",
@@ -125,6 +126,7 @@ export async function runCouncil(
 // ── synthesizeCouncilResponse ──────────────────────────────────────────────────
 
 async function synthesizeCouncilResponse(
+  userId: string,
   question: string,
   responses: CouncilAgentResponse[],
 ): Promise<string> {
@@ -142,14 +144,11 @@ async function synthesizeCouncilResponse(
     .join("\n\n---\n\n");
 
   try {
-    const OpenAI = (await import("openai")).default;
-    const openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    const openai = createRoutedOpenAIChatShim("[CouncilSynthesis]", "balanced");
 
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
+      user: userId,
       messages: [
         {
           role: "system",

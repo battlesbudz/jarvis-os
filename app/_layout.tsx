@@ -20,6 +20,9 @@ import { queryClient, apiRequest } from "@/lib/query-client";
 import { runMigrations, isOnboardingComplete } from "@/lib/storage";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { WakeWordProvider } from "@/lib/wake-word-context";
+import { useAndroidApkUpdateCheck } from "@/lib/app-update";
+import { captureTelegramInitData } from "@/lib/telegram-webapp";
+import { hasDesktopConnectorAuthBridge } from "@/lib/desktop-connector-setup";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -33,9 +36,11 @@ function useProtectedRoute() {
     if (isLoading) return;
 
     const onLoginPage = segments[0] === "login";
+    const onDesktopConnectorSetupPage = segments[0] === "desktop-connector-setup";
+    const allowDesktopConnectorBridge = onDesktopConnectorSetupPage && hasDesktopConnectorAuthBridge();
     const currentRoute = "/" + segments.join("/");
 
-    if (!isAuthenticated && !onLoginPage) {
+    if (!isAuthenticated && !onLoginPage && !allowDesktopConnectorBridge) {
       lastRouteRef.current = currentRoute !== "/" ? currentRoute : "/";
       router.replace("/login");
     } else if (isAuthenticated && onLoginPage) {
@@ -112,8 +117,9 @@ function useDeepLinkNavigation() {
   const handleNavUrl = useCallback((url: string) => {
     try {
       const parsed = Linking.parse(url);
-      const screen = parsed.hostname ?? '';
-      if (screen === 'voice-realtime') {
+      const host = parsed.hostname ?? '';
+      const path = typeof parsed.path === 'string' ? parsed.path.replace(/^\/+/, '') : '';
+      if (host === 'voice-realtime' || path === 'voice-realtime') {
         router.push('/voice-realtime');
       }
     } catch {
@@ -181,10 +187,18 @@ function useExpoPushTokenRegistration() {
 }
 
 function AppNavigator() {
+  useEffect(() => {
+    if (Platform.OS !== "web") return;
+    captureTelegramInitData().catch(() => {
+      // Telegram init data is only present inside a real Telegram Mini App.
+    });
+  }, []);
+
   const { isLoading } = useProtectedRoute();
   useDeepLinkAuth();
   useDeepLinkNavigation();
   useExpoPushTokenRegistration();
+  useAndroidApkUpdateCheck();
 
   useEffect(() => {
     if (Platform.OS === 'web') return;

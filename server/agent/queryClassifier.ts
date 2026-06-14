@@ -27,6 +27,9 @@ export function classifyQueryIntent(text: string): "research" | "general" {
   return RESEARCH_PATTERNS.some((re) => re.test(text)) ? "research" : "general";
 }
 
+export { classifyToolAwareRoute } from "./toolAwareRouting";
+export type { ToolAwareIntent, ToolAwareRoutePlan } from "./toolAwareRouting";
+
 /**
  * Patterns that indicate the user wants Jarvis to build a new tool or feature.
  *

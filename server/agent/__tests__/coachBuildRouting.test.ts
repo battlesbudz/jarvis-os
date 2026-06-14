@@ -162,13 +162,18 @@ async function run(): Promise<void> {
     };
     const deps: BuildRouteDeps = { submit: capturingSubmit };
 
-    await routeBuildIntent(makeInput({ discordChannelId: "ch-discord-99" }), deps);
+    await routeBuildIntent(makeInput({ originChannelId: "telegram-chat-1", discordChannelId: "ch-discord-99" }), deps);
 
     assert(capturedInputs.length === 1, "DC-1: submit was called exactly once");
     assertEquals(
+      capturedInputs[0]?.originChannelId as string,
+      "telegram-chat-1",
+      "DC-2: originChannelId is forwarded to the job input",
+    );
+    assertEquals(
       capturedInputs[0]?.originDiscordChannelId as string,
       "ch-discord-99",
-      "DC-2: originDiscordChannelId is forwarded to the job input",
+      "DC-3: originDiscordChannelId is forwarded to the job input",
     );
   }
 

@@ -46,7 +46,7 @@ const GOAL_STOP_WORDS = new Set([
 /**
  * Extract candidate project/product tokens from a goal title.
  * Returns tokens that are at least 3 characters and not generic goal words.
- * Handles compound tokens like "OpenClaw", "my-startup", "HealthTrackr".
+ * Handles compound tokens like "JarvisOS", "my-startup", "HealthTrackr".
  */
 function extractTokensFromGoalTitle(title: string): string[] {
   const tokens = new Set<string>();
@@ -83,7 +83,7 @@ export async function getProtectedEntityNames(userId: string): Promise<string[]>
 
   try {
     // 1. Goal tree titles — the most reliable "this is my project" signal.
-    // A goal_tree title like "Launch OpenClaw" or "OpenClaw MVP v1" contains
+    // A goal_tree title like "Launch HealthTrackr" or "HealthTrackr MVP v1" contains
     // the product name once we strip the action words.
     const trees = await db
       .select({ title: schema.goalTrees.title })
@@ -198,7 +198,8 @@ export function findEntityNearMatch(
   const queryWords = searchQuery
     .split(/[\s,;:()\[\]{}"'`|]+/)
     .map((w) => w.replace(/[^a-zA-Z0-9_-]/g, "").trim())
-    .filter((w) => w.length >= 4);  // ignore short tokens to cut false positives
+    .filter((w) => w.length >= 4)
+    .filter((w) => !GOAL_STOP_WORDS.has(w.toLowerCase()));  // ignore generic command words to cut false positives
 
   for (const qw of queryWords) {
     for (const entity of entityNames) {

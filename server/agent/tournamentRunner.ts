@@ -2,8 +2,8 @@
  * Tournament Runner — multi-agent competitive answer selection.
  *
  * Fans out N independent sub-agent calls on the same task (with prompt-level
- * diversity to produce varied outputs), collects all results, then asks a
- * Claude judge to score each output and name a winner.
+ * diversity to produce varied outputs), collects all results, then asks the
+ * Codex OAuth judge to score each output and name a winner.
  *
  * The complete run (outputs, scores, winner) is persisted to `tournament_runs`
  * so the user can retrieve runners-up on request.
@@ -12,7 +12,7 @@
 import { runSubAgent } from "./subagents";
 import type { SubAgentType } from "./subagents";
 import type { ToolContext } from "./types";
-import { anthropic, ORCHESTRATOR_MODEL } from "../lib/anthropicClient";
+import { routeModelTurn } from "./modelRouter";
 import { db } from "../db";
 import { tournamentRuns } from "@shared/schema";
 import type { TournamentOutput, TournamentScore } from "@shared/schema";
@@ -100,6 +100,7 @@ async function judgeOutputs(opts: {
   task: string;
   outputs: TournamentOutput[];
   criteria: string;
+  userId?: string;
 }): Promise<{ scores: TournamentScore[]; winnerIndex: number }> {
   // Build output block preserving original agentIndex values.
   const outputBlock = opts.outputs
@@ -111,10 +112,17 @@ async function judgeOutputs(opts: {
 
   const agentIndices = opts.outputs.map((o) => o.agentIndex);
 
-  const response = await anthropic.messages.create({
-    model: ORCHESTRATOR_MODEL,
-    max_tokens: 1024,
-    system: `You are an expert quality judge evaluating multiple outputs from independent AI agents on the same task. Score each output against the provided criteria and pick the best one. Respond with valid JSON only — no markdown, no commentary outside JSON.
+  const response = await routeModelTurn({
+    tier: "smart",
+    maxCompletionTokens: 1024,
+    stream: false,
+    toolChoice: "none",
+    userId: opts.userId,
+    logPrefix: "[TournamentJudge]",
+    messages: [
+      {
+        role: "system",
+        content: `You are an expert quality judge evaluating multiple outputs from independent AI agents on the same task. Score each output against the provided criteria and pick the best one. Respond with valid JSON only — no markdown, no commentary outside JSON.
 
 Agent indices available: ${agentIndices.join(", ")}
 
@@ -133,7 +141,7 @@ Rules:
 - Failed agents (showing an error message) should receive score ≤ 10.
 - winnerIndex must be one of the listed agent indices, pointing to the highest-scoring agent.
 - Keep each reasoning to 1-2 sentences.`,
-    messages: [
+      },
       {
         role: "user",
         content: `Task: ${opts.task}\n\nJudge criteria: ${opts.criteria}\n\n${outputBlock}`,
@@ -141,8 +149,7 @@ Rules:
     ],
   });
 
-  const content = response.content[0];
-  const text = content.type === "text" ? content.text : "";
+  const text = response.textContent ?? "";
 
   try {
     const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -221,7 +228,7 @@ export async function runTournament(opts: TournamentOptions): Promise<Tournament
   let winnerIndex = 0;
 
   try {
-    const judgment = await judgeOutputs({ task: opts.task, outputs, criteria });
+    const judgment = await judgeOutputs({ task: opts.task, outputs, criteria, userId: opts.context.userId });
     scores = judgment.scores;
     winnerIndex = judgment.winnerIndex;
   } catch (err) {

@@ -60,10 +60,11 @@ export function parseNaturalTime(expr: string): Date | null {
   const lower = s.toLowerCase();
   const now = new Date();
 
-  // "in X minutes/hours/days"
-  const relM = lower.match(/^in\s+(\d+(?:\.\d+)?)\s+(minute|minutes|hour|hours|day|days|week|weeks)$/);
+  // "in X minutes/hours/days" and natural one-offs like "in an hour"
+  const relM = lower.match(/^in\s+(\d+(?:\.\d+)?|an?|one)\s+(minute|minutes|hour|hours|day|days|week|weeks)$/);
   if (relM) {
-    const n = parseFloat(relM[1]);
+    const rawAmount = relM[1];
+    const n = /^(a|an|one)$/.test(rawAmount) ? 1 : parseFloat(rawAmount);
     const unit = relM[2];
     const result = new Date(now);
     if (unit.startsWith("minute")) result.setMinutes(now.getMinutes() + n);
@@ -322,7 +323,7 @@ export const cronCreateTool: AgentTool = {
     try {
       const [task] = await db
         .insert(schema.jarvisScheduledTasks)
-        .values({ userId: ctx.userId, title, description, scheduledAt, recurrence, shellCommand })
+        .values({ userId: ctx.userId, title, description, scheduledAt, recurrence, shellCommand, taskKind: "jarvis_action" })
         .returning();
 
       const when = formatWhen(scheduledAt);

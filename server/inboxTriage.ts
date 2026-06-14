@@ -16,12 +16,8 @@ import { eq, and, sql as drizzleSql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { markSoulStale } from "./memory/soul";
 import { STRICTLY_IRREVERSIBLE_TOOLS, approveGate } from "./agent/agentApproval";
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
+import { isInboxTriageEnabled } from "./inboxTriageConfig";
 
 type TriageVerdict = "auto_handle" | "escalate" | "promote_memory";
 
@@ -55,12 +51,12 @@ Summary: ${d.summary || "(none)"}
 Content preview: ${bodySnippet}`;
 
   try {
-    const resp = await openai.chat.completions.create({
+    const resp = await createRoutedChatCompletion({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 120,
-    });
+    }, { tier: "cheap", logPrefix: "[InboxTriage/deliverable]", userId: d.userId });
     const raw = resp.choices[0]?.message?.content || "{}";
     const result = JSON.parse(raw) as { verdict?: string; note?: string };
     const valid: TriageVerdict[] = ["auto_handle", "escalate", "promote_memory"];
@@ -188,12 +184,12 @@ Snippet: ${(item.snippet || "").slice(0, 400)}
 Jarvis reason: ${item.jarvisReason || "(none)"}`;
 
   try {
-    const resp = await openai.chat.completions.create({
+    const resp = await createRoutedChatCompletion({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 80,
-    });
+    }, { tier: "cheap", logPrefix: "[InboxTriage/item]", userId: item.userId });
     const raw = resp.choices[0]?.message?.content || "{}";
     const result = JSON.parse(raw) as { autoDismiss?: boolean; reason?: string };
     return { autoDismiss: result.autoDismiss === true, reason: result.reason || "" };
@@ -336,6 +332,11 @@ export async function runTriagePassForUser(userId: string): Promise<void> {
 }
 
 export async function runStartupTriagePass(): Promise<void> {
+  if (!isInboxTriageEnabled()) {
+    console.log("[InboxTriage] Startup pass skipped — set JARVIS_INBOX_TRIAGE_ENABLED=true to enable automatic triage");
+    return;
+  }
+
   const users = await db.select({ id: schema.users.id }).from(schema.users);
   for (const user of users) {
     await runTriagePassForUser(user.id).catch((err) => {
@@ -348,6 +349,12 @@ let triageRunning = false;
 
 export function startTriageRunner(): void {
   if (triageRunning) return;
+
+  if (!isInboxTriageEnabled()) {
+    console.log("[InboxTriage] Automatic triage disabled — set JARVIS_INBOX_TRIAGE_ENABLED=true to enable it");
+    return;
+  }
+
   triageRunning = true;
 
   const INTERVAL_MS = 3 * 60 * 1000;

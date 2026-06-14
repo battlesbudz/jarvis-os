@@ -18,6 +18,7 @@ export interface BuildRouteInput {
   userText: string;
   channelName: string;
   chatMessages: Array<{ role: string; content: string }>;
+  originChannelId?: string;
   discordChannelId?: string;
 }
 
@@ -55,7 +56,7 @@ export async function routeBuildIntent(
   input: BuildRouteInput,
   deps: BuildRouteDeps = { submit: submitAgentJob },
 ): Promise<BuildRouteResult> {
-  const { userId, userText, channelName, chatMessages, discordChannelId } = input;
+  const { userId, userText, channelName, chatMessages, originChannelId, discordChannelId } = input;
   const { submit } = deps;
 
   const buildTitle = `Build: ${userText.slice(0, 80)}${userText.length > 80 ? "…" : ""}`;
@@ -63,6 +64,7 @@ export async function routeBuildIntent(
   // ── Enqueue (or detect duplicate) ────────────────────────────────────────
   const buildPrompt = userText;
   const buildInput: Record<string, unknown> = { originChannel: channelName };
+  if (originChannelId) buildInput.originChannelId = originChannelId;
   if (discordChannelId) buildInput.originDiscordChannelId = discordChannelId;
 
   const recentForBuild = chatMessages

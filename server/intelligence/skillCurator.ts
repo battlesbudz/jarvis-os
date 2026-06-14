@@ -7,16 +7,14 @@
  * calls an LLM to draft candidate skills. Candidates are written to the
  * skill_candidates table for the user to review in Profile > Skills.
  */
-
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "../agent/providers/env";
+import { createRoutedChatCompletion } from "../agent/routedChatCompletion";
 import { db } from "../db";
 import { skillCandidates, orchestrationTraces, interactionLog, users } from "@shared/schema";
 import { eq, and, gte, desc } from "drizzle-orm";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const MIN_OCCURRENCES = 3;
 const LOOKBACK_DAYS = 7;
@@ -216,11 +214,11 @@ If you cannot draft meaningful skills from the clusters, return an empty array: 
 
   let candidates: { name: string; triggerDescription: string; instructionText: string }[] = [];
   try {
-    const resp = await openai.chat.completions.create({
+    const resp = await createRoutedChatCompletion({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 1200,
-    });
+    }, { tier: "balanced", logPrefix: "[SkillCurator/draft]", userId });
     const raw = resp.choices[0]?.message?.content?.trim() ?? "[]";
     candidates = JSON.parse(raw);
     if (!Array.isArray(candidates)) candidates = [];
@@ -327,11 +325,11 @@ Return ONLY a valid JSON object (no markdown fences):
 }`;
 
   try {
-    const resp = await openai.chat.completions.create({
+    const resp = await createRoutedChatCompletion({
       model: "gpt-4o-mini",
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 300,
-    });
+    }, { tier: "cheap", logPrefix: "[SkillCurator/synthesiser]", userId });
     const raw = resp.choices[0]?.message?.content?.trim() ?? "{}";
     const data = JSON.parse(raw) as { name?: string; triggerDescription?: string; instructionText?: string };
     if (!data.name || !data.triggerDescription || !data.instructionText) return;

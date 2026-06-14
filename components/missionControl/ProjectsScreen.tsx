@@ -109,6 +109,10 @@ export default function ProjectsScreen() {
     router.navigate({ pathname: '/(tabs)/goals', params: { highlightId: goal.id } });
   };
 
+  const openGoalsManager = () => {
+    router.navigate('/(tabs)/goals');
+  };
+
   if (isLoading) {
     return (
       <View style={styles.centered}>
@@ -131,7 +135,14 @@ export default function ProjectsScreen() {
       <View style={styles.centered}>
         <VisionSprite size={64} tint={Colors.violet} active={false} />
         <Text style={styles.emptyTitle}>No projects yet</Text>
-        <Text style={styles.emptyText}>Ask Jarvis to start one</Text>
+        <Text style={styles.emptyText}>Start with a goal, then let Jarvis break it into a project tree.</Text>
+        <Pressable
+          style={({ pressed }) => [styles.manageBtn, pressed && { opacity: 0.75 }]}
+          onPress={openGoalsManager}
+        >
+          <Ionicons name="flag-outline" size={14} color={Colors.violet} />
+          <Text style={styles.manageBtnText}>Manage goals</Text>
+        </Pressable>
       </View>
     );
   }
@@ -146,11 +157,20 @@ export default function ProjectsScreen() {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.sectionLabel}>
-        <Ionicons name="folder-outline" size={12} color={Colors.violet} />
-        <Text style={styles.sectionLabelText}>GOALS & PROJECTS</Text>
-        <View style={[styles.countBadge, { backgroundColor: Colors.violet + '25' }]}>
-          <Text style={[styles.countBadgeText, { color: Colors.violet }]}>{sorted.length}</Text>
+        <View style={styles.sectionLabelLeft}>
+          <Ionicons name="folder-outline" size={12} color={Colors.violet} />
+          <Text style={styles.sectionLabelText}>GOALS & PROJECTS</Text>
+          <View style={[styles.countBadge, { backgroundColor: Colors.violet + '25' }]}>
+            <Text style={[styles.countBadgeText, { color: Colors.violet }]}>{sorted.length}</Text>
+          </View>
         </View>
+        <Pressable
+          style={({ pressed }) => [styles.manageBtnCompact, pressed && { opacity: 0.75 }]}
+          onPress={openGoalsManager}
+        >
+          <Ionicons name="flag-outline" size={12} color={Colors.violet} />
+          <Text style={styles.manageBtnCompactText}>Manage</Text>
+        </Pressable>
       </View>
 
       <View style={twoCol ? styles.cardsGridTwo : styles.cardsGridOne}>
@@ -196,8 +216,13 @@ const styles = StyleSheet.create({
   sectionLabel: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'space-between',
     marginBottom: 10,
+  },
+  sectionLabelLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   sectionLabelText: {
     fontSize: 10,
@@ -213,6 +238,38 @@ const styles = StyleSheet.create({
   countBadgeText: {
     fontSize: 10,
     fontFamily: 'Inter_700Bold',
+  },
+  manageBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.violet + '55',
+    backgroundColor: Colors.violet + '14',
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+  },
+  manageBtnText: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.violet,
+  },
+  manageBtnCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.violet + '44',
+    paddingHorizontal: 9,
+    paddingVertical: 6,
+  },
+  manageBtnCompactText: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.violet,
   },
   cardsGridOne: {
     gap: 10,

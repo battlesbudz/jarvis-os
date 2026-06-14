@@ -9,6 +9,7 @@ import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForU
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
 import { createSchedule, listSchedules, deleteSchedule, toggleSchedule, parseCronExpression, SCHEDULE_TEMPLATES, nextRunTime } from "../discord/schedules";
 import { discordPendingApprovals, discordAgents, discordChannelSchedules } from "@shared/schema";
+import { getPublicBaseUrl } from "../publicUrl";
 
 function generateCode(len = 6): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -461,8 +462,7 @@ export function registerChannelRoutes(app: Express): void {
   // GET /api/channels/discord/interactions-config — return the interactions URL and public-key status
   // Used by the Profile screen to show the slash-command setup instructions.
   app.get("/api/channels/discord/interactions-config", authMiddleware, (req: Request, res: Response) => {
-    const domain = process.env.REPLIT_DOMAINS?.split(",")[0] || req.hostname;
-    const interactionsUrl = `https://${domain}/api/discord/interactions`;
+    const interactionsUrl = `${getPublicBaseUrl(req)}/api/discord/interactions`;
     const publicKeyConfigured = !!process.env.DISCORD_PUBLIC_KEY;
     res.json({ interactionsUrl, publicKeyConfigured });
   });
@@ -940,7 +940,7 @@ export function registerChannelRoutes(app: Express): void {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    // Keep-alive ping every 25 s so Replit proxy doesn't close the connection
+    // Keep-alive ping every 25 s so hosting proxies do not close the connection
     const keepalive = setInterval(() => {
       try { res.write(": ping\n\n"); } catch { clearInterval(keepalive); }
     }, 25000);

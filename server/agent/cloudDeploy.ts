@@ -127,7 +127,7 @@ async function uploadVercelFile(token: string, entry: FileEntry): Promise<boolea
         "x-vercel-size": String(entry.size),
         "x-vercel-digest": `sha1:${entry.sha}`,
       },
-      body: entry.data,
+      body: entry.data as unknown as BodyInit,
     });
     // 200 / 201 = success, 400 / 409 = file already stored (de-dup) — all OK
     return resp.ok || resp.status === 400 || resp.status === 409;

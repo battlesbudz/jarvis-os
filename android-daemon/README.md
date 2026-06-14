@@ -65,7 +65,7 @@ After installing:
    - Tap "Fix" next to All Files Access
    - Find "Jarvis Daemon" and toggle "Allow access to manage all files"
 4. **Pair with Jarvis**:
-   - Enter your Jarvis server URL (e.g. `https://myapp.replit.app`)
+   - Enter your Jarvis OS server URL (e.g. `https://<jarvis-os-production-url>`)
    - In the Jarvis app, go to Profile → Connected Channels → Android Device → Pair
    - Enter the 8-character code shown in the app
    - Tap "Connect to Jarvis"

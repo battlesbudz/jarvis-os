@@ -64,15 +64,18 @@ export const discordCapability: Capability = {
     },
   ],
   configRequirements: [
-    { key: "DISCORD_BOT_TOKEN", label: "Discord Bot Token" },
-    { key: "DISCORD_CLIENT_ID", label: "Discord Application Client ID" },
+    { key: "DISCORD_BOT_TOKEN", label: "Discord Bot Token", optional: true },
+    { key: "DISCORD_CLIENT_ID", label: "Discord Application Client ID", optional: true },
   ],
   async healthCheck() {
     if (!process.env.DISCORD_BOT_TOKEN) {
-      return { healthy: false, reason: "DISCORD_BOT_TOKEN not set" };
+      return { healthy: true, reason: "Discord optional channel is disabled." };
     }
     if (!process.env.DISCORD_CLIENT_ID) {
-      return { healthy: false, reason: "DISCORD_CLIENT_ID not set" };
+      return {
+        healthy: true,
+        reason: "Discord bot token is configured; client ID is only needed for setup flows.",
+      };
     }
     return { healthy: true };
   },

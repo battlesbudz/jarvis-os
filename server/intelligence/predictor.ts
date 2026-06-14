@@ -15,12 +15,9 @@ import { db } from "../db";
 import { eq, and, desc, gte, isNull, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { PatternAnalysis } from "./pattern-analyser";
-import OpenAI from "openai";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[Predictor]", "balanced");
 
 const CONFIDENCE_THRESHOLD = 55;
 

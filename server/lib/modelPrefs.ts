@@ -2,79 +2,150 @@
  * Model Preferences
  *
  * Central helper for resolving which AI model to use per task category.
- * Reads from userPreferences.data.modelPreferences with hard-coded defaults.
+ * Reads from userPreferences.data.modelPreferences with catalog-backed defaults.
  * Falls back silently on any DB error so callers never crash.
  */
-import { db } from "../db";
 import { userPreferences } from "@shared/schema";
+import {
+  CODEX_OAUTH_MODEL,
+  MODEL_CATEGORIES,
+  MODEL_DEFAULTS,
+  MODEL_OPTIONS,
+  getModelsForCategory,
+  isValidModelForCategory,
+  type ModelCategory,
+} from "@shared/modelProviderCatalog";
 import { eq } from "drizzle-orm";
 
-export type ModelCategory = "chat" | "planning" | "memory" | "research" | "orchestrator";
+export type { ModelCategory } from "@shared/modelProviderCatalog";
+export { CODEX_OAUTH_MODEL, MODEL_CATEGORIES, MODEL_DEFAULTS, MODEL_OPTIONS as AVAILABLE_MODELS, isValidModelForCategory };
 
-export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
-  chat: "gpt-4o-mini",
-  planning: "gpt-4o-mini",
-  memory: "gpt-4o-mini",
-  research: "gpt-4.1-mini",
-  orchestrator: "claude-opus-4-6",
-};
+export const ORCHESTRATOR_MODELS = getModelsForCategory("orchestrator");
+export const GLOBAL_MODEL_PREFERENCE_KEY = "selectedModel";
+export const GLOBAL_MODEL_SELECTION_EXPLICIT_KEY = "selectedModelExplicit";
+const MODEL_CATEGORY_KEYS = MODEL_CATEGORIES.map((category) => category.key);
 
-export const AVAILABLE_MODELS = [
-  { value: "gpt-5-mini", label: "Fast", description: "Quick responses, great for most tasks" },
-  { value: "gpt-5.1", label: "Smart", description: "Better reasoning with balanced speed" },
-  { value: "gpt-4.1-mini", label: "Capable", description: "Strong reasoning in a compact model" },
-  { value: "gpt-4o", label: "Powerful", description: "Highest quality for complex tasks" },
-  { value: "gpt-4o-mini", label: "Lightweight", description: "Efficient for high-volume tasks" },
-] as const;
-
-export const ORCHESTRATOR_MODELS = [
-  { value: "claude-opus-4-6", label: "Claude Opus 4.6", description: "Primary mainframe AI — orchestrates every task" },
-  { value: "claude-opus-4-7", label: "Claude Opus 4.7", description: "Newer flagship — alternative orchestrator" },
-  { value: "claude-sonnet-4-6", label: "Claude Sonnet", description: "Balanced speed & quality" },
-  { value: "claude-haiku-4-5", label: "Claude Haiku", description: "Fast, lightweight orchestration" },
-] as const;
-
-export type AvailableModel = (typeof AVAILABLE_MODELS)[number]["value"];
+export type AvailableModel = (typeof MODEL_OPTIONS)[number]["value"];
 export type OrchestratorModel = (typeof ORCHESTRATOR_MODELS)[number]["value"];
 
-const VALID_OPENAI_MODEL_VALUES = new Set(AVAILABLE_MODELS.map((m) => m.value));
-const VALID_ORCHESTRATOR_MODEL_VALUES = new Set(ORCHESTRATOR_MODELS.map((m) => m.value));
-
-/** True only for OpenAI models (used by chat/planning/memory/research categories). */
+/** True for any catalog model Jarvis can select globally. */
 export function isValidModel(value: unknown): value is AvailableModel {
-  return typeof value === "string" && VALID_OPENAI_MODEL_VALUES.has(value as AvailableModel);
+  return typeof value === "string" && MODEL_OPTIONS.some((model) => model.value === value);
 }
 
-/** True only for Anthropic/orchestrator models. */
+/** True only for catalog models usable by the orchestrator. */
 export function isValidOrchestratorModel(value: unknown): value is OrchestratorModel {
-  return typeof value === "string" && VALID_ORCHESTRATOR_MODEL_VALUES.has(value as OrchestratorModel);
+  return isValidModelForCategory(value, "orchestrator");
 }
 
-/**
- * Validate a model value for a given category.
- * OpenAI categories only accept OpenAI models; orchestrator only accepts Claude models.
- */
-export function isValidModelForCategory(value: unknown, category: ModelCategory): boolean {
-  if (category === "orchestrator") return isValidOrchestratorModel(value);
-  return isValidModel(value);
+export function buildGlobalModelPreferences(model: string): Record<string, string> {
+  return {
+    [GLOBAL_MODEL_PREFERENCE_KEY]: model,
+    [GLOBAL_MODEL_SELECTION_EXPLICIT_KEY]: "true",
+    ...Object.fromEntries(MODEL_CATEGORY_KEYS.map((category) => [category, model])),
+  };
+}
+
+export function hasExplicitGlobalModelSelection(
+  modelPrefs: Record<string, unknown> | undefined | null,
+): boolean {
+  if (!modelPrefs) return false;
+  const marker = modelPrefs[GLOBAL_MODEL_SELECTION_EXPLICIT_KEY];
+  return marker === true || marker === "true" || marker === "explicit" || marker === "user";
+}
+
+export function resolveGlobalModelPreference(
+  modelPrefs: Record<string, unknown> | undefined | null,
+): string | null {
+  if (!modelPrefs) return null;
+
+  const explicit = modelPrefs[GLOBAL_MODEL_PREFERENCE_KEY];
+  if (isValidModel(explicit) && (explicit !== CODEX_OAUTH_MODEL || hasExplicitGlobalModelSelection(modelPrefs))) {
+    return explicit;
+  }
+
+  for (const category of MODEL_CATEGORY_KEYS) {
+    const candidate = modelPrefs[category];
+    if (isValidModel(candidate) && candidate !== MODEL_DEFAULTS[category]) return candidate;
+  }
+
+  if (isValidModel(explicit)) return explicit;
+
+  return null;
+}
+
+async function readUserModelPreferences(userId: string): Promise<Record<string, unknown> | null> {
+  if (!userId) return null;
+  const { db } = await import("../db");
+  const rows = await db
+    .select({ data: userPreferences.data })
+    .from(userPreferences)
+    .where(eq(userPreferences.userId, userId))
+    .limit(1);
+  const prefs = rows[0]?.data as Record<string, unknown> | undefined;
+  const modelPrefs = prefs?.modelPreferences;
+  return modelPrefs && typeof modelPrefs === "object" ? modelPrefs as Record<string, unknown> : null;
+}
+
+export async function getSelectedModelPreference(userId: string): Promise<string | null> {
+  try {
+    return resolveGlobalModelPreference(await readUserModelPreferences(userId));
+  } catch {
+    return null;
+  }
+}
+
+export async function getSelectedModelPreferenceState(
+  userId: string,
+): Promise<{ model: string | null; isExplicit: boolean }> {
+  try {
+    const modelPrefs = await readUserModelPreferences(userId);
+    return {
+      model: resolveGlobalModelPreference(modelPrefs),
+      isExplicit: hasExplicitGlobalModelSelection(modelPrefs),
+    };
+  } catch {
+    return { model: null, isExplicit: false };
+  }
+}
+
+export async function saveSelectedModelPreference(userId: string, model: string): Promise<Record<string, string>> {
+  if (!userId) throw new Error("userId is required");
+  if (!isValidModel(model)) throw new Error("Invalid model");
+
+  const { db } = await import("../db");
+  const rows = await db
+    .select({ data: userPreferences.data })
+    .from(userPreferences)
+    .where(eq(userPreferences.userId, userId))
+    .limit(1);
+  const existing = (rows[0]?.data ?? {}) as Record<string, unknown>;
+  const existingModelPrefs = (existing.modelPreferences ?? {}) as Record<string, string>;
+  const nextModelPrefs = { ...existingModelPrefs, ...buildGlobalModelPreferences(model) };
+  const updated = {
+    ...existing,
+    modelPreferences: nextModelPrefs,
+  };
+
+  await db
+    .insert(userPreferences)
+    .values({ userId, data: updated })
+    .onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated } });
+
+  return nextModelPrefs;
 }
 
 /**
  * Return the model string for a given user + category.
- * Uses category-aware validation: orchestrator-category preferences are validated against
- * the Anthropic model set; all other categories are validated against the OpenAI model set.
- * Falls back to MODEL_DEFAULTS[category] if the preference is missing or the DB call fails.
+ * A selected model is global: chat, planning, memory, research, orchestrator,
+ * scheduled jobs, and agent turns must not silently diverge by category.
  */
 export async function getModel(userId: string, category: ModelCategory): Promise<string> {
   if (!userId) return MODEL_DEFAULTS[category];
   try {
-    const rows = await db
-      .select({ data: userPreferences.data })
-      .from(userPreferences)
-      .where(eq(userPreferences.userId, userId))
-      .limit(1);
-    const prefs = rows[0]?.data as Record<string, unknown> | undefined;
-    const modelPrefs = prefs?.modelPreferences as Record<string, string> | undefined;
+    const modelPrefs = await readUserModelPreferences(userId);
+    const selected = resolveGlobalModelPreference(modelPrefs);
+    if (selected) return selected;
     const pref = modelPrefs?.[category];
     if (isValidModelForCategory(pref, category)) return pref as string;
   } catch {

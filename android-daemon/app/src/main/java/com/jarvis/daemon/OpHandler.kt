@@ -49,6 +49,8 @@ object OpHandler {
                 "android_return_to_jarvis" -> handleReturnToJarvis(context)
                 "android_screenshot" -> handleScreenshot()
                 "android_read_screen" -> handleReadScreen()
+                "android_screen_context" -> handleScreenContext()
+                "android_operator_action" -> handleOperatorAction(op)
                 "android_tap" -> handleTap(op)
                 "android_type" -> handleType(op)
                 "android_swipe" -> handleSwipe(op)
@@ -317,7 +319,7 @@ object OpHandler {
         // Last resort: open the URL directly (may cause page reload in some browsers)
         val svc = JarvisAccessibilityService.instance
         if (svc == null) {
-            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://GameplanAI.replit.app")).apply {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(JarvisConfig.SERVER_URL)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
             val pi = android.app.PendingIntent.getActivity(
@@ -327,9 +329,9 @@ object OpHandler {
             NotificationHelper.showAction(context, "↩ Return to Jarvis", "Tap to reopen the Jarvis chat", pi, "return_jarvis".hashCode())
             return OpResult(false, error = "No browser found to bring to foreground — showed notification")
         }
-        val opened = try { svc.browseUrl("https://GameplanAI.replit.app") } catch (e: Exception) { false }
+        val opened = try { svc.browseUrl(JarvisConfig.SERVER_URL) } catch (e: Exception) { false }
         return if (opened) {
-            OpResult(true, data = JSONObject().put("returned", true).put("url", "https://GameplanAI.replit.app"))
+            OpResult(true, data = JSONObject().put("returned", true).put("url", JarvisConfig.SERVER_URL))
         } else {
             OpResult(false, error = "Could not navigate back to Jarvis")
         }
@@ -392,6 +394,35 @@ object OpHandler {
         } catch (e: Exception) {
             OpResult(false, error = "Read screen error: ${e.message}")
         }
+    }
+
+    private fun handleScreenContext(): OpResult {
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
+        return try {
+            OpResult(true, data = svc.captureScreenContext().toJson())
+        } catch (e: Exception) {
+            OpResult(false, error = "Screen context error: ${e.message}")
+        }
+    }
+
+    private fun handleOperatorAction(op: JSONObject): OpResult {
+        val svc = JarvisAccessibilityService.instance
+            ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
+        val actionJson = op.optJSONObject("action")
+            ?: return OpResult(false, error = "action object required")
+
+        val action = OperatorAction.fromJson(actionJson)
+        val result = OperatorActionExecutor(svc).execute(action)
+        val ok = result.optBoolean("ok", false)
+        val error = if (ok) null else result.optString("error", "operator action failed")
+        return OpResult(
+            ok = ok,
+            data = JSONObject()
+                .put("action", action.toJson())
+                .put("result", result),
+            error = error
+        )
     }
 
     private fun handleTap(op: JSONObject): OpResult {

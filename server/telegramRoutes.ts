@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { db } from "./db";
 import { eq, and, desc, sql, gte, lte } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl, sendMessageGetId, editMessage, buildVoiceCallKeyboard } from "./integrations/telegram";
+import { sendMessage, sendLongMessage, sendMessageWithButtons, sendTelegramDocument, sendPhoto, sendVoice, sendChatAction, answerCallbackQuery, isTelegramConfigured, getUpdates, downloadTelegramFile, downloadTelegramFileBuffer, getWebhookHealth, ensureWebhook, getExpectedWebhookUrl, sendMessageGetId, editMessage, buildVoiceCallKeyboard, getTelegramBotUsername } from "./integrations/telegram";
 import { attachmentToBuffer, collectMarkdownExtras } from "./channels/attachmentHelpers";
 import { outboundMiddleware } from "./channels/outboundMiddleware";
 import type { ChannelAttachment } from "./channels/types";
@@ -18,23 +18,40 @@ import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSo
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
 import { extractAndStore } from "./memory/extractor";
+import { processLivingContextUpdate } from "./workspace/livingContextRouter";
 import { getSoulPromptBlock } from "./memory/soul";
 import { runAgent } from "./agent/harness";
+import { parseTelegramApprovalCallback } from "./agent/approvalNotifications";
 import { telegramCoachTools } from "./agent/tools";
 import { runCoachAgent } from "./channels/coachAgent";
 import { routeToNamedAgent } from "./agent/runNamedAgent";
 import { completePairing as completeDiscordPairing } from "./discord/manager";
 import { getSession as getCoachSession, setSession as setCoachSession } from "./channels/sessionStore";
+import { getTelegramNeedsAttentionDecision } from "./channels/telegramNeedsAttention";
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { resolveScheduledTaskAttention } from "./lib/taskResolver";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
-import { getActiveRunForUser, activeCoachRuns } from "./runRegistry";
+import { activeCoachRuns } from "./runRegistry";
+import {
+  createTelegramRunGuard,
+  isTelegramRunAbortedError,
+  isTelegramRunTimeoutError,
+  TELEGRAM_REPLY_TIMEOUT_MS,
+} from "./telegramRunGuard";
+import {
+  cancelTelegramCoachMessageBatches,
+  enqueueTelegramCoachMessageBatch,
+} from "./telegramMessageBatcher";
+import { shouldTryTelegramAgentSdkWorkflow } from "./telegramWorkflowIntent";
+import {
+  TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildVisibleTurnProgressMessage,
+  shouldEmitVisibleProgressUpdate,
+} from "./agent/turnProgress";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 function generateLinkCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -43,6 +60,17 @@ function generateLinkCode(): string {
     code += chars[Math.floor(Math.random() * chars.length)];
   }
   return code;
+}
+
+function getTelegramE2eProbeId(text?: string): string | null {
+  const match = String(text ?? "").match(/\bJTE2E_[A-Z0-9_:-]+\b/i);
+  return match ? match[0].slice(0, 80) : null;
+}
+
+function logTelegramE2eReply(probeId: string | null, route: string, startedAt: number, reply: string): void {
+  if (!probeId) return;
+  const compactReply = reply.replace(/\s+/g, " ").trim().slice(0, 1800);
+  console.log(`[TelegramE2E] id=${probeId} route=${route} durationMs=${Date.now() - startedAt} reply=${JSON.stringify(compactReply)}`);
 }
 
 
@@ -174,6 +202,9 @@ async function deliverCoachText(
 }
 
 async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
+  const runGuard = createTelegramRunGuard(userId);
+  const turnStartedAtMs = Date.now();
+
   // Pre-fetch TTS prefs — used to decide between streaming (text) and voice paths.
   const ttsPrefs = await getUserTtsPrefs(userId).catch(() => ({ enabled: false, voice: "" as string }));
 
@@ -209,13 +240,38 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
   // Guard: once the final reply delivery begins we must stop any in-flight
   // token edits from overwriting the completed message (e.g. leaving " ▌").
   let streamClosed = false;
+  let progressUpdateCount = 0;
+  let latestProgressPhase = "";
+  let lastVisibleUpdateAtMs = turnStartedAtMs;
+  let visibleProgressTimer: ReturnType<typeof setInterval> | null = null;
 
   let onToken: ((chunk: string) => void) | undefined;
 
   if (!ttsPrefs.enabled) {
     placeholderMsgId = await sendMessageGetId(chatId, "Working on it…").catch(() => null);
+    lastVisibleUpdateAtMs = Date.now();
+    visibleProgressTimer = setInterval(() => {
+      if (streamClosed || !placeholderMsgId || streamBuf.trim()) return;
+      const nowMs = Date.now();
+      if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+      runGuard.touch("auto_progress", latestProgressPhase || "Still running");
+      const progressText = buildVisibleTurnProgressMessage({
+        startedAtMs: turnStartedAtMs,
+        nowMs,
+        updateCount: progressUpdateCount,
+        latestPhase: latestProgressPhase,
+      });
+      progressUpdateCount += 1;
+      lastVisibleUpdateAtMs = nowMs;
+      editMessage(chatId, placeholderMsgId, progressText)
+        .then((result) => {
+          console.log(`[Telegram] visible progress ok=${result.ok} elapsedMs=${nowMs - turnStartedAtMs} chatId=${chatId}`);
+        })
+        .catch(() => {});
+    }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
     onToken = (chunk: string) => {
       if (streamClosed) return;
+      runGuard.touch("model_token", "Streaming model response");
       streamBuf += chunk;
       const now = Date.now();
       // Only edit once we have a meaningful snippet (≥10 chars) and the interval has elapsed.
@@ -244,6 +300,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
           }
         }).catch(() => {});
         lastEditAt = now;
+        lastVisibleUpdateAtMs = now;
       }
     };
   } else {
@@ -255,13 +312,16 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
 
   const clearTimers = () => {
     clearInterval(typingInterval);
+    if (visibleProgressTimer !== null) clearInterval(visibleProgressTimer);
     if (ttsStillThinkingTimer !== null) clearTimeout(ttsStillThinkingTimer);
   };
 
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
     // Pass onToken so named-agent replies also stream into the placeholder.
-    const namedResult = await routeToNamedAgent(userId, "telegram", chatId, userText, undefined, onToken).catch(() => null);
+    const namedResult = await runGuard.race(
+      routeToNamedAgent(userId, "telegram", chatId, userText, undefined, onToken).catch(() => null),
+    );
     if (namedResult !== null) {
       streamClosed = true;
       clearTimers();
@@ -274,21 +334,39 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     // (mirrors the Discord pattern: if streaming content is already visible,
     // the user can see progress without an additional status edit).
     const onProgressMessage = (msg: string) => {
+      latestProgressPhase = msg;
+      runGuard.touch("progress", msg);
       if (placeholderMsgId && !streamBuf) {
-        editMessage(chatId, placeholderMsgId, `⏳ ${msg}`).catch(() => {});
+        const nowMs = Date.now();
+        lastVisibleUpdateAtMs = nowMs;
+        editMessage(chatId, placeholderMsgId, buildVisibleTurnProgressMessage({
+          startedAtMs: turnStartedAtMs,
+          nowMs,
+          updateCount: progressUpdateCount,
+          latestPhase: msg,
+        })).then((result) => {
+          console.log(`[Telegram] routed progress ok=${result.ok} elapsedMs=${nowMs - turnStartedAtMs} chatId=${chatId} phase=${msg}`);
+        }).catch(() => {});
+        progressUpdateCount += 1;
       }
     };
 
     const storedSessionId = await getCoachSession(userId, "Telegram");
-    const { reply, attachments, sdkSessionId } = await runCoachAgent({
-      userId,
-      userText,
-      channelName: "Telegram",
-      imageUrl,
-      sdkSessionId: storedSessionId,
-      onToken,
-      onProgressMessage,
-    });
+    console.log(`[Telegram] starting coach turn with inactivityTimeoutMs=${TELEGRAM_REPLY_TIMEOUT_MS}`);
+    const { reply, attachments, sdkSessionId } = await runGuard.race(
+      runCoachAgent({
+        userId,
+        userText,
+        channelName: "Telegram",
+        originChannelId: String(chatId),
+        imageUrl,
+        sdkSessionId: storedSessionId,
+        onToken,
+        onProgressMessage,
+        signal: runGuard.signal,
+      }),
+      TELEGRAM_REPLY_TIMEOUT_MS,
+    );
 
     if (sdkSessionId) {
       setCoachSession(userId, "Telegram", sdkSessionId);
@@ -390,6 +468,25 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
   } catch (error) {
     streamClosed = true;
     clearTimers();
+    if (isTelegramRunAbortedError(error)) {
+      if (placeholderMsgId) {
+        await editMessage(chatId, placeholderMsgId, "Stopped this Telegram turn.").catch(() => {});
+      }
+      return;
+    }
+    if (isTelegramRunTimeoutError(error)) {
+      const timeoutMessage = "I stopped this Telegram turn because I did not see meaningful progress for a long time. Send it again or ask me to delegate it as a background job.";
+      console.warn(`[Telegram] coach turn inactive for ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
+      if (placeholderMsgId) {
+        await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
+          sendMessage(chatId, timeoutMessage).catch(() => {});
+        });
+      } else {
+        await sendMessage(chatId, timeoutMessage);
+      }
+      logInteraction(userId, "telegram", "outbound", timeoutMessage).catch(() => {});
+      return;
+    }
     console.error("Error handling Telegram coach reply:", error);
     // If we have a placeholder, update it with the error message instead of sending
     // a separate message (avoids leaving an orphaned "Working on it…" bubble).
@@ -401,6 +498,8 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
       await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
     }
     return;
+  } finally {
+    runGuard.finish();
   }
 }
 
@@ -460,6 +559,12 @@ async function extractProfileFromTelegram(userId: string, userText: string): Pro
       sourceType: "telegram",
       contextHint,
     });
+    await processLivingContextUpdate({
+      userId,
+      text: userText,
+      sourceType: "conversation",
+      sourceRef: "telegram",
+    }).catch((err) => console.error("[LivingContext/telegram] update failed:", err));
   } catch (err) {
     console.error("[Profile/Telegram] Extraction error:", err);
   }
@@ -471,6 +576,96 @@ async function handleCallbackQuery(callbackQuery: any): Promise<void> {
   const chatId: string | undefined = callbackQuery.message?.chat?.id?.toString();
   if (!chatId) {
     await answerCallbackQuery(queryId);
+    return;
+  }
+
+  const approvalCallback = parseTelegramApprovalCallback(data);
+  if (approvalCallback) {
+    const links = await db
+      .select({ userId: schema.telegramLinks.userId })
+      .from(schema.telegramLinks)
+      .where(eq(schema.telegramLinks.chatId, chatId))
+      .limit(1);
+
+    const groupLinks = links.length > 0
+      ? []
+      : await db
+          .select({ userId: schema.telegramLinks.userId })
+          .from(schema.telegramLinks)
+          .where(sql`${schema.telegramLinks.groupChatIds}::jsonb @> ${JSON.stringify([chatId])}::jsonb`)
+          .limit(1);
+    const linkedUserId = links[0]?.userId ?? groupLinks[0]?.userId;
+
+    if (!linkedUserId) {
+      await answerCallbackQuery(queryId, "Session not found. Please re-link Telegram.");
+      return;
+    }
+
+    const { approveGate, getGate, rejectGate } = await import("./agent/agentApproval");
+    const gate = await getGate(approvalCallback.gateId);
+    if (!gate || gate.userId !== linkedUserId) {
+      await answerCallbackQuery(queryId, "Approval not found for this Telegram chat.");
+      return;
+    }
+
+    const ok = approvalCallback.decision === "approve"
+      ? await approveGate(approvalCallback.gateId, linkedUserId)
+      : await rejectGate(approvalCallback.gateId, linkedUserId);
+
+    if (!ok) {
+      await answerCallbackQuery(queryId, "That approval is no longer pending.");
+      return;
+    }
+
+    const { isAgentSdkApprovalGate, resumeAgentSdkRunFromApprovalGate } = await import("../src/agent/agentRunner");
+    if (isAgentSdkApprovalGate(gate)) {
+      if (approvalCallback.decision === "approve") {
+        await answerCallbackQuery(queryId, "Approved. Jarvis will continue.");
+        await sendMessage(chatId, `Approved ${gate.toolName}. Resuming the Agent SDK email workflow.`);
+      } else {
+        await answerCallbackQuery(queryId, "Declined. Jarvis will not send it.");
+        await sendMessage(chatId, `Declined ${gate.toolName}. I will not send that email.`);
+      }
+      await resumeAgentSdkRunFromApprovalGate({
+        gate,
+        approved: approvalCallback.decision === "approve",
+        originChannelId: chatId,
+      }).catch((err) => console.error("[AgentSDK/HITL] resume failed:", err));
+      return;
+    }
+
+    if (approvalCallback.decision === "approve") {
+      await answerCallbackQuery(queryId, "Approved. Jarvis will continue.");
+      await sendMessage(chatId, `✅ Approved ${gate.toolName}. Jarvis will continue.`);
+    } else {
+      await answerCallbackQuery(queryId, "Declined. Jarvis will stop that action.");
+      await sendMessage(chatId, `❌ Declined ${gate.toolName}. Jarvis will stop that action.`);
+    }
+    try {
+      const approved = approvalCallback.decision === "approve";
+      const { isDirectEmailApprovalGate, resumeDirectEmailApprovalGate } = await import("./agent/directEmailApprovalRoute");
+      if (isDirectEmailApprovalGate(gate)) {
+        const continuation = await resumeDirectEmailApprovalGate(gate, approved);
+        await sendMessage(chatId, continuation.reason);
+        return;
+      }
+
+      if (approved) {
+        const { continueTopLevelApproval } = await import("./agent/topLevelApprovalContinuation");
+        const continuation = await continueTopLevelApproval(gate);
+        if (continuation.continued) {
+          await sendMessage(
+            chatId,
+            continuation.jobId
+              ? `Queued the approved follow-up as ${continuation.agentType} job ${continuation.jobId}.`
+              : continuation.reason,
+          );
+        }
+      }
+    } catch (err) {
+      console.error("[Telegram approval callback] continuation failed:", err);
+      await sendMessage(chatId, "Approval was recorded, but Jarvis could not continue the follow-up automatically. You can still review it in the app.");
+    }
     return;
   }
 
@@ -606,6 +801,7 @@ async function processUpdate(update: any): Promise<void> {
     // Capture the clean user input before any context-prefix injection so task
     // guidance is stored without the "[Replying to Jarvis's message: ...]" wrapper.
     const rawUserText = text;
+    const telegramE2eProbeId = getTelegramE2eProbeId(rawUserText);
 
     // Inject context when the user replies to a specific Jarvis message, so the
     // agent knows what the reply is referring to without needing conversation history.
@@ -664,11 +860,34 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Sorry, I couldn't download that voice message. Could you try again or type it out?");
           return;
         }
-        const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const { detectAudioFormat } = await import('./integrations/audioClient');
         const format = detectAudioFormat(file.buffer);
-        const transcript = await speechToText(file.buffer, format);
+        let linkedUserId: string | null = null;
+
+        if (chatType !== 'group' && chatType !== 'supergroup') {
+          const [link] = await db
+            .select({ userId: schema.telegramLinks.userId })
+            .from(schema.telegramLinks)
+            .where(eq(schema.telegramLinks.chatId, chatId))
+            .limit(1);
+
+          if (!link?.userId) {
+            await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
+            return;
+          }
+          linkedUserId = link.userId;
+        }
+
+        await sendChatAction(chatId, "upload_voice").catch(() => {});
+        const { transcribeTelegramAudio } = await import("./telegramVoiceTranscription");
+        const transcription = await transcribeTelegramAudio({ audioBuffer: file.buffer, format, userId: linkedUserId });
+        const transcript = transcription.text;
         if (!transcript || !transcript.trim()) {
-          await sendMessage(chatId, "Sorry, I couldn't make out what you said. Could you try again or type it out?");
+          if (transcription.failure === "local_worker_required") {
+            await sendMessage(chatId, "Voice transcription needs cloud STT configured or your Jarvis local worker online with audio transcription enabled. Send /local_worker here for the exact startup command, then send the voice message again.");
+            return;
+          }
+          await sendMessage(chatId, "Sorry, I couldn't transcribe that voice message right now. Could you try again or type it out?");
           return;
         }
         text = transcript.trim();
@@ -709,7 +928,7 @@ async function processUpdate(update: any): Promise<void> {
           await sendMessage(chatId, "Sorry, I couldn't download that video. Could you try again or share the YouTube URL instead?");
           return;
         }
-        const { speechToText, detectAudioFormat } = await import('./replit_integrations/audio/client');
+        const { speechToText, detectAudioFormat } = await import('./integrations/audioClient');
         const format = detectAudioFormat(file.buffer);
         const transcript = await speechToText(file.buffer, format === 'unknown' ? 'mp4' : format);
         if (!transcript || !transcript.trim()) {
@@ -820,13 +1039,18 @@ async function processUpdate(update: any): Promise<void> {
       // ── Stop-intent detection ──────────────────────────────────────────
       // If the user sends a stop/cancel intent while a task is running, abort it
       // immediately instead of queuing the message as a normal chat turn.
-      if (text && /^(stop|cancel|abort|enough|quit|nevermind|stop it|please stop)\.?$/i.test(text.trim())) {
+      if (text && /^(?:\S+\s*)?(stop|cancel|abort|enough|quit|nevermind|stop it|please stop)\.?$/i.test(text.trim())) {
         const linkedUserId = link[0].userId;
-        const activeRun = getActiveRunForUser(linkedUserId);
-        if (activeRun) {
-          activeRun.controller.abort();
-          activeCoachRuns.delete(activeRun.runId);
-          await sendMessage(chatId, "Stopping — cancelled the current task.");
+        const pendingBatchCount = cancelTelegramCoachMessageBatches(linkedUserId, chatId);
+        const activeRuns = Array.from(activeCoachRuns.entries())
+          .filter(([, run]) => run.userId === linkedUserId);
+        if (activeRuns.length > 0 || pendingBatchCount > 0) {
+          for (const [runId, run] of activeRuns) {
+            run.controller.abort();
+            activeCoachRuns.delete(runId);
+          }
+          const totalCancelled = activeRuns.length + pendingBatchCount;
+          await sendMessage(chatId, `Stopping — cancelled ${totalCancelled === 1 ? "the current task" : `${totalCancelled} current tasks`}.`);
         } else {
           await sendMessage(chatId, "Nothing is currently running.");
         }
@@ -921,6 +1145,19 @@ async function processUpdate(update: any): Promise<void> {
             `Voice mode: ${prefs.enabled ? "ON" : "OFF"} | Voice: ${voiceLabel}\n\nCommands:\n/tts on — enable voice replies\n/tts off — disable voice replies\n/tts voice <name> — change voice\n\nOpenAI voices: ${openaiList}\nElevenLabs voices: ${elevenList}`,
           );
         }
+        return;
+      }
+
+      // Local worker setup/status for Telegram voice-note transcription.
+      if (/^\/(?:local_?worker|worker)(?:\s|$)/i.test(text) || /^show me my local worker token$/i.test(text.trim())) {
+        const userId = link[0].userId;
+        if (chatType === "group" || chatType === "supergroup") {
+          await sendMessage(chatId, "For safety, ask me for /local_worker in a private chat so I don't post your worker token in a group.");
+          return;
+        }
+        const { getPublicBaseUrl } = await import("./publicUrl");
+        const { buildLocalWorkerTelegramSetupMessage } = await import("./localWorkerSetup");
+        await sendMessage(chatId, buildLocalWorkerTelegramSetupMessage(userId, getPublicBaseUrl()));
         return;
       }
 
@@ -1421,7 +1658,7 @@ async function processUpdate(update: any): Promise<void> {
       const VOICE_CALL_CMD_RE = /^\/call(?:@\S+)?(\s|$)/i;
       const VOICE_TRIGGER_RE = /\b(voice\s+call|call\s+me|let['']?s\s+talk)\b/i;
       if (VOICE_CALL_CMD_RE.test(text) || VOICE_TRIGGER_RE.test(text)) {
-        // /call and trigger phrases: single button only (no "💬 Text reply" — we're already in text)
+        // /call and trigger phrases: single voice action only.
         const keyboard = buildVoiceCallKeyboard();
         if (keyboard) {
           await sendMessage(
@@ -1475,7 +1712,9 @@ async function processUpdate(update: any): Promise<void> {
             )
             .orderBy(desc(schema.jarvisScheduledTasks.createdAt));
 
-          if (needsTasks.length === 1) {
+          const attentionDecision = getTelegramNeedsAttentionDecision(rawUserText, needsTasks.length);
+
+          if (needsTasks.length === 1 && attentionDecision.shouldRouteToTask) {
             // Use rawUserText so stored guidance isn't polluted with the
             // "[Replying to Jarvis's message: ...]" context-injection prefix.
             const result = await resolveScheduledTaskAttention(userId, needsTasks[0].id, rawUserText);
@@ -1486,7 +1725,7 @@ async function processUpdate(update: any): Promise<void> {
               );
               return;
             }
-          } else if (needsTasks.length > 1) {
+          } else if (needsTasks.length > 1 && attentionDecision.shouldShowTaskList) {
             const taskList = needsTasks
               .map((t, i) => {
                 const q = t.attentionQuestion ? `\n   ↳ ${t.attentionQuestion}` : "";
@@ -1504,7 +1743,64 @@ async function processUpdate(update: any): Promise<void> {
         }
       }
 
-      await handleCoachReply(userId, chatId, text, imageUrl);
+      const shouldTryAgentSdkWorkflow = shouldTryTelegramAgentSdkWorkflow(rawUserText);
+
+      const { handlePrimeInput, isPrimeRuntimeEnabled } = await import("./agent/autonomyRuntime");
+      if (shouldTryAgentSdkWorkflow) {
+        const primeStartedAt = Date.now();
+        const primeResult = await handlePrimeInput({
+          userId,
+          channel: "telegram",
+          message: rawUserText,
+          metadata: { originChannelId: chatId },
+        });
+        if (primeResult.handled) {
+          if (primeResult.reply) {
+            logTelegramE2eReply(telegramE2eProbeId, `prime_${primeResult.status}`, primeStartedAt, primeResult.reply);
+          }
+          if (primeResult.status !== "complete" && primeResult.status !== "failed" && primeResult.reply) {
+            await sendMessage(chatId, primeResult.reply);
+          }
+          return;
+        }
+      }
+
+      if (shouldTryAgentSdkWorkflow && !isPrimeRuntimeEnabled()) {
+        const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");
+        const reminderStartedAt = Date.now();
+        const agentSdkReminderResult = await runAgentSdkReminderWorkflow({
+          userId,
+          userText: rawUserText,
+          originChannel: "telegram",
+          originChannelId: chatId,
+        });
+        if (agentSdkReminderResult.handled) {
+          logTelegramE2eReply(telegramE2eProbeId, `agent_sdk_reminder_${agentSdkReminderResult.status}`, reminderStartedAt, agentSdkReminderResult.reply);
+          if (agentSdkReminderResult.status !== "complete" && agentSdkReminderResult.status !== "failed") {
+            await sendMessage(chatId, agentSdkReminderResult.reply);
+          }
+          return;
+        }
+        const emailStartedAt = Date.now();
+        const agentSdkResult = await runAgentSdkEmailWorkflow({
+          userId,
+          userText: rawUserText,
+          originChannel: "telegram",
+          originChannelId: chatId,
+        });
+        if (agentSdkResult.handled) {
+          logTelegramE2eReply(telegramE2eProbeId, `agent_sdk_email_${agentSdkResult.status}`, emailStartedAt, agentSdkResult.reply);
+          if (agentSdkResult.status !== "complete" && agentSdkResult.status !== "failed") {
+            await sendMessage(chatId, agentSdkResult.reply);
+          }
+          return;
+        }
+      }
+
+      enqueueTelegramCoachMessageBatch(
+        { userId, chatId, text, imageUrl },
+        (batch) => handleCoachReply(batch.userId, batch.chatId, batch.text, batch.imageUrl),
+      );
     } catch (err) {
       console.error("Error handling Telegram message:", err);
       await sendMessage(chatId, "Sorry, something went wrong. Please try again.");
@@ -1567,8 +1863,14 @@ export function registerTelegramRoutes(app: Express): void {
 
       const code = generateLinkCode();
       await db.insert(schema.telegramLinkCodes).values({ code, userId });
+      const botUsername = await getTelegramBotUsername();
 
-      res.json({ code });
+      res.json({
+        code,
+        botUsername,
+        botUrl: botUsername ? `https://t.me/${botUsername}` : null,
+        deepLinkUrl: botUsername ? `https://t.me/${botUsername}?start=${code}` : null,
+      });
     } catch (error) {
       console.error("Error generating link code:", error);
       res.status(500).json({ error: "Failed to generate link code" });
@@ -1606,6 +1908,7 @@ export function registerTelegramRoutes(app: Express): void {
           connected: false,
           username: null,
           configured: isTelegramConfigured(),
+          botUsername: await getTelegramBotUsername(),
           webhookHealthy: webhookHealth?.healthy ?? null,
           webhookLastChecked: webhookHealth?.lastChecked ?? null,
         });
@@ -1615,6 +1918,7 @@ export function registerTelegramRoutes(app: Express): void {
         connected: true,
         username: link[0].username,
         configured: isTelegramConfigured(),
+        botUsername: await getTelegramBotUsername(),
         webhookHealthy: webhookHealth?.healthy ?? null,
         webhookLastChecked: webhookHealth?.lastChecked ?? null,
       });

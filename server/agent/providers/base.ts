@@ -18,15 +18,27 @@
 
 import type OpenAI from "openai";
 
+export type ProviderResponseFormat =
+  OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"];
+
 export interface ProviderQueryParams {
   model: string;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
   toolChoice: "auto" | "required" | "none";
   maxCompletionTokens: number;
+  responseFormat?: ProviderResponseFormat;
   /** When true, the provider should emit fine-grained text deltas in real time. */
   stream: boolean;
+  /** User-scoped runtimes, such as the desktop daemon, need this to find the right connection. */
+  userId?: string;
   signal?: AbortSignal;
+}
+
+export function isJsonObjectResponseFormat(responseFormat: ProviderResponseFormat | undefined): boolean {
+  return !!responseFormat
+    && typeof responseFormat === "object"
+    && (responseFormat as { type?: unknown }).type === "json_object";
 }
 
 // ── Chunk types (discriminated union) ──────────────────────────────────────────
@@ -45,6 +57,9 @@ export interface ProviderTurnResult {
   textChunks: string[];
   toolCallList: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[];
   finishReason: string | null;
+  providerName?: string;
+  model?: string;
+  fallbackUsed?: boolean;
 }
 
 // ── Accumulator helper ─────────────────────────────────────────────────────────
@@ -56,6 +71,7 @@ export interface ProviderTurnResult {
  */
 export async function accumulateTurn(
   gen: AsyncGenerator<ProviderChunk>,
+  onChunk?: (chunk: ProviderChunk) => void | Promise<void>,
 ): Promise<ProviderTurnResult> {
   let textContent = "";
   const textChunks: string[] = [];
@@ -64,6 +80,7 @@ export async function accumulateTurn(
   let finishReason: string | null = null;
 
   for await (const chunk of gen) {
+    if (onChunk) await onChunk(chunk);
     switch (chunk.type) {
       case "text":
         textContent += chunk.delta;

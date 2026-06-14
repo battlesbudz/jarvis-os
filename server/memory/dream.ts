@@ -16,10 +16,10 @@
 import { db } from "../db";
 import { eq, desc, and, gte, lt, sql, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
 import { extractAndStore } from "./extractor";
 import { markSoulStale } from "./soul";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
@@ -36,10 +36,7 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   }
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[DreamCycle]", "balanced");
 
 const MINIMUM_MEMORY_AGE_DAYS = 14;
 const CONSOLIDATION_BATCH_SIZE = 20;
@@ -338,6 +335,7 @@ Output JSON:
     try {
       const resp = await openai.chat.completions.create({
         model,
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 800,
@@ -476,6 +474,7 @@ Rules:
     try {
       const resp = await openai.chat.completions.create({
         model,
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 400,
@@ -752,6 +751,7 @@ ${corpus.text.slice(0, 12000)}`;
   try {
     const resp = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 1200,

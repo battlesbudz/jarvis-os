@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { db } from "./db";
-import { users } from "@shared/schema";
+import { telegramLinks, users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 
 import crypto from "crypto";
@@ -25,15 +25,105 @@ declare global {
   namespace Express {
     interface Request {
       userId?: string;
+      authScope?: "user" | "webchat";
     }
   }
 }
 
 export function generateToken(userId: string): string {
-  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+  return jwt.sign({ userId, scope: "user" }, JWT_SECRET, { expiresIn: TOKEN_EXPIRY });
+}
+
+export function generateWebchatToken(userId: string): string {
+  return jwt.sign({ userId, scope: "webchat" }, JWT_SECRET, { expiresIn: "24h" });
+}
+
+function isWebchatScopedPath(req: Request): boolean {
+  if (req.method === "GET" && req.path === "/api/webchat/events") return true;
+  if (req.method === "POST" && req.path === "/api/coach/chat") return true;
+  if (["GET", "PUT", "DELETE"].includes(req.method) && req.path === "/api/data/chat-history") return true;
+  if (["GET", "PUT"].includes(req.method) && req.path === "/api/data/coach-session-id") return true;
+  return false;
+}
+
+function stripPort(host: string): string {
+  const trimmed = host.trim().toLowerCase();
+  if (trimmed.startsWith("[::1]")) return "::1";
+  return trimmed.split(":")[0] || trimmed;
+}
+
+function isLoopbackHost(host: string | undefined): boolean {
+  if (!host) return false;
+  const normalised = stripPort(host.split(",")[0] || "");
+  return normalised === "localhost" || normalised === "127.0.0.1" || normalised === "::1";
+}
+
+function isLoopbackIp(ip: string | undefined): boolean {
+  if (!ip) return true;
+  const normalised = ip.trim().toLowerCase();
+  return normalised === "::1" ||
+    normalised === "127.0.0.1" ||
+    normalised === "::ffff:127.0.0.1" ||
+    normalised.startsWith("127.");
+}
+
+function isLocalDashboardRequest(req: Request): boolean {
+  const host = (req.headers["x-forwarded-host"] as string | undefined) || req.headers.host;
+  if (!isLoopbackHost(host)) return false;
+
+  const forwardedFor = (req.headers["x-forwarded-for"] as string | undefined)
+    ?.split(",")
+    .map((ip) => ip.trim())
+    .filter(Boolean);
+  if (forwardedFor?.length && !forwardedFor.every(isLoopbackIp)) return false;
+
+  return isLoopbackIp(req.socket.remoteAddress);
 }
 
 export const authRouter = Router();
+
+export function verifyTelegramWebAppInitData(
+  initData: string,
+  botToken: string,
+  nowMs = Date.now(),
+): { telegramUserId: string } | null {
+  const params = new URLSearchParams(initData);
+  const receivedHash = params.get("hash");
+  if (!receivedHash) return null;
+
+  const authDateRaw = params.get("auth_date");
+  const authDate = authDateRaw ? Number(authDateRaw) : NaN;
+  if (!Number.isFinite(authDate)) return null;
+  if (Math.abs(nowMs / 1000 - authDate) > 24 * 60 * 60) return null;
+
+  const pairs: string[] = [];
+  params.forEach((value, key) => {
+    if (key !== "hash") pairs.push(`${key}=${value}`);
+  });
+  pairs.sort();
+
+  const secret = crypto.createHmac("sha256", "WebAppData").update(botToken).digest();
+  const computedHash = crypto
+    .createHmac("sha256", secret)
+    .update(pairs.join("\n"))
+    .digest("hex");
+
+  const received = Buffer.from(receivedHash, "hex");
+  const computed = Buffer.from(computedHash, "hex");
+  if (received.length !== computed.length || !crypto.timingSafeEqual(received, computed)) {
+    return null;
+  }
+
+  const userRaw = params.get("user");
+  if (!userRaw) return null;
+  try {
+    const parsed = JSON.parse(userRaw) as { id?: number | string };
+    if (parsed.id === undefined || parsed.id === null) return null;
+    return { telegramUserId: String(parsed.id) };
+  } catch {
+    return null;
+  }
+}
 
 authRouter.post("/register", async (req: Request, res: Response) => {
   try {
@@ -108,6 +198,56 @@ authRouter.post("/login", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Login error:", error);
     res.status(500).json({ error: "Failed to log in" });
+  }
+});
+
+authRouter.post("/telegram-webapp", async (req: Request, res: Response) => {
+  try {
+    const initData = typeof req.body?.initData === "string" ? req.body.initData : "";
+    if (!initData) {
+      return res.status(400).json({ error: "Telegram init data is required" });
+    }
+
+    const botToken = process.env.TELEGRAM_BOT_TOKEN;
+    if (!botToken) {
+      return res.status(500).json({ error: "Telegram bot is not configured" });
+    }
+
+    const verified = verifyTelegramWebAppInitData(initData, botToken);
+    if (!verified) {
+      return res.status(401).json({ error: "Invalid Telegram login data" });
+    }
+
+    const [link] = await db.select({ userId: telegramLinks.userId })
+      .from(telegramLinks)
+      .where(eq(telegramLinks.chatId, verified.telegramUserId))
+      .limit(1);
+
+    if (!link) {
+      return res.status(401).json({ error: "Telegram account is not linked to Jarvis" });
+    }
+
+    const [user] = await db.select({
+      id: users.id,
+      username: users.username,
+      displayName: users.displayName,
+      email: users.email,
+    }).from(users).where(eq(users.id, link.userId)).limit(1);
+
+    if (!user) {
+      return res.status(401).json({ error: "Linked Jarvis user was not found" });
+    }
+
+    const token = generateToken(user.id);
+    res.json({
+      token,
+      userId: user.id,
+      username: user.displayName || user.username,
+      email: user.email || null,
+    });
+  } catch (error) {
+    console.error("Telegram web app auth error:", error);
+    res.status(500).json({ error: "Failed to authenticate with Telegram" });
   }
 });
 
@@ -241,7 +381,10 @@ authRouter.get("/me", async (req: Request, res: Response) => {
     }
 
     const token = authHeader.slice(7);
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; scope?: string };
+    if (payload.scope === "webchat") {
+      return res.status(401).json({ error: "Invalid token" });
+    }
 
     const [user] = await db.select({
       id: users.id,
@@ -274,6 +417,12 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
     return next();
   }
 
+  // Codex gateway endpoints use JARVIS_CODEX_GATEWAY_TOKEN, not user JWTs.
+  // The route handlers perform their own bearer-token check.
+  if (req.path.startsWith("/api/codex/")) {
+    return next();
+  }
+
   if (!req.path.startsWith("/api/")) {
     return next();
   }
@@ -288,16 +437,21 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
     // Dashboard internal secret — localhost-only bypass
     const dashSecret = process.env.DASHBOARD_SECRET;
-    if (dashSecret && token === dashSecret) {
+    if (dashSecret && token === dashSecret && isLocalDashboardRequest(req)) {
       const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
       if (firstUser) {
         req.userId = firstUser.id;
+        req.authScope = "user";
         return next();
       }
     }
 
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; scope?: string };
+    if (payload.scope === "webchat" && !isWebchatScopedPath(req)) {
+      return res.status(403).json({ error: "Webchat token is not allowed for this endpoint" });
+    }
     req.userId = payload.userId;
+    req.authScope = payload.scope === "webchat" ? "webchat" : "user";
     next();
   } catch {
     return res.status(401).json({ error: "Invalid or expired token" });
@@ -315,11 +469,12 @@ export async function getUserIdFromRequest(req: Request): Promise<string | null>
   try {
     const token = authHeader.slice(7);
     const dashSecret = process.env.DASHBOARD_SECRET;
-    if (dashSecret && token === dashSecret) {
+    if (dashSecret && token === dashSecret && isLocalDashboardRequest(req)) {
       const [firstUser] = await db.select({ id: users.id }).from(users).limit(1);
       return firstUser?.id ?? null;
     }
-    const payload = jwt.verify(token, JWT_SECRET) as { userId: string };
+    const payload = jwt.verify(token, JWT_SECRET) as { userId: string; scope?: string };
+    if (payload.scope === "webchat" && !isWebchatScopedPath(req)) return null;
     return payload.userId ?? null;
   } catch {
     return null;

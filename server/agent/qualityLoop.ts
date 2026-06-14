@@ -1,30 +1,63 @@
 /**
  * Quality Loop — pre-think and post-check bookends for every chat turn.
  *
- * preThink  : asks Claude Opus for a 1-2 sentence approach note before the
- *             OpenAI agent runs, so the system prompt carries a clear directive.
- * postCheck : asks Claude Opus whether the agent reply addressed the request;
+ * preThink  : asks the orchestrator model for a 1-2 sentence approach note
+ *             before the agent runs, so the system prompt carries a clear
+ *             directive.
+ * postCheck : asks the orchestrator model whether the agent reply addressed the request;
  *             returns { passed, feedback }.  Errors are fail-open (passed=true)
- *             so a broken Anthropic call never silently drops a user reply.
+ *             so a provider hiccup never silently drops a user reply.
  *
  * Both calls are capped at 80 output tokens and enforced with a 4-second hard
  * timeout so they never become a bottleneck on the hot path.
+ *
+ * Codex OAuth models are bypassed here because these checks are optional and
+ * daemon-backed Codex turns are a shared foreground runtime; aborting a
+ * 4-second quality probe can cancel the runtime the real orchestrator needs.
  */
 
-import { anthropic } from "../lib/anthropicClient";
+import { routeModelTurn } from "./modelRouter";
+import { isCodexOAuthModel } from "./runtimeModel";
 
 const MAX_TOKENS = 80;
 const TIMEOUT_MS = 4000;
 
+export function shouldBypassQualityLoopForModel(model: string | undefined | null): boolean {
+  return isCodexOAuthModel(model);
+}
+
 /**
- * Wrap a promise with a hard timeout.  Resolves to `fallback` when the timeout
- * fires — the original promise is not cancelled (fire-and-forget).
+ * Run with a linked AbortSignal. Resolves to `fallback` on timeout, abort, or
+ * provider error, while cancelling the underlying model request.
  */
-function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
-  ]);
+function abortError(message: string): Error {
+  const err = new Error(message);
+  err.name = "AbortError";
+  return err;
+}
+
+async function withAbortableTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  fallback: T,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  if (parentSignal?.aborted) return fallback;
+
+  const controller = new AbortController();
+  const onParentAbort = () => controller.abort(parentSignal?.reason ?? abortError("Quality loop aborted by caller"));
+  const timeout = setTimeout(() => controller.abort(abortError("Quality loop timed out")), ms);
+  timeout.unref?.();
+  parentSignal?.addEventListener("abort", onParentAbort, { once: true });
+
+  try {
+    return await run(controller.signal);
+  } catch {
+    return fallback;
+  } finally {
+    clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", onParentAbort);
+  }
 }
 
 /**
@@ -35,11 +68,21 @@ export async function preThink(
   userMessage: string,
   briefContext: string,
   orchestratorModel: string,
+  userId?: string,
+  signal?: AbortSignal,
 ): Promise<string> {
-  const run = async (): Promise<string> => {
-    const msg = await anthropic.messages.create({
-      model: orchestratorModel,
-      max_tokens: MAX_TOKENS,
+  if (shouldBypassQualityLoopForModel(orchestratorModel)) return "";
+
+  const run = async (runSignal: AbortSignal): Promise<string> => {
+    const response = await routeModelTurn({
+      tier: "smart",
+      requestedModel: orchestratorModel,
+      maxCompletionTokens: MAX_TOKENS,
+      stream: false,
+      toolChoice: "none",
+      userId,
+      signal: runSignal,
+      logPrefix: "[QualityLoop/preThink]",
       messages: [
         {
           role: "user",
@@ -50,15 +93,10 @@ export async function preThink(
         },
       ],
     });
-    const block = msg.content[0];
-    return block.type === "text" ? block.text.trim() : "";
+    return (response.textContent ?? "").trim();
   };
 
-  try {
-    return await withTimeout(run(), TIMEOUT_MS, "");
-  } catch {
-    return "";
-  }
+  return withAbortableTimeout(run, TIMEOUT_MS, "", signal);
 }
 
 export interface PostCheckResult {
@@ -69,17 +107,27 @@ export interface PostCheckResult {
 /**
  * Ask the orchestrator model whether the agent reply fully addressed the user's
  * request.  Returns { passed: true, feedback: "" } on timeout or any error so
- * a broken Anthropic call never blocks or drops a reply.
+ * a provider failure never blocks or drops a reply.
  */
 export async function postCheck(
   userMessage: string,
   agentReply: string,
   orchestratorModel: string,
+  userId?: string,
+  signal?: AbortSignal,
 ): Promise<PostCheckResult> {
-  const run = async (): Promise<PostCheckResult> => {
-    const msg = await anthropic.messages.create({
-      model: orchestratorModel,
-      max_tokens: MAX_TOKENS,
+  if (shouldBypassQualityLoopForModel(orchestratorModel)) return { passed: true, feedback: "" };
+
+  const run = async (runSignal: AbortSignal): Promise<PostCheckResult> => {
+    const response = await routeModelTurn({
+      tier: "smart",
+      requestedModel: orchestratorModel,
+      maxCompletionTokens: MAX_TOKENS,
+      stream: false,
+      toolChoice: "none",
+      userId,
+      signal: runSignal,
+      logPrefix: "[QualityLoop/postCheck]",
       messages: [
         {
           role: "user",
@@ -90,9 +138,8 @@ export async function postCheck(
         },
       ],
     });
-    const block = msg.content[0];
-    if (block.type !== "text") return { passed: true, feedback: "" };
-    const text = block.text.trim();
+    const text = (response.textContent ?? "").trim();
+    if (!text) return { passed: true, feedback: "" };
     if (text.toUpperCase().startsWith("PASS")) {
       return { passed: true, feedback: "" };
     }
@@ -101,9 +148,5 @@ export async function postCheck(
     return { passed: false, feedback };
   };
 
-  try {
-    return await withTimeout(run(), TIMEOUT_MS, { passed: true, feedback: "" });
-  } catch {
-    return { passed: true, feedback: "" };
-  }
+  return withAbortableTimeout(run, TIMEOUT_MS, { passed: true, feedback: "" }, signal);
 }

@@ -1,7 +1,7 @@
 import { db } from "../db";
 import { eq, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
+import { routeModelTurn } from "../agent/modelRouter";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
@@ -18,10 +18,6 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   }
 }
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
 import { normalizeCategory, MEMORY_CATEGORIES } from "./categories";
 import { markSoulStale } from "./soul";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
@@ -53,6 +49,8 @@ interface ExtractedMemory {
   tier: schema.MemoryTier;
   memoryType: schema.MemoryType;
 }
+
+let memoryExtractionCooldownUntil = 0;
 
 function normalizeForDedup(s: string): string {
   return s.trim().toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ");
@@ -95,9 +93,54 @@ function parseExtraction(raw: string): RawExtractedMemory[] {
   return [];
 }
 
+function isProviderBackpressure(err: unknown): boolean {
+  const anyErr = err as { status?: unknown; code?: unknown; type?: unknown; message?: unknown };
+  const message = typeof anyErr?.message === "string" ? anyErr.message.toLowerCase() : "";
+  return (
+    anyErr?.status === 429 ||
+    anyErr?.code === "rate_limit_exceeded" ||
+    anyErr?.code === "insufficient_quota" ||
+    anyErr?.type === "tokens" ||
+    message.includes("rate limit") ||
+    message.includes("insufficient_quota") ||
+    message.includes("exceeded your current quota")
+  );
+}
+
+function shouldSkipLowSignalExtraction(source: string): boolean {
+  const normalized = source.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!normalized) return true;
+  if (
+    /\b(remind\s+me|set\s+(a\s+)?reminder)\b/.test(normalized) &&
+    /\b(in|at|on|tomorrow|today|tonight|morning|afternoon|evening|hour|minute|week)\b/.test(normalized)
+  ) return true;
+  if (
+    normalized.startsWith("please reply with exactly") ||
+    normalized.includes("please reply with exactly") ||
+    normalized.includes("router works") ||
+    normalized.includes("final chat works") ||
+    normalized.includes("optional ai is quiet") ||
+    normalized.includes("logs checked") ||
+    normalized.includes("logs are clean") ||
+    normalized.includes("tell a joke") ||
+    normalized === "who are you" ||
+    normalized === "who are you?" ||
+    normalized === "hey" ||
+    normalized === "yo" ||
+    normalized === "yo yo"
+  ) return true;
+  if (normalized.length > 240) return false;
+  return false;
+}
+
 export async function extractAndStore(input: ExtractInput): Promise<ExtractedMemory[]> {
   const { userId, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
   if (!source.trim()) return [];
+  if (shouldSkipLowSignalExtraction(source)) return [];
+  if (Date.now() < memoryExtractionCooldownUntil) {
+    console.warn("[Memory] extraction skipped: provider backpressure cooldown active");
+    return [];
+  }
 
   let stored: ExtractedMemory[] = [];
   let hadAnyError = false;
@@ -114,7 +157,7 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
 
     const existingList =
       existingMemories.length > 0
-        ? `\nExisting memories (DO NOT duplicate or rephrase these):\n${existingMemories.slice(0, 80).map((m) => `- ${m}`).join("\n")}`
+        ? `\nExisting memories (DO NOT duplicate or rephrase these):\n${existingMemories.slice(0, 35).map((m) => `- ${m}`).join("\n")}`
         : "";
     const contextNote = contextHint ? `\nContext: ${contextHint}` : "";
 
@@ -122,34 +165,34 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
 Output JSON: { "memories": [{"content": string, "category": one-of-categories, "confidence": 0-100, "tier": one-of-tiers, "memory_type": one-of-types}] }
 
 Categories (pick ONE per memory):
-- work_patterns       — when/how they focus, schedule habits, tools, deep-work timing
-- communication_style — humor, energy, decision style, message length preference
-- energy_rhythms      — peak/low hours, sleep, exercise timing, recovery rituals
-- goals_history       — goals stated or inferred over time, including past goals
-- relationships       — specific named people (family, teammates, partners)
-- values              — what they care about deeply, what motivates them
-- blockers            — recurring frictions, fears, procrastination triggers
-- accomplishments     — concrete wins, milestones reached
-- preferences         — explicit preferences (meeting times, channels)
-- fact                — anything else durable and specific
+- work_patterns       - when/how they focus, schedule habits, tools, deep-work timing
+- communication_style - humor, energy, decision style, message length preference
+- energy_rhythms      - peak/low hours, sleep, exercise timing, recovery rituals
+- goals_history       - goals stated or inferred over time, including past goals
+- relationships       - specific named people (family, teammates, partners)
+- values              - what they care about deeply, what motivates them
+- blockers            - recurring frictions, fears, procrastination triggers
+- accomplishments     - concrete wins, milestones reached
+- preferences         - explicit preferences (meeting times, channels)
+- fact                - anything else durable and specific
 
 Memory Tiers (pick ONE per memory):
-- working     — fleeting context valid for minutes only (e.g. "user is currently stressed about X")
-- short_term  — conversational facts valid for 48-72 hours (e.g. "user said they're busy today")
-- long_term   — stable, durable patterns and facts that persist indefinitely
+- working     - fleeting context valid for minutes only (e.g. "user is currently stressed about X")
+- short_term  - conversational facts valid for 48-72 hours (e.g. "user said they're busy today")
+- long_term   - stable, durable patterns and facts that persist indefinitely
 
 Memory Types (pick ONE per memory):
-- episodic    — an event, action, or fact tied to a specific moment ("user finished the project on Friday", "user said they are busy today")
-- semantic    — a general fact or stable preference that holds across time ("user prefers morning deep work")
-- procedural  — a repeated behavioral habit or workflow ("user reviews email at 9am daily")
-- contextual  — momentary internal state with no factual claim ("user seems stressed right now")
+- episodic    - an event, action, or fact tied to a specific moment ("user finished the project on Friday", "user said they are busy today")
+- semantic    - a general fact or stable preference that holds across time ("user prefers morning deep work")
+- procedural  - a repeated behavioral habit or workflow ("user reviews email at 9am daily")
+- contextual  - momentary internal state with no factual claim ("user seems stressed right now")
 
-Tier/Type canonical assignments — follow these exactly:
-- Facts from the current conversation  → short_term + episodic  (expires 48-72 h)
-- Current fleeting/emotional state     → working    + contextual (expires 2-4 h)
-- Inferred stable patterns/preferences → long_term  + semantic
-- Specific past events                 → long_term  + episodic
-- Repeated behavioral habits           → long_term  + procedural
+Tier/Type canonical assignments - follow these exactly:
+- Facts from the current conversation  -> short_term + episodic  (expires 48-72 h)
+- Current fleeting/emotional state     -> working    + contextual (expires 2-4 h)
+- Inferred stable patterns/preferences -> long_term  + semantic
+- Specific past events                 -> long_term  + episodic
+- Repeated behavioral habits           -> long_term  + procedural
 
 Rules:
 - Only extract facts that are SPECIFIC and not already captured.
@@ -160,21 +203,25 @@ Rules:
 ${existingList}
 
 Source (${sourceType}):
-${source.slice(0, 6000)}
+${source.slice(0, 1800)}
 
 Return { "memories": [] } if nothing new and high-confidence was learned.`;
 
-    const { getModel } = await import("../lib/modelPrefs");
-    const model = await getModel(userId, "memory");
-
-    const response = await openai.chat.completions.create({
-      model,
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 500,
+    const response = await routeModelTurn({
+      tier: "cheap",
+      messages: [
+        {
+          role: "system",
+          content: "Return only valid JSON. Do not include markdown fences, prose, or commentary.",
+        },
+        { role: "user", content: prompt },
+      ],
+      maxCompletionTokens: 250,
+      userId: input.userId,
+      logPrefix: "[MemoryExtract]",
     });
 
-    const content = response.choices[0]?.message?.content || '{"memories":[]}';
+    const content = response.textContent || '{"memories":[]}';
     const raw = parseExtraction(content).slice(0, maxNew);
 
     for (const r of raw) {
@@ -216,7 +263,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
         }).catch(() => {});
       }
       try {
-        await db.insert(schema.userMemories).values({
+        const [inserted] = await db.insert(schema.userMemories).values({
           userId,
           content: text,
           category,
@@ -230,7 +277,15 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
           expiresAt: expiresAt ?? undefined,
           pendingReview,
           reviewStatus,
-        });
+        }).returning({ id: schema.userMemories.id });
+        if (embedding && inserted?.id) {
+          try {
+            const { upsertMemoryEmbedding } = await import("./vectorStore");
+            await upsertMemoryEmbedding(inserted.id, embedding);
+          } catch (err) {
+            console.error("[Memory] embeddingVector write failed:", err);
+          }
+        }
         seen.add(norm);
         stored.push({ content: text, category, confidence, tier, memoryType });
         console.log(`[Memory] +${sourceType} [${category} ${tier}/${memoryType} c=${confidence}${embedding ? " e" : ""}${expiresAt ? " ttl" : ""}] ${text.slice(0, 70)}`);
@@ -248,6 +303,13 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
     }
   } catch (err) {
     hadAnyError = true;
+    if (isProviderBackpressure(err)) {
+      memoryExtractionCooldownUntil = Date.now() + 60_000;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Memory] extraction skipped: provider backpressure (${msg.slice(0, 180)})`);
+      return stored;
+    }
+
     console.error("[Memory] extract failed:", err);
     diagEmit({
       userId,
@@ -260,6 +322,14 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
 
   if (stored.length > 0) {
     markSoulStale(userId).catch((err) => console.error("[Memory] markSoulStale:", err));
+
+    if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
+      import("../brain/adapter").then(({ projectApprovedMemories }) => {
+        projectApprovedMemories(userId, 25).catch((err) =>
+          console.error("[Memory] brain projection failed:", err),
+        );
+      }).catch((err) => console.error("[Memory] brain import failed:", err));
+    }
 
     // For rich source types use ingestSource (compounding wiki) instead of
     // the legacy TTL-gated maybeRegenerateVault.

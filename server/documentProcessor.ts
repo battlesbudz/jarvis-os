@@ -1,13 +1,12 @@
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
+import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
 import { userDocuments } from "@shared/schema";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = new OpenAI(getOpenAIClientConfig());
 
 const MAX_DOCS_PER_USER = 10;
 const MAX_EXTRACTED_CHARS = 80000;
@@ -137,7 +136,7 @@ async function summarizeText(name: string, text: string, userId: string): Promis
   const model = await getModel(userId, "research");
 
   const input = text.slice(0, MAX_SUMMARY_INPUT_CHARS);
-  const response = await openai.chat.completions.create({
+  const response = await createRoutedChatCompletion({
     model,
     messages: [
       {
@@ -151,7 +150,7 @@ async function summarizeText(name: string, text: string, userId: string): Promis
     ],
     temperature: 0.2,
     max_tokens: 1000,
-  });
+  }, { tier: "balanced", logPrefix: "[DocumentSummary]", userId });
 
   return response.choices[0]?.message?.content || text.slice(0, 3000);
 }

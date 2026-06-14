@@ -1,18 +1,19 @@
-import type { AgentTool, ToolContext, ToolArgs, ToolResult } from "../types";
-import { db } from "../../db";
-import * as schema from "@shared/schema";
+import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
+import { createJarvisScheduledTask } from "../../jarvisScheduledTasks";
+import { parseNaturalTime, parseRecurringExpr } from "./cronTools";
 
 interface ScheduleJarvisTaskArgs {
   title?: string;
   description?: string;
   scheduledAt?: string;
   recurrence?: string;
+  taskKind?: string;
 }
 
 export const scheduleJarvisTaskTool: AgentTool = {
   name: "schedule_jarvis_task",
   description:
-    "Schedule a recurring or one-off task for Jarvis to perform automatically. Use this when the user asks you to 'remind me every Monday to...', 'check my inbox every morning', 'do X at Y time', or any request to schedule a future autonomous action. These tasks appear in the user's Mission Control calendar so they can verify Jarvis is actually scheduled to do what they asked.",
+    "Schedule a recurring or one-off task/reminder for the user's own to-do list. Use this for human tasks like 'remind me to call...', 'add Make $140 on DoorDash as a daily task', habits, errands, chores, and anything Jarvis cannot personally do because it requires the user's body, car, money, physical presence, or real-world action. These are non-executable user tasks by default. Do not use this tool for autonomous work Jarvis should perform later, such as checking inboxes, running scripts, sending reports, or operating connected apps; use the explicit cron/job tools for those.",
   parameters: {
     type: "object",
     properties: {
@@ -26,11 +27,16 @@ export const scheduleJarvisTaskTool: AgentTool = {
       },
       scheduledAt: {
         type: "string",
-        description: "When to first run this task. ISO 8601 datetime string (e.g. '2025-05-01T09:00:00Z'). For daily/recurring tasks, use the next scheduled occurrence.",
+        description: "When to first run this task. Accepts an ISO 8601 datetime string or common natural language such as 'in an hour', 'tomorrow at 9am', or 'next Monday at 10am'. For daily/recurring tasks, use the next scheduled occurrence.",
       },
       recurrence: {
         type: "string",
         description: "Optional recurrence rule in plain English (e.g. 'daily', 'every Monday', 'weekdays at 9am', 'every Sunday at 8pm'). Omit for one-off tasks.",
+      },
+      taskKind: {
+        type: "string",
+        enum: ["user_task", "jarvis_action"],
+        description: "Defaults to user_task. Only use jarvis_action when Jarvis can actually perform the future action with tools; never use jarvis_action for physical or user-owned tasks.",
       },
     },
     required: ["title", "scheduledAt"],
@@ -47,22 +53,22 @@ export const scheduleJarvisTaskTool: AgentTool = {
       return { ok: false, content: "scheduledAt is required.", label: "Missing scheduledAt" };
     }
 
-    const scheduledAt = new Date(scheduledAtStr);
+    const recurring = parseRecurringExpr(scheduledAtStr);
+    const scheduledAt = recurring?.scheduledAt ?? parseNaturalTime(scheduledAtStr) ?? new Date(scheduledAtStr);
+    const recurrence = a.recurrence ? String(a.recurrence).trim() : recurring?.recurrence ?? null;
     if (isNaN(scheduledAt.getTime())) {
-      return { ok: false, content: `Invalid scheduledAt: "${scheduledAtStr}". Use ISO 8601 format.`, label: "Invalid date" };
+      return { ok: false, content: `Invalid scheduledAt: "${scheduledAtStr}". Use ISO 8601 or natural language like "in an hour" or "tomorrow at 9am".`, label: "Invalid date" };
     }
 
     try {
-      const [task] = await db
-        .insert(schema.jarvisScheduledTasks)
-        .values({
-          userId: ctx.userId,
-          title,
-          description: a.description ? String(a.description).trim() : null,
-          scheduledAt,
-          recurrence: a.recurrence ? String(a.recurrence).trim() : null,
-        })
-        .returning();
+      const { task, deduped } = await createJarvisScheduledTask({
+        userId: ctx.userId,
+        title,
+        description: a.description ? String(a.description).trim() : null,
+        scheduledAt,
+        recurrence,
+        taskKind: a.taskKind,
+      });
 
       const when = scheduledAt.toLocaleDateString("en-US", {
         weekday: "short",
@@ -71,12 +77,13 @@ export const scheduleJarvisTaskTool: AgentTool = {
         hour: "numeric",
         minute: "2-digit",
       });
+      const actionLabel = deduped ? "Already scheduled" : "Scheduled";
 
       return {
         ok: true,
-        content: `Scheduled: "${title}" for ${when}${a.recurrence ? ` (${a.recurrence})` : ""}.\n\n[View in Scheduled Tasks →](gameplan://scheduled)`,
-        label: `Scheduled: ${title}`,
-        detail: JSON.stringify({ id: task.id, title, scheduledAt: task.scheduledAt }),
+        content: `${actionLabel}: "${title}" for ${when}${recurrence ? ` (${recurrence})` : ""}.\n\n[View in Scheduled Tasks ->](gameplan://scheduled)`,
+        label: `${actionLabel}: ${title}`,
+        detail: JSON.stringify({ id: task.id, title, scheduledAt: task.scheduledAt, deduped }),
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

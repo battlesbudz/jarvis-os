@@ -1,5 +1,8 @@
 import { getApiUrl } from '@/lib/query-client';
 import { getAuthToken } from '@/lib/auth-context';
+import { generateId, getGreeting, getTodayKey } from '@/lib/storageHelpers';
+import { insertTaskAtOptimalPosition, sortTasksByEnergy } from '@/lib/storageTaskOrdering';
+import { getSuggestions } from '@/lib/suggestions';
 
 export interface Task {
   id: string;
@@ -45,14 +48,7 @@ export interface Goal {
   updatedAt?: string;
 }
 
-export interface Suggestion {
-  id: string;
-  title: string;
-  description: string;
-  category: 'activity' | 'date_night' | 'finance' | 'career' | 'wellness';
-  icon: string;
-  actionLabel: string;
-}
+export type { Suggestion } from '@/lib/suggestions';
 
 export interface ConnectedPlatform {
   id: string;
@@ -273,13 +269,15 @@ export interface LifeContext {
 }
 
 export interface CoachAction {
-  type: 'task' | 'goal' | 'link';
+  type: 'task' | 'goal' | 'link' | 'reminder';
   title: string;
   category: string;
   priority?: 'high' | 'medium' | 'low';
   description?: string;
   url?: string;
   buttonLabel?: string;
+  scheduledAt?: string;
+  recurrence?: string;
 }
 
 /**
@@ -327,6 +325,11 @@ export interface PendingConfirm {
     body?: string;
     provider?: string;
     action?: string;
+    platform?: string;
+    connection?: string;
+    reason?: string;
+    data?: string;
+    query?: string;
     cmd?: string;
     path?: string;
     content?: string;
@@ -359,22 +362,6 @@ export interface Commitment {
   extractedAt: string;
   resolvedAt: string | null;
   sourceMessage: string | null;
-}
-
-function generateId(): string {
-  return Date.now().toString() + Math.random().toString(36).substr(2, 9);
-}
-
-function getTodayKey(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
-function getGreeting(): string {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
 }
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
@@ -435,6 +422,15 @@ async function apiDelete(path: string): Promise<ApiDataResponse> {
   });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json() as Promise<ApiDataResponse>;
+}
+
+async function getUserPreferencesData(): Promise<UserPreferencesData> {
+  const result = await apiGet('/api/data/user-preferences');
+  return (result.data || {}) as UserPreferencesData;
+}
+
+async function saveUserPreferencesData(prefs: UserPreferencesData): Promise<void> {
+  await apiPut('/api/data/user-preferences', prefs);
 }
 
 const DEFAULT_PLATFORMS: ConnectedPlatform[] = [
@@ -570,96 +566,7 @@ export async function clearBrainDumpItem(id: string): Promise<void> {
   }
 }
 
-function isLikelyQuick(title: string): boolean {
-  const quickWords = /\b(quick|fast|brief|small|simple|easy|check|read|reply|send|call|text|ping|remind|look up|google|note)\b/i;
-  return quickWords.test(title);
-}
-
-function countLeadingQuickWins(tasks: Task[]): number {
-  let count = 0;
-  for (const t of tasks) {
-    if (isLikelyQuick(t.title)) {
-      count++;
-    } else {
-      break;
-    }
-  }
-  return count;
-}
-
-function findLastHighMedIndex(tasks: Task[]): number {
-  let idx = -1;
-  for (let i = 0; i < tasks.length; i++) {
-    if (tasks[i].priority === 'high' || tasks[i].priority === 'medium') {
-      idx = i;
-    }
-  }
-  return idx;
-}
-
-function insertTaskAtOptimalPosition(tasks: Task[], newTask: Task, energyLevel?: number): Task[] {
-  const incomplete = tasks.filter(t => !t.completed);
-  const completed = tasks.filter(t => t.completed);
-
-  const isQuickWin = isLikelyQuick(newTask.title);
-  const isHighPriority = newTask.priority === 'high';
-  const isLowPriority = newTask.priority === 'low';
-  const isLowEnergy = (energyLevel ?? 3) <= 2;
-
-  if (isLowEnergy) {
-    if (isQuickWin || isLowPriority) {
-      return [newTask, ...incomplete, ...completed];
-    } else {
-      return [...incomplete, newTask, ...completed];
-    }
-  }
-
-  if (isQuickWin) {
-    return [newTask, ...incomplete, ...completed];
-  }
-  if (isHighPriority) {
-    const quickWinCount = countLeadingQuickWins(incomplete);
-    return [
-      ...incomplete.slice(0, quickWinCount),
-      newTask,
-      ...incomplete.slice(quickWinCount),
-      ...completed,
-    ];
-  }
-  if (isLowPriority) {
-    return [...incomplete, newTask, ...completed];
-  }
-  const lastHighMedIdx = findLastHighMedIndex(incomplete);
-  return [
-    ...incomplete.slice(0, lastHighMedIdx + 1),
-    newTask,
-    ...incomplete.slice(lastHighMedIdx + 1),
-    ...completed,
-  ];
-}
-
-export function sortTasksByEnergy(tasks: Task[], energyLevel: number): Task[] {
-  const incomplete = tasks.filter(t => !t.completed);
-  const completed = tasks.filter(t => t.completed);
-
-  if (energyLevel <= 2) {
-    return [
-      ...incomplete.filter(t => t.priority === 'low' || isLikelyQuick(t.title)),
-      ...incomplete.filter(t => t.priority === 'medium' && !isLikelyQuick(t.title)),
-      ...incomplete.filter(t => t.priority === 'high' && !isLikelyQuick(t.title)),
-      ...completed,
-    ];
-  }
-  const quickWins = incomplete.filter(t => isLikelyQuick(t.title));
-  const rest = incomplete.filter(t => !isLikelyQuick(t.title));
-  return [
-    ...quickWins,
-    ...rest.filter(t => t.priority === 'high'),
-    ...rest.filter(t => t.priority === 'medium'),
-    ...rest.filter(t => t.priority === 'low'),
-    ...completed,
-  ];
-}
+export { sortTasksByEnergy };
 
 export async function addTaskToToday(task: Partial<Task>, energyLevel?: number): Promise<void> {
   try {
@@ -702,8 +609,7 @@ export type CoachingMode = 'sharp' | 'drill' | 'mentor' | 'strategist' | 'flow';
 
 export async function getCoachingMode(): Promise<CoachingMode> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return (prefs.coachingMode as CoachingMode) || 'sharp';
   } catch {
     return 'sharp';
@@ -712,10 +618,9 @@ export async function getCoachingMode(): Promise<CoachingMode> {
 
 export async function saveCoachingMode(mode: CoachingMode): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.coachingMode = mode;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] saveCoachingMode failed:', e);
   }
@@ -723,8 +628,7 @@ export async function saveCoachingMode(mode: CoachingMode): Promise<void> {
 
 export async function getViewMode(): Promise<ViewMode> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return prefs.viewMode || 'list';
   } catch {
     return 'list';
@@ -733,10 +637,9 @@ export async function getViewMode(): Promise<ViewMode> {
 
 export async function saveViewMode(mode: ViewMode): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.viewMode = mode;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] saveViewMode failed:', e);
   }
@@ -835,8 +738,7 @@ export async function saveCoachSessionId(sdkSessionId: string | null): Promise<v
 
 export async function getDailyCoachNote(): Promise<{ note: string; date: string } | null> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return prefs.dailyCoachNote || null;
   } catch {
     return null;
@@ -846,10 +748,9 @@ export async function getDailyCoachNote(): Promise<{ note: string; date: string 
 export async function saveDailyCoachNote(note: string): Promise<void> {
   try {
     const today = getTodayKey();
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.dailyCoachNote = { note, date: today };
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] saveDailyCoachNote failed:', e);
   }
@@ -1161,8 +1062,7 @@ export async function deleteGoal(id: string): Promise<void> {
 
 export async function getPlatforms(): Promise<ConnectedPlatform[]> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     const saved = prefs.platforms || [];
     if (saved.length === 0) return DEFAULT_PLATFORMS;
     return DEFAULT_PLATFORMS.map(def => {
@@ -1181,10 +1081,9 @@ export async function togglePlatform(id: string): Promise<void> {
     const updated = platforms.map(p =>
       p.id === id ? { ...p, connected: !p.connected } : p
     );
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.platforms = updated;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('Failed to toggle platform:', e);
   }
@@ -1272,13 +1171,14 @@ export async function resetStats(): Promise<void> {
 const CURRENT_MIGRATION_VERSION = 2;
 export async function runMigrations(): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const token = await getAuthToken();
+    if (!token) return;
+    const prefs = await getUserPreferencesData();
     const version = prefs.migrationVersion || 0;
     if (version < CURRENT_MIGRATION_VERSION) {
       await resetStats();
       prefs.migrationVersion = CURRENT_MIGRATION_VERSION;
-      await apiPut('/api/data/user-preferences', prefs);
+      await saveUserPreferencesData(prefs);
     }
   } catch (e) {
     console.error('[storage] runMigrations failed:', e);
@@ -1299,64 +1199,7 @@ export async function regeneratePlan(goals: Goal[]): Promise<DayPlan> {
   return plan;
 }
 
-export function getSuggestions(): Suggestion[] {
-  const day = new Date().getDay();
-  const suggestions: Suggestion[] = [
-    {
-      id: '1',
-      title: 'Try a new restaurant',
-      description: 'Explore that new Italian place downtown for a relaxed dinner.',
-      category: 'date_night',
-      icon: 'restaurant',
-      actionLabel: 'Plan it',
-    },
-    {
-      id: '2',
-      title: 'Automate your savings',
-      description: 'Set up a recurring transfer of $50/week to your savings account.',
-      category: 'finance',
-      icon: 'trending-up',
-      actionLabel: 'Learn more',
-    },
-    {
-      id: '3',
-      title: 'Morning yoga flow',
-      description: 'Start tomorrow with a 15-minute yoga session for flexibility.',
-      category: 'wellness',
-      icon: 'leaf',
-      actionLabel: 'Schedule',
-    },
-    {
-      id: '4',
-      title: 'Update your LinkedIn',
-      description: 'Add recent achievements to boost profile visibility.',
-      category: 'career',
-      icon: 'briefcase',
-      actionLabel: 'Open',
-    },
-    {
-      id: '5',
-      title: 'Weekend hike',
-      description: 'Check out trails nearby for a Saturday morning adventure.',
-      category: 'activity',
-      icon: 'compass',
-      actionLabel: 'Explore',
-    },
-  ];
-
-  if (day === 5 || day === 6) {
-    suggestions.unshift({
-      id: '6',
-      title: 'Movie night in',
-      description: 'Pick a new release and set up a cozy movie night at home.',
-      category: 'date_night',
-      icon: 'film',
-      actionLabel: 'Browse',
-    });
-  }
-
-  return suggestions;
-}
+export { getSuggestions };
 
 export async function getCompletedCalendarIds(): Promise<string[]> {
   try {
@@ -1388,8 +1231,7 @@ export async function saveCompletedCalendarId(id: string, completed: boolean): P
 
 export async function getUserName(): Promise<string> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return prefs.userName || '';
   } catch {
     return '';
@@ -1398,10 +1240,9 @@ export async function getUserName(): Promise<string> {
 
 export async function saveUserName(name: string): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.userName = name;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] saveUserName failed:', e);
   }
@@ -1409,8 +1250,7 @@ export async function saveUserName(name: string): Promise<void> {
 
 export async function isOnboardingComplete(): Promise<boolean> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     return prefs.onboardingComplete === true;
   } catch {
     return false;
@@ -1419,10 +1259,9 @@ export async function isOnboardingComplete(): Promise<boolean> {
 
 export async function setOnboardingComplete(): Promise<void> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    const prefs = (result.data || {}) as UserPreferencesData;
+    const prefs = await getUserPreferencesData();
     prefs.onboardingComplete = true;
-    await apiPut('/api/data/user-preferences', prefs);
+    await saveUserPreferencesData(prefs);
   } catch (e) {
     console.error('[storage] setOnboardingComplete failed:', e);
   }
@@ -1598,8 +1437,7 @@ export async function getCarryoverTasks(): Promise<Task[]> {
 
 export async function getUserPreferences(): Promise<Record<string, any>> {
   try {
-    const result = await apiGet('/api/data/user-preferences');
-    return (result.data as Record<string, any>) || {};
+    return await getUserPreferencesData();
   } catch {
     return {};
   }

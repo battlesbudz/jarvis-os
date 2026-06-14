@@ -1,17 +1,15 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { saveUserToken, deleteUserToken, getUserOAuthStatus } from './userTokenStore';
+import { getPublicBaseUrl } from './publicUrl';
+import { handleMobileAuthCallback, isMobileAuthState } from './mobileAuthRoutes';
+import { createMobileAuthImplicitCallbackHtml } from './auth/mobileAuthHtml';
 
 export const oauthRouter = Router();
 export const oauthCallbackRouter = Router();
 
 function getBaseUrl(req: Request): string {
-  const domain = process.env.REPLIT_DOMAINS?.split(',')[0];
-  if (domain) {
-    const isDev = process.env.REPLIT_DEV_DOMAIN === domain;
-    return isDev ? `https://${domain}:5000` : `https://${domain}`;
-  }
-  return `${req.protocol}://${req.get('host')}`;
+  return getPublicBaseUrl(req);
 }
 
 function successHtml(provider: string, email?: string): string {
@@ -115,6 +113,15 @@ oauthRouter.get('/google/authorize', (req: Request, res: Response) => {
 
 oauthCallbackRouter.get('/google/callback', async (req: Request, res: Response) => {
   const { code, state: userId, error } = req.query as Record<string, string>;
+
+  if (!code && !userId && !error) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(createMobileAuthImplicitCallbackHtml());
+  }
+
+  if (isMobileAuthState(userId)) {
+    return handleMobileAuthCallback(req, res);
+  }
 
   if (error || !code || !userId) {
     return res.send(errorHtml(error || 'Authorization was cancelled.'));
@@ -390,13 +397,6 @@ oauthRouter.get('/status', async (req: Request, res: Response) => {
   if (!userId) return res.status(401).json({ error: 'Not authenticated' });
   try {
     const status = await getUserOAuthStatus(userId);
-    if (!status.microsoft?.connected) {
-      const { checkOutlookConnection } = await import('./integrations/outlook');
-      const projConnected = await checkOutlookConnection().catch(() => false);
-      if (projConnected) {
-        status.microsoft = { connected: true, accounts: [] };
-      }
-    }
     res.json(status);
   } catch (err) {
     console.error('OAuth status error:', err);

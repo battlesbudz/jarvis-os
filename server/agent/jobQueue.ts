@@ -5,6 +5,8 @@ import type { SubAgentType } from "./subagents";
 import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
 import { runGoalDecomposition } from "./goalDecomposer";
 import { runNamedAgent } from "./runNamedAgent";
+import { runEphemeralAgentSession, type EphemeralAgentKind } from "./ephemeralAgents";
+import { buildEphemeralWorkerResultDeliverable } from "./ephemeralWorkerDeliverable";
 import { runWeeklyPatternJob } from "../memory/weeklyJob";
 import { getValidGoogleTokens } from "../userTokenStore";
 import type { ToolContext } from "./types";
@@ -12,25 +14,55 @@ import { notifyUser, getChannel } from "../channels/registry";
 import { postToDiscordChannelById, sendToDiscordUser, sendFileToDiscordChannel, sendFileToDiscordUser } from "../discord/manager";
 import type { ChannelSendOpts } from "../channels/types";
 import { _notifyJobCompleteCore } from "./notifyJobCompleteCore";
-export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
-export { _notifyJobCompleteCore };
 import { onWorkflowJobComplete, onWorkflowJobFail } from "./workflowEngine";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "./errorLogger";
 import { submitAgentJob as _submitAgentJob, getModelForJobType as _getModelForJobType, type SubmitJobInput, type AgentJobType as _AgentJobType } from "./jobClient";
 import { runAgent } from "./harness";
 import { verifyJobOutput } from "./orchestrator";
+import { routeModelTurn } from "./modelRouter";
 import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeCodeChangeTool } from "./tools/selfEditTools";
 import { fetchCalendarTool } from "./tools/calendar";
 import { researchHasSourceUrls } from "./researchUtils";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
 import { createDriveBinaryFile } from "../integrations/googleDrive";
+import { normalizeApprovalReceipt } from "./approvalReceipt";
+import { decideJobFailureRecovery } from "./jobObservability";
+import { buildWorkerRuntimeEvent, resolveWorkerType, withWorkerRuntimeEvent } from "./workerRuntime";
+import {
+  buildFeatureProgressLabel,
+  buildFeatureProgressPercent,
+  type BuildFeatureProgressInput,
+} from "./buildFeatureJobCore";
 
 // Re-export from the shared client so existing callers don't break.
+export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
+export { _notifyJobCompleteCore };
 export type AgentJobType = _AgentJobType;
 export type { SubmitJobInput };
 export const submitAgentJob = _submitAgentJob;
 export const getModelForJobType = _getModelForJobType;
+
+function getRevisionDeliverableMeta(jobInput: Record<string, unknown>): Record<string, unknown> {
+  const revisionOfDeliverableId = typeof jobInput.revisionOfDeliverableId === "string"
+    ? jobInput.revisionOfDeliverableId
+    : undefined;
+  const revisionOfJobId = typeof jobInput.revisionOfJobId === "string"
+    ? jobInput.revisionOfJobId
+    : undefined;
+  const revisionInstructions = typeof jobInput.revisionInstructions === "string"
+    ? jobInput.revisionInstructions
+    : undefined;
+
+  if (!revisionOfDeliverableId && !revisionOfJobId && !revisionInstructions) return {};
+
+  return {
+    revision: true,
+    ...(revisionOfDeliverableId ? { revisionOfDeliverableId } : {}),
+    ...(revisionOfJobId ? { revisionOfJobId } : {}),
+    ...(revisionInstructions ? { revisionInstructions } : {}),
+  };
+}
 
 async function notifyJobComplete(
   userId: string,
@@ -157,6 +189,26 @@ async function notifyJobComplete(
         notified.push("in_app");
       }
       console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
+      return;
+    }
+
+    if (origin === "heartbeat/crew") {
+      // Internal heartbeat crew diagnostics belong in diagnostic_events, not
+      // user notification channels. Sending these through notifyUser can leak
+      // backend triage/planning output into Telegram or create inbox loops.
+      await diagEmit({
+        userId,
+        subsystem: "heartbeat",
+        severity: "info",
+        message: `Heartbeat crew job completed: ${agentType} - ${title}`.slice(0, 500),
+        metadata: {
+          originChannel,
+          agentType,
+          title,
+          bodyPreview: body.slice(0, 2000),
+        },
+      }).catch(() => {});
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} -> [diagnostics]`);
       return;
     }
 
@@ -603,6 +655,93 @@ let workerRunning = false;
 let workerStarted = false;
 let stopRequested = false;
 
+function jobInputOf(job: { input: unknown }): Record<string, unknown> {
+  return (job.input && typeof job.input === "object" ? job.input : {}) as Record<string, unknown>;
+}
+
+async function appendWorkerEventToJob(opts: {
+  jobId: string;
+  agentType: string;
+  title: string;
+  input: Record<string, unknown>;
+  type: "started" | "progress" | "approval_required" | "retrying" | "completed" | "failed" | "cancelled";
+  message: string;
+  userVisible?: boolean;
+  progress?: { currentStep: string; percent?: number };
+  checkpoint?: { id: string; reason: string; requiredFor: string; gateId?: string };
+  retryAttempt?: number;
+  metadata?: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  const workerType = resolveWorkerType({ agentType: opts.agentType, input: opts.input });
+  const nextInput = withWorkerRuntimeEvent(
+    opts.input,
+    buildWorkerRuntimeEvent({
+      type: opts.type,
+      workerType,
+      message: opts.message,
+      userVisible: opts.userVisible ?? false,
+      progress: opts.progress,
+      checkpoint: opts.checkpoint,
+      retryAttempt: opts.retryAttempt,
+      metadata: opts.metadata,
+    }),
+  );
+  await db
+    .update(schema.agentJobs)
+    .set({ input: nextInput })
+    .where(eq(schema.agentJobs.id, opts.jobId));
+  return nextInput;
+}
+
+async function appendWorkerProgressToJob(opts: {
+  jobId: string;
+  agentType: string;
+  title: string;
+  input: Record<string, unknown>;
+  currentStep: string;
+  percent: number;
+  metadata?: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  return appendWorkerEventToJob({
+    jobId: opts.jobId,
+    agentType: opts.agentType,
+    title: opts.title,
+    input: opts.input,
+    type: "progress",
+    message: opts.currentStep,
+    userVisible: true,
+    progress: { currentStep: opts.currentStep, percent: opts.percent },
+    metadata: opts.metadata,
+  });
+}
+
+async function appendWorkerEventById(opts: {
+  jobId: string;
+  type: "completed" | "failed" | "cancelled";
+  message: string;
+  userVisible?: boolean;
+  progress?: { currentStep: string; percent?: number };
+  metadata?: Record<string, unknown>;
+}): Promise<void> {
+  const [job] = await db
+    .select()
+    .from(schema.agentJobs)
+    .where(eq(schema.agentJobs.id, opts.jobId))
+    .limit(1);
+  if (!job) return;
+  await appendWorkerEventToJob({
+    jobId: opts.jobId,
+    agentType: job.agentType,
+    title: job.title,
+    input: jobInputOf(job),
+    type: opts.type,
+    message: opts.message,
+    userVisible: opts.userVisible,
+    progress: opts.progress,
+    metadata: opts.metadata,
+  }).catch((err) => console.warn(`[JobQueue] worker event append failed for ${opts.jobId}:`, err));
+}
+
 async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | null> {
   // Pick the oldest queued job whose user has no currently-running job.
   // Use a single SQL CTE so the claim is atomic across worker restarts.
@@ -649,6 +788,14 @@ async function claimNextJob(): Promise<typeof schema.agentJobs.$inferSelect | nu
 }
 
 async function failJob(jobId: string, message: string, userId?: string): Promise<void> {
+  await appendWorkerEventById({
+    jobId,
+    type: "failed",
+    message: `Job failed: ${message.slice(0, 200)}`,
+    userVisible: true,
+    progress: { currentStep: "Failed" },
+    metadata: { error: message.slice(0, 1000) },
+  });
   try {
     await db
       .update(schema.agentJobs)
@@ -722,6 +869,14 @@ async function completeJob(
   jobId: string,
   payload: { result: Record<string, unknown>; turns: number; toolCallsCount: number },
 ): Promise<void> {
+  await appendWorkerEventById({
+    jobId,
+    type: "completed",
+    message: "Job completed",
+    userVisible: true,
+    progress: { currentStep: "Complete", percent: 100 },
+    metadata: { result: payload.result },
+  });
   await db
     .update(schema.agentJobs)
     .set({
@@ -744,9 +899,42 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
   try {
     // Extract origin channel stored at queue time — used to route the completion
     // notification back to the right channel rather than spamming all channels.
-    const jobInput = (job.input as Record<string, unknown>) ?? {};
+    let jobInput = jobInputOf(job);
+    jobInput = await appendWorkerEventToJob({
+      jobId: job.id,
+      agentType: job.agentType,
+      title: job.title,
+      input: jobInput,
+      type: "started",
+      message: `Started ${job.title}`,
+      userVisible: true,
+      progress: { currentStep: "Running", percent: 5 },
+    }).catch((err) => {
+      console.warn(`[JobQueue] worker start event failed for ${job.id}:`, err);
+      return jobInput;
+    });
     const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
+    const originChannelId = typeof jobInput.originChannelId === "string" ? jobInput.originChannelId : undefined;
     const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
+    const approvalReceipt = normalizeApprovalReceipt(jobInput.approvalReceipt);
+    if (typeof jobInput.approvalGateId === "string") {
+      jobInput = await appendWorkerEventToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        type: "approval_required",
+        message: "Approval checkpoint is linked to this job",
+        userVisible: true,
+        progress: { currentStep: "Waiting for approval" },
+        checkpoint: {
+          id: jobInput.approvalGateId,
+          gateId: jobInput.approvalGateId,
+          reason: typeof jobInput.approvalReason === "string" ? jobInput.approvalReason : "User approval required",
+          requiredFor: typeof jobInput.approvalToolName === "string" ? jobInput.approvalToolName : job.agentType,
+        },
+      }).catch(() => jobInput);
+    }
 
     // Helper: fire the workflow hook if this job belongs to a workflow step.
     const wfId    = jobInput.workflowId    as string | undefined;
@@ -816,6 +1004,8 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         platform: "orchestrator",
         initiatedBy: "jarvis",
         model: namedAgentModel,
+        approvalReceipt,
+        jobId: job.id,
       });
 
       await completeJob(job.id, {
@@ -853,6 +1043,119 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
     }
 
     // ── Custom user-defined agent ──────────────────────────────────────────────
+    if (job.agentType === "ephemeral_agent_task") {
+      const ephemeralAgent = jobInput.ephemeralAgent && typeof jobInput.ephemeralAgent === "object"
+        ? jobInput.ephemeralAgent as Record<string, unknown>
+        : {};
+      const rawKind = typeof ephemeralAgent.kind === "string" ? ephemeralAgent.kind : "task_worker";
+      const kind: EphemeralAgentKind = rawKind === "task_worker" ? "task_worker" : "task_worker";
+      const platform = typeof jobInput.originChannel === "string" ? jobInput.originChannel : (originChannel || "app");
+
+      console.log(`[JobQueue] ephemeral_agent_task kind=${kind} job=${job.id}`);
+
+      jobInput = await appendWorkerProgressToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        currentStep: "Preparing temporary worker",
+        percent: 20,
+        metadata: { kind },
+      }).catch((err) => {
+        console.warn(`[JobQueue] ephemeral_agent_task progress append failed for ${job.id}:`, err);
+        return jobInput;
+      });
+
+      jobInput = await appendWorkerProgressToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        currentStep: "Running temporary worker",
+        percent: 55,
+        metadata: { kind },
+      }).catch((err) => {
+        console.warn(`[JobQueue] ephemeral_agent_task running progress append failed for ${job.id}:`, err);
+        return jobInput;
+      });
+
+      const result = await runEphemeralAgentSession({
+        userId: job.userId,
+        kind,
+        userRequest: job.prompt || job.title,
+        platform,
+        channelId: originDiscordChannelId,
+        parentTaskId: job.id,
+      });
+
+      jobInput = await appendWorkerProgressToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        currentStep: "Preparing review deliverable",
+        percent: 85,
+        metadata: {
+          ephemeralAgentId: result.agentId,
+          turns: result.turns,
+          toolCalls: result.toolCalls?.length ?? 0,
+        },
+      }).catch((err) => {
+        console.warn(`[JobQueue] ephemeral_agent_task deliverable progress append failed for ${job.id}:`, err);
+        return jobInput;
+      });
+
+      const [deliverable] = await db
+        .insert(schema.deliverables)
+        .values(buildEphemeralWorkerResultDeliverable(job, result, kind))
+        .returning({ id: schema.deliverables.id });
+      const deliverableId = deliverable?.id || "";
+
+      jobInput = await appendWorkerProgressToJob({
+        jobId: job.id,
+        agentType: job.agentType,
+        title: job.title,
+        input: jobInput,
+        currentStep: "Review deliverable ready",
+        percent: 95,
+        metadata: { deliverableId },
+      }).catch((err) => {
+        console.warn(`[JobQueue] ephemeral_agent_task review progress append failed for ${job.id}:`, err);
+        return jobInput;
+      });
+
+      await completeJob(job.id, {
+        result: {
+          output: result.reply,
+          deliverableId,
+          ephemeralAgentId: result.agentId,
+          kind,
+        },
+        turns: result.turns,
+        toolCallsCount: result.toolCalls?.length ?? 0,
+      });
+
+      console.log(
+        `[JobQueue] ephemeral_agent_task complete: kind=${kind} job=${job.id} deliverable=${deliverableId} turns=${result.turns}`,
+      );
+
+      await notifyJobComplete(
+        job.userId,
+        "ephemeral_agent_task",
+        job.title,
+        result.reply,
+        originChannel,
+        originDiscordChannelId,
+      );
+
+      if (hasWorkflow) {
+        await onWorkflowJobComplete(wfId!, wfStep!, job.id, result.reply.slice(0, 1200)).catch((e) =>
+          console.error("[JobQueue] workflow hook failed:", e),
+        );
+      }
+      return;
+    }
+
     if (job.agentType === "custom_agent") {
       const input = (job.input as Record<string, unknown>) ?? {};
       const customAgentId = String(input.customAgentId ?? "");
@@ -876,8 +1179,11 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       const ctx: ToolContext = {
         userId: job.userId,
         googleAccessToken,
-        channel: `JobQueue/custom_agent`,
+        channel: originChannel || `JobQueue/custom_agent`,
+        originChannelId,
+        jobId: job.id,
         state: { pendingAttachments: [] },
+        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
 
       const modelOverride = typeof input.model === "string"
@@ -891,9 +1197,10 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         context: ctx,
         model: modelOverride,
         extraSystemPrompt: agentDef.extraPrompt ?? undefined,
+        approvalReceipt,
       });
 
-      // ── Claude Opus verification loop (custom_agent) ──────────────────────
+      // ── Codex OAuth verification loop (custom_agent) ──────────────────────
       const MAX_CUSTOM_VERIFY_RETRIES = 2;
       let customVerificationPassed: boolean | null = null;
       let customVerificationRetries = 0;
@@ -908,6 +1215,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
             originalPrompt: job.prompt,
             result: customSub.body,
             orchestratorModel: orchModel,
+            userId: job.userId,
             correctionContext,
           });
 
@@ -942,6 +1250,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
               context: ctx,
               model: modelOverride,
               extraSystemPrompt: agentDef.extraPrompt ?? undefined,
+              approvalReceipt,
             });
           } else {
             customVerificationPassed = false;
@@ -970,7 +1279,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
           title: `[${agentDef.name}] ${sub.title}`,
           summary: sub.summary,
           body: sub.body,
-          meta: { ...sub.meta, customAgentId, customAgentName: agentDef.name },
+          meta: { ...sub.meta, ...getRevisionDeliverableMeta(jobInput), customAgentId, customAgentName: agentDef.name },
         })
         .returning({ id: _deliverables.id });
 
@@ -1101,8 +1410,11 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       const generalCtx: ToolContext = {
         userId: job.userId,
         googleAccessToken: null,
-        channel: `JobQueue/general`,
+        channel: originChannel || `JobQueue/general`,
+        originChannelId,
+        jobId: job.id,
         state: { pendingAttachments: [] },
+        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
 
       const debugTools = [
@@ -1158,8 +1470,11 @@ writing a clear inbox message explaining what is broken and what the user should
       const briefCtx: ToolContext = {
         userId: job.userId,
         googleAccessToken: briefGoogleToken,
-        channel: `JobQueue/morning_brief`,
+        channel: originChannel || `JobQueue/morning_brief`,
+        originChannelId,
+        jobId: job.id,
         state: { pendingAttachments: [] },
+        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
       const briefTools = briefGoogleToken ? [fetchCalendarTool] : [];
       const briefModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
@@ -1221,7 +1536,6 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const { applyCodeChangeTool } = await import("./tools/applyCodeChangeTool");
       const { runShellTool: buildShellTool } = await import("./tools/runShellTool");
       const { cleanupJobWorkspace, execInWorkspaceTool } = await import("./tools/codeExecution");
-      const { anthropic, ORCHESTRATOR_MAX_TOKENS } = await import("../lib/anthropicClient");
       const { getModel } = await import("../lib/modelPrefs");
 
       const orchModel = await getModel(job.userId, "orchestrator");
@@ -1229,8 +1543,11 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const buildCtx: ToolContext = {
         userId: job.userId,
         googleAccessToken: null,
-        channel: `JobQueue/build_feature`,
+        channel: originChannel || `JobQueue/build_feature`,
+        originChannelId,
+        jobId: job.id,
         state: { pendingAttachments: [] },
+        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
       };
 
       /** Persist progress state into agent_jobs.input (merge, not replace). */
@@ -1246,6 +1563,28 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       const sendBuildPing = (text: string): Promise<void> =>
         notifyJobComplete(job.userId, "build_feature", job.title, text, originChannel, originDiscordChannelId);
 
+      const recordBuildProgress = async (input: BuildFeatureProgressInput): Promise<void> => {
+        const currentStep = buildFeatureProgressLabel(input);
+        jobInput = await appendWorkerProgressToJob({
+          jobId: job.id,
+          agentType: job.agentType,
+          title: job.title,
+          input: jobInput,
+          currentStep,
+          percent: buildFeatureProgressPercent(input),
+          metadata: {
+            phase: input.phase,
+            stepIndex: input.stepIndex,
+            stepCount: input.stepCount,
+            stepLabel: input.stepLabel,
+            attempt: input.attempt,
+          },
+        }).catch((err) => {
+          console.warn(`[JobQueue] build_feature progress append failed for ${job.id}:`, err);
+          return jobInput;
+        });
+      };
+
       const baseFeatureDescription = String(jobInput.feature_description ?? job.prompt);
       const conversationContext = jobInput.conversationContext ? String(jobInput.conversationContext) : "";
       const featureDescription = conversationContext
@@ -1259,6 +1598,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       // Max wait: 5 minutes, then proceed without research.
       let researchBody = String(jobInput.researchBody ?? "");
       if (Boolean(jobInput.research_required ?? false) && !researchBody) {
+        await recordBuildProgress({ phase: "research" });
         let researchJobId = String(jobInput.researchJobId ?? "");
 
         if (!researchJobId) {
@@ -1270,6 +1610,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
             input: { parentJobId: job.id, originChannel, originDiscordChannelId },
           })).id;
           await persistProgress({ researchJobId });
+          await recordBuildProgress({ phase: "research" });
           await sendBuildPing(`🔍 Background research queued (job ${researchJobId.slice(0, 8)}…) — waiting up to 5 min`);
         }
 
@@ -1286,6 +1627,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
             .limit(1);
           researchStatus = row?.status ?? "unknown";
           if (researchStatus === "complete" || researchStatus === "failed") break;
+          await recordBuildProgress({ phase: "research" });
           await new Promise((r) => setTimeout(r, RESEARCH_POLL_INTERVAL_MS));
         }
 
@@ -1298,14 +1640,16 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
           if (deliv?.body) {
             researchBody = deliv.body.slice(0, 4000);
             await persistProgress({ researchBody });
+            await recordBuildProgress({ phase: "planning" });
             console.log(`[JobQueue] build_feature job ${job.id} — research complete (${researchBody.length} chars)`);
           }
         } else {
           console.warn(`[JobQueue] build_feature job ${job.id} — research job ${researchJobId} did not complete (status=${researchStatus}), proceeding without research`);
+          await recordBuildProgress({ phase: "planning" });
         }
       }
 
-      // ── Phase 2: Plan with Claude Opus ──────────────────────────────────────
+      // ── Phase 2: Plan with Codex OAuth ──────────────────────────────────────
       interface BuildStep {
         step_id: string;
         label: string;
@@ -1317,15 +1661,23 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
       let plan = (jobInput.plan as BuildStep[] | null) ?? null;
 
       if (!plan) {
+        await recordBuildProgress({ phase: "planning" });
         const planCtx = [
           featureDescription,
           researchBody ? `\n\nResearch findings:\n${researchBody}` : "",
         ].join("");
 
-        const planResp = await anthropic.messages.create({
-          model: orchModel,
-          max_tokens: ORCHESTRATOR_MAX_TOKENS,
-          system: `You are an expert TypeScript/Node.js engineer planning how to build a new Jarvis tool or feature.
+        const planResp = await routeModelTurn({
+          tier: "smart",
+          maxCompletionTokens: 8192,
+          stream: false,
+          toolChoice: "none",
+          userId: job.userId,
+          logPrefix: "[BuildFeaturePlan]",
+          messages: [
+            {
+              role: "system",
+              content: `You are an expert TypeScript/Node.js engineer planning how to build a new Jarvis tool or feature.
 Decompose the feature into discrete, independently verifiable implementation steps.
 Output a JSON array inside a \`\`\`json block. Each element:
 {
@@ -1343,10 +1695,12 @@ Jarvis tool patterns:
 - Shared DB schema lives in shared/schema.ts (Drizzle ORM + drizzle-kit)
 
 Keep the plan minimal: 2-5 steps for most features. Each step is one focused code change.`,
-          messages: [{ role: "user", content: `Feature to build:\n${planCtx}` }],
+            },
+            { role: "user", content: `Feature to build:\n${planCtx}` },
+          ],
         });
 
-        const planText = planResp.content[0].type === "text" ? planResp.content[0].text : "";
+        const planText = planResp.textContent ?? "";
         const jsonMatch = planText.match(/```json\s*([\s\S]*?)\s*```/);
         const raw = jsonMatch ? jsonMatch[1] : planText.trim();
 
@@ -1374,6 +1728,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         }
 
         await persistProgress({ plan, currentStepIndex: 0, completedSteps: [] });
+        await recordBuildProgress({ phase: "step_started", stepIndex: 0, stepCount: plan.length, stepLabel: plan[0]?.label });
         console.log(`[JobQueue] build_feature job ${job.id} — plan with ${plan.length} step(s)`);
         await sendBuildPing(`📋 Build plan ready (${plan.length} step${plan.length === 1 ? "" : "s"}) — beginning implementation`);
       }
@@ -1406,6 +1761,13 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         );
 
         for (let attempt = 0; attempt <= MAX_STEP_RETRIES; attempt++) {
+          await recordBuildProgress({
+            phase: "step_started",
+            stepIndex: stepIdx,
+            stepCount: plan.length,
+            stepLabel: step.label,
+            attempt,
+          });
           const workerPrompt = [
             `Implement build step: "${step.label}"`,
             ``,
@@ -1444,6 +1806,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           const workerOutput = workerResult.reply || "(no output)";
 
           // b. Mechanical gate: TypeScript type_check must pass before AI review
+          await recordBuildProgress({ phase: "type_check", stepIndex: stepIdx, stepCount: plan.length, stepLabel: step.label });
           const typeCheckResult = await buildShellTool.execute({ command: "type_check" }, buildCtx);
 
           if (!typeCheckResult.ok) {
@@ -1462,9 +1825,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             break;  // stepPassed remains false
           }
 
-          // c. AI verify: Claude Opus checks whether the step meets acceptance criteria
+          // c. AI verify: Codex OAuth checks whether the step meets acceptance criteria
           //    Only reached if type_check passed above.
-          //    Enrich input with actual file excerpts so Opus has code evidence.
+          //    Enrich input with actual file excerpts so the verifier has code evidence.
           const fileSnippets: string[] = [];
           for (const filePath of step.files_affected.slice(0, 3)) {
             if (!filePath || filePath.includes("TBD")) continue;
@@ -1484,11 +1847,13 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
               : "",
           ].filter(Boolean).join("\n");
 
+          await recordBuildProgress({ phase: "verifying", stepIndex: stepIdx, stepCount: plan.length, stepLabel: step.label });
           const verification = await verifyJobOutput({
             agentType: "build_feature",
             originalPrompt: `Step: ${step.label}\nAcceptance criteria: ${step.acceptance_criteria}`,
             result: verifyInput,
             orchestratorModel: orchModel,
+            userId: job.userId,
             correctionContext,
           });
 
@@ -1536,6 +1901,12 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           verificationPassed: stepPassed,
           verificationRetries: stepRetries,
         });
+        await recordBuildProgress({
+          phase: "step_completed",
+          stepIndex: stepIdx,
+          stepCount: plan.length,
+          stepLabel: step.label,
+        });
 
         // If all retries exhausted and step still failed → abort the build
         if (!stepPassed) {
@@ -1578,12 +1949,14 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         );
       }
 
-      // ── Phase 4: Final type-check + smoke tests + Claude Opus synthesis ────────
+      // ── Phase 4: Final type-check + smoke tests + Codex OAuth synthesis ────────
+      await recordBuildProgress({ phase: "final_check" });
       const finalTypeCheck = await buildShellTool.execute({ command: "type_check" }, buildCtx);
 
       // Run the test suite as a smoke test (non-fatal — used only to enrich the summary)
       let finalTestResult: { ok: boolean; content: string } | null = null;
       try {
+        await recordBuildProgress({ phase: "smoke_tests" });
         finalTestResult = await buildShellTool.execute({ command: "run_tests" }, buildCtx);
         console.log(
           `[JobQueue] build_feature job ${job.id} — smoke tests: ${finalTestResult.ok ? "✅ passed" : "❌ failed"}`
@@ -1598,30 +1971,38 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
 
       let synthesis = stepSummaryLines.join("\n");
       try {
-        const synthResp = await anthropic.messages.create({
-          model: orchModel,
-          max_tokens: 600,
-          system: `You are Jarvis summarizing a completed multi-step feature build. Be concise and specific.`,
-          messages: [{
-            role: "user",
-            content: [
-              `Feature built: ${featureDescription}`,
-              ``,
-              `Steps completed:`,
-              stepSummaryLines.join("\n"),
-              ``,
-              `Final TypeScript type-check: ${finalTypeCheck.ok ? "✅ passed" : `⚠️ ${finalTypeCheck.content.slice(0, 200)}`}`,
-              finalTestResult
-                ? `Smoke tests (npm test): ${finalTestResult.ok ? "✅ passed" : `⚠️ ${finalTestResult.content.slice(0, 300)}`}`
-                : "",
-              ``,
-              `Write a clear 3-5 sentence summary of what was built, what files changed, and any caveats.`,
-            ].filter(Boolean).join("\n"),
-          }],
+        await recordBuildProgress({ phase: "synthesis" });
+        const synthResp = await routeModelTurn({
+          tier: "smart",
+          maxCompletionTokens: 600,
+          stream: false,
+          toolChoice: "none",
+          userId: job.userId,
+          logPrefix: "[BuildFeatureSynthesis]",
+          messages: [
+            {
+              role: "system",
+              content: `You are Jarvis summarizing a completed multi-step feature build. Be concise and specific.`,
+            },
+            {
+              role: "user",
+              content: [
+                `Feature built: ${featureDescription}`,
+                ``,
+                `Steps completed:`,
+                stepSummaryLines.join("\n"),
+                ``,
+                `Final TypeScript type-check: ${finalTypeCheck.ok ? "✅ passed" : `⚠️ ${finalTypeCheck.content.slice(0, 200)}`}`,
+                finalTestResult
+                  ? `Smoke tests (npm test): ${finalTestResult.ok ? "✅ passed" : `⚠️ ${finalTestResult.content.slice(0, 300)}`}`
+                  : "",
+                ``,
+                `Write a clear 3-5 sentence summary of what was built, what files changed, and any caveats.`,
+              ].filter(Boolean).join("\n"),
+            },
+          ],
         });
-        if (synthResp.content[0].type === "text") {
-          synthesis = synthResp.content[0].text;
-        }
+        synthesis = synthResp.textContent?.trim() || synthesis;
       } catch (synthErr) {
         console.error(`[JobQueue] build_feature synthesis failed (non-fatal):`, synthErr);
       }
@@ -2025,8 +2406,11 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     const ctx: ToolContext = {
       userId: job.userId,
       googleAccessToken,
-      channel: `JobQueue/${job.agentType}`,
+      channel: originChannel || `JobQueue/${job.agentType}`,
+      originChannelId,
+      jobId: job.id,
       state: { pendingAttachments: [] },
+      ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
     };
 
     // Per-type model routing is handled at orchestrator-controlled spawn points
@@ -2049,9 +2433,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       context: ctx,
       model: subAgentModelOverride,
       extraSystemPrompt: priorContextBlock,
+      approvalReceipt,
     });
 
-    // ── Claude Opus verification loop ─────────────────────────────────────────
+    // ── Codex OAuth verification loop ─────────────────────────────────────────
     // Applies to user-facing deliverable types only. Skipped for system jobs
     // (weekly_pattern, named_agent_task, morning_brief, goal_decompose) which
     // are handled separately above with their own structured validation.
@@ -2071,6 +2456,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           originalPrompt: job.prompt,
           result: sub.body,
           orchestratorModel: orchModel,
+          userId: job.userId,
           correctionContext,
         });
 
@@ -2104,6 +2490,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             defaultTitle: job.title,
             context: ctx,
             model: subAgentModelOverride,
+            approvalReceipt,
           });
         } else {
           verificationPassed = false;
@@ -2190,6 +2577,8 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // generates ONE consolidated PDF from all sibling deliverables.
     // ─────────────────────────────────────────────────────────────────────────
 
+    const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(jobInput) };
+
     const inserted = await db
       .insert(schema.deliverables)
       .values({
@@ -2200,7 +2589,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         title: sub.title,
         summary: sub.summary,
         body: sub.body,
-        meta: sub.meta,
+        meta: deliverableMeta,
         driveLink: (sub.meta?.pdfDriveLink as string | undefined) ?? null,
       })
       .returning({ id: schema.deliverables.id });
@@ -2242,8 +2631,12 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     console.error(`[JobQueue] job ${job.id} failed:`, err);
 
     const jobInput = (job.input as Record<string, unknown>) ?? {};
-    const retryCount = typeof jobInput.retryCount === "number" ? jobInput.retryCount : 0;
     const MAX_RETRIES = 2;
+    const recovery = decideJobFailureRecovery({
+      input: jobInput,
+      errorMessage: msg,
+      maxRetries: MAX_RETRIES,
+    });
 
     // Log persistent errors to system_error_log for Jarvis self-debugging
     logSystemError({
@@ -2251,21 +2644,32 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       message: msg,
       error: err,
       level: "error",
-      context: { jobId: job.id, agentType: job.agentType, retryCount },
+      context: { jobId: job.id, agentType: job.agentType, retryCount: recovery.nextRetryCount },
       userId: job.userId,
     }).catch(() => {});
 
-    if (retryCount < MAX_RETRIES) {
-      const nextRetry = retryCount + 1;
-      console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${nextRetry}/${MAX_RETRIES}) after error: ${msg}`);
+    if (recovery.action === "requeue") {
+      console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${recovery.nextRetryCount}/${MAX_RETRIES}) after error: ${msg}`);
       try {
+        const retryInput = await appendWorkerEventToJob({
+          jobId: job.id,
+          agentType: job.agentType,
+          title: job.title,
+          input: recovery.nextInput ?? jobInput,
+          type: "retrying",
+          message: `Retrying after failure: ${msg.slice(0, 160)}`,
+          userVisible: true,
+          progress: { currentStep: `Retrying (${recovery.nextRetryCount}/${MAX_RETRIES})` },
+          retryAttempt: recovery.nextRetryCount,
+          metadata: { error: msg.slice(0, 1000) },
+        }).catch(() => recovery.nextInput ?? jobInput);
         await db
           .update(schema.agentJobs)
           .set({
             status: "queued",
             startedAt: null,
-            error: `Retry ${nextRetry}/${MAX_RETRIES}: ${msg}`.slice(0, 2000),
-            input: { ...jobInput, retryCount: nextRetry },
+            error: recovery.persistedError,
+            input: retryInput,
           })
           .where(eq(schema.agentJobs.id, job.id));
       } catch (retryErr) {

@@ -241,36 +241,37 @@ async function run(): Promise<void> {
       context: { ...minimalContext },
     });
 
+    const capturedText = capturedSystemContent ?? "";
     assert(
-      capturedSystemContent?.includes("Android Task Execution Rule") ?? false,
+      capturedText.includes("Android Task Execution Rule"),
       "HA-3: first system message contains 'Android Task Execution Rule' heading",
     );
     assert(
-      !(capturedSystemContent?.includes("Immediately call the appropriate tool") ?? false),
+      !capturedText.includes("Immediately call the appropriate tool"),
       "HA-3: conflicting phrase 'Immediately call the appropriate tool' is NOT present",
     );
     assert(
-      capturedSystemContent?.includes("Chain tool calls directly") ?? false,
+      capturedText.includes("Chain tool calls directly"),
       "HA-3: new sequential-execution rule body present ('Chain tool calls directly')",
     );
     assert(
-      capturedSystemContent?.includes("android_read_screen after every navigation") ?? false,
+      capturedText.includes("android_read_screen after every navigation"),
       "HA-3: screen-reading carve-out present ('android_read_screen after every navigation')",
     );
     assert(
-      capturedSystemContent?.includes("When the user provides a YouTube URL") ?? false,
+      capturedText.includes("When the user provides a YouTube URL"),
       "HA-3: YouTube URL instruction present ('When the user provides a YouTube URL')",
     );
     assert(
-      capturedSystemContent?.includes("android_read_screen` is your first choice") ?? false,
+      capturedText.includes("android_read_screen` is your first choice"),
       "HA-3: android_read_screen first-choice guidance present",
     );
     assert(
-      capturedSystemContent?.includes("Hard limit: 4 screenshots per task") ?? false,
+      capturedText.includes("Hard limit: 4 screenshots per task"),
       "HA-3: screenshot hard limit (4 per task) guidance present",
     );
     assert(
-      capturedSystemContent?.includes("do not open the app manually and search for it") ?? false,
+      capturedText.includes("do not open the app manually and search for it"),
       "HA-3: direct-URL instruction forbids manual search ('do not open the app manually and search for it')",
     );
 

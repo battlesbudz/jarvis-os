@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Best-effort yt-dlp upgrade via pip --user before the dev server starts.
-# Overrides the stale Nix-pinned binary without touching replit.nix.
-# --break-system-packages is required in Nix environments that enforce PEP 668;
+# Overrides stale environment-pinned yt-dlp binaries when possible.
+# --break-system-packages is required in managed Python environments that enforce PEP 668;
 # with --user it writes only to ~/.local, never to the immutable /nix/store.
 # The production path (npm run server:prod) is covered by ensureYtdlpUpgraded()
 # in server/lib/transcriptCache.ts which runs on first audio-transcription.

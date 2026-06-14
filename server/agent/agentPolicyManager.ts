@@ -9,7 +9,7 @@
  *   "custom"     — follow global defaults, but additionally auto-approve tools whose
  *                  name matches any pattern in the agent's allowlist
  *
- * Pattern matching supports exact names ("gmail_draft") and simple prefix wildcards
+ * Pattern matching supports exact names ("create_gmail_draft") and simple prefix wildcards
  * ("gmail_*"). No regex — intentionally simple to avoid misconfig footguns.
  */
 import { db } from "../db";
@@ -115,7 +115,7 @@ export async function removeAllowlistPattern(
 /**
  * Returns true if toolName matches the given pattern.
  * Supports:
- *   "gmail_draft"   — exact match
+ *   "create_gmail_draft"   — exact match
  *   "gmail_*"       — prefix wildcard (must end with *)
  */
 export function matchesPattern(toolName: string, pattern: string): boolean {

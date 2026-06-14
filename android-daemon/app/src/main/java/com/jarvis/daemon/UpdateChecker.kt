@@ -19,15 +19,16 @@ import java.net.URL
 object UpdateChecker {
 
     private const val TAG = "JarvisUpdate"
-    private const val VERSION_URL =
-        "https://github.com/battlesbudz/JarvisAi/releases/download/android-daemon-latest/version.json"
-    private const val APK_URL =
-        "https://github.com/battlesbudz/JarvisAi/releases/download/android-daemon-latest/jarvis-daemon.apk"
+    private const val MANIFEST_PATH = "/api/app-update/android-daemon"
+    private const val APK_PATH = "/api/download/apk"
+
+    private fun serverUrl(path: String): String =
+        JarvisConfig.normalizeServerUrl(JarvisConfig.SERVER_URL).trimEnd('/') + path
 
     fun check(activity: Activity) {
         Thread {
             try {
-                val conn = URL(VERSION_URL).openConnection() as HttpURLConnection
+                val conn = URL(serverUrl(MANIFEST_PATH)).openConnection() as HttpURLConnection
                 conn.connectTimeout = 8000
                 conn.readTimeout = 8000
                 conn.instanceFollowRedirects = true
@@ -39,11 +40,12 @@ object UpdateChecker {
                 val json = JSONObject(body)
                 val remoteCode = json.getInt("versionCode")
                 val remoteName = json.getString("versionName")
+                val apkUrl = json.optString("apkUrl", serverUrl(APK_PATH))
                 val localCode = BuildConfig.VERSION_CODE
                 Log.d(TAG, "Local versionCode=$localCode, remote=$remoteCode ($remoteName)")
                 if (remoteCode > localCode) {
                     activity.runOnUiThread {
-                        showUpdateDialog(activity, remoteName)
+                        showUpdateDialog(activity, remoteName, apkUrl)
                     }
                 }
             } catch (e: Exception) {
@@ -52,7 +54,7 @@ object UpdateChecker {
         }.start()
     }
 
-    private fun showUpdateDialog(activity: Activity, newVersion: String) {
+    private fun showUpdateDialog(activity: Activity, newVersion: String, apkUrl: String) {
         AlertDialog.Builder(activity)
             .setTitle("Update Available — v$newVersion")
             .setMessage(
@@ -61,17 +63,17 @@ object UpdateChecker {
                 "Your pairing settings will be preserved."
             )
             .setPositiveButton("Update Now") { _, _ ->
-                downloadAndInstall(activity)
+                downloadAndInstall(activity, apkUrl)
             }
             .setNegativeButton("Later", null)
             .show()
     }
 
-    private fun downloadAndInstall(context: Context) {
+    private fun downloadAndInstall(context: Context, apkUrl: String) {
         val destFile = File(context.getExternalFilesDir(null), "jarvis-daemon-update.apk")
         if (destFile.exists()) destFile.delete()
 
-        val request = DownloadManager.Request(Uri.parse(APK_URL))
+        val request = DownloadManager.Request(Uri.parse(apkUrl.ifBlank { serverUrl(APK_PATH) }))
             .setTitle("Jarvis Daemon Update")
             .setDescription("Downloading new version…")
             .setNotificationVisibility(

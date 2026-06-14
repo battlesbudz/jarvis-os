@@ -4,15 +4,20 @@
  * Walks every user's active goal_trees, finds the next-ready tasks,
  * and surfaces a small batch (1-3 per day) that can be merged into
  * the morning plan. Pacing rule: if the user's recent 7-day completion
- * rate is below 50%, only inject 1 task; otherwise inject up to 3.
+ * rate is low or today's energy is low, keep the batch light. The user can
+ * choose light/balanced/ambitious pacing in preferences.
  */
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import {
+  calculateGoalPacing,
+  normalizeGoalPacingMode,
+  type GoalPacingDecision,
+  type GoalPacingMode,
+} from "./goalPacing";
 import type {
   GoalTreeData,
-  GoalTreePhase,
-  GoalTreeMilestone,
   GoalTreeTask,
 } from "@shared/schema";
 
@@ -25,6 +30,11 @@ export interface InjectableGoalTask {
   title: string;
   description?: string;
   estimateHours?: number;
+}
+
+interface PacingContext {
+  existingPlanTaskCount?: number;
+  calendarBusyMinutes?: number;
 }
 
 function isTaskActionable(t: GoalTreeTask): boolean {
@@ -60,7 +70,7 @@ async function recentCompletionRate(userId: string): Promise<number> {
       .from(schema.completionHistory)
       .where(eq(schema.completionHistory.userId, userId))
       .limit(1);
-    const arr = (row?.data as Array<{ completed?: boolean; date?: string }> | undefined) || [];
+    const arr = (row?.data as { completed?: boolean; date?: string }[] | undefined) || [];
     if (arr.length === 0) return 1;
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
     const recent = arr.filter((h) => {
@@ -75,20 +85,231 @@ async function recentCompletionRate(userId: string): Promise<number> {
   }
 }
 
+async function weekdayCompletionRate(userId: string, dateKey: string): Promise<number | undefined> {
+  try {
+    const [row] = await db
+      .select({ data: schema.completionHistory.data })
+      .from(schema.completionHistory)
+      .where(eq(schema.completionHistory.userId, userId))
+      .limit(1);
+    const arr = (row?.data as { completed?: boolean; date?: string }[] | undefined) || [];
+    if (arr.length === 0) return undefined;
+    const targetDay = new Date(`${dateKey}T00:00:00Z`).getUTCDay();
+    const matching = arr.filter((entry) => {
+      if (!entry.date) return false;
+      return new Date(`${entry.date}T00:00:00Z`).getUTCDay() === targetDay;
+    });
+    if (matching.length < 3) return undefined;
+    return matching.filter((entry) => entry.completed).length / matching.length;
+  } catch {
+    return undefined;
+  }
+}
+
+async function getGoalPacingMode(userId: string): Promise<GoalPacingMode> {
+  try {
+    const [row] = await db
+      .select({ data: schema.userPreferences.data })
+      .from(schema.userPreferences)
+      .where(eq(schema.userPreferences.userId, userId))
+      .limit(1);
+    return normalizeGoalPacingMode((row?.data as { goalPacingMode?: unknown } | undefined)?.goalPacingMode);
+  } catch {
+    return "balanced";
+  }
+}
+
+async function getEnergyLevel(userId: string, dateKey: string): Promise<number | undefined> {
+  try {
+    const [row] = await db
+      .select({ data: schema.energyCheckins.data })
+      .from(schema.energyCheckins)
+      .where(and(eq(schema.energyCheckins.userId, userId), eq(schema.energyCheckins.date, dateKey)))
+      .limit(1);
+    const data = row?.data as { energy?: unknown; level?: unknown } | undefined;
+    const value = typeof data?.energy === "number" ? data.energy : data?.level;
+    return typeof value === "number" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function energyFromData(data: unknown): number | undefined {
+  const value =
+    typeof (data as { energy?: unknown } | undefined)?.energy === "number"
+      ? (data as { energy: number }).energy
+      : (data as { level?: unknown } | undefined)?.level;
+  return typeof value === "number" ? value : undefined;
+}
+
+async function getRecentEnergyLevels(userId: string, dateKey: string): Promise<number[]> {
+  try {
+    const rows = await db
+      .select({ date: schema.energyCheckins.date, data: schema.energyCheckins.data })
+      .from(schema.energyCheckins)
+      .where(eq(schema.energyCheckins.userId, userId))
+      .orderBy(desc(schema.energyCheckins.date))
+      .limit(14);
+    return rows
+      .filter((row) => row.date !== dateKey)
+      .map((row) => energyFromData(row.data))
+      .filter((value): value is number => typeof value === "number");
+  } catch {
+    return [];
+  }
+}
+
+function parseDateKey(value: string | undefined): number | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const time = new Date(`${value}T00:00:00Z`).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function daysUntil(dateKey: string, dueDate: string | undefined): number | null {
+  const start = parseDateKey(dateKey);
+  const due = parseDateKey(dueDate);
+  if (start === null || due === null) return null;
+  return Math.ceil((due - start) / (24 * 60 * 60 * 1000));
+}
+
+function nearestGoalDeadlineDays(trees: (typeof schema.goalTrees.$inferSelect)[], dateKey: string): number | undefined {
+  let nearest: number | null = null;
+  for (const row of trees) {
+    const tree = (row.tree as GoalTreeData) || { phases: [] };
+    for (const phase of tree.phases) {
+      for (const milestone of phase.milestones) {
+        for (const task of milestone.tasks) {
+          if (task.status === "complete") continue;
+          const days = daysUntil(dateKey, task.dueDate);
+          if (days === null) continue;
+          nearest = nearest === null ? days : Math.min(nearest, days);
+        }
+      }
+    }
+  }
+  return nearest ?? undefined;
+}
+
+async function getNearestCommitmentDeadlineDays(userId: string, dateKey: string): Promise<number | undefined> {
+  try {
+    const rows = await db
+      .select({ dueDate: schema.commitments.dueDate })
+      .from(schema.commitments)
+      .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, "pending")))
+      .limit(100);
+    let nearest: number | null = null;
+    for (const row of rows) {
+      const days = daysUntil(dateKey, row.dueDate ?? undefined);
+      if (days === null) continue;
+      nearest = nearest === null ? days : Math.min(nearest, days);
+    }
+    return nearest ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function taskDurationMinutes(task: unknown): number {
+  const duration = (task as { duration?: unknown } | undefined)?.duration;
+  if (typeof duration !== "number" || !Number.isFinite(duration) || duration <= 0) return 30;
+  return Math.max(5, Math.round(duration));
+}
+
+function isCalendarBusyTask(task: unknown): boolean {
+  const candidate = task as { category?: unknown; time?: unknown } | undefined;
+  return candidate?.category === "calendar" || typeof candidate?.time === "string";
+}
+
+function calendarBusyMinutesFromTasks(tasks: unknown): number {
+  if (!Array.isArray(tasks)) return 0;
+  return tasks.filter(isCalendarBusyTask).reduce((sum, task) => sum + taskDurationMinutes(task), 0);
+}
+
+export function getPlanPacingContextFromTasks(tasks: unknown): PacingContext {
+  return {
+    existingPlanTaskCount: Array.isArray(tasks) ? tasks.length : 0,
+    calendarBusyMinutes: calendarBusyMinutesFromTasks(tasks),
+  };
+}
+
+async function getExistingPlanSignals(userId: string, dateKey: string): Promise<{ taskCount: number; calendarBusyMinutes: number }> {
+  try {
+    const [row] = await db
+      .select({ data: schema.plans.data })
+      .from(schema.plans)
+      .where(and(eq(schema.plans.userId, userId), eq(schema.plans.date, dateKey)))
+      .limit(1);
+    const tasks = (row?.data as { tasks?: unknown } | undefined)?.tasks;
+    const context = getPlanPacingContextFromTasks(tasks);
+    return { taskCount: context.existingPlanTaskCount ?? 0, calendarBusyMinutes: context.calendarBusyMinutes ?? 0 };
+  } catch {
+    return { taskCount: 0, calendarBusyMinutes: 0 };
+  }
+}
+
+export async function getGoalPacingDecision(
+  userId: string,
+  dateKey: string,
+  context: PacingContext = {},
+): Promise<GoalPacingDecision> {
+  const [
+    completionRate,
+    mode,
+    energyLevel,
+    recentEnergyLevels,
+    existingPlanSignals,
+    weekdayRate,
+    activeGoalTrees,
+    commitmentDeadlineDays,
+  ] = await Promise.all([
+    recentCompletionRate(userId),
+    getGoalPacingMode(userId),
+    getEnergyLevel(userId, dateKey),
+    getRecentEnergyLevels(userId, dateKey),
+    getExistingPlanSignals(userId, dateKey),
+    weekdayCompletionRate(userId, dateKey),
+    db
+      .select()
+      .from(schema.goalTrees)
+      .where(and(eq(schema.goalTrees.userId, userId), eq(schema.goalTrees.status, "active")))
+      .catch(() => []),
+    getNearestCommitmentDeadlineDays(userId, dateKey),
+  ]);
+  const goalDeadlineDays = nearestGoalDeadlineDays(activeGoalTrees, dateKey);
+  const deadlineCandidates = [goalDeadlineDays, commitmentDeadlineDays].filter(
+    (days): days is number => typeof days === "number",
+  );
+
+  return calculateGoalPacing({
+    completionRate,
+    mode,
+    energyLevel,
+    recentEnergyLevels,
+    existingPlanTaskCount: context.existingPlanTaskCount ?? existingPlanSignals.taskCount,
+    weekdayCompletionRate: weekdayRate,
+    calendarBusyMinutes: context.calendarBusyMinutes ?? existingPlanSignals.calendarBusyMinutes,
+    nearestDeadlineDays: deadlineCandidates.length > 0 ? Math.min(...deadlineCandidates) : undefined,
+  });
+}
+
 /**
  * Returns goal-tree tasks that should be injected into TODAY's plan
  * for this user. Caller is responsible for merging them into the
  * existing plan (or letting buildPlanForUser see them).
  */
-export async function getInjectableGoalTasks(userId: string, dateKey: string): Promise<InjectableGoalTask[]> {
+export async function getInjectableGoalTasks(
+  userId: string,
+  dateKey: string,
+  context: PacingContext = {},
+): Promise<InjectableGoalTask[]> {
   const trees = await db
     .select()
     .from(schema.goalTrees)
     .where(and(eq(schema.goalTrees.userId, userId), eq(schema.goalTrees.status, "active")));
   if (trees.length === 0) return [];
 
-  const rate = await recentCompletionRate(userId);
-  const dailyCap = rate < 0.5 ? 1 : 3;
+  const pacing = await getGoalPacingDecision(userId, dateKey, context);
+  const dailyCap = pacing.dailyCap;
 
   const candidates: InjectableGoalTask[] = [];
   for (const row of trees) {

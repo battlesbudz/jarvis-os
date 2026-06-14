@@ -5,7 +5,10 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": ["gameplan", "jarvis"],
+    "scheme": [
+      "gameplan",
+      "jarvis"
+    ],
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
@@ -19,6 +22,7 @@
     },
     "android": {
       "package": "com.gameplan",
+      "versionCode": 1,
       "adaptiveIcon": {
         "backgroundColor": "#6366F1",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -29,9 +33,20 @@
         {
           "action": "VIEW",
           "data": [
-            { "scheme": "jarvis", "host": "voice-realtime" }
+            {
+              "scheme": "gameplan",
+              "host": "auth",
+              "pathPrefix": "/complete"
+            },
+            {
+              "scheme": "jarvis",
+              "host": "voice-realtime"
+            }
           ],
-          "category": ["BROWSABLE", "DEFAULT"]
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
         }
       ]
     },
@@ -42,7 +57,7 @@
       [
         "expo-router",
         {
-          "origin": "https://replit.com/"
+          "origin": "https://gameplanjarvisai.up.railway.app/"
         }
       ],
       "expo-font",
@@ -51,6 +66,15 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {
+        "origin": "https://gameplanjarvisai.up.railway.app/"
+      },
+      "eas": {
+        "projectId": "8d5e2929-109d-43f4-ad23-45ef5731dfc3"
+      }
+    },
+    "owner": "wickedclown.jb"
   }
 }

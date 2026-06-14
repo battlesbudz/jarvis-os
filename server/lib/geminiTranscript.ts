@@ -32,40 +32,24 @@ let _client: GoogleGenAI | null = null;
 let _phase0GatewayUnsupported = false;
 
 /**
- * Builds a GoogleGenAI client, preferring a direct Google key when available.
- *
- * Priority:
- *   1. GOOGLE_GEMINI_API_KEY — a real Google AI Studio key that calls
- *      generativelanguage.googleapis.com directly.  This is the ONLY path that
- *      supports multimodal fileData requests (YouTube URL transcription).
- *   2. AI_INTEGRATIONS_GEMINI_API_KEY — the Replit-managed proxy key.  Usable
- *      for text-only Gemini calls but the proxy rejects the multimodal endpoint.
+ * Builds a GoogleGenAI client from a direct Google AI Studio key.
  */
 function getClient(): GoogleGenAI {
   if (_client) return _client;
   const directKey = process.env.GOOGLE_GEMINI_API_KEY;
-  if (directKey) {
-    _client = new GoogleGenAI({ apiKey: directKey });
-    return _client;
-  }
-  const proxyKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  if (!proxyKey) throw new Error("No Gemini API key configured — set GOOGLE_GEMINI_API_KEY or AI_INTEGRATIONS_GEMINI_API_KEY");
-  const baseUrl = process.env.AI_INTEGRATIONS_GEMINI_BASE_URL;
-  _client = new GoogleGenAI({
-    apiKey: proxyKey,
-    ...(baseUrl ? { httpOptions: { baseUrl } } : {}),
-  });
+  if (!directKey) throw new Error("No Gemini API key configured - set GOOGLE_GEMINI_API_KEY");
+  _client = new GoogleGenAI({ apiKey: directKey });
   return _client;
 }
 
-/** True if the active Gemini key is the direct Google key (not the Replit proxy). */
+/** True if the direct Gemini key is configured. */
 function isUsingDirectKey(): boolean {
   return !!process.env.GOOGLE_GEMINI_API_KEY;
 }
 
 /**
- * Detect a gateway-level rejection meaning the proxy doesn't support this endpoint.
- * Covers the known Replit AI gateway error variants:
+ * Detect a gateway-level rejection meaning the configured provider does not support this endpoint.
+ * Covers known gateway error variants:
  *   - "INVALID_ENDPOINT" — explicit endpoint-not-found response
  *   - "Endpoint: '...' is not supported" — longer form of the same error
  *   - "endpoint.*not supported" — any other phrasing of the same condition
@@ -219,10 +203,10 @@ async function callGemini(model: string, videoUrl: string): Promise<string> {
  *      not support multimodal endpoints, fail fast with GATEWAY_UNSUPPORTED.
  *   2. Try gemini-2.5-flash — supports YouTube URL processing natively via
  *      fileData.fileUri (Gemini 2.0+ models support YouTube URLs in fileData).
- *   3. If the response is INVALID_ENDPOINT (proxy rejects this endpoint), mark
+ *   3. If the response is INVALID_ENDPOINT, mark
  *      the gateway as unsupported for the lifetime of this process and throw so
  *      the caller falls through.  Do NOT retry with a second model — both will
- *      get the same INVALID_ENDPOINT response from the proxy.
+ *      get the same INVALID_ENDPOINT response.
  *   4. If 2.5-flash explicitly rejects the video for a content/policy/quota
  *      reason, retry once with gemini-2.5-pro as a conservative fallback.
  *   5. Any other error is rethrown so the caller can fall through to Phase 1.
@@ -232,26 +216,26 @@ async function callGemini(model: string, videoUrl: string): Promise<string> {
  * @throws If both models fail or the API key is missing
  */
 export async function fetchTranscriptViaGemini(videoUrl: string): Promise<string> {
-  // Fast path: skip immediately when we already know the proxy rejects this endpoint.
+  // Fast path: skip immediately when we already know this endpoint is unsupported.
   if (_phase0GatewayUnsupported && !isUsingDirectKey()) {
     throw new Error(
-      "GATEWAY_UNSUPPORTED: Replit AI proxy does not support the multimodal endpoint — " +
-      "Phase 0 skipped for this process. Add a GOOGLE_GEMINI_API_KEY secret (free at " +
+      "GATEWAY_UNSUPPORTED: the configured Gemini gateway does not support the multimodal endpoint — " +
+      "Phase 0 skipped for this process. Add GOOGLE_GEMINI_API_KEY (free at " +
       "https://aistudio.google.com/apikey) to enable YouTube transcription."
     );
   }
   try {
     return await callGemini("gemini-2.5-flash", videoUrl);
   } catch (flashErr) {
-    // Gateway-level rejection: the proxy doesn't forward this endpoint at all.
+    // Gateway-level rejection: the configured provider doesn't forward this endpoint.
     // Both models will get the same error — mark permanently unsupported and throw.
     if (isGatewayEndpointError(flashErr) && !isUsingDirectKey()) {
       if (!_phase0GatewayUnsupported) {
         _phase0GatewayUnsupported = true;
         console.warn(
-          "[geminiTranscript] Replit AI proxy rejected multimodal endpoint (INVALID_ENDPOINT). " +
+          "[geminiTranscript] Gemini gateway rejected multimodal endpoint (INVALID_ENDPOINT). " +
           "Phase 0 will be skipped for this process lifetime. " +
-          "To enable Gemini YouTube transcription, add a GOOGLE_GEMINI_API_KEY secret " +
+          "To enable Gemini YouTube transcription, add GOOGLE_GEMINI_API_KEY " +
           "(free key at https://aistudio.google.com/apikey)."
         );
       }
@@ -637,8 +621,8 @@ export async function transcribeVideoFromUrl(
   );
 
   // ── Stream or buffer-then-upload to Google File API ───────────────────────
-  const apiKey = process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("AI_INTEGRATIONS_GEMINI_API_KEY is not set");
+  const apiKey = process.env.GOOGLE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GOOGLE_GEMINI_API_KEY is not set");
 
   let fileName: string;
   try {
@@ -716,11 +700,8 @@ export async function transcribeVideoFromUrl(
  * Returns true if the Gemini transcript path is configured and available.
  * Callers use this to skip Phase 0 cheaply when no key is present.
  *
- * Accepts either:
- *   - GOOGLE_GEMINI_API_KEY (direct Google key — supports multimodal endpoints)
- *   - AI_INTEGRATIONS_GEMINI_API_KEY (Replit proxy key — text-only, Phase 0 will
- *     fall back after the first INVALID_ENDPOINT if no direct key is set)
+ * Requires GOOGLE_GEMINI_API_KEY, which supports multimodal endpoints.
  */
 export function isGeminiTranscriptAvailable(): boolean {
-  return !!(process.env.GOOGLE_GEMINI_API_KEY || process.env.AI_INTEGRATIONS_GEMINI_API_KEY);
+  return !!process.env.GOOGLE_GEMINI_API_KEY;
 }

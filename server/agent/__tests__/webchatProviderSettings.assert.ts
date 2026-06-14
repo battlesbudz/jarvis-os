@@ -1,0 +1,97 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+const template = readFileSync(resolve(process.cwd(), "server", "templates", "chat.html"), "utf8");
+const settingsScreen = readFileSync(resolve(process.cwd(), "app", "(tabs)", "settings.tsx"), "utf8");
+const insightsScreen = readFileSync(resolve(process.cwd(), "app", "(tabs)", "insights.tsx"), "utf8");
+const routes = readFileSync(resolve(process.cwd(), "server", "routes.ts"), "utf8");
+const coachRoutePatcher = readFileSync(resolve(process.cwd(), "scripts", "patch-coach-route.cjs"), "utf8");
+
+assert.match(template, /id="setup-btn"/);
+assert.match(template, /Open model and provider setup/);
+assert.match(template, /class="icon-btn setup-header-btn"/);
+assert.match(template, /<span class="setup-btn-label">Models<\/span>/);
+assert.match(template, /id="empty-setup-btn"/);
+assert.match(template, /Models and keys/);
+assert.match(template, /id="setup-sheet-overlay"/);
+assert.match(template, /AI models/);
+assert.match(template, /Provider access/);
+
+assert.match(template, /Connect ChatGPT Subscription/);
+assert.match(template, /Use OpenAI API Key/);
+assert.match(template, /Use Jarvis Default Model/);
+assert.match(template, /Paste full callback URL/);
+assert.match(template, /localhost error page/);
+assert.match(template, /Open ChatGPT login/);
+assert.match(template, /Anthropic Claude/);
+assert.match(template, /Google Gemini/);
+assert.match(template, /Local Llama/);
+assert.match(template, /data-provider-action="save-key"/);
+
+assert.match(template, /\/api\/settings\/models/);
+assert.match(template, /\/api\/settings\/orchestrator/);
+assert.match(template, /\/api\/auth\/providers\/status/);
+assert.match(template, /\/api\/auth\/openai-oauth\/start/);
+assert.match(template, /\/api\/auth\/openai-oauth\/callback-url/);
+assert.match(template, /\/api\/auth\/openai-api-key/);
+assert.match(template, /\/api\/auth\/model-provider-api-key/);
+assert.match(template, /\/api\/auth\/providers\/openai/);
+assert.match(template, /\/api\/auth\/providers\/\$\{encodeURIComponent\(provider\)\}/);
+
+assert.match(template, /setupBtn\.addEventListener\('click', openSetupSheet\)/);
+assert.match(template, /emptySetupBtn\.addEventListener\('click', openSetupSheet\)/);
+assert.match(template, /restoredEmptySetupBtn\.addEventListener\('click', openSetupSheet\)/);
+assert.match(template, /openAILoginLink\.style\.display\s*=\s*'flex'/);
+assert.match(template, /openAILoginLink\.focus\(\)/);
+assert.doesNotMatch(template, /window\.open\(data\.loginUrl/);
+assert.match(template, /DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY = 'jarvis_web_desktop_connector_auth_bridge'/);
+assert.match(template, /localStorage\.removeItem\(DESKTOP_CONNECTOR_AUTH_BRIDGE_KEY\)/);
+assert.doesNotMatch(template, /@gameplan_auth_token/);
+assert.doesNotMatch(template, /data\.requiresDesktopConnector/);
+assert.doesNotMatch(template, /bridgeWebchatAuthToDesktopConnectorSetup\(\);\s*window\.location\.assign\(setupPath\)/);
+assert.doesNotMatch(template, /window\.location\.assign\(setupPath\)/);
+assert.match(template, /setupBtn\.style\.display\s*=\s*'none'/);
+assert.match(template, /setupBtn\.style\.display\s*=\s*'flex'/);
+assert.match(template, /emptySetupBtn\.style\.display\s*=\s*'none'/);
+assert.match(template, /emptySetupBtn\.style\.display\s*=\s*'inline-flex'/);
+assert.match(template, /Provider setup is only available to the Jarvis owner/);
+assert.match(template, /event\.type === 'error' \|\| event\.error/);
+
+assert.match(settingsScreen, /authFetch\(new URL\('\/api\/auth\/openai-oauth\/start', getApiUrl\(\)\)\.toString\(\)/);
+assert.match(settingsScreen, /if \(!res\.ok\) \{/);
+assert.match(settingsScreen, /setOpenAILoginUrl\(data\.loginUrl\)/);
+assert.match(settingsScreen, /Platform\.OS !== 'web'[\s\S]*openHostedConnectionLink\(data\.loginUrl\)/);
+assert.match(settingsScreen, /openOpenAILoginUrl/);
+assert.match(settingsScreen, /window\.open\(openAILoginUrl, '_blank', 'noopener,noreferrer'\)/);
+assert.doesNotMatch(settingsScreen, /window\.location\.assign\(openAILoginUrl\)/);
+assert.doesNotMatch(settingsScreen, /data\.requiresDesktopConnector === true/);
+assert.doesNotMatch(settingsScreen, /router\.push\(setupPath as Href\)/);
+assert.match(settingsScreen, /Open login URL/);
+assert.match(settingsScreen, /Copy login URL/);
+assert.match(settingsScreen, /filter\(\(provider\) => provider\.id !== 'openai'\)/);
+assert.equal((settingsScreen.match(/>\s*Connect ChatGPT Subscription\s*<\/Text>/g) ?? []).length, 1);
+assert.doesNotMatch(settingsScreen, /const isOpenAI = provider\.id === 'openai'/);
+assert.match(insightsScreen, /parsed\.type === 'error' \|\| parsed\.error/);
+assert.match(insightsScreen, /streamErrorMessage/);
+assert.match(insightsScreen, /Error: \$\{streamErrorMessage\}/);
+
+assert.match(routes, /type:\s*['"]error['"],\s*message:/);
+assert.doesNotMatch(routes, /JSON\.stringify\(\{\s*error:\s*["']Stream interrupted["']/);
+assert.match(routes, /writeCoachStreamError\(res,\s*error\)/);
+assert.match(routes, /getExplicitCoachRequestedModel\(userId\)/);
+assert.match(routes, /requestedModel:\s*coachChatSelectedModel/);
+assert.match(routes, /preferRequestedModel:\s*Boolean\(coachChatSelectedModel\)/);
+assert.doesNotMatch(routes, /requestedModel:\s*coachChatModel/);
+assert.match(routes, /streamCoachModelTurn\(\{\s*requestedModel:\s*coachChatSelectedModel,\s*preferRequestedModel:\s*Boolean\(coachChatSelectedModel\),\s*messages:\s*streamMessages,/);
+assert.match(routes, /userId:\s*userId\s*\?\?\s*undefined/);
+assert.match(routes, /streamCoachModelTurn/);
+assert.match(routes, /const finalTurn = await streamCoachModelTurn\(/);
+assert.match(routes, /chunk\.type !== ["']text["']/);
+assert.doesNotMatch(routes, /const stream = await openai\.chat\.completions\.create\(\{\s*model:\s*coachChatModel/s);
+assert.match(routes, /streamedModel\s*=\s*finalTurn\.model\s*\?\?\s*coachChatSelectedModel\s*\?\?\s*["']gpt-4o-mini["']/);
+assert.match(coachRoutePatcher, /hasImportedCoachModelTurn/);
+assert.match(coachRoutePatcher, /requestedModel:\s*params\.requestedModel/);
+assert.match(coachRoutePatcher, /preferRequestedModel:\s*params\.preferRequestedModel/);
+
+console.log("OK: webchat exposes owner-only model and OpenAI provider setup controls");

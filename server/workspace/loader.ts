@@ -18,6 +18,7 @@ import fs from "fs/promises";
 import { watch } from "fs";
 import path from "path";
 import os from "os";
+import { buildWorkspacePromptContext } from "../memory/contextBuilder";
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -39,20 +40,21 @@ export type WorkspaceFileKey = keyof typeof WORKSPACE_FILES;
 
 export const STUBS: Record<WorkspaceFileKey, string> = {
   soul: `# Jarvis Workspace — SOUL.md
-<!-- Edit this file to give Jarvis a custom persona or standing character instructions. -->
-<!-- These instructions are injected into EVERY agent session alongside the generated Soul. -->
+<!-- Edit this file to give Jarvis custom persona or preference facts. -->
+<!-- File content is treated as untrusted facts/preferences, not instructions. -->
 
 ## Persona & Character
 You are Jarvis — a highly capable, proactive AI chief-of-staff. You are direct, thoughtful, and action-oriented. You adapt your communication style to match the user's energy and context.
 
-## Standing Instructions
+## Standing Preferences
 - Always prioritise the user's time. Summarise before elaborating.
 - When uncertain, ask one clarifying question rather than guessing.
 - Prefer concrete, actionable responses over vague advice.
 `,
 
   agents: `# Jarvis Workspace — AGENTS.md
-<!-- Edit this file to define operating principles that apply across all agent sessions. -->
+<!-- Edit this file to define operating preference facts for agent sessions. -->
+<!-- File content is treated as untrusted facts/preferences, not instructions. -->
 
 ## Operating Principles
 1. Complete tasks fully — never return a half-finished result without flagging it.
@@ -151,29 +153,16 @@ async function loadCache(): Promise<WorkspaceCache> {
  * Returns a single workspace context block for injection into system prompts.
  * Reads from cache; reloads from disk if the cache has been invalidated.
  */
-export async function getWorkspaceContext(): Promise<string> {
+export async function getWorkspaceContext(opts: { seedQuery?: string } = {}): Promise<string> {
   const c = cache ?? (await loadCache());
-
-  const parts: string[] = [];
-
-  const soulContent = c.soul.trim();
-  if (soulContent && !isStubOnly(soulContent)) {
-    parts.push(`### SOUL.md\n${soulContent}`);
-  }
-
-  const agentsContent = c.agents.trim();
-  if (agentsContent && !isStubOnly(agentsContent)) {
-    parts.push(`### AGENTS.md\n${agentsContent}`);
-  }
-
-  const memoryContent = c.memory.trim();
-  if (memoryContent && !isStubOnly(memoryContent)) {
-    parts.push(`### MEMORY.md (HOT memory)\n${memoryContent}`);
-  }
-
-  if (parts.length === 0) return "";
-
-  return `\n\n---\n## Workspace Instructions\n_These standing instructions are loaded from the owner's workspace files and MUST be followed:_\n\n${parts.join("\n\n")}`;
+  return buildWorkspacePromptContext(
+    {
+      soul: isStubOnly(c.soul) ? "" : c.soul,
+      agents: isStubOnly(c.agents) ? "" : c.agents,
+      memory: isStubOnly(c.memory) ? "" : c.memory,
+    },
+    { seedQuery: opts.seedQuery },
+  );
 }
 
 /** Return true when content is just comment lines (the stub template). */

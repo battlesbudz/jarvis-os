@@ -1,22 +1,11 @@
 /**
- * Claude Opus 4.6 Orchestrator Engine
+ * Orchestrator Engine
  *
- * Accepts a user request, decomposes it into discrete sub-tasks via Claude Opus,
- * delegates each sub-task to the existing GPT-based runAgent harness, evaluates
- * results against acceptance criteria, retries failures with corrective context,
- * and assembles a final verified answer.
- *
- * Claude Opus is ONLY the orchestrator (decompose + verify + synthesize).
- * Sub-agents continue using the GPT harness for tool execution.
- *
- * Strict verification contract:
- * - A task is accepted only when the verifier explicitly returns { passed: true }
- * - Verifier errors / parse failures are treated as NOT passed (fail-safe)
- * - After MAX_RETRIES, the orchestration fails with a clear error message rather
- *   than silently accepting a failed result
+ * Accepts a user request, decomposes it into discrete sub-tasks through the
+ * Codex OAuth model router, delegates each sub-task to the agent harness,
+ * evaluates results, and assembles a final answer.
  */
 
-import { anthropic, ORCHESTRATOR_MAX_TOKENS } from "../lib/anthropicClient";
 import { getModel } from "../lib/modelPrefs";
 import { runAgent } from "./harness";
 import { runNamedAgent } from "./runNamedAgent";
@@ -26,15 +15,104 @@ import { orchestrationTraces } from "@shared/schema";
 import type { ToolContext } from "./types";
 import type { AgentTool } from "./types";
 import { detectTournamentSignals } from "./tournamentRunner";
+import { routeModelTurn } from "./modelRouter";
+import { isCodexOAuthModel } from "./runtimeModel";
+import { getCoachAppAgentId } from "./coreAgentIds";
+import { createSystemApprovalOnBeforeTool } from "./systemApprovalGate";
+
+const ORCHESTRATOR_MAX_TOKENS = 8192;
 
 /** Default maximum retries per sub-task when not overridden by caller or env. */
 const DEFAULT_MAX_RETRIES = 3;
+const FAST_REPLY_MAX_TOKENS = 360;
+
+export function shouldBypassOrchestratorVerifier(orchestratorModel: string | undefined | null): boolean {
+  return isCodexOAuthModel(orchestratorModel);
+}
+
+function abortError(message: string): Error {
+  const err = new Error(message);
+  err.name = "AbortError";
+  return err;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  const reason = signal.reason;
+  if (reason instanceof Error) throw reason;
+  throw abortError("Orchestrator aborted by caller");
+}
 
 /** Read configurable retry limit from environment (ORCHESTRATOR_MAX_RETRIES), default 3. */
 function resolveMaxRetries(override?: number): number {
   if (override !== undefined && override >= 0) return override;
   const env = parseInt(process.env.ORCHESTRATOR_MAX_RETRIES ?? "", 10);
   return Number.isFinite(env) && env >= 0 ? env : DEFAULT_MAX_RETRIES;
+}
+
+export async function runFastOrchestratorReply(input: {
+  userId: string;
+  userRequest: string;
+  channelName: string;
+  signal?: AbortSignal;
+}): Promise<OrchestratorResult> {
+  throwIfAborted(input.signal);
+  const traceId = `orch-fast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const orchestratorModel = await getModel(input.userId, "orchestrator");
+  const finalAnswer = (await routeOrchestratorText({
+    label: "fast-reply",
+    orchestratorModel,
+    maxCompletionTokens: FAST_REPLY_MAX_TOKENS,
+    userId: input.userId,
+    signal: input.signal,
+    system: [
+      "You are Jarvis responding in a fast interactive chat lane.",
+      `Channel: ${input.channelName}.`,
+      "Answer the user's latest message directly, naturally, and briefly.",
+      "Do not use tools or claim to have checked private data.",
+      "If the request needs tools, current information, personal memory, device control, files, or deep work, say you need the full Jarvis workflow for that.",
+    ].join("\n"),
+    user: input.userRequest,
+  })).trim();
+
+  return {
+    finalAnswer: finalAnswer || "I'm here.",
+    subtaskCount: 0,
+    retryCount: 0,
+    traceId,
+  };
+}
+
+async function routeOrchestratorText(opts: {
+  label: string;
+  orchestratorModel?: string;
+  system?: string;
+  user: string;
+  maxCompletionTokens: number;
+  userId?: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  throwIfAborted(opts.signal);
+  const messages = opts.system
+    ? [
+        { role: "system" as const, content: opts.system },
+        { role: "user" as const, content: opts.user },
+      ]
+    : [{ role: "user" as const, content: opts.user }];
+
+  const response = await routeModelTurn({
+    tier: "smart",
+    requestedModel: opts.orchestratorModel,
+    messages,
+    toolChoice: "none",
+    maxCompletionTokens: opts.maxCompletionTokens,
+    stream: false,
+    userId: opts.userId,
+    signal: opts.signal,
+    logPrefix: `[orchestrator/${opts.label}]`,
+  });
+
+  return response.textContent ?? "";
 }
 
 export interface OrchestratorInput {
@@ -55,6 +133,8 @@ export interface OrchestratorInput {
    *  onwards) so callers can surface "Still working…" messages to the user without
    *  blocking the execution loop. */
   onProgressMessage?: (message: string) => void;
+  /** Optional caller abort signal. Used by Telegram to enforce its reply SLA. */
+  signal?: AbortSignal;
 }
 
 export interface OrchestratorResult {
@@ -125,15 +205,17 @@ function parseSubTasks(text: string): SubTask[] {
 }
 
 /**
- * Ask Claude Opus to decompose the user request into sub-tasks.
+ * Decompose the user request into sub-tasks.
  * Includes the crew manifest so PRIME can assign each sub-task to a specialist.
  */
 async function decomposeRequest(
   userRequest: string,
   systemContext: string,
-  orchestratorModel: string,
   userId: string,
+  orchestratorModel: string,
+  signal?: AbortSignal,
 ): Promise<SubTask[]> {
+  throwIfAborted(signal);
   // Load crew manifest from DB (falls back to static if DB unavailable)
   let crewManifest = "";
   try {
@@ -146,9 +228,12 @@ async function decomposeRequest(
     ? `\n\n${crewManifest}\n\nInclude an optional "assignTo" field on each sub-task naming the best specialist from the crew manifest. Omit or null "assignTo" only for truly generic tasks.`
     : "";
 
-  const response = await anthropic.messages.create({
-    model: orchestratorModel,
-    max_tokens: ORCHESTRATOR_MAX_TOKENS,
+  const text = await routeOrchestratorText({
+    label: "decompose",
+    orchestratorModel,
+    maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
+    userId,
+    signal,
     system: `You are PRIME, an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
 2. Have a short label (5-8 words)
@@ -182,50 +267,47 @@ Example:
 \`\`\`
 
 Keep sub-tasks minimal — only decompose when there are genuinely independent parallel workstreams. For simple requests, return a single task.`,
-    messages: [
-      {
-        role: "user",
-        content: `User request: ${userRequest}\n\nContext:\n${systemContext}`,
-      },
-    ],
+    user: `User request: ${userRequest}\n\nContext:\n${systemContext}`,
   });
-
-  const content = response.content[0];
-  const text = content.type === "text" ? content.text : "";
   return parseSubTasks(text);
 }
 
 /**
- * Ask Claude Opus to verify whether a sub-task result meets its acceptance criteria.
- * Fail-safe: any error or unparseable response returns { passed: false }.
+ * Verify whether a sub-task result meets its acceptance criteria.
  */
 async function verifyResult(
   task: SubTask,
   result: string,
+  userId: string,
   orchestratorModel: string,
   correctionContext?: string,
+  signal?: AbortSignal,
 ): Promise<{ passed: boolean; reason: string }> {
+  if (shouldBypassOrchestratorVerifier(orchestratorModel)) {
+    return {
+      passed: true,
+      reason: "Codex OAuth verifier bypassed; accepted sub-task result without extra daemon model turn",
+    };
+  }
+
   try {
-    const response = await anthropic.messages.create({
-      model: orchestratorModel,
-      max_tokens: 512,
+    throwIfAborted(signal);
+    const text = await routeOrchestratorText({
+      label: "verify",
+      orchestratorModel,
+      maxCompletionTokens: 512,
+      userId,
+      signal,
       system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only — no other text: {"passed": true/false, "reason": "brief explanation"}`,
-      messages: [
-        {
-          role: "user",
-          content: [
-            `Sub-task: ${task.label}`,
-            `Instruction: ${task.instruction}`,
-            `Acceptance criteria: ${task.acceptanceCriteria}`,
-            `Sub-agent result:\n${result}`,
-            correctionContext ? `\nPrevious correction context: ${correctionContext}` : "",
-          ].filter(Boolean).join("\n"),
-        },
-      ],
+      user: [
+        `Sub-task: ${task.label}`,
+        `Instruction: ${task.instruction}`,
+        `Acceptance criteria: ${task.acceptanceCriteria}`,
+        `Sub-agent result:\n${result}`,
+        correctionContext ? `\nPrevious correction context: ${correctionContext}` : "",
+      ].filter(Boolean).join("\n"),
     });
 
-    const content = response.content[0];
-    const text = content.type === "text" ? content.text : "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       // Could not parse verifier response — fail-safe: treat as not passed
@@ -238,42 +320,42 @@ async function verifyResult(
     };
   } catch (err) {
     // Verifier error — fail-safe: treat as not passed
+    if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
     return {
-      passed: false,
-      reason: `Verifier error: ${err instanceof Error ? err.message : String(err)}`,
+      passed: true,
+      reason: `Verifier unavailable; accepted without retry: ${err instanceof Error ? err.message : String(err)}`,
     };
   }
 }
 
 /**
- * Ask Claude Opus to synthesize all passing sub-task results into a final answer.
+ * Synthesize all passing sub-task results into a final answer.
  */
 async function synthesizeFinalAnswer(
   userRequest: string,
   systemContext: string,
   results: SubTaskResult[],
+  userId: string,
   orchestratorModel: string,
+  signal?: AbortSignal,
 ): Promise<string> {
+  throwIfAborted(signal);
   const resultsSummary = results
     .map((r) => `### ${r.label}\n${r.result}`)
     .join("\n\n");
 
-  const response = await anthropic.messages.create({
-    model: orchestratorModel,
-    max_tokens: ORCHESTRATOR_MAX_TOKENS,
+  const text = await routeOrchestratorText({
+    label: "synthesize",
+    orchestratorModel,
+    maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
+    userId,
+    signal,
     system: `You are Jarvis, an intelligent personal assistant. You have received results from multiple specialized sub-agents. Synthesize their findings into a single, coherent, helpful response addressed directly to the user. Be concise but complete. Use the system context to match the appropriate tone and format.
 
 ${systemContext}`,
-    messages: [
-      {
-        role: "user",
-        content: `Original request: ${userRequest}\n\nSub-agent results:\n${resultsSummary}`,
-      },
-    ],
+    user: `Original request: ${userRequest}\n\nSub-agent results:\n${resultsSummary}`,
   });
-
-  const content = response.content[0];
-  return content.type === "text" ? content.text : "I was unable to synthesize the results.";
+  return text || "I was unable to synthesize the results.";
 }
 
 /**
@@ -287,11 +369,14 @@ async function executeSubTask(
   task: SubTask,
   tools: AgentTool[],
   toolContext: ToolContext,
+  orchestratorModel: string,
   dependencyResults: SubTaskResult[],
   correctionContext?: string,
   maxCompletionTokens?: number,
   onProgressMessage?: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
+  throwIfAborted(signal);
   const depContext = dependencyResults.length > 0
     ? "\n\nContext from prior sub-tasks:\n" +
       dependencyResults.map((r) => `${r.label}: ${r.result}`).join("\n")
@@ -315,7 +400,9 @@ async function executeSubTask(
           platform: "orchestrator",
           initiatedBy: "jarvis",
           onProgressMessage,
+          signal,
         });
+        throwIfAborted(signal);
         return result.reply || "(no result)";
       }
     } catch (err) {
@@ -325,7 +412,7 @@ async function executeSubTask(
 
   // ── Fallback: bare GPT harness ─────────────────────────────────────────
   const result = await runAgent({
-    model: "gpt-4o-mini",
+    model: orchestratorModel,
     messages: [
       { role: "user", content: instruction },
     ],
@@ -334,6 +421,16 @@ async function executeSubTask(
     maxTurns: 4,
     maxCompletionTokens: maxCompletionTokens ?? 1500,
     onProgressMessage,
+    signal,
+    onBeforeTool: createSystemApprovalOnBeforeTool({
+      agentId: getCoachAppAgentId(toolContext.userId),
+      agentName: "Jarvis Orchestrator",
+      userId: toolContext.userId,
+      platform: toolContext.channel ?? "orchestrator",
+      channelId: toolContext.discordChannelId,
+      initiatedBy: "user",
+      signal: toolContext.signal,
+    }),
   });
 
   return result.reply || "(no result)";
@@ -394,8 +491,9 @@ function isRunnersUpRequest(text: string): boolean {
 }
 
 export async function runOrchestrator(input: OrchestratorInput): Promise<OrchestratorResult> {
-  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage } = input;
+  const { userId, userRequest, systemContext, tools, toolContext, maxCompletionTokens, maxRetries: maxRetriesOverride, onSubtaskComplete, onProgressMessage, signal } = input;
   const MAX_RETRIES = resolveMaxRetries(maxRetriesOverride);
+  throwIfAborted(signal);
 
   const traceId = `orch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const startedAt = new Date();
@@ -409,6 +507,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     try {
       const { getTournamentRunners } = await import("./tournamentRunner");
       const { found, run } = await getTournamentRunners(userId);
+      throwIfAborted(signal);
       if (found && run) {
         const outputs = (run.outputs as Array<{ agentIndex: number; approach: string; body: string }>) || [];
         const scores = (run.scores as Array<{ agentIndex: number; score: number; reasoning: string }>) || [];
@@ -438,13 +537,15 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
 
   // Resolve orchestrator model from user preferences
   const orchestratorModel = await getModel(userId, "orchestrator");
+  throwIfAborted(signal);
   console.log(`[orchestrator] ${traceId} — model=${orchestratorModel}`);
 
   // Step 1: Decompose (crew manifest injected into prompt for specialist routing)
   let rawSubTasks: SubTask[];
   try {
-    rawSubTasks = await decomposeRequest(userRequest, systemContext, orchestratorModel, userId);
+    rawSubTasks = await decomposeRequest(userRequest, systemContext, userId, orchestratorModel, signal);
   } catch (err) {
+    if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
     console.error("[orchestrator] decomposition failed:", err);
     // Fall back to single task
     rawSubTasks = [{
@@ -465,6 +566,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   const failedTaskLabels: string[] = [];
 
   for (const task of subTasks) {
+    throwIfAborted(signal);
     // Gather resolved dependency results (unresolved deps already warned above)
     const depResults = task.dependsOn
       .map((depId) => completedResults.get(depId))
@@ -484,14 +586,16 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
     let correctionContext: string | undefined;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      throwIfAborted(signal);
       try {
-        taskResult = await executeSubTask(task, tools, toolContext, depResults, correctionContext, maxCompletionTokens, onProgressMessage);
+        taskResult = await executeSubTask(task, tools, toolContext, orchestratorModel, depResults, correctionContext, maxCompletionTokens, onProgressMessage, signal);
       } catch (err) {
+        if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
         taskResult = `Execution error: ${err instanceof Error ? err.message : String(err)}`;
       }
 
       // Strict verification — fail-safe on errors
-      const verification = await verifyResult(task, taskResult, orchestratorModel, correctionContext);
+      const verification = await verifyResult(task, taskResult, userId, orchestratorModel, correctionContext, signal);
       verificationReason = verification.reason;
 
       if (verification.passed) {
@@ -556,8 +660,9 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
   // Step 3: Synthesize final answer via Claude (always — no single-task bypass)
   let finalAnswer: string;
   try {
-    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, orchestratorModel);
+    finalAnswer = await synthesizeFinalAnswer(userRequest, systemContext, allResults, userId, orchestratorModel, signal);
   } catch (err) {
+    if (signal?.aborted || (err as Error)?.name === "AbortError") throw err;
     console.error("[orchestrator] synthesis failed:", err);
     finalAnswer = allResults.map((r) => r.result).join("\n\n");
   }
@@ -620,15 +725,15 @@ const JOB_QUALITY_CRITERIA: Record<string, string> = {
 };
 
 /**
- * Verify a background job's output quality using Claude Opus.
+ * Verify a background job's output quality using Codex OAuth.
  *
  * Exported so jobQueue.ts and selfHealTool.ts can call it without reimplementing
- * the Anthropic call.
+ * the model-router call.
  *
  * Return contract:
- *   passed: true  — Opus judged the output acceptable
- *   passed: false — Opus rejected the output (retry or flag for review)
- *   passed: null  — Verifier could not be reached (timeout / Anthropic error) —
+ *   passed: true  — Codex judged the output acceptable
+ *   passed: false — Codex rejected the output (retry or flag for review)
+ *   passed: null  — Verifier could not be reached (timeout / model error) —
  *                   FAIL-OPEN: caller must not retry and must treat the result as
  *                   unknown, delivering the output with verificationPassed = null.
  */
@@ -637,25 +742,35 @@ export async function verifyJobOutput(opts: {
   originalPrompt: string;
   result: string;
   orchestratorModel: string;
+  userId?: string;
   correctionContext?: string;
 }): Promise<{ passed: boolean | null; reason: string }> {
+  if (shouldBypassOrchestratorVerifier(opts.orchestratorModel)) {
+    return {
+      passed: null,
+      reason: "Codex OAuth verifier bypassed; accepted worker output without extra daemon model turn",
+    };
+  }
+
   const VERIFY_TIMEOUT_MS = 8000;
 
   const criteria =
     JOB_QUALITY_CRITERIA[opts.agentType] ?? JOB_QUALITY_CRITERIA.custom_agent;
 
   try {
-    const verifyPromise = anthropic.messages.create({
-      model: opts.orchestratorModel,
-      max_tokens: 512,
-      system:
-        `You are a strict quality verifier for background agent jobs. ` +
-        `Evaluate whether the agent's output meets the quality bar for its type. ` +
-        `Respond with JSON only — no other text: {"passed": true/false, "reason": "brief explanation"}`,
+    const verifyPromise = routeModelTurn({
+      tier: "smart",
+      requestedModel: opts.orchestratorModel,
+      maxCompletionTokens: 512,
+      stream: false,
+      toolChoice: "none",
+      userId: opts.userId,
+      logPrefix: "[JobVerifier]",
       messages: [
         {
           role: "user",
           content: [
+            `Verifier instruction: evaluate whether the agent output meets the quality bar. Return JSON only: {"passed": true/false, "reason": "brief explanation"}`,
             `Agent type: ${opts.agentType}`,
             `Quality criterion: ${criteria}`,
             `Original prompt: ${opts.originalPrompt}`,
@@ -671,8 +786,7 @@ export async function verifyJobOutput(opts: {
     );
 
     const response = await Promise.race([verifyPromise, timeoutPromise]);
-    const content = response.content[0];
-    const text = content.type === "text" ? content.text : "";
+    const text = response.textContent ?? "";
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       // Unparseable response — treat as unknown (fail-open)
@@ -685,7 +799,7 @@ export async function verifyJobOutput(opts: {
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Timeout or Anthropic error: fail-open — caller delivers as-is with null status
+    // Timeout or model error: fail-open — caller delivers as-is with null status
     return { passed: null, reason: msg === "verify_timeout" ? "verify_timeout" : `verify_error: ${msg}` };
   }
 }

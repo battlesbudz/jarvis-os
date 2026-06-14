@@ -1,4 +1,3 @@
-import path from "path";
 import { createHash } from "crypto";
 import type { AgentTool } from "../types";
 import {
@@ -13,90 +12,13 @@ import {
   getDaemonLastSeen,
   waitForTrainingTap,
 } from "../../daemon/bridge";
-import { anthropic, ORCHESTRATOR_MODEL } from "../../lib/anthropicClient";
+import { routeModelTurn } from "../modelRouter";
 import { screenshotDiff } from "../../lib/screenshotDiff";
 import { db } from "../../db";
 import { buttonLocations, searchBarLocations } from "@shared/schema";
 import { eq, and, desc, sql as drizzleSql } from "drizzle-orm";
 import { notifyUser } from "../../channels/registry";
-
-//        Shell safety: server-side preflight for early UX feedback                                                    
-// Mirrors the daemon-side commandEscapesRoot strategy so the agent gets a fast
-// error message before the round-trip. The daemon is the authoritative boundary.
-// The server normalizes absolute paths (to collapse /usr/../etc tricks) but cannot
-// resolve relative tokens against the user's ROOT     those are flagged conservatively.
-
-const SAFE_DEVICE_FILES_SET = new Set(["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/zero"]);
-
-// System command binary prefixes     the first token of each shell segment may be
-// an absolute path to a system binary; file arguments must stay inside the workspace.
-const CMD_BIN_PREFIXES = [
-  "/usr/", "/bin/", "/sbin/", "/opt/homebrew/", "/usr/local/",
-  "/nix/", "/home/linuxbrew/", "/Applications/", "/System/", "/Library/",
-];
-
-function isCmdBin(p: string): boolean {
-  const norm = path.normalize(p);
-  return CMD_BIN_PREFIXES.some((prefix) => norm.startsWith(prefix));
-}
-
-function detectsOutsideRoot(cmd: string): boolean {
-  // Always-block patterns
-  if (/\bcd\s+\.\./.test(cmd)) return true;
-  if (/\bsudo\s+rm/.test(cmd)) return true;
-  if (/\brm\s+-rf\s+\//.test(cmd)) return true;
-
-  // Expand ~ and $HOME so resolved paths can be checked.
-  // Server doesn't know the user's JARVIS_DAEMON_ROOT, so it flags anything that
-  // resolves to an absolute non-bin path (conservative: daemon is the final arbiter).
-  const HOME = process.env.HOME || process.env.USERPROFILE || "";
-  if (!HOME && /~|\$\{?HOME\}?/.test(cmd)) return true;
-  const expanded = HOME
-    ? cmd
-        .replace(/\$\{HOME\}/g, HOME)
-        .replace(/\$HOME(?=[/\s;|&>'")\x60]|$)/g, HOME)
-        .replace(/~/g, HOME)
-    : cmd;
-
-  if (/\bcd\s+\//.test(expanded)) return true;
-
-  // Redirection targets: normalize and block anything that isn't /dev/* (conservative)
-  const redirectMatches = expanded.match(/>\s*(\/[^\s;|&]*)/g) || [];
-  for (const redir of redirectMatches) {
-    const target = redir.replace(/^>\s*/, "");
-    const norm = path.normalize(target);
-    if (!SAFE_DEVICE_FILES_SET.has(norm)) return true;
-  }
-
-  // Token-level path scan on expanded command
-  const segments = expanded.split(/[|;]|&&|\|\|/);
-  for (const segment of segments) {
-    const tokens = segment.trim().split(/[\s<>()$\x60]+/).map((t) => t.replace(/^['"\x60]|['"\x60]$/g, ""));
-    let isCmd = true;
-    for (const token of tokens) {
-      if (!token) continue;
-      if (/^-/.test(token)) continue;
-
-      if (token.startsWith("/")) {
-        const norm = path.normalize(token);
-        if (!SAFE_DEVICE_FILES_SET.has(norm)) {
-          if (isCmd && isCmdBin(norm)) {
-            // First token is system binary     allow it.
-          } else {
-            // Absolute file argument     server can't verify it's in user's ROOT,
-            // so flag it; daemon will do the definitive ROOT-containment check.
-            return true;
-          }
-        }
-      } else if (token.includes("..")) {
-        return true; // Conservative: daemon resolves against ROOT definitively.
-      }
-
-      isCmd = false;
-    }
-  }
-  return false;
-}
+import { detectsOutsideRoot } from "./daemonShellSafety";
 
 export const daemonShellTool: AgentTool = {
   name: "daemon_shell",
@@ -316,7 +238,7 @@ export const daemonStatusTool: AgentTool = {
 };
 
 //        ScreenMap cache                                                                                                                                                                                     
-// 500 ms per-user cache so back-to-back calls don't hit Claude Vision twice.
+// 500 ms per-user cache so back-to-back calls don't hit Codex OAuth twice.
 interface ScreenMapEntry {
   ts: number;
   result: string;
@@ -450,7 +372,7 @@ export interface ScreenElement {
 // ── buildScreenMapElements ─────────────────────────────────────────────────────
 // Shared ScreenMap acquisition logic used by both android_screen_understand and
 // android_tap_element. Captures screenshot + view hierarchy in parallel, calls
-// Claude Vision, normalizes the output, updates the cache, and returns elements.
+// Codex OAuth, normalizes the output, updates the cache, and returns elements.
 // Callers must check permissions before invoking this.
 type BuildScreenMapResult =
   | { ok: true; elements: ScreenElement[] }
@@ -502,25 +424,26 @@ async function buildScreenMapElements(userId: string, ctx?: object): Promise<Bui
 
   let screenElements: ScreenElement[] = [];
   try {
-    const claudeResponse = await anthropic.messages.create({
-      model: ORCHESTRATOR_MODEL,
-      max_tokens: 2048,
+    const codexResponse = await routeModelTurn({
+      tier: "smart",
+      maxCompletionTokens: 2048,
+      stream: false,
+      toolChoice: "none",
+      userId,
+      logPrefix: "[ScreenMap]",
       messages: [
         {
+          role: "system",
+          content: "You are analyzing Android UI Automator data for UI automation. Return only valid JSON.",
+        },
+        {
           role: "user",
-          content: [
-            {
-              type: "image",
-              source: { type: "base64", media_type: "image/jpeg", data: base64Image },
-            },
-            {
-              type: "text",
-              text: `You are analyzing an Android screen for UI automation.
+          content: `You are analyzing an Android screen for UI automation.
 
 Here is the UI Automator element tree (JSON):
 ${elementsJson}
 
-Look at the screenshot and the element tree above. Return a JSON array of the most important interactive elements visible on screen. For each element include:
+The screenshot was captured (${base64Image.length} base64 characters), but this Codex OAuth route receives text prompts only. Infer the visible interactive elements from the element tree. Return a JSON array of the most important interactive elements visible on screen. For each element include:
 - "label": short human-readable name (e.g. "Search bar", "Post button", "Back")
 - "description": what this element does or contains
 - "center_x": horizontal center pixel coordinate for tapping
@@ -533,22 +456,17 @@ Look at the screenshot and the element tree above. Return a JSON array of the mo
 IMPORTANT: For icon-only buttons (ImageButton, ImageView, etc.) that have no text label, class_name is essential — always include it. Never leave class_name empty or omit it for these elements.
 
 Prioritize: search bars, input fields, buttons, navigation items, interactive content.
-Include elements that have no accessibility label but are visually identifiable as interactive.
 Return ONLY a valid JSON array, no explanation, no markdown fences.`,
-            },
-          ],
         },
       ],
     });
 
-    const responseText = claudeResponse.content[0]?.type === "text"
-      ? claudeResponse.content[0].text.trim()
-      : "[]";
+    const responseText = (codexResponse.textContent ?? "[]").trim();
     const cleaned = responseText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
     const raw = JSON.parse(cleaned);
     screenElements = normalizeScreenElements(Array.isArray(raw) ? raw : []);
   } catch (err) {
-    console.error("[buildScreenMapElements] Claude Vision error:", err);
+    console.error("[buildScreenMapElements] Codex OAuth screen-map error:", err);
     return {
       ok: false,
       content: `Vision analysis failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -569,6 +487,33 @@ Return ONLY a valid JSON array, no explanation, no markdown fences.`,
 // form fields that are below the visible area of the screen.
 // Swipe coordinates are computed as a fraction of the actual screen dimensions
 // so the gesture works correctly on tablets, foldables, and any screen density.
+async function resolveScreenMapElements(
+  userId: string,
+  ctx: object | undefined,
+  toolName: string,
+  maxAge: number,
+): Promise<BuildScreenMapResult> {
+  const cached = screenMapCache.get(userId);
+  if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
+    console.log(`[${toolName}] userId=${userId} using cached ScreenMap`);
+    try {
+      const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
+      const elements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
+      if (elements.length > 0) {
+        return { ok: true, elements };
+      }
+    } catch {
+      // Fall through to a fresh ScreenMap, matching the previous per-tool fallback.
+    }
+  }
+
+  const buildResult = await buildScreenMapElements(userId, ctx);
+  if (!buildResult.ok) return buildResult;
+
+  console.log(`[${toolName}] userId=${userId} fresh ScreenMap: ${buildResult.elements.length} elements`);
+  return buildResult;
+}
+
 const SCROLL_MAX_ATTEMPTS = 3;
 // Fallback coordinates for a typical 1080×1920 px Android phone (used when
 // the display size op is unavailable or the daemon does not support it yet).
@@ -1577,7 +1522,7 @@ export const androidSearchInAppTool: AgentTool = {
 
       // ── Vision fallback for iconOnly apps and unknown apps ──────────────────
       // When resource-ID matching fails for an icon-only search entry point, use
-      // Claude Vision (android_screen_understand internally) to locate the magnifying-
+      // Codex screen map (android_screen_understand internally) to locate the magnifying-
       // glass icon visually. This avoids asking the user to intervene manually.
       // For unknown apps (not in APP_SEARCH_HINTS) we also attempt the vision path
       // automatically — many apps use an icon-only search entry point that the
@@ -2520,27 +2465,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_swipe_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_swipe_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_swipe_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_swipe_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_swipe_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
     let bestElement: ScreenElement | null = null;
@@ -2625,7 +2554,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Compare a fresh screenshot against the pre-scroll one. If the pixel
         // diff is below 2% the page has not moved — we are at the bottom.
         // We check this BEFORE calling buildScreenMapElements (the expensive
-        // Vision/Claude call) so we can skip it when the list is exhausted.
+        // screen-map call) so we can skip it when the list is exhausted.
         let screenshotCheckConclusive = false;
         if (preScrollScreenshot) {
           const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
@@ -2944,27 +2873,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_pinch_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_pinch_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_pinch_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_pinch_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_pinch_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
     let bestElement: ScreenElement | null = null;
@@ -3378,27 +3291,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (Vision-based, cache or fresh) ──────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_tap_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_tap_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_tap_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_tap_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_tap_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
     let bestElement: ScreenElement | null = null;
@@ -3484,7 +3381,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // Compare a fresh screenshot against the pre-scroll one. If the pixel
         // diff is below 2 % the page has not moved — we are at the bottom.
         // We check this BEFORE calling buildScreenMapElements (the expensive
-        // Vision/Claude call) so we can skip it when the list is exhausted.
+        // screen-map call) so we can skip it when the list is exhausted.
         // Track whether we got a conclusive screenshot-based answer so that we
         // can fall through to the hierarchy fallback when capture fails.
         let screenshotCheckConclusive = false;
@@ -3832,27 +3729,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_long_press_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_long_press_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_long_press_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_long_press_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_long_press_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
     let bestElement: ScreenElement | null = null;
@@ -4690,27 +4571,11 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_drag_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_drag_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_drag_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_drag_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_drag_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match source element ────────────────────────────────────────────
     let fromElement: ScreenElement | null = null;
@@ -6281,27 +6146,11 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
 
     // ── Step 1: Resolve ScreenMap (cache or fresh) ────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
-    let screenElements: ScreenElement[] = [];
-
-    const cached = screenMapCache.get(ctx.userId);
-    if (cached && maxAge > 0 && Date.now() - cached.ts <= maxAge) {
-      console.log(`[android_type_into_element] userId=${ctx.userId} using cached ScreenMap`);
-      try {
-        const parsed = JSON.parse(cached.result) as { elements?: unknown[] };
-        screenElements = normalizeScreenElements(Array.isArray(parsed.elements) ? parsed.elements : []);
-      } catch {
-        screenElements = [];
-      }
+    const screenMapResult = await resolveScreenMapElements(ctx.userId, ctx, "android_type_into_element", maxAge);
+    if (!screenMapResult.ok) {
+      return { ok: false, content: screenMapResult.content, label: `android_type_into_element: ${screenMapResult.label}` };
     }
-
-    if (screenElements.length === 0) {
-      const buildResult = await buildScreenMapElements(ctx.userId, ctx);
-      if (!buildResult.ok) {
-        return { ok: false, content: buildResult.content, label: `android_type_into_element: ${buildResult.label}` };
-      }
-      screenElements = buildResult.elements;
-      console.log(`[android_type_into_element] userId=${ctx.userId} fresh ScreenMap: ${screenElements.length} elements`);
-    }
+    let screenElements = screenMapResult.elements;
 
     // ── Step 2: Fuzzy-match the element (with scroll-then-retry for off-screen fields) ──
     let bestElement: ScreenElement | null = null;
@@ -6572,7 +6421,7 @@ export const androidFillFormTool: AgentTool = {
 Accepts a list of fields (label + text pairs) and fills them in order, using the same ScreenMap + scoreElement matching as android_type_into_element. Replaces multiple sequential android_type_into_element calls for login forms, registration pages, and filter dialogs.
 
 Steps performed internally:
-1. Capture a fresh ScreenMap once at the start (screenshot + view hierarchy → Claude Vision)
+1. Capture a fresh ScreenMap once at the start (screenshot + view hierarchy → Codex screen map)
 2. For each field: fuzzy-match label, tap to focus, optionally clear, type via three-level fallback (android_type → android_paste_text → retry), verify
 3. If a field label is not found in the current ScreenMap, refresh the ScreenMap once (handles page transitions between fields)
 4. If still not found, scroll down and re-capture the ScreenMap up to 3 times to find fields that are off-screen

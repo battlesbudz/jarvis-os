@@ -11,6 +11,7 @@ import {
   Alert,
   TextInput,
   Modal,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -46,6 +47,16 @@ import { getApiUrl, apiRequest } from '@/lib/query-client';
 import { useAuth, authFetch } from '@/lib/auth-context';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
+import RuntimeDiagnosticsPanel from '@/components/RuntimeDiagnosticsPanel';
+import {
+  CONNECTION_APPS,
+  getConnectionStatusLabel,
+  normalizeConnectionsStatus,
+  normalizeConnectionTestResult,
+  type ConnectionAppId,
+  type ConnectionsStatus,
+} from '@/lib/connectionUx';
+import { MODEL_PROVIDER_CATALOG } from '@shared/modelProviderCatalog';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -68,16 +79,11 @@ interface BuildLogEntry {
   createdAt: string;
 }
 
-interface OAuthStatus {
-  google: OAuthProviderStatus;
-  microsoft: OAuthProviderStatus;
-  slack: OAuthProviderStatus;
-}
-
 interface TelegramStatus {
   connected: boolean;
   username: string | null;
   configured: boolean;
+  botUsername?: string | null;
 }
 
 interface McpServerInfo {
@@ -94,6 +100,40 @@ interface McpServerInfo {
   isSystem: boolean;
   credentialMode?: 'direct' | 'env-ref';
   envKey?: string | null;
+}
+
+type OpenAIProviderAuthType = 'api_key' | 'oauth';
+interface OpenAIProviderAuthTypeStatus {
+  connected: boolean;
+  isDefault: boolean;
+  email?: string;
+  accountId?: string;
+  expiresAt?: string;
+}
+interface OpenAIProviderAuthStatus {
+  providerCatalog?: CatalogProvider[];
+  providers?: Record<string, ProviderAuthProviderStatus>;
+  openai: {
+    connected: boolean;
+    defaultAuthType: OpenAIProviderAuthType | null;
+    fallbackEnabled: boolean;
+    authTypes: Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>;
+  };
+}
+interface ProviderAuthProviderStatus {
+  connected: boolean;
+  defaultAuthType: OpenAIProviderAuthType | null;
+  fallbackEnabled?: boolean;
+  authTypes: Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>;
+}
+interface CatalogProvider {
+  id: string;
+  label: string;
+  shortLabel: string;
+  description: string;
+  credentialKinds: Array<'api_key' | 'oauth' | 'local'>;
+  apiKeyPlaceholder?: string;
+  setupHint: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,31 +308,24 @@ export default function SettingsScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const { scrollTo } = useLocalSearchParams<{ scrollTo?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
+  const diagnosticsYRef = useRef(0);
   const [highlightedIntegration, setHighlightedIntegration] = useState<string | null>(null);
 
   // ── Auth state ──
-  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>({
-    google: { connected: false },
-    microsoft: { connected: false },
-    slack: { connected: false },
-  });
   const [telegramStatus, setTelegramStatus] = useState<TelegramStatus>({
     connected: false, username: null, configured: false,
   });
   const [telegramLinkCode, setTelegramLinkCode] = useState<string | null>(null);
   const [telegramPolling, setTelegramPolling] = useState(false);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [discordConnected, setDiscordConnected] = useState(false);
-  const [discordUsername, setDiscordUsername] = useState<string | null>(null);
-  const [discordPairExpanded, setDiscordPairExpanded] = useState(false);
-  const [discordPairCode, setDiscordPairCode] = useState('');
-  const [discordLinking, setDiscordLinking] = useState(false);
   const [integrationHealth, setIntegrationHealth] = useState<Record<string, string>>({});
   const [integrationErrors, setIntegrationErrors] = useState<Record<string, string | null>>({});
   const [loadingStatus, setLoadingStatus] = useState(true);
-  const [connectingId, setConnectingId] = useState<string | null>(null);
   const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
+  const [connectionsStatus, setConnectionsStatus] = useState<ConnectionsStatus | null>(null);
+  const [connectionBusyApp, setConnectionBusyApp] = useState<string | null>(null);
+  const [connectionTestSummary, setConnectionTestSummary] = useState<string | null>(null);
 
   // ── Per-section error states ──
   const [connectionsError, setConnectionsError] = useState(false);
@@ -325,15 +358,33 @@ export default function SettingsScreen() {
 
   // ── Model Preferences ──
   type ModelCategory = 'chat' | 'planning' | 'memory' | 'research';
-  interface AvailableModel { value: string; label: string; description: string }
+  type ModelCategoryWithOrchestrator = ModelCategory | 'orchestrator';
+  interface AvailableModel { value: string; label: string; description: string; provider?: string; categories?: ModelCategoryWithOrchestrator[] }
   const [modelPrefs, setModelPrefs] = useState<Record<ModelCategory, string>>({
-    chat: 'gpt-5-mini', planning: 'gpt-5-mini', memory: 'gpt-5-mini', research: 'gpt-4o-mini',
+    chat: 'chatgpt-codex-oauth/auto',
+    planning: 'chatgpt-codex-oauth/auto',
+    memory: 'chatgpt-codex-oauth/auto',
+    research: 'chatgpt-codex-oauth/auto',
   });
   const [availableModels, setAvailableModels] = useState<AvailableModel[]>([]);
   const [savingModel, setSavingModel] = useState<ModelCategory | null>(null);
 
+  // ── OpenAI provider auth ──
+  const [openAIProviderStatus, setOpenAIProviderStatus] = useState<OpenAIProviderAuthStatus | null>(null);
+  const [providerCatalog, setProviderCatalog] = useState<CatalogProvider[]>([]);
+  const [providerApiKeyVisible, setProviderApiKeyVisible] = useState<Record<string, boolean>>({});
+  const [providerApiKeyInputs, setProviderApiKeyInputs] = useState<Record<string, string>>({});
+  const [providerAuthMessages, setProviderAuthMessages] = useState<Record<string, string>>({});
+  const [openAIAuthLoading, setOpenAIAuthLoading] = useState(false);
+  const [openAIAuthBusy, setOpenAIAuthBusy] = useState(false);
+  const [openAIApiKeyVisible, setOpenAIApiKeyVisible] = useState(false);
+  const [openAIApiKeyInput, setOpenAIApiKeyInput] = useState('');
+  const [openAICallbackUrl, setOpenAICallbackUrl] = useState('');
+  const [openAILoginUrl, setOpenAILoginUrl] = useState<string | null>(null);
+  const [openAIAuthMessage, setOpenAIAuthMessage] = useState<string | null>(null);
+
   // ── Orchestrator ──
-  const [orchestratorModel, setOrchestratorModel] = useState('claude-opus-4-7');
+  const [orchestratorModel, setOrchestratorModel] = useState('chatgpt-codex-oauth/auto');
   const [availableOrchestratorModels, setAvailableOrchestratorModels] = useState<AvailableModel[]>([]);
   const [savingOrchestrator, setSavingOrchestrator] = useState(false);
 
@@ -375,7 +426,6 @@ export default function SettingsScreen() {
   type TtsVoiceId = typeof TTS_OPENAI_VOICES[number]['id'];
   const [ttsVoice, setTtsVoice] = useState<TtsVoiceId>('nova');
   const [ttsTelegramEnabled, setTtsTelegramEnabled] = useState(false);
-  const [ttsWhatsAppEnabled, setTtsWhatsAppEnabled] = useState(false);
   const [ttsSaving, setTtsSaving] = useState(false);
   const [ttsPreviewing, setTtsPreviewing] = useState(false);
 
@@ -391,17 +441,8 @@ export default function SettingsScreen() {
     setTtsTelegramEnabled(value);
     const channels: string[] = [];
     if (value) channels.push('telegram');
-    if (ttsWhatsAppEnabled) channels.push('whatsapp');
     await saveTtsSettings({ ttsChannels: channels });
-  }, [ttsWhatsAppEnabled, saveTtsSettings]);
-
-  const toggleTtsWhatsApp = useCallback(async (value: boolean) => {
-    setTtsWhatsAppEnabled(value);
-    const channels: string[] = [];
-    if (ttsTelegramEnabled) channels.push('telegram');
-    if (value) channels.push('whatsapp');
-    await saveTtsSettings({ ttsChannels: channels });
-  }, [ttsTelegramEnabled, saveTtsSettings]);
+  }, [saveTtsSettings]);
 
   const changeTtsVoice = useCallback(async (voice: TtsVoiceId) => {
     setTtsVoice(voice);
@@ -680,8 +721,34 @@ export default function SettingsScreen() {
     memoryWriteErrors15m: number;
     memoryReadErrors15m: number;
   }
+  interface JobRunnerJob {
+    id: string;
+    agentType: string;
+    title: string;
+    status: string;
+    ageMs: number;
+    runtimeMs: number | null;
+    retryCount: number;
+    lastError: string | null;
+    resultPreview: string | null;
+  }
+  interface JobRunnerObservability {
+    generatedAt: string;
+    summary: {
+      total: number;
+      byStatus: Record<string, number>;
+      activeCount: number;
+      recentFailureCount: number;
+      oldestQueuedAgeMs: number | null;
+    };
+    activeJobs: JobRunnerJob[];
+    recentJobs: JobRunnerJob[];
+    diagnosticEvents: MemoryDiagEvent[];
+  }
   const [healthReport, setHealthReport] = useState<HealthReport | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
+  const [jobRunnerReport, setJobRunnerReport] = useState<JobRunnerObservability | null>(null);
+  const [jobRunnerLoading, setJobRunnerLoading] = useState(false);
   const [diagnosisText, setDiagnosisText] = useState<string | null>(null);
   const [diagnosisLoading, setDiagnosisLoading] = useState(false);
   const [gapScanRunning, setGapScanRunning] = useState(false);
@@ -838,6 +905,31 @@ export default function SettingsScreen() {
     setHealthLoading(false);
   }, []);
 
+  const loadJobRunnerReport = useCallback(async () => {
+    setJobRunnerLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/agent-jobs/observability');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && typeof data === 'object' && data.summary) {
+          setJobRunnerReport({
+            ...data,
+            activeJobs: Array.isArray(data.activeJobs) ? data.activeJobs : [],
+            recentJobs: Array.isArray(data.recentJobs) ? data.recentJobs : [],
+            diagnosticEvents: Array.isArray(data.diagnosticEvents) ? data.diagnosticEvents : [],
+          });
+        } else {
+          setJobRunnerReport(null);
+        }
+      } else {
+        setJobRunnerReport(null);
+      }
+    } catch {
+      setJobRunnerReport(null);
+    }
+    setJobRunnerLoading(false);
+  }, []);
+
   const runDiagnosis = useCallback(async () => {
     setDiagnosisLoading(true);
     setDiagnosisText(null);
@@ -916,23 +1008,35 @@ export default function SettingsScreen() {
     return () => clearInterval(id);
   }, [subsystemSheetVisible, subsystemSheetName, fetchSubsystemEventsBackground]);
 
+  const applySelectedModel = useCallback((model: string, responsePrefs?: Record<string, unknown>) => {
+    const nextPrefs = (['chat', 'planning', 'memory', 'research'] as ModelCategory[]).reduce((acc, key) => {
+      const value = responsePrefs?.[key];
+      acc[key] = typeof value === 'string' ? value : model;
+      return acc;
+    }, {} as Record<ModelCategory, string>);
+    setModelPrefs(nextPrefs);
+    setOrchestratorModel(model);
+  }, []);
+
   const saveModel = useCallback(async (category: ModelCategory, model: string) => {
     setSavingModel(category);
     try {
-      await apiRequest('PATCH', '/api/settings/models', { category, model });
-      setModelPrefs(prev => ({ ...prev, [category]: model }));
+      const res = await apiRequest('PATCH', '/api/settings/models', { category, model });
+      const data = await res.json().catch(() => ({}));
+      applySelectedModel(String(data.selectedModel || model), data.modelPreferences);
     } catch {}
     setSavingModel(null);
-  }, []);
+  }, [applySelectedModel]);
 
   const saveOrchestratorModel = useCallback(async (model: string) => {
     setSavingOrchestrator(true);
     try {
-      await apiRequest('PATCH', '/api/settings/orchestrator', { model });
-      setOrchestratorModel(model);
+      const res = await apiRequest('PATCH', '/api/settings/orchestrator', { model });
+      const data = await res.json().catch(() => ({}));
+      applySelectedModel(String(data.selectedModel || model), data.modelPreferences);
     } catch {}
     setSavingOrchestrator(false);
-  }, []);
+  }, [applySelectedModel]);
 
   // ── Nervous System ──
   interface WatchTopic {
@@ -1029,40 +1133,33 @@ export default function SettingsScreen() {
     setLoadingStatus(true);
     // Each call is independent — a failure on one doesn't block others.
     // We track per-call results to detect when required data is unavailable.
-    const [oauthResult, telegramResult, discordResult, integrationResult, channelsResult] = await Promise.allSettled([
-      apiRequest('GET', '/api/oauth/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    const [telegramResult, integrationResult, channelsResult, connectionsResult] = await Promise.allSettled([
       apiRequest('GET', '/api/telegram/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
-      apiRequest('GET', '/api/discord/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/integrations/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
       apiRequest('GET', '/api/channels').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+      apiRequest('GET', '/api/connections/status').then(r => r.ok ? r.json() : Promise.reject(r.status)),
     ]);
 
-    const oauthRes = oauthResult.status === 'fulfilled' ? oauthResult.value : null;
     const telegramRes = telegramResult.status === 'fulfilled' ? telegramResult.value : null;
-    const discordRes = discordResult.status === 'fulfilled' ? discordResult.value : null;
     const integrationRes = integrationResult.status === 'fulfilled' ? integrationResult.value : null;
     const channelsRes = channelsResult.status === 'fulfilled' ? channelsResult.value : null;
+    const connectionsRes = connectionsResult.status === 'fulfilled' ? connectionsResult.value : null;
 
     // Show error row when any connections endpoint fails.
-    const anyConnectionFailed = [oauthResult, telegramResult, discordResult, integrationResult, channelsResult]
+    const anyConnectionFailed = [telegramResult, integrationResult, channelsResult, connectionsResult]
       .some(r => r.status === 'rejected');
     setConnectionsError(anyConnectionFailed);
 
-    if (oauthRes) setOAuthStatus({
-      google: oauthRes.google ?? { connected: false },
-      microsoft: oauthRes.microsoft ?? { connected: false },
-      slack: oauthRes.slack ?? { connected: false },
-    });
     if (telegramRes) setTelegramStatus({
       connected: telegramRes.connected ?? false,
       username: telegramRes.username ?? null,
       configured: telegramRes.configured ?? false,
+      botUsername: telegramRes.botUsername ?? null,
     });
-    setDiscordConnected(discordRes?.connected ?? false);
-    setDiscordUsername(discordRes?.discordUsername ?? null);
     setAndroidDaemonConnected(
       channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false
     );
+    if (connectionsRes) setConnectionsStatus(normalizeConnectionsStatus(connectionsRes));
     if (integrationRes && typeof integrationRes === 'object') {
       const health: Record<string, string> = {};
       const errors: Record<string, string | null> = {};
@@ -1095,6 +1192,22 @@ export default function SettingsScreen() {
     if (orchRes) {
       setOrchestratorModel(orchRes.orchestratorModel ?? 'claude-opus-4-7');
       setAvailableOrchestratorModels(orchRes.availableOrchestratorModels ?? []);
+    }
+  }, []);
+
+  const loadOpenAIProviderStatus = useCallback(async () => {
+    setOpenAIAuthLoading(true);
+    try {
+      const res = await apiRequest('GET', '/api/auth/providers/status');
+      if (res.ok) {
+        const data = await res.json();
+        setOpenAIProviderStatus(data);
+        if (Array.isArray(data.providerCatalog)) setProviderCatalog(data.providerCatalog);
+      }
+    } catch {
+      setOpenAIProviderStatus(null);
+    } finally {
+      setOpenAIAuthLoading(false);
     }
   }, []);
 
@@ -1261,11 +1374,11 @@ export default function SettingsScreen() {
         }
         const channels: string[] = Array.isArray(ttsRes.ttsChannels) ? ttsRes.ttsChannels : [];
         setTtsTelegramEnabled(channels.includes('telegram'));
-        setTtsWhatsAppEnabled(channels.includes('whatsapp'));
       }
     } catch {}
     await loadModels();
-  }, [loadConnections, loadModels]);
+    await loadOpenAIProviderStatus();
+  }, [loadConnections, loadModels, loadOpenAIProviderStatus]);
 
   useFocusEffect(useCallback(() => {
     loadAll();
@@ -1273,6 +1386,7 @@ export default function SettingsScreen() {
     loadThreatLog();
     loadBuildHistory();
     loadHealth();
+    loadJobRunnerReport();
     loadMcpServers();
     loadMcpServerKey();
     loadWorkspaceFiles();
@@ -1288,7 +1402,7 @@ export default function SettingsScreen() {
         githubPollRef.current = null;
       }
     };
-  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadMcpServers, loadMcpServerKey, loadWorkspaceFiles]));
+  }, [loadAll, loadNervousSystem, loadThreatLog, loadBuildHistory, loadHealth, loadJobRunnerReport, loadMcpServers, loadMcpServerKey, loadWorkspaceFiles]));
 
   useEffect(() => {
     return () => {
@@ -1302,8 +1416,17 @@ export default function SettingsScreen() {
   // Scroll to the CONNECTIONS section and highlight the integration when
   // the screen is opened with a `scrollTo` route param (e.g. from the
   // IntegrationErrorCard "Go to Settings → Connections" CTA).
+  const scrollToDiagnostics = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    scrollViewRef.current?.scrollTo({ y: Math.max(0, diagnosticsYRef.current - 8), animated: true });
+  }, []);
+
   useEffect(() => {
     if (!scrollTo) return;
+    if (scrollTo === 'diagnostics' || scrollTo === 'runtime') {
+      const timer = setTimeout(scrollToDiagnostics, 400);
+      return () => clearTimeout(timer);
+    }
     setHighlightedIntegration(scrollTo);
     // CONNECTIONS is the first section, so scroll to top to reveal it.
     const timer = setTimeout(() => {
@@ -1315,7 +1438,7 @@ export default function SettingsScreen() {
       clearTimeout(timer);
       clearTimeout(clearTimer);
     };
-  }, [scrollTo]);
+  }, [scrollTo, scrollToDiagnostics]);
 
   // ── Helpers ──
   // Triggers an immediate server-side re-validation for the current user so
@@ -1326,33 +1449,6 @@ export default function SettingsScreen() {
     } catch {}
   }, []);
 
-  // ── OAuth connect ──
-  const handleConnect = useCallback(async (platform: string) => {
-    setConnectingId(platform);
-    try {
-      const url = new URL(`/api/oauth/${platform}/connect`, getApiUrl()).toString();
-      await WebBrowser.openAuthSessionAsync(url, getApiUrl().toString());
-      await refreshIntegrationHealth();
-      await loadAll();
-    } catch {}
-    setConnectingId(null);
-  }, [loadAll, refreshIntegrationHealth]);
-
-  const handleDisconnect = useCallback(async (platform: string) => {
-    Alert.alert('Disconnect', `Disconnect ${platform}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Disconnect', style: 'destructive', onPress: async () => {
-          try {
-            await apiRequest('DELETE', `/api/oauth/disconnect/${platform}`);
-            await refreshIntegrationHealth();
-            await loadAll();
-          } catch {}
-        },
-      },
-    ]);
-  }, [loadAll, refreshIntegrationHealth]);
-
   // ── Telegram link ──
   const handleTelegramLink = useCallback(async () => {
     try {
@@ -1360,6 +1456,7 @@ export default function SettingsScreen() {
       const data = await res.json();
       if (data.code) {
         setTelegramLinkCode(data.code);
+        setTelegramStatus(prev => ({ ...prev, botUsername: data.botUsername ?? prev.botUsername ?? null }));
         setTelegramPolling(true);
         let attempts = 0;
         telegramPollRef.current = setInterval(async () => {
@@ -1376,7 +1473,12 @@ export default function SettingsScreen() {
               clearInterval(telegramPollRef.current!);
               setTelegramPolling(false);
               setTelegramLinkCode(null);
-              setTelegramStatus({ connected: true, username: status.username ?? null, configured: true });
+              setTelegramStatus({
+                connected: true,
+                username: status.username ?? null,
+                configured: true,
+                botUsername: status.botUsername ?? data.botUsername ?? null,
+              });
               // Refresh validator so health badge updates immediately after link
               await refreshIntegrationHealth();
               const healthRes = await apiRequest('GET', '/api/integrations/status').then(r => r.json()).catch(() => null);
@@ -1406,7 +1508,7 @@ export default function SettingsScreen() {
           try {
             await apiRequest('DELETE', '/api/telegram/disconnect');
             await refreshIntegrationHealth();
-            setTelegramStatus({ connected: false, username: null, configured: false });
+            setTelegramStatus(prev => ({ connected: false, username: null, configured: false, botUsername: prev.botUsername ?? null }));
             setIntegrationHealth(prev => ({ ...prev, telegram: 'unconfigured' }));
             setIntegrationErrors(prev => ({ ...prev, telegram: null }));
           } catch {}
@@ -1482,44 +1584,240 @@ export default function SettingsScreen() {
     await saveWakeSettings({ wakeWords: next });
   }, [wakeWords, saveWakeSettings]);
 
-  const handleDiscordPairSubmit = useCallback(async () => {
-    const code = discordPairCode.trim().toUpperCase();
-    if (code.length !== 6) {
-      Alert.alert('Invalid Code', 'Please enter the 6-character code from Discord.');
+  const openHostedConnectionLink = useCallback(async (url: string) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.location.assign(url);
       return;
     }
-    setDiscordLinking(true);
+    await WebBrowser.openBrowserAsync(url, {
+      presentationStyle: WebBrowser.WebBrowserPresentationStyle.FORM_SHEET,
+    }).catch(() => {
+      void Linking.openURL(url);
+    });
+  }, []);
+
+  const startOpenAIChatGPTOAuth = useCallback(async () => {
+    setOpenAIAuthBusy(true);
+    setOpenAIAuthMessage(null);
     try {
-      const res = await apiRequest('POST', '/api/discord/link', { code });
+      const res = await authFetch(new URL('/api/auth/openai-oauth/start', getApiUrl()).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
       const data = await res.json();
-      if (res.ok && data.ok) {
-        setDiscordConnected(true);
-        setDiscordUsername(data.discordUsername ?? null);
-        setDiscordPairExpanded(false);
-        setDiscordPairCode('');
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        // Refresh validator so health badge updates immediately after link
-        await refreshIntegrationHealth();
-        const healthRes = await apiRequest('GET', '/api/integrations/status').then(r => r.json()).catch(() => null);
-        if (healthRes && typeof healthRes === 'object') {
-          const health: Record<string, string> = {};
-          const errors: Record<string, string | null> = {};
-          for (const [k, v] of Object.entries(healthRes)) {
-            const entry = v as { status?: string; errorMessage?: string | null } | null;
-            health[k] = entry?.status ?? 'unconfigured';
-            errors[k] = entry?.errorMessage ?? null;
-          }
-          setIntegrationHealth(health);
-          setIntegrationErrors(errors);
-        }
-      } else {
-        Alert.alert('Pairing Failed', data.error ?? 'Could not link Discord. Please try again.');
+      if (!res.ok) {
+        throw new Error(data.message || data.error || 'OpenAI OAuth is not configured yet.');
       }
-    } catch {
-      Alert.alert('Error', 'Could not connect. Check your network and try again.');
+      if (typeof data.loginUrl !== 'string' || !data.loginUrl) {
+        throw new Error(data.message || 'OpenAI OAuth is not configured yet.');
+      }
+      setOpenAILoginUrl(data.loginUrl);
+      setOpenAIAuthMessage(data.instructions ?? 'Open the login URL. Paste the callback URL here if localhost cannot load.');
+      if (Platform.OS !== 'web') {
+        await openHostedConnectionLink(data.loginUrl);
+      }
+    } catch (error: any) {
+      const message = error?.message || 'Jarvis could not start OpenAI OAuth.';
+      setOpenAIAuthMessage(message);
+      Alert.alert('Connect ChatGPT Subscription', message);
+    } finally {
+      setOpenAIAuthBusy(false);
     }
-    setDiscordLinking(false);
-  }, [discordPairCode, refreshIntegrationHealth]);
+  }, [openHostedConnectionLink]);
+
+  const openOpenAILoginUrl = useCallback(async () => {
+    if (!openAILoginUrl) return;
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.open(openAILoginUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    await openHostedConnectionLink(openAILoginUrl);
+  }, [openAILoginUrl, openHostedConnectionLink]);
+
+  const saveOpenAIApiKey = useCallback(async () => {
+    const apiKey = openAIApiKeyInput.trim();
+    if (!apiKey) return;
+    setOpenAIAuthBusy(true);
+    try {
+      const res = await apiRequest('POST', '/api/auth/openai-api-key', { apiKey });
+      const data = await res.json().catch(() => ({}));
+      if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
+      setOpenAIApiKeyInput('');
+      setOpenAIApiKeyVisible(false);
+      setOpenAIAuthMessage('OpenAI API key saved and selected for this Jarvis account.');
+      await loadOpenAIProviderStatus();
+    } catch (error: any) {
+      Alert.alert('Use OpenAI API Key', error?.message || 'Jarvis could not save the API key.');
+    } finally {
+      setOpenAIAuthBusy(false);
+    }
+  }, [applySelectedModel, loadOpenAIProviderStatus, openAIApiKeyInput]);
+
+  const setProviderMessage = useCallback((providerId: string, message: string) => {
+    setProviderAuthMessages((prev) => ({ ...prev, [providerId]: message }));
+  }, []);
+
+  const saveProviderApiKey = useCallback(async (providerId: string) => {
+    const apiKey = (providerApiKeyInputs[providerId] ?? '').trim();
+    if (!apiKey) return;
+    setOpenAIAuthBusy(true);
+    try {
+      const res = await apiRequest('POST', '/api/auth/model-provider-api-key', { provider: providerId, apiKey });
+      const data = await res.json().catch(() => ({}));
+      if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
+      setProviderApiKeyInputs((prev) => ({ ...prev, [providerId]: '' }));
+      setProviderApiKeyVisible((prev) => ({ ...prev, [providerId]: false }));
+      setProviderMessage(providerId, 'Provider API key saved and selected for this Jarvis account.');
+      await loadOpenAIProviderStatus();
+    } catch (error: any) {
+      const message = error?.message || 'Jarvis could not save this provider key.';
+      setProviderMessage(providerId, message);
+      Alert.alert('Save Provider Key', message);
+    } finally {
+      setOpenAIAuthBusy(false);
+    }
+  }, [applySelectedModel, loadOpenAIProviderStatus, providerApiKeyInputs, setProviderMessage]);
+
+  const disconnectProvider = useCallback((providerId: string, label: string) => {
+    Alert.alert(
+      `Disconnect ${label}`,
+      `Remove stored credentials for ${label} from this Jarvis account?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: async () => {
+            setOpenAIAuthBusy(true);
+            try {
+              const res = await apiRequest('DELETE', `/api/auth/providers/${encodeURIComponent(providerId)}`);
+              const data = await res.json().catch(() => ({}));
+              if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
+              setProviderMessage(providerId, `${label} credentials removed.`);
+              await loadOpenAIProviderStatus();
+            } catch (error: any) {
+              const message = error?.message || `Jarvis could not disconnect ${label}.`;
+              setProviderMessage(providerId, message);
+              Alert.alert(`Disconnect ${label}`, message);
+            } finally {
+              setOpenAIAuthBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [applySelectedModel, loadOpenAIProviderStatus, setProviderMessage]);
+
+  const submitOpenAICallbackUrl = useCallback(async () => {
+    const callbackUrl = openAICallbackUrl.trim();
+    if (!callbackUrl) return;
+    setOpenAIAuthBusy(true);
+    try {
+      const res = await apiRequest('POST', '/api/auth/openai-oauth/callback-url', { callbackUrl });
+      const data = await res.json().catch(() => ({}));
+      if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
+      setOpenAICallbackUrl('');
+      setOpenAIAuthMessage('ChatGPT subscription connected and selected for this Jarvis account.');
+      await loadOpenAIProviderStatus();
+    } catch (error: any) {
+      Alert.alert('Finish OpenAI Login', error?.message || 'Jarvis could not complete OpenAI OAuth.');
+    } finally {
+      setOpenAIAuthBusy(false);
+    }
+  }, [applySelectedModel, loadOpenAIProviderStatus, openAICallbackUrl]);
+
+  const useJarvisDefaultModel = useCallback(() => {
+    Alert.alert(
+      'Use Jarvis Default Model',
+      'This removes stored OpenAI API-key and OAuth profiles from this Jarvis account.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Use Default',
+          style: 'destructive',
+          onPress: async () => {
+            setOpenAIAuthBusy(true);
+            try {
+              const res = await apiRequest('DELETE', '/api/auth/providers/openai?resetSelectedModel=1');
+              const data = await res.json().catch(() => ({}));
+              if (data.selectedModel) applySelectedModel(String(data.selectedModel), data.modelPreferences);
+              setOpenAIAuthMessage('Jarvis default model route is active.');
+              await loadOpenAIProviderStatus();
+            } catch (error: any) {
+              Alert.alert('Use Jarvis Default Model', error?.message || 'Jarvis could not reset the OpenAI provider.');
+            } finally {
+              setOpenAIAuthBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [applySelectedModel, loadOpenAIProviderStatus]);
+
+  const connectExternalApp = useCallback(async (appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    setConnectionBusyApp(`connect:${appId}`);
+    try {
+      const res = await apiRequest('POST', '/api/connections/connect-link', { appId, app: appId });
+      const data = await res.json();
+      const url = data?.url ?? data?.connectUrl ?? data?.connectLink ?? data?.oauthUrl ?? data?.authUrl ?? data?.link;
+      if (typeof url !== 'string' || !url) {
+        throw new Error('Jarvis could not create a hosted connection link.');
+      }
+      await openHostedConnectionLink(url);
+      setConnectionTestSummary(`${app?.label ?? 'App'} connection opened in your browser.`);
+      await loadConnections();
+    } catch (error: any) {
+      Alert.alert('Connect app', error?.message || `Jarvis could not start ${app?.label ?? 'that app'} connection.`);
+    } finally {
+      setConnectionBusyApp(null);
+    }
+  }, [loadConnections, openHostedConnectionLink]);
+
+  const disconnectExternalApp = useCallback((appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    Alert.alert('Disconnect app', `Disconnect ${app?.label ?? 'this app'} from Jarvis?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Disconnect',
+        style: 'destructive',
+        onPress: async () => {
+          setConnectionBusyApp(`disconnect:${appId}`);
+          try {
+            await apiRequest('POST', '/api/connections/disconnect', { appId, app: appId });
+            setConnectionTestSummary(`${app?.label ?? 'App'} disconnected.`);
+            await loadConnections();
+          } catch (error: any) {
+            Alert.alert('Disconnect app', error?.message || `Jarvis could not disconnect ${app?.label ?? 'that app'}.`);
+          } finally {
+            setConnectionBusyApp(null);
+          }
+        },
+      },
+    ]);
+  }, [loadConnections]);
+
+  const testExternalApp = useCallback(async (appId: ConnectionAppId) => {
+    const app = CONNECTION_APPS.find((item) => item.id === appId);
+    setConnectionBusyApp(`test:${appId}`);
+    try {
+      const res = await apiRequest('POST', '/api/connections/test', { appId, app: appId });
+      const data = await res.json();
+      const result = normalizeConnectionTestResult(data);
+      setConnectionTestSummary(`${app?.label ?? 'App'}: ${result.summary}`);
+      if (data?.connections || data?.apps || data?.statuses) {
+        setConnectionsStatus(normalizeConnectionsStatus(data));
+      } else {
+        await loadConnections();
+      }
+      if (result.ok) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      setConnectionTestSummary(`Jarvis could not test ${app?.label ?? 'that app'} right now.`);
+    } finally {
+      setConnectionBusyApp(null);
+    }
+  }, [loadConnections]);
 
   // ── Reward claim ──
   const handleClaimReward = useCallback(async (reward: Reward) => {
@@ -1541,19 +1839,17 @@ export default function SettingsScreen() {
   const xpProgress = xpInfo.progress;
   const availableRewards = getAvailableRewards(lifetimeXp);
   const earnedBadges = (stats.badges ?? []).map(id => ALL_BADGES.find(b => b.id === id)).filter(Boolean);
-
-  // OAuth platform configs
-  const PLATFORMS = [
-    { id: 'google', name: 'Google', subtitle: 'Calendar + Gmail', icon: 'logo-google' as const, color: '#4285F4' },
-    { id: 'microsoft', name: 'Microsoft', subtitle: 'Outlook Calendar', icon: 'logo-windows' as const, color: '#0078D4' },
-    { id: 'slack', name: 'Slack', subtitle: 'Messages & Channels', icon: 'chatbubbles-outline' as const, color: '#611f69' },
-  ];
-  // Maps OAuth platform id → integration_status table key
-  const PLATFORM_HEALTH_KEY: Record<string, string> = {
-    google: 'google',
-    microsoft: 'outlook',
-    slack: 'slack',
-  };
+  const openAIStatus = openAIProviderStatus?.providers?.openai ?? openAIProviderStatus?.openai;
+  const openAIApiKeyStatus = openAIStatus?.authTypes.api_key;
+  const openAIOAuthStatus = openAIStatus?.authTypes.oauth;
+  const openAIDefaultLabel =
+    openAIStatus?.defaultAuthType === 'oauth'
+      ? 'ChatGPT subscription'
+      : openAIStatus?.defaultAuthType === 'api_key'
+        ? 'OpenAI API key'
+        : 'Jarvis default model';
+  const modelProviderCards = (providerCatalog.length > 0 ? providerCatalog : MODEL_PROVIDER_CATALOG)
+    .filter((provider) => provider.id !== 'openai');
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -1571,6 +1867,28 @@ export default function SettingsScreen() {
         showsVerticalScrollIndicator={false}
       >
 
+        <View style={styles.quickNavCard}>
+          <View style={styles.quickNavHeader}>
+            <View style={[styles.quickNavIconWrap, { backgroundColor: '#10B98120' }]}>
+              <Ionicons name="pulse-outline" size={18} color="#10B981" />
+            </View>
+            <View style={styles.quickNavCopy}>
+              <Text style={styles.quickNavTitle}>Runtime checks</Text>
+              <Text style={styles.quickNavSubtitle}>Jump to Runtime Preview and configuration diagnostics.</Text>
+            </View>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Jump to Runtime Preview diagnostics"
+            testID="settings-runtime-diagnostics-jump"
+            style={styles.quickNavButton}
+            onPress={scrollToDiagnostics}
+          >
+            <Text style={styles.quickNavButtonText}>Runtime Preview</Text>
+            <Ionicons name="arrow-down-outline" size={15} color="#10B981" />
+          </Pressable>
+        </View>
+
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── CONNECTIONS ── */}
         <SectionHeader label="CONNECTIONS" accent={Colors.cyan} />
@@ -1579,59 +1897,99 @@ export default function SettingsScreen() {
           {connectionsError && (
             <SectionErrorRow message="Couldn't load connections" onRetry={loadConnections} />
           )}
-          {/* OAuth platforms */}
-          {PLATFORMS.map((p, idx) => {
-            const status = oauthStatus[p.id as keyof OAuthStatus];
-            const isConnecting = connectingId === p.id;
-            const healthKey = PLATFORM_HEALTH_KEY[p.id];
-            const health = healthKey ? integrationHealth[healthKey] : undefined;
-            const isBroken = health === 'broken';
-            const isExpiring = health === 'expiring_soon';
-            const isHighlighted = healthKey ? highlightedIntegration === healthKey : false;
+          <View style={styles.connRow}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#6366F120' }]}>
+              <Ionicons name="git-network-outline" size={18} color="#6366F1" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>App Connections</Text>
+              <Text style={styles.connSub}>
+                Use hosted sign-in links for mail, calendars, team chat, files, and tasks. No secrets to paste.
+              </Text>
+              {connectionsStatus?.error ? (
+                <Text style={[styles.connSub, { color: Colors.warning }]}>{connectionsStatus.error}</Text>
+              ) : null}
+            </View>
+            <Pressable
+              style={[styles.connBtn, styles.connBtnDisconnected, { borderColor: '#6366F1' }]}
+              onPress={loadConnections}
+            >
+              <Text style={[styles.connBtnText, { color: '#6366F1' }]}>Refresh</Text>
+            </Pressable>
+          </View>
+
+          {CONNECTION_APPS.map((app) => {
+            const appStatus = connectionsStatus?.apps[app.id];
+            const connected = appStatus?.connected ?? false;
+            const statusLabel = appStatus ? getConnectionStatusLabel(appStatus) : 'Connect';
+            const connectBusy = connectionBusyApp === `connect:${app.id}`;
+            const disconnectBusy = connectionBusyApp === `disconnect:${app.id}`;
+            const testBusy = connectionBusyApp === `test:${app.id}`;
+            const statusText = connected
+              ? appStatus?.accountLabel || 'Connected'
+              : appStatus?.error || (statusLabel === 'Reconnect' ? 'Needs reconnect' : app.description);
             return (
-              <View key={p.id} style={[styles.connRow, idx > 0 && styles.connRowBorder, isHighlighted && { backgroundColor: '#FEF3C7' }]}>
-                <View style={[styles.connIconWrap, { backgroundColor: p.color + '20' }]}>
-                  <Ionicons name={p.icon} size={18} color={p.color} />
+              <View key={app.id} style={[styles.connRow, styles.connRowBorder]}>
+                <View style={[styles.connIconWrap, { backgroundColor: app.color + '20' }]}>
+                  <Ionicons name={app.icon as keyof typeof Ionicons.glyphMap} size={18} color={app.color} />
                 </View>
                 <View style={styles.connInfo}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={styles.connName}>{p.name}</Text>
-                    {health && <StatusDot status={health} />}
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                    <Text style={styles.connName}>{app.label}</Text>
+                    <StatusDot status={connected ? 'healthy' : statusLabel === 'Reconnect' ? 'broken' : 'unconfigured'} />
                   </View>
-                  <Text style={[styles.connSub, isBroken && { color: Colors.error }]}>
-                    {isBroken
-                      ? 'Connection broken — tap Reconnect'
-                      : isExpiring
-                        ? 'Token expiring soon'
-                        : status.connected
-                          ? (status.accounts?.[0]?.email ?? status.email ?? 'Connected')
-                          : p.subtitle}
-                  </Text>
+                  <Text style={[styles.connSub, appStatus?.error && { color: Colors.warning }]}>{statusText}</Text>
+                  <View style={styles.connectionActionsRow}>
+                    <Pressable
+                      style={[styles.connBtn, { borderColor: app.color, opacity: connectBusy ? 0.65 : 1 }]}
+                      onPress={() => connectExternalApp(app.id)}
+                      disabled={connectBusy || disconnectBusy || testBusy}
+                    >
+                      <Text style={[styles.connBtnText, { color: app.color }]}>
+                        {connectBusy ? 'Opening' : connected ? 'Reconnect' : statusLabel}
+                      </Text>
+                    </Pressable>
+                    {connected ? (
+                      <Pressable
+                        style={[styles.connBtn, { borderColor: Colors.border, opacity: disconnectBusy ? 0.65 : 1 }]}
+                        onPress={() => disconnectExternalApp(app.id)}
+                        disabled={connectBusy || disconnectBusy || testBusy}
+                      >
+                        <Text style={[styles.connBtnText, { color: Colors.textTertiary }]}>
+                          {disconnectBusy ? 'Disconnecting' : 'Disconnect'}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      style={[styles.connectionSecondaryButton, { opacity: testBusy ? 0.65 : 1 }]}
+                      onPress={() => testExternalApp(app.id)}
+                      disabled={connectBusy || disconnectBusy || testBusy}
+                    >
+                      {testBusy ? (
+                        <ActivityIndicator size="small" color={Colors.textSecondary} />
+                      ) : (
+                        <Ionicons name="pulse-outline" size={15} color={Colors.textSecondary} />
+                      )}
+                      <Text style={styles.connectionSecondaryButtonText}>{testBusy ? 'Testing' : 'Test'}</Text>
+                    </Pressable>
+                  </View>
                 </View>
-                <Pressable
-                  style={[
-                    styles.connBtn,
-                    isBroken
-                      ? { backgroundColor: Colors.error + '20', borderColor: Colors.error }
-                      : status.connected ? styles.connBtnConnected : styles.connBtnDisconnected,
-                  ]}
-                  onPress={() => (isBroken || isExpiring || !status.connected) ? handleConnect(p.id) : handleDisconnect(p.id)}
-                  disabled={isConnecting || loadingStatus}
-                >
-                  {isConnecting ? (
-                    <ActivityIndicator size="small" color={Colors.cyan} />
-                  ) : (
-                    <Text style={[
-                      styles.connBtnText,
-                      isBroken ? { color: Colors.error } : status.connected && styles.connBtnTextConnected,
-                    ]}>
-                      {isBroken ? 'Reconnect' : isExpiring ? 'Renew' : status.connected ? 'Connected' : 'Connect'}
-                    </Text>
-                  )}
-                </Pressable>
               </View>
             );
           })}
+
+          {connectionTestSummary ? <Text style={styles.connectionTestText}>{connectionTestSummary}</Text> : null}
+          {connectionsStatus?.nextSteps?.length ? (
+            <View style={styles.connectionSteps}>
+              {connectionsStatus.nextSteps.slice(0, 3).map((step, idx) => (
+                <View key={`${step}-${idx}`} style={styles.connectionStepRow}>
+                  <Text style={styles.connectionStepNumber}>{idx + 1}</Text>
+                  <Text style={styles.connectionStepText}>{step}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
 
           {/* Telegram */}
           {(() => {
@@ -1672,7 +2030,9 @@ export default function SettingsScreen() {
           {/* Telegram link code */}
           {telegramLinkCode && (
             <View style={styles.linkCodeBlock}>
-              <Text style={styles.linkCodeLabel}>Send this code to @GamePlanAI_bot on Telegram:</Text>
+              <Text style={styles.linkCodeLabel}>
+                Send this code to {telegramStatus.botUsername ? `@${telegramStatus.botUsername}` : 'the Jarvis Telegram bot'}:
+              </Text>
               <Text style={styles.linkCode}>{telegramLinkCode}</Text>
               {telegramPolling && (
                 <View style={styles.linkCodeWait}>
@@ -1683,76 +2043,7 @@ export default function SettingsScreen() {
             </View>
           )}
 
-          {/* Discord */}
-          {(() => {
-            const discordBroken = integrationHealth['discord'] === 'broken';
-            const discordErrMsg = integrationErrors['discord'];
-            return (
-              <Pressable
-                style={[styles.connRow, styles.connRowBorder, highlightedIntegration === 'discord' && { backgroundColor: '#FEF3C7' }]}
-                onPress={() => {
-                  if (discordBroken || !discordConnected) setDiscordPairExpanded(v => !v);
-                }}
-              >
-                <View style={[styles.connIconWrap, { backgroundColor: '#5865F220' }]}>
-                  <Ionicons name="logo-discord" size={18} color="#5865F2" />
-                </View>
-                <View style={styles.connInfo}>
-                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <Text style={styles.connName}>Discord</Text>
-                    <StatusDot status={integrationHealth['discord']} />
-                  </View>
-                  <Text style={[styles.connSub, discordBroken && { color: Colors.error }]}>
-                    {discordBroken
-                      ? (discordErrMsg ?? 'Connection error — tap to reconnect')
-                      : discordConnected
-                        ? (discordUsername ? `@${discordUsername}` : 'Connected')
-                        : 'Tap to link your Discord account'}
-                  </Text>
-                </View>
-                <View style={[styles.connBtn, (discordBroken || !discordConnected) ? styles.connBtnDisconnected : styles.connBtnConnected,
-                  discordBroken && { borderColor: Colors.error }]}>
-                  <Text style={[styles.connBtnText, discordBroken && { color: Colors.error },
-                    !discordBroken && discordConnected && styles.connBtnTextConnected]}>
-                    {discordBroken ? 'Reconnect' : discordConnected ? 'Connected' : 'Connect'}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })()}
-          {discordPairExpanded && (!discordConnected || integrationHealth['discord'] === 'broken') && (
-            <View style={styles.linkCodeBlock}>
-              <Text style={styles.linkCodeLabel}>How to link Discord:</Text>
-              <Text style={[styles.connSub, { marginBottom: 6 }]}>
-                1. Open Discord and DM your Jarvis bot{'\n'}
-                2. The bot replies with a 6-character code{'\n'}
-                3. Enter that code below
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                <TextInput
-                  style={[styles.linkCodeInput]}
-                  placeholder="ABC123"
-                  placeholderTextColor={Colors.textTertiary}
-                  value={discordPairCode}
-                  onChangeText={t => setDiscordPairCode(t.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6))}
-                  autoCapitalize="characters"
-                  maxLength={6}
-                  returnKeyType="done"
-                  onSubmitEditing={handleDiscordPairSubmit}
-                />
-                <Pressable
-                  style={[styles.connBtn, styles.connBtnDisconnected, { paddingHorizontal: 16 }]}
-                  onPress={handleDiscordPairSubmit}
-                  disabled={discordLinking}
-                >
-                  {discordLinking
-                    ? <ActivityIndicator size="small" color={Colors.cyan} />
-                    : <Text style={styles.connBtnText}>Link</Text>
-                  }
-                </Pressable>
-              </View>
-            </View>
-          )}
+
 
           {/* Android Daemon */}
           <View style={[styles.connRow, styles.connRowBorder]}>
@@ -1907,7 +2198,7 @@ export default function SettingsScreen() {
                       <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
                         To enable one-tap GitHub login, an admin must create a GitHub OAuth App and set the{' '}
                         <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>GITHUB_CLIENT_ID</Text>
-                        {' '}secret in the Replit environment.
+                        {' '}secret in the Railway environment.
                       </Text>
                       <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
                         Setup steps:{'\n'}
@@ -1919,12 +2210,12 @@ export default function SettingsScreen() {
                           github.com/settings/developers
                         </Text>
                         {'\n'}
-                        {'2. '}Click "New OAuth App" and fill in any name and homepage URL.{'\n'}
+                        {'2. Click "New OAuth App" and fill in any name and homepage URL.\n'}
                         {'3. '}Set Authorization callback URL to any valid URL (Device Flow does not use it).{'\n'}
-                        {'4. '}Enable "Device Flow" in the app settings.{'\n'}
+                        {'4. Enable "Device Flow" in the app settings.\n'}
                         {'5. '}Copy the Client ID and add it as the{' '}
                         <Text style={{ fontFamily: 'Inter_600SemiBold', color: Colors.text }}>GITHUB_CLIENT_ID</Text>
-                        {' '}secret in Replit.{'\n'}
+                        {' '}variable in Railway.{'\n'}
                         {'   '}(No client secret needed for Device Flow.)
                       </Text>
                       <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
@@ -2009,7 +2300,7 @@ export default function SettingsScreen() {
               </View>
               {githubConnected && (
                 <Text style={{ color: Colors.textTertiary, fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 8 }}>
-                  Ask Jarvis "what are my open PRs?" or use /pr on Telegram.
+                  {'Ask Jarvis "what are my open PRs?" or use /pr on Telegram.'}
                 </Text>
               )}
             </View>
@@ -2217,7 +2508,7 @@ export default function SettingsScreen() {
                     </View>
                     {mcpAddEnvPresent === false && (
                       <Text style={{ color: Colors.error, fontSize: 11, marginBottom: 8, marginTop: -4 }}>
-                        Variable not found — add it to Replit Secrets first.
+                        Variable not found — add it to Railway Variables first.
                       </Text>
                     )}
                     {mcpAddEnvPresent === true && (
@@ -2239,7 +2530,7 @@ export default function SettingsScreen() {
                     {mcpEnvGuideExpanded && (
                       <View style={{ backgroundColor: Colors.surface, borderRadius: 8, padding: 12, marginBottom: 10, borderWidth: 1, borderColor: Colors.border }}>
                         <Text style={{ color: Colors.text, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 18 }}>
-                          {`1. Open your Replit project.\n2. Click the padlock icon (Secrets) in the left sidebar.\n3. Add a new secret with your chosen name (e.g. MY_API_TOKEN) and paste the value.\n4. The variable will be available in this dropdown immediately — no restart needed.\n\nUsing Secrets keeps raw keys out of your database and lets you rotate them without changing the app.`}
+                          {`1. Open your Railway project.\n2. Go to the service's Variables tab.\n3. Add a variable with your chosen name (e.g. MY_API_TOKEN) and paste the value.\n4. Redeploy the service so the server receives the new variable.\n\nUsing Railway Variables keeps raw keys out of your database and lets you rotate them without changing the app.`}
                         </Text>
                       </View>
                     )}
@@ -2359,7 +2650,7 @@ export default function SettingsScreen() {
                 Copy your key now
               </Text>
               <Text style={{ fontSize: 11, color: Colors.textSecondary, fontFamily: 'Inter_400Regular', lineHeight: 15 }}>
-                This is shown once. Store it somewhere safe — you won't be able to see it again.
+                {'This is shown once. Store it somewhere safe - you won\'t be able to see it again.'}
               </Text>
             </View>
           )}
@@ -2417,6 +2708,305 @@ export default function SettingsScreen() {
               </Pressable>
             </View>
           )}
+        </View>
+        </ErrorBoundary>
+
+        <ErrorBoundary FallbackComponent={SectionFallback}>
+        {/* ── MODEL PROVIDER ── */}
+        <SectionHeader label="MODEL SETUP" accent="#2563EB" />
+        <View style={styles.card}>
+          <View style={[styles.connRow, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#2563EB20' }]}>
+              <Ionicons name="sparkles-outline" size={18} color="#2563EB" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>Choose a provider</Text>
+              <Text style={styles.connSub}>
+                Claude, Gemini, or a local Llama runtime. OpenAI account and API-key setup lives in the OpenAI section below.
+              </Text>
+            </View>
+            <Pressable onPress={loadOpenAIProviderStatus} style={{ padding: 8 }}>
+              {openAIAuthLoading ? (
+                <ActivityIndicator size="small" color="#2563EB" />
+              ) : (
+                <Ionicons name="refresh-outline" size={18} color={Colors.textSecondary} />
+              )}
+            </Pressable>
+          </View>
+
+          <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 12 }}>
+            {modelProviderCards.map((provider, idx) => {
+              const providerStatus = openAIProviderStatus?.providers?.[provider.id] ?? (provider.id === 'openai' ? openAIStatus : undefined);
+              const apiStatus = providerStatus?.authTypes?.api_key;
+              const oauthStatus = providerStatus?.authTypes?.oauth;
+              const isLocal = provider.id === 'local-llama';
+              const apiVisible = Boolean(providerApiKeyVisible[provider.id]);
+              const apiInput = providerApiKeyInputs[provider.id] ?? '';
+              const providerMessage = providerAuthMessages[provider.id];
+              const activeLabel =
+                providerStatus?.defaultAuthType === 'oauth'
+                  ? `${provider.shortLabel} OAuth connected`
+                  : providerStatus?.defaultAuthType === 'api_key'
+                    ? 'API key connected'
+                    : isLocal
+                      ? 'Ready when your local runtime is running'
+                      : 'Not connected';
+              const iconName =
+                provider.id === 'anthropic' ? 'cube-outline' :
+                provider.id === 'google' ? 'logo-google' :
+                provider.id === 'local-llama' ? 'hardware-chip-outline' :
+                'sparkles-outline';
+
+              return (
+                <View key={provider.id} style={[providerAuthStyles.providerCard, idx > 0 && providerAuthStyles.providerCardBorder]}>
+                  <View style={providerAuthStyles.providerHeader}>
+                    <View style={[styles.connIconWrap, { backgroundColor: providerStatus?.connected ? '#052e16' : '#1a1a1a' }]}>
+                      <Ionicons name={iconName as any} size={18} color={providerStatus?.connected ? '#10B981' : '#2563EB'} />
+                    </View>
+                    <View style={styles.connInfo}>
+                      <Text style={styles.connName}>{provider.label}</Text>
+                      <Text style={styles.connSub}>{activeLabel}</Text>
+                      {oauthStatus?.connected && oauthStatus.email ? <Text style={styles.connSub}>{oauthStatus.email}</Text> : null}
+                      <Text style={providerAuthStyles.providerHint}>{provider.setupHint}</Text>
+                    </View>
+                  </View>
+
+                  <View style={providerAuthStyles.actionGrid}>
+                    {provider.credentialKinds.includes('api_key') ? (
+                      <Pressable
+                        onPress={() => {
+                          setProviderApiKeyVisible((prev) => ({ ...prev, [provider.id]: !prev[provider.id] }));
+                        }}
+                        disabled={openAIAuthBusy}
+                        style={[
+                          providerAuthStyles.primaryAction,
+                          apiStatus?.isDefault && providerAuthStyles.apiKeyActionActive,
+                          openAIAuthBusy && providerAuthStyles.disabledAction,
+                        ]}
+                      >
+                        <Ionicons name="key-outline" size={16} color={apiStatus?.isDefault ? '#fff' : '#0F766E'} />
+                        <Text style={[providerAuthStyles.primaryActionText, apiStatus?.isDefault && providerAuthStyles.activeActionText]}>
+                          {isLocal ? 'Use Local Runtime Key' : `Use ${provider.shortLabel} API Key`}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+
+                    {isLocal ? (
+                      <Pressable
+                        onPress={() => setProviderMessage(provider.id, 'Local Llama is selected from AI Models. Start Ollama, LM Studio, vLLM, or the Jarvis model relay before chatting.')}
+                        disabled={openAIAuthBusy}
+                        style={[providerAuthStyles.primaryAction, openAIAuthBusy && providerAuthStyles.disabledAction]}
+                      >
+                        <Ionicons name="hardware-chip-outline" size={16} color="#2563EB" />
+                        <Text style={providerAuthStyles.primaryActionText}>Use Local Llama</Text>
+                      </Pressable>
+                    ) : null}
+
+                    {providerStatus?.connected ? (
+                      <Pressable
+                        onPress={() => disconnectProvider(provider.id, provider.shortLabel)}
+                        disabled={openAIAuthBusy}
+                        style={[providerAuthStyles.primaryAction, openAIAuthBusy && providerAuthStyles.disabledAction]}
+                      >
+                        <Ionicons name="close-circle-outline" size={16} color={Colors.error} />
+                        <Text style={providerAuthStyles.primaryActionText}>Disconnect</Text>
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  {apiVisible ? (
+                    <View style={providerAuthStyles.inputBlock}>
+                      <TextInput
+                        style={providerAuthStyles.secretInput}
+                        value={apiInput}
+                        onChangeText={(value) => {
+                          setProviderApiKeyInputs((prev) => ({ ...prev, [provider.id]: value }));
+                        }}
+                        placeholder={provider.apiKeyPlaceholder ?? 'API key'}
+                        placeholderTextColor={Colors.textTertiary}
+                        secureTextEntry
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                      <Pressable
+                        onPress={() => saveProviderApiKey(provider.id)}
+                        disabled={openAIAuthBusy || !apiInput.trim()}
+                        style={[providerAuthStyles.saveButton, (!apiInput.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
+                      >
+                        {openAIAuthBusy ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Ionicons name="checkmark-outline" size={15} color="#fff" />
+                        )}
+                        <Text style={providerAuthStyles.saveButtonText}>Save</Text>
+                      </Pressable>
+                    </View>
+                  ) : null}
+
+                  {providerMessage ? <Text style={providerAuthStyles.statusText}>{providerMessage}</Text> : null}
+                </View>
+              );
+            })}
+          </View>
+        </View>
+
+        <SectionHeader label="OPENAI DIRECT SETUP" accent="#2563EB" />
+        <View style={styles.card}>
+          <View style={[styles.connRow, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#2563EB20' }]}>
+              <Ionicons name="sparkles-outline" size={18} color="#2563EB" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>OpenAI</Text>
+              <Text style={styles.connSub}>
+                {openAIAuthLoading ? 'Checking provider status...' : openAIDefaultLabel}
+              </Text>
+              {openAIOAuthStatus?.connected && openAIOAuthStatus.email ? (
+                <Text style={styles.connSub}>{openAIOAuthStatus.email}</Text>
+              ) : null}
+            </View>
+            <Pressable onPress={loadOpenAIProviderStatus} style={{ padding: 8 }}>
+              {openAIAuthLoading ? (
+                <ActivityIndicator size="small" color="#2563EB" />
+              ) : (
+                <Ionicons name="refresh-outline" size={18} color={Colors.textSecondary} />
+              )}
+            </Pressable>
+          </View>
+
+          <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 10 }}>
+            <Text style={{ color: Colors.textSecondary, fontSize: 12, fontFamily: 'Inter_400Regular', lineHeight: 17 }}>
+              Uses your ChatGPT/Codex account instead of an API key. If login ends on a localhost error page, copy the URL and paste it back into Jarvis to complete setup.
+            </Text>
+
+            <View style={providerAuthStyles.actionGrid}>
+              <Pressable
+                onPress={startOpenAIChatGPTOAuth}
+                disabled={openAIAuthBusy}
+                style={[
+                  providerAuthStyles.primaryAction,
+                  openAIOAuthStatus?.isDefault && providerAuthStyles.oauthActionActive,
+                  openAIAuthBusy && providerAuthStyles.disabledAction,
+                ]}
+              >
+                <Ionicons name="person-circle-outline" size={16} color={openAIOAuthStatus?.isDefault ? '#fff' : '#2563EB'} />
+                <Text style={[providerAuthStyles.primaryActionText, openAIOAuthStatus?.isDefault && providerAuthStyles.activeActionText]}>
+                  Connect ChatGPT Subscription
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setOpenAIApiKeyVisible((visible) => !visible)}
+                disabled={openAIAuthBusy}
+                style={[
+                  providerAuthStyles.primaryAction,
+                  openAIApiKeyStatus?.isDefault && providerAuthStyles.apiKeyActionActive,
+                  openAIAuthBusy && providerAuthStyles.disabledAction,
+                ]}
+              >
+                <Ionicons name="key-outline" size={16} color={openAIApiKeyStatus?.isDefault ? '#fff' : '#0F766E'} />
+                <Text style={[providerAuthStyles.primaryActionText, openAIApiKeyStatus?.isDefault && providerAuthStyles.activeActionText]}>
+                  Use OpenAI API Key
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={useJarvisDefaultModel}
+                disabled={openAIAuthBusy}
+                style={[
+                  providerAuthStyles.primaryAction,
+                  !openAIStatus?.connected && providerAuthStyles.defaultActionActive,
+                  openAIAuthBusy && providerAuthStyles.disabledAction,
+                ]}
+              >
+                <Ionicons name="radio-outline" size={16} color={!openAIStatus?.connected ? '#fff' : Colors.textSecondary} />
+                <Text style={[providerAuthStyles.primaryActionText, !openAIStatus?.connected && providerAuthStyles.activeActionText]}>
+                  Use Jarvis Default Model
+                </Text>
+              </Pressable>
+            </View>
+
+            {openAIApiKeyVisible ? (
+              <View style={providerAuthStyles.inputBlock}>
+                <TextInput
+                  style={providerAuthStyles.secretInput}
+                  value={openAIApiKeyInput}
+                  onChangeText={setOpenAIApiKeyInput}
+                  placeholder="OPENAI_API_KEY"
+                  placeholderTextColor={Colors.textTertiary}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Pressable
+                  onPress={saveOpenAIApiKey}
+                  disabled={openAIAuthBusy || !openAIApiKeyInput.trim()}
+                  style={[providerAuthStyles.saveButton, (!openAIApiKeyInput.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
+                >
+                  {openAIAuthBusy ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Ionicons name="checkmark-outline" size={15} color="#fff" />
+                  )}
+                  <Text style={providerAuthStyles.saveButtonText}>Save</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            <View style={providerAuthStyles.inputBlock}>
+              <TextInput
+                style={providerAuthStyles.callbackInput}
+                value={openAICallbackUrl}
+                onChangeText={setOpenAICallbackUrl}
+                placeholder="http://127.0.0.1:1455/auth/callback?code=abc123&state=xyz"
+                placeholderTextColor={Colors.textTertiary}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <Pressable
+                onPress={submitOpenAICallbackUrl}
+                disabled={openAIAuthBusy || !openAICallbackUrl.trim()}
+                style={[providerAuthStyles.saveButton, (!openAICallbackUrl.trim() || openAIAuthBusy) && providerAuthStyles.disabledAction]}
+              >
+                <Ionicons name="log-in-outline" size={15} color="#fff" />
+                <Text style={providerAuthStyles.saveButtonText}>Finish</Text>
+              </Pressable>
+            </View>
+
+            {openAILoginUrl ? (
+              <View style={providerAuthStyles.loginLinkActions}>
+                {Platform.OS === 'web' ? (
+                  <Pressable
+                    onPress={openOpenAILoginUrl}
+                    style={providerAuthStyles.copyLoginRow}
+                  >
+                    <Ionicons name="open-outline" size={14} color="#2563EB" />
+                    <Text style={providerAuthStyles.copyLoginText}>Open login URL</Text>
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  onPress={async () => {
+                    await Clipboard.setStringAsync(openAILoginUrl);
+                    setOpenAIAuthMessage('OpenAI login URL copied.');
+                  }}
+                  style={providerAuthStyles.copyLoginRow}
+                >
+                  <Ionicons name="copy-outline" size={14} color="#2563EB" />
+                  <Text style={providerAuthStyles.copyLoginText}>Copy login URL</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {openAIAuthMessage ? (
+              <Text style={providerAuthStyles.statusText}>{openAIAuthMessage}</Text>
+            ) : null}
+
+            {openAIStatus?.fallbackEnabled ? (
+              <Text style={[providerAuthStyles.statusText, { color: '#F59E0B' }]}>
+                Explicit OpenAI auth fallback is enabled.
+              </Text>
+            ) : null}
+          </View>
         </View>
         </ErrorBoundary>
 
@@ -2517,22 +3107,7 @@ export default function SettingsScreen() {
             />
           </View>
 
-          {/* WhatsApp auto-TTS toggle */}
-          <View style={[styles.connRow, styles.connRowBorder, { paddingVertical: 12 }]}>
-            <View style={[styles.connIconWrap, { backgroundColor: '#0f2a1a' }]}>
-              <Ionicons name="logo-whatsapp" size={18} color={Colors.success} />
-            </View>
-            <View style={styles.connInfo}>
-              <Text style={styles.connName}>Auto-speak on WhatsApp</Text>
-              <Text style={styles.connSub}>Jarvis sends a voice note after every WhatsApp reply</Text>
-            </View>
-            <Switch
-              value={ttsWhatsAppEnabled}
-              onValueChange={toggleTtsWhatsApp}
-              disabled={ttsSaving}
-              trackColor={{ false: Colors.border, true: Colors.success }}
-            />
-          </View>
+
 
           {/* Voice picker */}
           <View style={{ paddingHorizontal: 14, paddingTop: 12, paddingBottom: 4 }}>
@@ -2594,7 +3169,7 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
             <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 6 }}>
-              You can also ask Jarvis to "read that out" or "say it as a voice message" at any time
+              {'You can also ask Jarvis to "read that out" or "say it as a voice message" at any time'}
             </Text>
           </View>}
         </View>
@@ -2991,7 +3566,7 @@ export default function SettingsScreen() {
           <View style={tlStyles.header}>
             <Ionicons name="eye-outline" size={16} color="#F59E0B" />
             <Text style={tlStyles.headerText}>ANOMALY DETECTION</Text>
-            <Text style={tlStyles.headerSub}>Patterns flagged by Jarvis's reflexive gut layer</Text>
+            <Text style={tlStyles.headerSub}>{"Patterns flagged by Jarvis's reflexive gut layer"}</Text>
           </View>
           {threatLogLoading ? (
             <View style={tlStyles.loadingRow}>
@@ -3066,7 +3641,8 @@ export default function SettingsScreen() {
                   { key: 'research' as ModelCategory, icon: 'search-outline', label: 'Research' },
                 ] as { key: ModelCategory; icon: string; label: string }[]
               ).map(({ key, icon, label }, idx) => {
-                const currentModel = availableModels.find(m => m.value === modelPrefs[key]);
+                const categoryModels = availableModels.filter(m => !m.categories || m.categories.includes(key));
+                const currentModel = categoryModels.find(m => m.value === modelPrefs[key]) ?? availableModels.find(m => m.value === modelPrefs[key]);
                 return (
                   <Pressable
                     key={key}
@@ -3077,7 +3653,7 @@ export default function SettingsScreen() {
                         label,
                         'Choose the AI model for this category',
                         [
-                          ...availableModels.map(m => ({
+                          ...categoryModels.map(m => ({
                             text: `${m.label}  —  ${m.description}`,
                             style: (m.value === modelPrefs[key] ? 'destructive' : 'default') as 'destructive' | 'default',
                             onPress: () => saveModel(key, m.value),
@@ -3120,7 +3696,7 @@ export default function SettingsScreen() {
                 'Orchestrator Model',
                 'Choose the Claude model used for task decomposition and verification',
                 [
-                  ...availableOrchestratorModels.map((m: AvailableModel) => ({
+                  ...availableOrchestratorModels.filter((m: AvailableModel) => !m.categories || m.categories.includes('orchestrator')).map((m: AvailableModel) => ({
                     text: `${m.label}  —  ${m.description}`,
                     style: (m.value === orchestratorModel ? 'destructive' : 'default') as 'destructive' | 'default',
                     onPress: () => saveOrchestratorModel(m.value),
@@ -3168,7 +3744,7 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
           <Link href="/skills" asChild>
-            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+            <Pressable style={styles.prefRowBordered}>
               <View style={styles.prefLeft}>
                 <Ionicons name="sparkles-outline" size={16} color={Colors.violet} />
                 <View>
@@ -3180,19 +3756,19 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
           <Link href="/code-proposals" asChild>
-            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+            <Pressable style={styles.prefRowBordered}>
               <View style={styles.prefLeft}>
                 <Ionicons name="code-slash-outline" size={16} color={Colors.cyan} />
                 <View>
                   <Text style={styles.prefTitle}>Code Proposals</Text>
-                  <Text style={styles.prefSub}>Review and approve Jarvis's self-improvements</Text>
+                  <Text style={styles.prefSub}>{"Review and approve Jarvis's self-improvements"}</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
             </Pressable>
           </Link>
           <Link href="/self-repair-history" asChild>
-            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+            <Pressable style={styles.prefRowBordered}>
               <View style={styles.prefLeft}>
                 <Ionicons name="construct-outline" size={16} color={Colors.violet} />
                 <View>
@@ -3204,12 +3780,12 @@ export default function SettingsScreen() {
             </Pressable>
           </Link>
           <Link href="/capability-gaps" asChild>
-            <Pressable style={[styles.prefRow, styles.prefRowBorder]}>
+            <Pressable style={styles.prefRowBordered}>
               <View style={styles.prefLeft}>
                 <Ionicons name="alert-circle-outline" size={16} color={Colors.warning} />
                 <View>
                   <Text style={styles.prefTitle}>Capability Gaps</Text>
-                  <Text style={styles.prefSub}>What Jarvis couldn't do this week</Text>
+                  <Text style={styles.prefSub}>{"What Jarvis couldn't do this week"}</Text>
                 </View>
               </View>
               <Ionicons name="chevron-forward" size={16} color={Colors.textTertiary} />
@@ -3298,7 +3874,7 @@ export default function SettingsScreen() {
                 return (
                   <>
                     <Text style={healthStyles.overallSub}>
-                      {healthReport.openAiReachable ? `OpenAI ✓${latencyText}` : '⚠ OpenAI unreachable'} ·{' '}
+                      {healthReport.openAiReachable ? `AI provider ✓${latencyText}` : '⚠ AI provider unreachable'} ·{' '}
                       {healthReport.dbReachable ? 'DB ✓' : '⚠ DB unreachable'} ·{' '}
                       Queue: {healthReport.jobQueueDepth}
                       {healthReport.staleJobCount > 0 ? ` (${healthReport.staleJobCount} re-queued)` : ''}
@@ -3310,7 +3886,13 @@ export default function SettingsScreen() {
                 );
               })()}
             </View>
-            <Pressable onPress={loadHealth} style={healthStyles.refreshBtn}>
+            <Pressable
+              onPress={() => {
+                loadHealth();
+                loadJobRunnerReport();
+              }}
+              style={healthStyles.refreshBtn}
+            >
               <Ionicons name="refresh-outline" size={16} color="#10B981" />
             </Pressable>
           </View>
@@ -3391,6 +3973,64 @@ export default function SettingsScreen() {
             );
           })()}
 
+          {/* Job runner observability */}
+          <View style={healthStyles.jobRunnerSection}>
+            <View style={healthStyles.jobRunnerHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={healthStyles.timelineHeader}>Job Runner</Text>
+                {jobRunnerReport && (() => {
+                  const q = jobRunnerReport.summary.byStatus.queued ?? 0;
+                  const r = jobRunnerReport.summary.byStatus.running ?? 0;
+                  const f = jobRunnerReport.summary.recentFailureCount ?? 0;
+                  const oldest = jobRunnerReport.summary.oldestQueuedAgeMs;
+                  const oldestText = oldest == null
+                    ? 'no queued wait'
+                    : oldest < 60000
+                      ? '<1m oldest queued'
+                      : `${Math.floor(oldest / 60000)}m oldest queued`;
+                  return (
+                    <Text style={healthStyles.overallSub}>
+                      {`${q} queued - ${r} running - ${f} failed recently - ${oldestText}`}
+                    </Text>
+                  );
+                })()}
+              </View>
+              {jobRunnerLoading ? (
+                <ActivityIndicator size="small" color="#10B981" />
+              ) : (
+                <Pressable onPress={loadJobRunnerReport} style={healthStyles.refreshBtn}>
+                  <Ionicons name="refresh-outline" size={15} color="#10B981" />
+                </Pressable>
+              )}
+            </View>
+            {jobRunnerReport && jobRunnerReport.activeJobs.slice(0, 3).map((job) => {
+              const runtime = job.runtimeMs == null ? null : Math.max(0, Math.floor(job.runtimeMs / 1000));
+              const ageMin = Math.max(0, Math.floor(job.ageMs / 60000));
+              const meta = `${job.agentType} - ${job.status}${job.retryCount > 0 ? ` - retry ${job.retryCount}` : ''}${runtime != null ? ` - ${runtime}s runtime` : ` - ${ageMin}m old`}`;
+              return (
+                <View key={job.id} style={healthStyles.jobRunnerRow}>
+                  <View style={[healthStyles.timelineDot, { backgroundColor: job.status === 'running' ? '#10B981' : '#F59E0B' }]} />
+                  <View style={healthStyles.timelineContent}>
+                    <Text style={healthStyles.timelineMsg} numberOfLines={1}>{job.title}</Text>
+                    <Text style={healthStyles.timelineSub} numberOfLines={1}>{meta}</Text>
+                    {job.lastError && <Text style={healthStyles.timelineTime} numberOfLines={1}>{job.lastError}</Text>}
+                  </View>
+                </View>
+              );
+            })}
+            {jobRunnerReport && jobRunnerReport.activeJobs.length === 0 && (
+              <Text style={healthStyles.overallSub}>No active jobs.</Text>
+            )}
+            {jobRunnerReport && jobRunnerReport.diagnosticEvents.length > 0 && (
+              <Text style={healthStyles.jobRunnerEvent} numberOfLines={2}>
+                {jobRunnerReport.diagnosticEvents[0]?.message}
+              </Text>
+            )}
+            {!jobRunnerReport && !jobRunnerLoading && (
+              <Text style={healthStyles.overallSub}>Job runner details unavailable.</Text>
+            )}
+          </View>
+
           {/* Recent error timeline */}
           {healthReport && healthReport.recentErrors && healthReport.recentErrors.length > 0 && (
             <View style={healthStyles.timelineSection}>
@@ -3447,7 +4087,16 @@ export default function SettingsScreen() {
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── DIAGNOSTICS ── */}
+        <View
+          testID="settings-diagnostics-section"
+          onLayout={(event) => {
+            diagnosticsYRef.current = event.nativeEvent.layout.y;
+          }}
+        >
         <SectionHeader label="DIAGNOSTICS" accent="#10B981" />
+        <View style={[styles.card, { marginBottom: 12 }]}>
+          <RuntimeDiagnosticsPanel />
+        </View>
         <View style={[styles.card, { gap: 0 }]}>
           <View style={drStyles.headerRow}>
             <View style={{ flex: 1, gap: 2 }}>
@@ -3525,6 +4174,7 @@ export default function SettingsScreen() {
               <Text style={drStyles.emptyHintText}>Tap Run to check your Jarvis configuration</Text>
             </View>
           )}
+        </View>
         </View>
 
         </ErrorBoundary>
@@ -3865,6 +4515,137 @@ export default function SettingsScreen() {
 // Styles
 // ─────────────────────────────────────────────────────────────────────────────
 
+const providerAuthStyles = StyleSheet.create({
+  providerCard: {
+    gap: 10,
+    paddingTop: 10,
+  },
+  providerCardBorder: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    paddingTop: 14,
+  },
+  providerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  providerHint: {
+    color: Colors.textTertiary,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 15,
+    marginTop: 4,
+  },
+  actionGrid: {
+    gap: 8,
+  },
+  primaryAction: {
+    minHeight: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  oauthActionActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  apiKeyActionActive: {
+    backgroundColor: '#0F766E',
+    borderColor: '#0F766E',
+  },
+  defaultActionActive: {
+    backgroundColor: Colors.textSecondary,
+    borderColor: Colors.textSecondary,
+  },
+  disabledAction: {
+    opacity: 0.55,
+  },
+  primaryActionText: {
+    color: Colors.text,
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+    textAlign: 'center',
+    flexShrink: 1,
+  },
+  activeActionText: {
+    color: '#fff',
+  },
+  inputBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  secretInput: {
+    flex: 1,
+    minHeight: 42,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    color: Colors.text,
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+  },
+  callbackInput: {
+    flex: 1,
+    minHeight: 42,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    color: Colors.text,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    fontSize: 11,
+  },
+  saveButton: {
+    minHeight: 42,
+    borderRadius: 8,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+  },
+  saveButtonText: {
+    color: '#fff',
+    fontSize: 13,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  copyLoginRow: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+  },
+  loginLinkActions: {
+    alignItems: 'flex-start',
+    gap: 4,
+  },
+  copyLoginText: {
+    color: '#2563EB',
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+  },
+  statusText: {
+    color: Colors.textTertiary,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: 'Inter_400Regular',
+  },
+});
+
 const styles = StyleSheet.create({
   root: {
     flex: 1,
@@ -3901,6 +4682,59 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     overflow: 'hidden',
+  },
+  quickNavCard: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    padding: 14,
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 12,
+  },
+  quickNavHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  quickNavIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickNavCopy: {
+    flex: 1,
+    gap: 2,
+  },
+  quickNavTitle: {
+    fontSize: 14,
+    fontFamily: 'Inter_700Bold',
+    color: Colors.text,
+  },
+  quickNavSubtitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 16,
+  },
+  quickNavButton: {
+    minHeight: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#10B98155',
+    backgroundColor: '#10B98114',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  quickNavButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+    color: '#10B981',
   },
   // Connection rows
   connRow: {
@@ -3958,6 +4792,127 @@ const styles = StyleSheet.create({
   connBtnTextConnected: {
     color: Colors.success,
   },
+  connectionPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: '#6366F120',
+    borderWidth: 1,
+    borderColor: '#6366F150',
+  },
+  connectionPillText: {
+    fontSize: 10,
+    fontFamily: 'Inter_600SemiBold',
+    color: '#A5B4FC',
+  },
+  connectionKeyPreview: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.success,
+  },
+  connectionPanel: {
+    padding: 14,
+    gap: 10,
+  },
+  connectionSetupSteps: {
+    backgroundColor: '#6366F112',
+    borderWidth: 1,
+    borderColor: '#6366F135',
+    borderRadius: 10,
+    padding: 10,
+    gap: 4,
+  },
+  connectionSetupTitle: {
+    fontSize: 11,
+    fontFamily: 'Inter_700Bold',
+    color: '#C7D2FE',
+    textTransform: 'uppercase',
+    marginBottom: 2,
+  },
+  connectionSetupText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  connectionInputLabel: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  connectionInput: {
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 13,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.text,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  connectionActionsPanelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  connectionActionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 10,
+  },
+  connectionSecondaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+  },
+  connectionSecondaryButtonText: {
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.textSecondary,
+  },
+  connectionHint: {
+    flex: 1,
+    textAlign: 'right',
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+  },
+  connectionTestText: {
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
+  connectionSteps: {
+    gap: 5,
+    marginTop: 2,
+  },
+  connectionStepRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  connectionStepNumber: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    textAlign: 'center',
+    lineHeight: 18,
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    color: '#C7D2FE',
+    backgroundColor: '#6366F120',
+  },
+  connectionStepText: {
+    flex: 1,
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
+  },
   linkCodeBlock: {
     marginHorizontal: 14,
     marginBottom: 12,
@@ -4014,6 +4969,15 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   prefRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  prefRowBordered: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 14,
+    gap: 12,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
   },
@@ -4756,6 +5720,34 @@ const healthStyles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_500Medium',
     lineHeight: 17,
+  },
+  jobRunnerSection: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  jobRunnerHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  jobRunnerRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    paddingVertical: 2,
+  },
+  jobRunnerEvent: {
+    fontSize: 11,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textTertiary,
+    lineHeight: 16,
+    backgroundColor: Colors.surfaceAlt,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
   },
   diagSection: {
     padding: 12,

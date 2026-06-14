@@ -9,12 +9,7 @@ import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSo
 import { getOutlookCalendarEvents, getRecentOutlookEmails } from "./integrations/outlook";
 import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
 
 const CURIOSITY_SCAN_LOCK_ID = 7654321098;
 let scannerStarted = false;
@@ -147,12 +142,12 @@ Return only items worth asking about. Return { "questions": [] } if nothing is i
   const { getModel } = await import("./lib/modelPrefs");
   const model = await getModel(userId ?? "", "research");
 
-  const response = await openai.chat.completions.create({
+  const response = await createRoutedChatCompletion({
     model,
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
     max_completion_tokens: 800,
-  });
+  }, { tier: "balanced", logPrefix: "[CuriosityScanner]", userId });
 
   const content =
     response.choices[0]?.message?.content || '{"questions":[]}';

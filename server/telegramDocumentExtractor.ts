@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { getOpenAIClientConfig } from "./agent/providers/env";
 import { downloadTelegramFileBuffer } from "./integrations/telegram";
 
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
@@ -8,10 +9,7 @@ let _openai: OpenAI | null = null;
 
 function getOpenAI(): OpenAI {
   if (!_openai) {
-    _openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    _openai = new OpenAI(getOpenAIClientConfig());
   }
   return _openai;
 }

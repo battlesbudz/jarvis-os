@@ -31,57 +31,57 @@ function test(name: string, fn: () => void) {
 // ── editDistance ──────────────────────────────────────────────────────────────
 
 test("identical strings → 0", () => {
-  assert.strictEqual(editDistance("OpenClaw", "OpenClaw"), 0);
+  assert.strictEqual(editDistance("HealthTrackr", "HealthTrackr"), 0);
 });
 
 test("case-insensitive identical → 0", () => {
-  assert.strictEqual(editDistance("openclaw", "OpenClaw"), 0);
+  assert.strictEqual(editDistance("healthtrackr", "HealthTrackr"), 0);
 });
 
 test("one substitution → 1", () => {
-  // OpenClaw → OpenClas (one char wrong)
-  assert.strictEqual(editDistance("OpenClaw", "OpenClas"), 1);
+  // HealthTrackr -> HealthTrackz (one char wrong)
+  assert.strictEqual(editDistance("HealthTrackr", "HealthTrackz"), 1);
 });
 
-test("transposition + substitution → 2 (OSA counts swap as 1 edit)", () => {
-  // OpenClaw → OpenCals:  'l','a' swap (1 transposition) + 'w'→'s' (1 substitution) = 2
-  assert.strictEqual(editDistance("OpenClaw", "OpenCals"), 2);
+test("adjacent transposition → 1 (OSA counts swap as 1 edit)", () => {
+  // HealthTrackr -> HealthTrakcr exercises the transposition branch.
+  assert.strictEqual(editDistance("HealthTrackr", "HealthTrakcr"), 1);
 });
 
 test("completely different strings → > 2", () => {
-  assert.ok(editDistance("OpenClaw", "Stripe") > 2);
+  assert.ok(editDistance("HealthTrackr", "Stripe") > 2);
 });
 
 test("one deletion → 1", () => {
-  assert.strictEqual(editDistance("OpenClaw", "OpenCla"), 1);
+  assert.strictEqual(editDistance("HealthTrackr", "HealthTrack"), 1);
 });
 
 test("one insertion → 1", () => {
-  assert.strictEqual(editDistance("OpenClaw", "OpenClaaw"), 1);
+  assert.strictEqual(editDistance("HealthTrackr", "HealthTrackrr"), 1);
 });
 
 // ── findEntityNearMatch ───────────────────────────────────────────────────────
 
-test("near-match triggers: OpenCals ≈ OpenClaw", () => {
-  const result = findEntityNearMatch("Research OpenCals booking platform", ["OpenClaw"]);
+test("near-match triggers for a protected project typo", () => {
+  const result = findEntityNearMatch("Research HealthTrakcr booking platform", ["HealthTrackr"]);
   assert.ok(result !== null, "Expected a near-match to be found");
-  assert.strictEqual(result!.matchedEntity, "OpenClaw");
-  assert.strictEqual(result!.queryWord, "OpenCals");
+  assert.strictEqual(result!.matchedEntity, "HealthTrackr");
+  assert.strictEqual(result!.queryWord, "HealthTrakcr");
   assert.ok(result!.distance <= 2);
 });
 
 test("exact match does NOT trigger (distance=0)", () => {
-  const result = findEntityNearMatch("Research OpenClaw features", ["OpenClaw"]);
+  const result = findEntityNearMatch("Research HealthTrackr features", ["HealthTrackr"]);
   assert.strictEqual(result, null, "Exact match should not trigger confirmation");
 });
 
 test("unrelated query does NOT trigger", () => {
-  const result = findEntityNearMatch("What is the weather in London today", ["OpenClaw"]);
+  const result = findEntityNearMatch("What is the weather in London today", ["HealthTrackr"]);
   assert.strictEqual(result, null, "Unrelated query should not trigger");
 });
 
 test("empty entity list → no match", () => {
-  const result = findEntityNearMatch("Research OpenCals", []);
+  const result = findEntityNearMatch("Research HealthTrakcr", []);
   assert.strictEqual(result, null, "Empty entity list should never match");
 });
 
@@ -110,9 +110,14 @@ test("multi-word query checks all words", () => {
   assert.strictEqual(result!.matchedEntity, "TrackrAi");
 });
 
+test("command verbs do NOT trigger: create should not match creative", () => {
+  const result = findEntityNearMatch("Create a short reviewable deliverable", ["creative"]);
+  assert.strictEqual(result, null, "Generic command verbs should not trigger entity confirmation");
+});
+
 test("confirmed 'no' path: skip_entity_check equivalent passes entity list as []", () => {
   // When skip_entity_check=true the caller passes an empty list, so no match
-  const result = findEntityNearMatch("Research OpenCals", []);
+  const result = findEntityNearMatch("Research HealthTrakcr", []);
   assert.strictEqual(result, null);
 });
 

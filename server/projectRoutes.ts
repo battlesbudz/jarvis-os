@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { db } from "./db";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import {
   startProject,
@@ -11,9 +11,16 @@ import {
   getUserProjects,
   setAutonomousMode,
 } from "./agent/projectRunner";
+import { answerAppProjectQuestion, resumeAppProject, startAppProject } from "./agent/appProjectRunner";
+import { normalizeCreateProjectRequest, isSafeProjectFilePath } from "./agent/projectCreateRequest";
+import { ensureProjectArchiveAvailable, generateDownloadToken } from "./agent/appDelivery";
 import { authMiddleware } from "./auth";
 import { getGitHubSettings, createGitHubRepo, pushWorkspaceToGitHub } from "./integrations/github";
+import { getPublicBaseUrl } from "./publicUrl";
+import { getProjectDownloadsDir, getProjectWorkspaceDir } from "./projectStorage";
+import { hydrateProjectWorkspace, listProjectSnapshot, readProjectArchive, readProjectSnapshotFile } from "./projectArtifacts";
 import * as fs from "fs";
+import * as path from "path";
 
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
@@ -34,25 +41,30 @@ export function registerProjectRoutes(app: Express): void {
   app.post("/api/projects", authMiddleware, async (req: Request, res: Response) => {
     try {
       const userId = (req as any).userId as string;
-      const { title, description, goal, autonomousMode, originChannel } = req.body as {
-        title?: string;
-        description?: string;
-        goal?: string;
-        autonomousMode?: boolean;
-        originChannel?: string;
-      };
-
-      if (!title || !goal) {
-        return res.status(400).json({ error: "title and goal are required" });
+      const normalized = normalizeCreateProjectRequest(req.body);
+      if (normalized.errors.length > 0) {
+        return res.status(400).json({ error: normalized.errors.join(", ") });
       }
 
-      const projectId = await startProject(userId, title, description ?? "", goal, originChannel ?? "app");
+      if (normalized.projectKind === "app") {
+        const { projectId } = await startAppProject({
+          userId,
+          title: normalized.title,
+          description: normalized.description,
+          goal: normalized.goal,
+          framework: normalized.framework,
+          originChannel: normalized.originChannel,
+        });
+        return res.json({ projectId, status: "planning", projectKind: "app" });
+      }
 
-      if (autonomousMode) {
+      const projectId = await startProject(userId, normalized.title, normalized.description, normalized.goal, normalized.originChannel);
+
+      if (normalized.autonomousMode) {
         await setAutonomousMode(projectId, true);
       }
 
-      res.json({ projectId, status: "planning" });
+      res.json({ projectId, status: "planning", projectKind: "general" });
     } catch (err) {
       console.error("[ProjectRoutes] POST /api/projects failed:", err);
       res.status(500).json({ error: "Failed to create project" });
@@ -73,6 +85,120 @@ export function registerProjectRoutes(app: Express): void {
     } catch (err) {
       console.error("[ProjectRoutes] GET /api/projects/:id failed:", err);
       res.status(500).json({ error: "Failed to load project" });
+    }
+  });
+
+  app.get("/api/projects/:id/files", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const id = _p(req.params.id);
+      const [project] = await db
+        .select()
+        .from(schema.jarvisProjects)
+        .where(and(eq(schema.jarvisProjects.id, id), eq(schema.jarvisProjects.userId, userId)))
+        .limit(1);
+
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      if (!project.workspaceDir || !fs.existsSync(project.workspaceDir)) {
+        const files = await listProjectSnapshot(id);
+        return res.json({ workspaceDir: project.workspaceDir ?? null, files });
+      }
+
+      await hydrateProjectWorkspace(id, project.workspaceDir).catch(() => undefined);
+      const root = path.resolve(project.workspaceDir);
+      const blocked = new Set([".git", "node_modules", ".next", ".expo", "dist", "build"]);
+      const files: { path: string; name: string; type: "file" | "directory"; size: number; updatedAt: string }[] = [];
+      const walk = (dir: string, depth: number) => {
+        if (depth > 4 || files.length >= 250) return;
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (blocked.has(entry.name)) continue;
+          const full = path.join(dir, entry.name);
+          const stat = fs.statSync(full);
+          const rel = path.relative(root, full).replace(/\\/g, "/");
+          files.push({
+            path: rel,
+            name: entry.name,
+            type: entry.isDirectory() ? "directory" : "file",
+            size: entry.isDirectory() ? 0 : stat.size,
+            updatedAt: stat.mtime.toISOString(),
+          });
+          if (entry.isDirectory()) walk(full, depth + 1);
+          if (files.length >= 250) return;
+        }
+      };
+      walk(root, 0);
+      res.json({ workspaceDir: root, files });
+    } catch (err) {
+      console.error("[ProjectRoutes] GET /api/projects/:id/files failed:", err);
+      res.status(500).json({ error: "Failed to list project files" });
+    }
+  });
+
+  app.get("/api/projects/:id/files/content", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const id = _p(req.params.id);
+      const requestedPath = typeof req.query.path === "string" ? req.query.path : "";
+      if (!isSafeProjectFilePath(requestedPath)) return res.status(400).json({ error: "Invalid file path" });
+
+      const [project] = await db
+        .select()
+        .from(schema.jarvisProjects)
+        .where(and(eq(schema.jarvisProjects.id, id), eq(schema.jarvisProjects.userId, userId)))
+        .limit(1);
+
+      if (!project?.workspaceDir) {
+        const snapshot = await readProjectSnapshotFile(id, requestedPath);
+        if (!snapshot) return res.status(404).json({ error: "Project workspace not found" });
+        return res.json(snapshot);
+      }
+      await hydrateProjectWorkspace(id, project.workspaceDir).catch(() => undefined);
+      const root = path.resolve(project.workspaceDir);
+      const fullPath = path.resolve(root, requestedPath);
+      if (!fullPath.startsWith(root + path.sep)) return res.status(400).json({ error: "Invalid file path" });
+      if (!fs.existsSync(fullPath) || !fs.statSync(fullPath).isFile()) {
+        const snapshot = await readProjectSnapshotFile(id, requestedPath);
+        if (!snapshot) return res.status(404).json({ error: "File not found" });
+        return res.json(snapshot);
+      }
+      const stat = fs.statSync(fullPath);
+      if (stat.size > 200_000) return res.status(413).json({ error: "File is too large to preview" });
+
+      const content = fs.readFileSync(fullPath, "utf8");
+      res.json({ path: requestedPath, content, size: stat.size, updatedAt: stat.mtime.toISOString() });
+    } catch (err) {
+      console.error("[ProjectRoutes] GET /api/projects/:id/files/content failed:", err);
+      res.status(500).json({ error: "Failed to read project file" });
+    }
+  });
+
+  app.get("/api/projects/:id/download-url", authMiddleware, async (req: Request, res: Response) => {
+    try {
+      const userId = (req as any).userId as string;
+      const id = _p(req.params.id);
+      const [project] = await db
+        .select()
+        .from(schema.jarvisProjects)
+        .where(and(eq(schema.jarvisProjects.id, id), eq(schema.jarvisProjects.userId, userId)))
+        .limit(1);
+
+      if (!project) return res.status(404).json({ error: "Project not found" });
+      if (project.status !== "complete") return res.status(409).json({ error: "Project is not complete yet" });
+
+      const zipPath = path.join(getProjectDownloadsDir(), `${id}.zip`);
+      if (!fs.existsSync(zipPath)) {
+        const archive = await readProjectArchive(id);
+        if (!archive) {
+          await ensureProjectArchiveAvailable(id);
+        }
+      }
+
+      const token = generateDownloadToken(id);
+      const downloadUrl = `${getPublicBaseUrl(req)}/api/downloads/project/${id}?token=${token}`;
+      res.json({ downloadUrl });
+    } catch (err) {
+      console.error("[ProjectRoutes] GET /api/projects/:id/download-url failed:", err);
+      res.status(500).json({ error: "Failed to create download link" });
     }
   });
 
@@ -101,12 +227,20 @@ export function registerProjectRoutes(app: Express): void {
       }
 
       if (action === "resume") {
-        await resumeProject(id);
+        if (project.appFramework) {
+          await resumeAppProject(id);
+        } else {
+          await resumeProject(id);
+        }
         return res.json({ status: "building" });
       }
 
       if (answer !== undefined) {
-        await answerProjectQuestion(id, answer);
+        if (project.appFramework) {
+          await answerAppProjectQuestion(id, answer);
+        } else {
+          await answerProjectQuestion(id, answer);
+        }
         return res.json({ status: "building" });
       }
 
@@ -135,6 +269,19 @@ export function registerProjectRoutes(app: Express): void {
         .limit(1);
 
       if (!project) return res.status(404).json({ error: "Project not found" });
+
+      await db
+        .update(schema.agentJobs)
+        .set({
+          status: "cancelled",
+          error: "Project deleted",
+          completedAt: new Date(),
+        })
+        .where(and(
+          eq(schema.agentJobs.userId, userId),
+          sql`${schema.agentJobs.input}->>'projectId' = ${id}`,
+          sql`${schema.agentJobs.status} IN ('queued', 'running')`,
+        ));
 
       await db.delete(schema.jarvisProjects).where(eq(schema.jarvisProjects.id, id));
       res.json({ deleted: true });
@@ -176,7 +323,18 @@ export function registerProjectRoutes(app: Express): void {
         return res.status(400).json({ error: "Project must be complete before pushing to GitHub" });
       }
 
-      if (!project.workspaceDir || !fs.existsSync(project.workspaceDir)) {
+      let workspaceDir = project.workspaceDir;
+      if (!workspaceDir) {
+        workspaceDir = getProjectWorkspaceDir(id);
+        await db
+          .update(schema.jarvisProjects)
+          .set({ workspaceDir, updatedAt: new Date() })
+          .where(eq(schema.jarvisProjects.id, id));
+      }
+
+      await hydrateProjectWorkspace(id, workspaceDir).catch(() => undefined);
+
+      if (!fs.existsSync(workspaceDir)) {
         return res.status(400).json({ error: "Project workspace directory not found" });
       }
 
@@ -210,7 +368,7 @@ export function registerProjectRoutes(app: Express): void {
           settings.pat,
           owner,
           repo,
-          project.workspaceDir,
+          workspaceDir,
           syncMessage,
         );
 
@@ -243,7 +401,7 @@ export function registerProjectRoutes(app: Express): void {
         settings.pat,
         createResult.owner,
         createResult.repoName,
-        project.workspaceDir,
+        workspaceDir,
         `Initial commit: ${project.title ?? "Jarvis project"}`,
       );
 

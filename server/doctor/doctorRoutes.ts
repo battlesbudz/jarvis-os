@@ -62,7 +62,7 @@ export function registerDoctorRoutes(app: Express): void {
 const CHECK_SUBSYSTEM: Record<string, DiagnosticSubsystem> = {
   database_connectivity: "database",
   llm_key_validity: "integration",
-  anthropic_key_presence: "integration",
+  codex_oauth_presence: "integration",
   outbound_https: "channel_registry",
   env_vars_presence: "integration",
   telegram_webhook: "channel_registry",

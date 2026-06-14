@@ -4134,8 +4134,8 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.openclaw_build_log": {
-      "name": "openclaw_build_log",
+    "public.agent_build_log": {
+      "name": "agent_build_log",
       "schema": "",
       "columns": {
         "id": {
@@ -4199,9 +4199,9 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "openclaw_build_log_user_id_users_id_fk": {
-          "name": "openclaw_build_log_user_id_users_id_fk",
-          "tableFrom": "openclaw_build_log",
+        "agent_build_log_user_id_users_id_fk": {
+          "name": "agent_build_log_user_id_users_id_fk",
+          "tableFrom": "agent_build_log",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"

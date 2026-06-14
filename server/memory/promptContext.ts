@@ -2,9 +2,10 @@ import { db } from "../db";
 import { eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getSoulPromptBlock } from "./soul";
-import { retrieveRelevantMemories } from "./retrieve";
+import { retrieveMemoryContext } from "./memoryOs";
 import { getEmotionalState, buildEmotionalStatePromptBlock } from "../intelligence/emotional-state";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import { buildBudgetedContextBlock, BUDGET_PRESETS } from "./contextBuilder";
 
 interface PatternRow {
   patterns: unknown;
@@ -41,7 +42,11 @@ export async function buildAiContextSections(
   try {
     const soulText = await getSoulPromptBlock(userId);
     if (soulText && soulText.trim().length > 0) {
-      out.soulSection = `\n\nWhat I know about this person (JARVIS Soul):\n${soulText.trim()}\n`;
+      out.soulSection = buildBudgetedContextBlock({
+        title: "User context from JARVIS Soul",
+        items: [{ text: soulText.trim() }],
+        budget: BUDGET_PRESETS.planning.soul,
+      });
     }
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
@@ -71,7 +76,11 @@ export async function buildAiContextSections(
         .map((p) => `- ${p.observation || p.summary || JSON.stringify(p)}`)
         .join("\n");
       if (top || row.summary) {
-        out.patternSection = `\n\nRecent weekly patterns I've noticed:\n${row.summary ? row.summary + "\n" : ""}${top}\n`;
+        out.patternSection = buildBudgetedContextBlock({
+          title: "Recent weekly patterns",
+          items: [{ text: `${row.summary ? row.summary + "\n" : ""}${top}` }],
+          budget: BUDGET_PRESETS.planning.dreams,
+        });
       }
     }
   } catch (err) {
@@ -89,12 +98,19 @@ export async function buildAiContextSections(
   try {
     const trimmed = (seedQuery || "").trim();
     if (trimmed.length > 0) {
-      const mems = await retrieveRelevantMemories(userId, trimmed, 6);
+      const memoryContext = await retrieveMemoryContext({
+        userId,
+        query: trimmed,
+        limit: 6,
+        caller: "coach_context",
+      });
+      const mems = memoryContext.items.map((item) => item.memory);
       if (mems.length > 0) {
-        out.memorySection =
-          `\n\nRelevant memories:\n` +
-          mems.map((m) => `- [${m.category}] ${m.content}`).join("\n") +
-          `\n`;
+        out.memorySection = buildBudgetedContextBlock({
+          title: "Relevant memories",
+          items: mems.map((m) => ({ label: m.category, text: m.content })),
+          budget: BUDGET_PRESETS.planning.memory,
+        });
       }
     }
   } catch (err) {
@@ -133,8 +149,11 @@ export async function buildAiContextSections(
 
     if (parts.length > 0) {
       const combined = parts.join("\n\n");
-      const truncated = combined.length > 1500 ? combined.slice(0, 1497) + "…" : combined;
-      out.vaultSection = `\n\n## Knowledge Vault\n${truncated}\n`;
+      out.vaultSection = buildBudgetedContextBlock({
+        title: "Knowledge Vault",
+        items: [{ text: combined }],
+        budget: BUDGET_PRESETS.planning.vault,
+      });
     }
   } catch (err) {
     console.error("[promptContext] vault load failed", err);

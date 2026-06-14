@@ -1,11 +1,11 @@
 /**
  * Deep Research Planner
  *
- * Uses a lightweight LLM call (claude-3-5-haiku) to convert a research prompt
+ * Uses the Codex OAuth model router to convert a research prompt
  * into a multi-phase research plan. Phase 1 (prerequisiteTopics) is researched
  * first to build context; Phase 2 (mainTopics) runs with that context injected.
  */
-import Anthropic from "@anthropic-ai/sdk";
+import { routeModelTurn } from "./modelRouter";
 
 export interface ResearchPlan {
   prerequisiteTopics: string[];
@@ -43,12 +43,18 @@ export async function planResearch(
   userId: string,
 ): Promise<ResearchPlan> {
   try {
-    const client = new Anthropic();
-    const response = await client.messages.create({
-      model: "claude-3-5-haiku-20241022",
-      max_tokens: 512,
-      system: PLANNER_SYSTEM_PROMPT,
+    const response = await routeModelTurn({
+      tier: "smart",
+      maxCompletionTokens: 512,
+      stream: false,
+      toolChoice: "none",
+      userId,
+      logPrefix: "[DeepResearchPlanner]",
       messages: [
+        {
+          role: "system",
+          content: PLANNER_SYSTEM_PROMPT,
+        },
         {
           role: "user",
           content: `Research request: ${prompt}`,
@@ -56,11 +62,7 @@ export async function planResearch(
       ],
     });
 
-    const raw = response.content
-      .filter((b) => b.type === "text")
-      .map((b) => (b as { type: "text"; text: string }).text)
-      .join("")
-      .trim();
+    const raw = (response.textContent ?? "").trim();
 
     const parsed = JSON.parse(raw) as Partial<ResearchPlan>;
 

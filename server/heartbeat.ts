@@ -1,7 +1,7 @@
 /**
  * Jarvis Heartbeat — autonomous action daemon.
  *
- * Inspired by OpenClaw's heartbeat pattern (MIT, © 2025 Peter Steinberger).
+ * Jarvis heartbeat runtime.
  * Runs on a fixed interval, walks the JARVIS_HEARTBEAT.md checklist for
  * every linked user, and either acts now / queues a draft for review /
  * stays silent. No Telegram pings unless an action fired.
@@ -24,12 +24,9 @@ import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { emit as diagEmit } from "./diagnostics/diagnosticsService";
-import OpenAI from "openai";
+import { createRoutedOpenAIChatShim } from "./agent/routedChatCompletion";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const CHECKLIST_PATH = path.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
@@ -249,6 +246,7 @@ Plain text, no markdown asterisks, no preamble.`;
       const briefModel = await getModel(userId, "planning");
       const resp = await openai.chat.completions.create({
         model: briefModel,
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         max_completion_tokens: 600,
       });
@@ -376,6 +374,7 @@ Return JSON: { "subject": "Re: ...", "body": "..." }`;
       const draftModel = await getModel(userId, "planning");
       const resp = await openai.chat.completions.create({
         model: draftModel,
+        user: userId,
         messages: [{ role: "user", content: prompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 800,
@@ -579,6 +578,7 @@ Return JSON:
     const wrapModel = await getModel(userId, "planning");
     const resp = await openai.chat.completions.create({
       model: wrapModel,
+      user: userId,
       messages: [{ role: "user", content: llmPrompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 600,
@@ -673,7 +673,7 @@ Return JSON:
  *
  * All pending tasks are concatenated into one batched request string so PRIME
  * decomposes them together and routes sub-tasks to the correct specialists.
- * This avoids one Anthropic call per task and ensures PRIME has the full
+ * This avoids one extra model call per task and ensures PRIME has the full
  * picture when deciding specialist assignments.
  */
 /**
@@ -1211,8 +1211,7 @@ export async function runAgentHealthCheck(): Promise<void> {
           // Discord: check if bot token is set and the configured channel is accessible
           const discordToken = process.env.DISCORD_BOT_TOKEN;
           if (!discordToken) {
-            live = false;
-            reason = "DISCORD_BOT_TOKEN not configured";
+            live = true; // Discord is optional; an unset token means the channel is disabled, not dead.
           } else if (agent.channelId) {
             try {
               const resp = await fetch(`https://discord.com/api/v10/channels/${agent.channelId}`, {

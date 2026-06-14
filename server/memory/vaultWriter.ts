@@ -14,13 +14,11 @@
 import { db } from "../db";
 import { eq, and, desc, gte, sql, count, isNull, lt } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
+import { isRetriableProviderError } from "../agent/providers/fallback";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
 
 const VAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const VAULT_NOVELTY_THRESHOLD = 3;
@@ -202,7 +200,7 @@ const PAGE_SPECS: PageSpec[] = [
     title: "About You",
     buildPrompt: async (userId) => {
       const source = await buildAboutYouSource(userId);
-      return `You are Jarvis, an AI assistant maintaining a personal wiki about this user. 
+      return `You are Jarvis, an AI assistant maintaining a personal wiki about this user.
 Write the "About You" wiki page as a clear, insightful markdown document.
 Cover: who they are, their personality & communication style, core values, and key preferences.
 Write in third person from Jarvis's perspective. Be specific, not generic. Max 600 words.
@@ -319,6 +317,7 @@ async function generatePage(userId: string, spec: PageSpec, model: string): Prom
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: promptText }],
       max_completion_tokens: 1000,
     });
@@ -486,6 +485,7 @@ ${pageListForLLM}${lintLogSection}`;
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 800,
     });
@@ -593,6 +593,7 @@ Rules:
 
     const planResponse = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: planPrompt }],
       response_format: { type: "json_object" },
       max_completion_tokens: 300,
@@ -731,6 +732,7 @@ Instructions:
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: prompt }],
       max_completion_tokens: 900,
     });
@@ -772,6 +774,11 @@ Instructions:
 
     console.log(`[Vault] Updated wiki page "${slug}" (${pageType}) for ${userId} — ${crossRefs.length} cross-refs`);
   } catch (err) {
+    if (isRetriableProviderError(err)) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[Vault] updateWikiPage("${opts.slug}") skipped: provider backpressure (${msg.slice(0, 180)})`);
+      return;
+    }
     console.error(`[Vault] updateWikiPage("${opts.slug}") failed:`, err);
   }
 }
@@ -797,6 +804,7 @@ export async function fileQuery(
 
     const worthFiling = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [
         {
           role: "user",
@@ -868,6 +876,7 @@ Write a clean wiki page (markdown) that:
 
     const response = await openai.chat.completions.create({
       model,
+      user: userId,
       messages: [{ role: "user", content: pagePrompt }],
       max_completion_tokens: 700,
     });
@@ -1023,6 +1032,7 @@ Return {"corrections": []} if no issues found. Only include entries where revisi
 
       const lintResponse = await openai.chat.completions.create({
         model,
+        user: userId,
         messages: [{ role: "user", content: lintPrompt }],
         response_format: { type: "json_object" },
         max_completion_tokens: 2000,

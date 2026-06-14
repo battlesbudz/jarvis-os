@@ -5,16 +5,40 @@ import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
 import type { ProviderName, FallbackChainEntry } from "./providers";
+import { resolveRuntimeAgentModel } from "./runtimeModel";
 import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
+import { estimateModelUsage, recordModelUsage } from "./modelUsage";
+import { persistHarnessMindTrace } from "./mindTraceRecorder";
 
 /**
  * Resolve the provider name from a model string.
- * Claude models (claude-*) route to ClaudeProvider; everything else to OpenAIProvider.
- * Switching an agent to a different provider is done by changing its model string
- * (via modelPrefs) — no harness edits required.
+ * Runtime execution is forced through Codex OAuth when enabled.
  */
 function resolveProviderName(model: string): ProviderName {
-  return model.startsWith("claude") ? "claude" : "openai";
+  const normalized = model.toLowerCase();
+  if (
+    normalized.startsWith("anthropic/") ||
+    normalized.startsWith("google/") ||
+    normalized.startsWith("modelrelay/") ||
+    normalized.startsWith("chatgpt-codex-oauth/") ||
+    normalized.startsWith("codex-oauth/") ||
+    normalized.startsWith("openai-compatible/") ||
+    normalized.startsWith("openrouter/") ||
+    normalized.startsWith("groq/") ||
+    normalized.startsWith("together/") ||
+    normalized.startsWith("fireworks/") ||
+    normalized.startsWith("cerebras/") ||
+    normalized.startsWith("nvidia/") ||
+    normalized.startsWith("deepseek/")
+  ) {
+    if (normalized.startsWith("anthropic/")) return "anthropic";
+    if (normalized.startsWith("google/")) return "google";
+    if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
+      return "chatgpt-codex-oauth";
+    }
+    return "openai-compatible";
+  }
+  return "openai";
 }
 
 export interface RunAgentOptions {
@@ -65,13 +89,14 @@ export interface RunAgentOptions {
    * Ordered list of fallback providers to try when the primary provider
    * returns a retriable error (5xx, 429, timeout).
    *
-   * The primary provider is automatically derived from the `model` name
-   * (claude-* → claude, everything else → openai) and is always tried first.
+   * The primary provider is automatically derived from the runtime model and
+   * Codex OAuth is primary when enabled.
    * Names listed here are appended as backups — duplicates of the primary
    * are silently de-duplicated.
    *
-   * Example: `providerFallbackChain: ["claude"]` on an OpenAI model will
-   * retry on ClaudeProvider whenever OpenAI returns a 5xx or rate-limit.
+   * Example: `providerFallbackChain: ["openai-compatible"]` can retry on a
+   * configured compatible endpoint whenever the primary provider returns a 5xx
+   * or rate-limit.
    * The fallback provider uses a sensible default model (see
    * DEFAULT_PROVIDER_MODELS in providers/fallback.ts) unless overridden via
    * `providerFallbackModels`.
@@ -79,7 +104,7 @@ export interface RunAgentOptions {
    * Opt-in and off by default. A global default can be set via the
    * PROVIDER_FALLBACK_CHAIN environment variable (comma-separated provider
    * names, with optional explicit models via "name:model" syntax, e.g.
-   * "openai:gpt-4o,claude:claude-3-5-sonnet-20241022") which applies to every
+   * "chatgpt-codex-oauth:chatgpt-codex-oauth/auto,openai:gpt-4o") which applies to every
    * runAgent call that does not provide its own chain.
    */
   providerFallbackChain?: ProviderName[];
@@ -88,8 +113,8 @@ export interface RunAgentOptions {
    * When a fallback provider is selected, its model string is resolved from
    * this map first, then falls back to DEFAULT_PROVIDER_MODELS.
    *
-   * Example: `providerFallbackModels: { claude: "claude-3-haiku-20240307" }`
-   * will use claude-3-haiku on the backup turn rather than the default.
+   * Example: `providerFallbackModels: { "openai-compatible": "modelrelay/auto-fastest" }`
+   * will use that model on the backup turn rather than the default.
    */
   providerFallbackModels?: Partial<Record<ProviderName, string>>;
   /**
@@ -251,10 +276,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // candidate keys and resolve the broken one via live validator status.
   const toolToIntegrationKey = new Map<string, string[]>();
 
-  const { getModel } = await import("../lib/modelPrefs");
-  const model = modelOpt ?? (await getModel(context.userId, "chat"));
+  const { getModel, getSelectedModelPreference } = await import("../lib/modelPrefs");
+  const selectedModel = await getSelectedModelPreference(context.userId);
+  const model = resolveRuntimeAgentModel(selectedModel ?? modelOpt ?? (await getModel(context.userId, "chat")));
 
   const channel = context.channel || "Agent";
+  const harnessStartedAt = Date.now();
+  const harnessContextLoaded = new Set<string>(["always_on_kernel"]);
 
   // ── Inject workspace context into system prompt ────────────────────────────
   // Load SOUL.md, AGENTS.md, and MEMORY.md from ~/.jarvis/workspace/ and
@@ -262,9 +290,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // heading. This runs before all other injections so workspace rules take
   // highest precedence.
   let messages = opts.messages;
+  const seedUserMessage = [...messages].reverse().find((m) => m.role === "user");
+  const seedQuery =
+    typeof seedUserMessage?.content === "string"
+      ? seedUserMessage.content
+      : Array.isArray(seedUserMessage?.content)
+        ? (seedUserMessage.content as Array<{ type: string; text?: string }>)
+            .filter((p) => p.type === "text")
+            .map((p) => p.text ?? "")
+            .join(" ")
+        : "";
   try {
     const { getWorkspaceContext } = await import("../workspace/loader");
-    const workspaceBlock = await getWorkspaceContext();
+    const workspaceBlock = await getWorkspaceContext({ seedQuery });
     if (workspaceBlock) {
       messages = messages.map((m, i) => {
         if (i === 0 && m.role === "system") {
@@ -272,6 +310,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
         }
         return m;
       });
+      harnessContextLoaded.add("workspace_context");
       console.log(`[${channel}/Harness] workspace context injected`);
     }
   } catch {
@@ -284,11 +323,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   if (context.userId) {
     try {
       const { loadUserSkills } = await import("../intelligence/skillWriter");
+      const { truncateToBudget, BUDGET_PRESETS } = await import("../memory/contextBuilder");
       const skills = await loadUserSkills(context.userId);
       if (skills.length > 0) {
-        const skillBlock = skills
+        const skillBlockRaw = skills
           .map((s) => `### Skill: ${s.name}\n${s.instructions}`)
           .join("\n\n");
+        const skillBlock = truncateToBudget(skillBlockRaw, BUDGET_PRESETS.agentTurn.skills);
         const injected = `\n\n---\n## Learnt Behaviour Skills\nThe following skills have been crystallised from repeated patterns and MUST be followed:\n\n${skillBlock}`;
         messages = messages.map((m, i) => {
           if (i === 0 && m.role === "system") {
@@ -296,6 +337,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
           return m;
         });
+        harnessContextLoaded.add("user_skill_files");
       }
     } catch {
       // skills are best-effort — never block an agent run
@@ -308,14 +350,16 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       const { userSkills: userSkillsTable } = await import("@shared/schema");
       const { eq, and } = await import("drizzle-orm");
       const { db: dbImport } = await import("../db");
+      const { truncateToBudget, BUDGET_PRESETS } = await import("../memory/contextBuilder");
       const activeSkills = await dbImport
         .select()
         .from(userSkillsTable)
         .where(and(eq(userSkillsTable.userId, context.userId), eq(userSkillsTable.isActive, true)));
       if (activeSkills.length > 0) {
-        const skillBlock = activeSkills
+        const skillBlockRaw = activeSkills
           .map((s) => `### ${s.emoji} ${s.name}\n${s.instructions}`)
           .join("\n\n");
+        const skillBlock = truncateToBudget(skillBlockRaw, BUDGET_PRESETS.agentTurn.skills);
         const injected = `\n\n---\n## Active Skills\nThe user has enabled the following personal skills. You MUST follow their instructions:\n\n${skillBlock}`;
         messages = messages.map((m, i) => {
           if (i === 0 && m.role === "system") {
@@ -323,6 +367,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
           return m;
         });
+        harnessContextLoaded.add("db_user_skills");
         console.log(`[${channel}/Harness] injected ${activeSkills.length} user skill(s)`);
       }
     } catch {
@@ -336,11 +381,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     // Falls back silently on any error so existing behaviour is unchanged.
     try {
       const { loadPackInstructionsForUser } = await import("../intelligence/behaviorStore");
+      const { truncateToBudget, BUDGET_PRESETS } = await import("../memory/contextBuilder");
       const packs = await loadPackInstructionsForUser(context.userId);
       if (packs.length > 0) {
-        const packBlock = packs
+        const packBlockRaw = packs
           .map((p) => `### Pack: ${p.name} (v${p.version})\n${p.merged}`)
           .join("\n\n");
+        const packBlock = truncateToBudget(packBlockRaw, BUDGET_PRESETS.agentTurn.behaviorPacks);
         // Build heartbeat-rules summary for packs that have non-empty rules.
         const heartbeatLines: string[] = [];
         for (const p of packs) {
@@ -365,6 +412,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
           return m;
         });
+        harnessContextLoaded.add("behavior_packs");
         console.log(`[${channel}/Harness] injected ${packs.length} behaviour pack(s)`);
 
         // Aggregate tool-group preferences from all active packs for use
@@ -436,6 +484,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
           return m;
         });
+        harnessContextLoaded.add("activation_context");
       }
     } catch {
       // activation plan injection is best-effort — never block an agent run
@@ -593,6 +642,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             ? { ...m, content: (m.content ?? "") + unavailableNote }
             : m,
         );
+        harnessContextLoaded.add("integration_status_context");
         console.log(`[${channel}/Harness] integration alert (broken): ${allBroken.join(", ")}`);
       }
 
@@ -607,6 +657,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             ? { ...m, content: (m.content ?? "") + expiryNote }
             : m,
         );
+        harnessContextLoaded.add("integration_status_context");
       }
     } catch {
       // Best-effort — never block an agent run
@@ -870,10 +921,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Inject the active tool set so surface-scoped tools (e.g. test_tool)
   // can verify they are not being used to escape per-surface restrictions.
   context.allowedToolNames = new Set(tools.map((t) => t.name));
+  if (tools.length > 0) harnessContextLoaded.add("tool_manifest");
 
-  // Resolve the provider once per run based on the model name.
-  // claude-* models → ClaudeProvider, everything else → OpenAIProvider.
-  // To switch an agent's provider, change its model string in modelPrefs.
+  // Resolve the provider once per run based on the runtime model.
   const primaryProviderName = resolveProviderName(model);
   const provider = getProvider(primaryProviderName);
 
@@ -881,9 +931,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   //   Priority: per-run option > global env var > single-provider (no fallback).
   // The primary provider is always first; duplicates from the tail are removed.
   // Each entry carries its own model string so cross-provider fallback always
-  // sends a model ID the receiving provider understands (OpenAI models use
-  // "gpt-*", Anthropic models use "claude-*" — they are not interchangeable).
+  // sends a model ID the receiving provider understands.
   const effectiveFallbackChain: FallbackChainEntry[] | null = (() => {
+    if (primaryProviderName === "chatgpt-codex-oauth") return null;
+
     // Resolve the tail: per-run option takes priority over the global env chain.
     // opts.providerFallbackChain is ProviderName[]; env chain is already
     // FallbackChainEntry[] (supports "provider:model" syntax).
@@ -922,14 +973,71 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
    * Falls back to the plain accumulateTurn(provider.query(...)) path when
    * no fallback chain is configured so the hot path has no extra overhead.
    */
-  const runProviderQuery = (
+  const runProviderQuery = async (
     queryParams: Parameters<typeof provider.query>[0],
   ) => {
-    if (effectiveFallbackChain) {
-      return queryWithFallback(effectiveFallbackChain, queryParams, `[${channel}/Agent]`);
+    const startedAt = Date.now();
+    try {
+      const result = effectiveFallbackChain
+        ? await queryWithFallback(effectiveFallbackChain, queryParams, `[${channel}/Agent]`)
+        : await (async () => {
+            console.log(`[${channel}/Agent] provider=${primaryProviderName} model=${model}`);
+            const plainResult = await accumulateTurn(provider.query(queryParams));
+            plainResult.providerName = primaryProviderName;
+            plainResult.model = queryParams.model;
+            plainResult.fallbackUsed = false;
+            return plainResult;
+          })();
+
+      if (context.userId) {
+        const usage = estimateModelUsage({
+          messages: queryParams.messages,
+          tools: queryParams.tools,
+          textContent: result.textContent,
+          toolCallList: result.toolCallList,
+        });
+        void recordModelUsage({
+          userId: context.userId,
+          provider: result.providerName ?? primaryProviderName,
+          model: result.model ?? queryParams.model,
+          source: context.channel ?? channel,
+          ...usage,
+          durationMs: Date.now() - startedAt,
+          success: true,
+          metadata: {
+            finishReason: result.finishReason,
+            toolCalls: result.toolCallList.length,
+            fallbackUsed: Boolean(result.fallbackUsed),
+          },
+        });
+      }
+
+      return result;
+    } catch (err) {
+      if (context.userId) {
+        const usage = estimateModelUsage({
+          messages: queryParams.messages,
+          tools: queryParams.tools,
+          textContent: "",
+          toolCallList: [],
+        });
+        void recordModelUsage({
+          userId: context.userId,
+          provider: primaryProviderName,
+          model: queryParams.model,
+          source: context.channel ?? channel,
+          ...usage,
+          completionTokens: 0,
+          totalTokens: usage.promptTokens,
+          durationMs: Date.now() - startedAt,
+          success: false,
+          metadata: {
+            error: err instanceof Error ? err.message.slice(0, 300) : String(err).slice(0, 300),
+          },
+        });
+      }
+      throw err;
     }
-    console.log(`[${channel}/Agent] provider=${primaryProviderName} model=${model}`);
-    return accumulateTurn(provider.query(queryParams));
   };
 
   // `messages` was already set above (with skills injected); spread into a mutable copy
@@ -966,6 +1074,25 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // overlapping text in live-edit UIs (e.g. Discord).
   let suppressNextStream = false;
 
+  const finalizeRun = async (result: AgentRunResult): Promise<AgentRunResult> => {
+    if (context.userId && inlineUserMessageText.trim()) {
+      await persistHarnessMindTrace({
+        userId: context.userId,
+        userRequest: inlineUserMessageText,
+        channel,
+        model,
+        turns: result.turns,
+        finishReason: result.finishReason,
+        reply: result.reply,
+        toolCalls: result.toolCalls,
+        durationMs: Date.now() - harnessStartedAt,
+        messages: result.messages,
+        contextLoaded: [...harnessContextLoaded],
+      });
+    }
+    return result;
+  };
+
   for (let turn = 0; turn < effectiveMaxTurns; turn++) {
     // ── Abort check — honour caller cancellation before each turn ───────
     if (signal?.aborted) {
@@ -997,6 +1124,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       toolChoice,
       maxCompletionTokens,
       stream: !!onToken,
+      userId: context.userId,
       signal,
     });
 
@@ -1417,13 +1545,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       }
     }
 
-    return {
+    return finalizeRun({
       reply,
       turns: turn + 1,
       toolCalls,
       finishReason: hadToolError ? "tool_error" : lastFinish,
       messages: conversationMessages,
-    };
+    });
   }
 
   // Hit max turns. Force a final answer with tools disabled.
@@ -1436,6 +1564,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       toolChoice: "none",
       maxCompletionTokens,
       stream: !!onToken,
+      userId: context.userId,
       signal,
     });
     reply = finalResult.textContent;
@@ -1450,11 +1579,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     console.error(`[${channel}/Agent] final-answer call failed:`, err);
   }
 
-  return {
+  return finalizeRun({
     reply,
     turns: effectiveMaxTurns,
     toolCalls,
     finishReason: hadToolError ? "tool_error" : lastFinish,
     messages: conversationMessages,
-  };
+  });
 }

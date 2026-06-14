@@ -1,11 +1,11 @@
 /**
- * Provider fallback chain — automatic retry on a backup model when the
+ * Provider fallback chain - automatic retry on a backup model when the
  * primary provider returns a retriable error (5xx, 429, timeout, etc.).
  *
  * Usage (harness):
  *   const result = await queryWithFallback(
  *     [
- *       { providerName: "claude", model: "claude-opus-4-7" },   // primary (orchestrator)
+ *       { providerName: "chatgpt-codex-oauth", model: "chatgpt-codex-oauth/auto" }, // primary
  *       { providerName: "openai", model: "gpt-4.1-mini" }, // backup (subagent tier)
  *     ],
  *     queryParams,
@@ -16,20 +16,19 @@
  *   - Per-run: pass `providerFallbackChain` + optional `providerFallbackModels`
  *              in RunAgentOptions.
  *   - Global:  set PROVIDER_FALLBACK_CHAIN env var (comma-separated, e.g.
- *              "openai,claude" or with explicit models "openai:gpt-4o,claude:claude-3-5-sonnet-20241022")
+ *              "chatgpt-codex-oauth,openai" or with explicit models
+ *              "chatgpt-codex-oauth:chatgpt-codex-oauth/auto,openai:gpt-4o")
  *              When set, every runAgent call implicitly uses this chain unless
  *              the caller provides its own.
  *
- * The feature is opt-in and off by default — if neither the env var nor the
+ * The feature is opt-in and off by default - if neither the env var nor the
  * per-run option is set the harness behaves exactly as before.
  */
 
-import type { ProviderQueryParams, ProviderTurnResult } from "./base";
+import type { ProviderChunk, ProviderQueryParams, ProviderTurnResult } from "./base";
 import { accumulateTurn } from "./base";
 import { getProvider } from "./index";
 import type { ProviderName } from "./index";
-
-// ── Default models per provider ────────────────────────────────────────────
 
 /**
  * Default model string used when a fallback chain entry does not specify one.
@@ -37,17 +36,17 @@ import type { ProviderName } from "./index";
  * cross-provider fallback scenarios.
  */
 export const DEFAULT_PROVIDER_MODELS: Record<ProviderName, string> = {
-  claude: "claude-opus-4-7",
   openai: "gpt-4.1-mini",
+  "openai-compatible": "modelrelay/auto-fastest",
+  "chatgpt-codex-oauth": "chatgpt-codex-oauth/auto",
+  anthropic: "claude-sonnet-4-5",
+  google: "gemini-2.5-pro",
 };
-
-// ── Fallback chain entry ────────────────────────────────────────────────────
 
 /**
  * A single entry in the provider fallback chain.
  * Each entry carries both the provider name and the model string to use
- * with that provider, since model namespaces are provider-specific
- * (e.g. "gpt-4o" is only valid for OpenAI, "claude-*" only for Anthropic).
+ * with that provider, since model namespaces are provider-specific.
  */
 export interface FallbackChainEntry {
   providerName: ProviderName;
@@ -55,43 +54,97 @@ export interface FallbackChainEntry {
   model: string;
 }
 
-// ── Error classification ────────────────────────────────────────────────────
+function collectErrorSignals(err: unknown): string {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = err;
+
+  for (let depth = 0; current != null && depth < 8 && !seen.has(current); depth++) {
+    seen.add(current);
+
+    if (current instanceof Error) {
+      parts.push(current.name, current.message);
+      const anyErr = current as unknown as Record<string, unknown>;
+      for (const key of ["code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+
+    if (typeof current === "object") {
+      const anyErr = current as Record<string, unknown>;
+      for (const key of ["name", "message", "code", "type", "status", "statusCode"]) {
+        const value = anyErr[key];
+        if (typeof value === "string" || typeof value === "number") parts.push(String(value));
+      }
+      current = anyErr.cause;
+      continue;
+    }
+
+    parts.push(String(current));
+    break;
+  }
+
+  return parts.join(" ");
+}
 
 /**
  * Returns true for errors that warrant trying a backup provider:
  *   - HTTP 5xx (provider-side outage / maintenance)
  *   - HTTP 429 (rate-limit / quota exceeded)
+ *   - HTTP 413 (provider/model token cap too small for this prompt)
  *   - Network-level timeouts and connection failures
  *
- * 4xx client errors (400 Bad Request, 401 Unauthorized, etc.) are NOT
- * retriable — a different provider would see the same failure.
+ * Most 4xx client errors (400 Bad Request, 401 Unauthorized, etc.) are NOT
+ * retriable - a different provider would see the same failure. 413 is the
+ * exception because another model/provider may have a larger context or TPM cap.
  */
 export function isRetriableProviderError(err: unknown): boolean {
-  // Check numeric `.status` property emitted by OpenAI / Anthropic SDKs
+  if (err instanceof Error && err.name === "AbortError") return false;
+
+  // Check numeric `.status` property emitted by provider SDKs.
   const anyErr = err as Record<string, unknown>;
   if (typeof anyErr.status === "number") {
     const s = anyErr.status as number;
-    if (s === 429 || (s >= 500 && s < 600)) return true;
+    if (s === 413 || s === 429 || (s >= 500 && s < 600)) return true;
   }
 
-  const msg = err instanceof Error ? err.message : String(err);
+  const msg = collectErrorSignals(err);
   const lower = msg.toLowerCase();
 
   // Numeric status codes embedded in the error message
-  if (/\b(500|502|503|504|529)\b/.test(msg)) return true;
-  if (/\b429\b/.test(msg)) return true;
+  if (/\b(413|429|500|502|503|504|529)\b/.test(msg)) return true;
 
   // Textual signals common across provider SDKs
   const retriableTerms = [
     "rate limit",
     "rate_limit",
     "ratelimit",
+    "rate_limit_exceeded",
     "quota exceeded",
+    "exceeded your current quota",
+    "insufficient_quota",
     "too many requests",
+    "request too large",
+    "tokens per minute",
+    "tpm",
+    "please reduce your message size",
+    "context length",
+    "maximum context",
+    "fetch failed",
     "timeout",
     "timed out",
+    "headers timeout",
+    "headerstimeouterror",
+    "und_err_headers_timeout",
+    "body timeout",
+    "und_err_body_timeout",
     "econnrefused",
     "econnreset",
+    "econnaborted",
+    "socket hang up",
     "network error",
     "service unavailable",
     "overloaded",
@@ -104,9 +157,7 @@ export function isRetriableProviderError(err: unknown): boolean {
   return false;
 }
 
-// ── Global fallback chain from env ─────────────────────────────────────────
-
-const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude"];
+const KNOWN_PROVIDERS: ProviderName[] = ["openai", "openai-compatible", "chatgpt-codex-oauth", "anthropic", "google"];
 
 /**
  * Reads PROVIDER_FALLBACK_CHAIN from the environment and returns an ordered
@@ -114,12 +165,12 @@ const KNOWN_PROVIDERS: ProviderName[] = ["openai", "claude"];
  * results in fewer than 2 valid entries.
  *
  * Formats accepted:
- *   "openai,claude"
- *      → uses DEFAULT_PROVIDER_MODELS for model strings
- *   "claude:claude-opus-4-7,openai:gpt-4.1-mini"
- *      → uses explicit model strings
- *   Mixed: "claude,openai:gpt-4o-mini"
- *      → first entry uses the default, second uses the explicit model
+ *   "chatgpt-codex-oauth,openai"
+ *      -> uses DEFAULT_PROVIDER_MODELS for model strings
+ *   "chatgpt-codex-oauth:chatgpt-codex-oauth/auto,openai:gpt-4.1-mini"
+ *      -> uses explicit model strings
+ *   Mixed: "chatgpt-codex-oauth,openai:gpt-4o-mini"
+ *      -> first entry uses the default, second uses the explicit model
  *
  * Unknown provider names are silently dropped so a misconfigured env var
  * does not crash the server.
@@ -141,20 +192,16 @@ export function getGlobalFallbackChain(): FallbackChainEntry[] | null {
   return entries.length >= 2 ? entries : null;
 }
 
-// ── Core fallback helper ────────────────────────────────────────────────────
-
 /**
  * Runs a provider query using the first entry in `chain`.
  * On a retriable error, falls back to the next entry in the chain and
  * logs the event for observability.
  *
  * Each chain entry carries its own model string so cross-provider fallback
- * always sends a model ID that the receiving provider understands
- * (e.g. the OpenAI primary uses "gpt-4o"; the Claude backup uses
- * "claude-3-5-sonnet-20241022", not "gpt-4o").
+ * always sends a model ID that the receiving provider understands.
  *
  * Non-retriable errors (client 4xx, AbortError, etc.) propagate immediately
- * without trying further providers — they would fail on any provider.
+ * without trying further providers - they would fail on any provider.
  *
  * @param chain      Ordered provider entries to try (primary first).
  * @param params     Base query parameters. `model` is overridden per entry.
@@ -180,7 +227,7 @@ export async function queryWithFallback(
       const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
       console.warn(
         `${logPrefix} provider_fallback: primary=${prev.providerName}(${prev.model}) failed ` +
-          `with retriable error — retrying on fallback=${entry.providerName}(${entry.model}). ` +
+          `with retriable error - retrying on fallback=${entry.providerName}(${entry.model}). ` +
           `Error: ${errMsg.slice(0, 200)}`,
       );
     } else {
@@ -190,9 +237,11 @@ export async function queryWithFallback(
     try {
       const provider = getProvider(entry.providerName);
       // Override `params.model` with the model string for this specific provider.
-      // Model namespaces are provider-specific: OpenAI accepts "gpt-*",
-      // Anthropic accepts "claude-*". Cross-provider fallback MUST remap the model.
+      // Model namespaces are provider-specific, so fallback must remap the model.
       const result = await accumulateTurn(provider.query({ ...params, model: entry.model }));
+      result.providerName = entry.providerName;
+      result.model = entry.model;
+      result.fallbackUsed = isFallback;
 
       if (isFallback) {
         console.log(
@@ -204,22 +253,90 @@ export async function queryWithFallback(
     } catch (err) {
       lastError = err;
 
-      // AbortError — caller cancelled the run; do not try further providers.
+      // AbortError - caller cancelled the run; do not try further providers.
       if (err instanceof Error && err.name === "AbortError") {
         throw err;
       }
 
       const hasMore = i < chain.length - 1;
       if (hasMore && isRetriableProviderError(err)) {
-        // Retriable — try the next provider in the chain.
+        // Retriable - try the next provider in the chain.
         continue;
       }
 
-      // Last provider or non-retriable error — propagate.
+      // Last provider or non-retriable error - propagate.
       throw err;
     }
   }
 
   // Should be unreachable, but TypeScript needs a return path.
+  throw lastError;
+}
+
+export async function queryWithFallbackStreaming(
+  chain: FallbackChainEntry[],
+  params: ProviderQueryParams,
+  logPrefix: string,
+  onChunk: (chunk: ProviderChunk) => void | Promise<void>,
+): Promise<ProviderTurnResult> {
+  if (chain.length === 0) {
+    throw new Error(`${logPrefix} provider fallback chain is empty`);
+  }
+
+  let lastError: unknown;
+
+  for (let i = 0; i < chain.length; i++) {
+    const entry = chain[i];
+    const isFallback = i > 0;
+    let emittedChunk = false;
+
+    if (isFallback) {
+      const prev = chain[i - 1];
+      const errMsg = lastError instanceof Error ? lastError.message : String(lastError);
+      console.warn(
+        `${logPrefix} provider_fallback: primary=${prev.providerName}(${prev.model}) failed ` +
+          `before streaming content - retrying on fallback=${entry.providerName}(${entry.model}). ` +
+          `Error: ${errMsg.slice(0, 200)}`,
+      );
+    } else {
+      console.log(`${logPrefix} provider=${entry.providerName} model=${entry.model}`);
+    }
+
+    try {
+      const provider = getProvider(entry.providerName);
+      const result = await accumulateTurn(
+        provider.query({ ...params, model: entry.model, stream: true }),
+        async (chunk) => {
+          emittedChunk = true;
+          await onChunk(chunk);
+        },
+      );
+      result.providerName = entry.providerName;
+      result.model = entry.model;
+      result.fallbackUsed = isFallback;
+
+      if (isFallback) {
+        console.log(
+          `${logPrefix} provider_fallback: fallback=${entry.providerName}(${entry.model}) succeeded`,
+        );
+      }
+
+      return result;
+    } catch (err) {
+      lastError = err;
+
+      if (err instanceof Error && err.name === "AbortError") {
+        throw err;
+      }
+
+      const hasMore = i < chain.length - 1;
+      if (!emittedChunk && hasMore && isRetriableProviderError(err)) {
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
   throw lastError;
 }

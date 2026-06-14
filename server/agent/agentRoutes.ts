@@ -58,13 +58,14 @@ import {
   rejectGate,
   getGate,
 } from "./agentApproval";
+import { continueTopLevelApproval } from "./topLevelApprovalContinuation";
 import {
   validateAgentConfig,
   exportAgentConfig,
   importConfigToCreateArgs,
 } from "./agentConfigSchema";
 import type { AgentConfigFile } from "./agentConfigSchema";
-import { resumeSession, persistChatMessages, getChatHistory } from "./providers/claude";
+import { resumeSession, persistChatMessages, getChatHistory } from "./providers/sessionStore";
 import {
   getAgentPolicy,
   setAgentPolicyScope,
@@ -75,6 +76,13 @@ import type { AgentPolicyScope } from "@shared/schema";
 import { AGENT_POLICY_SCOPES } from "@shared/schema";
 import { readAuditEntries, countAuditEntries } from "./selfHealAudit";
 import { isIntegrationOwner } from "../integrationOwner";
+import { buildWorkerRuntimeTaskView } from "./workerRuntime";
+import {
+  TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
+  buildTurnProgressEvent,
+  buildVisibleTurnProgressMessage,
+  shouldEmitVisibleProgressUpdate,
+} from "./turnProgress";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -247,6 +255,7 @@ export function registerAgentRoutes(app: Express): void {
       // Shape recent jobs for the "ACTIVE TASKS" section
       const activeTasks = recentJobs.map((j) => {
         const inp = (j.input as Record<string, unknown>) ?? {};
+        const workerRuntimeView = buildWorkerRuntimeTaskView(inp);
         return {
           id: j.id,
           title: j.title,
@@ -261,6 +270,7 @@ export function registerAgentRoutes(app: Express): void {
           output: j.status === "complete" || j.status === "delivered"
             ? String((j.result as Record<string, unknown>)?.output ?? "").slice(0, 400)
             : null,
+          ...workerRuntimeView,
         };
       });
 
@@ -347,7 +357,11 @@ export function registerAgentRoutes(app: Express): void {
         res.status(500).json({ error: "Failed to persist gate approval — DB write may have failed" });
         return;
       }
-      res.json({ ok: true });
+      const continuation = await continueTopLevelApproval(gate).catch((err) => {
+        console.error("[AgentRoutes] top-level approval continuation failed:", err);
+        return { continued: false, reason: "Continuation failed after approval." };
+      });
+      res.json({ ok: true, continuation });
     } catch (err) { handleError(res, err); }
   });
 
@@ -605,6 +619,11 @@ export function registerAgentRoutes(app: Express): void {
         res.setHeader("X-Run-Id", runId);
         res.flushHeaders();
 
+        const turnStartedAtMs = Date.now();
+        let lastVisibleUpdateAtMs = turnStartedAtMs;
+        let progressUpdateCount = 0;
+        let latestProgressPhase = "";
+
         // Heartbeat: SSE comment every 15 s prevents mobile network idle-drops.
         const heartbeat = setInterval(() => {
           if (!res.writableEnded && !res.destroyed) {
@@ -612,9 +631,36 @@ export function registerAgentRoutes(app: Express): void {
           }
         }, 15_000);
 
+        const visibleProgress = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return;
+          const nowMs = Date.now();
+          if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
+          const message = buildVisibleTurnProgressMessage({
+            startedAtMs: turnStartedAtMs,
+            nowMs,
+            updateCount: progressUpdateCount,
+            latestPhase: latestProgressPhase,
+          });
+          const event = buildTurnProgressEvent({
+            startedAtMs: turnStartedAtMs,
+            nowMs,
+            updateCount: progressUpdateCount,
+            source: "server",
+            stage: "idle_visible_update",
+            message,
+            detail: latestProgressPhase || undefined,
+            meaningful: false,
+          });
+          progressUpdateCount += 1;
+          lastVisibleUpdateAtMs = nowMs;
+          console.log(`[AgentRoutes/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} runId=${runId}`);
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
+
         // Cleanup helper — called on normal completion and on client disconnect.
         const cleanup = () => {
           clearInterval(heartbeat);
+          clearInterval(visibleProgress);
           activeRuns.delete(runId);
         };
 
@@ -636,6 +682,7 @@ export function registerAgentRoutes(app: Express): void {
             sdkSessionId: incomingSessionId,
             onToken: (chunk: string) => {
               fullReply += chunk;
+              lastVisibleUpdateAtMs = Date.now();
               if (!res.writableEnded) {
                 res.write(`data: ${JSON.stringify({ content: chunk })}\n\n`);
               }
@@ -650,6 +697,7 @@ export function registerAgentRoutes(app: Express): void {
                 const label = integrationLabels[integrationKey] ?? integrationKey;
                 const safeMessage = `Your ${label} connection has expired and needs to be reconnected.`;
                 console.debug(`[AgentRoutes/SSE] integration_error detail: ${errorMessage.slice(0, 300)}`);
+                lastVisibleUpdateAtMs = Date.now();
                 res.write(
                   `data: ${JSON.stringify({ type: "integration_error", integration: integrationKey, message: safeMessage })}\n\n`,
                 );
@@ -659,6 +707,7 @@ export function registerAgentRoutes(app: Express): void {
               if (!res.writableEnded) {
                 console.warn(`[AgentRoutes/SSE] tool_error: tool=${toolName}`);
                 console.debug(`[AgentRoutes/SSE] tool_error detail: ${errorMessage.slice(0, 300)}`);
+                lastVisibleUpdateAtMs = Date.now();
                 res.write(
                   `data: ${JSON.stringify({ type: "tool_error", tool: toolName })}\n\n`,
                 );
@@ -666,9 +715,22 @@ export function registerAgentRoutes(app: Express): void {
             },
             onProgressMessage: (message: string) => {
               if (!res.writableEnded) {
+                latestProgressPhase = message;
                 console.debug(`[AgentRoutes/SSE] progress: ${message}`);
+                const nowMs = Date.now();
+                lastVisibleUpdateAtMs = nowMs;
+                const event = buildTurnProgressEvent({
+                  startedAtMs: turnStartedAtMs,
+                  nowMs,
+                  updateCount: progressUpdateCount,
+                  source: "harness",
+                  stage: "progress",
+                  message,
+                  meaningful: true,
+                });
+                progressUpdateCount += 1;
                 res.write(
-                  `data: ${JSON.stringify({ type: "progress", message })}\n\n`,
+                  `data: ${JSON.stringify(event)}\n\n`,
                 );
               }
             },

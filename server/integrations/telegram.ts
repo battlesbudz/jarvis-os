@@ -1,8 +1,9 @@
 import crypto from 'crypto';
+import { getPublicBaseUrl } from '../publicUrl';
 
 // Token selection: in dev, prefer TELEGRAM_BOT_TOKEN_DEV (a separate test bot
 // created via BotFather) so the dev server never races with the production
-// webhook.  Set TELEGRAM_BOT_TOKEN_DEV as a Replit secret in the workspace.
+// webhook. Set TELEGRAM_BOT_TOKEN_DEV in the local/dev environment.
 // In production, always use TELEGRAM_BOT_TOKEN.
 const isProduction = process.env.NODE_ENV === 'production';
 const BOT_TOKEN = (!isProduction && process.env.TELEGRAM_BOT_TOKEN_DEV)
@@ -89,10 +90,18 @@ export interface InlineKeyboardButton {
   text: string;
   callback_data?: string;
   url?: string;
+  web_app?: { url: string };
 }
 
 export interface InlineKeyboardMarkup {
   inline_keyboard: InlineKeyboardButton[][];
+}
+
+export interface ReplyKeyboardMarkup {
+  keyboard: { text: string }[][];
+  resize_keyboard?: boolean;
+  is_persistent?: boolean;
+  input_field_placeholder?: string;
 }
 
 /**
@@ -100,12 +109,24 @@ export interface InlineKeyboardMarkup {
  * Points to /go/voice-call — a public Express route that first attempts to
  * open the native app via jarvis://voice-realtime and falls back to the HTTPS
  * web version of the voice screen after 1.5 s if the app is not installed.
- * Returns null in dev mode when REPLIT_DOMAINS is not set.
  */
-function getVoiceCallUrl(): string | null {
-  const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
-  if (!domain) return null;
-  return `https://${domain}/go/voice-call`;
+export function getExpectedVoiceCallUrl(): string {
+  return `${getPublicBaseUrl()}/go/voice-call`;
+}
+
+export function getExpectedVoiceMiniAppUrl(): string {
+  return `${getExpectedMiniAppUrl()}/voice-realtime`;
+}
+
+export function buildTelegramQuickActionKeyboard(): ReplyKeyboardMarkup {
+  return {
+    keyboard: [
+      [{ text: "Add to triage" }, { text: "Stop" }],
+    ],
+    resize_keyboard: true,
+    is_persistent: true,
+    input_field_placeholder: "Tap a quick action...",
+  };
 }
 
 /**
@@ -114,26 +135,24 @@ function getVoiceCallUrl(): string | null {
  *   1. Attempts to launch the native app via jarvis://voice-realtime
  *   2. Falls back to the HTTPS web voice screen after 1.5 s
  *
- * Returns null if no URL can be determined (dev mode without REPLIT_DOMAINS).
  */
 export function buildVoiceCallKeyboard(opts?: {
   includeTextReplyButton?: boolean;
 }): InlineKeyboardMarkup | null {
-  const url = getVoiceCallUrl();
+  void opts;
+  const url = getExpectedVoiceMiniAppUrl();
   if (!url) return null;
-  const row: InlineKeyboardButton[] = [
-    { text: '🎙 Open voice call', url },
-  ];
-  if (opts?.includeTextReplyButton) {
-    row.push({ text: '💬 Text reply', callback_data: 'voice_dismiss' });
-  }
-  return { inline_keyboard: [row] };
+  return {
+    inline_keyboard: [[
+      { text: "Open voice call", web_app: { url } },
+    ]],
+  };
 }
 
 export async function sendMessage(
   chatId: string,
   text: string,
-  replyMarkupOrOpts?: InlineKeyboardMarkup | { parse_mode?: string }
+  replyMarkupOrOpts?: InlineKeyboardMarkup | ReplyKeyboardMarkup | { parse_mode?: string }
 ): Promise<void> {
   if (!BOT_TOKEN) return;
   if (devSendBlocked) return;
@@ -141,9 +160,13 @@ export async function sendMessage(
   if (replyMarkupOrOpts) {
     if ("inline_keyboard" in replyMarkupOrOpts) {
       body.reply_markup = replyMarkupOrOpts;
+    } else if ("keyboard" in replyMarkupOrOpts) {
+      body.reply_markup = replyMarkupOrOpts;
     } else if ("parse_mode" in replyMarkupOrOpts && replyMarkupOrOpts.parse_mode) {
       body.parse_mode = replyMarkupOrOpts.parse_mode;
     }
+  } else if (process.env.TELEGRAM_QUICK_ACTIONS_ENABLED !== "0") {
+    body.reply_markup = buildTelegramQuickActionKeyboard();
   }
   const res = await fetch(`${BASE}/sendMessage`, {
     method: 'POST',
@@ -537,13 +560,50 @@ export async function ensureWebhook(expectedUrl: string): Promise<{ healthy: boo
 }
 
 /**
- * Returns the expected production webhook URL derived from REPLIT_DOMAINS.
- * Returns null if REPLIT_DOMAINS is not set (dev mode).
+ * Returns the expected production webhook URL.
  */
 export function getExpectedWebhookUrl(): string | null {
-  const domain = (process.env.REPLIT_DOMAINS || '').split(',')[0]?.trim();
-  if (!domain) return null;
-  return `https://${domain}/api/telegram/webhook`;
+  return `${getPublicBaseUrl()}/api/telegram/webhook`;
+}
+
+export function getExpectedMiniAppUrl(): string | null {
+  const configured = process.env.TELEGRAM_MINI_APP_URL || process.env.TELEGRAM_WEB_APP_URL;
+  return configured ? new URL(configured).origin : getPublicBaseUrl();
+}
+
+export async function setMiniAppMenuButton(url: string, chatId?: string): Promise<void> {
+  if (!BOT_TOKEN) return;
+  if (!/^https:\/\//i.test(url)) {
+    throw new Error(`Telegram Mini App URL must be HTTPS: ${url}`);
+  }
+
+  const res = await fetch(`${BASE}/setChatMenuButton`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(chatId ? { chat_id: chatId } : {}),
+      menu_button: {
+        type: 'web_app',
+        text: process.env.TELEGRAM_MINI_APP_BUTTON_TEXT || 'Open Jarvis',
+        web_app: { url },
+      },
+    }),
+  });
+  const data = await res.json() as { ok: boolean; description?: string };
+  if (!data.ok) {
+    throw new Error(`Failed to set Telegram Mini App button: ${data.description || JSON.stringify(data)}`);
+  }
+}
+
+export async function ensureMiniAppMenuButton(expectedUrl: string, chatId?: string): Promise<boolean> {
+  try {
+    await setMiniAppMenuButton(expectedUrl, chatId);
+    console.log('[Telegram] Mini App menu button set:', chatId ? `${expectedUrl} (chat ${chatId})` : expectedUrl);
+    return true;
+  } catch (err) {
+    console.error('[Telegram] Mini App menu button setup failed:', err);
+    return false;
+  }
 }
 
 export function isTelegramConfigured(): boolean {
@@ -732,7 +792,7 @@ export function logTelegramStatus(): void {
   if (BOT_TOKEN) {
     console.log('Telegram: configured ✓');
   } else {
-    console.log('Telegram: not configured (set TELEGRAM_BOT_TOKEN in Replit Secrets)');
+    console.log('Telegram: not configured (set TELEGRAM_BOT_TOKEN in the server environment)');
   }
 }
 

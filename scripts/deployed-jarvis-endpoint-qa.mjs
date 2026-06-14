@@ -1,0 +1,232 @@
+#!/usr/bin/env node
+
+const DEFAULT_BASE_URL = "https://gameplanjarvisai.up.railway.app";
+
+const baseUrl = (process.env.JARVIS_QA_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, "");
+const token = process.env.JARVIS_QA_AUTH_TOKEN || "";
+const runChat = process.env.JARVIS_QA_RUN_CHAT === "1";
+const chatPrompt = process.env.JARVIS_QA_CHAT_PROMPT
+  || "QA_ENDPOINT_OK: reply with exactly QA_ENDPOINT_OK and do not create tasks, jobs, memories, or deliverables.";
+
+if (!token) {
+  console.error([
+    "Missing JARVIS_QA_AUTH_TOKEN.",
+    "",
+    "Set it to an authenticated Jarvis bearer token before running endpoint QA.",
+    "Do not scrape browser localStorage/sessionStorage for this value.",
+    "",
+    "Preferred options:",
+    "  1. Use a manually issued owner QA token if the deployment provides one.",
+    "  2. Log in through a supported auth flow and copy the returned bearer token from the API response.",
+    "",
+    "PowerShell example:",
+    "  $env:JARVIS_QA_AUTH_TOKEN = '<bearer-token-without-Bearer-prefix>'",
+    "  npm run jarvis:qa:endpoints",
+  ].join("\n"));
+  process.exit(2);
+}
+
+const probes = [
+  { name: "auth.me", method: "GET", path: "/api/auth/me" },
+  { name: "doctor", method: "GET", path: "/api/doctor" },
+  { name: "integrations.status", method: "GET", path: "/api/integrations/status" },
+  { name: "calendar.status", method: "GET", path: "/api/calendar/status" },
+  { name: "gmail.status", method: "GET", path: "/api/gmail/status" },
+  { name: "discord.status", method: "GET", path: "/api/discord/status" },
+  { name: "slack.status", method: "GET", path: "/api/slack/status" },
+  { name: "provider.health", method: "GET", path: "/api/jarvis/provider-health", okStatuses: [200, 207] },
+  { name: "usage.today", method: "GET", path: "/api/jarvis/model-usage?days=1" },
+  { name: "scheduled.tasks", method: "GET", path: "/api/jarvis/scheduled-tasks" },
+  { name: "daily.command", method: "GET", path: "/api/daily-command/today" },
+  { name: "mind.trace.recent", method: "GET", path: "/api/mind-trace/recent?limit=5" },
+  { name: "inbox.items", method: "GET", path: "/api/inbox/items" },
+  { name: "deliverables", method: "GET", path: "/api/deliverables" },
+  { name: "agent.jobs", method: "GET", path: "/api/agent-jobs" },
+  { name: "agent.jobs.active", method: "GET", path: "/api/agent-jobs/active" },
+  { name: "agent.jobs.failed", method: "GET", path: "/api/agent-jobs?status=failed&limit=10" },
+  { name: "agent.approvals", method: "GET", path: "/api/agents/approvals" },
+  { name: "agents", method: "GET", path: "/api/agents" },
+  { name: "projects", method: "GET", path: "/api/projects" },
+  { name: "memories", method: "GET", path: "/api/memories" },
+  { name: "memory.trust", method: "GET", path: "/api/memory/trust" },
+  { name: "memory.pending", method: "GET", path: "/api/memory/pending-review" },
+  { name: "commitments", method: "GET", path: "/api/commitments" },
+];
+
+function summarizePayload(name, payload) {
+  if (!payload || typeof payload !== "object") return undefined;
+  if (name === "doctor" && payload.summary) {
+    return `pass=${payload.summary.pass ?? "?"} warn=${payload.summary.warn ?? "?"} fail=${payload.summary.fail ?? "?"}`;
+  }
+  if (name === "provider.health") {
+    const primary = payload.routeChains?.balanced?.[0];
+    const codex = payload.codexGateway?.enabled ? "codex=enabled" : "codex=off";
+    return `${payload.allOk ? "allOk" : "check"} ${codex}${primary ? ` primary=${primary.provider}/${primary.model}` : ""}`;
+  }
+  if (name === "usage.today" && payload.totals) {
+    return `calls=${payload.totals.calls ?? 0} tokens=${payload.totals.totalTokens ?? 0}`;
+  }
+  if (name === "daily.command") {
+    return `date=${payload.date ?? "?"} status=${payload.status ?? "?"} approvals=${payload.approvals?.pendingCount ?? 0} failed=${payload.jobs?.failed?.length ?? 0}`;
+  }
+  if (name === "mind.trace.recent") {
+    return `traces=${Array.isArray(payload.traces) ? payload.traces.length : 0}`;
+  }
+  if (name === "agent.jobs.failed" && Array.isArray(payload)) {
+    const retryable = payload.filter((job) => job?.review?.canRetry === true).length;
+    return `failed=${payload.length} retryable=${retryable}`;
+  }
+  if (name === "agent.approvals") {
+    return `pending=${Array.isArray(payload.gates) ? payload.gates.length : 0}`;
+  }
+  if (name === "memory.trust" && payload.counts) {
+    const counts = payload.counts;
+    return `pending=${counts.pending ?? 0} active=${counts.active ?? 0} edited=${counts.edited ?? 0} rejected=${counts.rejected ?? 0}`;
+  }
+  if (name === "memory.pending" && Array.isArray(payload.memories)) {
+    return `pending=${payload.memories.length}`;
+  }
+  if (name === "integrations.status") {
+    const entries = Object.values(payload);
+    const runnable = entries.filter((entry) => entry?.capabilityRunnable === true).length;
+    const linkedBlocked = entries.filter((entry) => entry?.readiness === "linked_blocked").length;
+    return `runnable=${runnable} linked_blocked=${linkedBlocked} total=${entries.length}`;
+  }
+  if (Array.isArray(payload)) return `items=${payload.length}`;
+  if (Array.isArray(payload.items)) return `items=${payload.items.length}`;
+  if (Array.isArray(payload.data)) return `items=${payload.data.length}`;
+  if (Array.isArray(payload.results)) return `items=${payload.results.length}`;
+  if (typeof payload.connected === "boolean") return `connected=${payload.connected}`;
+  if (typeof payload.ok === "boolean") return `ok=${payload.ok}`;
+  return undefined;
+}
+
+async function requestJson(probe) {
+  const started = Date.now();
+  const res = await fetch(`${baseUrl}${probe.path}`, {
+    method: probe.method,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/json",
+    },
+  });
+  const text = await res.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = { raw: text.slice(0, 500) };
+  }
+  const okStatuses = probe.okStatuses || [200];
+  return {
+    name: probe.name,
+    path: probe.path,
+    status: res.status,
+    ok: okStatuses.includes(res.status),
+    durationMs: Date.now() - started,
+    summary: summarizePayload(probe.name, payload),
+    payload,
+  };
+}
+
+function parseSse(text) {
+  const events = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const raw = line.slice(5).trim();
+    if (!raw || raw === "[DONE]") continue;
+    try {
+      events.push(JSON.parse(raw));
+    } catch {
+      events.push({ raw });
+    }
+  }
+  return events;
+}
+
+async function runChatProbe() {
+  const started = Date.now();
+  const res = await fetch(`${baseUrl}/api/coach/chat`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "text/event-stream",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      originChannel: "qa_endpoint_harness",
+      messages: [{ role: "user", content: chatPrompt }],
+      history: [],
+      goals: [],
+      stats: {},
+    }),
+  });
+  const text = await res.text();
+  const events = parseSse(text);
+  const content = events
+    .map((event) => event.content || event.text || "")
+    .filter(Boolean)
+    .join("");
+  const job = events.find((event) => event.type === "background_job");
+  return {
+    name: "chat.basic",
+    path: "/api/coach/chat",
+    status: res.status,
+    ok: res.ok && content.includes("QA_ENDPOINT_OK"),
+    durationMs: Date.now() - started,
+    summary: `content=${JSON.stringify(content.slice(0, 120))}${job ? ` job=${job.jobId}` : ""}`,
+    payload: { events, content },
+  };
+}
+
+const results = [];
+for (const probe of probes) {
+  try {
+    results.push(await requestJson(probe));
+  } catch (error) {
+    results.push({
+      name: probe.name,
+      path: probe.path,
+      status: 0,
+      ok: false,
+      durationMs: 0,
+      summary: error instanceof Error ? error.message : String(error),
+      payload: null,
+    });
+  }
+}
+
+if (runChat) {
+  try {
+    results.push(await runChatProbe());
+  } catch (error) {
+    results.push({
+      name: "chat.basic",
+      path: "/api/coach/chat",
+      status: 0,
+      ok: false,
+      durationMs: 0,
+      summary: error instanceof Error ? error.message : String(error),
+      payload: null,
+    });
+  }
+}
+
+const failed = results.filter((result) => !result.ok);
+for (const result of results) {
+  const marker = result.ok ? "ok" : "FAIL";
+  const detail = result.summary ? ` - ${result.summary}` : "";
+  console.log(`${marker.padEnd(4)} ${result.name.padEnd(22)} ${String(result.status).padStart(3)} ${String(result.durationMs).padStart(5)}ms${detail}`);
+}
+
+console.log("");
+console.log(JSON.stringify({
+  baseUrl,
+  checkedAt: new Date().toISOString(),
+  runChat,
+  passed: results.length - failed.length,
+  failed: failed.length,
+  results: results.map(({ payload, ...result }) => result),
+}, null, 2));
+
+process.exit(failed.length > 0 ? 1 : 0);

@@ -1,7 +1,19 @@
-import type { AgentTool } from "../types";
-import { retrieveRelevantMemories, batchIncrementAccessCount } from "../../memory/retrieve";
+import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
+import { batchIncrementAccessCount } from "../../memory/retrieve";
+import type { RetrievedMemory } from "../../memory/retrieve";
+import { retrieveMemoryContext, memoryContextItemsToRetrievedMemories, type MemoryContext } from "../../memory/memoryOs";
 import { db } from "../../db";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
+import {
+  MEMORY_CATEGORIES,
+  MEMORY_TIERS,
+  MEMORY_TYPES,
+  userMemories,
+  users,
+  type MemoryCategory,
+  type MemoryTier,
+  type MemoryType,
+} from "@shared/schema";
 
 interface MemoryRow {
   id: string;
@@ -14,6 +26,329 @@ interface MemoryRow {
   access_count: number;
 }
 
+interface MemorySearchDeps {
+  retrieveMemoryContext?: (input: {
+    userId: string;
+    query: string;
+    limit?: number;
+    caller: string;
+    skipAccessUpdate?: boolean;
+  }) => Promise<MemoryContext>;
+  retrieveMemories?: (
+    userId: string,
+    query: string,
+    limit: number,
+    skipAccessUpdate: boolean,
+  ) => Promise<RetrievedMemory[]>;
+  incrementAccessCount: (ids: string[]) => void;
+  fetchProfileIdentity: (userId: string) => Promise<string | null>;
+}
+
+interface MemorySaveDeps {
+  embedText: (text: string) => Promise<number[] | null>;
+  upsertMemoryEmbedding: (memoryId: string, embedding: number[]) => Promise<unknown>;
+  markSoulStale: (userId: string) => Promise<void>;
+  projectApprovedMemories: (userId: string, limit?: number) => Promise<unknown>;
+}
+
+function normalizeForDedup(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function clampInt(value: unknown, min: number, max: number, fallback: number): number {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(numeric)));
+}
+
+function normalizeCategory(value: unknown): MemoryCategory {
+  const raw = String(value || "").trim().toLowerCase();
+  return (MEMORY_CATEGORIES as readonly string[]).includes(raw)
+    ? (raw as MemoryCategory)
+    : "fact";
+}
+
+function normalizeTier(value: unknown): MemoryTier {
+  const raw = String(value || "").trim().toLowerCase();
+  return (MEMORY_TIERS as readonly string[]).includes(raw)
+    ? (raw as MemoryTier)
+    : "long_term";
+}
+
+function normalizeMemoryType(value: unknown): MemoryType {
+  const raw = String(value || "").trim().toLowerCase();
+  return (MEMORY_TYPES as readonly string[]).includes(raw)
+    ? (raw as MemoryType)
+    : "semantic";
+}
+
+async function executeMemorySave(
+  args: ToolArgs,
+  ctx: ToolContext,
+  deps: MemorySaveDeps,
+): Promise<ToolResult> {
+  const content = String(args.content || "").replace(/\s+/g, " ").trim();
+  if (!content) {
+    return { ok: false, content: "No memory content provided.", label: "Memory save failed" };
+  }
+
+  const category = normalizeCategory(args.category);
+  const tier = normalizeTier(args.tier);
+  const memoryType = normalizeMemoryType(args.memory_type ?? args.memoryType);
+  const confidence = clampInt(args.confidence, 0, 100, 95);
+  const sourceRef = String(args.source_ref || args.sourceRef || ctx.channel || "agent").trim();
+  const normalized = normalizeForDedup(content);
+
+  try {
+    const duplicateResult = await db.execute<{ id: string }>(sql`
+      SELECT id
+      FROM user_memories
+      WHERE user_id = ${ctx.userId}
+        AND LOWER(REGEXP_REPLACE(TRIM(content), '\\s+', ' ', 'g')) = ${normalized}
+        AND (expires_at IS NULL OR expires_at >= NOW())
+        AND review_status NOT IN ('discarded', 'rejected')
+      LIMIT 1
+    `);
+    const duplicateId = duplicateResult.rows?.[0]?.id;
+    if (duplicateId) {
+      return {
+        ok: true,
+        content: `Memory already saved: ${content}`,
+        label: "Memory save: duplicate",
+        detail: duplicateId,
+      };
+    }
+
+    let embedding: number[] | null = null;
+    try {
+      embedding = await deps.embedText(content);
+    } catch (err) {
+      console.warn("[MemorySave] embedding failed; saving without embedding:", err);
+    }
+
+    const [inserted] = await db.insert(userMemories).values({
+      userId: ctx.userId,
+      content,
+      category,
+      confidence,
+      relevanceScore: 75,
+      sourceType: "manual",
+      sourceRef: sourceRef || null,
+      embedding: embedding ?? undefined,
+      tier,
+      memoryType,
+      pendingReview: false,
+      reviewStatus: "active",
+    }).returning({ id: userMemories.id });
+
+    if (embedding && inserted?.id) {
+      deps.upsertMemoryEmbedding(inserted.id, embedding).catch((err) =>
+        console.warn("[MemorySave] embedding vector write failed:", err),
+      );
+    }
+
+    deps.markSoulStale(ctx.userId).catch((err) =>
+      console.warn("[MemorySave] markSoulStale failed:", err),
+    );
+
+    if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
+      deps.projectApprovedMemories(ctx.userId, 25).catch((err) =>
+        console.warn("[MemorySave] brain projection failed:", err),
+      );
+    }
+
+    console.log(
+      `[${ctx.channel || "Agent"}] memory_save [${category} ${tier}/${memoryType} c=${confidence}] ${content.slice(0, 70)}`,
+    );
+
+    return {
+      ok: true,
+      content: `Saved memory: ${content}`,
+      label: "Memory saved",
+      detail: inserted?.id,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, content: `Memory save failed: ${msg}`, label: "Memory save error" };
+  }
+}
+
+function isIdentityFallbackQuery(query: string): boolean {
+  const normalized = query.toLowerCase();
+  return (
+    /\b(what|which)\s+(name|nickname)\b/.test(normalized) ||
+    /\bwhat\s+(is|['’]?s)\s+my\s+(name|nickname)\b/.test(normalized) ||
+    /\b(name|nickname)\s+(you\s+should\s+)?call\s+me\b/.test(normalized) ||
+    /\b(user\s+)?(name|nickname|identity)\b.*\bwhat\s+is\s+my\s+name\b/.test(normalized) ||
+    /\bwhat\s+to\s+call\s+me\b/.test(normalized) ||
+    /\bpreferred\s+name\b/.test(normalized)
+  );
+}
+
+function appendProfileIdentityFallback(content: string, identity: string | null): string {
+  if (!identity) return content;
+  return [
+    `Profile identity fallback: ${identity}`,
+    "This comes from the user's account/profile identity, not a retrieved memory or stated preference. If no memory explicitly states a preferred name or nickname, answer with this fallback identity and say where it came from.",
+    "",
+    content,
+  ].join("\n");
+}
+
+async function fetchProfileIdentity(userId: string): Promise<string | null> {
+  const [user] = await db
+    .select({
+      displayName: users.displayName,
+      username: users.username,
+      email: users.email,
+    })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+
+  const identity = user?.displayName || user?.username || user?.email || null;
+  return identity?.trim() || null;
+}
+
+async function executeMemorySearch(
+  args: ToolArgs,
+  ctx: ToolContext,
+  deps: MemorySearchDeps,
+): Promise<ToolResult> {
+  const query = String(args.query || "").trim();
+  if (!query) {
+    return { ok: false, content: "No query provided.", label: "Memory search failed" };
+  }
+
+  const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
+  const category = args.category ? String(args.category).trim() : null;
+  const tierFilter = args.tier ? String(args.tier).trim() : null;
+  const shouldIncludeProfileFallback = isIdentityFallbackQuery(query);
+
+  try {
+    let memories: RetrievedMemory[];
+    let uncertainty: string[] = [];
+    if (deps.retrieveMemoryContext) {
+      const memoryContext = await deps.retrieveMemoryContext({
+        userId: ctx.userId,
+        query,
+        limit: limit * 2,
+        caller: "memory_search",
+        skipAccessUpdate: true,
+      });
+      memories = memoryContextItemsToRetrievedMemories(memoryContext.items);
+      uncertainty = memoryContext.uncertainty;
+    } else if (deps.retrieveMemories) {
+      memories = await deps.retrieveMemories(ctx.userId, query, limit * 2, true);
+    } else {
+      throw new Error("No memory retrieval dependency configured.");
+    }
+
+    if (category) {
+      memories = memories.filter(
+        (m) => m.category.toLowerCase() === category.toLowerCase(),
+      );
+    }
+
+    if (tierFilter) {
+      memories = memories.filter(
+        (m) => m.tier.toLowerCase() === tierFilter.toLowerCase(),
+      );
+    }
+
+    const top = memories.slice(0, limit);
+    const profileIdentity = shouldIncludeProfileFallback
+      ? await deps.fetchProfileIdentity(ctx.userId)
+      : null;
+
+    deps.incrementAccessCount(top.map((m) => m.id));
+
+    if (top.length === 0) {
+      const retrievalFailure = uncertainty.find((note) => note.startsWith("Memory retrieval failed:"));
+      if (retrievalFailure) {
+        return {
+          ok: false,
+          content: retrievalFailure,
+          label: "Memory search error",
+          detail: retrievalFailure,
+        };
+      }
+
+      return {
+        ok: true,
+        content: appendProfileIdentityFallback(
+          `No memories found for query: "${query}"${category ? ` (category: ${category})` : ""}${tierFilter ? ` (tier: ${tierFilter})` : ""}.`,
+          profileIdentity,
+        ),
+        label: "Memory search: no results",
+      };
+    }
+
+    const formatted = top
+      .map((m, i: number) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
+      .join("\n");
+
+    const content = appendProfileIdentityFallback(
+      [
+        `Memory search returned ${top.length} actual retrieved memor${top.length === 1 ? "y" : "ies"} for: "${query}"`,
+        "These are real memory entries from the user's memory store. In your final answer, summarize the entries below and do not claim there were no results.",
+        "",
+        "Format: [tier/type] (category, confidence%)",
+        "",
+        formatted,
+      ].join("\n"),
+      profileIdentity,
+    );
+
+    console.log(
+      `[${ctx.channel || "Agent"}] memory_search "${query}" -> ${top.length} result(s)`,
+    );
+
+    return {
+      ok: true,
+      content,
+      label: `Memory search: ${query}`,
+      detail: `${top.length} memories retrieved`,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, content: `Memory search failed: ${msg}`, label: "Memory search error" };
+  }
+}
+
+export function executeMemorySearchForTest(
+  args: ToolArgs,
+  ctx: ToolContext,
+  deps: MemorySearchDeps,
+): Promise<ToolResult> {
+  return executeMemorySearch(args, ctx, deps);
+}
+
+const defaultMemorySearchDeps: MemorySearchDeps = {
+  retrieveMemoryContext,
+  incrementAccessCount: batchIncrementAccessCount,
+  fetchProfileIdentity,
+};
+
+const defaultMemorySaveDeps: MemorySaveDeps = {
+  async embedText(text) {
+    const { embedText } = await import("../../memory/retrieve");
+    return embedText(text);
+  },
+  async upsertMemoryEmbedding(memoryId, embedding) {
+    const { upsertMemoryEmbedding } = await import("../../memory/vectorStore");
+    return upsertMemoryEmbedding(memoryId, embedding);
+  },
+  async markSoulStale(userId) {
+    const { markSoulStale } = await import("../../memory/soul");
+    await markSoulStale(userId);
+  },
+  async projectApprovedMemories(userId, limit) {
+    const { projectApprovedMemories } = await import("../../brain/adapter");
+    return projectApprovedMemories(userId, limit);
+  },
+};
+
 export const memorySearchTool: AgentTool = {
   name: "memory_search",
   description:
@@ -23,17 +358,17 @@ export const memorySearchTool: AgentTool = {
     properties: {
       query: {
         type: "string",
-        description: "What you want to recall — a question or topic phrase",
+        description: "What you want to recall - a question or topic phrase",
       },
       category: {
         type: "string",
         description:
-          "Optional — filter to a specific category: work_patterns, values, blockers, goals, relationships, preferences, health, communication_style, or any other label",
+          "Optional - filter to a specific category: work_patterns, values, blockers, goals, relationships, preferences, health, communication_style, or any other label",
       },
       tier: {
         type: "string",
         description:
-          "Optional — filter by memory tier: 'working' (minutes-fresh), 'short_term' (hours/days), or 'long_term' (permanent facts)",
+          "Optional - filter by memory tier: 'working' (minutes-fresh), 'short_term' (hours/days), or 'long_term' (permanent facts)",
       },
       limit: {
         type: "number",
@@ -43,64 +378,46 @@ export const memorySearchTool: AgentTool = {
     required: ["query"],
   },
   async execute(args, ctx) {
-    const query = String(args.query || "").trim();
-    if (!query) {
-      return { ok: false, content: "No query provided.", label: "Memory search failed" };
-    }
+    return executeMemorySearch(args, ctx, defaultMemorySearchDeps);
+  },
+};
 
-    const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
-    const category = args.category ? String(args.category).trim() : null;
-    const tierFilter = args.tier ? String(args.tier).trim() : null;
-
-    try {
-      // skipAccessUpdate=true so we only count accesses for the final filtered set.
-      let memories = await retrieveRelevantMemories(ctx.userId, query, limit * 2, true);
-
-      if (category) {
-        memories = memories.filter(
-          (m) => m.category.toLowerCase() === category.toLowerCase(),
-        );
-      }
-
-      if (tierFilter) {
-        memories = memories.filter(
-          (m) => m.tier.toLowerCase() === tierFilter.toLowerCase(),
-        );
-      }
-
-      const top = memories.slice(0, limit);
-
-      // Increment access_count only for memories actually returned to the agent.
-      batchIncrementAccessCount(top.map((m) => m.id));
-
-      if (top.length === 0) {
-        return {
-          ok: true,
-          content: `No memories found for query: "${query}"${category ? ` (category: ${category})` : ""}${tierFilter ? ` (tier: ${tierFilter})` : ""}.`,
-          label: "Memory search: no results",
-        };
-      }
-
-      const formatted = top
-        .map((m, i: number) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
-        .join("\n");
-
-      const content = `Found ${top.length} relevant memories for: "${query}"\n\nFormat: [tier/type] (category, confidence%)\n\n${formatted}`;
-
-      console.log(
-        `[${ctx.channel || "Agent"}] memory_search "${query}" → ${top.length} result(s)`,
-      );
-
-      return {
-        ok: true,
-        content,
-        label: `Memory search: ${query}`,
-        detail: `${top.length} memories retrieved`,
-      };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, content: `Memory search failed: ${msg}`, label: "Memory search error" };
-    }
+export const memorySaveTool: AgentTool = {
+  name: "memory_save",
+  description:
+    "Durably save an explicit user-provided fact, preference, identity correction, or instruction to long-term memory. Use this when the user says to remember, save, add to memory, or correct what Jarvis should know. Do not use it for inferred guesses; save only the user's stated content.",
+  parameters: {
+    type: "object",
+    properties: {
+      content: {
+        type: "string",
+        description: "The exact fact or preference to save as memory.",
+      },
+      category: {
+        type: "string",
+        description: "Optional category: fact, preferences, relationships, values, work_patterns, communication_style, goals_history, blockers, accomplishments, or energy_rhythms. Defaults to fact.",
+      },
+      confidence: {
+        type: "number",
+        description: "Optional confidence from 0 to 100. Defaults to 95 for explicit user instructions.",
+      },
+      tier: {
+        type: "string",
+        description: "Optional tier: working, short_term, or long_term. Defaults to long_term.",
+      },
+      memory_type: {
+        type: "string",
+        description: "Optional memory type: semantic, procedural, episodic, or contextual. Defaults to semantic.",
+      },
+      source_ref: {
+        type: "string",
+        description: "Optional source reference for where the memory came from.",
+      },
+    },
+    required: ["content"],
+  },
+  async execute(args, ctx) {
+    return executeMemorySave(args, ctx, defaultMemorySaveDeps);
   },
 };
 
@@ -153,7 +470,6 @@ export const memoryGetTool: AgentTool = {
         };
       }
 
-      // Increment access_count and last_referenced_at for all returned rows.
       const ids = memories.map((m) => m.id);
       db.execute(sql`
         UPDATE user_memories
@@ -169,7 +485,7 @@ export const memoryGetTool: AgentTool = {
       const content = `${memories.length} memories in category "${category}":\n\n${formatted}`;
 
       console.log(
-        `[${ctx.channel || "Agent"}] memory_get category="${category}" → ${memories.length} row(s)`,
+        `[${ctx.channel || "Agent"}] memory_get category="${category}" -> ${memories.length} row(s)`,
       );
 
       return {

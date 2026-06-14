@@ -24,7 +24,6 @@ import * as schema from "@shared/schema";
 import type { IntegrationName, IntegrationStatusValue } from "@shared/schema";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { logSystemError } from "../agent/errorLogger";
-import { ReplitConnectors } from "@replit/connectors-sdk";
 import { notifyUser } from "../channels/registry";
 
 // Rate-limit automatic debug sessions: at most once per 24 hours per capability.
@@ -105,9 +104,6 @@ async function checkOAuthIntegration(
     `);
     const row = (rows as SqlQueryResult<OAuthTokenRow>).rows?.[0] ?? (Array.isArray(rows) ? (rows as OAuthTokenRow[])[0] : null);
     if (!row) {
-      // No entry in user_oauth_tokens — fall back to Replit-managed connector tokens.
-      if (provider === "google") return checkGoogleViaConnector();
-      if (provider === "microsoft") return checkOutlookViaConnector();
       return { status: "unconfigured" };
     }
 
@@ -197,123 +193,7 @@ async function pingOAuthProvider(
   }
 }
 
-// ── Replit connector fallback helpers ─────────────────────────────────────────
-// When user_oauth_tokens has no row for a provider, these helpers check whether
-// a Replit-managed connector token exists and can successfully reach the API.
-// Uses @replit/connectors-sdk — the SDK handles token refresh automatically.
-
-/**
- * Check whether a Replit connector is active by:
- *   1. Confirming the connection exists via listConnections.
- *   2. Doing a lightweight proxy ping to verify the token is still valid.
- *
- * Returns 'healthy'      — connection present and ping succeeds (HTTP 2xx).
- * Returns 'unconfigured' — no connection found in this Repl.
- * Returns 'broken'       — connection exists but ping returned non-2xx,
- *                          meaning the token is revoked, expired, or the
- *                          connector is misconfigured.
- *
- * The connector SDK handles token refresh and auth headers automatically;
- * we never touch the raw access token.
- */
-async function checkConnectorStatus(
-  connectorName: string,
-  pingPath: string,
-): Promise<CheckResult> {
-  try {
-    const connectors = new ReplitConnectors();
-
-    // Step 1: verify the connection exists in this Repl.
-    const connections = await connectors.listConnections({
-      connector_names: connectorName,
-      refresh_policy: "none",
-    });
-
-    if (!connections || connections.length === 0) {
-      return { status: "unconfigured" };
-    }
-
-    // Step 2: ping the provider API to confirm the token is still valid.
-    // Any non-2xx response is treated as broken — the connector is set up
-    // but its OAuth token is either expired or revoked.
-    // Exception: 429 (Too Many Requests) means the token is valid but rate-limited;
-    // treat as healthy so we don't fire false-positive broken alerts.
-    const res = await connectors.proxy(connectorName, pingPath, { method: "GET" });
-    if (res.ok) return { status: "healthy" };
-    if (res.status === 429) return { status: "healthy" };
-
-    const text = await res.text().catch(() => "");
-
-    // If the response body is an HTML error page (e.g. the Replit connector proxy
-    // returned a 404 with <!DOCTYPE html>) it means the connector infrastructure
-    // itself is failing — NOT the user's OAuth token.  Treat as unconfigured so
-    // no user alert is fired (it is not actionable by the user).
-    const isHtmlErrorPage = text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html");
-    if (isHtmlErrorPage) {
-      console.warn(`[IntegrationValidator] ${connectorName} connector returned HTML ${res.status} — treating as unconfigured (proxy error)`);
-      return { status: "unconfigured" };
-    }
-
-    return {
-      status: "broken",
-      errorMessage: `${connectorName} connector token invalid (HTTP ${res.status}): ${text.slice(0, 120)}`,
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    // listConnections throws with a descriptive message when no connection
-    // exists for this connector in the current Repl. Only that case should
-    // be returned as unconfigured; infrastructure / auth failures are broken.
-    const isNoConnection =
-      msg.includes("not found") ||
-      msg.includes("no connection") ||
-      (msg.includes("404") && msg.includes("connection"));
-    if (isNoConnection) {
-      return { status: "unconfigured" };
-    }
-    return { status: "broken", errorMessage: `${connectorName} connector error: ${msg}` };
-  }
-}
-
-/**
- * Check Google integration via Replit connectors (google-calendar + google-mail).
- * Both connectors are pinged; both must be healthy for the integration to pass.
- *
- * Calendar ping:  GET /users/me/calendarList  (requires calendar scope)
- * Gmail ping:     GET /gmail/v1/users/me/labels  (requires gmail.labels scope)
- */
-async function checkGoogleViaConnector(): Promise<CheckResult> {
-  const [calendarResult, mailResult] = await Promise.all([
-    checkConnectorStatus("google-calendar", "/users/me/calendarList"),
-    checkConnectorStatus("google-mail", "/gmail/v1/users/me/labels"),
-  ]);
-
-  // Both unconfigured → no connector set up at all
-  if (calendarResult.status === "unconfigured" && mailResult.status === "unconfigured") {
-    return { status: "unconfigured" };
-  }
-  // Surface broken over unconfigured (more actionable)
-  if (calendarResult.status === "broken") return calendarResult;
-  if (mailResult.status === "broken") return mailResult;
-  // Both healthy → healthy
-  if (calendarResult.status === "healthy" && mailResult.status === "healthy") {
-    return { status: "healthy" };
-  }
-  // Partial — one connector missing
-  return {
-    status: "broken",
-    errorMessage: "One or more Google connectors (Calendar / Gmail) are not fully configured",
-  };
-}
-
-/**
- * Check Outlook (Microsoft) integration via the Replit outlook connector.
- * Pings GET /v1.0/me on the Microsoft Graph API to verify the token is valid.
- */
-async function checkOutlookViaConnector(): Promise<CheckResult> {
-  return checkConnectorStatus("outlook", "/v1.0/me");
-}
-
-// ── Cached system-level credential checks (once per process start) ────────────
+// Cached system-level credential checks (once per process start) ────────────
 // These validate that the bot/API credentials are correctly configured.
 // Per-call overhead is a Map lookup; actual ping happens once per cycle.
 
@@ -461,7 +341,11 @@ async function checkDiscord(userId: string): Promise<CheckResult> {
       .limit(1);
     if (rows.length === 0) return { status: "unconfigured" };
 
-    // Step 2: user IS linked — now verify system Discord bot token is valid.
+    if (!process.env.DISCORD_BOT_TOKEN) {
+      return { status: "unconfigured" };
+    }
+
+    // Step 2: user IS linked and Discord is enabled; now verify system Discord bot token is valid.
     const botOk = await checkSystemCredential("discord_bot", pingDiscordBot);
     if (!botOk) {
       return { status: "broken", errorMessage: "Discord bot token missing or invalid" };
@@ -655,7 +539,7 @@ function buildDirectNotification(integration: string, errorMessage: string): str
     );
   }
 
-  // Revoked / invalid token (401, 403 from connector proxy)
+  // Revoked / invalid token (401, 403 from provider API)
   if (msg.includes("http 401") || msg.includes("http 403") ||
       msg.includes("token invalid") || msg.includes("token revoked") ||
       msg.includes("access denied") || msg.includes("unauthorized")) {
@@ -996,13 +880,17 @@ async function warmupRateLimitCache(): Promise<void> {
       WHERE status = 'broken'
     `);
     const rows: BrokenRow[] = (raw as BrokenResult).rows ?? (Array.isArray(raw) ? (raw as BrokenRow[]) : []);
+    const activeRows = rows.filter((row) => {
+      if (row.integration === "discord" && !process.env.DISCORD_BOT_TOKEN) return false;
+      return true;
+    });
     const now = Date.now();
-    for (const row of rows) {
+    for (const row of activeRows) {
       const key = `${row.integration}:${row.user_id}`;
       lastDebugTriggerAt.set(key, now);
     }
-    if (rows.length > 0) {
-      console.log(`[IntegrationValidator] warmed rate-limit cache: ${rows.length} already-broken integration(s) — cooldown active, no repeat alert until ${new Date(now + DEBUG_TRIGGER_COOLDOWN_MS).toISOString()}`);
+    if (activeRows.length > 0) {
+      console.log(`[IntegrationValidator] warmed rate-limit cache: ${activeRows.length} already-broken integration(s) — cooldown active, no repeat alert until ${new Date(now + DEBUG_TRIGGER_COOLDOWN_MS).toISOString()}`);
     }
   } catch (err) {
     // Non-fatal: if the DB is unavailable at startup, the cache starts cold.

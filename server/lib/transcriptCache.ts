@@ -10,7 +10,7 @@
  *     → Passes the YouTube URL directly to Gemini 2.5 Flash as a fileData part.
  *     → Google fetches and transcribes the video from its own infrastructure.
  *     → No yt-dlp, no ffmpeg, no IP blocks. Works for any video length.
- *     → Skipped if AI_INTEGRATIONS_GEMINI_API_KEY is not set.
+ *     → Skipped if GOOGLE_GEMINI_API_KEY is not set.
  *
  *   Phase 1 — Metadata check (InnerTube player API, lightweight)
  *     → Determines whether captions exist at all before committing to heavier work.
@@ -644,7 +644,7 @@ export function getAudioTranscriptTelemetry() {
 }
 
 async function transcribeBuffer(buf: Buffer, ext: "wav" | "mp3"): Promise<string> {
-  const { openai } = await import("../replit_integrations/audio/client");
+  const { openai } = await import("../integrations/audioClient");
   const { toFile } = await import("openai");
   const file = await toFile(buf, `audio.${ext}`, { type: `audio/${ext}` });
   const resp = await openai.audio.transcriptions.create({
@@ -906,7 +906,7 @@ async function fetchAudioTranscript(videoId: string, originalInput?: string): Pr
 // requests. TVHTML5_SIMPLY_EMBEDDED_PLAYER and ANDROID are embedded/app
 // clients that bypass most bot-detection filters applied to the web player.
 
-const INNERTUBE_KEY = "your-youtube-innertube-api-key";
+const INNERTUBE_KEY = process.env.YOUTUBE_INNERTUBE_API_KEY ?? "";
 
 interface InnerTubeClientConfig {
   name: string;
@@ -1103,7 +1103,7 @@ function rankCaptionTracks(tracks: InnerTubeCaptionTrack[]): InnerTubeCaptionTra
  *   has-captions  → caption tracks found; ready to download XML
  *   no-captions   → player responded but has no caption tracks
  *   terminal      → private / age-restricted / rate-limited
- *   blocked       → all clients returned HTTP errors (Replit IP block)
+ *   blocked       → all clients returned HTTP errors (cloud IP block)
  */
 async function checkInnerTubePlayerData(videoId: string): Promise<CaptionAvailability> {
   for (const client of INNERTUBE_CLIENTS) {
@@ -1610,7 +1610,7 @@ export async function fetchTranscriptCached(
           return { segments, noCaptionsDetected: false, source };
         }
       } else {
-        console.warn("[transcriptCache] Phase 0.5 skipped — no Gemini key configured (set GOOGLE_GEMINI_API_KEY for direct access, or AI_INTEGRATIONS_GEMINI_API_KEY for proxy)");
+        console.warn("[transcriptCache] Phase 0.5 skipped - no Gemini key configured (set GOOGLE_GEMINI_API_KEY)");
       }
     } catch (geminiErr) {
       const geminiErrMsg = geminiErr instanceof Error ? geminiErr.message : String(geminiErr);
@@ -1622,13 +1622,13 @@ export async function fetchTranscriptCached(
       console.warn(`[transcriptCache] Phase 0.5 (Gemini) FAILED for ${resolvedId}:`, {
         error: fullMsg,
         stack: geminiErr instanceof Error ? geminiErr.stack?.slice(0, 400) : undefined,
-        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key (not the Replit proxy key)",
+        hint: "Check GOOGLE_GEMINI_API_KEY is a valid Google AI Studio key",
       });
     }
   }
 
   // Short-circuit when Supadata timed out and Gemini fallback also produced nothing —
-  // Phases 1-4 are all IP-blocked on Replit datacenter servers, so falling through
+  // Phases 1-4 are often IP-blocked on cloud datacenter servers, so falling through
   // wastes time and masks the real failure.
   if (supadataTimedOut && segments.length === 0) {
     console.warn(`[transcriptCache] Supadata timed out and Gemini fallback produced nothing for ${resolvedId} — skipping Phases 1-4 (all IP-blocked on datacenter)`);

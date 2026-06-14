@@ -18,6 +18,8 @@ import type { AgentTool } from "../types";
 import { db } from "../../db";
 import { eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { getProjectWorkspaceDir, getProjectWorkspaceRoot } from "../../projectStorage";
+import { hydrateProjectWorkspace, snapshotProjectWorkspace } from "../../projectArtifacts";
 
 const ALLOWED_EXECUTABLES = new Set([
   "npm", "npx", "node", "git", "zip", "unzip",
@@ -75,7 +77,7 @@ function removePidFile(workspaceDir: string): void {
  * processes, and removes the files so ports are not leaked across restarts.
  */
 export function cleanupOrphanedDevServers(): void {
-  const projectsRoot = path.join(process.cwd(), "projects");
+  const projectsRoot = getProjectWorkspaceRoot();
   if (!fs.existsSync(projectsRoot)) return;
 
   let entries: string[];
@@ -184,6 +186,48 @@ function resolvePathValue(value: string, workspaceDir: string): string {
   return path.resolve(workspaceDir, value);
 }
 
+function isSafeProjectRelativePath(value: string): boolean {
+  if (!value || value.length > 240) return false;
+  if (path.isAbsolute(value)) return false;
+  const normalized = value.replace(/\\/g, "/");
+  if (normalized.includes("\0")) return false;
+  return !normalized.split("/").some((part) => part === "..");
+}
+
+async function getOrCreateProjectWorkspace(projectId: string): Promise<
+  | { ok: true; workspaceDir: string }
+  | { ok: false; content: string; label: string }
+> {
+  const [project] = await db
+    .select()
+    .from(schema.jarvisProjects)
+    .where(eq(schema.jarvisProjects.id, projectId))
+    .limit(1);
+
+  if (!project) {
+    return { ok: false, content: `Project ${projectId} not found`, label: "Project not found" };
+  }
+
+  let workspaceDir = project.workspaceDir;
+  if (!workspaceDir) {
+    workspaceDir = getProjectWorkspaceDir(projectId);
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    await db
+      .update(schema.jarvisProjects)
+      .set({ workspaceDir, updatedAt: new Date() })
+      .where(eq(schema.jarvisProjects.id, projectId));
+  }
+
+  if (!fs.existsSync(workspaceDir)) {
+    fs.mkdirSync(workspaceDir, { recursive: true });
+  }
+  await hydrateProjectWorkspace(projectId, workspaceDir).catch((err) => {
+    console.warn(`[ProjectShell] failed to hydrate workspace for ${projectId}:`, err);
+  });
+
+  return { ok: true, workspaceDir };
+}
+
 /**
  * Scan all tokens in the command that look like filesystem paths and reject any
  * that resolve outside the workspace directory.  This prevents commands such as:
@@ -260,6 +304,15 @@ async function runCommand(
     child.stdout.on("data", (d: Buffer) => { stdout += d.toString(); });
     child.stderr.on("data", (d: Buffer) => { stderr += d.toString(); });
 
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      resolve({
+        stdout: stdout.slice(0, 8000),
+        stderr: `${stderr}${stderr ? "\n" : ""}${err.message}`.slice(0, 4000),
+        exitCode: -1,
+      });
+    });
+
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve({
@@ -277,7 +330,7 @@ async function runDevServer(
   projectId: string,
   port: number,
 ): Promise<{ pid: number; url: string }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const env = {
       ...process.env,
       HOME: os.homedir(),
@@ -330,6 +383,12 @@ async function runDevServer(
       ) {
         settle();
       }
+    });
+
+    child.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      reject(err);
     });
 
     (setTimeout(settle, 15000) as unknown as { unref(): void }).unref();
@@ -403,7 +462,7 @@ The tool returns the local URL where the app is running so you can immediately t
 
     let workspaceDir = project.workspaceDir;
     if (!workspaceDir) {
-      workspaceDir = path.join(process.cwd(), "projects", projectId);
+      workspaceDir = getProjectWorkspaceDir(projectId);
       fs.mkdirSync(workspaceDir, { recursive: true });
       await db
         .update(schema.jarvisProjects)
@@ -414,6 +473,9 @@ The tool returns the local URL where the app is running so you can immediately t
     if (!fs.existsSync(workspaceDir)) {
       fs.mkdirSync(workspaceDir, { recursive: true });
     }
+    await hydrateProjectWorkspace(projectId, workspaceDir).catch((err) => {
+      console.warn(`[ProjectShell] failed to hydrate workspace for ${projectId}:`, err);
+    });
 
     const executable = parseExecutable(command);
     if (!ALLOWED_EXECUTABLES.has(executable)) {
@@ -477,6 +539,9 @@ The tool returns the local URL where the app is running so you can immediately t
     }
 
     const { stdout, stderr, exitCode } = await runCommand(command, workspaceDir, timeoutSeconds);
+    await snapshotProjectWorkspace(projectId, workspaceDir).catch((err) => {
+      console.warn(`[ProjectShell] failed to snapshot workspace for ${projectId}:`, err);
+    });
 
     const success = exitCode === 0;
     console.log(
@@ -494,6 +559,74 @@ The tool returns the local URL where the app is running so you can immediately t
       label: success ? `Command ok (exit ${exitCode})` : `Command failed (exit ${exitCode})`,
       detail: `cwd: ${workspaceDir}`,
       metadata: { exitCode, workspaceDir },
+    };
+  },
+};
+
+export const projectWriteFileTool: AgentTool = {
+  name: "project_write_file",
+  description: `Write or replace a text file inside the current standalone app project's isolated workspace.
+Use this for app source files, CSS, package.json, Vite config, HTML, and README files.
+Path must be relative to the project workspace, for example 'src/App.jsx' or 'package.json'.`,
+  parameters: {
+    type: "object",
+    properties: {
+      path: {
+        type: "string",
+        description: "Relative path inside the project workspace, e.g. 'src/App.jsx'.",
+      },
+      content: {
+        type: "string",
+        description: "Complete file content to write.",
+      },
+    },
+    required: ["path", "content"],
+  },
+  async execute(args: Record<string, unknown>, ctx) {
+    const projectId = String(ctx?.projectId ?? "");
+    if (!projectId) {
+      return { ok: false, content: "project_write_file requires a projectId in context", label: "No project context" };
+    }
+
+    const relativePath = String(args.path ?? "").trim();
+    const content = String(args.content ?? "");
+    if (!isSafeProjectRelativePath(relativePath)) {
+      return {
+        ok: false,
+        content: "Invalid path. Use a relative path inside the project workspace without '..' segments.",
+        label: "Unsafe path blocked",
+      };
+    }
+    if (content.length > 1_000_000) {
+      return { ok: false, content: "File content is too large for project_write_file.", label: "Content too large" };
+    }
+
+    const workspace = await getOrCreateProjectWorkspace(projectId);
+    if (!workspace.ok) return workspace;
+
+    const root = path.resolve(workspace.workspaceDir);
+    const fullPath = path.resolve(root, relativePath);
+    if (!fullPath.startsWith(root + path.sep) && fullPath !== root) {
+      return {
+        ok: false,
+        content: "Resolved file path escapes the project workspace.",
+        label: "Unsafe path blocked",
+      };
+    }
+
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content, "utf8");
+    await snapshotProjectWorkspace(projectId, workspace.workspaceDir).catch((err) => {
+      console.warn(`[ProjectShell] failed to snapshot workspace for ${projectId}:`, err);
+    });
+
+    console.log(`[ProjectWriteFile] project=${projectId} path="${relativePath}" bytes=${content.length}`);
+    return {
+      ok: true,
+      content: `Wrote ${relativePath} (${content.length} bytes).`,
+      label: "File written",
+      detail: `cwd: ${workspace.workspaceDir}`,
+      metadata: { path: relativePath, bytes: content.length, workspaceDir: workspace.workspaceDir },
     };
   },
 };

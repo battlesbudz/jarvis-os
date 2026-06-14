@@ -8,8 +8,9 @@ import { eq, and, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { findDuplicateJob } from "./tools/jobDuplicateGuard";
+import { buildInitialWorkerRuntime } from "./workerRuntime";
 
-export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research" | "app_project";
+export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "ephemeral_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research" | "app_project";
 
 export interface SubmitJobInput {
   userId: string;
@@ -45,7 +46,7 @@ export interface SubmitJobDeps {
  *   - research / planning  → gpt-4.1-mini — stronger reasoning for complex tasks
  *   - writing / email      → gpt-4o-mini  — fast, efficient for prose + drafts
  *
- * Claude Opus 4.6 is reserved exclusively for the top-level orchestrator brain.
+ * Codex OAuth is reserved as the top-level orchestrator brain.
  * All sub-agents (background jobs, named agents, workflow steps) use GPT minis.
  *
  * `submitAgentJob` automatically injects the routed model into `input.model`
@@ -155,17 +156,27 @@ export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps 
     callerInput.model !== undefined || routedModel === undefined
       ? callerInput
       : { ...callerInput, model: routedModel };
+  const workerRuntime = buildInitialWorkerRuntime({
+    agentType: input.agentType,
+    title: input.title,
+    input: mergedInput,
+  });
+  const runtimeInput: Record<string, unknown> = {
+    ...mergedInput,
+    workerType: workerRuntime.workerType,
+    workerRuntime,
+  };
 
   const id = await insertFn({
     userId: input.userId,
     agentType: input.agentType,
     title: input.title.slice(0, 200),
     prompt: input.prompt,
-    input: mergedInput,
+    input: runtimeInput,
     status: "queued",
   });
 
-  const model = mergedInput.model ?? "agent-default";
+  const model = runtimeInput.model ?? "agent-default";
   console.log(
     `[JobQueue] queued job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`,
   );

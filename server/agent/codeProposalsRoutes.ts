@@ -191,7 +191,7 @@ export function registerCodeProposalsRoutes(app: Express): void {
       res.json({ ok: true, filePath: row.filePath, restarting: true });
 
       // Gracefully restart so the newly-written file is loaded immediately.
-      // The Replit workflow manager will relaunch the process automatically.
+      // The process supervisor will relaunch the process automatically.
       setTimeout(() => {
         console.log("[CodeProposals] Restarting backend to apply code change…");
         process.exit(0);

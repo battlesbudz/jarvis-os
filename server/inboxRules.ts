@@ -1,12 +1,9 @@
 import { db } from "./db";
 import { eq, and, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import OpenAI from "openai";
+import { createRoutedOpenAIChatShim } from "./agent/routedChatCompletion";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[InboxRules]", "cheap");
 
 export interface MatchHints {
   senders?: string[];
@@ -243,7 +240,7 @@ export async function createRuleFromText(
 { "senders": [], "subjectKeywords": [], "domains": [], "locationKeywords": [] }
 
 Examples:
-- "suppress Replit notifications" → { "senders": ["replit"], "subjectKeywords": ["replit"], "domains": ["replit.com"], "locationKeywords": [] }
+- "suppress deployment notifications" -> { "senders": ["deploy"], "subjectKeywords": ["deployment"], "domains": [], "locationKeywords": [] }
 - "always surface New York events" → { "senders": [], "subjectKeywords": ["new york"], "domains": [], "locationKeywords": ["new york", "nyc", "manhattan"] }
 - "suppress newsletters" → { "senders": [], "subjectKeywords": ["newsletter", "unsubscribe"], "domains": [], "locationKeywords": [] }`,
         },

@@ -33,9 +33,11 @@ import path from "path";
 import { eq } from "drizzle-orm";
 // Side-effect import: registers workspace topic context provider.
 import "./providers/topicContext";
+import { createRoutedOpenAIChatShim } from "./routedChatCompletion";
 import type { DiscordAgent } from "@shared/schema";
 import type { ChannelAttachment } from "../channels/types";
 import type OpenAI from "openai";
+import type { ApprovalReceipt } from "./approvalReceipt";
 
 // ── Errors ─────────────────────────────────────────────────────────────────────
 
@@ -185,6 +187,10 @@ export interface RunNamedAgentOptions {
    * Prevents infinite recursion — the quality checker is skipped on revision passes.
    */
   isRevisionPass?: boolean;
+  /** Scoped receipt from a previously-approved top-level action. */
+  approvalReceipt?: ApprovalReceipt;
+  /** Background worker job ID when this named-agent run belongs to agent_jobs. */
+  jobId?: string;
 }
 
 export interface NamedAgentResult {
@@ -285,7 +291,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
 
     if (opts.sdkSessionId) {
       try {
-        const { resumeSession } = await import("./providers/claude");
+        const { resumeSession } = await import("./providers/sessionStore");
         const resumed = await resumeSession(opts.sdkSessionId, agentId, userId);
         if (resumed) {
           // Session found — append the new user message and skip full rebuild.
@@ -318,18 +324,51 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       try {
         const memories = await readAgentMemories(agentId, userId, userMessage, 8);
         if (memories.length > 0) {
-          memoryBlock = `\n\n## My Memory (${agent.name})\n` +
-            memories.map((m) => `- [${m.category}] ${m.content}`).join("\n");
+          const { buildBudgetedContextBlock, BUDGET_PRESETS } = await import("../memory/contextBuilder");
+          memoryBlock = buildBudgetedContextBlock({
+            title: `My Memory (${agent.name})`,
+            items: memories.map((m) => ({ label: m.category, text: m.content })),
+            budget: BUDGET_PRESETS.agentTurn.memory,
+          });
         }
       } catch { /* non-blocking */ }
 
       // ── Optionally include global soul ───────────────────────────────────────
       let soulBlock = "";
+      let globalMemoryBlock = "";
       if (agent.accessGlobalMemory) {
         try {
           const { getSoulPromptBlock } = await import("../memory/soul");
+          const { buildBudgetedContextBlock, BUDGET_PRESETS } = await import("../memory/contextBuilder");
           const soul = await getSoulPromptBlock(userId);
-          if (soul) soulBlock = `\n\n## User Context (Global)\n${soul.trim()}`;
+          if (soul) {
+            soulBlock = buildBudgetedContextBlock({
+              title: "User Context (Global)",
+              items: [{ text: soul.trim() }],
+              budget: BUDGET_PRESETS.agentTurn.soul,
+            });
+          }
+        } catch { /* non-blocking */ }
+
+        try {
+          const { retrieveMemoryContext } = await import("../memory/memoryOs");
+          const { buildBudgetedContextBlock, BUDGET_PRESETS } = await import("../memory/contextBuilder");
+          const memoryContext = await retrieveMemoryContext({
+            userId,
+            query: userMessage,
+            limit: 6,
+            caller: "agent_sdk_context",
+          });
+          if (memoryContext.items.length > 0) {
+            globalMemoryBlock = buildBudgetedContextBlock({
+              title: "Relevant User Memories (Global)",
+              items: memoryContext.items.map((item) => ({
+                label: item.memory.category,
+                text: item.memory.content,
+              })),
+              budget: BUDGET_PRESETS.agentTurn.memory,
+            });
+          }
         } catch { /* non-blocking */ }
       }
 
@@ -348,7 +387,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
         ? loadCrewReinforcement(crewRoleForPrompt)
         : "";
 
-      const systemPromptBase = `${persona}${reinforcementBlock}${soulBlock}${memoryBlock}`;
+      const systemPromptBase = `${persona}${reinforcementBlock}${soulBlock}${globalMemoryBlock}${memoryBlock}`;
 
       // ── Context registry: inject registered provider context ───────────────
       const registryCtx = await contextRegistry.build({
@@ -395,8 +434,10 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
     }
 
     // ── Resolve model (caller override → agent preferredModel → global pref) ──
-    const { getModel, AVAILABLE_MODELS, ORCHESTRATOR_MODELS } = await import("../lib/modelPrefs");
+    const { getModel, getSelectedModelPreference, AVAILABLE_MODELS, ORCHESTRATOR_MODELS } = await import("../lib/modelPrefs");
+    const selectedModel = await getSelectedModelPreference(userId);
     let model =
+      selectedModel ??
       opts.model ??
       agent.preferredModel ??
       (await getModel(userId, "chat"));
@@ -411,26 +452,9 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
       console.warn(`[runNamedAgent] agent=${agentId} resolved unknown model "${model}" — continuing`);
     }
 
-    // ── Model enforcement: crew specialists must use approved OpenAI models ──
-    // Crew specialists (crewRole set, isCrewMember=true) MUST run on gpt-4o-mini
-    // or gpt-4.1-mini. Gemini models are strictly forbidden in this path.
-    // If an invalid model is detected, clamp to gpt-4o-mini and warn.
     const configJson = (agent.configJson ?? {}) as Record<string, unknown>;
     const isCrewMember = configJson.isCrewMember === true;
     const crewRole = typeof configJson.crewRole === "string" ? configJson.crewRole : null;
-    if (isCrewMember && crewRole && crewRole !== "orchestrator") {
-      const CREW_APPROVED_MODELS = new Set(["gpt-4o-mini", "gpt-4.1-mini"]);
-      const isGemini = typeof model === "string" && model.toLowerCase().startsWith("gemini");
-      const isApproved = typeof model === "string" && CREW_APPROVED_MODELS.has(model);
-      if (isGemini || !isApproved) {
-        console.warn(
-          `[runNamedAgent] crew specialist ${agent.name} has disallowed model "${model}" — clamping to gpt-4o-mini. ` +
-          `Crew specialists must use gpt-4o-mini or gpt-4.1-mini. Gemini is not permitted in this path.`,
-        );
-        model = "gpt-4o-mini";
-      }
-    }
-
     // ── Crew specialist tool scoping ─────────────────────────────────────────
     // When the agent is a non-orchestrator crew specialist, filter permittedTools
     // to only the tools listed in agents/crew/tools.json for its role. This keeps
@@ -468,8 +492,10 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
         userId,
         platform,
         channelId: opts.channelId,
+        workerJobId: opts.jobId,
         initiatedBy,
         signal,
+        approvalReceipt: opts.approvalReceipt,
       });
       return { allowed: result.allowed, reason: result.reason, params: result.params };
     };
@@ -512,7 +538,7 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
     //     can resume without re-injecting history.
     let finalSessionId: string | undefined = activeSessionId;
     try {
-      const { initSession, appendToSession } = await import("./providers/claude");
+      const { initSession, appendToSession } = await import("./providers/sessionStore");
       if (sessionResumed && activeSessionId) {
         // Append only the new exchange: the messages the harness added after the
         // resumption point (user message + assistant reply + any tool messages).
@@ -716,14 +742,11 @@ async function extractAndWriteMemories(
   agentReply: string,
 ): Promise<void> {
   try {
-    const OpenAI = (await import("openai")).default;
-    const openai = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-      baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-    });
+    const openai = createRoutedOpenAIChatShim("[NamedAgentMemoryExtract]", "cheap");
 
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
+      user: userId,
       messages: [
         {
           role: "system",

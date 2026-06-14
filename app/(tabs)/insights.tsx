@@ -93,6 +93,15 @@ const SUGGESTED_PROMPTS = [
   "I'm struggling to stay consistent",
 ];
 
+
+function isNoisyChatFailure(message: ChatMessage, index: number): boolean {
+  if (message.role !== 'assistant' || index < 6) return false;
+  const content = message.content.toLowerCase();
+  return content.includes('failed to get coach response')
+    || content.includes('failed to get response')
+    || content.includes('something went wrong while talking to jarvis');
+}
+
 const CONTEXT_WINDOW = 12;
 
 function generateId(): string {
@@ -160,18 +169,19 @@ interface ConfirmCardProps {
 
 function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: ConfirmCardProps) {
   const isEmail = pendingConfirm.tool === 'send_email';
+  const isConnectedAccountAction = pendingConfirm.tool === 'connected_accounts_execute';
   const preview = pendingConfirm.preview;
 
   return (
     <View style={styles.confirmCard}>
       <View style={styles.confirmCardHeader}>
         <Ionicons
-          name={isEmail ? 'mail-outline' : 'terminal-outline'}
+          name={isEmail ? 'mail-outline' : isConnectedAccountAction ? 'git-network-outline' : 'terminal-outline'}
           size={15}
           color={Colors.primary}
         />
         <Text style={styles.confirmCardTitle}>
-          {isEmail ? 'Send email?' : `Run terminal command?`}
+          {isEmail ? 'Send email?' : isConnectedAccountAction ? 'Approve connected account action?' : `Run terminal command?`}
         </Text>
       </View>
 
@@ -185,6 +195,25 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             <>
               <Text style={styles.confirmPreviewLabel}>Body</Text>
               <Text style={styles.confirmPreviewValue} numberOfLines={4}>{preview.body}</Text>
+            </>
+          )}
+        </View>
+      ) : isConnectedAccountAction ? (
+        <View style={styles.confirmPreview}>
+          <Text style={styles.confirmPreviewLabel}>Platform</Text>
+          <Text style={styles.confirmPreviewValue} numberOfLines={1}>{preview.platform}</Text>
+          <Text style={styles.confirmPreviewLabel}>Action</Text>
+          <Text style={styles.confirmPreviewCode} numberOfLines={2}>{preview.action}</Text>
+          {!!preview.reason && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Reason</Text>
+              <Text style={styles.confirmPreviewValue} numberOfLines={3}>{preview.reason}</Text>
+            </>
+          )}
+          {!!preview.data && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Data</Text>
+              <Text style={styles.confirmPreviewCode} numberOfLines={4}>{preview.data}</Text>
             </>
           )}
         </View>
@@ -227,7 +256,7 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             <Ionicons name="checkmark" size={14} color="#fff" />
           )}
           <Text style={styles.confirmBtnConfirmText}>
-            {isLoading ? (isEmail ? 'Sending...' : 'Running...') : isEmail ? 'Send' : 'Run'}
+            {isLoading ? (isEmail ? 'Sending...' : isConnectedAccountAction ? 'Approving...' : 'Running...') : isEmail ? 'Send' : isConnectedAccountAction ? 'Approve' : 'Run'}
           </Text>
         </Pressable>
       </View>
@@ -252,6 +281,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
   const isUser = message.role === 'user';
   const router = useRouter();
   const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
+  const [actionStatusMap, setActionStatusMap] = useState<Record<string, 'saving' | 'error'>>({});
   const [draftStatus, setDraftStatus] = useState<'idle' | 'saving' | 'saved' | 'error' | 'reconnect'>('idle');
   const [gmailUrl, setGmailUrl] = useState<string | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
@@ -303,6 +333,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
 
   const handleAddAction = useCallback(async (action: CoachAction, key: string) => {
     if (addedMap[key]) return;
+    if (actionStatusMap[key] === 'saving') return;
     if (action.type === 'link') {
       if (action.url) {
         if (action.url === 'profile://discord') {
@@ -315,12 +346,26 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
       }
       return;
     }
-    setAddedMap(prev => ({ ...prev, [key]: true }));
+    setActionStatusMap(prev => ({ ...prev, [key]: 'saving' }));
     try {
-      if (action.type === 'task') {
-        const loadedGoals = await getGoals();
-        const plan = await getTodayPlan(loadedGoals);
-        const newTask = {
+      if (action.type === 'reminder') {
+        if (!action.scheduledAt) {
+          throw new Error('No reminder time was provided.');
+        }
+        const res = await apiRequest('POST', '/api/jarvis/scheduled-tasks', {
+          title: action.title,
+          description: action.description || action.title,
+          scheduledAt: action.scheduledAt,
+          recurrence: action.recurrence,
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Could not schedule reminder.');
+        }
+        queryClient.invalidateQueries({ queryKey: ['/api/jarvis/scheduled-tasks'] });
+        queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
+      } else if (action.type === 'task') {
+        const task = {
           id: generateId(),
           title: action.title,
           category: action.category as any,
@@ -328,9 +373,20 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
           priority: (action.priority || 'medium') as any,
           description: action.description,
           goalId: undefined,
+          createdBy: 'coach_suggestion',
+          originSurface: 'coach_chat',
+          sourceIntent: 'suggestion_add',
+          createdAt: Date.now(),
         };
-        const updated = { ...plan, tasks: [...plan.tasks, newTask] };
-        await savePlan(updated);
+        const res = await apiRequest('PATCH', '/api/daily-command/plan', {
+          op: 'add_task',
+          task,
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || 'Could not add task to today.');
+        }
+        queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       } else {
         const validCats = ['fitness', 'finance', 'career', 'personal', 'social'];
         const cat = validCats.includes(action.category) ? action.category : 'personal';
@@ -345,8 +401,17 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
         };
         await saveGoal(newGoal);
       }
-    } catch {}
-  }, [addedMap, onDiscordConnect]);
+      setAddedMap(prev => ({ ...prev, [key]: true }));
+      setActionStatusMap(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    } catch (error) {
+      setActionStatusMap(prev => ({ ...prev, [key]: 'error' }));
+      Alert.alert('Could not add this', error instanceof Error ? error.message : 'Please try again.');
+    }
+  }, [addedMap, actionStatusMap, onDiscordConnect, router]);
 
   return (
     <View style={[styles.messageRow, isUser ? styles.messageRowUser : styles.messageRowAssistant]}>
@@ -396,6 +461,8 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                   onPress={() => {
                     if (ea.url === 'profile://discord') {
                       onDiscordConnect?.();
+                    } else if (ea.url === 'app://inbox') {
+                      router.push('/(tabs)/inbox');
                     } else if (ea.url!.startsWith('profile://')) {
                       router.push('/(tabs)/profile');
                     } else {
@@ -636,22 +703,64 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
           {message.actions.map((action, idx) => {
             const key = `${action.type}-${idx}`;
             const added = addedMap[key];
+            const status = actionStatusMap[key];
+            const saving = status === 'saving';
+            const failed = status === 'error';
+            const actionIcon = action.type === 'link'
+              ? 'link-outline'
+              : saving
+                ? 'time-outline'
+                : added
+                  ? 'checkmark'
+                  : failed
+                    ? 'alert-circle-outline'
+                    : action.type === 'reminder'
+                      ? 'alarm-outline'
+                      : action.type === 'task'
+                        ? 'add-circle-outline'
+                        : 'flag-outline';
+            const actionLabel = action.type === 'link'
+              ? (action.buttonLabel || action.title)
+              : saving
+                ? 'Adding...'
+                : added
+                  ? (action.type === 'reminder' ? 'Reminder set' : 'Added!')
+                  : failed
+                    ? 'Retry add'
+                    : action.type === 'reminder'
+                      ? `Remind: ${action.title}`
+                      : action.type === 'task'
+                        ? `Add: ${action.title}`
+                        : `Set goal: ${action.title}`;
             return (
               <Pressable
                 key={key}
-                style={[styles.actionPill, added && styles.actionPillAdded, action.type === 'link' && styles.actionPillLink]}
+                style={[
+                  styles.actionPill,
+                  added && styles.actionPillAdded,
+                  failed && styles.actionPillError,
+                  action.type === 'link' && styles.actionPillLink,
+                  action.type === 'reminder' && !added && !failed && styles.actionPillReminder,
+                ]}
                 onPress={() => handleAddAction(action, key)}
+                disabled={saving}
               >
-                <Ionicons
-                  name={action.type === 'link' ? 'link-outline' : added ? 'checkmark' : action.type === 'task' ? 'add-circle-outline' : 'flag-outline'}
-                  size={13}
-                  color={action.type === 'link' ? '#818CF8' : added ? Colors.success : Colors.primary}
-                />
-                <Text style={[styles.actionPillText, added && styles.actionPillTextAdded, action.type === 'link' && styles.actionPillTextLink]}>
-                  {action.type === 'link'
-                    ? (action.buttonLabel || action.title)
-                    : added ? 'Added!'
-                    : action.type === 'task' ? `Add: ${action.title}` : `Set goal: ${action.title}`}
+                {saving ? (
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                ) : (
+                  <Ionicons
+                    name={actionIcon as any}
+                    size={13}
+                    color={action.type === 'link' ? '#818CF8' : failed ? Colors.error : added ? Colors.success : Colors.primary}
+                  />
+                )}
+                <Text style={[
+                  styles.actionPillText,
+                  added && styles.actionPillTextAdded,
+                  failed && styles.actionPillTextError,
+                  action.type === 'link' && styles.actionPillTextLink,
+                ]}>
+                  {actionLabel}
                 </Text>
               </Pressable>
             );
@@ -750,7 +859,6 @@ export default function InsightsScreen() {
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
-  const [commitmentsCollapsed, setCommitmentsCollapsed] = useState(false);
   // MCP prompt browser state
   interface McpPromptEntry {
     serverName: string;
@@ -763,16 +871,6 @@ export default function InsightsScreen() {
   const [mcpPrompts, setMcpPrompts] = useState<McpPromptEntry[]>([]);
   const [mcpPromptsLoading, setMcpPromptsLoading] = useState(false);
 
-  const [weeklyInsights, setWeeklyInsights] = useState<{
-    id: string;
-    weekOf: string;
-    summary: string | null;
-    patterns: { category: string; observation: string; evidence: string[]; confidence: number }[];
-    createdAt: string;
-  }[]>([]);
-  const [weeklyInsightsLoading, setWeeklyInsightsLoading] = useState(true);
-  const [weeklyInsightsCollapsed, setWeeklyInsightsCollapsed] = useState(false);
-  const latestInsight = weeklyInsights[0] || null;
   const [isBaseLoading, setIsBaseLoading] = useState(true);
   const [isEmailLoading, setIsEmailLoading] = useState(true);
   const commitmentsRef = useRef<Commitment[]>([]);
@@ -811,6 +909,15 @@ export default function InsightsScreen() {
       micPulse.value = withTiming(1, { duration: 200 });
     }
   }, [isRecording, micPulse]);
+
+
+  useEffect(() => {
+    if (!messages[0]?.id || messages.length === 0) return;
+    if (hasScrolledRef.current && messages[0]?.role !== 'user') return;
+    requestAnimationFrame(() => {
+      flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+    });
+  }, [messages]);
 
   useEffect(() => {
     if (isSpeaking) {
@@ -1539,41 +1646,6 @@ export default function InsightsScreen() {
     } catch {}
   }, []);
 
-  const fetchWeeklyInsights = useCallback(async () => {
-    setWeeklyInsightsLoading(true);
-    try {
-      const url = new URL('/api/weekly-insights', getApiUrl());
-      const res = await authFetch(url.toString());
-      const data = await res.json();
-      if (data.insights && Array.isArray(data.insights)) {
-        setWeeklyInsights(data.insights);
-      }
-    } catch {}
-    setWeeklyInsightsLoading(false);
-  }, []);
-
-  useEffect(() => { fetchWeeklyInsights(); }, [fetchWeeklyInsights]);
-
-  const markCommitmentDone = useCallback(async (id: string) => {
-    try {
-      const url = new URL(`/api/commitments/${id}`, getApiUrl());
-      await authFetch(url.toString(), {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'done' }),
-      });
-      setCommitments(prev => prev.filter(c => c.id !== id));
-    } catch {}
-  }, []);
-
-  const dismissCommitment = useCallback(async (id: string) => {
-    try {
-      const url = new URL(`/api/commitments/${id}`, getApiUrl());
-      await authFetch(url.toString(), { method: 'DELETE' });
-      setCommitments(prev => prev.filter(c => c.id !== id));
-    } catch {}
-  }, []);
-
   const checkAccountabilityOnMount = useCallback(async (loadedHistory: any[], loadedCommitments: Commitment[], loadedGoals: Goal[], loadedStats: UserStats, loadedLifeContext: LifeContext | null) => {
     if (proactiveCheckedRef.current) return;
     proactiveCheckedRef.current = true;
@@ -1922,6 +1994,7 @@ export default function InsightsScreen() {
     }
     const userMsg: ChatMessage = { id: generateId(), role: 'user', content: text.trim() };
     const assistantId = generateId();
+    hasScrolledRef.current = false;
 
     setMessages(prev => {
       const updated = [userMsg, ...prev];
@@ -1972,6 +2045,21 @@ export default function InsightsScreen() {
       const serverRunId = response.headers.get('X-Run-Id');
       if (serverRunId) chatRunIdRef.current = serverRunId;
 
+      if (!response.ok) {
+        const rawError = await response.text().catch(() => '');
+        let message = `Chat request failed (${response.status})`;
+        try {
+          const parsed = JSON.parse(rawError);
+          if (parsed?.error) message = String(parsed.error);
+        } catch {
+          if (rawError.trim()) message = rawError.trim().slice(0, 240);
+        }
+        if (response.status === 401) {
+          message = 'You are not signed in. Please sign in again, then try chat.';
+        }
+        throw new Error(message);
+      }
+
       setShowTyping(false);
       const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' };
       streamingAssistantIdRef.current = assistantId;
@@ -1990,6 +2078,7 @@ export default function InsightsScreen() {
       let gotConfirmRequired = false;
       let gotPhoneWorking = false;
       let streamAborted = false;
+      let streamErrorMessage = '';
 
       outer: while (true) {
         const { done, value } = await reader.read();
@@ -2009,6 +2098,19 @@ export default function InsightsScreen() {
                 saveCoachSessionId(parsed.sdkSessionId).catch(() => {});
               } else if (parsed.type === 'aborted') {
                 streamAborted = true;
+                break outer;
+              } else if (parsed.type === 'error' || parsed.error) {
+                streamErrorMessage = String(parsed.message || parsed.error || 'Jarvis hit a model provider error.');
+                fullContent = `Error: ${streamErrorMessage}`;
+                setIsSearchingWeb(false);
+                setIsWorkingOnPhone(false);
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], content: fullContent };
+                  saveChatHistory(updated);
+                  return updated;
+                });
                 break outer;
               } else if (parsed.type === 'confirm_required') {
                 gotConfirmRequired = true;
@@ -2038,6 +2140,36 @@ export default function InsightsScreen() {
                   setIsWorkingOnPhone(true);
                   setPhoneWorkingMessage(progressMsg);
                 }
+              } else if (parsed.type === 'working') {
+                const progressMsg = String(parsed.message || '');
+                if (progressMsg) {
+                  setIsWorkingOnPhone(true);
+                  setPhoneWorkingMessage(progressMsg);
+                }
+              } else if (parsed.type === 'background_job' && parsed.jobId) {
+                const jobId = String(parsed.jobId);
+                const agentType = String(parsed.agentType || 'background');
+                const jobAction: ExecutedAction = {
+                  tool: 'queue_background_job',
+                  result: 'success',
+                  label: `${agentType} job queued (${jobId.slice(0, 8)})`,
+                  buttonLabel: 'Open Inbox',
+                  url: 'app://inbox',
+                };
+                executedActions = [
+                  ...executedActions.filter((action) => action.tool !== 'queue_background_job' || action.label !== jobAction.label),
+                  jobAction,
+                ];
+                queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) {
+                    updated[idx] = { ...updated[idx], executedActions };
+                    saveChatHistory(updated);
+                  }
+                  return updated;
+                });
               } else if (parsed.type === 'working') {
                 gotPhoneWorking = true;
                 setIsWorkingOnPhone(true);
@@ -2109,7 +2241,13 @@ export default function InsightsScreen() {
         return;
       }
 
-      const finalContent = fullContent;
+      if (streamErrorMessage) {
+        return;
+      }
+
+      const finalContent = fullContent.trim().length > 0
+        ? fullContent
+        : 'Error: Jarvis did not return a final response. Please retry; if this repeats, check the selected model provider runtime.';
       const finalActions = executedActions;
       setMessages(prev => {
         const updated = [...prev];
@@ -2138,7 +2276,12 @@ export default function InsightsScreen() {
         const suggestRes = await authFetch(suggestUrl.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lastAssistantMessage: finalContent, goals: goalsRef.current, coachingMode: coachingModeRef.current }),
+          body: JSON.stringify({
+            lastAssistantMessage: finalContent,
+            lastUserMessage: userMsg.content,
+            goals: goalsRef.current,
+            coachingMode: coachingModeRef.current,
+          }),
         });
         const suggestData = await suggestRes.json();
         const actions: CoachAction[] = suggestData.actions || [];
@@ -2214,7 +2357,9 @@ export default function InsightsScreen() {
         // you switched apps. Show a contextual message instead of a generic error.
         const errContent = isWorkingOnPhone
           ? "Your phone task finished — the connection dropped when you switched apps. If you got a notification, it completed successfully. Ask me to recap what I did and I'll tell you."
-          : 'Sorry, I had trouble connecting. Please try again.';
+          : error instanceof Error && error.message
+            ? error.message
+            : 'Sorry, I had trouble connecting. Please try again.';
         const errMsg: ChatMessage = {
           id: assistantId,
           role: 'assistant',
@@ -2319,7 +2464,7 @@ export default function InsightsScreen() {
         label: data.label || (data.result === 'success' ? 'Done' : 'Failed'),
       };
       const successContent = data.result === 'success'
-        ? (tool === 'send_email' ? `Email sent successfully.` : `Command executed successfully.`)
+        ? (tool === 'send_email' ? `Email sent successfully.` : tool === 'connected_accounts_execute' ? `Connected account action completed successfully.` : `Command executed successfully.`)
         : `Action failed: ${data.detail || data.error || 'Unknown error'}`;
       setMessages(prev => {
         const updated = [...prev];
@@ -2423,16 +2568,26 @@ export default function InsightsScreen() {
   }, [confirmClear]);
 
   const lastAssistantId = messages.find(m => m.role === 'assistant')?.id;
-  const totalMessages = messages.length;
+  const visibleMessages = messages.filter((m, index) => !isNoisyChatFailure(m, index));
+  const hiddenFailureCount = messages.length - visibleMessages.length;
+  const totalMessages = visibleMessages.length;
   const showDivider = totalMessages > CONTEXT_WINDOW;
 
-  const listData: (ChatMessage | { type: 'divider'; id: string })[] = showDivider
+  const listData: (ChatMessage | { type: 'divider'; id: string; label?: string })[] = showDivider
     ? [
-        ...messages.slice(0, CONTEXT_WINDOW),
+        ...visibleMessages.slice(0, CONTEXT_WINDOW),
         { type: 'divider' as const, id: 'divider' },
-        ...messages.slice(CONTEXT_WINDOW),
+        ...visibleMessages.slice(CONTEXT_WINDOW),
       ]
-    : messages;
+    : visibleMessages;
+
+  if (hiddenFailureCount > 0) {
+    listData.push({
+      type: 'divider' as const,
+      id: 'hidden-failures',
+      label: `${hiddenFailureCount} older failed ${hiddenFailureCount === 1 ? 'reply' : 'replies'} hidden`,
+    });
+  }
 
   const handleDiscordConnect = useCallback(async () => {
     setDiscordPairInput('');
@@ -2502,12 +2657,12 @@ export default function InsightsScreen() {
     })();
   }, [discordPhase, discordConnectVisible]);
 
-  const renderItem = useCallback(({ item, index }: { item: ChatMessage | { type: 'divider'; id: string }; index: number }) => {
+  const renderItem = useCallback(({ item, index }: { item: ChatMessage | { type: 'divider'; id: string; label?: string }; index: number }) => {
     if ('type' in item && item.type === 'divider') {
       return (
         <View style={styles.dividerRow}>
           <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>Earlier messages not sent to coach</Text>
+          <Text style={styles.dividerText}>{item.label ?? 'Earlier messages not sent to coach'}</Text>
           <View style={styles.dividerLine} />
         </View>
       );
@@ -2533,104 +2688,6 @@ export default function InsightsScreen() {
   }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming, handleConfirmAction, handleDiscordConnect]);
 
   const isEmpty = messages.length === 0 && !isStreaming;
-
-  const getCommitmentDueBadgeStyle = (dueDate: string | null) => {
-    if (!dueDate) return { bg: '#F3F4F6', color: '#6B7280', label: 'Open' };
-    const today = getTodayKey();
-    if (dueDate < today) return { bg: '#FEE2E2', color: '#DC2626', label: 'Overdue' };
-    if (dueDate === today) return { bg: '#FEF3C7', color: '#D97706', label: 'Today' };
-    return { bg: '#ECFDF5', color: '#059669', label: dueDate };
-  };
-
-  const renderWeeklyInsightsSection = () => {
-    if (weeklyInsightsLoading) return null;
-    if (!latestInsight || (!latestInsight.summary && (!latestInsight.patterns || latestInsight.patterns.length === 0))) return null;
-    return (
-      <View style={[styles.commitmentsSection, { backgroundColor: Colors.surface }]}>
-        <Pressable style={styles.commitmentsHeader} onPress={() => setWeeklyInsightsCollapsed(p => !p)}>
-          <View style={styles.commitmentsHeaderLeft}>
-            <Ionicons name="bulb-outline" size={16} color={Colors.primary} />
-            <Text style={styles.commitmentsHeaderTitle}>What we're noticing</Text>
-            <View style={styles.commitmentsBadge}>
-              <Text style={styles.commitmentsBadgeText}>{latestInsight.patterns?.length || 0}</Text>
-            </View>
-          </View>
-          <Ionicons
-            name={weeklyInsightsCollapsed ? 'chevron-down' : 'chevron-up'}
-            size={16}
-            color={Colors.textSecondary}
-          />
-        </Pressable>
-        {!weeklyInsightsCollapsed && (
-          <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
-            {latestInsight.summary ? (
-              <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 19, marginBottom: 10 }}>
-                {latestInsight.summary}
-              </Text>
-            ) : null}
-            {(latestInsight.patterns || []).slice(0, 5).map((p, i) => (
-              <View key={i} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
-                <View style={{ marginTop: 6, width: 5, height: 5, borderRadius: 3, backgroundColor: Colors.primary }} />
-                <View style={{ flex: 1 }}>
-                  <Text style={{ color: Colors.text, fontSize: 13, lineHeight: 18 }}>{p.observation}</Text>
-                  {p.evidence && p.evidence.length > 0 ? (
-                    <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 2 }}>
-                      Why: {p.evidence.slice(0, 2).join(' · ')}
-                    </Text>
-                  ) : null}
-                </View>
-                <Text style={{ color: Colors.textTertiary, fontSize: 10, fontWeight: '600' }}>{p.confidence}%</Text>
-              </View>
-            ))}
-            <Text style={{ color: Colors.textTertiary, fontSize: 10, marginTop: 4 }}>
-              Updated weekly · learned from your last 30 days
-            </Text>
-          </View>
-        )}
-      </View>
-    );
-  };
-
-  const renderCommitmentsSection = () => {
-    if (commitments.length === 0) return null;
-    return (
-      <View style={styles.commitmentsSection}>
-        <Pressable style={styles.commitmentsHeader} onPress={() => setCommitmentsCollapsed(prev => !prev)}>
-          <View style={styles.commitmentsHeaderLeft}>
-            <Ionicons name="flag-outline" size={16} color={Colors.primary} />
-            <Text style={styles.commitmentsHeaderTitle}>Open Commitments</Text>
-            <View style={styles.commitmentsBadge}>
-              <Text style={styles.commitmentsBadgeText}>{commitments.length}</Text>
-            </View>
-          </View>
-          <Ionicons
-            name={commitmentsCollapsed ? 'chevron-down' : 'chevron-up'}
-            size={16}
-            color={Colors.textSecondary}
-          />
-        </Pressable>
-        {!commitmentsCollapsed && commitments.map((c) => {
-          const badge = getCommitmentDueBadgeStyle(c.dueDate);
-          return (
-            <View key={c.id} style={styles.commitmentCard}>
-              <Pressable style={styles.commitmentCheckbox} onPress={() => markCommitmentDone(c.id)}>
-                <Ionicons name="square-outline" size={20} color={Colors.textSecondary} />
-              </Pressable>
-              <View style={styles.commitmentContent}>
-                <Text style={styles.commitmentText}>{c.content}</Text>
-                <View style={[styles.commitmentDueBadge, { backgroundColor: badge.bg }]}>
-                  <Text style={[styles.commitmentDueText, { color: badge.color }]}>{badge.label}</Text>
-                </View>
-              </View>
-              <Pressable style={styles.commitmentDismiss} onPress={() => dismissCommitment(c.id)}>
-                <Ionicons name="close" size={16} color={Colors.textSecondary} />
-              </Pressable>
-            </View>
-          );
-        })}
-      </View>
-    );
-  };
 
   const renderInboxSection = (extraStyle?: any) => (
     <View style={[styles.inboxSection, extraStyle]}>
@@ -2747,9 +2804,6 @@ export default function InsightsScreen() {
           <Text style={styles.emailLoadingText}>Loading email & Slack context…</Text>
         </View>
       )}
-
-      {renderWeeklyInsightsSection()}
-      {renderCommitmentsSection()}
 
       <View style={styles.chatArea}>
         {gmailConnected && isEmpty && renderInboxSection({ paddingHorizontal: 16 })}
@@ -2893,7 +2947,16 @@ export default function InsightsScreen() {
           editable={!isStreaming && !isRecording && !isTranscribing && !isBaseLoading}
           returnKeyType="send"
           blurOnSubmit={false}
-          onSubmitEditing={() => sendMessage(input)}
+          onSubmitEditing={() => {
+            if (Platform.OS !== 'web') sendMessage(input);
+          }}
+          onKeyPress={(event) => {
+            const nativeEvent = event.nativeEvent as typeof event.nativeEvent & { shiftKey?: boolean };
+            if (Platform.OS === 'web' && nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && input.trim()) {
+              (event as unknown as { preventDefault?: () => void }).preventDefault?.();
+              sendMessage(input);
+            }
+          }}
         />
         {isStreaming ? (
           <Pressable style={styles.stopBtn} onPress={handleStop}>
@@ -4036,9 +4099,17 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECFDF5',
     borderColor: '#A7F3D0',
   },
+  actionPillError: {
+    backgroundColor: '#FEF2F2',
+    borderColor: '#FECACA',
+  },
   actionPillLink: {
     backgroundColor: 'rgba(99, 102, 241, 0.1)',
     borderColor: 'rgba(99, 102, 241, 0.4)',
+  },
+  actionPillReminder: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
   },
   actionPillText: {
     fontSize: 12,
@@ -4047,6 +4118,9 @@ const styles = StyleSheet.create({
   },
   actionPillTextAdded: {
     color: Colors.success,
+  },
+  actionPillTextError: {
+    color: Colors.error,
   },
   actionPillTextLink: {
     color: '#818CF8',
@@ -4447,79 +4521,6 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter_500Medium',
     color: '#92400E',
     flex: 1,
-  },
-  commitmentsSection: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  commitmentsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 6,
-  },
-  commitmentsHeaderLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  commitmentsHeaderTitle: {
-    fontSize: 14,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.text,
-  },
-  commitmentsBadge: {
-    backgroundColor: Colors.primary,
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    minWidth: 20,
-    alignItems: 'center',
-  },
-  commitmentsBadgeText: {
-    fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-    color: '#fff',
-  },
-  commitmentCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.card,
-    borderRadius: 10,
-    padding: 10,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  commitmentCheckbox: {
-    marginRight: 8,
-    padding: 2,
-  },
-  commitmentContent: {
-    flex: 1,
-    gap: 4,
-  },
-  commitmentText: {
-    fontSize: 13,
-    fontFamily: 'Inter_500Medium',
-    color: Colors.text,
-  },
-  commitmentDueBadge: {
-    alignSelf: 'flex-start',
-    borderRadius: 6,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  commitmentDueText: {
-    fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-  },
-  commitmentDismiss: {
-    padding: 4,
-    marginLeft: 4,
   },
   discordModal: {
     flex: 1,

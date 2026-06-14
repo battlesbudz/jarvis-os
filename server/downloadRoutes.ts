@@ -1,21 +1,66 @@
 import type { Express, Request, Response } from "express";
 import * as fs from "fs";
 import * as path from "path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { getUserIdFromRequest } from "./auth";
 import { validateDownloadToken } from "./agent/appDelivery";
+import { getProjectDownloadsDir } from "./projectStorage";
+import { readProjectArchive } from "./projectArtifacts";
 
 const APK_PATH = path.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
-const DOWNLOADS_DIR = path.join(process.cwd(), "server", "static", "downloads");
+const DOWNLOADS_DIR = getProjectDownloadsDir();
+const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
 function getFallbackUrl(): string | null {
-  return process.env.ANDROID_APK_URL ?? null;
+  const releaseBase = (
+    process.env.JARVIS_ANDROID_DAEMON_UPDATE_RELEASE_BASE ||
+    "https://github.com/battlesbudz/Gameplanjarvisai/releases/download/android-daemon-latest"
+  ).replace(/\/+$/, "");
+  return (
+    process.env.JARVIS_ANDROID_DAEMON_APK_URL ??
+    process.env.ANDROID_APK_URL ??
+    `${releaseBase}/jarvis-daemon.apk`
+  );
+}
+
+async function proxyFallbackApk(fallbackUrl: string, res: Response): Promise<void> {
+  const remote = await fetch(fallbackUrl, {
+    headers: {
+      Accept: "application/vnd.android.package-archive, application/octet-stream, */*",
+      "User-Agent": "JarvisAPKDownloader/1.0",
+    },
+  });
+
+  if (!remote.ok) {
+    res.status(502).json({
+      error: "Hosted APK unavailable",
+      status: remote.status,
+    });
+    return;
+  }
+
+  res.setHeader(
+    "Content-Type",
+    remote.headers.get("content-type") || "application/vnd.android.package-archive",
+  );
+  res.setHeader("Content-Disposition", 'attachment; filename="jarvis-daemon.apk"');
+  const contentLength = remote.headers.get("content-length");
+  if (contentLength) res.setHeader("Content-Length", contentLength);
+  res.setHeader("Cache-Control", "public, max-age=300");
+  if (!remote.body) {
+    res.status(502).json({ error: "Hosted APK response did not include a body" });
+    return;
+  }
+
+  await pipeline(Readable.fromWeb(remote.body as any), res);
 }
 
 export function registerDownloadRoutes(app: Express): void {
-  app.get("/api/download/apk", (_req: Request, res: Response) => {
+  app.get("/api/download/apk", async (_req: Request, res: Response) => {
     if (fs.existsSync(APK_PATH)) {
       const stat = fs.statSync(APK_PATH);
       res.setHeader("Content-Type", "application/vnd.android.package-archive");
@@ -28,7 +73,14 @@ export function registerDownloadRoutes(app: Express): void {
 
     const fallback = getFallbackUrl();
     if (fallback) {
-      res.redirect(302, fallback);
+      try {
+        await proxyFallbackApk(fallback, res);
+      } catch (error) {
+        console.error("[DownloadRoutes] failed to proxy hosted daemon APK:", error);
+        if (!res.headersSent) {
+          res.status(502).json({ error: "Failed to download hosted APK" });
+        }
+      }
       return;
     }
 
@@ -64,7 +116,7 @@ export function registerDownloadRoutes(app: Express): void {
   //   a) A valid signed ?token=<token> query param (for Telegram/Discord clickthrough)
   //   b) Bearer auth (for in-app download button)
   app.get("/api/downloads/project/:projectId", async (req: Request, res: Response) => {
-    const { projectId } = req.params;
+    const projectId = _p(req.params.projectId);
     const queryToken = typeof req.query.token === "string" ? req.query.token : null;
 
     // ── Auth: signed token OR bearer ────────────────────────────────────────
@@ -96,10 +148,21 @@ export function registerDownloadRoutes(app: Express): void {
       const zipPath = path.join(DOWNLOADS_DIR, `${projectId}.zip`);
 
       if (!fs.existsSync(zipPath)) {
-        return res.status(404).json({
-          error: "Project zip not yet available",
-          detail: "The project may still be building. You will receive a notification when the download is ready.",
-        });
+        const archive = await readProjectArchive(projectId);
+        if (!archive) {
+          return res.status(404).json({
+            error: "Project zip not yet available",
+            detail: "The project may still be building. You will receive a notification when the download is ready.",
+          });
+        }
+
+        const safeName = (project.title ?? projectId).replace(/[^a-z0-9]/gi, "-").toLowerCase();
+        const filename = `${safeName}.zip`;
+        res.setHeader("Content-Type", "application/zip");
+        res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+        res.setHeader("Content-Length", archive.sizeBytes);
+        res.setHeader("Cache-Control", "no-cache");
+        return res.end(archive.data);
       }
 
       const stat = fs.statSync(zipPath);

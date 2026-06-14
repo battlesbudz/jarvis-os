@@ -7,21 +7,19 @@
  * JSON-schema pass to convert the plan into a typed GoalTreeData
  * payload that we persist into goal_trees.
  */
-import OpenAI from "openai";
 import { db } from "../db";
 import { eq, and } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { createRoutedOpenAIChatShim } from "./routedChatCompletion";
 import type {
   GoalTreeData,
   GoalTreePhase,
   GoalTreeMilestone,
   GoalTreeTask,
 } from "@shared/schema";
+import { buildUntrustedSoulContext, BUDGET_PRESETS } from "../memory/contextBuilder";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[GoalDecomposer]", "balanced");
 
 interface UserGoal {
   id: string;
@@ -105,7 +103,11 @@ async function generateTreeWithLLM(goal: UserGoal, userId: string): Promise<Goal
   let soulBlock = "";
   try {
     const { getSoulPromptBlock } = await import("../memory/soul");
-    soulBlock = await getSoulPromptBlock(userId);
+    soulBlock = buildUntrustedSoulContext(
+      await getSoulPromptBlock(userId),
+      "User context from JARVIS Soul",
+      BUDGET_PRESETS.planning.soul,
+    );
   } catch (err) {
     console.error(`[goalDecomposer] SOUL load failed for ${userId}:`, err);
   }
@@ -155,6 +157,7 @@ Decompose it now.`;
 
   const resp = await openai.chat.completions.create({
     model,
+    user: userId,
     messages: [
       { role: "system", content: system },
       { role: "user", content: userMsg },

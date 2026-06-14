@@ -4,6 +4,7 @@ import * as schema from "@shared/schema";
 import { runAgent } from "../agent/harness";
 import { activationPlanner } from "../agent/activationPlanner";
 import { parseChannelKey, resolveChannelTools } from "../agent/tools/channelTools";
+import { filterToolsByGroups, type ToolGroup } from "../agent/tools/index";
 import { getChannel } from "./registry";
 import { getValidGoogleTokens } from "../userTokenStore";
 import { getRecentEmailCommitments } from "../integrations/gmail";
@@ -13,12 +14,19 @@ import { getSoulPromptBlock } from "../memory/soul";
 import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive, isDaemonActionAllowed } from "../daemon/bridge";
 import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
-import { runOrchestrator } from "../agent/orchestrator";
+import { runFastOrchestratorReply, runOrchestrator } from "../agent/orchestrator";
+import { getDeterministicFastReply, isFastInteractiveRequest, isFastLaneDeflection } from "../agent/fastInteractive";
 import { preThink, postCheck } from "../agent/qualityLoop";
 import { getModel, MODEL_DEFAULTS } from "../lib/modelPrefs";
 import { contextRegistry } from "../agent/contextRegistry";
-import { classifyBuildIntent, classifyBuildFollowUp, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
+import { buildBudgetedContextBlock, BUDGET_PRESETS, truncateToBudget } from "../memory/contextBuilder";
+import { processLivingContextUpdate } from "../workspace/livingContextRouter";
+import { classifyBuildIntent, classifyBuildFollowUp, classifyToolAwareRoute, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
+import { routeAutonomyRequest } from "../agent/autonomyRuntime";
+import { getCoachAppAgentId } from "../agent/coreAgentIds";
+import { createSystemApprovalOnBeforeTool } from "../agent/systemApprovalGate";
+import { getCoachAgentSessionAgentId } from "./coachAgentSession";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -35,6 +43,8 @@ export interface CoachReplyInput {
    *  (turn 15+, every 5 turns). Callers use this to keep the user informed
    *  without consuming an extra model turn. */
   onProgressMessage?: (message: string) => void;
+  /** Current external chat/channel ID when the caller has one (Telegram chat ID, Discord channel ID, etc.). */
+  originChannelId?: string;
   /** Discord guild (server) ID — set when the request originates from a Discord guild channel.
    *  Surfaced in ToolContext so Discord-specific tools (e.g. deleteDiscordChannel) can
    *  identify the server without requiring a pre-configured workspace. */
@@ -57,6 +67,8 @@ export interface CoachReplyInput {
    * Merged into the channel's normal tool set before passing to the agent.
    */
   extraTools?: import("../agent/types").AgentTool[];
+  /** Optional caller abort signal. Used by Telegram to enforce a user-facing SLA. */
+  signal?: AbortSignal;
 }
 
 export interface CoachReplyResult {
@@ -96,15 +108,139 @@ function getMaxTokensForChannel(channelName: string): number {
   return 2000;
 }
 
+function getTelegramE2eProbeId(userText?: string): string | null {
+  const match = String(userText ?? "").match(/\bJTE2E_[A-Z0-9_:-]+\b/i);
+  return match ? match[0].slice(0, 80) : null;
+}
+
+function logTelegramE2eReply(probeId: string | null, reply: string): void {
+  if (!probeId) return;
+  const compactReply = reply.replace(/\s+/g, " ").trim().slice(0, 1800);
+  console.log(`[TelegramE2E] id=${probeId} reply=${JSON.stringify(compactReply)}`);
+}
+
 // Channel-agnostic coach pipeline shared by Telegram / WhatsApp / Slack /
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
-/** Agent ID used as the namespace key in the claude session store for main coach turns. */
-const COACH_AGENT_ID = "coach";
+async function persistFastCoachExchange(input: {
+  userId: string;
+  channelName: string;
+  channelLower: string;
+  userText: string;
+  reply: string;
+  coachSessionAgentId: string;
+  sdkSessionId?: string;
+}): Promise<string | undefined> {
+  const { userId, channelName, channelLower, userText, reply, coachSessionAgentId, sdkSessionId } = input;
+  const userMsg = { id: Date.now().toString(), role: "user", content: userText };
+  const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
+
+  await logInteraction(userId, channelLower as any, "outbound", reply).catch(() => {});
+
+  try {
+    const rows = await db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1);
+    const existing = (rows[0]?.data as Array<{ id?: string; role: string; content: string }> | undefined) || [];
+    const updatedChat = [assistantMsg, userMsg, ...existing].slice(0, 100);
+    await db.insert(schema.chatHistory)
+      .values({ userId, data: updatedChat })
+      .onConflictDoUpdate({
+        target: schema.chatHistory.userId,
+        set: { data: updatedChat, updatedAt: new Date() },
+      });
+  } catch (err) {
+    console.error("[coach] fast-lane chat history persist failed:", err);
+  }
+
+  try {
+    const { initSession, appendToSession } = await import("../agent/providers/sessionStore");
+    const newUserMsg = { role: "user" as const, content: userText };
+    const newAssistMsg = { role: "assistant" as const, content: reply };
+    if (sdkSessionId) {
+      await appendToSession(sdkSessionId, coachSessionAgentId, userId, [newUserMsg, newAssistMsg]);
+      return sdkSessionId;
+    }
+    return await initSession(coachSessionAgentId, userId, [
+      {
+        role: "system" as const,
+        content: `You are GamePlan Coach Jarvis responding via ${channelName}. This session includes fast-lane turns that must be treated as normal recent conversation.`,
+      },
+      newUserMsg,
+      newAssistMsg,
+    ]);
+  } catch (err) {
+    console.error("[coach] fast-lane session persist failed:", err);
+    return sdkSessionId;
+  }
+}
 
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
-  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, discordGuildId, discordChannelId } = input;
+  const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
+  const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
   const channelLower = channelName.toLowerCase();
+  const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
+  const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
+
+  if (
+    channelName === "Telegram" &&
+    !imageUrl &&
+    !input.extraTools?.length &&
+    isFastInteractiveRequest(userText || "")
+  ) {
+    logInteraction(userId, channelLower as any, "inbound", userText || "[image]").catch(() => {});
+    const deterministicReply = getDeterministicFastReply(userText || "");
+    if (deterministicReply) {
+      console.log(`[Telegram] route=deterministic_fast_reply${telegramE2eLogSuffix}`);
+      logTelegramE2eReply(telegramE2eProbeId, deterministicReply);
+      const fastSessionId = await persistFastCoachExchange({
+        userId,
+        channelName,
+        channelLower,
+        userText,
+        reply: deterministicReply,
+        coachSessionAgentId,
+        sdkSessionId: input.sdkSessionId,
+      });
+      return {
+        reply: deterministicReply,
+        rawReply: deterministicReply,
+        attachments: [],
+        sdkSessionId: fastSessionId,
+      };
+    }
+    try {
+      const fastStartedAt = Date.now();
+      console.log(`[Telegram] route=fast_orchestrator start${telegramE2eLogSuffix}`);
+      const fastResult = await runFastOrchestratorReply({
+        userId,
+        userRequest: userText,
+        channelName,
+        signal,
+      });
+      console.log(`[Telegram] route=fast_orchestrator done durationMs=${Date.now() - fastStartedAt} traceId=${fastResult.traceId}${telegramE2eLogSuffix}`);
+      if (!isFastLaneDeflection(fastResult.finalAnswer)) {
+        logTelegramE2eReply(telegramE2eProbeId, fastResult.finalAnswer);
+        const fastSessionId = await persistFastCoachExchange({
+          userId,
+          channelName,
+          channelLower,
+          userText,
+          reply: fastResult.finalAnswer,
+          coachSessionAgentId,
+          sdkSessionId: input.sdkSessionId,
+        });
+        return {
+          reply: fastResult.finalAnswer,
+          rawReply: fastResult.finalAnswer,
+          attachments: [],
+          sdkSessionId: fastSessionId,
+        };
+      }
+      console.log(`[Telegram] route=fast_orchestrator escalated_to_full reason=fast_deflection${telegramE2eLogSuffix}`);
+    } catch (fastErr) {
+      if (signal?.aborted || (fastErr as Error)?.name === "AbortError") throw fastErr;
+      console.warn("[Telegram] orchestrator fast lane failed; falling back to full coach workflow:", fastErr);
+    }
+  }
 
   // ── Native session resumption (mirrors runNamedAgent pattern) ────────────────
   // When the caller provides a sdkSessionId, attempt to resume the cached
@@ -118,8 +254,8 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
 
   if (input.sdkSessionId) {
     try {
-      const { resumeSession } = await import("../agent/providers/claude");
-      const resumed = await resumeSession(input.sdkSessionId, COACH_AGENT_ID, userId);
+      const { resumeSession } = await import("../agent/providers/sessionStore");
+      const resumed = await resumeSession(input.sdkSessionId, coachSessionAgentId, userId);
       if (resumed) {
         cachedSessionMessages = resumed.messages;
         sessionResumed = true;
@@ -157,7 +293,7 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   // parallel with the other DB queries below (zero net latency on the hot path).
   const _orchestratorModelPromise = getModel(userId, "orchestrator");
   const _preThinkPromise = _orchestratorModelPromise.then((m) =>
-    preThink(userText || "", channelName + " " + _quickDateStr, m),
+    preThink(userText || "", channelName + " " + _quickDateStr, m, userId, signal),
   );
 
   // ── Fire Google token lookup immediately so Gmail/Calendar API calls can
@@ -233,6 +369,14 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   ]);
 
   logInteraction(userId, channelLower as any, "inbound", userText || "[image]").catch(() => {});
+  if (userText) {
+    processLivingContextUpdate({
+      userId,
+      text: userText,
+      sourceType: "conversation",
+      sourceRef: channelName,
+    }).catch((err) => console.error(`[LivingContext/${channelName}] update failed:`, err));
+  }
 
   let userTimezone = "America/New_York";
   if (goalsRow.status === "fulfilled") userGoals = (goalsRow.value[0]?.data as any[]) || [];
@@ -257,7 +401,14 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     preThinkResult.status === "fulfilled" ? (preThinkResult.value as string) : "";
 
   // Soul and website crawl blocks were fetched in the parallel batch above.
-  const soulBlock = soulBlockResult.status === "fulfilled" ? soulBlockResult.value : "";
+  const rawSoulBlock = soulBlockResult.status === "fulfilled" ? soulBlockResult.value : "";
+  const soulBlock = rawSoulBlock
+    ? buildBudgetedContextBlock({
+        title: "User context from JARVIS Soul",
+        items: [{ text: rawSoulBlock }],
+        budget: BUDGET_PRESETS.coachTurn.soul,
+      })
+    : "";
   let websiteCrawlBlock = websiteCrawlResult.status === "fulfilled" ? websiteCrawlResult.value : "";
 
   const localForDateKey = new Date(new Date().toLocaleString("en-US", { timeZone: userTimezone }));
@@ -347,7 +498,10 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
 
   const gmailSection = gmailItems.length > 0
     ? `## Recent Emails (last 14 days)\n` +
-      gmailItems.slice(0, 100).map((i: any) => `- [id:${i.id}] From: ${i.from || "unknown"} | "${i.subject}" — ${i.snippet}`).join("\n")
+      truncateToBudget(
+        gmailItems.slice(0, 100).map((i: any) => `- [id:${i.id}] From: ${i.from || "unknown"} | "${i.subject}" — ${i.snippet}`).join("\n"),
+        BUDGET_PRESETS.coachTurn.gmailSnippets,
+      )
     : gmailConnected
       ? `## Recent Emails\nGmail is connected but no emails found.`
       : `## Recent Emails\nGmail not connected.`;
@@ -483,7 +637,11 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const turnStrategyBlock = turnGuidance
     ? `\n\n## Turn Strategy\n${turnGuidance}`
     : "";
-  const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock;
+  const toolAwareRoute = classifyToolAwareRoute(userText || "");
+  const toolAwareBlock = toolAwareRoute.shouldPreferTool
+    ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
+    : "";
+  const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock + toolAwareBlock;
 
   // ── Context registry: inject registered provider context ────────────────────
   // Derive a normalised platform string for providers that need it.
@@ -529,9 +687,11 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const agentCtx: import("../agent/types").ToolContext = {
     userId,
     channel: channelName,
+    originChannelId: originChannelId ?? discordChannelId,
     googleAccessToken: googleAccessToken || undefined,
     discordGuildId: discordGuildId || undefined,
     discordChannelId: discordChannelId || undefined,
+    signal,
     state: {
       dateKey,
       todayPlan,
@@ -555,12 +715,30 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     const extraNames = new Set(input.extraTools.map(t => t.name));
     scopedTools = [...scopedTools.filter(t => !extraNames.has(t.name)), ...input.extraTools];
   }
+  if (toolAwareRoute.toolGroups.length > 0) {
+    const existingNames = new Set(scopedTools.map((tool) => tool.name));
+    const boostedTools = filterToolsByGroups(toolAwareRoute.toolGroups as ToolGroup[], !!googleAccessToken)
+      .filter((tool) => !existingNames.has(tool.name));
+    if (boostedTools.length > 0) {
+      scopedTools = [...scopedTools, ...boostedTools];
+      console.log(`[${channelName}] tool-aware boost: +${boostedTools.length} tools for ${toolAwareRoute.intents.join(", ")}`);
+    }
+  }
   const canonicalKey = parseChannelKey(channelName);
   const registeredChannel = canonicalKey ? getChannel(canonicalKey) : undefined;
   console.log(
     `[${channelName}] tool scope: ${scopedTools.length} tools` +
     (registeredChannel ? ` (groups: ${registeredChannel.toolGroups.join(", ")})` : " (fallback groups)"),
   );
+  const coachApprovalOnBeforeTool = createSystemApprovalOnBeforeTool({
+    agentId: getCoachAppAgentId(userId),
+    agentName: "Jarvis App Coach",
+    userId,
+    platform: channelName,
+    channelId: originChannelId ?? discordChannelId,
+    initiatedBy: "user",
+    signal: agentCtx.signal,
+  });
 
   // ── Activation planner — run before the model session ─────────────────────
   // Channel sessions always run (shouldRun is always true for explicit user
@@ -618,6 +796,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         userText,
         channelName,
         chatMessages,
+        originChannelId: originChannelId ?? discordChannelId,
         discordChannelId,
       });
       if (buildResult.handled && buildResult.reply) {
@@ -690,6 +869,45 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     return { reply: resumeReply, rawReply: resumeReply, attachments: [], sdkSessionId: activeSessionId };
   }
 
+  // ── Autonomy-policy short-circuit ─────────────────────────────────────────
+  // Before falling through to the model orchestrator, give the deterministic OS
+  // policy first refusal on obvious autonomous work. This prevents the live
+  // coach from answering "I can't do that" when the correct behavior is to
+  // queue a background deliverable or pause for approval.
+  if (userText) {
+    try {
+      const autonomyResult = await routeAutonomyRequest({
+        userId,
+        userText,
+        channelName,
+        originChannelId: originChannelId ?? discordChannelId,
+      });
+
+      if (autonomyResult.handled && autonomyResult.reply) {
+        const autonomyReply = autonomyResult.reply;
+        const autonomyTs = Date.now();
+        const userMsgEntry = { id: autonomyTs.toString(), role: "user", content: userText };
+        const asstMsgEntry = { id: (autonomyTs + 1).toString(), role: "assistant", content: autonomyReply };
+        const updatedChatAutonomy = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
+        db.insert(schema.chatHistory)
+          .values({ userId, data: updatedChatAutonomy })
+          .onConflictDoUpdate({
+            target: schema.chatHistory.userId,
+            set: { data: updatedChatAutonomy, updatedAt: new Date() },
+          })
+          .catch((err: unknown) => console.error("[coach] autonomy-policy chat history persist failed:", err));
+        logInteraction(userId, channelLower as any, "outbound", autonomyReply).catch(() => {});
+        console.log(
+          `[${channelName}] autonomy-policy handled mode=${autonomyResult.decision.mode}` +
+          (autonomyResult.jobId ? ` job=${autonomyResult.jobId}` : ""),
+        );
+        return { reply: autonomyReply, rawReply: autonomyReply, attachments: [], sdkSessionId: activeSessionId };
+      }
+    } catch (autonomyErr) {
+      console.error(`[${channelName}] autonomy-policy handling failed (falling through to orchestrator):`, autonomyErr);
+    }
+  }
+
   // ── Build-session context-switch detection ────────────────────────────────
   // When the user was mid-build but just sent an unrelated request, flag this
   // so we can prepend a brief soft transition note to the orchestrator reply.
@@ -702,7 +920,8 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   // Always route through the orchestrator — it is the foundational execution
   // architecture. Falls back to direct harness on any orchestrator error.
   let rawReply: string;
-  console.log(`[${channelName}] routing through orchestrator`);
+  const orchestratorStartedAt = Date.now();
+  console.log(`[${channelName}] route=full_orchestrator start tools=${scopedTools.length}${telegramE2eLogSuffix}`);
   try {
     const orchResult = await runOrchestrator({
       userId,
@@ -712,15 +931,18 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       toolContext: agentCtx,
       maxCompletionTokens: getMaxTokensForChannel(channelName),
       onProgressMessage,
+      signal,
     });
     rawReply = orchResult.finalAnswer;
     console.log(
-      `[${channelName}] orchestrator done — tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}`,
+      `[${channelName}] route=full_orchestrator done durationMs=${Date.now() - orchestratorStartedAt} tasks=${orchResult.subtaskCount}, retries=${orchResult.retryCount}, traceId=${orchResult.traceId}${telegramE2eLogSuffix}`,
     );
   } catch (orchErr) {
-    console.error(`[${channelName}] orchestrator failed, falling back to direct harness:`, orchErr);
+    if (signal?.aborted || (orchErr as Error)?.name === "AbortError") throw orchErr;
+    console.error(`[${channelName}] route=full_orchestrator failed durationMs=${Date.now() - orchestratorStartedAt}; falling back to direct harness:`, orchErr);
+    const fallbackStartedAt = Date.now();
     const fallback = await runAgent({
-      model: "gpt-4o-mini",
+      model: orchestratorModel,
       messages: baseMessages,
       tools: scopedTools,
       context: agentCtx,
@@ -729,8 +951,11 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       onToken,
       onProgressMessage,
       activationPlan: channelActivationPlan,
+      onBeforeTool: coachApprovalOnBeforeTool,
+      signal,
     });
     rawReply = fallback.reply;
+    console.log(`[${channelName}] route=direct_harness_fallback done durationMs=${Date.now() - fallbackStartedAt}`);
   }
 
   // ── Post-check quality gate ────────────────────────────────────────────────
@@ -742,7 +967,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   if (rawReply) {
     const checkUserText = userText || "[image-only message]";
     try {
-      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel);
+      const checkResult = await postCheck(checkUserText, rawReply, orchestratorModel, userId, signal);
       postCheckPassed = checkResult.passed;
       if (!checkResult.passed) {
         const correctionFeedback = checkResult.feedback ||
@@ -757,13 +982,15 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         retried = true;
         try {
           const correction = await runAgent({
-            model: "gpt-4o-mini",
+            model: orchestratorModel,
             messages: correctionMessages,
             tools: scopedTools,
             context: agentCtx,
             maxTurns: 4,
             maxCompletionTokens: getMaxTokensForChannel(channelName),
             activationPlan: channelActivationPlan,
+            onBeforeTool: coachApprovalOnBeforeTool,
+            signal,
           });
           if (correction.reply) {
             rawReply = correction.reply;
@@ -868,6 +1095,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   }
 
   const reply = rawReply || "Sorry, I couldn't generate a response right now.";
+  logTelegramE2eReply(telegramE2eProbeId, reply);
   const attachments = (agentCtx.state.pendingAttachments || []) as ChannelAttachment[];
 
   // ── Query Filing — optionally save substantive synthesis answers to the wiki ─
@@ -891,9 +1119,9 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
 
   let finalSessionId: string | undefined = activeSessionId;
   try {
-    const { initSession, appendToSession } = await import("../agent/providers/claude");
+    const { initSession, appendToSession } = await import("../agent/providers/sessionStore");
     if (sessionResumed && activeSessionId) {
-      appendToSession(activeSessionId, COACH_AGENT_ID, userId, [newUserMsg, newAssistMsg]).catch(() => {});
+      appendToSession(activeSessionId, coachSessionAgentId, userId, [newUserMsg, newAssistMsg]).catch(() => {});
     } else {
       // Build the full message list for the new session:
       // system prompt + prior history (from DB or empty) + new exchange.
@@ -905,7 +1133,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
           content: m.content,
         }));
 
-      finalSessionId = await initSession(COACH_AGENT_ID, userId, [
+      finalSessionId = await initSession(coachSessionAgentId, userId, [
         { role: "system" as const, content: effectiveSystemPrompt },
         ...priorHistory,
         newUserMsg,

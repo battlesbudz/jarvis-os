@@ -44,18 +44,20 @@ function getDeploymentDomain() {
     return stripProtocol(process.env.EXPO_PUBLIC_DOMAIN);
   }
 
-  // Replit deployment internal domain (set automatically by Replit during deployments)
-  if (process.env.REPLIT_INTERNAL_APP_DOMAIN) {
-    return stripProtocol(process.env.REPLIT_INTERNAL_APP_DOMAIN);
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+    return stripProtocol(process.env.RAILWAY_PUBLIC_DOMAIN);
   }
 
-  // Dev fallback — only used in local/dev builds without an explicit domain set
-  if (process.env.REPLIT_DEV_DOMAIN) {
-    return stripProtocol(process.env.REPLIT_DEV_DOMAIN);
+  if (process.env.PUBLIC_BASE_URL) {
+    return stripProtocol(process.env.PUBLIC_BASE_URL);
+  }
+
+  if (process.env.SERVER_URL) {
+    return stripProtocol(process.env.SERVER_URL);
   }
 
   console.error(
-    "ERROR: No deployment domain found. Set EXPO_PUBLIC_DOMAIN, REPLIT_INTERNAL_APP_DOMAIN, or REPLIT_DEV_DOMAIN",
+    "ERROR: No deployment domain found. Set EXPO_PUBLIC_DOMAIN, RAILWAY_PUBLIC_DOMAIN, PUBLIC_BASE_URL, or SERVER_URL",
   );
   process.exit(1);
 }

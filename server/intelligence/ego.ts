@@ -16,12 +16,9 @@ import { notifyUser } from "../channels/registry";
 import { logInteraction } from "../interactionLog";
 import { markSoulStale } from "../memory/soul";
 import { recordSkillSignal } from "./skillWriter";
-import OpenAI from "openai";
+import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[Ego]", "balanced");
 
 const SELF_CORRECTION_THRESHOLD = 0.25;
 const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;

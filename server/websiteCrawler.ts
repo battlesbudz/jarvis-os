@@ -2,14 +2,11 @@ import * as cheerio from "cheerio";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { websiteCrawls } from "@shared/schema";
-import OpenAI from "openai";
+import { createRoutedOpenAIChatShim } from "./agent/routedChatCompletion";
 import * as dns from "node:dns/promises";
 import * as net from "node:net";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+const openai = createRoutedOpenAIChatShim("[WebsiteCrawler]", "balanced");
 
 const MAX_PAGES = 60;
 const FETCH_TIMEOUT_MS = 8000;

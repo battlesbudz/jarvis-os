@@ -3,6 +3,12 @@ import { tavilySearch, formatSearchResults } from "../../integrations/search";
 import type { SearchResult } from "../../integrations/search";
 import { callBrowserTool } from "../mcp/playwrightMcpClient";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
+import {
+  buildBrowserSearchFallbackUrls,
+  isBrowserSearchChallengeText,
+  isNewsLikeSearchQuery,
+  newsRssSearchFallback,
+} from "./webSearchFallback";
 
 type TavilyLikeResult = Awaited<ReturnType<typeof tavilySearch>>;
 function emptyTavilyResult(answer: string): TavilyLikeResult {
@@ -11,6 +17,8 @@ function emptyTavilyResult(answer: string): TavilyLikeResult {
 
 const JS_SPARSE_THRESHOLD = 200;
 const MAX_BROWSER_FALLBACK = 2;
+const BROWSER_SEARCH_TEXT_LIMIT = 1600;
+const BROWSER_RESEARCH_TEXT_LIMIT = 900;
 
 // SSRF guard for the browser fallback — mirrors the one in browserTools.ts
 const BLOCKED_SEARCH_HOSTS = /^(localhost|0\.0\.0\.0|metadata\.google\.internal|169\.254\.169\.254)$/i;
@@ -32,6 +40,46 @@ function isSafeSearchUrl(url: string): boolean {
     if (PRIVATE_IP_PATTERNS.some((rx) => rx.test(host))) return false;
     return true;
   } catch { return false; }
+}
+
+function mcpText(content: { type: string; text?: string }[] | undefined): string {
+  return (content ?? [])
+    .filter((c) => c.type === "text" && c.text)
+    .map((c) => c.text!)
+    .join("\n")
+    .trim();
+}
+
+async function browserSearchFallback(query: string, userId: string): Promise<string> {
+  const attempts: string[] = [];
+  for (const searchUrl of buildBrowserSearchFallbackUrls(query)) {
+    const navResult = await callBrowserTool(userId, "browser_navigate", { url: searchUrl });
+    if (navResult.isError) {
+      attempts.push(`${new URL(searchUrl).hostname}: ${mcpText(navResult.content) || "browser navigation failed"}`);
+      continue;
+    }
+
+    const snapResult = await callBrowserTool(userId, "browser_snapshot", {});
+    if (snapResult.isError) {
+      attempts.push(`${new URL(searchUrl).hostname}: ${mcpText(snapResult.content) || "browser snapshot failed"}`);
+      continue;
+    }
+
+    const visibleText = mcpText(snapResult.content);
+    if (isBrowserSearchChallengeText(visibleText)) {
+      attempts.push(`${new URL(searchUrl).hostname}: challenge page`);
+      continue;
+    }
+
+    return [
+      `Browser search results for: ${query}`,
+      `Search URL: ${searchUrl}`,
+      "",
+      visibleText.slice(0, BROWSER_SEARCH_TEXT_LIMIT) || "(No visible result text found.)",
+    ].join("\n");
+  }
+
+  throw new Error(`browser search fallback failed across providers: ${attempts.join("; ") || "no result text"}`);
 }
 
 /**
@@ -58,7 +106,7 @@ async function enrichSparseResults(
         .map((c) => c.text!)
         .join("\n")
         .trim()
-        .slice(0, 2000);
+        .slice(0, 1000);
       if (text.length > enriched[i].content.length) {
         enriched[i] = { ...enriched[i], content: text };
       }
@@ -83,7 +131,46 @@ export const webSearchTool: AgentTool = {
   },
   async execute(args, ctx) {
     if (!process.env.TAVILY_API_KEY) {
-      return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
+      if (!ctx.userId) {
+        return { ok: false, content: "Web search is not configured.", label: "Search unavailable" };
+      }
+      const query = String(args.query || "");
+      if (isNewsLikeSearchQuery(query)) {
+        try {
+          const newsResults = await newsRssSearchFallback(query);
+          console.log(`[${ctx.channel || "Agent"}] search_web news RSS fallback "${query}"`);
+          return {
+            ok: true,
+            content: newsResults,
+            label: `News search: ${query}`,
+            detail: "Search API not configured; used news RSS fallback.",
+          };
+        } catch (err) {
+          console.warn(
+            `[${ctx.channel || "Agent"}] search_web news RSS fallback failed for "${query}": ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+      }
+      try {
+        const browserResults = await browserSearchFallback(query, ctx.userId);
+        console.log(`[${ctx.channel || "Agent"}] search_web browser fallback "${query}"`);
+        return {
+          ok: true,
+          content: browserResults,
+          label: `Browser search: ${query}`,
+          detail: "Search API not configured; used browser fallback.",
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          content: `Web search is not configured, and browser search fallback failed: ${msg}`,
+          label: "Search unavailable",
+          detail: msg,
+        };
+      }
     }
     const query = String(args.query || "");
 
@@ -148,7 +235,7 @@ export const researchTopicTool: AgentTool = {
     required: ["topic"],
   },
   async execute(args, ctx) {
-    if (!process.env.TAVILY_API_KEY) {
+    if (false) {
       return { ok: false, content: "Research is not available — web search is not configured.", label: "Research unavailable" };
     }
 
@@ -157,6 +244,42 @@ export const researchTopicTool: AgentTool = {
     const queries: string[] = Array.isArray(subQueriesRaw) && subQueriesRaw.length > 0
       ? subQueriesRaw.slice(0, 4).map((q) => String(q))
       : [topic];
+
+    if (!process.env.TAVILY_API_KEY) {
+      if (!ctx.userId) {
+        return { ok: false, content: "Research is not available because web search is not configured.", label: "Research unavailable" };
+      }
+      try {
+        const sections: string[] = [];
+        for (const query of queries.slice(0, 2)) {
+          if (isNewsLikeSearchQuery(query)) {
+            try {
+              const newsResults = await newsRssSearchFallback(query);
+              sections.push(`### Query: ${query}\n${newsResults.slice(0, BROWSER_RESEARCH_TEXT_LIMIT)}`);
+              continue;
+            } catch {
+              // Fall through to browser fallback.
+            }
+          }
+          const browserResults = await browserSearchFallback(query, ctx.userId);
+          sections.push(`### Query: ${query}\n${browserResults.slice(0, BROWSER_RESEARCH_TEXT_LIMIT)}`);
+        }
+        return {
+          ok: true,
+          content: `Research findings on: ${topic}\n\n${sections.join("\n\n")}`,
+          label: `Browser research: ${topic}`,
+          detail: "Search API not configured; used browser fallback.",
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return {
+          ok: false,
+          content: `Research is not available because web search is not configured, and browser fallback failed: ${msg}`,
+          label: "Research unavailable",
+          detail: msg,
+        };
+      }
+    }
 
     // Entity near-match note — non-blocking advisory for callers to surface.
     let entityNote = "";

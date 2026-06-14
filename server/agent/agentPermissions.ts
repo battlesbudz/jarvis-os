@@ -59,7 +59,7 @@ const PERMISSION_TOOL_MAP: Record<keyof AgentPermissions, string[]> = {
     "browser_tab_new", "browser_tab_list", "browser_tab_select", "browser_tab_close",
   ],
   can_send_emails: ["send_email"],
-  can_create_email_drafts: ["gmail_draft"],
+  can_create_email_drafts: ["create_gmail_draft", "gmail_draft"],
   can_read_email: ["fetch_emails", "gmail_action"],
   can_send_messages: [
     "discord_post", "connect_channel", "sessions_send",
@@ -74,8 +74,8 @@ const PERMISSION_TOOL_MAP: Record<keyof AgentPermissions, string[]> = {
   can_use_voice: ["speak"],
   can_create_tasks: ["manage_tasks"],
   can_create_other_agents: ["setup_named_agent"],
-  can_access_global_memory: ["memory_search", "memory_get"],
-  can_run_code: ["run_python"],
+  can_access_global_memory: ["memory_search", "memory_get", "memory_save", "living_context_update"],
+  can_run_code: ["run_python", "delegate_to_codex"],
   can_access_calendar: ["fetch_calendar", "create_calendar_event"],
 };
 
@@ -96,6 +96,69 @@ function getPermissions(agent: DiscordAgent): AgentPermissions {
   return { ...DEFAULT_AGENT_PERMISSIONS, ...stored };
 }
 
+function getBuiltInSubAgentPermissions(agentId: string): AgentPermissions | null {
+  const type = agentId.startsWith("subagent:") ? agentId.slice("subagent:".length) : "";
+  if (!type) return null;
+
+  const base: AgentPermissions = {
+    ...DEFAULT_AGENT_PERMISSIONS,
+    can_send_messages: false,
+    can_create_tasks: false,
+  };
+
+  switch (type) {
+    case "research":
+      return { ...base, can_search_web: true };
+    case "writing":
+      return { ...base, can_search_web: true, can_access_files: true };
+    case "planning":
+      return { ...base, can_search_web: true, can_access_calendar: true };
+    case "email":
+      return { ...base, can_search_web: true };
+    default:
+      return null;
+  }
+}
+
+function checkPermissionsForAgentId(
+  agentId: string,
+  userId: string | undefined,
+  permissions: AgentPermissions,
+  toolName: string,
+): void {
+  if (ALWAYS_ALLOWED_TOOLS.has(toolName)) return;
+
+  const requiredFlags = TOOL_PERMISSION_MAP[toolName];
+  if (!requiredFlags || requiredFlags.length === 0) {
+    logAgentEvent({
+      event: "tool_permission_denied",
+      agentId,
+      userId,
+      toolName,
+      detail: "unclassified-tool-denied",
+    });
+    throw new PermissionDeniedError(agentId, toolName, "unclassified_tool");
+  }
+
+  if (toolName === "daemon_action") {
+    if (permissions.can_take_screenshots || permissions.can_open_apps) return;
+    throw new PermissionDeniedError(agentId, toolName, "can_take_screenshots");
+  }
+
+  for (const flag of requiredFlags) {
+    if (!permissions[flag]) {
+      logAgentEvent({
+        event: "tool_permission_denied",
+        agentId,
+        userId,
+        toolName,
+        detail: `flag=${flag}`,
+      });
+      throw new PermissionDeniedError(agentId, toolName, flag);
+    }
+  }
+}
+
 // ── checkPermission ────────────────────────────────────────────────────────────
 
 /**
@@ -104,47 +167,7 @@ function getPermissions(agent: DiscordAgent): AgentPermissions {
  */
 export function checkPermission(agent: DiscordAgent, toolName: string): void {
   const perms = getPermissions(agent);
-
-  // Always-allowed tools pass unconditionally
-  if (ALWAYS_ALLOWED_TOOLS.has(toolName)) return;
-
-  const requiredFlags = TOOL_PERMISSION_MAP[toolName];
-
-  // Fail-closed: tools not in the permission map AND not in always-allowed are denied
-  if (!requiredFlags || requiredFlags.length === 0) {
-    logAgentEvent({
-      event: "tool_permission_denied",
-      agentId: agent.id,
-      userId: agent.userId,
-      toolName,
-      detail: "unclassified-tool-denied",
-    });
-    throw new PermissionDeniedError(agent.id, toolName, "unclassified_tool");
-  }
-
-  // All required flags must be true (for tools in multiple groups, AND logic).
-  // Most tools are guarded by exactly one flag; the OR case (daemon_action) is
-  // handled by requiring either can_take_screenshots OR can_open_apps.
-  const toolName_lower = toolName;
-
-  // Special case: daemon_action requires can_take_screenshots OR can_open_apps
-  if (toolName_lower === "daemon_action") {
-    if (perms.can_take_screenshots || perms.can_open_apps) return;
-    throw new PermissionDeniedError(agent.id, toolName, "can_take_screenshots");
-  }
-
-  for (const flag of requiredFlags) {
-    if (!perms[flag]) {
-      logAgentEvent({
-        event: "tool_permission_denied",
-        agentId: agent.id,
-        userId: agent.userId,
-        toolName,
-        detail: `flag=${flag}`,
-      });
-      throw new PermissionDeniedError(agent.id, toolName, flag);
-    }
-  }
+  checkPermissionsForAgentId(agent.id, agent.userId, perms, toolName);
 }
 
 // ── wrapToolsForAgent ──────────────────────────────────────────────────────────
@@ -229,6 +252,25 @@ toolCallHooks.register(
       const { getAgent } = await import("./agentManager");
       const agent = await getAgent(ctx.agentId);
       if (!agent) {
+        const builtInSubAgentPermissions = getBuiltInSubAgentPermissions(ctx.agentId);
+        if (builtInSubAgentPermissions) {
+          try {
+            checkPermissionsForAgentId(ctx.agentId, ctx.userId, builtInSubAgentPermissions, ctx.toolName);
+            return undefined;
+          } catch (permErr) {
+            if (permErr instanceof PermissionDeniedError) {
+              logAgentEvent({
+                event: "tool_permission_denied",
+                agentId: ctx.agentId,
+                userId: ctx.userId,
+                toolName: ctx.toolName,
+                detail: "runtime-hook: built-in subagent not in permitted set",
+              });
+              return { block: true, blockReason: `Agent does not have permission to use ${ctx.toolName}` };
+            }
+            throw permErr;
+          }
+        }
         // Unknown agent — fail-closed: block rather than silently allow
         return { block: true, blockReason: `Agent ${ctx.agentId} not found` };
       }

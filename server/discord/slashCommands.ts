@@ -16,6 +16,7 @@ import { channelLinks } from "@shared/schema";
 import { runCoachAgent } from "../channels/coachAgent";
 import { routeSlashCommand, getHelpText, SLASH_COMMANDS } from "../channels/slashCommandRouter";
 import { cancelAllForUser } from "../agent/jobClient";
+import { tryHandleDiscordChatWithPrime } from "./primeRuntimeChat";
 
 import { generateSlashCommandPairingCode } from "./manager";
 
@@ -524,12 +525,34 @@ async function handleChat(
   }
 
   const guildId = interaction.guild_id as string | undefined;
+  const originChannelId = interaction.channel_id as string | undefined;
+
+  try {
+    const primeReply = await tryHandleDiscordChatWithPrime({
+      userId,
+      message,
+      originChannelId,
+      guildId,
+    });
+    if (primeReply) {
+      await editInteractionReply(
+        appId,
+        interaction.token,
+        primeReply,
+        isPublic ? undefined : EPHEMERAL,
+      );
+      return;
+    }
+  } catch (err) {
+    console.warn("[SlashCommands] PRIME runtime chat path failed; falling back to coach agent:", err);
+  }
 
   try {
     const result = await runCoachAgent({
       userId,
       userText: message,
       channelName: "Discord",
+      originChannelId,
       discordGuildId: guildId,
     });
     await editInteractionReply(

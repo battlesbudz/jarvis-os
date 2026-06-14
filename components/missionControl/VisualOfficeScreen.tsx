@@ -26,7 +26,7 @@ interface Agent {
   createdAt: string;
 }
 
-type AgentStatus = 'ACTIVE' | 'STANDBY' | 'ON-DEMAND';
+type AgentStatus = 'ACTIVE' | 'READY' | 'STANDBY' | 'PAUSED' | 'ON-DEMAND';
 
 function getRoleColor(role: string): string {
   const r = role.toUpperCase();
@@ -40,7 +40,8 @@ function getRoleColor(role: string): string {
 
 function getAgentStatus(agent: Agent): AgentStatus {
   if (agent.isActive !== 1) return 'ON-DEMAND';
-  if (!agent.lastLoopRun) return 'STANDBY';
+  if (!agent.loopEnabled) return 'PAUSED';
+  if (!agent.lastLoopRun) return 'READY';
   const minsAgo = (Date.now() - new Date(agent.lastLoopRun).getTime()) / 60000;
   return minsAgo <= 5 ? 'ACTIVE' : 'STANDBY';
 }
@@ -58,7 +59,7 @@ function formatTimeAgo(dt: string | null): string {
 
 function formatNextRun(agent: Agent): string {
   if (agent.isActive !== 1) return 'on demand';
-  if (!agent.loopEnabled) return 'disabled';
+  if (!agent.loopEnabled) return 'paused';
   if (!agent.lastLoopRun || !agent.loopIntervalMinutes) return 'soon';
   const nextMs = new Date(agent.lastLoopRun).getTime() + agent.loopIntervalMinutes * 60000;
   const diffMins = Math.round((nextMs - Date.now()) / 60000);
@@ -75,7 +76,9 @@ function getFirstLineOfPrompt(loopPrompt: string | null): string {
 
 const STATUS_BADGE_CONFIG = {
   ACTIVE: { color: Colors.success, bg: Colors.success + '20' },
+  READY: { color: Colors.cyan, bg: Colors.cyan + '20' },
   STANDBY: { color: Colors.textSecondary, bg: Colors.surfaceAlt },
+  PAUSED: { color: Colors.warning, bg: Colors.warning + '20' },
   'ON-DEMAND': { color: Colors.violet, bg: Colors.violet + '20' },
 };
 
