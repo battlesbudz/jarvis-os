@@ -1,6 +1,6 @@
 # Jarvis Desktop Daemon
 
-A small Node.js process that lets the GamePlan autonomous agent control a
+A small Node.js process that lets the Jarvis OS autonomous agent control a
 sandboxed corner of your desktop — running shell commands, reading and
 writing files, and sending you native notifications.
 
@@ -32,12 +32,12 @@ npm install
 
 ## Pair with your account
 
-1. Open the GamePlan app → Profile → Connected Channels → Desktop Daemon.
+1. Open the Jarvis OS app → Profile → Connected Channels → Desktop Daemon.
 2. Tap "Generate pairing code" — you'll get an 8-character code valid for 15 minutes.
 3. On your desktop, run:
 
 ```bash
-JARVIS_SERVER=https://gameplanjarvisai.up.railway.app \
+JARVIS_SERVER=https://<jarvis-os-production-url> \
 JARVIS_PAIR_CODE=ABCD1234 \
 JARVIS_DAEMON_ROOT=$HOME/jarvis-workspace \
 node jarvis-daemon.js
@@ -63,5 +63,5 @@ again with a fresh code — the server will close any prior session for you.
   Treat the workspace root the same way you'd treat a folder you let any
   CLI tool you installed touch — keep secrets out of it.
 - Pairing codes are single-use and expire after 15 minutes.
-- Stop the daemon at any time with `Ctrl+C`. Unpair from the GamePlan app
+- Stop the daemon at any time with `Ctrl+C`. Unpair from the Jarvis OS app
   to revoke the binding server-side.

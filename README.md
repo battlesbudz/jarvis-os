@@ -1,57 +1,68 @@
-# GamePlan / Jarvis AI 🧠⚡
+# Jarvis OS
 
 <div align="center">
-  <p><strong>Your Autonomous Personal AI Assistant for Productivity, Communication, and Executive Function</strong></p>
+  <p><strong>Your autonomous personal AI assistant for productivity, communication, and executive function.</strong></p>
 </div>
 
-GamePlan (powered by the **Jarvis** autonomous agent) is a full-stack, multi-channel AI assistant designed to act on your behalf. Inspired by OpenClaw's architecture, Jarvis goes beyond reactive chat—it is a proactive, self-improving agent that manages your inbox, calendar, and daily routines, all while adapting to your unique personality and goals.
+Jarvis OS is a full-stack, multi-channel AI assistant designed to act on your behalf. Jarvis goes beyond reactive chat: it is a proactive, self-improving agent that manages your inbox, calendar, and daily routines while adapting to your personality, goals, and working style.
 
-## 🚀 Key Features
+## Key Features
 
-- **Multi-Channel Presence:** Interact with Jarvis seamlessly via **Telegram, Slack, WhatsApp, Discord, or Web Chat**.
-- **Autonomous Action Engine:** Jarvis doesn't just answer questions; it calls tools in a loop to perform real-world tasks like drafting emails, triaging your inbox, and conducting web research.
-- **Proactive Executive Function:** Built with ADHD-friendly coaching in mind, featuring morning plan auto-generation, 30-minute curiosity scanners, and energy-aware task sequencing.
-- **Deep Integrations:** Native connections to Gmail, Google Calendar, Outlook, and GitHub.
-- **Inbox Triage Engine:** An autonomous background service that classifies deliverables every 3 minutes, handling routine items or escalating what needs your attention.
-- **Self-Improving Memory:** Jarvis builds a structured user profile (personality, values, goals) from conversations and uses it to update its own "Soul" prompt.
-- **Mobile First:** Built with React Native and Expo for a native mobile experience, alongside a Next.js desktop Mission Control dashboard.
+- **Multi-channel presence:** Interact with Jarvis through Telegram, Slack, WhatsApp, Discord, or web chat.
+- **Autonomous action engine:** Jarvis calls tools in a loop to perform real-world tasks like drafting emails, triaging your inbox, and conducting web research.
+- **Proactive executive function:** ADHD-friendly coaching with morning plan generation, curiosity scanners, and energy-aware task sequencing.
+- **Deep integrations:** Native connections to Gmail, Google Calendar, Outlook, and GitHub.
+- **Inbox triage engine:** A background service classifies deliverables, handles routine items, and escalates what needs attention.
+- **Self-improving memory:** Jarvis builds a structured user profile from conversations and uses it to personalize future behavior.
+- **Mobile first:** Built with React Native and Expo, with a Next.js Mission Control dashboard.
 
-## 🛠️ Tech Stack
+## Tech Stack
 
-- **Frontend:** React Native (Expo), React, TailwindCSS
+- **Frontend:** React Native, Expo, React, TailwindCSS
 - **Backend:** Node.js, Express, TypeScript
 - **Database:** PostgreSQL with Drizzle ORM
-- **AI/LLM:** OpenAI (GPT-4o/GPT-5-mini, Whisper, TTS Alloy)
-- **Integrations:** Google APIs (Gmail, Calendar, Drive), Slack API, Telegram Bot API, GitHub API
+- **AI/LLM:** OpenAI, Whisper, TTS
+- **Integrations:** Google APIs, Slack API, Telegram Bot API, GitHub API
 
-## 📂 Project Structure
+## Project Structure
 
 ```text
-├── app/               # React Native (Expo Router) frontend application
-├── server/            # Express backend, Agent logic, and Integrations
-├── shared/            # Shared TypeScript schemas and models (Drizzle)
-├── dashboard/         # Next.js Mission Control dashboard
-├── daemon/            # Background worker and local execution environment
-└── JARVIS_ROADMAP.md  # Detailed project roadmap and status
+app/                React Native and Expo Router app
+server/             Express backend, agent logic, integrations
+shared/             Shared TypeScript schemas and models
+dashboard/          Next.js Mission Control dashboard
+daemon/             Desktop daemon and local execution bridge
+android-daemon/     Android device-control daemon
+docs/               Architecture, operations, and roadmap docs
+JARVIS_ROADMAP.md   Project roadmap and status
 ```
 
-## 🧠 The Jarvis Architecture
+## Quick Start
 
-Jarvis operates on an **Agent Loop** (`server/agent/`). When triggered by a webhook, cron job, or direct message, Jarvis:
-1. Gathers context from its long-term memory (`server/memory/`).
-2. Evaluates the user's current emotional state and goals.
-3. Enters a tool-calling loop, utilizing capabilities like `Gmail`, `Tavily Search`, or `Calendar`.
-4. Executes actions autonomously or asks for permission if required by its configured `Soul`.
+```bash
+git clone https://github.com/battlesbudz/jarvis-os.git
+cd jarvis-os
+npm install
+cp .env.example .env
+npm run db:push
+npm run server:dev
+npm run expo:dev
+cd dashboard && npm run dev
+```
 
-## 🤝 Contributing
+## Architecture
 
-Contributions are welcome! Please check out the [Issues](https://github.com/battlesbudz/Gameplanjarvisai/issues) tab or open a Pull Request.
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+Jarvis operates on an agent loop in `server/agent/`. When triggered by a webhook, cron job, or direct message, Jarvis:
 
-## 📜 License
+1. Gathers context from long-term memory.
+2. Evaluates the user's current state and goals.
+3. Enters a tool-calling loop for capabilities like email, calendar, search, and local daemon actions.
+4. Executes allowed actions autonomously or asks for approval when required.
+
+## Contributing
+
+Contributions are welcome. Please check the [issues](https://github.com/battlesbudz/jarvis-os/issues) tab or open a pull request.
+
+## License
 
 Distributed under the MIT License. See `LICENSE` for more information.
