@@ -26,10 +26,19 @@ async function fetchWithTimeout(url, timeoutMs = 15000) {
   }
 }
 
-const response = await fetchWithTimeout(baseUrl);
+let response;
+try {
+  response = await fetchWithTimeout(baseUrl);
+} catch (error) {
+  console.error(`Deployed E2E smoke failed: ${baseUrl} could not be reached. ${error.message}`);
+  process.exit(1);
+}
 
-if (response.status >= 500) {
-  console.error(`Deployed E2E smoke failed: ${baseUrl} returned ${response.status}.`);
+const isSuccess = response.status >= 200 && response.status < 300;
+const isRedirect = response.status >= 300 && response.status < 400;
+
+if (!isSuccess && !isRedirect) {
+  console.error(`Deployed E2E smoke failed: ${baseUrl} returned ${response.status}. Expected 2xx or redirect.`);
   process.exit(1);
 }
 
