@@ -68,6 +68,14 @@ Self-hosters are responsible for:
 - [ ] `.env`, local connector state, keystores, and generated private artifacts are not committed
 - [ ] Approval gates remain enabled for high-risk actions
 
+Generate local secrets with:
+
+```bash
+node -e "console.log(require('node:crypto').randomBytes(48).toString('base64url'))"
+```
+
+Use different values for `JWT_SECRET`, `DASHBOARD_SECRET`, OAuth state secrets, and channel webhook secrets.
+
 ## If A Credential Leaks
 
 1. Revoke it at the provider.

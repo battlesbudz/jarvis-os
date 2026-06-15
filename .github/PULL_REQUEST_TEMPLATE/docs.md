@@ -18,6 +18,7 @@
 - [ ] No private personal/business workspace details
 - [ ] Public wording says Jarvis OS
 - [ ] Compatibility leftovers are documented intentionally
+- [ ] Setup commands, ports, and required secrets are explicit when setup behavior changed
 
 ## Verification
 

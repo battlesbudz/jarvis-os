@@ -11,8 +11,10 @@ const publicFiles = [
   "SECURITY.md",
   "CODE_OF_CONDUCT.md",
   "CHANGELOG.md",
+  "ROADMAP.md",
   "JARVIS_ROADMAP.md",
   "docs/README.md",
+  "docs/self-hosting.md",
   "docs/architecture.md",
   "docs/workspace-map.md",
   "docs/operations/jarvis-os-runbook.md",
@@ -39,6 +41,15 @@ const blockedPatterns = [
   { label: "private business/persona wording", pattern: /\bBattles Budz\b|\bBattles\b/ },
   { label: "maintainer-local Windows path", pattern: /C:\\Users\\/i },
   { label: "stale dashboard port", pattern: /localhost:3000/ },
+  { label: "internal planning archive link", pattern: /docs[\\/]+superpowers|docs\/superpowers/i },
+];
+
+const allowedCompatibilityReferences = [
+  {
+    file: "docs/public-compatibility.md",
+    labels: new Set(["old public slug"]),
+    reason: "This file intentionally documents staged-rename compatibility identifiers.",
+  },
 ];
 
 const requiredReadmeAssets = [
@@ -69,13 +80,19 @@ const files = [
 
 const failures = [];
 
+function isAllowedReference(file, blocked) {
+  return allowedCompatibilityReferences.some(
+    (allowed) => allowed.file === file && allowed.labels.has(blocked.label),
+  );
+}
+
 for (const file of files) {
   const text = fs.readFileSync(toFsPath(file), "utf8");
   const lines = text.split(/\r?\n/);
 
   lines.forEach((line, index) => {
     for (const blocked of blockedPatterns) {
-      if (blocked.pattern.test(line)) {
+      if (blocked.pattern.test(line) && !isAllowedReference(file, blocked)) {
         failures.push(`${file}:${index + 1} contains ${blocked.label}: ${line.trim()}`);
       }
     }

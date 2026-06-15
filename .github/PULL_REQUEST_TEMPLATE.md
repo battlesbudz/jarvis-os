@@ -45,6 +45,8 @@ Check any area touched and list the targeted test or assertion that covers it:
 - [ ] Deployment, release, APK, or update manifest:
 - [ ] Public docs or contributor flow:
 
+Use the focused test map in `CONTRIBUTING.md` when choosing checks.
+
 ## Remaining Risk
 
 What still needs human review or follow-up?

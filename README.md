@@ -15,6 +15,7 @@ The goal is useful autonomy that stays reviewable. Jarvis can work in the backgr
 ## Screenshots
 
 These screenshots are generated from the current local dashboard build.
+They show the first public dashboard surfaces; mobile, approval, connector, and channel screenshots are tracked in the public roadmap so future readers can verify more of the system visually.
 
 | Mission objectives | Knowledge base | Visual office |
 |---|---|---|
@@ -32,6 +33,21 @@ These screenshots are generated from the current local dashboard build.
 - **Desktop and Android control:** Optional Windows desktop connector plus Android daemon for local shell/file operations, screenshots, screen understanding, app navigation, notifications, and wake/talk mode.
 - **Safety boundaries:** Approval receipts, tool policies, daemon permissions, forbidden action checks, audit logs, and fail-closed behavior for high-risk actions.
 - **Deployment support:** Railway-oriented server deployment, Expo/Android builds, dashboard build, database migrations, doctor checks, and QA scripts.
+
+## Capability Status
+
+| Area | Current status | Required configuration | Verification |
+|---|---|---|---|
+| Express API and agent runtime | Core runtime is implemented and supported on `main`. | `DATABASE_URL`, `JWT_SECRET`, `APP_BASE_URL`, at least one usable model/provider path. | `npm run server:build`, `npm run jarvis:doctor`, `npm test` |
+| Expo mobile/web app | Implemented, with local Expo development and APK build paths. | `EXPO_PUBLIC_DOMAIN` or equivalent hosted API domain; Android/iOS build credentials for signed releases. | `npm run expo:dev`, GitHub APK workflows for releases |
+| Dashboard | Implemented as a separate Next.js app on port `3001`. | `JARVIS_API`, `DASHBOARD_SECRET`. | `npm --prefix dashboard run build` |
+| Long-term memory and G-Brain | Implemented, with ongoing hardening for review, provenance, and correction flows. | Database tables, model/provider support for embedding or extraction paths where enabled. | `npm test`, memory-specific tests listed in `CONTRIBUTING.md` |
+| Background jobs and deliverables | Implemented for queued autonomous work and reviewable outputs. | Database-backed job state and provider credentials for the requested task. | `npm test`, job/runtime tests |
+| Approval gates and safety controls | Implemented and treated as security-sensitive. | No extra setup for local checks; production deployments must keep approval gates enabled. | `npm test`, approval/runtime tests |
+| Provider routing | Implemented for OpenAI-compatible providers, Gemini, OpenRouter-style routing, and ChatGPT subscription connector paths. | Provider API keys or a working desktop/Codex OAuth connector path. | Provider routing tests listed in `CONTRIBUTING.md` |
+| Channels and external accounts | Implemented by adapter, but each channel is optional and requires its own credentials. | Only configure the channels you actually use. | Channel-specific smoke checks and scrubbed logs |
+| Desktop and Android connectors | Implemented, optional, and high-risk. | Explicit pairing, narrow file roots, device permissions, APK/connector install. | Connector tests listed in `CONTRIBUTING.md`; manual device checks for releases |
+| One-click self-hosting | Not yet one-click. Jarvis is self-hostable, but setup still requires explicit database, provider, auth, and optional channel configuration. | See `docs/self-hosting.md`. | Complete the local quickstart and run the checks above |
 
 ## Architecture
 
@@ -92,6 +108,8 @@ docs/                Architecture, operations, deployment, and roadmap docs
    - `EXPO_PUBLIC_DOMAIN`
    - at least one provider key or subscription connector path
 
+   For concrete local Postgres, secret-generation, expected ports, and first-run checks, follow [`docs/self-hosting.md`](docs/self-hosting.md).
+
 4. **Prepare the database and start the server**
 
    ```bash
@@ -137,7 +155,7 @@ Minimum production variables:
 - at least one AI/provider credential or a working ChatGPT subscription connector path
 - channel secrets only for the channels you enable
 
-See [`docs/railway-setup.md`](docs/railway-setup.md), [`docs/operations/jarvis-os-runbook.md`](docs/operations/jarvis-os-runbook.md), [`downloads/README.md`](downloads/README.md), and [`.env.example`](.env.example).
+See [`docs/self-hosting.md`](docs/self-hosting.md), [`docs/railway-setup.md`](docs/railway-setup.md), [`docs/operations/jarvis-os-runbook.md`](docs/operations/jarvis-os-runbook.md), [`downloads/README.md`](downloads/README.md), and [`.env.example`](.env.example).
 
 ## Compatibility Note
 
@@ -156,7 +174,7 @@ Jarvis is designed for real accounts and real devices, so high-risk actions must
 
 Jarvis OS is active software, not a polished one-click SaaS template. Many capabilities are implemented and used, but self-hosters should expect to configure providers, database state, OAuth apps, channel webhooks, and connector permissions.
 
-The public `main` branch is the supported branch. See [`JARVIS_ROADMAP.md`](JARVIS_ROADMAP.md) for the current capability map and remaining hardening work.
+The public `main` branch is the supported branch. See [`ROADMAP.md`](ROADMAP.md) for the public roadmap and [`JARVIS_ROADMAP.md`](JARVIS_ROADMAP.md) for the detailed technical roadmap.
 
 ## Contributing
 

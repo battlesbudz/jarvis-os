@@ -5,11 +5,13 @@ This folder contains the public architecture, setup, operations, deployment, and
 ## Start Here
 
 1. [`../README.md`](../README.md) - product overview, screenshots, architecture, and local setup.
-2. [`architecture.md`](architecture.md) - current system layout and boundaries.
-3. [`workspace-map.md`](workspace-map.md) - where major code and context areas live.
-4. [`operations/jarvis-os-runbook.md`](operations/jarvis-os-runbook.md) - startup, health checks, and safe autonomy operations.
-5. [`../downloads/README.md`](../downloads/README.md) - APK download and release paths.
-6. [`../JARVIS_ROADMAP.md`](../JARVIS_ROADMAP.md) - capability map and remaining hardening work.
+2. [`self-hosting.md`](self-hosting.md) - clean local install, database setup, secrets, ports, and verification.
+3. [`architecture.md`](architecture.md) - current system layout and boundaries.
+4. [`workspace-map.md`](workspace-map.md) - where major code and context areas live.
+5. [`operations/jarvis-os-runbook.md`](operations/jarvis-os-runbook.md) - startup, health checks, and safe autonomy operations.
+6. [`../downloads/README.md`](../downloads/README.md) - APK download and release paths.
+7. [`../ROADMAP.md`](../ROADMAP.md) - concise public roadmap.
+8. [`../JARVIS_ROADMAP.md`](../JARVIS_ROADMAP.md) - detailed technical roadmap and implementation phases.
 
 ## Architecture And Runtime
 
@@ -17,6 +19,7 @@ This folder contains the public architecture, setup, operations, deployment, and
 - [`workspace-map.md`](workspace-map.md) - generic workspace and code ownership map for contributors.
 - [`decision-log.md`](decision-log.md) - durable repo-level decisions and constraints.
 - [`public-compatibility.md`](public-compatibility.md) - staged rename and compatibility note for older identifiers.
+- [`self-hosting.md`](self-hosting.md) - local install and verification path.
 
 ## Operations And Deployment
 
