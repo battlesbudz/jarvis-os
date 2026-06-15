@@ -6,15 +6,18 @@ This is the startup and reliability guide for Jarvis as an agent operating syste
 
 ## Canonical Runtime
 
-Use this repo as the current source of truth:
+Use the checked-out repository root as the source of truth. The public repo should not depend on maintainer-local paths.
 
-`C:\Users\justi\Documents\Codex\2026-05-05\files-mentioned-by-the-user-jarvis-os\github-push\jarvis-os`
+```bash
+git clone https://github.com/battlesbudz/jarvis-os.git
+cd jarvis-os
+```
 
 ## First Command
 
 Run:
 
-```powershell
+```bash
 npm run jarvis:doctor
 ```
 
@@ -24,7 +27,7 @@ Read the blocker list before starting the server. Fix core blockers first.
 
 Run:
 
-```powershell
+```bash
 npm run jarvis:check
 ```
 
@@ -43,7 +46,7 @@ Jarvis may act autonomously only through this first-level flow:
 
 ## Approval Boundaries
 
-Jarvis must ask before sending messages, changing calendars, posting publicly, deleting data, triggering daemon/device actions, making purchases, committing code, deploying, or taking any licensing/compliance/business-finance action.
+Jarvis must ask before sending messages, changing calendars, posting publicly, deleting data, triggering daemon/device actions, making purchases, committing code, deploying, or taking any legal, compliance, financial, or business-commitment action.
 
 ## What This Foundation Does Not Do
 

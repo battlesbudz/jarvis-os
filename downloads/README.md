@@ -1,32 +1,42 @@
-# APK Downloads
+# Jarvis OS APK Downloads
 
-The Jarvis Android Daemon APK is served from this directory by the Express backend
-at `GET /api/download/apk` (no authentication required).
+Jarvis can serve Android APK links for two different clients:
 
-## How the endpoint resolves the APK
+- **Jarvis App APK:** the main Expo/Android app.
+- **Jarvis Android Daemon APK:** the optional device-control companion app.
 
-1. **Local file** — if `downloads/jarvis-daemon.apk` exists on the server
-   filesystem, it is streamed directly to the client.
-2. **Remote fallback** — if `ANDROID_APK_URL` environment variable is set,
-   the endpoint redirects (HTTP 302) to that URL. Use this for GitHub Releases
-   or any other hosted URL.
-3. **404** — if neither is available, the endpoint returns an error.
+Do not commit private signing keys, generated keystores, or locally built APKs unless the release process explicitly requires a public artifact.
 
-## Recommended setup
+## Android Daemon Endpoint
 
-### Option A — GitHub Releases (no local file needed)
+The Express backend serves the Android daemon APK at:
+
+```text
+GET /api/download/apk
+```
+
+Resolution order:
+
+1. **Local file:** if `downloads/jarvis-daemon.apk` exists on the server filesystem, it is streamed directly.
+2. **Remote fallback:** if `ANDROID_APK_URL` is set, the endpoint redirects to that URL. Use this for GitHub Releases or another hosted artifact.
+3. **404:** if neither is available, the endpoint returns an error.
+
+## Recommended Daemon Release Setup
+
+### Option A - GitHub Releases
 
 1. Push this project to GitHub.
-2. The workflow at `.github/workflows/build-android-apk.yml` builds the APK on
-   every push to `main` that touches `android-daemon/` and publishes it under the
-   tag `android-daemon-latest`.
-3. Set the `ANDROID_APK_URL` secret/environment variable in your hosting platform to:
-   ```
+2. The workflow at `.github/workflows/build-android-apk.yml` builds the daemon APK on pushes to `main` that touch `android-daemon/`.
+3. It publishes the artifact under the `android-daemon-latest` release tag.
+4. Set `ANDROID_APK_URL` in your hosting platform:
+
+   ```text
    https://github.com/<your-org>/<your-repo>/releases/download/android-daemon-latest/jarvis-daemon.apk
    ```
-4. The in-app "Download APK" button and QR code immediately start working.
 
-### Option B — Build locally and place here
+5. The in-app daemon download button and QR code can now resolve the APK.
+
+### Option B - Local Build
 
 ```bash
 # Requires JDK 17 and Android SDK
@@ -36,4 +46,30 @@ chmod +x gradlew
 cp app/build/outputs/apk/release/app-release*.apk ../downloads/jarvis-daemon.apk
 ```
 
-The backend picks up the file automatically on the next request (no restart needed).
+The backend picks up the file automatically on the next request.
+
+## Main App APK
+
+The workflow at `.github/workflows/build-jarvis-apk.yml` builds the main Jarvis Android app and publishes:
+
+- `jarvis-app.apk`
+- `version.json`
+
+The workflow requires:
+
+- GitHub repository variable `JARVIS_PUBLIC_DOMAIN`
+- signing secrets for the Jarvis app keystore
+- a valid Expo/Android build environment
+
+## Install Matrix
+
+| Artifact | Used For | Build Path | Hosted By |
+|---|---|---|---|
+| `jarvis-app.apk` | Main Jarvis mobile app | `.github/workflows/build-jarvis-apk.yml` | GitHub Release `jarvis-app-latest` |
+| `jarvis-daemon.apk` | Optional Android device-control daemon | `.github/workflows/build-android-apk.yml` | GitHub Release `android-daemon-latest` |
+
+## Safety Notes
+
+- APKs control user-facing software. Only publish artifacts built from reviewed commits.
+- Android daemon permissions are high-risk. Any permission change needs focused tests and explicit release notes.
+- Keep signing credentials in GitHub secrets or your build provider, never in source control.

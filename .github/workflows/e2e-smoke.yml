@@ -1,0 +1,32 @@
+name: Deployed E2E Smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 10 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  deployed-smoke:
+    name: Deployed smoke check
+    runs-on: ubuntu-22.04
+    env:
+      E2E_TARGET_URL: ${{ secrets.E2E_TARGET_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run deployed smoke
+        run: npm run ci:e2e:smoke

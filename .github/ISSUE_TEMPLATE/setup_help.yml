@@ -1,0 +1,54 @@
+name: Setup or deployment help
+description: Ask for help self-hosting or configuring Jarvis OS.
+title: "[Setup]: "
+labels: ["setup", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for local install, Railway, database, Expo, dashboard, APK, OAuth, or connector setup problems. Do not paste real secrets.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Setup area
+      options:
+        - Local server
+        - PostgreSQL / migrations
+        - Railway or hosted server
+        - Expo app
+        - Dashboard
+        - Android app APK
+        - Android daemon APK
+        - Desktop connector
+        - OAuth / provider credentials
+        - Channel bot or webhook
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to set up?
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: What have you tried?
+      description: Include commands and scrubbed output.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - OS:
+        - Node/npm:
+        - Database:
+        - Hosting provider:
+        - Public URL, if any:
+  - type: checkboxes
+    id: secret_check
+    attributes:
+      label: Secret check
+      options:
+        - label: I have removed tokens, passwords, database URLs, OAuth secrets, bot tokens, and private logs.
+          required: true

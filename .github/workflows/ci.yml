@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - codex/replit-main-continuation
+
+permissions:
+  contents: read
+
+jobs:
+  server-and-docs:
+    name: Server, tests, and public docs
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit public docs
+        run: npm run docs:audit
+
+      - name: Build server
+        run: npm run server:build
+
+      - name: Run tests
+        run: npm test
+
+  dashboard:
+    name: Dashboard build
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard dependencies
+        run: npm --prefix dashboard ci
+
+      - name: Build dashboard
+        run: npm --prefix dashboard run build

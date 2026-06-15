@@ -1,0 +1,49 @@
+name: Feature request
+description: Propose a scoped Jarvis OS capability or improvement.
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What real user workflow should become better?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe what Jarvis should do and what it should not do.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Primary area
+      options:
+        - Mobile app / Expo UI
+        - Dashboard
+        - Agent harness
+        - Provider routing
+        - Memory / SOUL / G-Brain
+        - Jobs / deliverables / approvals
+        - Channels / integrations
+        - Desktop connector
+        - Android daemon
+        - Deployment / database
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Safety and approval impact
+      description: Explain whether this touches external actions, local files/devices, memory writes, provider credentials, deployments, or approvals.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance checks
+      description: What tests, assertions, or manual checks would prove this works?

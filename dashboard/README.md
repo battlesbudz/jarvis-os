@@ -1,36 +1,45 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Jarvis OS Dashboard
 
-## Getting Started
+This is the Next.js mission-control surface for Jarvis OS. It gives maintainers and self-hosters a dense web view over tasks, projects, memory, calendar state, and visual/desktop control surfaces while the main Express runtime owns auth, data, jobs, and integrations.
 
-First, run the development server:
+## What It Shows
+
+- Task queue and scheduled operations
+- Project/objective views
+- Memory search and detail inspection
+- Calendar-oriented operations
+- Visual office and connector-oriented controls
+
+The dashboard talks to the Jarvis server through `app/api/proxy/[...path]/route.ts`. Keep data ownership in the Express server unless a dashboard-only concern is truly local UI state.
+
+## Local Development
+
+From the repo root:
 
 ```bash
+cd dashboard
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3001](http://localhost:3001).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The dashboard intentionally uses port `3001` so it can run beside the Expo/web app and Express API during development.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Verification
 
-## Learn More
+```bash
+npm run build
+```
 
-To learn more about Next.js, take a look at the following resources:
+For repo-level validation from the root:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm --prefix dashboard run build
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Safety Notes
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Do not put provider keys, OAuth tokens, bot tokens, database URLs, or connector secrets in dashboard code.
+- Treat views that expose memory, approvals, device controls, provider routing, or deployment controls as safety-sensitive.
+- If a dashboard change adds a new action button, verify the matching server route still enforces auth, permissions, and approval boundaries.
