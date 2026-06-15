@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <external-files-path name="update_apk" path="." />
+    <external-path name="external_storage" path="." />
+    <external-path name="dcim" path="DCIM/" />
+    <external-path name="pictures" path="Pictures/" />
+    <external-path name="downloads" path="Download/" />
+</paths>

@@ -6,8 +6,12 @@ import { channelLinks, channelLinkCodes, userPreferences } from "@shared/schema"
 import { randomBytes, createHash } from "crypto";
 import { getSession as _getCoachSession, setSession as _setCoachSession } from "../channels/sessionStore";
 
-interface PairMsg { type: "pair"; code: string; hostname?: string; platform?: string }
-interface ReconnectMsg { type: "reconnect"; daemonId: string; reconnectSecret: string; hostname?: string; platform?: string }
+type DaemonClientKind = "unified_android_app" | "standalone_android_daemon" | "desktop_daemon";
+type AndroidDaemonClientKind = "unified_android_app" | "standalone_android_daemon";
+interface DaemonClientMetadata { clientKind?: DaemonClientKind; appPackage?: string; appVersion?: string }
+interface AndroidDaemonClientMetadata { clientKind?: AndroidDaemonClientKind; appPackage?: string; appVersion?: string }
+interface PairMsg extends DaemonClientMetadata { type: "pair"; code: string; hostname?: string; platform?: string }
+interface ReconnectMsg extends DaemonClientMetadata { type: "reconnect"; daemonId: string; reconnectSecret: string; hostname?: string; platform?: string }
 interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; error?: string; [key: string]: unknown }
 interface HelloMsg { type: "hello"; ok: boolean; userId?: string; error?: string }
 interface PingMsg { type: "ping" }
@@ -233,6 +237,42 @@ function socketKey(userId: string, platform: string): string {
 
 function normalizeDaemonPlatform(platform: unknown): "desktop" | "android" {
   return String(platform || "").toLowerCase() === "android" ? "android" : "desktop";
+}
+
+function normalizeDaemonClientKind(value: unknown): DaemonClientKind | undefined {
+  if (
+    value === "unified_android_app" ||
+    value === "standalone_android_daemon" ||
+    value === "desktop_daemon"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeAndroidDaemonClientKind(value: unknown): AndroidDaemonClientKind | undefined {
+  if (value === "unified_android_app" || value === "standalone_android_daemon") {
+    return value;
+  }
+  return undefined;
+}
+
+function buildAndroidDaemonClientMetadata(platform: "desktop" | "android", msg: {
+  clientKind?: unknown;
+  appPackage?: unknown;
+  appVersion?: unknown;
+}): AndroidDaemonClientMetadata | null {
+  if (platform !== "android") return null;
+  const android_client: AndroidDaemonClientMetadata = {};
+  const clientKind = normalizeAndroidDaemonClientKind(msg.clientKind);
+  if (clientKind) android_client.clientKind = clientKind;
+  if (typeof msg.appPackage === "string" && msg.appPackage.trim()) {
+    android_client.appPackage = msg.appPackage.trim();
+  }
+  if (typeof msg.appVersion === "string" && msg.appVersion.trim()) {
+    android_client.appVersion = msg.appVersion.trim();
+  }
+  return Object.keys(android_client).length > 0 ? android_client : null;
 }
 
 export function isUserPaired(userId: string): boolean {
@@ -746,16 +786,19 @@ async function recordDaemonLink(userId: string, daemonId: string, meta: Record<s
     for (const row of existing) {
       const prior = (row.metadata as Record<string, unknown> | null) || {};
       const priorPlatform = normalizeDaemonPlatform(prior.platform);
-      if (priorPlatform === platform) {
-        // Preserve existing permissions for this platform
-        if (prior.permissions && !mergedMeta.permissions) {
-          mergedMeta.permissions = prior.permissions;
-        }
-        if (prior.android_permissions && !mergedMeta.android_permissions) {
-          mergedMeta.android_permissions = prior.android_permissions;
+        if (priorPlatform === platform) {
+          // Preserve existing permissions for this platform
+          if (prior.permissions && !mergedMeta.permissions) {
+            mergedMeta.permissions = prior.permissions;
+          }
+          if (prior.android_permissions && !mergedMeta.android_permissions) {
+            mergedMeta.android_permissions = prior.android_permissions;
+          }
+          if (platform === "android" && prior.android_client && !mergedMeta.android_client) {
+            mergedMeta.android_client = prior.android_client;
+          }
         }
       }
-    }
     // Delete only the existing row for this platform (preserve the other platform's row)
     for (const row of existing) {
       const priorMeta = (row.metadata as Record<string, unknown> | null) || {};
@@ -852,6 +895,15 @@ export function startDaemonBridge(server: HttpServer): void {
             if (rawPlatform !== normalizedPlatform && !storedMeta.osPlatform) storedMeta.osPlatform = rawPlatform;
           }
           const reconnPlatform = normalizeDaemonPlatform(storedMeta.platform);
+          const android_client = buildAndroidDaemonClientMetadata(reconnPlatform, rm);
+          if (android_client) {
+            const priorClient = storedMeta.android_client && typeof storedMeta.android_client === "object"
+              ? storedMeta.android_client as Record<string, unknown>
+              : {};
+            storedMeta.android_client = { ...priorClient, ...android_client };
+          } else if (reconnPlatform !== "android") {
+            delete storedMeta.android_client;
+          }
           storedMeta.platform = reconnPlatform;
           const reconnectUserId = row.userId;
           const reconnKey = socketKey(reconnectUserId, reconnPlatform);
@@ -929,10 +981,12 @@ export function startDaemonBridge(server: HttpServer): void {
         const daemonId = randomBytes(16).toString("hex");
         const reconnectSecret = randomBytes(32).toString("hex");
         const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
+        const android_client = buildAndroidDaemonClientMetadata(pairPlatform, m);
         await recordDaemonLink(userId, daemonId, {
           hostname: m.hostname || "unknown",
           platform: pairPlatform,
           ...(rawPairPlatform !== pairPlatform ? { osPlatform: rawPairPlatform } : {}),
+          ...(android_client ? { android_client } : {}),
           reconnectSecretHash,
         });
         pairedUserId = userId;

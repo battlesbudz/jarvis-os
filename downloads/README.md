@@ -1,39 +1,23 @@
 # APK Downloads
 
-The Jarvis Android Daemon APK is served from this directory by the Express backend
-at `GET /api/download/apk` (no authentication required).
+The main Jarvis Android APK is the default Android install. It includes
+integrated device control, so users do not need to install a separate daemon app.
 
-## How the endpoint resolves the APK
-
-1. **Local file** — if `downloads/jarvis-daemon.apk` exists on the server
-   filesystem, it is streamed directly to the client.
-2. **Remote fallback** — if `ANDROID_APK_URL` environment variable is set,
-   the endpoint redirects (HTTP 302) to that URL. Use this for GitHub Releases
-   or any other hosted URL.
-3. **404** — if neither is available, the endpoint returns an error.
+The unified Jarvis APK update manifest is served by the Express backend at
+`GET /api/app-update/android`.
 
 ## Recommended setup
 
-### Option A — GitHub Releases (no local file needed)
+1. Build and publish the main Jarvis Android APK.
+2. Publish a matching `version.json` manifest for the APK.
+3. Set `JARVIS_ANDROID_UPDATE_RELEASE_BASE` or
+   `JARVIS_ANDROID_UPDATE_MANIFEST_URL` in the hosting environment when the
+   manifest is not under the default `jarvis-app-latest` GitHub release.
+4. Set `JARVIS_ANDROID_APK_URL` when the manifest does not include an `apkUrl`.
 
-1. Push this project to GitHub.
-2. The workflow at `.github/workflows/build-android-apk.yml` builds the APK on
-   every push to `main` that touches `android-daemon/` and publishes it under the
-   tag `android-daemon-latest`.
-3. Set the `ANDROID_APK_URL` secret/environment variable in your hosting platform to:
-   ```
-   https://github.com/<your-org>/<your-repo>/releases/download/android-daemon-latest/jarvis-daemon.apk
-   ```
-4. The in-app "Download APK" button and QR code immediately start working.
+## Legacy standalone daemon
 
-### Option B — Build locally and place here
+The standalone Android daemon APK is legacy. New installs should use the main Jarvis Android APK, which includes device control.
 
-```bash
-# Requires JDK 17 and Android SDK
-cd android-daemon
-chmod +x gradlew
-./gradlew assembleRelease
-cp app/build/outputs/apk/release/app-release*.apk ../downloads/jarvis-daemon.apk
-```
-
-The backend picks up the file automatically on the next request (no restart needed).
+Legacy standalone daemon clients can still use `GET /api/app-update/android-daemon`
+and `GET /api/download/apk` while existing installs migrate.

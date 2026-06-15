@@ -213,13 +213,13 @@ Always confirm with the user before tap/type/swipe actions and before android_no
     const desktopActive = isDesktopDaemonActive(ctx.userId);
 
     if (!isUserPaired(ctx.userId)) {
-      return { ok: false, content: jsonErrorContent("No daemon paired. Ask the user to install and pair either the desktop daemon (Profile → Connected Channels → Desktop Daemon) or the Android daemon APK (Profile → Connected Channels → Android Device).") };
+      return { ok: false, content: jsonErrorContent("No daemon paired. Ask the user to pair either the desktop daemon (Profile -> Connected Channels -> Desktop Daemon) or Android device control in the main Jarvis Android app (Profile -> Android Device).") };
     }
 
     // ── Android actions ────────────────────────────────────────────────────
     if (isAndroidAction(rawAction)) {
       if (!androidActive) {
-        return { ok: false, content: jsonErrorContent("No Android daemon connected. Ask the user to install the Jarvis Android APK and pair it (Profile → Connected Channels → Android Device).") };
+        return { ok: false, content: jsonErrorContent("No Android device control connection is active. Ask the user to open the main Jarvis Android app, go to Profile -> Android Device, get a pairing code, and connect device control there.") };
       }
       const permKey = androidPermKey(rawAction);
       if (permKey && !(await isAndroidDaemonActionAllowed(ctx.userId, permKey))) {
@@ -359,20 +359,20 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       if (!result.ok && typeof result.error === "string") {
         const err = result.error;
         if (err.startsWith("FOREGROUND_REQUIRED")) {
-          return { ok: false, content: jsonErrorContent("This action requires the Jarvis Daemon app to be in the foreground on your Android device. Open the Jarvis Daemon app and try again.", { code: "FOREGROUND_REQUIRED" }) };
+          return { ok: false, content: jsonErrorContent("This action requires the main Jarvis Android app to be in the foreground on your Android device. Open Jarvis and try again.", { code: "FOREGROUND_REQUIRED" }) };
         }
         if (err.startsWith("CAMERA_PERMISSION_REQUIRED") || err.startsWith("SCREEN_RECORD_PERMISSION_REQUIRED")) {
           const isScreenRec = err.startsWith("SCREEN_RECORD_PERMISSION_REQUIRED");
           const fixNote = isScreenRec
-            ? "Screen recording requires a one-time grant. Open the Jarvis Daemon app on your Android device and tap 'Allow' next to Screen Recording, then try again."
-            : "Camera permission is not granted on the Android device. Open the Jarvis Daemon app and tap 'Grant' next to Camera, or go to Settings → Apps → Jarvis Daemon → Permissions → Camera.";
+            ? "Screen recording requires a one-time grant. Open the main Jarvis Android app on your device and tap 'Allow' next to Screen Recording, then try again."
+            : "Camera permission is not granted on the Android device. Open the main Jarvis Android app and tap 'Grant' next to Camera, or go to Settings -> Apps -> Jarvis -> Permissions -> Camera.";
           return { ok: false, content: jsonErrorContent(fixNote, { code: isScreenRec ? "SCREEN_RECORD_PERMISSION_REQUIRED" : "CAMERA_PERMISSION_REQUIRED" }) };
         }
         if (err.startsWith("LOCATION_PERMISSION_REQUIRED")) {
-          return { ok: false, content: jsonErrorContent("Location permission is not granted. On the Android device go to Settings → Apps → Jarvis Daemon → Permissions → Location and select 'Allow all the time' or 'Allow only while using the app'.", { code: "LOCATION_PERMISSION_REQUIRED" }) };
+          return { ok: false, content: jsonErrorContent("Location permission is not granted. On the Android device go to Settings -> Apps -> Jarvis -> Permissions -> Location and select 'Allow all the time' or 'Allow only while using the app'.", { code: "LOCATION_PERMISSION_REQUIRED" }) };
         }
         if (err.startsWith("SMS_PERMISSION_REQUIRED")) {
-          return { ok: false, content: jsonErrorContent("SEND_SMS permission is not granted. On the Android device go to Settings → Apps → Jarvis Daemon → Permissions → SMS and enable it.", { code: "SMS_PERMISSION_REQUIRED" }) };
+          return { ok: false, content: jsonErrorContent("SEND_SMS permission is not granted. On the Android device go to Settings -> Apps -> Jarvis -> Permissions -> SMS and enable it.", { code: "SMS_PERMISSION_REQUIRED" }) };
         }
         if (err.startsWith("SMS_NOT_SUPPORTED")) {
           return { ok: false, content: jsonErrorContent("This Android device does not support SMS (no SIM / cellular). SMS cannot be sent.", { code: "SMS_NOT_SUPPORTED" }) };

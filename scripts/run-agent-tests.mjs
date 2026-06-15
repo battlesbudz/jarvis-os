@@ -52,6 +52,8 @@ const tests = [
   { file: "server/time/__tests__/temporalContext.assert.ts" },
   { file: "server/agent/__tests__/cronTools.assert.ts" },
   { file: "server/agent/__tests__/actionOntology.assert.ts" },
+  { file: "server/agent/__tests__/androidUnifiedDaemonBridge.assert.ts" },
+  { file: "server/agent/__tests__/androidUnifiedDaemonCopy.assert.ts" },
   { file: "server/agent/__tests__/toolResolver.assert.ts" },
   { file: "server/agent/__tests__/webSearchFallback.assert.ts" },
   { file: "server/agent/__tests__/reminderDirectRoute.assert.ts" },

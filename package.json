@@ -42,7 +42,10 @@
     "jarvis:verify:brain-vector-db": "tsx scripts/verify-brain-vector-db.ts",
     "jarvis:verify:memory-vector-db": "tsx scripts/verify-memory-vector-db.ts",
     "jarvis:check": "npm run jarvis:doctor && npm test",
-    "test": "node scripts/run-agent-tests.mjs"
+    "jarvis:android-daemon:config-check": "node scripts/android-unified-daemon-config-check.mjs",
+    "test": "node scripts/run-agent-tests.mjs",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@composio/core": "^0.10.0",

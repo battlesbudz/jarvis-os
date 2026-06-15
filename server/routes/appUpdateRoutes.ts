@@ -90,6 +90,8 @@ export function registerAppUpdateRoutes(app: Express): void {
       if (!Number.isFinite(envVersionCode) || envVersionCode <= 0) return false;
       res.json({
         platform: "android-daemon",
+        legacy: true,
+        migrationTarget: "/api/app-update/android",
         versionCode: envVersionCode,
         versionName: envVersionName,
         apkUrl: railwayApkUrl,
@@ -123,6 +125,8 @@ export function registerAppUpdateRoutes(app: Express): void {
 
       return res.json({
         platform: "android-daemon",
+        legacy: true,
+        migrationTarget: "/api/app-update/android",
         versionCode: Number(manifest.versionCode || 0),
         versionName: manifest.versionName || null,
         apkUrl: manifest.apkUrl || railwayApkUrl,

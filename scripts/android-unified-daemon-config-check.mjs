@@ -1,0 +1,156 @@
+import { access, readFile } from "node:fs/promises";
+import path from "node:path";
+
+const projectRoot = process.cwd();
+const manifestPath = path.join(projectRoot, "android/app/src/main/AndroidManifest.xml");
+const appBuildGradlePath = path.join(projectRoot, "android/app/build.gradle");
+const stringsPath = path.join(projectRoot, "android/app/src/main/res/values/strings.xml");
+const mainApplicationPath = path.join(projectRoot, "android/app/src/main/java/com/gameplan/MainApplication.kt");
+const webSocketServicePath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/WebSocketService.kt",
+);
+const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
+const pluginTemplateWebSocketPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/WebSocketService.kt",
+);
+const accessibilityConfigPath = path.join(
+  projectRoot,
+  "android/app/src/main/res/xml/accessibility_service_config.xml",
+);
+const filePathsPath = path.join(projectRoot, "android/app/src/main/res/xml/file_paths.xml");
+
+const requiredPermissions = [
+  "android.permission.FOREGROUND_SERVICE",
+  "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+  "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+  "android.permission.RECORD_AUDIO",
+  "android.permission.RECEIVE_BOOT_COMPLETED",
+  "android.permission.WAKE_LOCK",
+  "android.permission.POST_NOTIFICATIONS",
+  "android.permission.REQUEST_INSTALL_PACKAGES",
+  "android.permission.QUERY_ALL_PACKAGES",
+  "android.permission.CAMERA",
+  "android.permission.ACCESS_FINE_LOCATION",
+  "android.permission.ACCESS_COARSE_LOCATION",
+  "android.permission.ACCESS_BACKGROUND_LOCATION",
+  "android.permission.SEND_SMS",
+  "android.permission.FOREGROUND_SERVICE_CAMERA",
+  "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
+];
+
+const requiredManifestSnippets = [
+  'android:name=".daemon.WebSocketService"',
+  'android:foregroundServiceType="dataSync|camera|mediaProjection"',
+  'android:name=".daemon.WakeWordService"',
+  'android:foregroundServiceType="microphone"',
+  'android:name=".daemon.JarvisAccessibilityService"',
+  "android.accessibilityservice.AccessibilityService",
+  'android:name="android.accessibilityservice"',
+  'android:resource="@xml/accessibility_service_config"',
+  'android:name=".daemon.JarvisNotificationListener"',
+  "android.service.notification.NotificationListenerService",
+  'android:name=".daemon.BootReceiver"',
+  "android.intent.action.BOOT_COMPLETED",
+  "android.intent.action.MY_PACKAGE_REPLACED",
+  'android:name="androidx.core.content.FileProvider"',
+  'android:authorities="${applicationId}.fileprovider"',
+  'android:name="android.support.FILE_PROVIDER_PATHS"',
+  'android:resource="@xml/file_paths"',
+];
+
+const forbiddenManifestSnippets = [
+  'android:name=".WebSocketService"',
+  'android:name=".WakeWordService"',
+  'android:name=".JarvisAccessibilityService"',
+  'android:name=".JarvisNotificationListener"',
+  'android:name=".BootReceiver"',
+];
+
+const requiredStringSnippets = [
+  '<string name="accessibility_service_label">',
+  '<string name="accessibility_service_description">',
+];
+
+const requiredDependencies = [
+  'implementation("org.java-websocket:Java-WebSocket:1.5.4")',
+  'implementation("org.json:json:20231013")',
+  'implementation("com.google.android.gms:play-services-location:21.2.0")',
+];
+
+function assertIncludes(contents, expected, source) {
+  if (!contents.includes(expected)) {
+    throw new Error(`${source} is missing ${expected}`);
+  }
+}
+
+function assertExcludes(contents, forbidden, source) {
+  if (contents.includes(forbidden)) {
+    throw new Error(`${source} must not include ${forbidden}`);
+  }
+}
+
+async function assertFileExists(filePath) {
+  try {
+    await access(filePath);
+  } catch {
+    throw new Error(`${path.relative(projectRoot, filePath)} is missing`);
+  }
+}
+
+const [manifest, appBuildGradle, strings, mainApplication, webSocketService, plugin] = await Promise.all([
+  readFile(manifestPath, "utf8"),
+  readFile(appBuildGradlePath, "utf8"),
+  readFile(stringsPath, "utf8"),
+  readFile(mainApplicationPath, "utf8"),
+  readFile(webSocketServicePath, "utf8"),
+  readFile(pluginPath, "utf8"),
+  assertFileExists(accessibilityConfigPath),
+  assertFileExists(filePathsPath),
+  assertFileExists(pluginTemplateWebSocketPath),
+]);
+
+for (const permission of requiredPermissions) {
+  assertIncludes(manifest, `android:name="${permission}"`, "AndroidManifest.xml");
+}
+
+for (const snippet of requiredManifestSnippets) {
+  assertIncludes(manifest, snippet, "AndroidManifest.xml");
+}
+
+for (const snippet of forbiddenManifestSnippets) {
+  assertExcludes(manifest, snippet, "AndroidManifest.xml");
+}
+
+for (const snippet of requiredStringSnippets) {
+  assertIncludes(strings, snippet, "strings.xml");
+}
+
+assertIncludes(strings, "Jarvis Device Control", "strings.xml");
+assertIncludes(
+  strings,
+  "Allows Jarvis to read screen content, tap, type, swipe, and take screenshots on your behalf",
+  "strings.xml",
+);
+
+for (const dependency of requiredDependencies) {
+  assertIncludes(appBuildGradle, dependency, "android/app/build.gradle");
+}
+
+assertIncludes(
+  mainApplication,
+  "import com.gameplan.daemon.JarvisDaemonPackage",
+  "MainApplication.kt",
+);
+assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
+assertIncludes(webSocketService, 'put("clientKind", "unified_android_app")', "WebSocketService.kt");
+assertIncludes(webSocketService, 'put("appPackage", packageName)', "WebSocketService.kt");
+assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(
+  plugin,
+  "android-daemon-native/src/main/java/com/gameplan/daemon",
+  "plugins/withJarvisAndroidDaemon.js",
+);
+
+console.log("OK: unified Android daemon native config is present");
