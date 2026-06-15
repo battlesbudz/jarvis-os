@@ -64,7 +64,7 @@ For local development, one provider key is enough to start testing basic model-b
 npm run db:push
 ```
 
-This applies the current schema to the configured database.
+This applies the current schema to the configured database. The command loads `.env` and `.env.local` automatically before reading `DATABASE_URL`.
 
 ## 5. Start The Server
 
@@ -72,7 +72,7 @@ This applies the current schema to the configured database.
 npm run server:dev
 ```
 
-The local Express API defaults to `http://localhost:5000`.
+The command loads `.env` and `.env.local` automatically. The local Express API defaults to `http://localhost:5000`.
 
 ## 6. Start The App
 
