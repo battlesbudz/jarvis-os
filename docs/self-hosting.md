@@ -95,6 +95,7 @@ npm run dev
 ```
 
 Open `http://localhost:3001`. The dashboard proxies API calls to `JARVIS_API`, defaulting to `http://localhost:5000`, and uses `DASHBOARD_SECRET` as a bearer token when calling the server.
+The dashboard loads the parent repo `.env` and `.env.local`, so the `JARVIS_API` and `DASHBOARD_SECRET` values from step 3 are reused automatically.
 
 ## 8. Verify The Install
 

@@ -21,7 +21,7 @@ The dashboard reads:
 | `JARVIS_API` | `http://localhost:5000` | Express server URL used by dashboard server-side API calls and proxy routes. |
 | `DASHBOARD_SECRET` | none | Bearer token forwarded to protected Jarvis server endpoints. Set the same value in the dashboard and server environments. |
 
-If the dashboard renders but data panels fail, first confirm the Express server is running, `JARVIS_API` points to it, and `DASHBOARD_SECRET` matches.
+When run from this repository, the dashboard loads the parent `.env` and `.env.local` before reading these values. If the dashboard renders but data panels fail, first confirm the Express server is running, `JARVIS_API` points to it, and `DASHBOARD_SECRET` matches.
 
 ## Local Development
 
@@ -41,7 +41,7 @@ npm run dev
 
 Open [http://localhost:3001](http://localhost:3001).
 
-The dashboard intentionally uses port `3001` so it can run beside the Expo/web app and Express API during development.
+The dashboard intentionally uses port `3001` so it can run beside the Expo/web app and Express API during development. It uses the same root `.env` as the Express server unless you explicitly set dashboard-specific environment variables in the shell or host.
 
 ## Verification
 

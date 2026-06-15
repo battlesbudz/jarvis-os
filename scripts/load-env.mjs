@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 function loadEnvFile(filePath, { override = false } = {}) {
   if (!existsSync(filePath)) return;
@@ -26,7 +27,9 @@ function loadEnvFile(filePath, { override = false } = {}) {
   }
 }
 
-const repoRoot = process.env.JARVIS_REPO_ROOT || process.cwd();
+const repoRoot =
+  process.env.JARVIS_REPO_ROOT ||
+  path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 loadEnvFile(path.join(repoRoot, ".env"));
 loadEnvFile(path.join(repoRoot, ".env.local"), { override: true });
