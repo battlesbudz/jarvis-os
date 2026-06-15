@@ -1,0 +1,34 @@
+name: Documentation issue
+description: Report unclear, stale, missing, or confusing docs.
+title: "[Docs]: "
+labels: ["documentation", "needs-triage"]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page or file
+      placeholder: README.md, docs/architecture.md, downloads/README.md
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is unclear or stale?
+    validations:
+      required: true
+  - type: textarea
+    id: improvement
+    attributes:
+      label: Suggested improvement
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Impact
+      options:
+        - Typo or wording
+        - Setup blocker
+        - Safety/security clarification
+        - Architecture/product clarity
+        - Release/download clarity
+    validations:
+      required: true

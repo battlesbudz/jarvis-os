@@ -1,27 +1,39 @@
-# Jarvis OS Docs Index
+# Jarvis OS Docs
 
-This folder contains architecture, operation, deployment, and roadmap documents for Jarvis OS. Read these before changing runtime behavior, safety boundaries, provider routing, memory, connectors, channels, or deployment scripts.
+This folder contains the public architecture, setup, operations, deployment, and roadmap documents for Jarvis OS. Read these before changing runtime behavior, safety boundaries, provider routing, memory, connectors, channels, or deployment scripts.
 
-## Core Orientation
+## Start Here
 
-- `architecture.md` - current system layout and boundaries.
-- `workspace-map.md` - where major code and context areas live.
-- `decision-log.md` - durable repo-level decisions and constraints.
-- `operations/jarvis-os-runbook.md` - startup, health checks, and safe autonomy operations.
+1. [`../README.md`](../README.md) - product overview, screenshots, architecture, and local setup.
+2. [`architecture.md`](architecture.md) - current system layout and boundaries.
+3. [`workspace-map.md`](workspace-map.md) - where major code and context areas live.
+4. [`operations/jarvis-os-runbook.md`](operations/jarvis-os-runbook.md) - startup, health checks, and safe autonomy operations.
+5. [`../downloads/README.md`](../downloads/README.md) - APK download and release paths.
+6. [`../JARVIS_ROADMAP.md`](../JARVIS_ROADMAP.md) - capability map and remaining hardening work.
 
-## Roadmaps And Plans
+## Architecture And Runtime
 
-- `../JARVIS_ROADMAP.md` - main autonomous-agent roadmap and current remaining work.
-- `jarvis-wearable-os-master-roadmap.md` - wearable/spatial/ambient OS roadmap, reviewed against the current implementation.
-- `gbrain-implementation-plan.md` - active implementation plan for the derived G-Brain second-brain layer.
-- `gbrain-spec-sheet.md` - implementation spec and contract sheet for G-Brain tables, adapter behavior, projection, retrieval, and maintenance.
-- `memory-os-temporal-graph-plan.md` - broader Memory OS and temporal graph plan that G-Brain feeds into.
-- `superpowers/plans/2026-05-15-jarvis-os-foundation.md` - completed Jarvis OS foundation implementation plan and follow-up status.
+- [`architecture.md`](architecture.md) - conceptual architecture, runtime flow, and folder map.
+- [`workspace-map.md`](workspace-map.md) - generic workspace and code ownership map for contributors.
+- [`decision-log.md`](decision-log.md) - durable repo-level decisions and constraints.
+- [`public-compatibility.md`](public-compatibility.md) - staged rename and compatibility note for older identifiers.
 
-## Integrations And Deployment
+## Operations And Deployment
 
-- `chatgpt-codex-oauth.md` - ChatGPT/Codex OAuth provider, gateway, and delegation notes.
-- `railway-setup.md` - Railway deployment/setup notes.
+- [`operations/jarvis-os-runbook.md`](operations/jarvis-os-runbook.md) - readiness checks and safe autonomy flow.
+- [`railway-setup.md`](railway-setup.md) - Railway deployment/setup notes.
+- [`chatgpt-codex-oauth.md`](chatgpt-codex-oauth.md) - ChatGPT/Codex OAuth provider, gateway, and delegation notes.
+
+## Memory And Agent System
+
+- [`gbrain-implementation-plan.md`](gbrain-implementation-plan.md) - active implementation plan for the derived G-Brain second-brain layer.
+- [`gbrain-spec-sheet.md`](gbrain-spec-sheet.md) - implementation spec and contract sheet for G-Brain tables, adapter behavior, projection, retrieval, and maintenance.
+- [`memory-os-temporal-graph-plan.md`](memory-os-temporal-graph-plan.md) - broader Memory OS and temporal graph plan that G-Brain feeds into.
+- [`jarvis-wearable-os-master-roadmap.md`](jarvis-wearable-os-master-roadmap.md) - wearable/spatial/ambient OS roadmap.
+
+## Public Documentation Boundary
+
+Public docs should explain Jarvis OS as a self-hostable project. They should not expose maintainer-local paths, private personal/business workspace details, credentials, tokens, or internal branch names. Historical internal plans may exist for maintainers, but they should not be linked from the public start path unless they are scrubbed for public readers.
 
 ## Notes For Maintainers And Agents
 
