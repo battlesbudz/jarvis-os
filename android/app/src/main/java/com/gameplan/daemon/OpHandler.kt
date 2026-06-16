@@ -56,11 +56,11 @@ object OpHandler {
                 "android_swipe" -> handleSwipe(op)
                 "android_pinch" -> handlePinch(op)
                 "android_press_key" -> handlePressKey(op)
-                "android_file_list" -> handleFileList(op)
-                "android_file_read" -> handleFileRead(op)
+                "android_file_list" -> handleFileList(context, op)
+                "android_file_read" -> handleFileRead(context, op)
                 "android_notifications_list" -> handleNotificationsList(op)
                 "android_notification_reply" -> handleNotificationReply(context, op)
-                "android_file_search" -> handleFileSearch(op)
+                "android_file_search" -> handleFileSearch(context, op)
                 "android_open_file" -> handleOpenFile(context, op)
                 "android_copy_to_clipboard" -> handleCopyToClipboard(context, op)
                 "notify" -> handleNotify(context, op)
@@ -725,12 +725,12 @@ object OpHandler {
         }
     }
 
-    private fun handleFileList(op: JSONObject): OpResult {
+    private fun handleFileList(context: Context, op: JSONObject): OpResult {
         val path = op.optString("path").ifEmpty {
             return OpResult(false, error = "path required")
         }
-        val resolvedPath = resolvePath(path)
-        val dir = File(resolvedPath)
+        val dir = resolveSharedStoragePath(context, path) ?: return privateFilePathDenied(path)
+        val resolvedPath = dir.absolutePath
         if (!dir.exists()) return OpResult(false, error = "Path not found: $resolvedPath")
         if (!dir.isDirectory) return OpResult(false, error = "Not a directory: $resolvedPath")
         val files = dir.listFiles() ?: return OpResult(false, error = "Cannot list directory — check storage permission")
@@ -747,12 +747,12 @@ object OpHandler {
         return OpResult(true, data = JSONObject().put("path", resolvedPath).put("files", arr).put("count", files.size))
     }
 
-    private fun handleFileRead(op: JSONObject): OpResult {
+    private fun handleFileRead(context: Context, op: JSONObject): OpResult {
         val path = op.optString("path").ifEmpty {
             return OpResult(false, error = "path required")
         }
-        val resolvedPath = resolvePath(path)
-        val file = File(resolvedPath)
+        val file = resolveSharedStoragePath(context, path) ?: return privateFilePathDenied(path)
+        val resolvedPath = file.absolutePath
         if (!file.exists()) return OpResult(false, error = "File not found: $resolvedPath")
         if (!file.isFile) return OpResult(false, error = "Not a file: $resolvedPath")
         if (file.length() > 10 * 1024 * 1024) {
@@ -813,11 +813,11 @@ object OpHandler {
     // ── android_file_search ──────────────────────────────────────────────────
     // Recursively walks the filesystem looking for files whose name contains
     // the query string (case-insensitive). Optional type filter and maxDepth.
-    private fun handleFileSearch(op: JSONObject): OpResult {
+    private fun handleFileSearch(context: Context, op: JSONObject): OpResult {
         val query = op.optString("query").ifEmpty {
             return OpResult(false, error = "query required")
         }
-        val rootPath = op.optString("root").ifEmpty { null }
+        val requestedRootPath = op.optString("root").ifEmpty { null }
             ?: Environment.getExternalStorageDirectory().absolutePath
         // Reads from "fileType" field. The server normalises any legacy "type" alias
         // before dispatching, so the daemon only needs to handle the canonical name.
@@ -849,7 +849,9 @@ object OpHandler {
             }
         }
 
-        val rootDir = File(rootPath)
+        val rootDir = resolveSharedStoragePath(context, requestedRootPath)
+            ?: return privateFilePathDenied(requestedRootPath)
+        val rootPath = rootDir.absolutePath
         if (!rootDir.exists()) return OpResult(false, error = "Root path not found: $rootPath")
         walk(rootDir, 1)
 
@@ -878,8 +880,9 @@ object OpHandler {
         val path = op.optString("path").ifEmpty {
             return OpResult(false, error = "path required")
         }
-        val file = File(path)
-        if (!file.exists()) return OpResult(false, error = "File not found: $path")
+        val file = resolveSharedStoragePath(context, path) ?: return privateFilePathDenied(path)
+        val resolvedPath = file.absolutePath
+        if (!file.exists()) return OpResult(false, error = "File not found: $resolvedPath")
 
         val ext = file.extension.lowercase()
         val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
@@ -894,7 +897,7 @@ object OpHandler {
             }
             context.startActivity(viewIntent)
             OpResult(true, data = JSONObject()
-                .put("path", path)
+                .put("path", resolvedPath)
                 .put("mimeType", mimeType)
                 .put("opened", true))
         } catch (e: Exception) {
@@ -910,8 +913,9 @@ object OpHandler {
         val path = op.optString("path").ifEmpty {
             return OpResult(false, error = "path required")
         }
-        val file = File(path)
-        if (!file.exists()) return OpResult(false, error = "File not found: $path")
+        val file = resolveSharedStoragePath(context, path) ?: return privateFilePathDenied(path)
+        val resolvedPath = file.absolutePath
+        if (!file.exists()) return OpResult(false, error = "File not found: $resolvedPath")
 
         val ext = file.extension.lowercase()
         val mimeType = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "image/*"
@@ -928,9 +932,9 @@ object OpHandler {
             val clipData = ClipData(clipDescription, ClipData.Item(uri))
             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             clipboard.setPrimaryClip(clipData)
-            Log.i(TAG, "Copied to clipboard: $path (mime=$imageMime)")
+            Log.i(TAG, "Copied to clipboard: $resolvedPath (mime=$imageMime)")
             OpResult(true, data = JSONObject()
-                .put("path", path)
+                .put("path", resolvedPath)
                 .put("mimeType", imageMime)
                 .put("copied", true))
         } catch (e: Exception) {
@@ -1093,7 +1097,7 @@ object OpHandler {
 
     private fun resolvePath(path: String): String {
         return when {
-            path.startsWith("/") -> path
+            File(path).isAbsolute -> path
             path == "downloads" || path == "Downloads" ->
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).absolutePath
             path == "dcim" || path == "DCIM" || path == "gallery" ->
@@ -1108,6 +1112,64 @@ object OpHandler {
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES).absolutePath
             else -> Environment.getExternalStorageDirectory().absolutePath + "/$path"
         }
+    }
+
+    private fun resolveSharedStoragePath(context: Context, path: String): File? {
+        val file = canonicalOrAbsolute(File(resolvePath(path)))
+        return if (isAppPrivatePath(context, file)) null else file
+    }
+
+    private fun privateFilePathDenied(path: String): OpResult {
+        return OpResult(
+            false,
+            error = "App-private file paths are not available to Android file operations: $path"
+        )
+    }
+
+    private fun isAppPrivatePath(context: Context, file: File): Boolean {
+        val candidatePath = normalizedPath(file)
+        val packageName = context.packageName
+        val packageDataAliases = listOf(
+            "/data/data/$packageName",
+            "/data/user/0/$packageName",
+            "/data/user_de/0/$packageName",
+        )
+        if (packageDataAliases.any { candidatePath == it || candidatePath.startsWith("$it/") }) {
+            return true
+        }
+
+        val privateRoots = listOfNotNull(
+            context.applicationInfo.dataDir?.takeIf { it.isNotBlank() }?.let(::File),
+            context.filesDir,
+            context.cacheDir,
+            optionalContextDir(context, "getNoBackupFilesDir"),
+            optionalContextDir(context, "getCodeCacheDir"),
+        ).map(::canonicalOrAbsolute)
+
+        return privateRoots.any { root ->
+            val rootPath = normalizedPath(root)
+            candidatePath == rootPath || candidatePath.startsWith("$rootPath/")
+        }
+    }
+
+    private fun canonicalOrAbsolute(file: File): File {
+        return try {
+            file.canonicalFile
+        } catch (_: Exception) {
+            file.absoluteFile
+        }
+    }
+
+    private fun optionalContextDir(context: Context, methodName: String): File? {
+        return try {
+            Context::class.java.getMethod(methodName).invoke(context) as? File
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    private fun normalizedPath(file: File): String {
+        return file.path.replace('\\', '/').trimEnd('/')
     }
 
     // ── Voice / Wake Word / Talk Mode ────────────────────────────────────────

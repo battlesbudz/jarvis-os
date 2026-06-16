@@ -64,8 +64,7 @@ const DAEMON_XML_CONTENTS = {
     android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true"
     android:description="@string/accessibility_service_description"
-    android:notificationTimeout="100"
-    android:packageNames="" />
+    android:notificationTimeout="100" />
 `,
   "file_paths.xml": `<?xml version="1.0" encoding="utf-8"?>
 <paths>

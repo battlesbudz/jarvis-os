@@ -25,6 +25,31 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun androidFileOpsRejectAppPrivateDataPaths() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val appDataDir = File(context.applicationInfo.dataDir ?: context.filesDir.path)
+        val privateFile = File(appDataDir, "shared_prefs/jarvis_daemon.xml").path
+        val privateDir = File(appDataDir, "shared_prefs").path
+        val operations = listOf(
+            JSONObject().put("type", "android_file_list").put("path", privateDir),
+            JSONObject().put("type", "android_file_read").put("path", privateFile),
+            JSONObject().put("type", "android_file_search").put("query", "jarvis").put("root", appDataDir.path),
+            JSONObject().put("type", "android_open_file").put("path", privateFile),
+            JSONObject().put("type", "android_copy_to_clipboard").put("path", privateFile),
+        )
+
+        for (op in operations) {
+            val result = OpHandler.handle(context, op)
+
+            assertFalse("${op.getString("type")} should reject private app paths", result.ok)
+            assertTrue(
+                "${op.getString("type")} returned unexpected error: ${result.error}",
+                result.error?.contains("App-private file paths") == true
+            )
+        }
+    }
+
+    @Test
     fun normalizeServerUrlAddsHttpsForBareHost() {
         assertEquals(
             "https://gameplanjarvisai.up.railway.app",

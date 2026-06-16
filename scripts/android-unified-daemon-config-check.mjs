@@ -24,6 +24,10 @@ const accessibilityServicePath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt",
 );
+const opHandlerPath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/OpHandler.kt",
+);
 const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
 const pluginTemplateWebSocketPath = path.join(
   projectRoot,
@@ -40,6 +44,10 @@ const pluginTemplateCameraPath = path.join(
 const pluginTemplateAccessibilityPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt",
+);
+const pluginTemplateOpHandlerPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OpHandler.kt",
 );
 const pluginBlurViewBuildGradlePath = path.join(projectRoot, "plugins/android-blurview-native/build.gradle");
 const pluginBlurViewSourcePath = path.join(
@@ -147,11 +155,14 @@ const [
   screenRecordHandler,
   cameraHandler,
   accessibilityService,
+  opHandler,
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateScreenRecord,
   pluginTemplateCamera,
   pluginTemplateAccessibility,
+  pluginTemplateOpHandler,
+  accessibilityConfig,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
   readFile(rootBuildGradlePath, "utf8"),
@@ -163,12 +174,14 @@ const [
   readFile(screenRecordHandlerPath, "utf8"),
   readFile(cameraHandlerPath, "utf8"),
   readFile(accessibilityServicePath, "utf8"),
+  readFile(opHandlerPath, "utf8"),
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateScreenRecordPath, "utf8"),
   readFile(pluginTemplateCameraPath, "utf8"),
   readFile(pluginTemplateAccessibilityPath, "utf8"),
-  assertFileExists(accessibilityConfigPath),
+  readFile(pluginTemplateOpHandlerPath, "utf8"),
+  readFile(accessibilityConfigPath, "utf8"),
   assertFileExists(filePathsPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
   assertFileExists(pluginBlurViewSourcePath),
@@ -202,6 +215,8 @@ assertIncludes(
   "Allows Jarvis to read screen content, tap, type, swipe, and take screenshots on your behalf",
   "strings.xml",
 );
+assertExcludes(accessibilityConfig, "android:packageNames", "accessibility_service_config.xml");
+assertExcludes(plugin, "android:packageNames", "plugins/withJarvisAndroidDaemon.js");
 
 for (const dependency of requiredDependencies) {
   assertIncludes(appBuildGradle, dependency, "android/app/build.gradle");
@@ -249,6 +264,20 @@ assertIncludes(accessibilityService, '"enter"         -> pressImeAction()', "Jar
 assertExcludes(accessibilityService, '"enter"         -> { pressImeAction(); true }', "JarvisAccessibilityService.kt");
 assertIncludes(pluginTemplateAccessibility, '"enter"         -> pressImeAction()', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
 assertExcludes(pluginTemplateAccessibility, '"enter"         -> { pressImeAction(); true }', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
+for (const [contents, source] of [
+  [opHandler, "OpHandler.kt"],
+  [pluginTemplateOpHandler, "plugins/android-daemon-native/OpHandler.kt"],
+]) {
+  assertIncludes(contents, '"android_file_list" -> handleFileList(context, op)', source);
+  assertIncludes(contents, '"android_file_read" -> handleFileRead(context, op)', source);
+  assertIncludes(contents, '"android_file_search" -> handleFileSearch(context, op)', source);
+  assertIncludes(contents, "resolveSharedStoragePath(context, path) ?: return privateFilePathDenied(path)", source);
+  assertIncludes(contents, "resolveSharedStoragePath(context, requestedRootPath)", source);
+  assertIncludes(contents, '"/data/data/$packageName"', source);
+  assertIncludes(contents, "context.applicationInfo.dataDir", source);
+  assertIncludes(contents, "File(path).isAbsolute", source);
+  assertExcludes(contents, 'path.startsWith("/") -> path', source);
+}
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(
   plugin,
