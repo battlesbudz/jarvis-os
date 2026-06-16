@@ -16,6 +16,10 @@ const screenRecordHandlerPath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/ScreenRecordHandler.kt",
 );
+const cameraHandlerPath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/CameraHandler.kt",
+);
 const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
 const pluginTemplateWebSocketPath = path.join(
   projectRoot,
@@ -24,6 +28,10 @@ const pluginTemplateWebSocketPath = path.join(
 const pluginTemplateScreenRecordPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/ScreenRecordHandler.kt",
+);
+const pluginTemplateCameraPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/CameraHandler.kt",
 );
 const pluginBlurViewBuildGradlePath = path.join(projectRoot, "plugins/android-blurview-native/build.gradle");
 const pluginBlurViewSourcePath = path.join(
@@ -129,9 +137,11 @@ const [
   mainApplication,
   webSocketService,
   screenRecordHandler,
+  cameraHandler,
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateScreenRecord,
+  pluginTemplateCamera,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
   readFile(rootBuildGradlePath, "utf8"),
@@ -141,9 +151,11 @@ const [
   readFile(mainApplicationPath, "utf8"),
   readFile(webSocketServicePath, "utf8"),
   readFile(screenRecordHandlerPath, "utf8"),
+  readFile(cameraHandlerPath, "utf8"),
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateScreenRecordPath, "utf8"),
+  readFile(pluginTemplateCameraPath, "utf8"),
   assertFileExists(accessibilityConfigPath),
   assertFileExists(filePathsPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
@@ -217,6 +229,10 @@ assertExcludes(screenRecordHandler, "Jarvis app app", "ScreenRecordHandler.kt");
 assertExcludes(screenRecordHandler, "Allow Screen Capture", "ScreenRecordHandler.kt");
 assertExcludes(pluginTemplateScreenRecord, "Jarvis app app", "plugins/android-daemon-native/ScreenRecordHandler.kt");
 assertExcludes(pluginTemplateScreenRecord, "Allow Screen Capture", "plugins/android-daemon-native/ScreenRecordHandler.kt");
+assertIncludes(cameraHandler, "IMPORTANCE_FOREGROUND", "CameraHandler.kt");
+assertExcludes(cameraHandler, "IMPORTANCE_FOREGROUND_SERVICE", "CameraHandler.kt");
+assertIncludes(pluginTemplateCamera, "IMPORTANCE_FOREGROUND", "plugins/android-daemon-native/CameraHandler.kt");
+assertExcludes(pluginTemplateCamera, "IMPORTANCE_FOREGROUND_SERVICE", "plugins/android-daemon-native/CameraHandler.kt");
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(
   plugin,

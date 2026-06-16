@@ -31,15 +31,15 @@ import java.util.concurrent.TimeUnit
  *
  * Uses Camera2 API directly — no CameraX dependency needed, avoiding build.gradle changes.
  * Both ops require CAMERA permission; audio clip also requires RECORD_AUDIO.
- * Both ops return FOREGROUND_REQUIRED if the accessibility service is not in the foreground
- * (camera2 + media recorder require an active foreground context on Android 10+).
+ * Both ops return FOREGROUND_REQUIRED if the app UI is not in the foreground
+ * (camera2 + media recorder require an active foreground Activity on Android 10+).
  */
 object CameraHandler {
 
     private const val TAG = "JarvisCam"
 
     /**
-     * Returns true if this process is currently in the foreground (IMPORTANCE_FOREGROUND or better).
+     * Returns true only when this process has a foreground Activity/UI.
      * Used as an explicit pre-check before Camera2 and MediaProjection ops to surface
      * FOREGROUND_REQUIRED before attempting hardware capture that may silently fail in background.
      */
@@ -47,7 +47,7 @@ object CameraHandler {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val processes = am.runningAppProcesses ?: return false
         val pid = android.os.Process.myPid()
-        return processes.any { it.pid == pid && it.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE }
+        return processes.any { it.pid == pid && it.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND }
     }
 
     fun handleSnap(context: Context, op: JSONObject): OpResult {
