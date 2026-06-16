@@ -1,11 +1,12 @@
-# Jarvis Autonomous Agent Roadmap
+# Jarvis OS Technical Roadmap
 
 > Living document - updated as features are built and shipped.
-> Last updated: June 5, 2026
+> Last updated: June 15, 2026
+> Public summary: `ROADMAP.md`
 
 ---
 
-## Vision
+## Technical Vision
 
 Transform Jarvis from its original coaching roots into a personal AI operating system that works, researches, builds, remembers, routes, and acts across trusted accounts and devices. Jarvis OS is its own runtime foundation: Express + Drizzle + Expo, a tool-calling harness, background jobs, reviewable deliverables, long-term memory, channels, approval gates, and desktop/Android connector control.
 

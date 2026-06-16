@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import "./load-env.mjs";
 import { runRailwayDatabaseRepair } from "./railway-db-repair.mjs";
 
 try {

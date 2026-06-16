@@ -31,8 +31,10 @@ Resolution order:
 4. Set `ANDROID_APK_URL` in your hosting platform:
 
    ```text
-   https://github.com/<your-org>/<your-repo>/releases/download/android-daemon-latest/jarvis-daemon.apk
+   https://github.com/battlesbudz/jarvis-os/releases/download/android-daemon-latest/jarvis-daemon.apk
    ```
+
+   Forks should replace `battlesbudz/jarvis-os` with their own repository path.
 
 5. The in-app daemon download button and QR code can now resolve the APK.
 

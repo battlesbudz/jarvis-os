@@ -77,6 +77,21 @@ Do not:
 
 If your change touches provider routing, daemon permissions, Android control, settings UI, storage, approval gates, or memory behavior, add or update targeted assertions.
 
+Use this map when deciding what to run:
+
+| Area touched | Minimum focused check |
+|---|---|
+| Provider routing, model selection, OpenAI-compatible providers, or ChatGPT subscription path | `npx tsx server/agent/__tests__/providerEnv.assert.ts`, `npx tsx server/agent/__tests__/modelRouter.assert.ts`, plus the nearest provider-specific test |
+| OpenAI provider auth or hosted provider setup | `npx tsx server/agent/__tests__/openaiProviderAuthRoutes.assert.ts`, `npx tsx server/agent/__tests__/openaiProviderAuthRuntime.assert.ts` |
+| Android daemon permissions, update URLs, APK download behavior, or daemon pairing | `node scripts/__tests__/androidDaemonUpdateConfig.test.mjs` |
+| Desktop connector permissions, sidecar launch, local shell/file access, or watchdog behavior | `node scripts/__tests__/desktopConnectorTauriConfig.test.mjs`, `node scripts/__tests__/desktopDaemonWatchdog.test.mjs` |
+| Settings UI provider controls, runtime diagnostics, or account/provider setup | `npx tsx server/agent/__tests__/webchatProviderSettings.assert.ts`, `npx tsx lib/__tests__/runtimeDiagnosticsUx.assert.ts` |
+| Storage helpers in `lib/storage.ts` | Add or update a focused `lib/__tests__/storage*.assert.ts` test before changing behavior, then run it directly. |
+| Memory, SOUL, G-Brain, context building, retrieval, or memory review | Run the nearest `server/memory/__tests__/*` or `server/agent/__tests__/memory*.assert.ts` test and document any database requirement. |
+| Approval gates, external actions, tool permissions, or worker approval checkpoints | `npx tsx server/agent/__tests__/toolExecutionPolicy.assert.ts`, `npx tsx server/agent/__tests__/systemApprovalGate.assert.ts`, plus the nearest runtime approval test |
+| Dashboard UI or dashboard API proxy behavior | `npm --prefix dashboard run build` |
+| Public docs, contributor flow, screenshots, README, downloads, roadmap, or GitHub templates | `npm run docs:audit` |
+
 ## Verification
 
 Run the narrowest relevant checks first, then the broader checks when the change is ready:

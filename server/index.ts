@@ -1,3 +1,4 @@
+import "../scripts/load-env.mjs";
 import "./agent/providers/envAliases";
 import "./agent/openaiChatRouterPatch";
 import express from "express";

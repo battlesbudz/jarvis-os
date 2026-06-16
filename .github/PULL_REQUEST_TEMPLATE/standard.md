@@ -25,6 +25,8 @@ List targeted tests for every sensitive area touched:
 - Storage/memory:
 - Deployment/release:
 
+Use the focused test map in `CONTRIBUTING.md` when choosing checks.
+
 ## Verification
 
 - [ ] `npm run docs:audit`

@@ -22,6 +22,8 @@ List targeted tests or assertions that prove the sensitive path still behaves co
 
 - 
 
+Use the focused test map in `CONTRIBUTING.md` when choosing checks.
+
 ## Verification
 
 - [ ] `npm run docs:audit`
