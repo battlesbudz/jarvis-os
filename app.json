@@ -61,7 +61,8 @@
         }
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "./plugins/withJarvisAndroidDaemon"
     ],
     "experiments": {
       "typedRoutes": true,

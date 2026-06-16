@@ -3,7 +3,7 @@
 Patch the Expo-generated android/app/build.gradle to:
   1. Replace versionCode with the CI run number
   2. Insert a signingConfigs.release block (if not already present)
-  3. Wire signingConfig signingConfigs.release into buildTypes.release
+  3. Replace any buildTypes.release signingConfig with signingConfigs.release
 
 Environment variables (all required):
   KEYSTORE_ABS   - absolute path to the signing keystore file
@@ -100,6 +100,18 @@ if build_types_start is not None:
             break
     if release_start is not None:
         release_end = find_closing_brace(lines, release_start)
+        removed_signing_config_count = 0
+        removed_signing_config = False
+        for i in range(release_end - 1, release_start, -1):
+            if re.search(r"\bsigningConfig\s+signingConfigs\.", lines[i]):
+                del lines[i]
+                removed_signing_config_count += 1
+                removed_signing_config = True
+
+        if removed_signing_config:
+            print("  Removed existing buildTypes.release signingConfig")
+
+        release_end -= removed_signing_config_count
         block_text = "".join(lines[release_start : release_end + 1])
         if "signingConfig signingConfigs.release" not in block_text:
             indent = "            "

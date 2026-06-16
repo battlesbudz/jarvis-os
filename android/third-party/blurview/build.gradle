@@ -1,0 +1,21 @@
+plugins {
+  id 'com.android.library'
+}
+
+android {
+  namespace 'eightbitlab.com.blurview'
+  compileSdk rootProject.ext.compileSdkVersion
+
+  compileOptions {
+    sourceCompatibility JavaVersion.VERSION_1_8
+    targetCompatibility JavaVersion.VERSION_1_8
+  }
+
+  defaultConfig {
+    minSdk rootProject.ext.minSdkVersion
+  }
+}
+
+dependencies {
+  implementation 'androidx.annotation:annotation:1.9.1'
+}

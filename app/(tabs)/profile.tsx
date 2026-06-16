@@ -13,7 +13,6 @@ import {
   Linking,
   TextInput,
   Switch,
-  Image,
   findNodeHandle,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -50,6 +49,7 @@ import * as WebBrowser from 'expo-web-browser';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
 import { ConnectedWindowsPcCard } from '@/components/desktopConnector/ConnectedWindowsPcCard';
+import { AndroidDeviceControlCard } from '@/components/androidDaemon/AndroidDeviceControlCard';
 import { checkAndroidApkUpdate } from '@/lib/app-update';
 import {
   CONNECTION_APPS,
@@ -333,7 +333,6 @@ export default function ProfileScreen() {
   } | null>(null);
   const [daemonPerms, setDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [daemonPermsBusy, setDaemonPermsBusy] = useState<string | null>(null);
-  const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
   const [androidDaemonPerms, setAndroidDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [androidDaemonPermsBusy, setAndroidDaemonPermsBusy] = useState<string | null>(null);
   const [trainedButtons, setTrainedButtons] = useState<Array<{ id: number; appPackage: string; elementLabel: string; confidence: number; stale: boolean; updatedAt: string }> | null>(null);
@@ -1529,19 +1528,6 @@ export default function ProfileScreen() {
     }
   }, [daemonPerms]);
 
-  const handleGenerateAndroidDaemonCode = useCallback(async () => {
-    setChannelBusy('android-daemon');
-    try {
-      const res = await apiRequest('POST', '/api/channels/daemon/code');
-      const data = await res.json();
-      setAndroidDaemonCode(data.code);
-    } catch (err) {
-      console.error('[android-daemon] code error:', err);
-    } finally {
-      setChannelBusy(null);
-    }
-  }, []);
-
   const loadAndroidDaemonPerms = useCallback(async () => {
     try {
       const res = await apiRequest('GET', '/api/channels/android-daemon/permissions');
@@ -1649,8 +1635,9 @@ export default function ProfileScreen() {
     setChannelBusy(channel);
     try {
       await apiRequest('DELETE', `/api/channels/${channel}`);
-      if (channel === 'daemon') { setAndroidDaemonCode(null); }
-      if (channel === 'android-daemon') { setAndroidDaemonCode(null); }
+      if (channel === 'daemon' || channel === 'android-daemon') {
+        setAndroidDaemonPerms(null);
+      }
       await loadChannels();
       return true;
     } catch (err) {
@@ -3444,103 +3431,13 @@ export default function ProfileScreen() {
             )}
 
             {/* Android Device */}
-            <View style={[styles.platformRow, { borderTopWidth: 1, borderTopColor: Colors.border }]}>
-              <View style={[styles.platformIcon, { backgroundColor: '#34A85318' }]}>
-                <Ionicons name="phone-portrait-outline" size={20} color="#34A853" />
-              </View>
-              <View style={styles.platformInfo}>
-                <Text style={styles.platformName}>Android Device</Text>
-                <Text style={styles.platformSubtitle}>
-                  {channelData?.android_daemon_connected
-                    ? `Connected${channelData.meta?.android_daemon?.hostname ? ` • ${channelData.meta.android_daemon.hostname}` : ''}`
-                    : 'Sideload the APK and let Jarvis control your Android phone'}
-                </Text>
-              </View>
-              {channelBusy === 'android-daemon' ? (
-                <ActivityIndicator size="small" color="#34A853" />
-              ) : channelData?.android_daemon_connected ? (
-                <Pressable style={styles.disconnectBtn} onPress={() => handleUnlinkChannel('android-daemon')}>
-                  <Ionicons name="checkmark-circle" size={18} color={Colors.success} />
-                  <Text style={styles.disconnectBtnText}>Unpair</Text>
-                </Pressable>
-              ) : (
-                <Pressable
-                  style={[styles.connectBtn, { borderColor: '#34A853' }]}
-                  onPress={handleGenerateAndroidDaemonCode}
-                >
-                  <Text style={[styles.connectBtnText, { color: '#34A853' }]}>Pair</Text>
-                </Pressable>
-              )}
-            </View>
-            {!channelData?.android_daemon_connected && (() => {
-              const apkUrl = `${getApiUrl()}/api/download/apk`;
-              const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(apkUrl)}`;
-              return (
-                <View style={{ paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1, borderTopColor: Colors.border, backgroundColor: Colors.background }}>
-                  <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text, marginBottom: 4 }}>
-                    Step 1 — Get the app
-                  </Text>
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 10 }}>
-                    Download the Jarvis Daemon APK and install it on your Android phone. Enable &quot;Install from unknown sources&quot; when prompted.
-                  </Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                    <View style={{ alignItems: 'center' }}>
-                      <Image
-                        source={{ uri: qrUrl }}
-                        style={{ width: 100, height: 100, borderRadius: 8 }}
-                        resizeMode="contain"
-                      />
-                      <Text style={{ fontSize: 10, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 4 }}>
-                        Scan to download
-                      </Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Pressable
-                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: '#34A853', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8 }}
-                        onPress={() => WebBrowser.openBrowserAsync(apkUrl)}
-                      >
-                        <Ionicons name="download-outline" size={16} color="#fff" />
-                        <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: '#fff' }}>Download APK</Text>
-                      </Pressable>
-                      <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, marginTop: 6, lineHeight: 16 }}>
-                        Tap &quot;Pair&quot; above after installing to get your connection code.
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              );
-            })()}
-            {androidDaemonCode && (
-              <View style={{ paddingHorizontal: 16, paddingVertical: 12, backgroundColor: Colors.background }}>
-                <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: Colors.text, marginBottom: 6 }}>
-                  Step 2 — Enter pairing code (valid 15 min):
-                </Text>
-                <Text selectable style={{ fontSize: 24, fontFamily: 'Inter_700Bold', letterSpacing: 4, color: '#34A853', marginBottom: 8 }}>
-                  {androidDaemonCode}
-                </Text>
-                <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: Colors.textSecondary, lineHeight: 18, marginBottom: 8 }}>
-                  Open the Jarvis Daemon app on your phone, then:
-                </Text>
-                <View style={{ padding: 10, borderRadius: 8, backgroundColor: '#34A85312', borderWidth: 1, borderColor: '#34A853', marginBottom: 8 }}>
-                  <Text style={{ fontSize: 12, fontFamily: 'Inter_400Regular', color: '#1a6b30', lineHeight: 20 }}>
-                    1. Server URL:{'\n'}
-                    <Text style={{ fontFamily: 'Inter_700Bold', letterSpacing: 0.5 }}>https://gameplanjarvisai.up.railway.app</Text>{'\n\n'}
-                    2. Pairing Code: enter the code above{'\n\n'}
-                    3. Tap <Text style={{ fontFamily: 'Inter_700Bold' }}>Pair</Text>. The dot turns green when connected.
-                  </Text>
-                </View>
-                <View style={{ padding: 10, borderRadius: 8, backgroundColor: Colors.warningDim, borderWidth: 1, borderColor: Colors.warning }}>
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_600SemiBold', color: '#7A5A00', marginBottom: 3 }}>
-                    Required permissions in the daemon app:
-                  </Text>
-                  <Text style={{ fontSize: 11, fontFamily: 'Inter_400Regular', color: '#7A5A00', lineHeight: 16 }}>
-                    • Accessibility Service — for screen reading and taps{'\n'}
-                    • Storage — for file access{'\n'}
-                    • (Optional) Notification Access — to forward your notifications to Jarvis
-                  </Text>
-                </View>
-              </View>
-            )}
+            <AndroidDeviceControlCard
+              serverConnected={!!channelData?.android_daemon_connected}
+              hostname={channelData?.meta?.android_daemon?.hostname ?? null}
+              description="Enable Android device control in this Jarvis app."
+              onRefreshChannels={loadChannels}
+              onUnpair={() => handleUnlinkChannel('android-daemon')}
+            />
 
             {/* Trained Buttons — button location memory */}
             {trainedButtons !== null && trainedButtons.length > 0 && (
@@ -3607,26 +3504,26 @@ export default function ProfileScreen() {
                     },
                     android_camera: {
                       title: 'Device permission required',
-                      body: 'Open the Jarvis Daemon app on your Android and tap "Grant" next to Camera. Without this, camera snaps and clips will fail.',
+                      body: 'Open Android app settings for Jarvis and allow Camera. Without this, camera snaps and clips will fail.',
                       warn: false,
                       fixLabel: 'Open Settings',
                       fixAction: () => Linking.openSettings(),
                     },
                     android_location: {
                       title: 'Device permission required',
-                      body: 'The first time Jarvis requests your location, Android will prompt for permission. You can also grant it in Settings → Apps → Jarvis Daemon → Permissions → Location.',
+                      body: 'The first time Jarvis requests your location, Android will prompt for permission. You can also grant it in Settings > Apps > Jarvis > Permissions > Location.',
                       warn: false,
                       fixLabel: 'Open Settings',
                       fixAction: () => Linking.openSettings(),
                     },
                     android_screen_record: {
                       title: 'Device grant required',
-                      body: 'Open the Jarvis Daemon app on your Android and tap "Allow" next to Screen Recording to grant MediaProjection access. This must be done before screen recording will work.',
+                      body: 'Use the Android Device setup card above when screen recording support is available. Android must show a system prompt before recording can start.',
                       warn: false,
                       fixLabel: 'How to fix',
                       fixAction: () => Alert.alert(
                         'Enable Screen Recording',
-                        '1. Open the Jarvis Daemon app on your Android device.\n2. Tap "Allow" next to Screen Recording.\n3. Approve the system prompt that appears.\n\nAfter granting access, screen recording will be available.',
+                        'Screen recording needs an Android system prompt from the foreground Jarvis app. This bridge exposes the setup entrypoint, but the Activity result flow is not wired in this task.',
                         [{ text: 'OK' }]
                       ),
                     },
