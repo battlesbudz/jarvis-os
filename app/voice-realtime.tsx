@@ -31,7 +31,7 @@ import {
   AudioQuality,
 } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { getApiUrl } from '@/lib/query-client';
@@ -244,6 +244,7 @@ const CODEX_VOICE_TURN_RECORDING_MS = 5000;
 export default function VoiceRealtimeScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const { autoStart } = useLocalSearchParams<{ autoStart?: string; source?: string }>();
 
   const [state, setState] = useState<SessionState>('idle');
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
@@ -289,6 +290,7 @@ export default function VoiceRealtimeScreen() {
   stateRef.current = state;
   const codexSessionIdRef = useRef(codexSessionId);
   codexSessionIdRef.current = codexSessionId;
+  const autoStartConsumedRef = useRef(false);
 
   useEffect(() => {
     cancelAnimation(ring1Scale);
@@ -561,6 +563,12 @@ export default function VoiceRealtimeScreen() {
       setState('idle');
     }
   }, [recordNativeCodexTurn, recordWebCodexTurn]);
+
+  useEffect(() => {
+    if (autoStart !== '1' || autoStartConsumedRef.current) return;
+    autoStartConsumedRef.current = true;
+    startCodexTurn();
+  }, [autoStart, startCodexTurn]);
 
   const cleanupWebSession = useCallback(() => {
     stopWebAmpMeter();

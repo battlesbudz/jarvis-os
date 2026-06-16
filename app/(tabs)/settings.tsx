@@ -12,6 +12,7 @@ import {
   TextInput,
   Modal,
   Linking,
+  ToastAndroid,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -57,6 +58,12 @@ import {
   type ConnectionsStatus,
 } from '@/lib/connectionUx';
 import { MODEL_PROVIDER_CATALOG } from '@shared/modelProviderCatalog';
+import {
+  CY03_DEFAULT_DEVICE_ADDRESS,
+  CY03_DEFAULT_DEVICE_NAME,
+  Cy03GlassesBleManager,
+  type Cy03ConnectionStatus,
+} from '@/lib/cy03-glasses-ble-manager';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -174,6 +181,25 @@ function StatusDot({ status }: { status: HealthStatus }) {
       backgroundColor: color, marginLeft: 6, alignSelf: 'center',
     }} />
   );
+}
+
+function getCy03StatusLabel(status: Cy03ConnectionStatus): string {
+  switch (status) {
+    case 'scanning':
+      return 'Scanning';
+    case 'connecting':
+      return 'Connecting';
+    case 'connected':
+      return 'Connected';
+    case 'disconnected':
+      return 'Disconnected';
+    case 'error':
+      return 'Needs attention';
+    case 'unsupported':
+      return 'Native Android only';
+    default:
+      return 'Idle';
+  }
 }
 
 const sectionStyles = StyleSheet.create({
@@ -339,6 +365,14 @@ export default function SettingsScreen() {
   const [wakeWords, setWakeWords] = useState<string[]>(['hey jarvis', 'jarvis', 'computer']);
   const [newWakeWord, setNewWakeWord] = useState('');
   const [wakeSettingsSaving, setWakeSettingsSaving] = useState(false);
+
+  // ── Smart Glasses / CY03 ──
+  const cy03ManagerRef = useRef<Cy03GlassesBleManager | null>(null);
+  const [cy03Status, setCy03Status] = useState<Cy03ConnectionStatus>('idle');
+  const [cy03LastPacket, setCy03LastPacket] = useState<string | null>(null);
+  const [cy03Logs, setCy03Logs] = useState<string[]>([]);
+  const [cy03AssistantEnabled, setCy03AssistantEnabled] = useState(true);
+  const [cy03Busy, setCy03Busy] = useState(false);
 
   // ── Stats / XP ──
   const [stats, setStats] = useState<UserStats>({
@@ -1820,6 +1854,87 @@ export default function SettingsScreen() {
   }, [loadConnections]);
 
   // ── Reward claim ──
+  const appendCy03Log = useCallback((message: string) => {
+    const timestamp = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+    setCy03Logs((prev) => [`${timestamp} ${message}`, ...prev].slice(0, 6));
+  }, []);
+
+  const getCy03Manager = useCallback(() => {
+    if (!cy03ManagerRef.current) {
+      cy03ManagerRef.current = new Cy03GlassesBleManager({
+        onStatusChanged: setCy03Status,
+        onGlassesConnected: (device) => appendCy03Log(`Connected ${device.name ?? device.id}`),
+        onGlassesDisconnected: (error) => appendCy03Log(error ? `Disconnected: ${error.message}` : 'Disconnected'),
+        onPacketReceived: (packet) => setCy03LastPacket(packet.hex),
+        onAssistantGestureDetected: () => {
+          appendCy03Log('Assistant gesture detected');
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          if (Platform.OS === 'android') {
+            ToastAndroid.show('Jarvis glasses trigger', ToastAndroid.SHORT);
+          } else {
+            Alert.alert('Jarvis glasses trigger');
+          }
+          router.push({ pathname: '/voice-realtime', params: { autoStart: '1', source: 'cy03' } } as Href);
+        },
+        onCameraButtonPressed: () => appendCy03Log('Camera button packet received'),
+        onLog: appendCy03Log,
+      });
+      cy03ManagerRef.current.setAssistantTriggerEnabled(cy03AssistantEnabled);
+    }
+    return cy03ManagerRef.current;
+  }, [appendCy03Log, cy03AssistantEnabled, router]);
+
+  useEffect(() => {
+    return () => {
+      cy03ManagerRef.current?.destroy();
+      cy03ManagerRef.current = null;
+    };
+  }, []);
+
+  const scanCy03Glasses = useCallback(async () => {
+    setCy03Busy(true);
+    try {
+      await getCy03Manager().scanAndConnect();
+    } catch (error: any) {
+      setCy03Status('error');
+      appendCy03Log(error?.message || 'CY03 scan failed');
+      Alert.alert('CY03 glasses', error?.message || 'Jarvis could not scan for CY03 glasses.');
+    } finally {
+      setCy03Busy(false);
+    }
+  }, [appendCy03Log, getCy03Manager]);
+
+  const connectCy03Glasses = useCallback(async () => {
+    setCy03Busy(true);
+    try {
+      await getCy03Manager().connectToKnownDevice();
+    } catch (error: any) {
+      setCy03Status('error');
+      appendCy03Log(error?.message || 'CY03 connect failed');
+      Alert.alert('CY03 glasses', error?.message || `Jarvis could not connect to ${CY03_DEFAULT_DEVICE_NAME}.`);
+    } finally {
+      setCy03Busy(false);
+    }
+  }, [appendCy03Log, getCy03Manager]);
+
+  const disconnectCy03Glasses = useCallback(async () => {
+    setCy03Busy(true);
+    try {
+      await getCy03Manager().disconnect();
+      appendCy03Log('Disconnected by user');
+    } catch (error: any) {
+      appendCy03Log(error?.message || 'CY03 disconnect failed');
+    } finally {
+      setCy03Busy(false);
+    }
+  }, [appendCy03Log, getCy03Manager]);
+
+  const toggleCy03AssistantTrigger = useCallback((enabled: boolean) => {
+    setCy03AssistantEnabled(enabled);
+    getCy03Manager().setAssistantTriggerEnabled(enabled);
+    appendCy03Log(enabled ? 'Assistant trigger enabled' : 'Assistant trigger disabled');
+  }, [appendCy03Log, getCy03Manager]);
+
   const handleClaimReward = useCallback(async (reward: Reward) => {
     try {
       await claimReward(reward.id);
@@ -1850,6 +1965,8 @@ export default function SettingsScreen() {
         : 'Jarvis default model';
   const modelProviderCards = (providerCatalog.length > 0 ? providerCatalog : MODEL_PROVIDER_CATALOG)
     .filter((provider) => provider.id !== 'openai');
+  const cy03StatusLabel = getCy03StatusLabel(cy03Status);
+  const cy03ActionBusy = cy03Busy || cy03Status === 'scanning' || cy03Status === 'connecting';
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -3006,6 +3123,77 @@ export default function SettingsScreen() {
                 Explicit OpenAI auth fallback is enabled.
               </Text>
             ) : null}
+          </View>
+        </View>
+
+        <SectionHeader label="SMART GLASSES / CY03" accent="#06B6D4" />
+        <View style={styles.card}>
+          <View style={[styles.connRow, { paddingVertical: 12 }]}>
+            <View style={[styles.connIconWrap, { backgroundColor: '#06B6D420' }]}>
+              <Ionicons name="bluetooth-outline" size={18} color="#06B6D4" />
+            </View>
+            <View style={styles.connInfo}>
+              <Text style={styles.connName}>CY03 / EyeVue glasses</Text>
+              <Text style={styles.connSub}>{CY03_DEFAULT_DEVICE_NAME} - {CY03_DEFAULT_DEVICE_ADDRESS}</Text>
+              <Text style={styles.connSub}>Status: {cy03StatusLabel}</Text>
+            </View>
+            {cy03ActionBusy ? (
+              <ActivityIndicator size="small" color="#06B6D4" />
+            ) : (
+              <View style={styles.connectionPill}>
+                <Text style={styles.connectionPillText}>{cy03StatusLabel}</Text>
+              </View>
+            )}
+          </View>
+
+          <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 10 }}>
+            <View style={providerAuthStyles.actionGrid}>
+              <Pressable
+                onPress={scanCy03Glasses}
+                disabled={cy03ActionBusy}
+                style={[providerAuthStyles.primaryAction, cy03ActionBusy && providerAuthStyles.disabledAction]}
+              >
+                <Ionicons name="search-outline" size={16} color="#06B6D4" />
+                <Text style={providerAuthStyles.primaryActionText}>Scan</Text>
+              </Pressable>
+              <Pressable
+                onPress={connectCy03Glasses}
+                disabled={cy03ActionBusy}
+                style={[providerAuthStyles.primaryAction, cy03ActionBusy && providerAuthStyles.disabledAction]}
+              >
+                <Ionicons name="link-outline" size={16} color="#06B6D4" />
+                <Text style={providerAuthStyles.primaryActionText}>Connect</Text>
+              </Pressable>
+              <Pressable
+                onPress={disconnectCy03Glasses}
+                disabled={cy03ActionBusy}
+                style={[providerAuthStyles.primaryAction, cy03ActionBusy && providerAuthStyles.disabledAction]}
+              >
+                <Ionicons name="close-circle-outline" size={16} color={Colors.error} />
+                <Text style={providerAuthStyles.primaryActionText}>Disconnect</Text>
+              </Pressable>
+            </View>
+
+            <View style={[styles.connRow, styles.connRowBorder, { paddingHorizontal: 0, paddingBottom: 0 }]}>
+              <View style={styles.connInfo}>
+                <Text style={styles.connName}>Assistant trigger</Text>
+                <Text style={styles.connSub}>Touch-pad hold or Hey Star starts Jarvis voice mode</Text>
+              </View>
+              <Switch
+                value={cy03AssistantEnabled}
+                onValueChange={toggleCy03AssistantTrigger}
+                trackColor={{ false: Colors.border, true: '#06B6D4' }}
+              />
+            </View>
+
+            <View style={{ gap: 6 }}>
+              <Text style={providerAuthStyles.statusText}>
+                Last packet: {cy03LastPacket ?? 'No packets received yet'}
+              </Text>
+              {cy03Logs.map((entry) => (
+                <Text key={entry} style={providerAuthStyles.statusText}>{entry}</Text>
+              ))}
+            </View>
           </View>
         </View>
         </ErrorBoundary>
