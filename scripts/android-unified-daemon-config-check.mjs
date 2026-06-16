@@ -160,6 +160,8 @@ for (const dependency of requiredDependencies) {
   assertIncludes(appBuildGradle, dependency, "android/app/build.gradle");
 }
 
+assertExcludes(appBuildGradle, "storeFile file('debug.keystore')", "android/app/build.gradle");
+assertExcludes(appBuildGradle, "signingConfig signingConfigs.debug", "android/app/build.gradle");
 assertIncludes(
   mainApplication,
   "import com.gameplan.daemon.JarvisDaemonPackage",

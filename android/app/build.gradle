@@ -102,18 +102,7 @@ android {
         buildConfigField "boolean", "JARVIS_SIDELOAD_TEST", ((findProperty('jarvis.sideloadTest') ?: "false").toString().toBoolean()).toString()
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
-    signingConfigs {
-        debug {
-            storeFile file('debug.keystore')
-            storePassword 'android'
-            keyAlias 'androiddebugkey'
-            keyPassword 'android'
-        }
-    }
     buildTypes {
-        debug {
-            signingConfig signingConfigs.debug
-        }
         release {
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
