@@ -1,36 +1,69 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Jarvis OS Dashboard
 
-## Getting Started
+This is the Next.js mission-control surface for Jarvis OS. It gives maintainers and self-hosters a dense web view over tasks, projects, memory, calendar state, and visual/desktop control surfaces while the main Express runtime owns auth, data, jobs, and integrations.
 
-First, run the development server:
+## What It Shows
+
+- Task queue and scheduled operations
+- Project/objective views
+- Memory search and detail inspection
+- Calendar-oriented operations
+- Visual office and connector-oriented controls
+
+The dashboard talks to the Jarvis server through `app/api/proxy/[...path]/route.ts`. Keep data ownership in the Express server unless a dashboard-only concern is truly local UI state.
+
+## Configuration
+
+The dashboard reads:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `JARVIS_API` | `http://localhost:5000` | Express server URL used by dashboard server-side API calls and proxy routes. |
+| `DASHBOARD_SECRET` | none | Bearer token forwarded to protected Jarvis server endpoints. Set the same value in the dashboard and server environments. |
+
+When run from this repository, the dashboard loads the parent `.env` and `.env.local` before reading these values. If the dashboard renders but data panels fail, first confirm the Express server is running, `JARVIS_API` points to it, and `DASHBOARD_SECRET` matches.
+
+## Local Development
+
+Start the Express server from the repo root first:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run server:dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Then start the dashboard:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cd dashboard
+npm install
+npm run dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open [http://localhost:3001](http://localhost:3001).
 
-## Learn More
+The dashboard intentionally uses port `3001` so it can run beside the Expo/web app and Express API during development. It uses the same root `.env` as the Express server unless you explicitly set dashboard-specific environment variables in the shell or host.
 
-To learn more about Next.js, take a look at the following resources:
+## Verification
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+npm run build
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+For repo-level validation from the root:
 
-## Deploy on Vercel
+```bash
+npm --prefix dashboard run build
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+For a full local check, also run the root server checks:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+npm run jarvis:doctor
+npm run server:build
+```
+
+## Safety Notes
+
+- Do not put provider keys, OAuth tokens, bot tokens, database URLs, or connector secrets in dashboard code.
+- Treat views that expose memory, approvals, device controls, provider routing, or deployment controls as safety-sensitive.
+- If a dashboard change adds a new action button, verify the matching server route still enforces auth, permissions, and approval boundaries.

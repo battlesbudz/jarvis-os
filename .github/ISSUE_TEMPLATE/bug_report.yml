@@ -1,0 +1,71 @@
+name: Bug report
+description: Report a reproducible Jarvis OS bug.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a Jarvis OS bug. Please keep credentials, tokens, private logs, and personal account data out of public issues.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Mobile app / Expo UI
+        - Dashboard
+        - Express API / routes
+        - Agent harness / tool calling
+        - Provider routing / ChatGPT subscription path
+        - Memory / SOUL / G-Brain
+        - Jobs / deliverables / approvals
+        - Channels / integrations
+        - Desktop connector
+        - Android daemon
+        - Deployment / database
+        - Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the failure and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - OS:
+        - Node/npm:
+        - Database:
+        - Hosting provider:
+        - App surface:
+  - type: dropdown
+    id: safety
+    attributes:
+      label: Safety impact
+      description: Does this involve secrets, account actions, local files, device permissions, approvals, provider routing, or memory writes?
+      options:
+        - No safety-sensitive behavior
+        - Possibly safety-sensitive
+        - Definitely safety-sensitive
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshots
+      description: Paste only scrubbed logs. Do not include secrets or private account data.

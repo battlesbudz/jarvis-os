@@ -25,12 +25,27 @@ List commands run:
 - [ ] `npm run server:build`
 - [ ] `npm run jarvis:doctor`
 - [ ] `npm test`
+- [ ] `npm run docs:audit`
 - [ ] Dashboard build, Android build, connector check, or other targeted test:
 
 ## Documentation
 
 - [ ] Docs updated
 - [ ] Docs not needed because:
+
+## Focused Assertions
+
+Check any area touched and list the targeted test or assertion that covers it:
+
+- [ ] Provider routing / ChatGPT subscription path:
+- [ ] Android daemon permissions or pairing:
+- [ ] Desktop connector permissions or local shell/file access:
+- [ ] Settings UI or account/provider controls:
+- [ ] Storage, memory, SOUL, or G-Brain behavior:
+- [ ] Deployment, release, APK, or update manifest:
+- [ ] Public docs or contributor flow:
+
+Use the focused test map in `CONTRIBUTING.md` when choosing checks.
 
 ## Remaining Risk
 
