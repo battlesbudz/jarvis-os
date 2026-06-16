@@ -59,6 +59,7 @@ const accessibilityConfigPath = path.join(
   "android/app/src/main/res/xml/accessibility_service_config.xml",
 );
 const filePathsPath = path.join(projectRoot, "android/app/src/main/res/xml/file_paths.xml");
+const apkWorkflowPath = path.join(projectRoot, ".github/workflows/build-jarvis-apk.yml");
 
 const requiredPermissions = [
   "android.permission.FOREGROUND_SERVICE",
@@ -86,6 +87,7 @@ const requiredPermissions = [
 ];
 
 const requiredManifestSnippets = [
+  'android:allowBackup="false"',
   'android:name=".daemon.WebSocketService"',
   'android:foregroundServiceType="dataSync|camera|mediaProjection"',
   'android:name=".daemon.WakeWordService"',
@@ -163,6 +165,7 @@ const [
   pluginTemplateAccessibility,
   pluginTemplateOpHandler,
   accessibilityConfig,
+  apkWorkflow,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
   readFile(rootBuildGradlePath, "utf8"),
@@ -182,6 +185,7 @@ const [
   readFile(pluginTemplateAccessibilityPath, "utf8"),
   readFile(pluginTemplateOpHandlerPath, "utf8"),
   readFile(accessibilityConfigPath, "utf8"),
+  readFile(apkWorkflowPath, "utf8"),
   assertFileExists(filePathsPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
   assertFileExists(pluginBlurViewSourcePath),
@@ -196,6 +200,7 @@ assertIncludes(manifest, 'android:name="android.permission.READ_EXTERNAL_STORAGE
 assertIncludes(manifest, 'android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"', "AndroidManifest.xml");
 assertIncludes(plugin, 'name: "android.permission.READ_EXTERNAL_STORAGE", maxSdkVersion: "32"', "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, 'name: "android.permission.WRITE_EXTERNAL_STORAGE", maxSdkVersion: "29"', "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, 'mainApplication.$["android:allowBackup"] = "false"', "plugins/withJarvisAndroidDaemon.js");
 
 for (const snippet of requiredManifestSnippets) {
   assertIncludes(manifest, snippet, "AndroidManifest.xml");
@@ -258,8 +263,10 @@ assertExcludes(pluginTemplateScreenRecord, "Jarvis app app", "plugins/android-da
 assertExcludes(pluginTemplateScreenRecord, "Allow Screen Capture", "plugins/android-daemon-native/ScreenRecordHandler.kt");
 assertIncludes(cameraHandler, "IMPORTANCE_FOREGROUND", "CameraHandler.kt");
 assertExcludes(cameraHandler, "IMPORTANCE_FOREGROUND_SERVICE", "CameraHandler.kt");
+assertExcludes(cameraHandler, "Jarvis app app", "CameraHandler.kt");
 assertIncludes(pluginTemplateCamera, "IMPORTANCE_FOREGROUND", "plugins/android-daemon-native/CameraHandler.kt");
 assertExcludes(pluginTemplateCamera, "IMPORTANCE_FOREGROUND_SERVICE", "plugins/android-daemon-native/CameraHandler.kt");
+assertExcludes(pluginTemplateCamera, "Jarvis app app", "plugins/android-daemon-native/CameraHandler.kt");
 assertIncludes(accessibilityService, '"enter"         -> pressImeAction()', "JarvisAccessibilityService.kt");
 assertExcludes(accessibilityService, '"enter"         -> { pressImeAction(); true }', "JarvisAccessibilityService.kt");
 assertIncludes(pluginTemplateAccessibility, '"enter"         -> pressImeAction()', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
@@ -288,5 +295,8 @@ assertIncludes(
   "android-daemon-native/src/main/java/com/gameplan/daemon",
   "plugins/withJarvisAndroidDaemon.js",
 );
+assertIncludes(apkWorkflow, "https://github.com/${{ github.repository }}/releases/download/jarvis-app-latest/jarvis-app.apk", "build-jarvis-apk.yml");
+assertIncludes(apkWorkflow, "https://github.com/${{ github.repository }}/releases/tag/jarvis-app-latest", "build-jarvis-apk.yml");
+assertExcludes(apkWorkflow, "battlesbudz/Gameplanjarvisai/releases", "build-jarvis-apk.yml");
 
 console.log("OK: unified Android daemon native config is present");

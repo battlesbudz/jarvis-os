@@ -52,13 +52,13 @@ object CameraHandler {
 
     fun handleSnap(context: Context, op: JSONObject): OpResult {
         if (!isForeground(context)) {
-            return OpResult(false, error = "FOREGROUND_REQUIRED: Camera capture requires the Jarvis app app to be in the foreground. Open the Jarvis app app and try again.")
+            return OpResult(false, error = "FOREGROUND_REQUIRED: Camera capture requires Jarvis OS to be in the foreground. Open Jarvis OS and try again.")
         }
         if (!hasPermission(context, Manifest.permission.CAMERA)) {
             return OpResult(
                 false,
                 error = "CAMERA_PERMISSION_REQUIRED: Jarvis cannot access the camera. " +
-                    "Open the Jarvis app app, tap 'Grant Camera', or go to Settings → Apps → Jarvis app → Permissions → Camera and enable it."
+                    "Open Jarvis OS, tap 'Grant Camera', or go to Settings → Apps → Jarvis OS → Permissions → Camera and enable it."
             )
         }
 
@@ -70,7 +70,7 @@ object CameraHandler {
                 val backBytes = captureJpeg(context, CameraCharacteristics.LENS_FACING_BACK)
                 val frontBytes = captureJpeg(context, CameraCharacteristics.LENS_FACING_FRONT)
                 if (backBytes == null && frontBytes == null) {
-                    return OpResult(false, error = "FOREGROUND_REQUIRED: Both cameras failed to capture. Bring the Jarvis app to the foreground and try again.")
+                    return OpResult(false, error = "FOREGROUND_REQUIRED: Both cameras failed to capture. Bring Jarvis OS to the foreground and try again.")
                 }
                 val data = JSONObject().put("format", "jpeg").put("facing", "both")
                 if (backBytes != null) data.put("back", Base64.encodeToString(backBytes, Base64.NO_WRAP)).put("backBytes", backBytes.size)
@@ -90,7 +90,7 @@ object CameraHandler {
             val jpegBytes = captureJpeg(context, lensFacing)
                 ?: return OpResult(
                     false,
-                    error = "FOREGROUND_REQUIRED: Camera capture failed — bring the Jarvis app to the foreground and try again. " +
+                    error = "FOREGROUND_REQUIRED: Camera capture failed — bring Jarvis OS to the foreground and try again. " +
                         "Some devices block camera access when the app is in the background."
                 )
             val b64 = Base64.encodeToString(jpegBytes, Base64.NO_WRAP)
@@ -111,13 +111,13 @@ object CameraHandler {
 
     fun handleClip(context: Context, op: JSONObject): OpResult {
         if (!isForeground(context)) {
-            return OpResult(false, error = "FOREGROUND_REQUIRED: Video recording requires the Jarvis app app to be in the foreground. Open the Jarvis app app and try again.")
+            return OpResult(false, error = "FOREGROUND_REQUIRED: Video recording requires Jarvis OS to be in the foreground. Open Jarvis OS and try again.")
         }
         if (!hasPermission(context, Manifest.permission.CAMERA)) {
             return OpResult(
                 false,
                 error = "CAMERA_PERMISSION_REQUIRED: Camera permission is required for video recording. " +
-                    "Go to Settings → Apps → Jarvis app → Permissions → Camera and enable it."
+                    "Go to Settings → Apps → Jarvis OS → Permissions → Camera and enable it."
             )
         }
         val audioEnabled = op.optBoolean("audio", false)
@@ -125,7 +125,7 @@ object CameraHandler {
             return OpResult(
                 false,
                 error = "MICROPHONE_PERMISSION_REQUIRED: Audio recording requires microphone permission. " +
-                    "Disable audio or grant the microphone permission to Jarvis app in Settings."
+                    "Disable audio or grant the microphone permission to Jarvis OS in Settings."
             )
         }
 
@@ -138,7 +138,7 @@ object CameraHandler {
             val mp4File = recordVideoClip(context, lensFacing, durationMs, audioEnabled)
                 ?: return OpResult(
                     false,
-                    error = "FOREGROUND_REQUIRED: Video recording failed — bring the Jarvis app to the foreground and try again."
+                    error = "FOREGROUND_REQUIRED: Video recording failed — bring Jarvis OS to the foreground and try again."
                 )
             val bytes = mp4File.readBytes()
             mp4File.delete()

@@ -246,6 +246,8 @@ async function addDaemonManifestConfigAsync(config) {
   const manifest = config.modResults;
   const mainApplication = getMainApplication(manifest);
 
+  mainApplication.$["android:allowBackup"] = "false";
+
   for (const permission of getDaemonPermissions()) {
     mergePermission(manifest, permission);
   }

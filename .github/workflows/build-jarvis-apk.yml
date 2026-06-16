@@ -141,8 +141,8 @@ jobs:
             "platform": "android",
             "versionCode": ${{ github.run_number }},
             "versionName": "1.0.${{ github.run_number }}",
-            "apkUrl": "https://github.com/battlesbudz/Gameplanjarvisai/releases/download/jarvis-app-latest/jarvis-app.apk",
-            "releaseUrl": "https://github.com/battlesbudz/Gameplanjarvisai/releases/tag/jarvis-app-latest",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/jarvis-app-latest/jarvis-app.apk",
+            "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/jarvis-app-latest",
             "sha256": "$SHA256",
             "notes": "Jarvis App build ${{ github.run_number }}"
           }
