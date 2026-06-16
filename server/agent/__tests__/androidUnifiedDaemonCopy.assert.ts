@@ -7,6 +7,10 @@ const profileSource = fs.readFileSync(path.join(projectRoot, "app/(tabs)/profile
 const coachAgentSource = fs.readFileSync(path.join(projectRoot, "server/channels/coachAgent.ts"), "utf8");
 const daemonToolSource = fs.readFileSync(path.join(projectRoot, "server/agent/tools/daemon.ts"), "utf8");
 const routesSource = fs.readFileSync(path.join(projectRoot, "server/routes.ts"), "utf8");
+const androidControlCardSource = fs.readFileSync(
+  path.join(projectRoot, "components/androidDaemon/AndroidDeviceControlCard.tsx"),
+  "utf8",
+);
 const nativeWrapperPath = path.join(projectRoot, "lib/android-daemon-native.ts");
 
 assert.equal(
@@ -49,6 +53,7 @@ for (const disallowed of [
   "Jarvis Daemon APK",
   "Android daemon APK",
   "open the Jarvis Daemon APK",
+  "tap 'Allow' next to Screen Recording",
 ]) {
   assert.equal(
     daemonToolSource.includes(disallowed),
@@ -61,6 +66,24 @@ for (const disallowed of [
     `Runtime route guidance should not include standalone Android app copy: ${disallowed}`,
   );
 }
+
+assert.match(
+  daemonToolSource,
+  /Screen recording is not available in the unified Jarvis Android app yet/,
+  "Daemon tool recovery copy should not point users to a missing screen-record grant flow.",
+);
+
+assert.match(
+  androidControlCardSource,
+  /nativeAvailable \|\| !!onUnpair/,
+  "Android control card should allow server-side unpair when the native module is unavailable.",
+);
+
+assert.match(
+  androidControlCardSource,
+  /await onUnpair\?\.\(\)/,
+  "Android control card should call the server-side unpair callback during disconnect.",
+);
 
 for (const method of [
   "getStatus",

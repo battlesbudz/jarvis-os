@@ -278,6 +278,12 @@ function getDaemonPermissions() {
     "android.permission.POST_NOTIFICATIONS",
     "android.permission.REQUEST_INSTALL_PACKAGES",
     "android.permission.QUERY_ALL_PACKAGES",
+    "android.permission.MANAGE_EXTERNAL_STORAGE",
+    { name: "android.permission.READ_EXTERNAL_STORAGE", maxSdkVersion: "32" },
+    "android.permission.READ_MEDIA_AUDIO",
+    "android.permission.READ_MEDIA_IMAGES",
+    "android.permission.READ_MEDIA_VIDEO",
+    { name: "android.permission.WRITE_EXTERNAL_STORAGE", maxSdkVersion: "29" },
     "android.permission.CAMERA",
     "android.permission.ACCESS_FINE_LOCATION",
     "android.permission.ACCESS_COARSE_LOCATION",
@@ -285,7 +291,17 @@ function getDaemonPermissions() {
     "android.permission.SEND_SMS",
     "android.permission.FOREGROUND_SERVICE_CAMERA",
     "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
-  ].map((name) => ({ $: { "android:name": name } }));
+  ].map((permission) => {
+    if (typeof permission === "string") {
+      return { $: { "android:name": permission } };
+    }
+    return {
+      $: {
+        "android:name": permission.name,
+        "android:maxSdkVersion": permission.maxSdkVersion,
+      },
+    };
+  });
 }
 
 async function copyDirectoryAsync(sourceDir, destinationDir) {

@@ -62,6 +62,7 @@ export function AndroidDeviceControlCard({
   const nativeAvailable = Platform.OS === "android" && status?.available !== false && !!AndroidDaemonNative;
   const anyBusy = busy !== null;
   const alreadyConnected = serverConnected || status?.connected === true;
+  const canDisconnect = !anyBusy && (nativeAvailable || !!onUnpair);
 
   useEffect(() => {
     if (alreadyConnected) {
@@ -109,15 +110,19 @@ export function AndroidDeviceControlCard({
   }, [alreadyConnected, anyBusy, nativeAvailable, onRefreshChannels, pairCode]);
 
   const disconnect = useCallback(async () => {
-    if (!AndroidDaemonNative || !nativeAvailable || anyBusy) return;
+    if (anyBusy || (!nativeAvailable && !onUnpair)) return;
     setBusy("disconnect");
     setError(null);
     try {
-      await AndroidDaemonNative.disconnect();
+      if (nativeAvailable && AndroidDaemonNative) {
+        await AndroidDaemonNative.disconnect();
+      }
       setPairCode(null);
       setPairCodeHint("Valid for 15 minutes.");
       await onUnpair?.();
-      await refreshNativeStatus();
+      if (nativeAvailable) {
+        await refreshNativeStatus();
+      }
       await onRefreshChannels?.();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to disconnect Android device control.";
@@ -289,9 +294,9 @@ export function AndroidDeviceControlCard({
 
       {alreadyConnected && (
         <Pressable
-          style={[styles.disconnectButton, (!nativeAvailable || anyBusy) && styles.disabledButton]}
+          style={[styles.disconnectButton, !canDisconnect && styles.disabledButton]}
           onPress={disconnect}
-          disabled={!nativeAvailable || anyBusy}
+          disabled={!canDisconnect}
         >
           {busy === "disconnect" ? (
             <ActivityIndicator size="small" color={Colors.textSecondary} />

@@ -10,10 +10,18 @@ const webSocketServicePath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/WebSocketService.kt",
 );
+const screenRecordHandlerPath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/ScreenRecordHandler.kt",
+);
 const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
 const pluginTemplateWebSocketPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/WebSocketService.kt",
+);
+const pluginTemplateScreenRecordPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/ScreenRecordHandler.kt",
 );
 const accessibilityConfigPath = path.join(
   projectRoot,
@@ -31,6 +39,12 @@ const requiredPermissions = [
   "android.permission.POST_NOTIFICATIONS",
   "android.permission.REQUEST_INSTALL_PACKAGES",
   "android.permission.QUERY_ALL_PACKAGES",
+  "android.permission.MANAGE_EXTERNAL_STORAGE",
+  "android.permission.READ_EXTERNAL_STORAGE",
+  "android.permission.READ_MEDIA_AUDIO",
+  "android.permission.READ_MEDIA_IMAGES",
+  "android.permission.READ_MEDIA_VIDEO",
+  "android.permission.WRITE_EXTERNAL_STORAGE",
   "android.permission.CAMERA",
   "android.permission.ACCESS_FINE_LOCATION",
   "android.permission.ACCESS_COARSE_LOCATION",
@@ -99,13 +113,15 @@ async function assertFileExists(filePath) {
   }
 }
 
-const [manifest, appBuildGradle, strings, mainApplication, webSocketService, plugin] = await Promise.all([
+const [manifest, appBuildGradle, strings, mainApplication, webSocketService, screenRecordHandler, plugin, pluginTemplateScreenRecord] = await Promise.all([
   readFile(manifestPath, "utf8"),
   readFile(appBuildGradlePath, "utf8"),
   readFile(stringsPath, "utf8"),
   readFile(mainApplicationPath, "utf8"),
   readFile(webSocketServicePath, "utf8"),
+  readFile(screenRecordHandlerPath, "utf8"),
   readFile(pluginPath, "utf8"),
+  readFile(pluginTemplateScreenRecordPath, "utf8"),
   assertFileExists(accessibilityConfigPath),
   assertFileExists(filePathsPath),
   assertFileExists(pluginTemplateWebSocketPath),
@@ -113,7 +129,13 @@ const [manifest, appBuildGradle, strings, mainApplication, webSocketService, plu
 
 for (const permission of requiredPermissions) {
   assertIncludes(manifest, `android:name="${permission}"`, "AndroidManifest.xml");
+  assertIncludes(plugin, permission, "plugins/withJarvisAndroidDaemon.js");
 }
+
+assertIncludes(manifest, 'android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"', "AndroidManifest.xml");
+assertIncludes(manifest, 'android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29"', "AndroidManifest.xml");
+assertIncludes(plugin, 'name: "android.permission.READ_EXTERNAL_STORAGE", maxSdkVersion: "32"', "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, 'name: "android.permission.WRITE_EXTERNAL_STORAGE", maxSdkVersion: "29"', "plugins/withJarvisAndroidDaemon.js");
 
 for (const snippet of requiredManifestSnippets) {
   assertIncludes(manifest, snippet, "AndroidManifest.xml");
@@ -146,6 +168,10 @@ assertIncludes(
 assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
 assertIncludes(webSocketService, 'put("clientKind", "unified_android_app")', "WebSocketService.kt");
 assertIncludes(webSocketService, 'put("appPackage", packageName)', "WebSocketService.kt");
+assertExcludes(screenRecordHandler, "Jarvis app app", "ScreenRecordHandler.kt");
+assertExcludes(screenRecordHandler, "Allow Screen Capture", "ScreenRecordHandler.kt");
+assertExcludes(pluginTemplateScreenRecord, "Jarvis app app", "plugins/android-daemon-native/ScreenRecordHandler.kt");
+assertExcludes(pluginTemplateScreenRecord, "Allow Screen Capture", "plugins/android-daemon-native/ScreenRecordHandler.kt");
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(
   plugin,

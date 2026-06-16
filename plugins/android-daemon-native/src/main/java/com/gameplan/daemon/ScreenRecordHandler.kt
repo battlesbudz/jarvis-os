@@ -27,7 +27,8 @@ import java.util.concurrent.TimeUnit
  * as a static reference here.
  *
  * If no grant has been issued yet (first use or permission revoked), we return
- * SCREEN_RECORD_PERMISSION_REQUIRED with a message directing the user to the app.
+ * SCREEN_RECORD_PERMISSION_REQUIRED. The unified app does not expose a
+ * media-projection grant flow yet, so callers should treat this as unavailable.
  *
  * Duration is clamped to 60 seconds.
  */
@@ -51,7 +52,7 @@ object ScreenRecordHandler {
         val audio = op.optBoolean("audio", false)
 
         if (!isForeground(context)) {
-            return OpResult(false, error = "FOREGROUND_REQUIRED: Screen recording requires the Jarvis app app to be in the foreground. Open the Jarvis app app and try again.")
+            return OpResult(false, error = "FOREGROUND_REQUIRED: Screen recording requires Jarvis OS to be in the foreground. Open Jarvis OS and try again.")
         }
 
         val captureIntent = projectionIntent
@@ -59,7 +60,7 @@ object ScreenRecordHandler {
             return OpResult(
                 false,
                 error = "SCREEN_RECORD_PERMISSION_REQUIRED: Screen recording requires a one-time permission from Android. " +
-                    "Open the Jarvis app app, tap 'Allow Screen Capture', approve the system prompt, then try again."
+                    "The unified Jarvis OS app does not expose that grant flow yet."
             )
         }
 
@@ -68,12 +69,12 @@ object ScreenRecordHandler {
         try {
             @Suppress("DEPRECATION")
             projection = mpm.getMediaProjection(android.app.Activity.RESULT_OK, captureIntent)
-                ?: return OpResult(false, error = "SCREEN_RECORD_PERMISSION_REQUIRED: Screen capture permission expired. Open the Jarvis app app and re-grant screen recording.")
+                ?: return OpResult(false, error = "SCREEN_RECORD_PERMISSION_REQUIRED: Screen capture permission expired. The unified Jarvis OS app does not expose a re-grant flow yet.")
         } catch (e: Exception) {
             projectionIntent = null
             return OpResult(
                 false,
-                error = "Screen recording setup failed: ${e.message}. Open the Jarvis app app and re-grant screen recording."
+                error = "Screen recording setup failed: ${e.message}. The unified Jarvis OS app does not expose a screen-capture grant flow yet."
             )
         }
 

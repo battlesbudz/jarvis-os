@@ -364,7 +364,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         if (err.startsWith("CAMERA_PERMISSION_REQUIRED") || err.startsWith("SCREEN_RECORD_PERMISSION_REQUIRED")) {
           const isScreenRec = err.startsWith("SCREEN_RECORD_PERMISSION_REQUIRED");
           const fixNote = isScreenRec
-            ? "Screen recording requires a one-time grant. Open the main Jarvis Android app on your device and tap 'Allow' next to Screen Recording, then try again."
+            ? "Screen recording is not available in the unified Jarvis Android app yet because Android's screen-capture grant flow is not wired. Use screenshot, screen context, or camera actions for now."
             : "Camera permission is not granted on the Android device. Open the main Jarvis Android app and tap 'Grant' next to Camera, or go to Settings -> Apps -> Jarvis -> Permissions -> Camera.";
           return { ok: false, content: jsonErrorContent(fixNote, { code: isScreenRec ? "SCREEN_RECORD_PERMISSION_REQUIRED" : "CAMERA_PERMISSION_REQUIRED" }) };
         }
