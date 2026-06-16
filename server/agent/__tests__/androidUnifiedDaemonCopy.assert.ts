@@ -93,8 +93,50 @@ assert.match(
 
 assert.match(
   androidControlCardSource,
+  /\/api\/download\/android/,
+  "Android control card should provide an install path when the native module is unavailable.",
+);
+
+assert.match(
+  androidControlCardSource,
   /await onUnpair\?\.\(\)/,
   "Android control card should call the server-side unpair callback during disconnect.",
+);
+
+assert.match(
+  routesSource,
+  /tap Code[\s\S]*tap Connect/,
+  "Runtime guidance should match the unified Android card Code -> Connect pairing flow.",
+);
+
+assert.match(
+  coachAgentSource,
+  /Tap Code[\s\S]*tap Connect/,
+  "Channel guidance should match the unified Android card Code -> Connect pairing flow.",
+);
+
+for (const staleGuidance of [
+  "Get Pairing Code",
+  "Server URL is https://gameplanjarvisai.up.railway.app",
+  "tap Pair",
+  "navigates the phone back to the Jarvis chat in the browser",
+]) {
+  assert.equal(
+    routesSource.includes(staleGuidance),
+    false,
+    `Runtime route guidance should not include stale Android setup copy: ${staleGuidance}`,
+  );
+  assert.equal(
+    coachAgentSource.includes(staleGuidance),
+    false,
+    `Channel guidance should not include stale Android setup copy: ${staleGuidance}`,
+  );
+}
+
+assert.match(
+  routesSource,
+  /returns the phone to the Jarvis app or existing chat surface/,
+  "Runtime guidance should describe return-to-Jarvis as app-first, not browser-only.",
 );
 
 for (const method of [

@@ -21,6 +21,12 @@ The unified Jarvis APK update manifest is served by the Express backend at:
 GET /api/app-update/android
 ```
 
+The main APK install/download endpoint is:
+
+```text
+GET /api/download/android
+```
+
 The workflow requires:
 
 - GitHub repository variable `JARVIS_PUBLIC_DOMAIN`

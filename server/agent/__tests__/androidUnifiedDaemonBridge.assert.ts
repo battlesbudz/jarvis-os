@@ -5,6 +5,7 @@ import path from "node:path";
 const projectRoot = process.cwd();
 const bridgeSource = fs.readFileSync(path.join(projectRoot, "server/daemon/bridge.ts"), "utf8");
 const appUpdateSource = fs.readFileSync(path.join(projectRoot, "server/routes/appUpdateRoutes.ts"), "utf8");
+const downloadRoutesSource = fs.readFileSync(path.join(projectRoot, "server/downloadRoutes.ts"), "utf8");
 
 assert.match(
   bridgeSource,
@@ -100,6 +101,18 @@ assert.match(
   appUpdateSource,
   /platform:\s*"android-daemon"[\s\S]*legacy:\s*true[\s\S]*migrationTarget:\s*"\/api\/app-update\/android"/,
   "Android daemon update manifest should explicitly mark legacy clients and their migration target.",
+);
+
+assert.match(
+  downloadRoutesSource,
+  /app\.get\("\/api\/download\/android"/,
+  "Download routes should expose a main Jarvis Android APK install path.",
+);
+
+assert.match(
+  downloadRoutesSource,
+  /jarvis-app\.apk/,
+  "Main Android download route should serve the Jarvis app APK, not the legacy daemon APK.",
 );
 
 console.log("OK: Android unified daemon bridge metadata and legacy update contracts are guarded");

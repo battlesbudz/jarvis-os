@@ -11,9 +11,18 @@ import { validateDownloadToken } from "./agent/appDelivery";
 import { getProjectDownloadsDir } from "./projectStorage";
 import { readProjectArchive } from "./projectArtifacts";
 
+const MAIN_APK_PATH = path.resolve(process.cwd(), "downloads", "jarvis-app.apk");
 const APK_PATH = path.resolve(process.cwd(), "downloads", "jarvis-daemon.apk");
 const DOWNLOADS_DIR = getProjectDownloadsDir();
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
+
+function getMainAppFallbackUrl(): string | null {
+  const releaseBase = (
+    process.env.JARVIS_ANDROID_UPDATE_RELEASE_BASE ||
+    "https://github.com/battlesbudz/Gameplanjarvisai/releases/download/jarvis-app-latest"
+  ).replace(/\/+$/, "");
+  return process.env.JARVIS_ANDROID_APK_URL ?? `${releaseBase}/jarvis-app.apk`;
+}
 
 function getFallbackUrl(): string | null {
   const releaseBase = (
@@ -27,7 +36,11 @@ function getFallbackUrl(): string | null {
   );
 }
 
-async function proxyFallbackApk(fallbackUrl: string, res: Response): Promise<void> {
+async function proxyFallbackApk(
+  fallbackUrl: string,
+  res: Response,
+  filename = "jarvis-daemon.apk",
+): Promise<void> {
   const remote = await fetch(fallbackUrl, {
     headers: {
       Accept: "application/vnd.android.package-archive, application/octet-stream, */*",
@@ -47,7 +60,7 @@ async function proxyFallbackApk(fallbackUrl: string, res: Response): Promise<voi
     "Content-Type",
     remote.headers.get("content-type") || "application/vnd.android.package-archive",
   );
-  res.setHeader("Content-Disposition", 'attachment; filename="jarvis-daemon.apk"');
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   const contentLength = remote.headers.get("content-length");
   if (contentLength) res.setHeader("Content-Length", contentLength);
   res.setHeader("Cache-Control", "public, max-age=300");
@@ -60,6 +73,38 @@ async function proxyFallbackApk(fallbackUrl: string, res: Response): Promise<voi
 }
 
 export function registerDownloadRoutes(app: Express): void {
+  app.get("/api/download/android", async (_req: Request, res: Response) => {
+    if (fs.existsSync(MAIN_APK_PATH)) {
+      const stat = fs.statSync(MAIN_APK_PATH);
+      res.setHeader("Content-Type", "application/vnd.android.package-archive");
+      res.setHeader("Content-Disposition", 'attachment; filename="jarvis-app.apk"');
+      res.setHeader("Content-Length", stat.size);
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      fs.createReadStream(MAIN_APK_PATH).pipe(res);
+      return;
+    }
+
+    const fallback = getMainAppFallbackUrl();
+    if (fallback) {
+      try {
+        await proxyFallbackApk(fallback, res, "jarvis-app.apk");
+      } catch (error) {
+        console.error("[DownloadRoutes] failed to proxy hosted Jarvis APK:", error);
+        if (!res.headersSent) {
+          res.status(502).json({ error: "Failed to download hosted Jarvis APK" });
+        }
+      }
+      return;
+    }
+
+    res.status(404).json({
+      error: "Jarvis APK not available",
+      instructions:
+        "Either place the built APK at downloads/jarvis-app.apk, " +
+        "or set JARVIS_ANDROID_APK_URL to a hosted Jarvis APK URL.",
+    });
+  });
+
   app.get("/api/download/apk", async (_req: Request, res: Response) => {
     if (fs.existsSync(APK_PATH)) {
       const stat = fs.statSync(APK_PATH);

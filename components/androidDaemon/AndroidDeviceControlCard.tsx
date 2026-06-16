@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -189,6 +190,17 @@ export function AndroidDeviceControlCard({
     }
   }, [anyBusy, nativeAvailable, refreshNativeStatus]);
 
+  const openAndroidDownload = useCallback(async () => {
+    setError(null);
+    try {
+      const baseUrl = getApiUrl().replace(/\/+$/, "");
+      await Linking.openURL(`${baseUrl}/api/download/android`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to open Android APK download.";
+      setError(message);
+    }
+  }, []);
+
   return (
     <View style={styles.card}>
       <View style={styles.header}>
@@ -217,7 +229,11 @@ export function AndroidDeviceControlCard({
 
       {!nativeAvailable && !alreadyConnected && (
         <View style={styles.notice}>
-          <Text style={styles.noticeText}>Open this Profile tab on Android to pair the built-in device control service.</Text>
+          <Text style={styles.noticeText}>Install the Jarvis Android app, then open Profile on Android to pair device control.</Text>
+          <Pressable style={styles.installButton} onPress={openAndroidDownload}>
+            <Ionicons name="download-outline" size={14} color={Colors.warningLight} />
+            <Text style={styles.installButtonText}>Install APK</Text>
+          </Pressable>
         </View>
       )}
 
@@ -385,6 +401,23 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
     fontFamily: "Inter_400Regular",
+    color: Colors.warningLight,
+  },
+  installButton: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: Colors.warning,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  installButtonText: {
+    fontSize: 12,
+    fontFamily: "Inter_600SemiBold",
     color: Colors.warningLight,
   },
   setup: {
