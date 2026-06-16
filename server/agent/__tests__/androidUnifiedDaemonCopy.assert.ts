@@ -19,6 +19,10 @@ const pluginAccessibilitySource = fs.readFileSync(
   path.join(projectRoot, "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt"),
   "utf8",
 );
+const legacyAccessibilitySource = fs.readFileSync(
+  path.join(projectRoot, "android-daemon/app/src/main/java/com/jarvis/daemon/JarvisAccessibilityService.kt"),
+  "utf8",
+);
 const nativeWrapperPath = path.join(projectRoot, "lib/android-daemon-native.ts");
 
 assert.equal(
@@ -147,7 +151,7 @@ assert.match(
   "Runtime guidance should describe return-to-Jarvis as app-first, not browser-only.",
 );
 
-for (const source of [androidAccessibilitySource, pluginAccessibilitySource]) {
+for (const source of [androidAccessibilitySource, pluginAccessibilitySource, legacyAccessibilitySource]) {
   assert.match(
     source,
     /Bitmap\.wrapHardwareBuffer\(hardwareBuffer,\s*result\.colorSpace\)/,

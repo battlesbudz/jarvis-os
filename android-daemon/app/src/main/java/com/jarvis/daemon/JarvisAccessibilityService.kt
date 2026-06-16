@@ -237,28 +237,26 @@ class JarvisAccessibilityService : AccessibilityService() {
             val callback = object : AccessibilityService.TakeScreenshotCallback {
                 override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
                     try {
-                        // ScreenshotResult's bitmap getter is not exposed in the compile-time
-                        // SDK stubs for all compileSdk versions. Use reflection to call whichever
-                        // method is available at runtime: getHardwareBitmap() (API 30) or
-                        // getBitmap() (API 31+). Both return android.graphics.Bitmap.
-                        val rawBmp: Bitmap? = try {
-                            result.javaClass.getMethod("getHardwareBitmap").invoke(result) as? Bitmap
-                        } catch (_: Exception) {
-                            try {
-                                result.javaClass.getMethod("getBitmap").invoke(result) as? Bitmap
-                            } catch (_: Exception) { null }
+                        val hardwareBuffer = result.hardwareBuffer
+                        val hardwareBitmap = try {
+                            Bitmap.wrapHardwareBuffer(hardwareBuffer, result.colorSpace)
+                        } catch (throwable: Throwable) {
+                            hardwareBuffer.close()
+                            throw throwable
                         }
 
-                        if (rawBmp == null) {
-                            Log.w(TAG, "ScreenshotResult: bitmap method not found via reflection")
-                            latch.countDown()
+                        if (hardwareBitmap == null) {
+                            hardwareBuffer.close()
+                            Log.w(TAG, "ScreenshotResult: could not wrap hardware buffer")
                             return
                         }
 
                         // Convert HARDWARE bitmap → ARGB_8888 so pixels are CPU-readable.
-                        val soft = if (rawBmp.config == Bitmap.Config.HARDWARE) {
-                            rawBmp.copy(Bitmap.Config.ARGB_8888, false).also { rawBmp.recycle() }
-                        } else rawBmp
+                        val soft = try {
+                            hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
+                        } finally {
+                            hardwareBuffer.close()
+                        }
 
                         // Scale to 50% — reduces ~8 MB ARGB bitmap to ~2 MB before encoding.
                         val scaledW = (soft.width * 0.5f).toInt().coerceAtLeast(1)
