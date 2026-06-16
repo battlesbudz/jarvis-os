@@ -1,6 +1,6 @@
-# Jarvis Docs Index
+# Jarvis OS Docs Index
 
-This folder contains the context future agents should read before changing Jarvis. The Desktop Jarvis copy at `C:\Users\justi\OneDrive\Desktop\Jarvis\docs` was checked on May 16, 2026; every document there now has a corresponding repo path here.
+This folder contains architecture, operation, deployment, and roadmap documents for Jarvis OS. Read these before changing runtime behavior, safety boundaries, provider routing, memory, connectors, channels, or deployment scripts.
 
 ## Core Orientation
 
@@ -23,8 +23,8 @@ This folder contains the context future agents should read before changing Jarvi
 - `chatgpt-codex-oauth.md` - ChatGPT/Codex OAuth provider, gateway, and delegation notes.
 - `railway-setup.md` - Railway deployment/setup notes.
 
-## Notes For Future Agents
+## Notes For Maintainers And Agents
 
-- Prefer the repo copies over Desktop copies. The Desktop files were used as source/reference, but repo docs may include newer updates.
-- Do not overwrite repo docs from Desktop blindly; compare normalized contents first.
 - Keep high-level context in docs and implementation-specific details near the code that owns them.
+- Keep AutoResearch and other external improvement harnesses out of Jarvis product docs unless the document is explicitly about development tooling.
+- Treat connector, daemon, provider-routing, approval, memory, and deployment changes as safety-sensitive.

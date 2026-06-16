@@ -1,19 +1,45 @@
-## Description
-A clear and concise description of what the bug or feature request is.
+## What happened?
 
-## Expected Behavior
-A clear and concise description of what you expected to happen.
+Describe the bug, feature request, or documentation gap.
 
-## Steps to Reproduce (for bugs)
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+## Area
+
+Check the closest area:
+
+- [ ] Mobile app / Expo UI
+- [ ] Dashboard or control surface
+- [ ] Agent harness / tool calling
+- [ ] Provider routing / ChatGPT subscription path
+- [ ] Memory / G-Brain / SOUL context
+- [ ] Background jobs / deliverables / approvals
+- [ ] Telegram, Discord, Slack, WhatsApp, email, or calendar integration
+- [ ] Desktop connector / daemon
+- [ ] Android daemon
+- [ ] Deployment / Railway / database
+- [ ] Documentation
+
+## Expected behavior
+
+What should Jarvis OS do instead?
+
+## Reproduction steps
+
+1.
+2.
+3.
 
 ## Environment
-- OS: [e.g. iOS, Android, macOS, Windows]
-- App Version: [e.g. 1.0.0]
-- Node Version: [e.g. 20.x]
 
-## Additional Context
-Add any other context about the problem here.
+- OS:
+- Node/npm:
+- Database:
+- Hosting provider:
+- App surface: mobile, web, dashboard, Telegram, desktop connector, Android daemon, other
+
+## Safety impact
+
+Does this involve secrets, account actions, local files, device permissions, approvals, provider routing, or memory writes?
+
+## Additional context
+
+Logs, screenshots, links, or related PRs.

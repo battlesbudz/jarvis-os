@@ -1,94 +1,76 @@
 # Security Policy
 
-## Supported versions
+Jarvis OS connects to personal accounts, long-term memory, local computers, Android devices, and hosted infrastructure. Treat every deployment as a privileged personal operating system, not a demo chatbot.
 
-This project is in active development on the `codex/replit-main-continuation`
-branch. Security fixes are made against the most recent commit on that
-branch. Older commits are not patched.
+## Supported Branch
+
+Security fixes are made against the latest commit on `main`.
 
 | Branch | Supported |
 |---|---|
-| `codex/replit-main-continuation` | ✅ |
-| `minimax` (and any `minimax-pr-*` branches) | ❌ |
-| Anything else | ❌ |
+| `main` | Yes |
+| Feature branches and old historical branches | No |
 
-## Reporting a vulnerability
+## Reporting A Vulnerability
 
-**Please do not file a public GitHub issue for security bugs.**
+Do not file public GitHub issues for security bugs.
 
-Use GitHub private vulnerability reporting for this repository, or contact
-the repository owner directly if private reporting is unavailable. Include:
+Use GitHub private vulnerability reporting for this repository, or contact the repository owner directly if private reporting is unavailable. Include:
 
 1. A short description of the issue
-2. A reproducer — minimal code, request, or steps
-3. The impact you believe it has
-4. Any known workarounds
+2. Minimal reproduction steps, request payloads, or affected files
+3. Expected impact
+4. Known workarounds
+5. Whether credentials, local files, device permissions, or third-party accounts are involved
 
-You should receive an acknowledgement within 72 hours. If you don't,
-follow up with a DM to a maintainer.
+You should receive an acknowledgement within 72 hours.
 
-## What we will do
+## Security Boundaries
 
-1. Confirm the report and assign a CVE if appropriate
-2. Develop a fix on a private branch
-3. Coordinate disclosure timing with you (default: 90 days from report)
-4. Credit you in the release notes unless you ask to remain anonymous
-5. Push the fix and a `SECURITY.md` addendum describing the issue
+High-risk Jarvis behavior must remain approval-gated and observable:
 
-## Out-of-scope
+- Sending email, posting publicly, making purchases, deploying, modifying production infrastructure, or changing calendar data
+- Running desktop shell commands or reading/writing local files through the desktop connector
+- Using Android accessibility/device-control actions
+- Changing memory, SOUL/context, provider credentials, or approval policies
+- Applying code changes or self-repair suggestions
 
-The following are not security vulnerabilities in the project itself,
-but are risks to be aware of when running it:
+If a contribution weakens one of these boundaries, it should be treated as security-sensitive.
 
-- **You** are responsible for the OAuth tokens and API keys you put in
-  `.env`. Treat them as production secrets. Don't commit them. Don't
-  share them in chat or screenshots.
-- **The desktop daemon** (`daemon/jarvis-daemon.js`) runs shell commands
-  on the host machine. It is sandboxed to a workspace root
-  (`JARVIS_DAEMON_ROOT`), but you must set that root to a directory
-  you actually want to expose. Don't point it at `/`, `~`, or any
-  directory containing unrelated secrets.
-- **The Android daemon APK** runs with notification listener, accessibility,
-  and (optionally) device-admin permissions. Only install APKs you
-  built yourself or downloaded from the official release URL in
-  `ANDROID_APK_URL`.
-- **The Patch-package patches** in `patches/` modify dependencies
-  post-install. If a patch fails on `npm install`, the install aborts.
-  Do not bypass this — read what the patch does before applying it.
-- **The Codex OAuth gateway** (`JARVIS_OAUTH_GATEWAY_*`) is a local
-  helper that bridges between the Codex CLI and the server. It runs
-  on `localhost` by default. Do not expose its port publicly without
-  authentication in front of it.
-- **Self-modification loops** (Jarvis proposing and applying its own
-  code changes) are gated behind the approval flow in
-  `server/agent/agentApproval.ts` and `server/agent/codeProposalsRoutes.ts`.
-  If you disable those gates, you have removed the only thing
-  preventing Jarvis from rewriting its own guardrails. Don't.
+## Self-Hosting Responsibilities
 
-## Reporting a compromised credential
+Self-hosters are responsible for:
 
-If you suspect a token, keystore, or `.env` value has leaked:
+- Keeping `.env` and platform variables private
+- Rotating leaked OAuth tokens, provider keys, bot tokens, and database credentials immediately
+- Setting strong `JWT_SECRET` and `DASHBOARD_SECRET` values
+- Restricting connector roots and daemon permissions to directories/devices they intend Jarvis to access
+- Reviewing provider spend limits and third-party account scopes
+- Running Jarvis behind HTTPS in production
 
-1. **Revoke the credential at the source** (GitHub PAT page, Google
-   Cloud console, Twilio console, etc.) immediately.
-2. **Rotate** — generate a new credential and update `.env` and any
-   platform secret stores.
-3. **Audit** — check the relevant provider's access logs for the
-   time window you suspect.
-4. **File a security report** as above so we can add detection / alerting.
+## Connector And Device Risks
 
-## Hardening checklist for self-hosters
+- **Desktop connector / daemon:** Can execute local operations when paired and permitted. Set `JARVIS_DAEMON_ROOT` to a specific workspace directory, not a home directory or drive root.
+- **Android daemon:** May use accessibility, notification listener, wake/talk mode, and optional device-admin permissions. Build or download only trusted APKs from the official project release path.
+- **ChatGPT subscription path:** Runs through the desktop connector/Codex OAuth path. Do not expose local helper ports publicly.
+- **Provider profiles:** Stored provider credentials must remain encrypted and scoped to the owning user.
 
-- [ ] `JWT_SECRET` is ≥ 32 random bytes
-- [ ] `DASHBOARD_SECRET` is set and ≥ 32 random bytes
-- [ ] `NODE_ENV=production` in any non-dev environment
-- [ ] Database connection uses SSL (`?sslmode=require`)
-- [ ] `JARVIS_DAEMON_ROOT` is set to a workspace directory, not `~` or `/`
-- [ ] HTTPS is terminated in front of the Express server (Railway,
-       Cloudflare, Caddy, etc.)
-- [ ] `EXPO_PUBLIC_*` values do not contain server secrets
-- [ ] API keys for paid services have spend caps set at the provider
-- [ ] `secrets.json` / `attached_assets/` are not committed (gitignore
-       should handle this; double-check after a fresh clone)
-- [ ] The `patches/` directory contents match upstream maintainers'
-       public recommendations
+## Hardening Checklist
+
+- [ ] `JWT_SECRET` is at least 32 random bytes
+- [ ] `DASHBOARD_SECRET` is at least 32 random bytes if dashboard secret auth is enabled
+- [ ] `NODE_ENV=production` in hosted environments
+- [ ] `DATABASE_URL` uses SSL in production
+- [ ] `APP_BASE_URL` and `EXPO_PUBLIC_DOMAIN` point to the intended public host
+- [ ] `JARVIS_DAEMON_ROOT` points to a narrow workspace directory
+- [ ] API/provider keys have spend caps where available
+- [ ] Channel webhook secrets are set only for enabled channels
+- [ ] `.env`, local connector state, keystores, and generated private artifacts are not committed
+- [ ] Approval gates remain enabled for high-risk actions
+
+## If A Credential Leaks
+
+1. Revoke it at the provider.
+2. Rotate it in `.env`, Railway variables, GitHub secrets, and any local connector state.
+3. Audit provider access logs for the suspected window.
+4. File a private security report if project behavior contributed to the leak.

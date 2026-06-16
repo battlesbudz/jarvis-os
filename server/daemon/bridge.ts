@@ -786,19 +786,19 @@ async function recordDaemonLink(userId: string, daemonId: string, meta: Record<s
     for (const row of existing) {
       const prior = (row.metadata as Record<string, unknown> | null) || {};
       const priorPlatform = normalizeDaemonPlatform(prior.platform);
-        if (priorPlatform === platform) {
-          // Preserve existing permissions for this platform
-          if (prior.permissions && !mergedMeta.permissions) {
-            mergedMeta.permissions = prior.permissions;
-          }
-          if (prior.android_permissions && !mergedMeta.android_permissions) {
-            mergedMeta.android_permissions = prior.android_permissions;
-          }
-          if (platform === "android" && prior.android_client && !mergedMeta.android_client) {
-            mergedMeta.android_client = prior.android_client;
-          }
+      if (priorPlatform === platform) {
+        // Preserve existing permissions for this platform
+        if (prior.permissions && !mergedMeta.permissions) {
+          mergedMeta.permissions = prior.permissions;
+        }
+        if (prior.android_permissions && !mergedMeta.android_permissions) {
+          mergedMeta.android_permissions = prior.android_permissions;
+        }
+        if (platform === "android" && prior.android_client && !mergedMeta.android_client) {
+          mergedMeta.android_client = prior.android_client;
         }
       }
+    }
     // Delete only the existing row for this platform (preserve the other platform's row)
     for (const row of existing) {
       const priorMeta = (row.metadata as Record<string, unknown> | null) || {};

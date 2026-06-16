@@ -1,43 +1,58 @@
 # Jarvis OS
 
-<div align="center">
-  <p><strong>Your autonomous personal AI assistant for productivity, communication, and executive function.</strong></p>
-</div>
+Jarvis OS is a self-hostable personal AI operating system. It combines a mobile app, web control surfaces, an Express runtime, a tool-calling agent harness, long-term memory, background workers, approval gates, and optional desktop/Android connectors into one system for running a private assistant that can plan, research, communicate, remember, and act.
 
-Jarvis OS is a full-stack, multi-channel AI assistant designed to act on your behalf. Jarvis goes beyond reactive chat: it is a proactive, self-improving agent that manages your inbox, calendar, and daily routines while adapting to your personality, goals, and working style.
-
-## Key Features
-
-- **Multi-channel presence:** Interact with Jarvis through Telegram, Slack, WhatsApp, Discord, or web chat.
-- **Autonomous action engine:** Jarvis calls tools in a loop to perform real-world tasks like drafting emails, triaging your inbox, and conducting web research.
-- **Proactive executive function:** ADHD-friendly coaching with morning plan generation, curiosity scanners, and energy-aware task sequencing.
-- **Deep integrations:** Native connections to Gmail, Google Calendar, Outlook, and GitHub.
-- **Inbox triage engine:** A background service classifies deliverables, handles routine items, and escalates what needs attention.
-- **Self-improving memory:** Jarvis builds a structured user profile from conversations and uses it to personalize future behavior.
-- **Mobile first:** Built with React Native and Expo, with a Next.js Mission Control dashboard.
-
-## Tech Stack
-
-- **Frontend:** React Native, Expo, React, TailwindCSS
-- **Backend:** Node.js, Express, TypeScript
-- **Database:** PostgreSQL with Drizzle ORM
-- **AI/LLM:** OpenAI, Whisper, TTS
-- **Integrations:** Google APIs, Slack API, Telegram Bot API, GitHub API
-
-## Project Structure
+This is not a single chatbot wrapper. Jarvis is built around an operating model:
 
 ```text
-app/                React Native and Expo Router app
-server/             Express backend, agent logic, integrations
-shared/             Shared TypeScript schemas and models
-dashboard/          Next.js Mission Control dashboard
-daemon/             Desktop daemon and local execution bridge
-android-daemon/     Android device-control daemon
-docs/               Architecture, operations, and roadmap docs
-JARVIS_ROADMAP.md   Project roadmap and status
+user intent -> routing -> context + memory -> agent/tool harness
+            -> approval policy -> execution -> deliverable/log/result
 ```
 
-## Quick Start
+The goal is to make useful autonomous work observable and reviewable instead of letting an agent silently mutate accounts, files, devices, or code.
+
+## What Jarvis Can Do
+
+- **Personal command center:** Mobile-first Expo app with web surfaces for chat, profile, settings, goals, inbox, memory review, job status, and deliverables.
+- **Agent runtime:** Tool-calling harness with model routing, provider fallback, task-specific agents, quality checks, and controlled background jobs.
+- **Long-term memory:** Structured user memories, relationship records, SOUL/context files, G-Brain derived notes, memory review, and retrieval paths for personalization.
+- **Autonomous work queue:** Persistent jobs for research, deep research, writing, planning, email drafting, goal decomposition, named-agent work, and build-feature workflows.
+- **Reviewable outputs:** Deliverables, approval gates, draft/revise/approve flows, revision lineage, Drive export, and channel notifications.
+- **Multi-channel presence:** Telegram, Discord, Slack, WhatsApp, in-app chat, web chat, email/calendar integrations, and external notification routing.
+- **Provider routing:** OpenAI-compatible providers, Gemini, OpenRouter-style routing, stored provider profiles, and ChatGPT subscription use through the desktop connector/Codex OAuth path.
+- **Desktop and Android control:** Optional Windows desktop connector plus Android daemon for local shell/file operations, screenshots, screen understanding, app navigation, notifications, and wake/talk mode.
+- **Safety boundaries:** Approval receipts, tool policies, daemon permissions, forbidden action checks, audit logs, and fail-closed behavior for high-risk actions.
+- **Deployment support:** Railway-oriented server deployment, Expo/Android builds, dashboard build, database migrations, and doctor/QA scripts.
+
+## Architecture
+
+```text
+app/                 Expo Router mobile/web app
+dashboard/           Next.js dashboard and mission-control surface
+server/              Express server, auth, runtime, routes, integrations
+server/agent/        Agent harness, workers, tools, model routing, approvals
+server/channels/     Telegram, Discord, Slack, WhatsApp, webchat, in-app adapters
+server/daemon/       Server-side bridge for desktop and Android connectors
+server/gateway/      Runtime control plane for status, events, devices, and actions
+server/memory/       Memory OS, retrieval, prompt context, derived brain support
+shared/              Drizzle schema, shared models, runtime contracts
+daemon/              Desktop daemon bridge
+desktop-connector/   Packaged desktop connector app
+android-daemon/      Android device-control daemon
+docs/                Architecture, operations, deployment, and roadmap docs
+```
+
+## Requirements
+
+- Node.js 22.x and npm 10.x
+- PostgreSQL 16+
+- A configured AI provider or ChatGPT subscription path
+- Optional: Railway for hosted server deployment
+- Optional: Expo/EAS for mobile builds
+- Optional: Android Studio/Gradle for Android daemon work
+- Optional: Windows PowerShell for desktop connector automation
+
+## Local Setup
 
 ```bash
 git clone https://github.com/battlesbudz/jarvis-os.git
@@ -46,23 +61,74 @@ npm install
 cp .env.example .env
 npm run db:push
 npm run server:dev
-npm run expo:dev
-cd dashboard && npm run dev
 ```
 
-## Architecture
+In another terminal, start the Expo app:
 
-Jarvis operates on an agent loop in `server/agent/`. When triggered by a webhook, cron job, or direct message, Jarvis:
+```bash
+npm run expo:dev
+```
 
-1. Gathers context from long-term memory.
-2. Evaluates the user's current state and goals.
-3. Enters a tool-calling loop for capabilities like email, calendar, search, and local daemon actions.
-4. Executes allowed actions autonomously or asks for approval when required.
+For the dashboard:
+
+```bash
+cd dashboard
+npm install
+npm run dev
+```
+
+Run the readiness check:
+
+```bash
+npm run jarvis:doctor
+```
+
+Run the main assertion suite:
+
+```bash
+npm test
+```
+
+## Hosting
+
+Jarvis is normally hosted as:
+
+- **Express API/server** on Railway or another Node host
+- **PostgreSQL** as the durable database
+- **Expo/mobile client** pointed at the public API URL
+- **Dashboard** as a separate Next.js app when needed
+- **Desktop/Android connectors** paired back to the hosted server through secure pairing flows
+
+Minimum production variables:
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `APP_BASE_URL`
+- `EXPO_PUBLIC_DOMAIN`
+- At least one AI/provider credential or a working ChatGPT subscription connector path
+- Channel secrets only for the channels you enable
+
+See [`docs/railway-setup.md`](docs/railway-setup.md), [`docs/operations/jarvis-os-runbook.md`](docs/operations/jarvis-os-runbook.md), and [`.env.example`](.env.example).
+
+## Safety Model
+
+Jarvis is designed for real accounts and real devices, so high-risk actions must stay gated:
+
+- No automatic email sends, purchases, deploys, public posts, or destructive file operations without an approval path.
+- Desktop and Android operations require explicit connector pairing and permissions.
+- Secrets belong in `.env`, Railway variables, or provider secret stores, never in source control.
+- Code-writing and self-repair tools must remain reviewable and approval-gated.
+
+## Project Status
+
+Jarvis OS is active software, not a polished one-click SaaS template. Many capabilities are implemented and used, but self-hosters should expect to configure providers, database state, OAuth apps, channel webhooks, and connector permissions.
+
+The public `main` branch is the supported branch. See [`JARVIS_ROADMAP.md`](JARVIS_ROADMAP.md) for the current capability map and remaining hardening work.
 
 ## Contributing
 
-Contributions are welcome. Please check the [issues](https://github.com/battlesbudz/jarvis-os/issues) tab or open a pull request.
+Bug reports, documentation fixes, tests, and scoped capability improvements are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md) before opening a pull request.
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+Jarvis OS is distributed under the MIT License. See [`LICENSE`](LICENSE).

@@ -1635,6 +1635,9 @@ export default function ProfileScreen() {
     setChannelBusy(channel);
     try {
       await apiRequest('DELETE', `/api/channels/${channel}`);
+      if (channel === 'daemon' || channel === 'android-daemon') {
+        setAndroidDaemonPerms(null);
+      }
       await loadChannels();
       return true;
     } catch (err) {
