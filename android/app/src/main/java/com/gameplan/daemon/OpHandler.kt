@@ -20,6 +20,7 @@ import android.util.Log
 import android.view.WindowManager
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
+import com.gameplan.MainActivity
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
@@ -282,7 +283,28 @@ object OpHandler {
     }
 
     private fun handleReturnToJarvis(context: Context): OpResult {
-        // Bring the browser to the foreground WITHOUT opening a URL.
+        try {
+            val appIntent = Intent(context, MainActivity::class.java).apply {
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            }
+            context.startActivity(appIntent)
+            DaemonLog.add("return_to_jarvis: brought unified app to foreground")
+            return OpResult(
+                true,
+                data = JSONObject()
+                    .put("returned", true)
+                    .put("target", "app")
+                    .put("pkg", context.packageName)
+            )
+        } catch (e: Exception) {
+            DaemonLog.add("return_to_jarvis: unified app launch failed: ${e.message}")
+        }
+
+        // Browser fallback: bring an existing Jarvis tab forward WITHOUT opening a URL.
         //
         // KEY INSIGHT: using browseUrl() (Intent.ACTION_VIEW + FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         // causes Chrome to navigate to the URL, which triggers a full page reload.

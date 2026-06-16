@@ -50,6 +50,18 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun androidReturnToJarvisPrefersUnifiedApp() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        val result = OpHandler.handle(context, JSONObject().put("type", "android_return_to_jarvis"))
+        val data = result.data as JSONObject
+
+        assertTrue(result.ok)
+        assertEquals("app", data.getString("target"))
+        assertEquals(context.packageName, data.getString("pkg"))
+    }
+
+    @Test
     fun normalizeServerUrlAddsHttpsForBareHost() {
         assertEquals(
             "https://gameplanjarvisai.up.railway.app",

@@ -271,6 +271,10 @@ for (const [contents, source] of [
   assertIncludes(contents, '"android_file_list" -> handleFileList(context, op)', source);
   assertIncludes(contents, '"android_file_read" -> handleFileRead(context, op)', source);
   assertIncludes(contents, '"android_file_search" -> handleFileSearch(context, op)', source);
+  assertIncludes(contents, "import com.gameplan.MainActivity", source);
+  assertIncludes(contents, "Intent(context, MainActivity::class.java)", source);
+  assertIncludes(contents, '.put("target", "app")', source);
+  assertIncludes(contents, "Browser fallback: bring an existing Jarvis tab forward", source);
   assertIncludes(contents, "resolveSharedStoragePath(context, path) ?: return privateFilePathDenied(path)", source);
   assertIncludes(contents, "resolveSharedStoragePath(context, requestedRootPath)", source);
   assertIncludes(contents, '"/data/data/$packageName"', source);
