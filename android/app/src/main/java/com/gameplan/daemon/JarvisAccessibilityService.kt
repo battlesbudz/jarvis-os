@@ -1070,7 +1070,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             "home"          -> { performGlobalAction(GLOBAL_ACTION_HOME); true }
             "recents"       -> { performGlobalAction(GLOBAL_ACTION_RECENTS); true }
             "notifications" -> { performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS); true }
-            "enter"         -> { pressImeAction(); true }
+            "enter"         -> pressImeAction()
             "select_all"    -> pressSelectAll()
             "delete"        -> pressDelete()
             else            -> false

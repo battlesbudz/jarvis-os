@@ -20,6 +20,10 @@ const cameraHandlerPath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/CameraHandler.kt",
 );
+const accessibilityServicePath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt",
+);
 const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
 const pluginTemplateWebSocketPath = path.join(
   projectRoot,
@@ -32,6 +36,10 @@ const pluginTemplateScreenRecordPath = path.join(
 const pluginTemplateCameraPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/CameraHandler.kt",
+);
+const pluginTemplateAccessibilityPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt",
 );
 const pluginBlurViewBuildGradlePath = path.join(projectRoot, "plugins/android-blurview-native/build.gradle");
 const pluginBlurViewSourcePath = path.join(
@@ -138,10 +146,12 @@ const [
   webSocketService,
   screenRecordHandler,
   cameraHandler,
+  accessibilityService,
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateScreenRecord,
   pluginTemplateCamera,
+  pluginTemplateAccessibility,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
   readFile(rootBuildGradlePath, "utf8"),
@@ -152,10 +162,12 @@ const [
   readFile(webSocketServicePath, "utf8"),
   readFile(screenRecordHandlerPath, "utf8"),
   readFile(cameraHandlerPath, "utf8"),
+  readFile(accessibilityServicePath, "utf8"),
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateScreenRecordPath, "utf8"),
   readFile(pluginTemplateCameraPath, "utf8"),
+  readFile(pluginTemplateAccessibilityPath, "utf8"),
   assertFileExists(accessibilityConfigPath),
   assertFileExists(filePathsPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
@@ -233,6 +245,10 @@ assertIncludes(cameraHandler, "IMPORTANCE_FOREGROUND", "CameraHandler.kt");
 assertExcludes(cameraHandler, "IMPORTANCE_FOREGROUND_SERVICE", "CameraHandler.kt");
 assertIncludes(pluginTemplateCamera, "IMPORTANCE_FOREGROUND", "plugins/android-daemon-native/CameraHandler.kt");
 assertExcludes(pluginTemplateCamera, "IMPORTANCE_FOREGROUND_SERVICE", "plugins/android-daemon-native/CameraHandler.kt");
+assertIncludes(accessibilityService, '"enter"         -> pressImeAction()', "JarvisAccessibilityService.kt");
+assertExcludes(accessibilityService, '"enter"         -> { pressImeAction(); true }', "JarvisAccessibilityService.kt");
+assertIncludes(pluginTemplateAccessibility, '"enter"         -> pressImeAction()', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
+assertExcludes(pluginTemplateAccessibility, '"enter"         -> { pressImeAction(); true }', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(
   plugin,

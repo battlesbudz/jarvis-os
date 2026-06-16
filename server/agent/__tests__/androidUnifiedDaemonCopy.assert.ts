@@ -81,6 +81,18 @@ assert.match(
 
 assert.match(
   androidControlCardSource,
+  /const healthy = serverConnected \|\| nativeConnected;/,
+  "Android control card should show connected health from server state when native status is unavailable.",
+);
+
+assert.match(
+  androidControlCardSource,
+  /!nativeAvailable && !alreadyConnected/,
+  "Android control card should not show pairing setup copy for a server-connected phone on non-native surfaces.",
+);
+
+assert.match(
+  androidControlCardSource,
   /await onUnpair\?\.\(\)/,
   "Android control card should call the server-side unpair callback during disconnect.",
 );

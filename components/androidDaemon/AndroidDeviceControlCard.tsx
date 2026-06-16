@@ -58,10 +58,11 @@ export function AndroidDeviceControlCard({
     return () => clearInterval(interval);
   }, [refreshNativeStatus]);
 
-  const healthy = serverConnected && status?.connected === true;
+  const nativeConnected = status?.connected === true;
+  const healthy = serverConnected || nativeConnected;
   const nativeAvailable = Platform.OS === "android" && status?.available !== false && !!AndroidDaemonNative;
   const anyBusy = busy !== null;
-  const alreadyConnected = serverConnected || status?.connected === true;
+  const alreadyConnected = healthy;
   const canDisconnect = !anyBusy && (nativeAvailable || !!onUnpair);
 
   useEffect(() => {
@@ -214,7 +215,7 @@ export function AndroidDeviceControlCard({
         </View>
       </View>
 
-      {!nativeAvailable && (
+      {!nativeAvailable && !alreadyConnected && (
         <View style={styles.notice}>
           <Text style={styles.noticeText}>Open this Profile tab on Android to pair the built-in device control service.</Text>
         </View>
