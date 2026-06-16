@@ -11,6 +11,18 @@ const androidControlCardSource = fs.readFileSync(
   path.join(projectRoot, "components/androidDaemon/AndroidDeviceControlCard.tsx"),
   "utf8",
 );
+const androidAccessibilitySource = fs.readFileSync(
+  path.join(projectRoot, "android/app/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt"),
+  "utf8",
+);
+const pluginAccessibilitySource = fs.readFileSync(
+  path.join(projectRoot, "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt"),
+  "utf8",
+);
+const legacyAccessibilitySource = fs.readFileSync(
+  path.join(projectRoot, "android-daemon/app/src/main/java/com/jarvis/daemon/JarvisAccessibilityService.kt"),
+  "utf8",
+);
 const nativeWrapperPath = path.join(projectRoot, "lib/android-daemon-native.ts");
 
 assert.equal(
@@ -138,6 +150,29 @@ assert.match(
   /returns the phone to the Jarvis app or existing chat surface/,
   "Runtime guidance should describe return-to-Jarvis as app-first, not browser-only.",
 );
+
+for (const source of [androidAccessibilitySource, pluginAccessibilitySource, legacyAccessibilitySource]) {
+  assert.match(
+    source,
+    /Bitmap\.wrapHardwareBuffer\(hardwareBuffer,\s*result\.colorSpace\)/,
+    "Accessibility screenshots should read ScreenshotResult hardware buffers directly.",
+  );
+  assert.match(
+    source,
+    /catch \(throwable: Throwable\) \{\s*hardwareBuffer\.close\(\)\s*throw throwable\s*\}/,
+    "Accessibility screenshots should close the hardware buffer if wrapping fails.",
+  );
+  assert.match(
+    source,
+    /finally \{\s*hardwareBitmap\.recycle\(\)\s*hardwareBuffer\.close\(\)\s*\}/,
+    "Accessibility screenshots should recycle the wrapped hardware bitmap after copying.",
+  );
+  assert.doesNotMatch(
+    source,
+    /getHardwareBitmap|getBitmap/,
+    "Accessibility screenshots should not reflect nonexistent ScreenshotResult bitmap getters.",
+  );
+}
 
 for (const method of [
   "getStatus",
