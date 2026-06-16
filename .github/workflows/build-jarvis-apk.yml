@@ -12,6 +12,8 @@ on:
       - 'assets/**'
       - 'components/**'
       - 'lib/**'
+      - 'android/**'
+      - 'plugins/**'
       - 'scripts/patch_gradle.py'
       - 'app.json'
       - 'eas.json'
