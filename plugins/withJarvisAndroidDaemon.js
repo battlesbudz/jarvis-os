@@ -7,11 +7,16 @@ const {
   withAndroidManifest,
   withAppBuildGradle,
   withDangerousMod,
+  withProjectBuildGradle,
+  withSettingsGradle,
   withStringsXml,
 } = require("@expo/config-plugins");
 
 const GENERATED_TAG = "jarvis-android-daemon-dependencies";
+const BLURVIEW_PROJECT_GRADLE_TAG = "jarvis-blurview-dependency-substitution";
+const BLURVIEW_SETTINGS_GRADLE_TAG = "jarvis-blurview-project-include";
 const DAEMON_SOURCE_TEMPLATE_DIR = "android-daemon-native/src/main/java/com/gameplan/daemon";
+const BLURVIEW_SOURCE_TEMPLATE_DIR = "android-blurview-native";
 
 const DAEMON_GRADLE_DEPENDENCIES = [
   'implementation("org.java-websocket:Java-WebSocket:1.5.4")',
@@ -23,6 +28,19 @@ const DAEMON_XML_RESOURCES = [
   "accessibility_service_config.xml",
   "file_paths.xml",
 ];
+
+const BLURVIEW_SETTINGS_GRADLE_SNIPPET = [
+  "include ':blurview'",
+  "project(':blurview').projectDir = new File(rootDir, 'third-party/blurview')",
+].join("\n");
+
+const BLURVIEW_PROJECT_GRADLE_SNIPPET = [
+  "  configurations.configureEach {",
+  "    resolutionStrategy.dependencySubstitution {",
+  "      substitute module('com.github.Dimezis:BlurView') using project(':blurview')",
+  "    }",
+  "  }",
+].join("\n");
 
 const DAEMON_STRING_ITEMS = [
   {
@@ -267,6 +285,40 @@ function addDaemonGradleDependencies(buildGradle) {
   return mergeResult.contents;
 }
 
+function addBlurViewProjectInclude(settingsGradle) {
+  if (settingsGradle.includes("project(':blurview').projectDir")) {
+    return settingsGradle;
+  }
+
+  const mergeResult = CodeGenerator.mergeContents({
+    tag: BLURVIEW_SETTINGS_GRADLE_TAG,
+    src: settingsGradle,
+    newSrc: BLURVIEW_SETTINGS_GRADLE_SNIPPET,
+    anchor: /include\s+['"]:app['"]/,
+    offset: 1,
+    comment: "//",
+  });
+
+  return mergeResult.contents;
+}
+
+function addBlurViewDependencySubstitution(buildGradle) {
+  if (buildGradle.includes("substitute module('com.github.Dimezis:BlurView') using project(':blurview')")) {
+    return buildGradle;
+  }
+
+  const mergeResult = CodeGenerator.mergeContents({
+    tag: BLURVIEW_PROJECT_GRADLE_TAG,
+    src: buildGradle,
+    newSrc: BLURVIEW_PROJECT_GRADLE_SNIPPET,
+    anchor: /allprojects\s*\{/,
+    offset: 1,
+    comment: "//",
+  });
+
+  return mergeResult.contents;
+}
+
 function getDaemonPermissions() {
   return [
     "android.permission.FOREGROUND_SERVICE",
@@ -326,6 +378,14 @@ async function copyDaemonKotlinSourcesAsync(pluginRoot, platformProjectRoot) {
   await copyDirectoryAsync(sourceDir, destinationDir);
 }
 
+async function copyBlurViewSourcesAsync(pluginRoot, platformProjectRoot) {
+  const sourceDir = path.join(pluginRoot, BLURVIEW_SOURCE_TEMPLATE_DIR);
+  const destinationDir = path.join(platformProjectRoot, "third-party/blurview");
+
+  await fs.rm(destinationDir, { recursive: true, force: true });
+  await copyDirectoryAsync(sourceDir, destinationDir);
+}
+
 async function copyDaemonXmlResourcesAsync(platformProjectRoot) {
   const destinationDir = path.join(platformProjectRoot, "app/src/main/res/xml");
 
@@ -370,9 +430,28 @@ const withJarvisAndroidDaemon = (config) => {
     return config;
   });
 
+  config = withProjectBuildGradle(config, (config) => {
+    if (config.modResults.language !== "groovy") {
+      throw new Error("Jarvis Android daemon config requires a Groovy android/build.gradle file.");
+    }
+
+    config.modResults.contents = addBlurViewDependencySubstitution(config.modResults.contents);
+    return config;
+  });
+
+  config = withSettingsGradle(config, (config) => {
+    if (config.modResults.language !== "groovy") {
+      throw new Error("Jarvis Android daemon config requires a Groovy android/settings.gradle file.");
+    }
+
+    config.modResults.contents = addBlurViewProjectInclude(config.modResults.contents);
+    return config;
+  });
+
   config = withDangerousMod(config, [
     "android",
     async (config) => {
+      await copyBlurViewSourcesAsync(__dirname, config.modRequest.platformProjectRoot);
       await copyDaemonKotlinSourcesAsync(__dirname, config.modRequest.platformProjectRoot);
       await copyDaemonXmlResourcesAsync(config.modRequest.platformProjectRoot);
       await patchMainApplicationAsync(config.modRequest.platformProjectRoot);

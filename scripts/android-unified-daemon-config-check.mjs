@@ -3,6 +3,8 @@ import path from "node:path";
 
 const projectRoot = process.cwd();
 const manifestPath = path.join(projectRoot, "android/app/src/main/AndroidManifest.xml");
+const rootBuildGradlePath = path.join(projectRoot, "android/build.gradle");
+const settingsGradlePath = path.join(projectRoot, "android/settings.gradle");
 const appBuildGradlePath = path.join(projectRoot, "android/app/build.gradle");
 const stringsPath = path.join(projectRoot, "android/app/src/main/res/values/strings.xml");
 const mainApplicationPath = path.join(projectRoot, "android/app/src/main/java/com/gameplan/MainApplication.kt");
@@ -22,6 +24,11 @@ const pluginTemplateWebSocketPath = path.join(
 const pluginTemplateScreenRecordPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/ScreenRecordHandler.kt",
+);
+const pluginBlurViewBuildGradlePath = path.join(projectRoot, "plugins/android-blurview-native/build.gradle");
+const pluginBlurViewSourcePath = path.join(
+  projectRoot,
+  "plugins/android-blurview-native/src/main/java/eightbitlab/com/blurview/BlurView.java",
 );
 const accessibilityConfigPath = path.join(
   projectRoot,
@@ -113,8 +120,21 @@ async function assertFileExists(filePath) {
   }
 }
 
-const [manifest, appBuildGradle, strings, mainApplication, webSocketService, screenRecordHandler, plugin, pluginTemplateScreenRecord] = await Promise.all([
+const [
+  manifest,
+  rootBuildGradle,
+  settingsGradle,
+  appBuildGradle,
+  strings,
+  mainApplication,
+  webSocketService,
+  screenRecordHandler,
+  plugin,
+  pluginTemplateScreenRecord,
+] = await Promise.all([
   readFile(manifestPath, "utf8"),
+  readFile(rootBuildGradlePath, "utf8"),
+  readFile(settingsGradlePath, "utf8"),
   readFile(appBuildGradlePath, "utf8"),
   readFile(stringsPath, "utf8"),
   readFile(mainApplicationPath, "utf8"),
@@ -125,6 +145,8 @@ const [manifest, appBuildGradle, strings, mainApplication, webSocketService, scr
   assertFileExists(accessibilityConfigPath),
   assertFileExists(filePathsPath),
   assertFileExists(pluginTemplateWebSocketPath),
+  assertFileExists(pluginBlurViewBuildGradlePath),
+  assertFileExists(pluginBlurViewSourcePath),
 ]);
 
 for (const permission of requiredPermissions) {
@@ -159,6 +181,16 @@ assertIncludes(
 for (const dependency of requiredDependencies) {
   assertIncludes(appBuildGradle, dependency, "android/app/build.gradle");
 }
+
+assertIncludes(rootBuildGradle, "substitute module('com.github.Dimezis:BlurView') using project(':blurview')", "android/build.gradle");
+assertIncludes(settingsGradle, "include ':blurview'", "android/settings.gradle");
+assertIncludes(settingsGradle, "project(':blurview').projectDir = new File(rootDir, 'third-party/blurview')", "android/settings.gradle");
+assertIncludes(plugin, "withProjectBuildGradle", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "withSettingsGradle", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "android-blurview-native", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "third-party/blurview", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "substitute module('com.github.Dimezis:BlurView') using project(':blurview')", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "project(':blurview').projectDir = new File(rootDir, 'third-party/blurview')", "plugins/withJarvisAndroidDaemon.js");
 
 assertExcludes(appBuildGradle, "storeFile file('debug.keystore')", "android/app/build.gradle");
 assertExcludes(appBuildGradle, "signingConfig signingConfigs.debug", "android/app/build.gradle");
