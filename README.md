@@ -180,6 +180,12 @@ The public `main` branch is the supported branch. See [`ROADMAP.md`](ROADMAP.md)
 
 Bug reports, documentation fixes, tests, and scoped capability improvements are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`SECURITY.md`](SECURITY.md) before opening a pull request.
 
+## Acknowledgements & Inspirations
+
+Parts of Jarvis OS's memory and knowledge-management architecture are derived from and inspired by GBrain, an open-source project created by Garry Tan. Jarvis extends and adapts those concepts as part of a broader Memory OS architecture focused on personal AI, autonomous workflows, reviewable memory, and cross-device presence.
+
+See [`ACKNOWLEDGEMENTS.md`](ACKNOWLEDGEMENTS.md) for attribution details.
+
 ## License
 
 Jarvis OS is distributed under the MIT License. See [`LICENSE`](LICENSE).

@@ -13,6 +13,7 @@ This project is moving from rapid private development into a cleaner open-source
 - Updated contributor and security guidance around provider routing, desktop/Android connectors, approval gates, and self-hosting.
 - Removed stale branch/support language from public docs.
 - Added a capability status matrix, local self-hosting guide, public roadmap, concrete compatibility identifier table, dashboard configuration notes, and focused contributor test map.
+- Added public GBrain attribution in the README and acknowledgements file.
 
 ### Security
 

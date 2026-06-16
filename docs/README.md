@@ -11,7 +11,8 @@ This folder contains the public architecture, setup, operations, deployment, and
 5. [`operations/jarvis-os-runbook.md`](operations/jarvis-os-runbook.md) - startup, health checks, and safe autonomy operations.
 6. [`../downloads/README.md`](../downloads/README.md) - APK download and release paths.
 7. [`../ROADMAP.md`](../ROADMAP.md) - concise public roadmap.
-8. [`../JARVIS_ROADMAP.md`](../JARVIS_ROADMAP.md) - detailed technical roadmap and implementation phases.
+8. [`../ACKNOWLEDGEMENTS.md`](../ACKNOWLEDGEMENTS.md) - public attribution for derived or materially inspired architecture.
+9. [`../JARVIS_ROADMAP.md`](../JARVIS_ROADMAP.md) - detailed technical roadmap and implementation phases.
 
 ## Architecture And Runtime
 

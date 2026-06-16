@@ -11,6 +11,7 @@ const publicFiles = [
   "SECURITY.md",
   "CODE_OF_CONDUCT.md",
   "CHANGELOG.md",
+  "ACKNOWLEDGEMENTS.md",
   "ROADMAP.md",
   "JARVIS_ROADMAP.md",
   "docs/README.md",
