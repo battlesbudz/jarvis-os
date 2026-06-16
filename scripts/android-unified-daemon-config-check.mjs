@@ -130,6 +130,7 @@ const [
   webSocketService,
   screenRecordHandler,
   plugin,
+  pluginTemplateWebSocket,
   pluginTemplateScreenRecord,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
@@ -141,10 +142,10 @@ const [
   readFile(webSocketServicePath, "utf8"),
   readFile(screenRecordHandlerPath, "utf8"),
   readFile(pluginPath, "utf8"),
+  readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateScreenRecordPath, "utf8"),
   assertFileExists(accessibilityConfigPath),
   assertFileExists(filePathsPath),
-  assertFileExists(pluginTemplateWebSocketPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
   assertFileExists(pluginBlurViewSourcePath),
 ]);
@@ -202,6 +203,16 @@ assertIncludes(
 assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
 assertIncludes(webSocketService, 'put("clientKind", "unified_android_app")', "WebSocketService.kt");
 assertIncludes(webSocketService, 'put("appPackage", packageName)', "WebSocketService.kt");
+assertIncludes(webSocketService, "private var currentConnectUsesDaemonId = false", "WebSocketService.kt");
+assertIncludes(webSocketService, "null -> {", "WebSocketService.kt");
+assertIncludes(webSocketService, "Skipping sticky restart reconnect", "WebSocketService.kt");
+assertIncludes(webSocketService, 'pairCode = ""', "WebSocketService.kt");
+assertIncludes(webSocketService, "Pair code rejected", "WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "private var currentConnectUsesDaemonId = false", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "null -> {", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "Skipping sticky restart reconnect", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, 'pairCode = ""', "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "Pair code rejected", "plugins/android-daemon-native/WebSocketService.kt");
 assertExcludes(screenRecordHandler, "Jarvis app app", "ScreenRecordHandler.kt");
 assertExcludes(screenRecordHandler, "Allow Screen Capture", "ScreenRecordHandler.kt");
 assertExcludes(pluginTemplateScreenRecord, "Jarvis app app", "plugins/android-daemon-native/ScreenRecordHandler.kt");

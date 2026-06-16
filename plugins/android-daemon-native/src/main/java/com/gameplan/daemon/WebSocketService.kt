@@ -95,6 +95,7 @@ class WebSocketService : Service() {
     private var reconnectSecret: String = ""
     private var paired = false
     private var reconnectEnabled = true
+    private var currentConnectUsesDaemonId = false
     private var reconnectAttempts = 0
     private val maxReconnectAttempts = 8
     private var pingFuture: java.util.concurrent.ScheduledFuture<*>? = null
@@ -165,6 +166,14 @@ class WebSocketService : Service() {
                     Log.i(TAG, "Skipping auto-reconnect — missing credentials")
                 }
             }
+            null -> {
+                if (serverUrl.isNotEmpty() && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty()) {
+                    reconnectEnabled = true
+                    connect(useDaemonId = true)
+                } else {
+                    Log.i(TAG, "Skipping sticky restart reconnect — missing credentials")
+                }
+            }
             ACTION_DISCONNECT -> {
                 reconnectEnabled = false
                 paired = false
@@ -186,17 +195,18 @@ class WebSocketService : Service() {
 
     private fun connect(useDaemonId: Boolean) {
         disconnect()
+        currentConnectUsesDaemonId = useDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty()
         val wsUrl = buildWsUrl(serverUrl)
-        val mode = if (useDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty()) "reconnect" else "pair"
+        val mode = if (currentConnectUsesDaemonId) "reconnect" else "pair"
         Log.i(TAG, "Connecting to $wsUrl [$mode]")
         updateStatus("Connecting…", false)
 
         wsClient = object : WebSocketClient(URI(wsUrl)) {
             override fun onOpen(handshakedata: ServerHandshake?) {
                 Log.i(TAG, "WebSocket opened")
-                DaemonLog.add("WS opened → sending ${if (useDaemonId && daemonId.isNotEmpty()) "reconnect" else "pair"}")
+                DaemonLog.add("WS opened → sending ${if (currentConnectUsesDaemonId) "reconnect" else "pair"}")
                 if (!paired) {
-                    if (useDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty()) {
+                    if (currentConnectUsesDaemonId) {
                         sendReconnectMessage()
                     } else {
                         sendPairMessage()
@@ -320,8 +330,9 @@ class WebSocketService : Service() {
                     DaemonLog.add("pair FAILED: $err")
                     updateStatus("Pair failed: $err", false)
                     // Server rejected our credentials — clear them so user must re-pair
-                    if (err.contains("invalid reconnect secret") || err.contains("re-pair") ||
-                        err.contains("legacy pair") || err.contains("unknown daemonId")) {
+                    if (currentConnectUsesDaemonId &&
+                        (err.contains("invalid reconnect secret") || err.contains("re-pair") ||
+                            err.contains("legacy pair") || err.contains("unknown daemonId"))) {
                         daemonId = ""
                         reconnectSecret = ""
                         getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
@@ -330,6 +341,10 @@ class WebSocketService : Service() {
                             .apply()
                         reconnectEnabled = false
                         Log.w(TAG, "Credentials invalidated — user must re-pair")
+                    } else if (!currentConnectUsesDaemonId) {
+                        pairCode = ""
+                        reconnectEnabled = false
+                        Log.w(TAG, "Pair code rejected — user must request a fresh code")
                     }
                     Log.e(TAG, "Pairing/reconnect failed: $err")
                 }
