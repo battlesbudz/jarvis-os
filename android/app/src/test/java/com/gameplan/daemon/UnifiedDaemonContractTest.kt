@@ -50,15 +50,18 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
-    fun androidReturnToJarvisPrefersUnifiedApp() {
+    fun androidReturnToJarvisDoesNotReportUnverifiedBackgroundLaunch() {
         val context = ApplicationProvider.getApplicationContext<Context>()
 
         val result = OpHandler.handle(context, JSONObject().put("type", "android_return_to_jarvis"))
-        val data = result.data as JSONObject
 
-        assertTrue(result.ok)
-        assertEquals("app", data.getString("target"))
-        assertEquals(context.packageName, data.getString("pkg"))
+        assertFalse(result.ok)
+        assertTrue(
+            "Unexpected return-to-Jarvis error: ${result.error}",
+            result.error?.contains("verify") == true ||
+                result.error?.contains("foreground") == true ||
+                result.error?.contains("No browser found") == true
+        )
     }
 
     @Test

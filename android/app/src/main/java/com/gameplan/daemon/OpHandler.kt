@@ -283,6 +283,27 @@ object OpHandler {
     }
 
     private fun handleReturnToJarvis(context: Context): OpResult {
+        val svc = JarvisAccessibilityService.instance
+
+        if (svc != null) {
+            val launched = try { svc.launchApp(context.packageName) } catch (e: Exception) {
+                DaemonLog.add("return_to_jarvis: accessibility app launch failed: ${e.message}")
+                false
+            }
+            if (launched) {
+                DaemonLog.add("return_to_jarvis: verified unified app foreground")
+                return OpResult(
+                    true,
+                    data = JSONObject()
+                        .put("returned", true)
+                        .put("target", "app")
+                        .put("pkg", context.packageName)
+                        .put("verified", true)
+                )
+            }
+            DaemonLog.add("return_to_jarvis: unified app was not verified in foreground; trying fallbacks")
+        }
+
         try {
             val appIntent = Intent(context, MainActivity::class.java).apply {
                 addFlags(
@@ -292,14 +313,18 @@ object OpHandler {
                 )
             }
             context.startActivity(appIntent)
-            DaemonLog.add("return_to_jarvis: brought unified app to foreground")
-            return OpResult(
-                true,
-                data = JSONObject()
-                    .put("returned", true)
-                    .put("target", "app")
-                    .put("pkg", context.packageName)
-            )
+            if (waitForForegroundPackage(svc, context.packageName)) {
+                DaemonLog.add("return_to_jarvis: verified unified app foreground after direct launch")
+                return OpResult(
+                    true,
+                    data = JSONObject()
+                        .put("returned", true)
+                        .put("target", "app")
+                        .put("pkg", context.packageName)
+                        .put("verified", true)
+                )
+            }
+            DaemonLog.add("return_to_jarvis: unified app launch dispatched but foreground was not verified")
         } catch (e: Exception) {
             DaemonLog.add("return_to_jarvis: unified app launch failed: ${e.message}")
         }
@@ -331,15 +356,24 @@ object OpHandler {
                     // back stack and forces a reload, killing the live SSE connection.
                 )
                 context.startActivity(launchIntent)
-                DaemonLog.add("return_to_jarvis: brought $pkg to foreground (no reload)")
-                return OpResult(true, data = JSONObject().put("returned", true).put("pkg", pkg))
+                if (waitForForegroundPackage(svc, pkg)) {
+                    DaemonLog.add("return_to_jarvis: verified $pkg foreground (no reload)")
+                    return OpResult(
+                        true,
+                        data = JSONObject()
+                            .put("returned", true)
+                            .put("target", "browser")
+                            .put("pkg", pkg)
+                            .put("verified", true)
+                    )
+                }
+                DaemonLog.add("return_to_jarvis: $pkg launch dispatched but foreground was not verified")
             } catch (e: Exception) {
                 DaemonLog.add("return_to_jarvis: $pkg failed: ${e.message}")
             }
         }
 
         // Last resort: open the URL directly (may cause page reload in some browsers)
-        val svc = JarvisAccessibilityService.instance
         if (svc == null) {
             val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(JarvisConfig.SERVER_URL)).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -353,10 +387,29 @@ object OpHandler {
         }
         val opened = try { svc.browseUrl(JarvisConfig.SERVER_URL) } catch (e: Exception) { false }
         return if (opened) {
-            OpResult(true, data = JSONObject().put("returned", true).put("url", JarvisConfig.SERVER_URL))
+            OpResult(false, error = "Opened Jarvis URL fallback, but could not verify Jarvis reached the foreground")
         } else {
             OpResult(false, error = "Could not navigate back to Jarvis")
         }
+    }
+
+    private fun waitForForegroundPackage(
+        svc: JarvisAccessibilityService?,
+        targetPackage: String,
+        timeoutMs: Long = 6000L
+    ): Boolean {
+        if (svc == null) return false
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            val foregroundPackage = try {
+                svc.rootInActiveWindow?.packageName?.toString()
+            } catch (_: Exception) {
+                null
+            }
+            if (foregroundPackage == targetPackage) return true
+            Thread.sleep(200)
+        }
+        return false
     }
 
     private fun handleScreenshot(): OpResult {

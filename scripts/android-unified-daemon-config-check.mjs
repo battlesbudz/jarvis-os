@@ -281,7 +281,12 @@ for (const [contents, source] of [
   assertIncludes(contents, "import com.gameplan.MainActivity", source);
   assertIncludes(contents, "Intent(context, MainActivity::class.java)", source);
   assertIncludes(contents, '.put("target", "app")', source);
+  assertIncludes(contents, "svc.launchApp(context.packageName)", source);
+  assertIncludes(contents, "waitForForegroundPackage(svc, context.packageName)", source);
+  assertIncludes(contents, '.put("verified", true)', source);
+  assertIncludes(contents, "could not verify Jarvis reached the foreground", source);
   assertIncludes(contents, "Browser fallback: bring an existing Jarvis tab forward", source);
+  assertExcludes(contents, "brought unified app to foreground", source);
   assertIncludes(contents, "resolveSharedStoragePath(context, path) ?: return privateFilePathDenied(path)", source);
   assertIncludes(contents, "resolveSharedStoragePath(context, requestedRootPath)", source);
   assertIncludes(contents, '"/data/data/$packageName"', source);
