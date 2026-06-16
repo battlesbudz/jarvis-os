@@ -153,6 +153,11 @@ for (const source of [androidAccessibilitySource, pluginAccessibilitySource]) {
     /Bitmap\.wrapHardwareBuffer\(hardwareBuffer,\s*result\.colorSpace\)/,
     "Accessibility screenshots should read ScreenshotResult hardware buffers directly.",
   );
+  assert.match(
+    source,
+    /catch \(throwable: Throwable\) \{\s*hardwareBuffer\.close\(\)\s*throw throwable\s*\}/,
+    "Accessibility screenshots should close the hardware buffer if wrapping fails.",
+  );
   assert.doesNotMatch(
     source,
     /getHardwareBitmap|getBitmap/,

@@ -238,7 +238,12 @@ class JarvisAccessibilityService : AccessibilityService() {
                 override fun onSuccess(result: AccessibilityService.ScreenshotResult) {
                     try {
                         val hardwareBuffer = result.hardwareBuffer
-                        val hardwareBitmap = Bitmap.wrapHardwareBuffer(hardwareBuffer, result.colorSpace)
+                        val hardwareBitmap = try {
+                            Bitmap.wrapHardwareBuffer(hardwareBuffer, result.colorSpace)
+                        } catch (throwable: Throwable) {
+                            hardwareBuffer.close()
+                            throw throwable
+                        }
 
                         if (hardwareBitmap == null) {
                             hardwareBuffer.close()
