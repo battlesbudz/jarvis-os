@@ -255,6 +255,7 @@ class JarvisAccessibilityService : AccessibilityService() {
                         val soft = try {
                             hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false)
                         } finally {
+                            hardwareBitmap.recycle()
                             hardwareBuffer.close()
                         }
 

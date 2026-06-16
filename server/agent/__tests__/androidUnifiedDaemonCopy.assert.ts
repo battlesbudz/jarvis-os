@@ -162,6 +162,11 @@ for (const source of [androidAccessibilitySource, pluginAccessibilitySource, leg
     /catch \(throwable: Throwable\) \{\s*hardwareBuffer\.close\(\)\s*throw throwable\s*\}/,
     "Accessibility screenshots should close the hardware buffer if wrapping fails.",
   );
+  assert.match(
+    source,
+    /finally \{\s*hardwareBitmap\.recycle\(\)\s*hardwareBuffer\.close\(\)\s*\}/,
+    "Accessibility screenshots should recycle the wrapped hardware bitmap after copying.",
+  );
   assert.doesNotMatch(
     source,
     /getHardwareBitmap|getBitmap/,
