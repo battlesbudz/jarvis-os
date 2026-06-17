@@ -72,11 +72,11 @@ jobs:
           key: gradle-caches-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: gradle-caches-
 
-      - name: Build debug APK with embedded bundle
+      - name: Build debug APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug -Pjarvis.sideloadTest=true --no-daemon --stacktrace
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
 
       - name: Run daemon accessibility E2E on emulator
         uses: reactivecircus/android-emulator-runner@v2
