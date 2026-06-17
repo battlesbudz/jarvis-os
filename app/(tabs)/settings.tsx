@@ -10,7 +10,6 @@ import {
   Switch,
   Alert,
   TextInput,
-  Modal,
   Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -48,6 +47,17 @@ import { useAuth, authFetch } from '@/lib/auth-context';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
 import RuntimeDiagnosticsPanel from '@/components/RuntimeDiagnosticsPanel';
+import {
+  SectionErrorRow,
+  SectionFallback,
+  SectionHeader,
+  SettingsFallback,
+  StatusDot,
+} from '@/components/settings/SettingsSectionChrome';
+import { SubsystemErrorSheet } from '@/components/settings/SubsystemErrorSheet';
+import { BuildHistorySection } from '@/components/settings/BuildHistorySection';
+import { WakeWordSection } from '@/components/settings/WakeWordSection';
+import { drStyles } from '@/components/settings/diagnosticsRunStyles';
 import {
   CONNECTION_APPS,
   getConnectionStatusLabel,
@@ -140,82 +150,6 @@ interface CatalogProvider {
 // Section header component
 // ─────────────────────────────────────────────────────────────────────────────
 
-function SectionHeader({ label, accent }: { label: string; accent: string }) {
-  return (
-    <View style={[sectionStyles.header, { borderLeftColor: accent }]}>
-      <Text style={[sectionStyles.label, { color: accent }]}>{label}</Text>
-    </View>
-  );
-}
-
-function SectionErrorRow({ message, onRetry }: { message?: string; onRetry: () => void }) {
-  return (
-    <View style={sectionStyles.errorRow}>
-      <Ionicons name="alert-circle-outline" size={15} color={Colors.textTertiary} />
-      <Text style={sectionStyles.errorText}>{message ?? "Couldn't load"}</Text>
-      <Pressable onPress={onRetry} style={sectionStyles.retryBtn}>
-        <Text style={sectionStyles.retryText}>Retry</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-type HealthStatus = 'healthy' | 'expiring_soon' | 'broken' | 'unconfigured' | string;
-
-function StatusDot({ status }: { status: HealthStatus }) {
-  if (!status || status === 'unconfigured') return null;
-  const color =
-    status === 'healthy' ? Colors.success :
-    status === 'expiring_soon' ? '#F59E0B' :
-    status === 'broken' ? Colors.error : Colors.textTertiary;
-  return (
-    <View style={{
-      width: 8, height: 8, borderRadius: 4,
-      backgroundColor: color, marginLeft: 6, alignSelf: 'center',
-    }} />
-  );
-}
-
-const sectionStyles = StyleSheet.create({
-  header: {
-    borderLeftWidth: 2,
-    paddingLeft: 10,
-    marginHorizontal: 16,
-    marginTop: 24,
-    marginBottom: 10,
-  },
-  label: {
-    fontSize: 10,
-    fontFamily: 'Inter_700Bold',
-    letterSpacing: 2,
-  },
-  errorRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-  },
-  errorText: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-  },
-  retryBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  retryText: {
-    fontSize: 12,
-    fontFamily: 'Inter_500Medium',
-    color: Colors.text,
-  },
-});
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,75 +161,6 @@ const GUT_THREAT_LABEL: Record<string, string> = {
   project_drift: 'Project Drift',
   relationship_anomaly: 'Relationship Signal',
 };
-
-function SettingsFallback({ error, resetError }: { error: Error; resetError: () => void }) {
-  return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 24 }}>
-      <Ionicons name="warning-outline" size={36} color={Colors.error} style={{ marginBottom: 12 }} />
-      <Text style={{ color: Colors.text, fontSize: 15, textAlign: 'center', marginBottom: 8, fontFamily: 'Inter_600SemiBold' }}>
-        Settings failed to load
-      </Text>
-      <Text style={{ color: Colors.textSecondary, fontSize: 13, textAlign: 'center', marginBottom: 20, fontFamily: 'Inter_400Regular' }}>
-        {error?.message || 'An unexpected error occurred.'}
-      </Text>
-      <Pressable
-        onPress={resetError}
-        style={{ backgroundColor: Colors.accent, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 8 }}
-      >
-        <Text style={{ color: '#fff', fontFamily: 'Inter_600SemiBold', fontSize: 14 }}>Retry</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-function SectionFallback({ error, resetError }: { error: Error; resetError: () => void }) {
-  return (
-    <View style={[sectionFallbackStyles.card]}>
-      <Ionicons name="alert-circle-outline" size={16} color={Colors.textTertiary} />
-      <Text style={sectionFallbackStyles.message} numberOfLines={1}>
-        {error?.message || "This section couldn't load"}
-      </Text>
-      <Pressable onPress={resetError} style={sectionFallbackStyles.retryBtn}>
-        <Text style={sectionFallbackStyles.retryText}>Retry</Text>
-      </Pressable>
-    </View>
-  );
-}
-
-const sectionFallbackStyles = StyleSheet.create({
-  card: {
-    marginHorizontal: 16,
-    marginTop: 4,
-    marginBottom: 2,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  message: {
-    flex: 1,
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-  },
-  retryBtn: {
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  retryText: {
-    fontSize: 12,
-    fontFamily: 'Inter_500Medium',
-    color: Colors.text,
-  },
-});
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
@@ -3011,79 +2876,18 @@ export default function SettingsScreen() {
         </ErrorBoundary>
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
-        {/* ── WAKE WORD ── */}
-        <SectionHeader label="WAKE WORD" accent={Colors.primary} />
-        <View style={styles.card}>
-          {/* Wake Word toggle */}
-          <View style={[styles.connRow, { paddingVertical: 12 }]}>
-            <View style={[styles.connIconWrap, { backgroundColor: '#1E3A5F' }]}>
-              <Ionicons name="mic-outline" size={18} color={Colors.primary} />
-            </View>
-            <View style={styles.connInfo}>
-              <Text style={styles.connName}>Wake Word</Text>
-              <Text style={styles.connSub}>Say a phrase to activate Jarvis hands-free (Android only)</Text>
-            </View>
-            <Switch
-              value={wakeWordEnabled}
-              onValueChange={toggleWakeWord}
-              disabled={wakeSettingsSaving}
-              trackColor={{ false: Colors.border, true: Colors.primary }}
-            />
-          </View>
-
-          {/* Talk Mode toggle */}
-          <View style={[styles.connRow, styles.connRowBorder, { paddingVertical: 12 }]}>
-            <View style={[styles.connIconWrap, { backgroundColor: '#0f2f1a' }]}>
-              <Ionicons name="chatbubble-ellipses-outline" size={18} color={Colors.success} />
-            </View>
-            <View style={styles.connInfo}>
-              <Text style={styles.connName}>Talk Mode</Text>
-              <Text style={styles.connSub}>Auto re-arm mic after each TTS response for hands-free chat</Text>
-            </View>
-            <Switch
-              value={talkModeEnabled}
-              onValueChange={toggleTalkMode}
-              disabled={wakeSettingsSaving}
-              trackColor={{ false: Colors.border, true: Colors.success }}
-            />
-          </View>
-
-          {/* Trigger phrase list */}
-          {wakeWordEnabled && (
-            <View style={{ paddingHorizontal: 14, paddingBottom: 12 }}>
-              <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_500Medium', marginTop: 6, marginBottom: 8, letterSpacing: 0.5 }}>
-                TRIGGER PHRASES
-              </Text>
-              {wakeWords.map(phrase => (
-                <View key={phrase} style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, backgroundColor: Colors.surface, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 7 }}>
-                  <Ionicons name="radio-outline" size={14} color={Colors.textSecondary} style={{ marginRight: 8 }} />
-                  <Text style={{ flex: 1, fontSize: 13, color: Colors.text, fontFamily: 'Inter_400Regular' }}>{phrase}</Text>
-                  <Pressable onPress={() => removeWakeWord(phrase)} hitSlop={10}>
-                    <Ionicons name="close-circle" size={16} color={Colors.textTertiary} />
-                  </Pressable>
-                </View>
-              ))}
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                <TextInput
-                  style={[styles.tzInput, { flex: 1, marginTop: 0 }]}
-                  placeholder="Add phrase..."
-                  placeholderTextColor={Colors.textTertiary}
-                  value={newWakeWord}
-                  onChangeText={setNewWakeWord}
-                  onSubmitEditing={addWakeWord}
-                  returnKeyType="done"
-                  autoCapitalize="none"
-                />
-                <Pressable
-                  onPress={addWakeWord}
-                  style={{ backgroundColor: Colors.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }}
-                >
-                  <Ionicons name="add" size={16} color="#fff" />
-                </Pressable>
-              </View>
-            </View>
-          )}
-        </View>
+        <WakeWordSection
+          wakeWordEnabled={wakeWordEnabled}
+          talkModeEnabled={talkModeEnabled}
+          wakeWords={wakeWords}
+          newWakeWord={newWakeWord}
+          saving={wakeSettingsSaving}
+          onToggleWakeWord={toggleWakeWord}
+          onToggleTalkMode={toggleTalkMode}
+          onChangeNewWakeWord={setNewWakeWord}
+          onAddWakeWord={addWakeWord}
+          onRemoveWakeWord={removeWakeWord}
+        />
         </ErrorBoundary>
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
@@ -3177,114 +2981,13 @@ export default function SettingsScreen() {
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── BUILD HISTORY ── */}
-        {buildHistory.length > 0 && (
-          <>
-            <SectionHeader label="BUILD HISTORY" accent="#8B5CF6" />
-            <View style={styles.card}>
-              <Pressable
-                style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 14 }}
-                onPress={() => setBuildHistoryExpanded(v => !v)}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Ionicons name="code-slash-outline" size={14} color="#8B5CF6" />
-                  <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
-                    Build History
-                  </Text>
-                  <View style={{ backgroundColor: '#8B5CF620', borderRadius: 10, paddingHorizontal: 6, paddingVertical: 1 }}>
-                    <Text style={{ fontSize: 11, color: '#8B5CF6', fontFamily: 'Inter_600SemiBold' }}>
-                      {buildHistory.length}
-                    </Text>
-                  </View>
-                </View>
-                <Ionicons
-                  name={buildHistoryExpanded ? 'chevron-up' : 'chevron-down'}
-                  size={14}
-                  color={Colors.textTertiary}
-                />
-              </Pressable>
-              {buildHistoryExpanded && (
-                <View style={{ paddingHorizontal: 14, paddingBottom: 14, gap: 8 }}>
-                  {buildHistory.map((build, idx) => {
-                    const argsJson = build.smokeTestArgs ? JSON.stringify(build.smokeTestArgs, null, 2) : null;
-                    const stableJson = (obj: Record<string, unknown> | null): string =>
-                      obj ? JSON.stringify(obj, Object.keys(obj).sort()) : '';
-                    const reusedArgs = build.smokeTestArgs
-                      ? buildHistory.slice(idx + 1).some(
-                          older => older.smokeTestPassed && older.smokeTestArgs &&
-                            stableJson(older.smokeTestArgs) === stableJson(build.smokeTestArgs)
-                        )
-                      : false;
-                    return (
-                    <View key={build.id} style={ocStyles.buildCard}>
-                      <Pressable
-                        style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}
-                        onPress={() => setExpandedBuildId(expandedBuildId === build.id ? null : build.id)}
-                      >
-                        <View style={{ flex: 1, gap: 2 }}>
-                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                            <Ionicons
-                              name={!build.success ? 'close-circle' : build.smokeTestPassed ? 'checkmark-circle' : 'alert-circle'}
-                              size={12}
-                              color={!build.success ? Colors.error : build.smokeTestPassed ? '#10B981' : '#F59E0B'}
-                            />
-                            <Text style={{ fontSize: 13, fontFamily: 'Inter_600SemiBold', color: Colors.text }}>
-                              {build.featureName}
-                            </Text>
-                            {reusedArgs && (
-                              <View style={{ backgroundColor: '#8B5CF620', borderRadius: 8, paddingHorizontal: 5, paddingVertical: 1, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
-                                <Ionicons name="refresh-outline" size={9} color="#8B5CF6" />
-                                <Text style={{ fontSize: 9, color: '#8B5CF6', fontFamily: 'Inter_600SemiBold' }}>reused args</Text>
-                              </View>
-                            )}
-                          </View>
-                          <Text style={{ fontSize: 10, fontFamily: 'Inter_500Medium', color: !build.success ? Colors.error : build.smokeTestPassed ? '#10B981' : '#F59E0B', marginBottom: 2 }}>
-                            {!build.success ? 'Build failed' : build.smokeTestPassed ? 'Built and verified' : 'Built'}
-                          </Text>
-                          <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular' }} numberOfLines={2}>
-                            {build.description}
-                          </Text>
-                          <Text style={{ fontSize: 10, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', marginTop: 2 }}>
-                            {new Date(build.createdAt ?? '').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                          </Text>
-                        </View>
-                        <Ionicons
-                          name={expandedBuildId === build.id ? 'chevron-up' : 'chevron-down'}
-                          size={12}
-                          color={Colors.textTertiary}
-                        />
-                      </Pressable>
-                      {expandedBuildId === build.id && (
-                        <>
-                          {argsJson && (
-                            <View style={{ marginTop: 8 }}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginBottom: 4 }}>
-                                <Ionicons name="flask-outline" size={10} color="#8B5CF6" />
-                                <Text style={{ fontSize: 10, fontFamily: 'Inter_600SemiBold', color: '#8B5CF6' }}>
-                                  {reusedArgs ? 'Test Args (reused from prior build)' : 'Test Args'}
-                                </Text>
-                              </View>
-                              <ScrollView style={ocStyles.buildCodeBlock} nestedScrollEnabled>
-                                <Text style={ocStyles.buildCodeText} selectable>
-                                  {argsJson}
-                                </Text>
-                              </ScrollView>
-                            </View>
-                          )}
-                          <ScrollView style={[ocStyles.buildCodeBlock, { marginTop: argsJson ? 6 : 8 }]} nestedScrollEnabled>
-                            <Text style={ocStyles.buildCodeText} selectable>
-                              {build.outputCode || '(no code recorded)'}
-                            </Text>
-                          </ScrollView>
-                        </>
-                      )}
-                    </View>
-                    );
-                  })}
-                </View>
-              )}
-            </View>
-          </>
-        )}
+        <BuildHistorySection
+          builds={buildHistory}
+          expanded={buildHistoryExpanded}
+          expandedBuildId={expandedBuildId}
+          onToggleExpanded={() => setBuildHistoryExpanded(v => !v)}
+          onToggleBuild={(buildId) => setExpandedBuildId(expandedBuildId === buildId ? null : buildId)}
+        />
         </ErrorBoundary>
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
@@ -4432,81 +4135,16 @@ export default function SettingsScreen() {
         claimedToday={false}
       />
 
-      {/* Subsystem Error Detail Sheet */}
-      <Modal
+      <SubsystemErrorSheet
         visible={subsystemSheetVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setSubsystemSheetVisible(false)}
-      >
-        <Pressable
-          style={memSheetStyles.backdrop}
-          onPress={() => setSubsystemSheetVisible(false)}
-        />
-        <View style={memSheetStyles.sheet}>
-          <View style={memSheetStyles.handle} />
-          <View style={memSheetStyles.header}>
-            <Ionicons name="warning-outline" size={16} color="#F59E0B" />
-            <Text style={memSheetStyles.title}>{subsystemSheetLabel} Error Details</Text>
-            <Pressable onPress={() => setSubsystemSheetVisible(false)} hitSlop={10}>
-              <Ionicons name="close" size={20} color={Colors.textSecondary} />
-            </Pressable>
-          </View>
-          <Text style={memSheetStyles.subtitle}>Recent errors from the {subsystemSheetLabel.toLowerCase()} subsystem (last 60 minutes)</Text>
-          {subsystemEventsLastUpdated != null && (
-            <Text style={memSheetStyles.lastUpdated}>
-              {(() => {
-                const diffMs = Date.now() - subsystemEventsLastUpdated.getTime();
-                const m = Math.floor(diffMs / 60000);
-                if (m < 1) return 'Updated just now';
-                if (m < 60) return `Updated ${m}m ago`;
-                return `Updated ${Math.floor(m / 60)}h ago`;
-              })()}
-            </Text>
-          )}
-          {subsystemEventsLoading ? (
-            <View style={memSheetStyles.loadingRow}>
-              <ActivityIndicator size="small" color={Colors.textSecondary} />
-              <Text style={memSheetStyles.loadingText}>Loading events…</Text>
-            </View>
-          ) : subsystemEvents.length === 0 ? (
-            <View style={memSheetStyles.emptyRow}>
-              <Ionicons name="checkmark-circle-outline" size={24} color="#10B981" />
-              <Text style={memSheetStyles.emptyText}>No {subsystemSheetLabel.toLowerCase()} errors in the last hour</Text>
-            </View>
-          ) : (
-            <ScrollView style={memSheetStyles.eventList} showsVerticalScrollIndicator={false}>
-              {subsystemEvents.map((ev) => {
-                const sevColor = ev.severity === 'critical' || ev.severity === 'error' ? Colors.error : '#F59E0B';
-                const operation = typeof ev.metadata?.operation === 'string' ? ev.metadata.operation : null;
-                const timeAgo = (() => {
-                  const diffMs = Date.now() - new Date(ev.createdAt ?? '').getTime();
-                  const m = Math.floor(diffMs / 60000);
-                  if (m < 1) return 'just now';
-                  if (m < 60) return `${m}m ago`;
-                  return `${Math.floor(m / 60)}h ago`;
-                })();
-                return (
-                  <View key={ev.id} style={memSheetStyles.eventRow}>
-                    <View style={[memSheetStyles.severityDot, { backgroundColor: sevColor }]} />
-                    <View style={memSheetStyles.eventContent}>
-                      <View style={memSheetStyles.eventMeta}>
-                        {operation ? (
-                          <Text style={[memSheetStyles.operationTag, { color: sevColor }]}>{operation}</Text>
-                        ) : (
-                          <Text style={[memSheetStyles.operationTag, { color: Colors.textTertiary }]}>{subsystemSheetName}</Text>
-                        )}
-                        <Text style={memSheetStyles.eventTime}>{timeAgo}</Text>
-                      </View>
-                      <Text style={memSheetStyles.eventMessage}>{ev.message}</Text>
-                    </View>
-                  </View>
-                );
-              })}
-            </ScrollView>
-          )}
-        </View>
-      </Modal>
+        subsystemName={subsystemSheetName}
+        subsystemLabel={subsystemSheetLabel}
+        events={subsystemEvents}
+        loading={subsystemEventsLoading}
+        lastUpdated={subsystemEventsLastUpdated}
+        styles={memSheetStyles}
+        onClose={() => setSubsystemSheetVisible(false)}
+      />
     </View>
   );
 }
@@ -4792,71 +4430,6 @@ const styles = StyleSheet.create({
   connBtnTextConnected: {
     color: Colors.success,
   },
-  connectionPill: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 999,
-    backgroundColor: '#6366F120',
-    borderWidth: 1,
-    borderColor: '#6366F150',
-  },
-  connectionPillText: {
-    fontSize: 10,
-    fontFamily: 'Inter_600SemiBold',
-    color: '#A5B4FC',
-  },
-  connectionKeyPreview: {
-    fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.success,
-  },
-  connectionPanel: {
-    padding: 14,
-    gap: 10,
-  },
-  connectionSetupSteps: {
-    backgroundColor: '#6366F112',
-    borderWidth: 1,
-    borderColor: '#6366F135',
-    borderRadius: 10,
-    padding: 10,
-    gap: 4,
-  },
-  connectionSetupTitle: {
-    fontSize: 11,
-    fontFamily: 'Inter_700Bold',
-    color: '#C7D2FE',
-    textTransform: 'uppercase',
-    marginBottom: 2,
-  },
-  connectionSetupText: {
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textSecondary,
-    lineHeight: 17,
-  },
-  connectionInputLabel: {
-    fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.textSecondary,
-  },
-  connectionInput: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.text,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  connectionActionsPanelRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
-  },
   connectionActionsRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4874,13 +4447,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_600SemiBold',
     color: Colors.textSecondary,
-  },
-  connectionHint: {
-    flex: 1,
-    textAlign: 'right',
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
   },
   connectionTestText: {
     fontSize: 12,
@@ -4945,20 +4511,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter_400Regular',
     color: Colors.textSecondary,
-  },
-  linkCodeInput: {
-    flex: 1,
-    height: 40,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.cyan + '60',
-    backgroundColor: Colors.surface,
-    color: Colors.text,
-    paddingHorizontal: 12,
-    fontSize: 18,
-    fontFamily: 'Inter_700Bold',
-    letterSpacing: 3,
-    textAlign: 'center',
   },
   // Preferences
   prefRow: {
@@ -5085,9 +4637,6 @@ const styles = StyleSheet.create({
     width: 52,
     gap: 4,
   },
-  badgeEmoji: {
-    fontSize: 24,
-  },
   badgeLabel: {
     fontSize: 9,
     fontFamily: 'Inter_500Medium',
@@ -5102,9 +4651,6 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     marginBottom: 8,
-  },
-  rewardEmoji: {
-    fontSize: 22,
   },
   rewardInfo: {
     flex: 1,
@@ -5421,208 +4967,6 @@ const tlStyles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter_400Regular',
     color: Colors.textTertiary,
-  },
-});
-
-const drStyles = StyleSheet.create({
-  headerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  title: {
-    fontSize: 13,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.text,
-  },
-  subtitle: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textSecondary,
-    lineHeight: 15,
-  },
-  ranAt: {
-    fontSize: 10,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-    marginTop: 2,
-  },
-  runBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#10B981',
-    backgroundColor: '#10B98115',
-    minWidth: 62,
-    justifyContent: 'center',
-  },
-  runBtnText: {
-    fontSize: 12,
-    fontFamily: 'Inter_600SemiBold',
-    color: '#10B981',
-  },
-  resultFirst: {
-    borderTopWidth: 0,
-  },
-  resultRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  resultLabel: {
-    fontSize: 13,
-    fontFamily: 'Inter_500Medium',
-    color: Colors.text,
-  },
-  resultMsg: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textSecondary,
-    lineHeight: 15,
-  },
-  emptyHint: {
-    padding: 14,
-    alignItems: 'center',
-  },
-  emptyHintText: {
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-  },
-});
-
-const ocStyles = StyleSheet.create({
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  configBlock: {
-    paddingHorizontal: 14,
-    paddingVertical: 14,
-    gap: 6,
-  },
-  label: {
-    fontSize: 11,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.textSecondary,
-    letterSpacing: 0.5,
-    marginBottom: 2,
-  },
-  hint: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-    lineHeight: 15,
-    marginBottom: 4,
-  },
-  input: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 13,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.text,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  modeRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  modePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surfaceAlt,
-  },
-  modePillActive: {
-    borderColor: '#8B5CF6',
-    backgroundColor: '#8B5CF620',
-  },
-  modePillText: {
-    fontSize: 12,
-    fontFamily: 'Inter_500Medium',
-    color: Colors.textTertiary,
-  },
-  modePillTextActive: {
-    color: '#8B5CF6',
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 8,
-    marginTop: 8,
-  },
-  statusText: {
-    fontSize: 12,
-    fontFamily: 'Inter_500Medium',
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginTop: 12,
-  },
-  btn: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  btnPrimary: {
-    backgroundColor: '#8B5CF6',
-  },
-  btnSecondary: {
-    backgroundColor: 'transparent',
-    borderWidth: 1,
-    borderColor: '#8B5CF6',
-  },
-  btnText: {
-    fontSize: 13,
-    fontFamily: 'Inter_600SemiBold',
-  },
-  buildCard: {
-    backgroundColor: Colors.surfaceAlt,
-    borderRadius: 8,
-    padding: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 4,
-  },
-  buildCodeBlock: {
-    marginTop: 8,
-    backgroundColor: Colors.surface,
-    borderRadius: 6,
-    padding: 10,
-    maxHeight: 300,
-  },
-  buildCodeText: {
-    fontSize: 11,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    color: Colors.textSecondary,
-    lineHeight: 16,
   },
 });
 

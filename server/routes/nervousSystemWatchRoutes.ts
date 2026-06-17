@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
 
@@ -7,6 +7,25 @@ const validCategories = new Set(["keyword", "company", "person", "industry"]);
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
 
 export function registerNervousSystemWatchRoutes(app: Express): void {
+  app.get("/api/nervous-system/signals", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    const parsedLimit = parseInt((req.query.limit as string) || "20", 10);
+    const limit = Math.min(50, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 20 : parsedLimit);
+    try {
+      const signals = await db
+        .select()
+        .from(schema.nervousSystemSignals)
+        .where(eq(schema.nervousSystemSignals.userId, userId))
+        .orderBy(desc(schema.nervousSystemSignals.createdAt))
+        .limit(limit);
+      res.json(signals);
+    } catch (err) {
+      console.error("[NervousSystem] signals fetch failed:", err);
+      res.status(500).json({ error: "Failed to fetch signals" });
+    }
+  });
+
   app.get("/api/nervous-system/watches", async (req: Request, res: Response) => {
     const userId = req.userId;
     if (!userId) return res.status(401).json({ error: "Not authenticated" });

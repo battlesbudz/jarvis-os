@@ -2,15 +2,10 @@ import { createHash } from "crypto";
 import type { AgentTool } from "../types";
 import {
   sendDaemonOp,
-  isDesktopDaemonActive,
   isAndroidDaemonActive,
   isAndroidDaemonActionAllowed,
-  isDaemonActionAllowed,
-  getDaemonPermissions,
-  getAndroidDaemonPermissions,
-  getDaemonDeviceMeta,
-  getDaemonLastSeen,
   waitForTrainingTap,
+  type AndroidDaemonAction,
 } from "../../daemon/bridge";
 import { routeModelTurn } from "../modelRouter";
 import { screenshotDiff } from "../../lib/screenshotDiff";
@@ -18,224 +13,8 @@ import { db } from "../../db";
 import { buttonLocations, searchBarLocations } from "@shared/schema";
 import { eq, and, desc, sql as drizzleSql } from "drizzle-orm";
 import { notifyUser } from "../../channels/registry";
-import { detectsOutsideRoot } from "./daemonShellSafety";
-
-export const daemonShellTool: AgentTool = {
-  name: "daemon_shell",
-  description:
-    "Run a shell command on the user's desktop via the paired desktop daemon. Returns stdout, stderr, exit code, and duration. Use this proactively when the user asks to run a script, build an app, run tests, execute local automation, read a local file via shell, or do any computation on their machine. Requires the desktop daemon to be paired and the 'shell' permission enabled in Profile     Connected Channels     Desktop Daemon     Permissions. When the daemon is offline, returns a clear explanation and how to start it. For desktop notifications, file reads, or screenshots, prefer daemon_action.",
-  parameters: {
-    type: "object",
-    properties: {
-      command: {
-        type: "string",
-        description: "The shell command to execute on the user's desktop. Runs inside the daemon workspace root (~/jarvis-workspace by default). Use relative paths for files inside the workspace.",
-      },
-      cwd: {
-        type: "string",
-        description: "Optional working directory relative to the daemon workspace root. Defaults to the workspace root.",
-      },
-      timeout_ms: {
-        type: "number",
-        description: "Optional timeout in milliseconds (default 30000, max 120000). Increase for long-running builds or test suites.",
-      },
-    },
-    required: ["command"],
-  },
-  async execute(args, ctx) {
-    const command = String(args.command || "").trim();
-    if (!command) {
-      return { ok: false, content: "command is required.", label: "daemon_shell: no command" };
-    }
-
-    if (!isDesktopDaemonActive(ctx.userId)) {
-      return {
-        ok: false,
-        content:
-          "Desktop daemon is not connected. To use daemon_shell, the user needs to:\n1. Download jarvis-daemon.js from Profile     Connected Channels     Desktop Daemon\n2. Run: JARVIS_SERVER=<url> JARVIS_PAIR_CODE=<code> node jarvis-daemon.js\nThe daemon reconnects automatically after network drops.",
-        label: "daemon_shell: desktop offline",
-      };
-    }
-
-    const shellAllowed = await isDaemonActionAllowed(ctx.userId, "shell");
-    if (!shellAllowed) {
-      return {
-        ok: false,
-        content:
-          "Shell execution is not permitted on this daemon. The user must enable it in Profile     Connected Channels     Desktop Daemon     Permissions     Shell Execution.",
-        label: "daemon_shell: shell permission denied",
-      };
-    }
-
-    // Look up the allow_outside_root permission     sent to daemon so it can enforce.
-    // The server also does a preflight regex check to surface clear error messages
-    // before the round-trip, but the daemon is the authoritative security boundary.
-    const allowOutsideRoot = await isDaemonActionAllowed(ctx.userId, "allow_outside_root");
-
-    // Preflight heuristic check (UX-only     daemon enforces authoritatively)
-    if (!allowOutsideRoot && detectsOutsideRoot(command)) {
-      return {
-        ok: false,
-        content:
-          `The command "${command.slice(0, 80)}" appears to navigate or write outside the daemon workspace root. ` +
-          "This is blocked by default. The user can enable unrestricted shell access in " +
-          "Profile     Connected Channels     Desktop Daemon     Permissions     Allow Outside Root.",
-        label: "daemon_shell: outside-root blocked",
-      };
-    }
-
-    const timeoutMs = Math.min(
-      typeof args.timeout_ms === "number" ? args.timeout_ms : 30000,
-      120000,
-    );
-
-    const startedAt = Date.now();
-    const result = await sendDaemonOp(
-      ctx.userId,
-      {
-        type: "shell",
-        cmd: command,
-        cwd: args.cwd ? String(args.cwd) : undefined,
-        timeoutMs,
-        allowOutsideRoot,
-      },
-      timeoutMs + 5000,
-    );
-
-    const durationMs = Date.now() - startedAt;
-
-    if (!result.ok && !result.data) {
-      const errMsg = result.error || "unknown error";
-      return {
-        ok: false,
-        content: `Shell command failed: ${errMsg}`,
-        label: "daemon_shell: error",
-        detail: errMsg,
-      };
-    }
-
-    const data = (result.data || {}) as Record<string, unknown>;
-    const stdout = typeof data.stdout === "string" ? data.stdout : "";
-    const stderr = typeof data.stderr === "string" ? data.stderr : "";
-    const exitCode = typeof data.code === "number" ? data.code : result.ok ? 0 : 1;
-
-    const parts: string[] = [];
-    if (stdout.trim()) parts.push(`STDOUT:\n${stdout.trim()}`);
-    if (stderr.trim()) parts.push(`STDERR:\n${stderr.trim()}`);
-    if (parts.length === 0) parts.push(result.ok ? "(no output)" : `Error: ${result.error || "non-zero exit"}`);
-
-    const summary = parts.join("\n\n");
-    const content = `Exit code: ${exitCode} | Duration: ${durationMs}ms\n\n${summary}`;
-
-    console.log(`[daemon_shell] userId=${ctx.userId} cmd="${command.slice(0, 60)}" ok=${result.ok} exit=${exitCode} dur=${durationMs}ms`);
-
-    return {
-      ok: result.ok,
-      content: content.slice(0, 12000),
-      label: `Shell: ${command.slice(0, 40)}${command.length > 40 ? "   " : ""}`,
-      detail: `exit=${exitCode} dur=${durationMs}ms`,
-    };
-  },
-};
-
-export const daemonStatusTool: AgentTool = {
-  name: "daemon_status",
-  description:
-    "Check the current connection status of the desktop daemon and Android daemon for this user. Returns connected state, last-seen time, hostname, and which capabilities are enabled. Use before running daemon_shell or daemon_action to verify the daemon is online and permissions are correct.",
-  parameters: {
-    type: "object",
-    properties: {},
-    required: [],
-  },
-  async execute(_args, ctx) {
-    const desktopActive = isDesktopDaemonActive(ctx.userId);
-    const androidActive = isAndroidDaemonActive(ctx.userId);
-
-    const [desktopMeta, androidMeta, desktopPerms, androidPerms, desktopLastSeen, androidLastSeen] = await Promise.all([
-      getDaemonDeviceMeta(ctx.userId, "desktop").catch(() => ({ hostname: null, platform: null })),
-      getDaemonDeviceMeta(ctx.userId, "android").catch(() => ({ hostname: null, platform: null })),
-      getDaemonPermissions(ctx.userId).catch(() => null),
-      getAndroidDaemonPermissions(ctx.userId).catch(() => null),
-      getDaemonLastSeen(ctx.userId, "desktop").catch(() => null),
-      getDaemonLastSeen(ctx.userId, "android").catch(() => null),
-    ]);
-
-    const desktopCapabilities: string[] = [];
-    if (desktopPerms) {
-      if (desktopPerms.shell) desktopCapabilities.push("shell");
-      if (desktopPerms.file_read) desktopCapabilities.push("file_read");
-      if (desktopPerms.file_write) desktopCapabilities.push("file_write");
-      if (desktopPerms.file_list) desktopCapabilities.push("file_list");
-      if (desktopPerms.notify) desktopCapabilities.push("notify");
-      if (desktopPerms.desktop_screenshot) desktopCapabilities.push("desktop_screenshot");
-      if (desktopPerms.desktop_read_screen) desktopCapabilities.push("desktop_read_screen");
-      if (desktopPerms.browser_local) desktopCapabilities.push("browser_local");
-      if (desktopPerms.allow_outside_root) desktopCapabilities.push("allow_outside_root");
-    }
-
-    const androidCapabilities: string[] = [];
-    if (androidPerms) {
-      if (androidPerms.android_screenshot) androidCapabilities.push("android_screenshot");
-      if (androidPerms.android_read_screen) androidCapabilities.push("android_read_screen");
-      if (androidPerms.android_open_app) androidCapabilities.push("android_open_app");
-      if (androidPerms.android_browse) androidCapabilities.push("android_browse");
-      if (androidPerms.android_file_list) androidCapabilities.push("android_file_list");
-      if (androidPerms.android_file_read) androidCapabilities.push("android_file_read");
-      if (androidPerms.android_tap_type) androidCapabilities.push("android_tap_type");
-      if (androidPerms.android_camera) androidCapabilities.push("android_camera");
-      if (androidPerms.android_location) androidCapabilities.push("android_location");
-      if (androidPerms.android_sms) androidCapabilities.push("android_sms");
-      if (androidPerms.android_screen_record) androidCapabilities.push("android_screen_record");
-    }
-
-    const status = {
-      desktop: {
-        connected: desktopActive,
-        lastSeen: desktopLastSeen,
-        hostname: desktopMeta.hostname,
-        capabilities: desktopCapabilities,
-      },
-      android: {
-        connected: androidActive,
-        lastSeen: androidLastSeen,
-        hostname: androidMeta.hostname,
-        capabilities: androidCapabilities,
-      },
-    };
-
-    const lines: string[] = [];
-
-    if (desktopActive) {
-      lines.push(`Desktop daemon: CONNECTED${desktopMeta.hostname ? ` (${desktopMeta.hostname})` : ""}${desktopLastSeen ? `     last seen ${desktopLastSeen}` : ""}`);
-      lines.push(`  Enabled capabilities: ${desktopCapabilities.length > 0 ? desktopCapabilities.join(", ") : "none"}`);
-      if (!desktopPerms?.shell) {
-        lines.push(`  Note: 'shell' is disabled. Enable it in Profile     Connected Channels     Desktop Daemon     Permissions to use daemon_shell.`);
-      }
-    } else {
-      lines.push(`Desktop daemon: OFFLINE${desktopLastSeen ? `     last seen ${desktopLastSeen}` : ""}`);
-      lines.push("  To connect: run jarvis-daemon.js with your pair code from Profile     Connected Channels     Desktop Daemon.");
-    }
-
-    lines.push("");
-
-    if (androidActive) {
-      lines.push(`Android daemon: CONNECTED${androidMeta.hostname ? ` (${androidMeta.hostname})` : ""}${androidLastSeen ? `     last seen ${androidLastSeen}` : ""}`);
-      lines.push(`  Enabled capabilities: ${androidCapabilities.length > 0 ? androidCapabilities.join(", ") : "none"}`);
-    } else {
-      lines.push(`Android daemon: OFFLINE${androidLastSeen ? `     last seen ${androidLastSeen}` : ""}`);
-      lines.push("  To connect: install the Jarvis Android APK and pair it from Profile     Connected Channels     Android Device.");
-    }
-
-    console.log(`[daemon_status] userId=${ctx.userId} desktop=${desktopActive} android=${androidActive}`);
-
-    return {
-      ok: true,
-      content: lines.join("\n"),
-      label: `Daemon status: desktop=${desktopActive ? "online" : "offline"} android=${androidActive ? "online" : "offline"}`,
-      detail: JSON.stringify(status),
-    };
-  },
-};
+export { daemonShellTool } from "./desktopDaemonShellTool";
+export { daemonStatusTool } from "./daemonStatusTool";
 
 //        ScreenMap cache                                                                                                                                                                                     
 // 500 ms per-user cache so back-to-back calls don't hit Codex OAuth twice.
@@ -271,6 +50,97 @@ export const learnedResourceIds = new Map<string, string>();
 // Keyed by ToolContext (unique object per request, GC'd when the turn ends).
 const MAX_SCREENSHOTS_PER_TURN = 4;
 const screenshotCountPerCtx = new WeakMap<object, number>();
+
+type AndroidPermissionRequirement = {
+  action: AndroidDaemonAction;
+  deniedLabel: string;
+};
+
+async function requireAndroidPermissions(
+  userId: string,
+  toolName: string,
+  requirements: AndroidPermissionRequirement[],
+): Promise<{ ok: false; content: string; label: string } | null> {
+  const allowed = await Promise.all(
+    requirements.map((requirement) => isAndroidDaemonActionAllowed(userId, requirement.action)),
+  );
+
+  for (let i = 0; i < requirements.length; i += 1) {
+    if (!allowed[i]) {
+      const requirement = requirements[i];
+      return {
+        ok: false,
+        content: `${requirement.action} permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.`,
+        label: `${toolName}: ${requirement.deniedLabel} permission denied`,
+      };
+    }
+  }
+
+  return null;
+}
+
+type AndroidTextInputFallbackResult = {
+  methodUsed: string | null;
+  inputOk: boolean;
+  daemonVerified: boolean;
+  fieldText: string | null;
+};
+
+async function runAndroidTextInputFallback(
+  userId: string,
+  text: string,
+  fieldDescription: string,
+  steps: string[],
+): Promise<AndroidTextInputFallbackResult> {
+  let methodUsed: string | null = null;
+  let inputOk = false;
+  let daemonVerified = false;
+  let fieldText: string | null = null;
+
+  steps.push("Level 1 - android_type (accessibility ACTION_SET_TEXT)...");
+  const typeResult = await sendDaemonOp(userId, { type: "android_type", text }, 10000);
+  if (typeResult.ok) {
+    methodUsed = "android_type";
+    inputOk = true;
+    steps.push("android_type accepted by accessibility service.");
+  } else {
+    steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
+  }
+
+  if (!inputOk) {
+    steps.push("Level 2 - android_paste_text (adb input text primary, clipboard fallback)...");
+    const pasteResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
+    if (pasteResult.ok) {
+      const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
+      const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
+      methodUsed = `android_paste_text:${daemonMethod}`;
+      inputOk = true;
+      daemonVerified = pasteData.verified === true;
+      fieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
+      steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
+    } else {
+      steps.push(`android_paste_text failed (${pasteResult.error || "unknown"}). Moving to Level 3.`);
+    }
+  }
+
+  if (!inputOk) {
+    steps.push("Level 3 - android_paste_text retry (clipboard-only path)...");
+    const retryResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
+    if (retryResult.ok) {
+      const retryData = (retryResult.data || {}) as Record<string, unknown>;
+      const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
+      methodUsed = `android_paste_text:${retryMethod}:L3`;
+      inputOk = true;
+      daemonVerified = retryData.verified === true;
+      fieldText = typeof retryData.field_text === "string" ? retryData.field_text : null;
+      steps.push(`Level 3 retry succeeded via ${retryMethod}. Daemon verified: ${daemonVerified}.`);
+    } else {
+      steps.push(`Level 3 retry failed (${retryResult.error || "unknown"}). All input methods exhausted.`);
+    }
+  }
+
+  return { methodUsed, inputOk, daemonVerified, fieldText };
+}
 
 /**
  * Returns true and increments the count if screenshots are still available this turn.
@@ -2260,6 +2130,55 @@ interface ClickableElement {
   className?: string;
 }
 
+interface HierarchyChangeBaseline {
+  count: number;
+  labels: Set<string>;
+  resourceIds: Set<string>;
+  idToLabel?: Map<string, string>;
+}
+
+function captureHierarchyChangeBaseline(
+  clickable: ClickableElement[],
+  options: { trackIdLabelChanges?: boolean } = {},
+): HierarchyChangeBaseline {
+  return {
+    count: clickable.length,
+    labels: new Set(clickable.map((el) => el.label)),
+    resourceIds: new Set(clickable.map((el) => el.resourceId).filter((id): id is string => !!id)),
+    idToLabel: options.trackIdLabelChanges
+      ? new Map(
+          clickable
+            .filter((el): el is ClickableElement & { resourceId: string } => !!el.resourceId)
+            .map((el) => [el.resourceId, el.label]),
+        )
+      : undefined,
+  };
+}
+
+function hierarchyChangedSince(baseline: HierarchyChangeBaseline, postClickable: ClickableElement[]): boolean {
+  if (postClickable.length !== baseline.count) return true;
+
+  const postLabels = new Set(postClickable.map((el) => el.label));
+  if ([...postLabels].some((label) => !baseline.labels.has(label))) return true;
+
+  const postResourceIds = new Set(postClickable.map((el) => el.resourceId).filter((id): id is string => !!id));
+  if ([...postResourceIds].some((id) => !baseline.resourceIds.has(id))) return true;
+  if (baseline.resourceIds.size > 0 && [...baseline.resourceIds].some((id) => !postResourceIds.has(id))) return true;
+
+  if (baseline.idToLabel && baseline.idToLabel.size > 0) {
+    const postIdToLabel = new Map<string, string>(
+      postClickable
+        .filter((el): el is ClickableElement & { resourceId: string } => !!el.resourceId)
+        .map((el) => [el.resourceId, el.label]),
+    );
+    return [...postIdToLabel.entries()].some(
+      ([id, postLabel]) => baseline.idToLabel?.has(id) && baseline.idToLabel.get(id) !== postLabel,
+    );
+  }
+
+  return false;
+}
+
 function matchStringScore(field: string, query: string): number {
   const f = field.toLowerCase();
   const q = query.toLowerCase().trim();
@@ -2349,6 +2268,19 @@ async function readScreen(userId: string): Promise<ClickableElement[]> {
   }));
 }
 
+function bestScreenElement(elements: ScreenElement[], label: string): { bestElement: ScreenElement | null; bestScore: number } {
+  let bestElement: ScreenElement | null = null;
+  let bestScore = 0;
+  for (const el of elements) {
+    const score = scoreElement(el, label);
+    if (score > bestScore) {
+      bestScore = score;
+      bestElement = el;
+    }
+  }
+  return { bestElement, bestScore };
+}
+
 // ── android_swipe_element ──────────────────────────────────────────────────────
 // Fuzzy-matches a label/description string against the ScreenMap and fires an
 // android_swipe gesture starting from the best-matching element's center, in the
@@ -2433,33 +2365,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // Permission checks
-    const [screenshotAllowed, readAllowed, swipeAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_swipe_element", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "swipe" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_swipe_element: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_swipe_element: read_screen permission denied",
-      };
-    }
-    if (!swipeAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_swipe_element: swipe permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     const resetScroll = args.reset_scroll === false ? false : true;
 
@@ -2472,16 +2383,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
-    let bestElement: ScreenElement | null = null;
-    let bestScore = 0;
-
-    for (const el of screenElements) {
-      const score = scoreElement(el, label);
-      if (score > bestScore) {
-        bestScore = score;
-        bestElement = el;
-      }
-    }
+    let { bestElement, bestScore } = bestScreenElement(screenElements, label);
 
     // ── Optional reset: scroll to top before the downward search loop ─────────
     // Fires only when the element was not found on the initial screen, ensuring
@@ -2665,11 +2567,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       try { preSwipeHash = await computeScreenshotHash(preSwipeScreenshot); } catch { /* best-effort */ }
     }
     const preSwipeClickable = await readScreen(ctx.userId);
-    const preSwipeCount = preSwipeClickable.length;
-    const preSwipeLabels = new Set(preSwipeClickable.map((el) => el.label));
-    const preSwipeResourceIds = new Set(
-      preSwipeClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-    );
+    const preSwipeHierarchy = captureHierarchyChangeBaseline(preSwipeClickable);
 
     // ── Fire the swipe ────────────────────────────────────────────────────────
     const swipeResult = await sendDaemonOp(ctx.userId, { type: "android_swipe", x1, y1, x2, y2, durationMs: 400 }, 15000);
@@ -2710,21 +2608,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // or visual change below threshold due to re-used resource IDs in scrolled content).
     if (!screenChanged) {
       const postSwipeClickable = await readScreen(ctx.userId);
-      if (postSwipeClickable.length !== preSwipeCount) {
-        screenChanged = true;
-      } else {
-        const postSwipeLabels = new Set(postSwipeClickable.map((el) => el.label));
-        if ([...postSwipeLabels].some((l) => !preSwipeLabels.has(l))) screenChanged = true;
-        if (!screenChanged) {
-          const postSwipeResourceIds = new Set(
-            postSwipeClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-          );
-          if ([...postSwipeResourceIds].some((id) => !preSwipeResourceIds.has(id))) screenChanged = true;
-          if (!screenChanged && preSwipeResourceIds.size > 0) {
-            if ([...preSwipeResourceIds].some((id) => !postSwipeResourceIds.has(id))) screenChanged = true;
-          }
-        }
-      }
+      screenChanged = hierarchyChangedSince(preSwipeHierarchy, postSwipeClickable);
     }
 
     console.log(`[android_swipe_element] userId=${ctx.userId} swiped ${direction} on "${bestElement.label}" from (${x1},${y1}) to (${x2},${y2}) score=${bestScore} screen_changed=${screenChanged} hash_distance=${hashDistance} scrolls_performed=${scrollsPerformed}`);
@@ -2843,33 +2727,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // Permission checks
-    const [screenshotAllowed, readAllowed, swipeAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_pinch_element", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "swipe" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_pinch_element: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_pinch_element: read_screen permission denied",
-      };
-    }
-    if (!swipeAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_pinch_element: swipe permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     // ── Resolve ScreenMap (cache or fresh) ────────────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
@@ -2880,16 +2743,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
-    let bestElement: ScreenElement | null = null;
-    let bestScore = 0;
-
-    for (const el of screenElements) {
-      const score = scoreElement(el, label);
-      if (score > bestScore) {
-        bestScore = score;
-        bestElement = el;
-      }
-    }
+    let { bestElement, bestScore } = bestScreenElement(screenElements, label);
 
     if (!bestElement || bestScore === 0) {
       const elementList = screenElements
@@ -2965,11 +2819,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       }
     } catch { /* hash capture is best-effort */ }
     const prePinchClickable = await readScreen(ctx.userId);
-    const prePinchCount = prePinchClickable.length;
-    const prePinchLabels = new Set(prePinchClickable.map((el) => el.label));
-    const prePinchResourceIds = new Set(
-      prePinchClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-    );
+    const prePinchHierarchy = captureHierarchyChangeBaseline(prePinchClickable);
 
     const pinchResult = await sendDaemonOp(
       ctx.userId,
@@ -3009,21 +2859,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     // or visual change below threshold). Mirrors the same fallback in android_swipe_element.
     if (!screenChanged) {
       const postPinchClickable = await readScreen(ctx.userId);
-      if (postPinchClickable.length !== prePinchCount) {
-        screenChanged = true;
-      } else {
-        const postPinchLabels = new Set(postPinchClickable.map((el) => el.label));
-        if ([...postPinchLabels].some((l) => !prePinchLabels.has(l))) screenChanged = true;
-        if (!screenChanged) {
-          const postPinchResourceIds = new Set(
-            postPinchClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-          );
-          if ([...postPinchResourceIds].some((id) => !prePinchResourceIds.has(id))) screenChanged = true;
-          if (!screenChanged && prePinchResourceIds.size > 0) {
-            if ([...prePinchResourceIds].some((id) => !postPinchResourceIds.has(id))) screenChanged = true;
-          }
-        }
-      }
+      screenChanged = hierarchyChangedSince(prePinchHierarchy, postPinchClickable);
     }
 
     console.log(
@@ -3259,33 +3095,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    // Permission checks (parallel)
-    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_tap_element", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "tap" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_tap_element: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_tap_element: read_screen permission denied",
-      };
-    }
-    if (!tapAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_tap_element: tap permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     const useScreenshot = args.verify_with_screenshot !== false;
 
@@ -3298,16 +3113,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
-    let bestElement: ScreenElement | null = null;
-    let bestScore = 0;
-
-    for (const el of screenElements) {
-      const score = scoreElement(el, label);
-      if (score > bestScore) {
-        bestScore = score;
-        bestElement = el;
-      }
-    }
+    let { bestElement, bestScore } = bestScreenElement(screenElements, label);
 
     // ── Scroll-to-find: swipe down the page until the element appears ─────────
     const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
@@ -3462,17 +3268,8 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       try { preTapHash = await computeScreenshotHash(preScreenshot); } catch { /* best-effort */ }
     }
     const preHierarchyClickable = await readScreen(ctx.userId);
-    const preHierarchyCount = preHierarchyClickable.length;
-    const preHierarchyLabels = new Set(preHierarchyClickable.map((el) => el.label));
-    const preHierarchyResourceIds = new Set(
-      preHierarchyClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-    );
+    const preHierarchy = captureHierarchyChangeBaseline(preHierarchyClickable, { trackIdLabelChanges: true });
     // Map resourceId → label so we can detect label-value changes on the same element
-    const preHierarchyIdToLabel = new Map<string, string>(
-      preHierarchyClickable
-        .filter((el): el is typeof el & { resourceId: string } => !!el.resourceId)
-        .map((el) => [el.resourceId, el.label]),
-    );
 
     // ── Retry loop ────────────────────────────────────────────────────────────
     // Attempts 1-3: tap at Vision-located coordinates with small offsets.
@@ -3543,31 +3340,31 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // FLAG_SECURE apps (no screenshot) are handled correctly.
       if (!verified) {
         const postClickable = await readScreen(ctx.userId);
-        if (postClickable.length !== preHierarchyCount) {
+        if (postClickable.length !== preHierarchy.count) {
           verified = true;
         } else {
           // Check if any new labels appeared compared to the pre-tap baseline
           const postLabels = new Set(postClickable.map((el) => el.label));
-          if ([...postLabels].some((l) => !preHierarchyLabels.has(l))) verified = true;
+          if ([...postLabels].some((l) => !preHierarchy.labels.has(l))) verified = true;
           // Check if any new resource IDs appeared, or if pre-tap resource IDs disappeared
           if (!verified) {
             const postResourceIds = new Set(
               postClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
             );
-            if ([...postResourceIds].some((id) => !preHierarchyResourceIds.has(id))) verified = true;
-            if (!verified && preHierarchyResourceIds.size > 0) {
-              if ([...preHierarchyResourceIds].some((id) => !postResourceIds.has(id))) verified = true;
+            if ([...postResourceIds].some((id) => !preHierarchy.resourceIds.has(id))) verified = true;
+            if (!verified && preHierarchy.resourceIds.size > 0) {
+              if ([...preHierarchy.resourceIds].some((id) => !postResourceIds.has(id))) verified = true;
             }
             // Check if any element with the same resource ID changed its label text
             // (e.g. "Show more" → "Show less") — set-based checks miss this case
-            if (!verified && preHierarchyIdToLabel.size > 0) {
+            if (!verified && preHierarchy.idToLabel && preHierarchy.idToLabel.size > 0) {
               const postIdToLabel = new Map<string, string>(
                 postClickable
                   .filter((el): el is typeof el & { resourceId: string } => !!el.resourceId)
                   .map((el) => [el.resourceId, el.label]),
               );
               if ([...postIdToLabel.entries()].some(
-                ([id, postLabel]) => preHierarchyIdToLabel.has(id) && preHierarchyIdToLabel.get(id) !== postLabel,
+                ([id, postLabel]) => preHierarchy.idToLabel?.has(id) && preHierarchy.idToLabel.get(id) !== postLabel,
               )) verified = true;
             }
           }
@@ -3693,32 +3490,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_long_press_element", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "tap" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_long_press_element: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_long_press_element: read_screen permission denied",
-      };
-    }
-    if (!tapAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_long_press_element: tap permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     const resetScroll = args.reset_scroll === false ? false : true;
     const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
@@ -3736,16 +3513,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     let screenElements = screenMapResult.elements;
 
     // ── Fuzzy-match ───────────────────────────────────────────────────────────
-    let bestElement: ScreenElement | null = null;
-    let bestScore = 0;
-
-    for (const el of screenElements) {
-      const score = scoreElement(el, label);
-      if (score > bestScore) {
-        bestScore = score;
-        bestElement = el;
-      }
-    }
+    let { bestElement, bestScore } = bestScreenElement(screenElements, label);
 
     // ── Optional reset: scroll to top if element not found on initial screen ──
     // Fires only when the element was not found on the initial screen, ensuring
@@ -4008,32 +3776,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_select_option", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "tap" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_select_option: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_select_option: read_screen permission denied",
-      };
-    }
-    if (!tapAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_select_option: tap permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     // Parse scroll params (shared by Step 1 and Step 3)
     const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
@@ -4535,32 +4283,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       };
     }
 
-    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_drag_element", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "tap" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_drag_element: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_drag_element: read_screen permission denied",
-      };
-    }
-    if (!tapAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_drag_element: tap permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     const resetScroll = args.reset_scroll === false ? false : true;
     const rawMaxScrollAttempts = typeof args.max_scroll_attempts === "number" ? args.max_scroll_attempts : 5;
@@ -5176,11 +4904,7 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
     } catch { /* hash capture is best-effort */ }
 
     const preDragClickable = await readScreen(ctx.userId);
-    const preDragCount = preDragClickable.length;
-    const preDragLabels = new Set(preDragClickable.map((el) => el.label));
-    const preDragResourceIds = new Set(
-      preDragClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-    );
+    const preDragHierarchy = captureHierarchyChangeBaseline(preDragClickable);
 
     const dragResult = await sendDaemonOp(
       ctx.userId,
@@ -5223,21 +4947,7 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
     // or visual change below threshold due to re-used resource IDs in dragged content).
     if (!screenChanged) {
       const postDragClickable = await readScreen(ctx.userId);
-      if (postDragClickable.length !== preDragCount) {
-        screenChanged = true;
-      } else {
-        const postDragLabels = new Set(postDragClickable.map((el) => el.label));
-        if ([...postDragLabels].some((l) => !preDragLabels.has(l))) screenChanged = true;
-        if (!screenChanged) {
-          const postDragResourceIds = new Set(
-            postDragClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-          );
-          if ([...postDragResourceIds].some((id) => !preDragResourceIds.has(id))) screenChanged = true;
-          if (!screenChanged && preDragResourceIds.size > 0) {
-            if ([...preDragResourceIds].some((id) => !postDragResourceIds.has(id))) screenChanged = true;
-          }
-        }
-      }
+      screenChanged = hierarchyChangedSince(preDragHierarchy, postDragClickable);
     }
 
     console.log(`[android_drag_coordinates] userId=${ctx.userId} dragged from (${x1},${y1}) to (${x2},${y2}) hold_ms=${holdMs} screen_changed=${screenChanged} hash_distance=${hashDistance}`);
@@ -5378,11 +5088,7 @@ Note: screen_changed verification uses screenshot hashing and accessibility hier
       }
     } catch { /* hash capture is best-effort */ }
     const prePinchClickable = await readScreen(ctx.userId);
-    const prePinchCount = prePinchClickable.length;
-    const prePinchLabels = new Set(prePinchClickable.map((el) => el.label));
-    const prePinchResourceIds = new Set(
-      prePinchClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-    );
+    const prePinchHierarchy = captureHierarchyChangeBaseline(prePinchClickable);
 
     const pinchResult = await sendDaemonOp(
       ctx.userId,
@@ -5424,21 +5130,7 @@ Note: screen_changed verification uses screenshot hashing and accessibility hier
     // and android_swipe_element.
     if (!screenChanged) {
       const postPinchClickable = await readScreen(ctx.userId);
-      if (postPinchClickable.length !== prePinchCount) {
-        screenChanged = true;
-      } else {
-        const postPinchLabels = new Set(postPinchClickable.map((el) => el.label));
-        if ([...postPinchLabels].some((l) => !prePinchLabels.has(l))) screenChanged = true;
-        if (!screenChanged) {
-          const postPinchResourceIds = new Set(
-            postPinchClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-          );
-          if ([...postPinchResourceIds].some((id) => !prePinchResourceIds.has(id))) screenChanged = true;
-          if (!screenChanged && prePinchResourceIds.size > 0) {
-            if ([...prePinchResourceIds].some((id) => !postPinchResourceIds.has(id))) screenChanged = true;
-          }
-        }
-      }
+      screenChanged = hierarchyChangedSince(prePinchHierarchy, postPinchClickable);
     }
 
     console.log(
@@ -6117,32 +5809,12 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     }
 
     // Permission checks — need screenshot + read_screen for ScreenMap, tap_type for tap + type
-    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_type_into_element", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "tap" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_type_into_element: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_type_into_element: read_screen permission denied",
-      };
-    }
-    if (!tapAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_type_into_element: tap permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     // ── Step 1: Resolve ScreenMap (cache or fresh) ────────────────────────────
     const maxAge = typeof args.max_age_ms === "number" ? args.max_age_ms : 500;
@@ -6153,17 +5825,8 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     let screenElements = screenMapResult.elements;
 
     // ── Step 2: Fuzzy-match the element (with scroll-then-retry for off-screen fields) ──
-    let bestElement: ScreenElement | null = null;
-    let bestScore = 0;
+    let { bestElement, bestScore } = bestScreenElement(screenElements, label);
     let scrollAttempts = 0;
-
-    for (const el of screenElements) {
-      const score = scoreElement(el, label);
-      if (score > bestScore) {
-        bestScore = score;
-        bestElement = el;
-      }
-    }
 
     // If not found on the initial screen, scroll down and retry up to SCROLL_MAX_ATTEMPTS times
     while ((!bestElement || bestScore === 0) && scrollAttempts < SCROLL_MAX_ATTEMPTS) {
@@ -6274,55 +5937,12 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     }
 
     // ── Step 5: Three-level input fallback chain ──────────────────────────────
-    let methodUsed: string | null = null;
-    let inputOk = false;
-    let daemonVerified = false;
-    let fieldText: string | null = null;
-
-    // Level 1 — android_type (accessibility ACTION_SET_TEXT)
-    steps.push("Level 1 — android_type (accessibility ACTION_SET_TEXT)...");
-    const typeResult = await sendDaemonOp(ctx.userId, { type: "android_type", text }, 10000);
-    if (typeResult.ok) {
-      methodUsed = "android_type";
-      inputOk = true;
-      steps.push("android_type accepted by accessibility service.");
-    } else {
-      steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
-    }
-
-    // Level 2 — android_paste_text (adb input text → clipboard fallback)
-    if (!inputOk) {
-      steps.push("Level 2 — android_paste_text (adb input text primary, clipboard fallback)...");
-      const pasteResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
-      if (pasteResult.ok) {
-        const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
-        const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
-        methodUsed = `android_paste_text:${daemonMethod}`;
-        inputOk = true;
-        daemonVerified = pasteData.verified === true;
-        fieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
-        steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
-      } else {
-        steps.push(`android_paste_text failed (${pasteResult.error || "unknown error"}). Moving to Level 3.`);
-      }
-    }
-
-    // Level 3 — clipboard-only retry
-    if (!inputOk) {
-      steps.push("Level 3 — android_paste_text retry (clipboard-only path)...");
-      const retryResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
-      if (retryResult.ok) {
-        const retryData = (retryResult.data || {}) as Record<string, unknown>;
-        const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
-        methodUsed = `android_paste_text:${retryMethod}:L3`;
-        inputOk = true;
-        daemonVerified = retryData.verified === true;
-        fieldText = typeof retryData.field_text === "string" ? retryData.field_text : null;
-        steps.push(`Level 3 retry succeeded via ${retryMethod}. Daemon verified: ${daemonVerified}.`);
-      } else {
-        steps.push(`Level 3 retry failed (${retryResult.error || "unknown"}). All input methods exhausted.`);
-      }
-    }
+    let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
+      ctx.userId,
+      text,
+      fieldDesc,
+      steps,
+    );
 
     if (!inputOk) {
       const summary = { ok: false, field: fieldDesc, match_score: bestScore, center_x, center_y, text_sent: text, method_used: null, verified: false, field_text: null, steps };
@@ -6569,16 +6189,7 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       }
 
       // ── Fuzzy-match the element ──────────────────────────────────────────────
-      let bestElement: ScreenElement | null = null;
-      let bestScore = 0;
-
-      for (const el of screenElements) {
-        const score = scoreElement(el, fieldLabel);
-        if (score > bestScore) {
-          bestScore = score;
-          bestElement = el;
-        }
-      }
+      let { bestElement, bestScore } = bestScreenElement(screenElements, fieldLabel);
 
       // If not found, refresh ScreenMap once (handles same-page state change)
       if (!bestElement || bestScore === 0) {
@@ -6693,55 +6304,12 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       }
 
       // ── Three-level input fallback chain ──────────────────────────────────────
-      let methodUsed: string | null = null;
-      let inputOk = false;
-      let daemonVerified = false;
-      let verifiedFieldText: string | null = null;
-
-      // Level 1 — android_type
-      result.steps.push("Level 1 — android_type (accessibility ACTION_SET_TEXT)...");
-      const typeResult = await sendDaemonOp(ctx.userId, { type: "android_type", text: fieldText }, 10000);
-      if (typeResult.ok) {
-        methodUsed = "android_type";
-        inputOk = true;
-        result.steps.push("android_type accepted.");
-      } else {
-        result.steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
-      }
-
-      // Level 2 — android_paste_text
-      if (!inputOk) {
-        result.steps.push("Level 2 — android_paste_text...");
-        const pasteResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text: fieldText, fieldDescription: matchedDesc }, 15000);
-        if (pasteResult.ok) {
-          const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
-          const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
-          methodUsed = `android_paste_text:${daemonMethod}`;
-          inputOk = true;
-          daemonVerified = pasteData.verified === true;
-          verifiedFieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
-          result.steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
-        } else {
-          result.steps.push(`android_paste_text failed (${pasteResult.error || "unknown"}). Moving to Level 3.`);
-        }
-      }
-
-      // Level 3 — clipboard-only retry
-      if (!inputOk) {
-        result.steps.push("Level 3 — android_paste_text retry (clipboard-only)...");
-        const retryResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text: fieldText, fieldDescription: matchedDesc }, 15000);
-        if (retryResult.ok) {
-          const retryData = (retryResult.data || {}) as Record<string, unknown>;
-          const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
-          methodUsed = `android_paste_text:${retryMethod}:L3`;
-          inputOk = true;
-          daemonVerified = retryData.verified === true;
-          verifiedFieldText = typeof retryData.field_text === "string" ? retryData.field_text : null;
-          result.steps.push(`Level 3 retry succeeded via ${retryMethod}. Verified: ${daemonVerified}.`);
-        } else {
-          result.steps.push(`Level 3 retry failed (${retryResult.error || "unknown"}). All input methods exhausted.`);
-        }
-      }
+      let { methodUsed, inputOk, daemonVerified, fieldText: verifiedFieldText } = await runAndroidTextInputFallback(
+        ctx.userId,
+        fieldText,
+        matchedDesc,
+        result.steps,
+      );
 
       if (!inputOk) {
         result.error = "All input levels failed.";

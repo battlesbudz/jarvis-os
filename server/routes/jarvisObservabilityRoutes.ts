@@ -1,8 +1,28 @@
 import type { Express, Request, Response } from "express";
+import { desc, eq } from "drizzle-orm";
+import * as schema from "@shared/schema";
 import { getModelRouteChain, type ModelExecutionTier } from "../agent/modelRouter";
 import { getModelUsageSummary } from "../agent/modelUsage";
+import { db } from "../db";
 
 export function registerJarvisObservabilityRoutes(app: Express): void {
+  app.get("/api/jarvis/builds", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Not authenticated" });
+    try {
+      const rows = await db
+        .select()
+        .from(schema.agentBuildLog)
+        .where(eq(schema.agentBuildLog.userId, userId))
+        .orderBy(desc(schema.agentBuildLog.createdAt))
+        .limit(50);
+      res.json({ builds: rows });
+    } catch (err) {
+      console.error("[jarvis] GET builds failed:", err);
+      res.status(500).json({ error: "Failed to load build log" });
+    }
+  });
+
   app.get("/api/jarvis/model-usage", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;
