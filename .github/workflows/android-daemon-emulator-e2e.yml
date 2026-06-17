@@ -13,17 +13,6 @@ on:
       - 'scripts/android-daemon-emulator-e2e.mjs'
       - 'package.json'
       - 'package-lock.json'
-  push:
-    paths:
-      - '.github/workflows/android-daemon-emulator-e2e.yml'
-      - 'android/**'
-      - 'app/**'
-      - 'components/**'
-      - 'lib/**'
-      - 'plugins/**'
-      - 'scripts/android-daemon-emulator-e2e.mjs'
-      - 'package.json'
-      - 'package-lock.json'
 
 permissions:
   contents: read
