@@ -95,9 +95,35 @@ function collectLogcat() {
 function findUsefulElement(snapshot) {
   const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
   return elements.find((element) => {
-    const traits = Array.isArray(element.traits) ? element.traits : [];
-    return traits.includes("ENABLED") && !element.sensitive && element.bounds;
+    const traits = Array.isArray(element.traits)
+      ? element.traits.map((trait) => String(trait).toLowerCase())
+      : [];
+    const hasAccessibleIdentity = Boolean(
+      element.text || element.contentDescription || element.viewId ||
+      (element.label && element.label !== "FrameLayout"),
+    );
+    return traits.includes("enabled") && !element.sensitive && element.bounds && hasAccessibleIdentity;
   });
+}
+
+async function waitForSettingsScreenContext(bridge) {
+  let lastContext = null;
+  for (let i = 0; i < 15; i++) {
+    const screenContext = await bridge.sendOp({ type: "android_screen_context" }, 30000);
+    const elements = Array.isArray(screenContext.data?.elements) ? screenContext.data.elements : [];
+    const usefulElement = findUsefulElement(screenContext.data);
+    lastContext = screenContext;
+    if (
+      screenContext.ok &&
+      screenContext.data?.foregroundPackage === "com.android.settings" &&
+      elements.length > 1 &&
+      usefulElement
+    ) {
+      return { screenContext, elements, usefulElement };
+    }
+    await sleep(1000);
+  }
+  throw new Error(`Settings accessibility tree did not expose actionable elements: ${JSON.stringify(lastContext)}`);
 }
 
 async function startBridge(port) {
@@ -230,19 +256,7 @@ async function main() {
     throw new Error(`android_operator_action open_app failed: ${JSON.stringify(openSettings)}`);
   }
 
-  const screenContext = await bridge.sendOp({ type: "android_screen_context" }, 30000);
-  const elements = Array.isArray(screenContext.data?.elements) ? screenContext.data.elements : [];
-  if (!screenContext.ok || elements.length === 0) {
-    throw new Error(`android_screen_context did not return accessibility elements: ${JSON.stringify(screenContext)}`);
-  }
-  if (screenContext.data?.foregroundPackage !== "com.android.settings") {
-    throw new Error(`Expected Settings foreground package, got ${screenContext.data?.foregroundPackage}`);
-  }
-
-  const usefulElement = findUsefulElement(screenContext.data);
-  if (!usefulElement) {
-    throw new Error(`No enabled non-sensitive element found in screen context: ${JSON.stringify(screenContext.data)}`);
-  }
+  const { screenContext, elements, usefulElement } = await waitForSettingsScreenContext(bridge);
 
   const tapElement = await bridge.sendOp({
     type: "android_operator_action",
