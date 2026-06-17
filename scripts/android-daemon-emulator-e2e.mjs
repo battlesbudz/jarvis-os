@@ -190,9 +190,9 @@ async function main() {
   adb(["reverse", `tcp:${port}`, `tcp:${port}`]);
   adbShell(
     [
-      "am start-foreground-service",
-      `-n ${PACKAGE_NAME}/.daemon.WebSocketService`,
-      "-a com.gameplan.daemon.BOOTSTRAP",
+      "am broadcast",
+      `-n ${PACKAGE_NAME}/.daemon.DaemonE2eReceiver`,
+      "-a com.gameplan.daemon.E2E_BOOTSTRAP",
       `--es server_url http://127.0.0.1:${port}`,
       `--es bootstrap_token ${BOOTSTRAP_TOKEN}`,
     ].join(" "),
