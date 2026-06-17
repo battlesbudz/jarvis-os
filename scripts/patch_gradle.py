@@ -2,8 +2,9 @@
 """
 Patch the Expo-generated android/app/build.gradle to:
   1. Replace versionCode with the CI run number
-  2. Insert a signingConfigs.release block (if not already present)
-  3. Replace any buildTypes.release signingConfig with signingConfigs.release
+  2. Replace versionName with the CI build version
+  3. Insert a signingConfigs.release block (if not already present)
+  4. Replace any buildTypes.release signingConfig with signingConfigs.release
 
 Environment variables (all required):
   KEYSTORE_ABS   - absolute path to the signing keystore file
@@ -11,7 +12,7 @@ Environment variables (all required):
   KEY_ALIAS      - signing key alias
   KEY_PASSWORD   - signing key password
   GRADLE_FILE    - path to android/app/build.gradle
-  RUN_NUMBER     - GitHub Actions run number to use as versionCode
+  RUN_NUMBER     - GitHub Actions run number to use as versionCode and versionName suffix
 """
 
 import re
@@ -23,6 +24,7 @@ os.environ["KEYSTORE_PASSWORD"]
 os.environ["KEY_ALIAS"]
 os.environ["KEY_PASSWORD"]
 run_number = int(os.environ["RUN_NUMBER"])
+version_name = f"1.0.{run_number}"
 gradle_file = os.environ["GRADLE_FILE"]
 
 with open(gradle_file, "r") as f:
@@ -39,11 +41,17 @@ def find_closing_brace(lines, start_idx):
     return len(lines) - 1
 
 
-# 1. Replace versionCode
+# 1. Replace versionCode and versionName
 for i, line in enumerate(lines):
     if "versionCode" in line and "//" not in line:
         lines[i] = re.sub(r"versionCode \d+", f"versionCode {run_number}", line)
         print(f"  versionCode updated on line {i + 1}")
+        break
+
+for i, line in enumerate(lines):
+    if "versionName" in line and "//" not in line:
+        lines[i] = re.sub(r'versionName "[^"]+"', f'versionName "{version_name}"', line)
+        print(f"  versionName updated on line {i + 1}")
         break
 
 # 2. Ensure signingConfigs.release exists

@@ -121,6 +121,8 @@ jobs:
           grep -n 'signingConfig signingConfigs.release' android/app/build.gradle || (echo "ERROR: signingConfig not wired to release buildType" && exit 1)
           echo "--- Checking versionCode ---"
           grep -n 'versionCode' android/app/build.gradle
+          echo "--- Checking versionName ---"
+          grep -n 'versionName "1.0.${{ github.run_number }}"' android/app/build.gradle || (echo "ERROR: versionName not patched" && exit 1)
           echo "Verification passed"
 
       - name: Build release APK
