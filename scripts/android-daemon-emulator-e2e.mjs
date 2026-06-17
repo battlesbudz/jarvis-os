@@ -8,6 +8,9 @@ const PACKAGE_NAME = process.env.ANDROID_PACKAGE_NAME || "com.gameplan";
 const ACCESSIBILITY_SERVICE =
   process.env.ANDROID_ACCESSIBILITY_SERVICE ||
   "com.gameplan/com.gameplan.daemon.JarvisAccessibilityService";
+const ACCESSIBILITY_SERVICE_SHORT =
+  process.env.ANDROID_ACCESSIBILITY_SERVICE_SHORT ||
+  `${PACKAGE_NAME}/.daemon.JarvisAccessibilityService`;
 const BOOTSTRAP_TOKEN = process.env.ANDROID_DAEMON_BOOTSTRAP_TOKEN || "e2e-bootstrap-token";
 const APK_PATH = process.env.ANDROID_APK_PATH || "android/app/build/outputs/apk/debug/app-debug.apk";
 
@@ -62,12 +65,23 @@ async function waitForBoot() {
 }
 
 async function waitForAccessibilityService() {
+  let lastValue = "";
   for (let i = 0; i < 30; i++) {
-    const enabled = adbShell("settings get secure enabled_accessibility_services", { capture: true }).trim();
-    if (enabled.includes(ACCESSIBILITY_SERVICE)) return;
+    lastValue = adbShell("settings get secure enabled_accessibility_services", { capture: true }).trim();
+    if (lastValue.includes(ACCESSIBILITY_SERVICE) || lastValue.includes(ACCESSIBILITY_SERVICE_SHORT)) return;
     await sleep(1000);
   }
-  throw new Error(`Accessibility service was not enabled: ${ACCESSIBILITY_SERVICE}`);
+  throw new Error(
+    `Accessibility service was not enabled: ${ACCESSIBILITY_SERVICE}; enabled_accessibility_services=${lastValue}`,
+  );
+}
+
+function enableAccessibilityService() {
+  adbShell(`settings put secure accessibility_enabled 1`);
+  adbShell(`settings put secure enabled_accessibility_services ${ACCESSIBILITY_SERVICE}`);
+  adbShell(`cmd accessibility enable-service ${ACCESSIBILITY_SERVICE} || true`);
+  adbShell(`cmd accessibility enable-service ${ACCESSIBILITY_SERVICE_SHORT} || true`);
+  adbShell("settings put secure touch_exploration_enabled 0 || true");
 }
 
 function collectLogcat() {
@@ -177,13 +191,10 @@ async function main() {
   if (!fs.existsSync(apk)) throw new Error(`APK not found: ${apk}`);
   adb(["install", "-r", apk]);
   adbShell(`pm grant ${PACKAGE_NAME} android.permission.POST_NOTIFICATIONS || true`);
-  adbShell(`settings put secure enabled_accessibility_services ${ACCESSIBILITY_SERVICE}`);
-  adbShell("settings put secure accessibility_enabled 1");
-  adbShell("settings put secure touch_exploration_enabled 0 || true");
-  await waitForAccessibilityService();
-
   adbShell(`monkey -p ${PACKAGE_NAME} -c android.intent.category.LAUNCHER 1`);
   await sleep(3000);
+  enableAccessibilityService();
+  await waitForAccessibilityService();
 
   const port = Number(process.env.ANDROID_DAEMON_E2E_PORT || 18789);
   const bridge = await startBridge(port);
