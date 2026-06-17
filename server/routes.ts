@@ -2,6 +2,7 @@ import "./agent/providers/envAliases";
 import { createHash } from 'crypto';
 import { activeCoachRuns } from "./runRegistry";
 import { registerCoachRunLifecycle } from "./coachRunLifecycle";
+import { registerCoachMorningBriefRoute, registerCoachWeeklyReviewRoute } from "./routes/coachReviewRoutes";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
@@ -10,7 +11,7 @@ import { getOpenAIClientConfig } from "./agent/providers/env";
 import { db } from "./db";
 import { eq, and, desc, sql, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import { userMemories, userPreferences, proactiveQuestionsSent, userDocuments } from "@shared/schema";
+import { userMemories, proactiveQuestionsSent, userDocuments } from "@shared/schema";
 import { processDocument, getUserDocumentContext, SUPPORTED_MIME_TYPES, SUPPORTED_EXTENSIONS, MAX_DOCS_PER_USER } from "./documentProcessor";
 import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
@@ -32,8 +33,7 @@ import {
   sendGmailEmail,
 } from "./integrations/gmail";
 import { getSlackMessages } from "./integrations/slack";
-import { authRouter, authMiddleware, getUserIdFromRequest } from "./auth";
-import { mobileAuthRouter } from "./mobileAuthRoutes";
+import { authMiddleware, getUserIdFromRequest } from "./auth";
 import { registerDataRoutes } from "./dataRoutes";
 import { registerTelegramRoutes } from "./telegramRoutes";
 import { registerChannelRoutes } from "./channels/routes";
@@ -43,7 +43,6 @@ import { registerCustomAgentRoutes } from "./agent/customAgentRoutes";
 import { registerCodeProposalsRoutes } from "./agent/codeProposalsRoutes";
 import { registerProjectRoutes } from "./projectRoutes";
 import { registerDoctorRoutes } from "./doctor/doctorRoutes";
-import { registerDownloadRoutes } from "./downloadRoutes";
 import { registerVaultRoutes } from "./vaultRoutes";
 import { registerLocalWorkerRoutes } from "./routes/localWorkerRoutes";
 import { registerMcpRoutes } from "./routes/mcpRoutes";
@@ -67,19 +66,12 @@ import { registerNervousSystemWatchRoutes } from "./routes/nervousSystemWatchRou
 import { registerDailyCommandRoutes } from "./dailyCommand/routes";
 import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
 import { registerMissionControlQueueRoutes } from "./routes/missionControlQueueRoutes";
-import { registerConnectionsRoutes, registerPublicConnectionsCallbackRoutes } from "./routes/connectionsRoutes";
-import { registerCodexGatewayRoutes } from "./routes/codexGatewayRoutes";
-import { registerAppUpdateRoutes } from "./routes/appUpdateRoutes";
+import { registerConnectionsRoutes } from "./routes/connectionsRoutes";
 import { registerDesktopConnectorRoutes } from "./routes/desktopConnectorRoutes";
 import { registerAgentJobMutationRoutes } from "./routes/agentJobMutationRoutes";
 import { registerAgentJobQueryRoutes } from "./routes/agentJobQueryRoutes";
-import { registerPublicWebchatInviteRoutes, registerWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
-import { registerAdminHealthRoutes } from "./routes/adminHealthRoutes";
-import { registerAdminSkillsRoutes } from "./routes/adminSkillsRoutes";
-import { registerAdminSearchRegistryRoutes } from "./routes/adminSearchRegistryRoutes";
-import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./routes/platformRoutes";
+import { registerWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
 import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
-import { registerTranscriptDiagnoseRoutes } from "./routes/transcriptDiagnoseRoutes";
 import { registerDiagnosticsRoutes } from "./routes/diagnosticsRoutes";
 import { registerScheduledTaskBasicRoutes } from "./routes/scheduledTaskBasicRoutes";
 import { registerScheduledTaskAttentionRoutes } from "./routes/scheduledTaskAttentionRoutes";
@@ -87,7 +79,6 @@ import { registerScheduledTaskRunRoutes } from "./routes/scheduledTaskRunRoutes"
 import { registerEgoRoutes } from "./routes/egoRoutes";
 import { registerDiscordConnectionRoutes } from "./routes/discordConnectionRoutes";
 import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
-import { registerDiscordInteractionRoutes } from "./routes/discordInteractionRoutes";
 import { registerButtonLocationRoutes } from "./routes/buttonLocationRoutes";
 import { registerGitHubDeviceRoutes } from "./routes/githubDeviceRoutes";
 import { registerGitHubSettingsRoutes } from "./routes/githubSettingsRoutes";
@@ -102,25 +93,28 @@ import { registerUserSkillMutationRoutes } from "./routes/userSkillMutationRoute
 import { registerJarvisSystemStateRoutes } from "./routes/jarvisSystemStateRoutes";
 import { registerVoiceRoutes } from "./routes/voiceRoutes";
 import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
+import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
 import { registerChatGptImportRoutes } from "./routes/chatgptImportRoutes";
+import { registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
+import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
+import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
+import { buildYoutubeTranscriptCoachTools } from "./youtubeTranscriptCoachTools";
 import {
   registerOpenAIProviderAuthRoutes,
-  registerPublicOpenAIProviderAuthCallbackRoutes,
 } from "./routes/openaiProviderAuthRoutes";
 import {
   registerAuthenticatedCoachRuntimeRoutes,
-  registerPublicCoachRuntimeRoutes,
 } from "./routes/coachRuntimeRoutes";
+import { registerPreAuthRoutes } from "./routes/preAuthRoutes";
 import { createJarvisScheduledTask } from "./jarvisScheduledTasks";
 import { claimIntegrationOwnership } from "./integrationOwner";
-import { oauthRouter, oauthCallbackRouter } from "./oauthRoutes";
+import { oauthRouter } from "./oauthRoutes";
 import { driveRouter } from "./driveRoutes";
 import { getValidGoogleTokens, getValidGoogleToken, getValidMicrosoftToken, getUserTokens, getUserToken, getUserOAuthStatus } from "./userTokenStore";
 import { tavilySearch, formatSearchResults } from "./integrations/search";
 import { logInteraction, getRecentInteractions, formatInteractionTimeline } from "./interactionLog";
-import { extractAndStore } from "./memory/extractor";
-import { processLivingContextUpdate } from "./workspace/livingContextRouter";
+import { runCoachChatSideEffects } from "./coachChatSideEffects";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
 import { listPeople, deletePerson } from "./memory/people";
@@ -137,8 +131,6 @@ import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
 import { getModel } from "./lib/modelPrefs";
 import { getExplicitCoachRequestedModel } from "./services/coachModelSelection";
-import { routeModelTurn } from "./agent/modelRouter";
-import { isRetriableProviderError } from "./agent/providers/fallback";
 import { getPublicBaseUrl } from "./publicUrl";
 import { estimateModelUsage, recordModelUsage } from "./agent/modelUsage";
 import type { AgentTool, ToolContext } from "./agent/types";
@@ -149,20 +141,15 @@ import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { buildToolExecutionPolicy } from "./agent/toolExecutionPolicy";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
-import {
-  TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
-  buildTurnProgressEvent,
-  buildVisibleTurnProgressMessage,
-  shouldEmitVisibleProgressUpdate,
-} from "./agent/turnProgress";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
-import { writeCoachStreamError } from "./services/coachSse";
-import { extractReminderSuggestion } from "./services/reminderSuggestion";
+import { createCoachChatProgressStream } from "./services/coachChatProgress";
+import { openCoachSse, writeCoachStreamError } from "./services/coachSse";
+import { buildCoachPostTranscriptTools, coachFunctionTool } from "./services/coachToolDefinitions";
+import { buildCoreCoachTools } from "./services/coreCoachTools";
 import {
   buildCoachSystemPrompt,
   getMorningNoteSummary,
-  getPersonaBlock,
   providerLabelForModel,
   runCoachModelTurn,
   streamCoachModelTurn,
@@ -187,71 +174,7 @@ const openai = new OpenAI(getOpenAIClientConfig());
 export { buildPlanForUser, buildPlanFromInputs } from './services/planGenerationService';
 
 export async function registerRoutes(app: Express): Promise<Server> {
-  app.use("/api/auth", authRouter);
-  app.use("/api/auth/mobile", mobileAuthRouter);
-  app.use("/api/oauth", oauthCallbackRouter);
-  registerDownloadRoutes(app);
-
-  registerPlatformRoutes(app);
-  registerPublicCoachRuntimeRoutes(app);
-  registerVoiceRedirectRoute(app);
-
-  /**
-   * POST /api/discord/interactions — public (Ed25519-verified, no JWT needed)
-   *
-   * Discord sends all slash-command interactions here. This must be registered
-   * BEFORE authMiddleware because Discord requests do not carry a Bearer JWT.
-   * Security is provided by Ed25519 signature verification instead.
-   */
-  registerDiscordInteractionRoutes(app);
-
-  // ── Admin: Skill Pack management (operator publish path) ─────────────────────
-  // Auth: x-admin-secret header must match JARVIS_ADMIN_SECRET env var.
-  // Mounted BEFORE authMiddleware so no user JWT is required — these endpoints
-  // are called by the Jarvis team via machine-to-machine tooling, not individual
-  // users. The static shared secret provides sufficient access control for this
-  // low-volume internal API.
-
-  function requireAdminSecret(req: Request, res: Response): boolean {
-    const secret = process.env.JARVIS_ADMIN_SECRET;
-    if (!secret) {
-      res.status(503).json({ error: "Admin secret not configured on this server." });
-      return false;
-    }
-    if (req.headers["x-admin-secret"] !== secret) {
-      res.status(401).json({ error: "Invalid admin secret." });
-      return false;
-    }
-    return true;
-  }
-
-  /**
-   * POST /api/admin/skills/publish
-   * Publish a new or updated skill pack.
-   *
-   * Body:
-   *   packId?        — if provided and exists, update that pack; otherwise create new
-   *   name           — pack display name (required)
-   *   instructions   — base instruction text (required)
-   *   changeNote     — changelog note for this version (required)
-   *   description?   — user-facing description (defaults to "" on create)
-   *   isStoreVisible? — whether to show in the Skill Store (defaults to true on create)
-   *   heartbeatRules? — JSON heartbeat rule config { disableDuringFocusBlocks, ... }
-   *   toolGroups?    — JSON tool group config { boost: [...], suppress: [...] }
-   *
-   * Active sessions pick up the new instructions at their next session start —
-   * mid-session injection is intentionally not supported to avoid instability.
-   */
-  registerAdminSkillsRoutes(app, requireAdminSecret);
-  registerAdminHealthRoutes(app, requireAdminSecret);
-
-  registerTranscriptDiagnoseRoutes(app, authMiddleware);
-  registerAdminSearchRegistryRoutes(app, requireAdminSecret);
-  registerPublicWebchatInviteRoutes(app);
-  registerCodexGatewayRoutes(app);
-  registerAppUpdateRoutes(app);
-  registerPublicConnectionsCallbackRoutes(app);
-  registerPublicOpenAIProviderAuthCallbackRoutes(app);
+  registerPreAuthRoutes(app);
 
   app.use(authMiddleware);
 
@@ -305,105 +228,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   registerPlanGenerationRoutes(app);
 
   const coachTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
-    {
-      type: "function",
-      function: {
-        name: "add_task",
-        description: "Add a new task to the user's plan for today",
-        parameters: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "Task title" },
-            category: { type: "string", enum: ["health", "work", "personal", "learning", "finance", "social"], description: "Task category" },
-            duration: { type: "number", description: "Estimated duration in minutes" },
-          },
-          required: ["title", "category"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "add_to_brain_dump",
-        description: "Add an item to the user's brain dump inbox",
-        parameters: {
-          type: "object",
-          properties: { text: { type: "string" } },
-          required: ["text"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "log_goal_progress",
-        description: "Log progress toward a goal",
-        parameters: {
-          type: "object",
-          properties: {
-            goalTitle: { type: "string", description: "Partial or full goal title to match" },
-            amount: { type: "number", description: "Amount to add to current progress" },
-          },
-          required: ["goalTitle", "amount"],
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "update_life_context",
-        description: "Update one or more life context fields for the user",
-        parameters: {
-          type: "object",
-          properties: {
-            priorityGoal: { type: "string" },
-            currentBlocker: { type: "string" },
-            improvementArea: { type: "string" },
-            upcomingDeadline: { type: "string" },
-            freeText: { type: "string" },
-          },
-        },
-      },
-    },
-    {
-      type: "function",
-      function: {
-        name: "complete_task",
-        description: "Mark a task as complete in today's plan",
-        parameters: {
-          type: "object",
-          properties: {
-            taskTitle: { type: "string", description: "Partial or full title of the task to complete" },
-          },
-          required: ["taskTitle"],
-        },
-      },
-    },
-    ...(process.env.TAVILY_API_KEY ? [{
-      type: "function" as const,
-      function: {
-        name: "web_search",
-        description: "Search the internet for real-time information such as current events, weather, stock prices, news, product reviews, or anything else that requires up-to-date data. Use this when the user asks about something you don't know or when current information is needed.",
-        parameters: {
-          type: "object",
-          properties: {
-            query: { type: "string", description: "The search query to look up" },
-          },
-          required: ["query"],
-        },
-      },
-    }] : []),
-    {
-      type: "function" as const,
-      function: {
+    ...buildCoreCoachTools(),
+    coachFunctionTool({
         name: "check_connections",
         description: "Check which external accounts and channels the user has connected (Google/Gmail/Calendar, Microsoft/Outlook, Telegram, WhatsApp, Discord, Desktop Daemon). Always call this before claiming a service is or isn't available.",
         parameters: { type: "object", properties: {} },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
+    }),
+    coachFunctionTool({
         name: "generate_reconnect_link",
         description: "Generate a fresh OAuth authorization URL so the user can reconnect a disconnected Google or Microsoft account. Returns a tappable link button. Use after check_connections confirms the service is not connected.",
         parameters: {
@@ -413,11 +244,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
           required: ["provider"],
         },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
+    }),
+    coachFunctionTool({
         name: "create_calendar_event",
         description: "Create a calendar event on the user's Google or Outlook calendar. Use when the user asks to schedule or block time. start and end must be ISO 8601 datetime strings.",
         parameters: {
@@ -432,11 +260,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
           required: ["title", "start", "end"],
         },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
+    }),
+    coachFunctionTool({
         name: "fetch_calendar",
         description: "Fetch the user's Google Calendar events for a given day or date range. Use whenever the user asks about their schedule, meetings, availability, or what's coming up. Returns events with title, time, and location.",
         parameters: {
@@ -446,11 +271,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             days: { type: "number", description: "Number of consecutive days to fetch starting from date. Default 1, max 14." },
           },
         },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
+    }),
+    coachFunctionTool({
         name: "fetch_emails",
         description: "Fetch recent emails on demand. Use when the user asks about their inbox beyond what's already in the system context. provider: 'google' (Gmail) or 'microsoft' (Outlook). count: number of emails to fetch (default 10, max 25).",
         parameters: {
@@ -461,11 +283,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
           required: ["provider"],
         },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
+    }),
+    coachFunctionTool({
         name: "send_email",
         description: "Send an email immediately via Gmail or Outlook. Only use after the user explicitly confirms they want to send. Requires Google or Microsoft to be connected. If the user has multiple Google accounts, pass accountHint with the sender email address to select the correct account.",
         parameters: {
@@ -479,11 +298,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
           required: ["to", "subject", "body"],
         },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
+    }),
+    coachFunctionTool({
         name: "daemon_action",
         description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser or app via deep link — for YouTube search use url='vnd.youtube://results?search_query=QUERY', for Google Maps use 'geo:0,0?q=QUERY', for Spotify use 'spotify:search:QUERY'), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text into focused field — set submit:true to also press Search/Go/Enter after typing), android_swipe (swipe gesture), android_press_key (back/home/recents/enter), android_file_list, android_file_read, android_notifications_list (read current phone notifications — checks server cache first; if cache is empty, AUTOMATICALLY swipes open the notification shade, reads the screen, then closes the shade; always returns real live data, never makes up notifications). CRITICAL RULES: (1) If this tool returns result:'error', STOP IMMEDIATELY and tell the user exactly what went wrong — do NOT proceed or pretend the action succeeded. (2) After android_open_app or android_browse succeeds, ALWAYS call android_read_screen next to confirm the screen state — NEVER describe app content or search results without first reading the screen. (3) For in-app searches (YouTube, Reddit, Maps, etc.) prefer android_browse with a deep link URL over open_app + navigate UI. Do NOT narrate what you plan to do before calling this tool — only confirm what actually happened after a successful result. Always call check_connections first to know which daemon type is paired.",
         parameters: {
@@ -512,11 +328,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
           required: ["action"],
         },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
+    }),
+    coachFunctionTool({
         name: "daemon_diagnostic",
         description: "Ping the paired daemon to verify it is alive and retrieve the recent op audit log (last 20 ops with timestamps and durations). Use this when: (1) an android_* op timed out or failed unexpectedly, (2) the user reports the daemon isn't responding, or (3) you want to check if the accessibility service is enabled on the device. Returns device state (model, androidVersion, accessibilityEnabled, foregroundPackage) and a timestamped log of recent ops.",
         parameters: {
@@ -524,11 +337,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           properties: {},
           required: [],
         },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
+    }),
+    coachFunctionTool({
         name: "search_youtube",
         description: "Search YouTube server-side and return structured results with title, channel name, view count, published date, duration, and video ID — without touching the phone. Use this BEFORE opening a video so you can intelligently pick the best result (reputable channel, high views, recent date). Returns up to 10 results. Then use fetch_youtube_transcript to get the transcript of the chosen video, and android_browse to open it on the phone. Pass trending:true when the user asks for 'trending', 'viral', 'momentum', or 'views per hour' content — this sorts by views/hour instead of total views.",
         parameters: {
@@ -541,143 +351,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           },
           required: ["query"],
         },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "fetch_youtube_transcript",
-        description: "Fetch the COMPLETE transcript/captions of a YouTube video server-side — returns the full text with no truncation. Use this INSTEAD of navigating YouTube's transcript UI on the phone.\n\nINTERNAL PIPELINE — this tool automatically tries multiple methods in order:\n  Phase 0:   Gemini multimodal — feeds the video URL directly to Gemini AI\n  Phase 0.5: Supadata — a cloud transcript API (supadata.ai) that bypasses YouTube's IP blocks. Uses mode=auto: tries native captions first, then AI-generates a transcript if no captions exist. This costs Supadata credits for AI generation.\n  Phase 1-4: YouTube InnerTube API, yt-dlp subtitles, timedtext, youtube-transcript library\n  Phase 5:   Whisper audio transcription (downloads audio via yt-dlp, then transcribes)\n  Phase 6:   Tavily web search fallback (last resort — summaries, not a real transcript)\n\nThe 'via X' label in the result (e.g. 'via Supadata', 'via YouTube captions', 'via Whisper (audio)') tells you which phase succeeded.",
-        parameters: {
-          type: "object",
-          properties: {
-            videoId: { type: "string", description: "YouTube video ID (e.g. 'dQw4w9WgXcQ') or full YouTube URL (https://youtube.com/watch?v=dQw4w9WgXcQ). Extract the video ID from the URL visible on screen via android_read_screen." },
-          },
-          required: ["videoId"],
-        },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "fetch_transcript_gemini",
-        description: "Fetch a YouTube transcript by feeding the video URL directly to Gemini's multimodal API (gemini-2.5-flash/pro). No captions required — Gemini transcribes the audio from Google's own infrastructure. Use when the video has no captions, or when the user explicitly asks to use Gemini. Requires GOOGLE_GEMINI_API_KEY to be configured.",
-        parameters: {
-          type: "object",
-          properties: {
-            videoId: { type: "string", description: "YouTube video ID (11 characters, e.g. 'dQw4w9WgXcQ') or full YouTube URL." },
-          },
-          required: ["videoId"],
-        },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "fetch_transcript_supadata",
-        description: "Fetch a YouTube transcript via the Supadata API (supadata.ai) using mode=auto. Tries YouTube's native captions first; if none exist, AI-generates a transcript (uses Supadata credits). Use when the user explicitly asks for Supadata, or when native captions are unavailable. Requires SUPADATA_API_KEY.",
-        parameters: {
-          type: "object",
-          properties: {
-            videoId: { type: "string", description: "YouTube video ID (11 characters, e.g. 'dQw4w9WgXcQ') or full YouTube URL." },
-          },
-          required: ["videoId"],
-        },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "fetch_transcript_audio",
-        description: "Fetch a YouTube transcript by downloading the audio via yt-dlp and transcribing it with OpenAI Whisper. Works even when no captions exist and Gemini/Supadata are unavailable. Use when the user explicitly asks for audio/Whisper transcription. Note: slow for long videos (may take several minutes). Requires yt-dlp to be installed.",
-        parameters: {
-          type: "object",
-          properties: {
-            videoId: { type: "string", description: "YouTube video ID (11 characters, e.g. 'dQw4w9WgXcQ') or full YouTube URL." },
-          },
-          required: ["videoId"],
-        },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "fetch_transcript_captions",
-        description: "Fetch a YouTube transcript using only native YouTube captions — no AI, no credits charged. Tries InnerTube, yt-dlp subtitles, timedtext, and the youtube-transcript library. Fast, but only works if the video actually has captions. Use when the user explicitly wants captions-only (no AI generation).",
-        parameters: {
-          type: "object",
-          properties: {
-            videoId: { type: "string", description: "YouTube video ID (11 characters, e.g. 'dQw4w9WgXcQ') or full YouTube URL." },
-          },
-          required: ["videoId"],
-        },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "connect_channel",
-        description: "Generate a one-tap deep link so the user can connect a new messaging channel (Telegram, WhatsApp, Slack, or Discord) to Jarvis. Returns a tappable link button. Use proactively when the user asks to connect/link any of these services.",
-        parameters: {
-          type: "object",
-          properties: {
-            channel: {
-              type: "string",
-              enum: ["telegram", "whatsapp", "discord", "slack"],
-              description: "Which channel to generate a connection link for.",
-            },
-          },
-          required: ["channel"],
-        },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "schedule_jarvis_task",
-        description: "Schedule a future item for the user's own to-do list or reminder list. Use for human tasks, habits, errands, chores, and tasks Jarvis cannot physically do, such as DoorDash work or calls the user must personally make. These are non-executable user tasks by default. Do not use this for autonomous Jarvis work like checking inboxes, sending reports, running scripts, or operating connected apps later; use explicit cron/job tools for those.",
-        parameters: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "Short title for the scheduled task (e.g. 'Review inbox', 'Send weekly update')" },
-            description: { type: "string", description: "Optional details for the user's task/reminder." },
-            scheduledAt: { type: "string", description: "When the task should appear or remind the user. Accepts ISO 8601 or common natural language like 'in an hour', 'tomorrow at 9am', 'daily', or 'next Monday at 10am'." },
-            recurrence: { type: "string", description: "Optional recurrence pattern: 'daily', 'weekly', 'weekdays', 'every Monday', 'every Sunday', etc. Omit for one-time tasks." },
-            taskKind: { type: "string", enum: ["user_task", "jarvis_action"], description: "Defaults to user_task. Only use jarvis_action when Jarvis can actually perform the scheduled action with tools." },
-          },
-          required: ["title", "scheduledAt"],
-        },
-      },
-    },
-    {
-      type: "function" as const,
-      function: {
-        name: "image_generate",
-        description:
-          "Generate an image from a text prompt using GPT Image and display it inline in the chat. " +
-          "Use for concept illustrations, motivational visuals, meal plan photos, mind maps, or any explicit image request. " +
-          "Do NOT call this for text-only answers — only when the user explicitly asks for an image or a visual would meaningfully enhance the response.",
-        parameters: {
-          type: "object",
-          properties: {
-            prompt: {
-              type: "string",
-              description: "A detailed description of the image to generate. Include style, content, mood, and any relevant details.",
-            },
-            size: {
-              type: "string",
-              enum: ["square", "landscape", "portrait"],
-              description: "Image aspect ratio: square (1:1, default), landscape (16:9), portrait (9:16).",
-            },
-            caption: {
-              type: "string",
-              description: "Optional short caption displayed below the image in chat (1-2 sentences max).",
-            },
-          },
-          required: ["prompt"],
-        },
-      },
-    },
+    }),
+    ...buildYoutubeTranscriptCoachTools(),
+    ...buildCoachPostTranscriptTools(),
   ];
 
   function fuzzyMatch(needle: string, haystack: string): boolean {
@@ -1695,91 +1371,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }
 
-  async function extractProfileInBackground(userId: string, messages: any[]) {
-    const recentMessages = messages.slice(-6);
-    if (recentMessages.length === 0) return;
-    const conversationText = recentMessages
-      .map((m: any) => `${m.role}: ${m.content}`)
-      .join('\n');
-    await extractAndStore({
-      userId,
-      source: conversationText,
-      sourceType: "chat",
-    });
-
-    const lastUserMessage = [...messages].reverse().find((m: any) => m.role === "user" && typeof m.content === "string");
-    if (lastUserMessage?.content) {
-      await processLivingContextUpdate({
-        userId,
-        text: lastUserMessage.content,
-        sourceType: "conversation",
-        sourceRef: "app chat",
-      }).catch((err) => console.error("[LivingContext/app_chat] update failed:", err));
-    }
-  }
-
-  /**
-   * Detect praise/correction/preference signals in the latest exchange and
-   * feed them into the Behaviour-to-Skill pipeline (best-effort, never throws).
-   */
-  function detectAndRecordBehaviorSignals(userId: string | undefined, messages: any[]): void {
-    if (!userId || messages.length === 0) return;
-    try {
-      const { detectBehaviorSignals } = require("./intelligence/pattern-analyser");
-      const { recordSkillSignal } = require("./intelligence/skillWriter");
-      const signals: Array<{ patternId: string; example: string }> = detectBehaviorSignals(messages);
-      for (const sig of signals) {
-        recordSkillSignal(userId, sig.patternId, sig.example).catch(() => {});
-      }
-    } catch {
-      // best-effort — never block the response
-    }
-  }
-
-  async function markProactiveQuestionsAnswered(userId: string, messages: any[]) {
-    try {
-      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-      const unanswered = await db.select()
-        .from(proactiveQuestionsSent)
-        .where(
-          and(
-            eq(proactiveQuestionsSent.userId, userId),
-            sql`${proactiveQuestionsSent.answeredAt} IS NULL`,
-            sql`${proactiveQuestionsSent.sentAt} > ${twentyFourHoursAgo}`
-          )
-        )
-        .orderBy(desc(proactiveQuestionsSent.sentAt))
-        .limit(1);
-      if (unanswered.length > 0) {
-        const lastUserMessage = messages.filter((m: any) => m.role === 'user').pop();
-        if (!lastUserMessage?.content) return;
-
-        const checkResponse = await openai.chat.completions.create({
-          model: "gpt-4o-mini",
-          messages: [{
-            role: "user",
-            content: `Is the following user message a reply to (or related to) this question? Only answer "yes" or "no".
-
-Question that was asked: "${unanswered[0].question}"
-User's message: "${lastUserMessage.content}"
-
-Answer (yes/no):`,
-          }],
-          max_completion_tokens: 10,
-        });
-        const answer = (checkResponse.choices[0]?.message?.content || '').trim().toLowerCase();
-        if (answer.startsWith('yes')) {
-          await db.update(proactiveQuestionsSent)
-            .set({ answeredAt: new Date() })
-            .where(eq(proactiveQuestionsSent.id, unanswered[0].id));
-          console.log(`[Profile] Marked proactive question as answered via coach chat: ${unanswered[0].id}`);
-        }
-      }
-    } catch (err) {
-      console.error("[Profile] Error marking proactive question answered:", err);
-    }
-  }
-
   app.post("/api/coach/chat", async (req: Request, res: Response) => {
     let userId: string | null | undefined;
     let cleanupRun: () => void = () => {};
@@ -1798,98 +1389,14 @@ Answer (yes/no):`,
         `[CoachChat] selected_model_seed userId=${userId ?? "anonymous"} authScope=${req.authScope ?? "none"} model=${coachChatSelectedModel ?? "none"}`,
       );
       const turnStartedAtMs = Date.now();
-      let lastVisibleUpdateAtMs = turnStartedAtMs;
-      let visibleProgressUpdateCount = 0;
-      let latestVisibleProgressPhase = "";
-      let visibleProgressInterval: ReturnType<typeof setInterval> | null = null;
-
-      const ensureCoachSseOpen = () => {
-        if (res.headersSent) return;
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.flushHeaders();
-      };
-
-      const emitVisibleProgress = (phase?: string) => {
-        if (phase) latestVisibleProgressPhase = phase;
-        if (res.writableEnded || res.destroyed) return;
-        const nowMs = Date.now();
-        ensureCoachSseOpen();
-        const message = buildVisibleTurnProgressMessage({
-          startedAtMs: turnStartedAtMs,
-          nowMs,
-          updateCount: visibleProgressUpdateCount,
-          latestPhase: latestVisibleProgressPhase,
-        });
-        const event = buildTurnProgressEvent({
-          startedAtMs: turnStartedAtMs,
-          nowMs,
-          updateCount: visibleProgressUpdateCount,
-          source: "server",
-          stage: "idle_visible_update",
-          message,
-          detail: latestVisibleProgressPhase || undefined,
-          meaningful: false,
-        });
-        visibleProgressUpdateCount += 1;
-        lastVisibleUpdateAtMs = nowMs;
-        try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
-          console.log(`[Coach/SSE] visible progress elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"} phase=${latestVisibleProgressPhase || "auto"}`);
-        } catch {}
-      };
-
-      const emitMeaningfulProgress = (input: {
-        source: string;
-        stage: string;
-        message: string;
-        detail?: string;
-      }) => {
-        if (res.writableEnded || res.destroyed) return;
-        const nowMs = Date.now();
-        ensureCoachSseOpen();
-        const event = buildTurnProgressEvent({
-          startedAtMs: turnStartedAtMs,
-          nowMs,
-          updateCount: visibleProgressUpdateCount,
-          source: input.source,
-          stage: input.stage,
-          message: input.message,
-          detail: input.detail,
-          meaningful: true,
-        });
-        visibleProgressUpdateCount += 1;
-        latestVisibleProgressPhase = input.message;
-        lastVisibleUpdateAtMs = nowMs;
-        try {
-          res.write(`data: ${JSON.stringify(event)}\n\n`);
-          console.log(`[Coach/SSE] meaningful progress source=${input.source} stage=${input.stage} elapsedMs=${nowMs - turnStartedAtMs} userId=${userId ?? "unknown"}`);
-        } catch {}
-      };
-
-      const touchVisibleProgress = (phase?: string) => {
-        if (phase) latestVisibleProgressPhase = phase;
-        lastVisibleUpdateAtMs = Date.now();
-      };
-
-      const startVisibleProgress = () => {
-        if (visibleProgressInterval) return;
-        visibleProgressInterval = setInterval(() => {
-          if (res.writableEnded || res.destroyed) return;
-          const nowMs = Date.now();
-          if (!shouldEmitVisibleProgressUpdate({ nowMs, lastVisibleUpdateAtMs })) return;
-          emitVisibleProgress();
-        }, TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS);
-      };
-
-      stopVisibleProgress = () => {
-        if (visibleProgressInterval) {
-          clearInterval(visibleProgressInterval);
-          visibleProgressInterval = null;
-        }
-      };
+      const coachProgress = createCoachChatProgressStream({ res, startedAtMs: turnStartedAtMs, userId });
+      const {
+        ensureCoachSseOpen,
+        emitMeaningfulProgress,
+        startVisibleProgress,
+        touchVisibleProgress,
+      } = coachProgress;
+      stopVisibleProgress = coachProgress.stopVisibleProgress;
       // Register the run before any expensive context loading so a visible
       // progress event can open SSE without preventing X-Run-Id from being set.
       const runId = `coach_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
@@ -2109,11 +1616,7 @@ Answer (yes/no):`,
         }
         res.write('data: [DONE]\n\n');
         res.end();
-        if (userId) {
-          extractProfileInBackground(userId, messages);
-          detectAndRecordBehaviorSignals(userId, messages);
-          markProactiveQuestionsAnswered(userId, messages).catch(() => {});
-        }
+        runCoachChatSideEffects(userId, messages, openai);
         return;
       }
 
@@ -2537,13 +2040,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           state: {
             pendingAttachments: [],
             onProgress: (msg: string) => {
-              if (!res.headersSent) {
-                res.setHeader('Content-Type', 'text/event-stream');
-                res.setHeader('Cache-Control', 'no-cache, no-transform');
-                res.setHeader('X-Accel-Buffering', 'no');
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                res.flushHeaders();
-              }
+              openCoachSse(res);
               touchVisibleProgress(msg);
               emitMeaningfulProgress({
                 source: "tool",
@@ -2667,11 +2164,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               if (looksHallucinated) {
                 console.warn(`[daemon] HALLUCINATION DETECTED userId=${userId} — model claimed device action without tool call. Intercepting.`);
                 const correctedResponse = "I wasn't able to perform that action on your phone — I need to call the phone tool to do that, and it didn't get called this time. Please try again and I'll make sure to actually execute the command.";
-                res.setHeader('Content-Type', 'text/event-stream');
-                res.setHeader('Cache-Control', 'no-cache, no-transform');
-                res.setHeader('X-Accel-Buffering', 'no');
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                res.flushHeaders();
+                openCoachSse(res);
                 res.write(`data: ${JSON.stringify({ content: correctedResponse })}\n\n`);
                 res.write('data: [DONE]\n\n');
                 res.end();
@@ -2679,11 +2172,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 return;
               }
               // Normal conversational response with no tools needed — stream it directly
-              res.setHeader('Content-Type', 'text/event-stream');
-              res.setHeader('Cache-Control', 'no-cache, no-transform');
-              res.setHeader('X-Accel-Buffering', 'no');
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.flushHeaders();
+              openCoachSse(res);
               res.write(`data: ${JSON.stringify({ content: responseText })}\n\n`);
               const lastUserMsg0 = [...messages].reverse().find((m: any) => m.role === 'user');
               // Session management — save/extend session and emit sdkSessionId.
@@ -2718,9 +2207,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               }
               res.write('data: [DONE]\n\n');
               res.end();
-              extractProfileInBackground(userId, messages);
-              detectAndRecordBehaviorSignals(userId, messages);
-              markProactiveQuestionsAnswered(userId, messages).catch(() => {});
+              runCoachChatSideEffects(userId, messages, openai);
               if (lastUserMsg0?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg0.content === 'string' ? lastUserMsg0.content : JSON.stringify(lastUserMsg0.content)).catch(() => {});
               logInteraction(userId, "app_chat", "outbound", responseText).catch(() => {});
               cleanupRun();
@@ -2737,11 +2224,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
           const hasWebSearch = choice.message.tool_calls.some(tc => tc.type === 'function' && (tc.function.name === 'web_search' || tc.function.name === 'search_web'));
           if (hasWebSearch && !res.headersSent) {
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache, no-transform');
-            res.setHeader('X-Accel-Buffering', 'no');
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.flushHeaders();
+            openCoachSse(res);
             touchVisibleProgress("Searching the web");
             emitMeaningfulProgress({
               source: "tool",
@@ -2769,13 +2252,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || '')));
 
             if (isHighStakes) {
-              if (!res.headersSent) {
-                res.setHeader('Content-Type', 'text/event-stream');
-                res.setHeader('Cache-Control', 'no-cache, no-transform');
-                res.setHeader('X-Accel-Buffering', 'no');
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                res.flushHeaders();
-              }
+              openCoachSse(res);
               const preview: Record<string, string> = {};
               if (tc.function.name === 'send_email') {
                 preview.to = String(args.to || '');
@@ -2813,13 +2290,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             // gives the user real-time progress instead of a blank loading state.
             if (tc.function.name === 'daemon_action') {
               hasDaemonActions = true;
-              if (!res.headersSent) {
-                res.setHeader('Content-Type', 'text/event-stream');
-                res.setHeader('Cache-Control', 'no-cache, no-transform');
-                res.setHeader('X-Accel-Buffering', 'no');
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                res.flushHeaders();
-              }
+              openCoachSse(res);
               const actionLabel: Record<string, string> = {
                 android_browse: 'Opening app on your phone...',
                 android_open_app: 'Launching app on your phone...',
@@ -2862,13 +2333,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               const mcpAgentTool = mcpAgentToolsMap.get(tc.function.name)!;
               // Clear pending attachments from previous turns on this context
               mcpToolCtx.state.pendingAttachments = [];
-              if (!res.headersSent) {
-                res.setHeader('Content-Type', 'text/event-stream');
-                res.setHeader('Cache-Control', 'no-cache, no-transform');
-                res.setHeader('X-Accel-Buffering', 'no');
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                res.flushHeaders();
-              }
+              openCoachSse(res);
               // Emit a "working" indicator for MCP tools
               const mcpServerDisplayName = (() => {
                 const parts = tc.function.name.split('__');
@@ -2937,13 +2402,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               mcpToolCtx.state.pendingAttachments = [];
               try {
                 if (agentTool.name === "delegate_to_codex") {
-                  if (!res.headersSent) {
-                    res.setHeader('Content-Type', 'text/event-stream');
-                    res.setHeader('Cache-Control', 'no-cache, no-transform');
-                    res.setHeader('X-Accel-Buffering', 'no');
-                    res.setHeader('Access-Control-Allow-Origin', '*');
-                    res.flushHeaders();
-                  }
+                  openCoachSse(res);
                   startKeepalive();
                   try {
                     res.write(`data: ${JSON.stringify({ type: 'mcp_progress', message: 'Handing this off to Codex...' })}\n\n`);
@@ -3046,13 +2505,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                     const canFallback = !isMultiProvider || (providerHint === integKey);
                     const shouldEmit = integStatus === 'broken' || (hasAuthSignal && canFallback);
                     if (shouldEmit) {
-                      if (!res.headersSent) {
-                        res.setHeader('Content-Type', 'text/event-stream');
-                        res.setHeader('Cache-Control', 'no-cache, no-transform');
-                        res.setHeader('X-Accel-Buffering', 'no');
-                        res.setHeader('Access-Control-Allow-Origin', '*');
-                        res.flushHeaders();
-                      }
+                      openCoachSse(res);
                       const coachIntegrationLabels: Record<string, string> = {
                         google: 'Google', outlook: 'Outlook', slack: 'Slack',
                         telegram: 'Telegram', discord: 'Discord', whatsapp: 'WhatsApp',
@@ -3118,13 +2571,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         // If the model returned its final text during the loop (turn > 0), stream it
         // directly here without re-calling the model (saves one LLM round-trip).
         if (loopFinalText) {
-          if (!res.headersSent) {
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache, no-transform');
-            res.setHeader('X-Accel-Buffering', 'no');
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.flushHeaders();
-          }
+          openCoachSse(res);
           if (actionResults.length > 0 || allMcpAttachments.length > 0) {
             const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search' && a.tool !== 'search_web');
             if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
@@ -3143,9 +2590,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}\n\n`);
           res.write('data: [DONE]\n\n');
           res.end();
-          extractProfileInBackground(userId, messages);
-          detectAndRecordBehaviorSignals(userId, messages);
-          markProactiveQuestionsAnswered(userId, messages).catch(() => {});
+          runCoachChatSideEffects(userId, messages, openai);
           const lastUserMsgLoop = [...messages].reverse().find((m: any) => m.role === 'user');
           if (lastUserMsgLoop?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsgLoop.content === 'string' ? lastUserMsgLoop.content : JSON.stringify(lastUserMsgLoop.content)).catch(() => {});
           logInteraction(userId, "app_chat", "outbound", loopFinalText).catch(() => {});
@@ -3154,13 +2599,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         }
       }
 
-      if (!res.headersSent) {
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache, no-transform');
-        res.setHeader('X-Accel-Buffering', 'no');
-        res.setHeader('Access-Control-Allow-Origin', '*');
-        res.flushHeaders();
-      }
+      openCoachSse(res);
 
       if (actionResults.length > 0 || allMcpAttachments.length > 0) {
         const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search' && a.tool !== 'search_web');
@@ -3280,9 +2719,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         res.end();
       }
       if (userId) {
-        extractProfileInBackground(userId, messages);
-        detectAndRecordBehaviorSignals(userId, messages);
-        markProactiveQuestionsAnswered(userId, messages).catch(() => {});
+        runCoachChatSideEffects(userId, messages, openai);
         const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
         if (lastUserMsg?.content) logInteraction(userId, "app_chat", "inbound", typeof lastUserMsg.content === 'string' ? lastUserMsg.content : JSON.stringify(lastUserMsg.content)).catch(() => {});
         if (fullStreamedReply) logInteraction(userId, "app_chat", "outbound", fullStreamedReply).catch(() => {});
@@ -3293,13 +2730,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       cleanupRun();
       // Graceful abort — user pressed Stop
       if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted'))) {
-        if (!res.headersSent) {
-          res.setHeader('Content-Type', 'text/event-stream');
-          res.setHeader('Cache-Control', 'no-cache, no-transform');
-          res.setHeader('X-Accel-Buffering', 'no');
-          res.setHeader('Access-Control-Allow-Origin', '*');
-          res.flushHeaders();
-        }
+        openCoachSse(res);
         if (!res.writableEnded) {
           res.write(`data: ${JSON.stringify({ type: 'aborted' })}\n\n`);
           res.end();
@@ -3323,306 +2754,21 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     }
   });
 
-  app.post("/api/chat/abort", async (req: Request, res: Response) => {
-    const callerId = req.userId;
-    if (!callerId) return res.status(401).json({ error: "Unauthorized" });
-    const { runId } = req.body;
-    if (!runId) return res.status(400).json({ error: "runId required" });
-    const run = activeCoachRuns.get(runId);
-    if (!run) return res.json({ ok: true });
-    if (run.userId !== callerId) return res.status(403).json({ error: "Forbidden" });
-    run.controller.abort();
-    activeCoachRuns.delete(runId);
-
-    // Cancel any pending transcript jobs for this user so the background
-    // poller does not complete and notify them after they pressed Stop.
-    try {
-      const { cancelUserTranscriptJobs } = await import('./lib/transcriptJobTracker');
-      const cancelled = await cancelUserTranscriptJobs(run.userId);
-      if (cancelled > 0) {
-        console.log(`[abort] Cancelled ${cancelled} pending transcript job(s) for user ${run.userId}`);
-      }
-    } catch (err) {
-      console.warn(`[abort] Failed to cancel transcript jobs: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    return res.json({ ok: true });
-  });
-
   // ── Web-chat invite tokens ────────────────────────────────────────────────
   // GET /api/webchat/invite/active — returns the owner's current unexpired token (if any)
   registerWebchatInviteRoutes(app, authMiddleware);
 
-  app.post("/api/coach/execute-confirmed", async (req: Request, res: Response) => {
-    try {
-      const { token } = req.body;
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-      if (!token) return res.status(400).json({ error: 'token is required' });
-      const pending = pendingConfirmations.get(token);
-      if (!pending) return res.status(400).json({ error: 'Confirmation token not found or expired' });
-      if (pending.userId !== userId) return res.status(403).json({ error: 'Token does not belong to this user' });
-      if (pending.expiresAt < Date.now()) {
-        pendingConfirmations.delete(token);
-        return res.status(400).json({ error: 'Confirmation token has expired' });
-      }
-      pendingConfirmations.delete(token);
-      let execResult: { result: 'success' | 'error' | 'pending'; label: string; detail: string };
-      if (pending.tool === 'connected_accounts_execute') {
-        const connectedAccountsTool = getTool('connected_accounts_execute');
-        if (!connectedAccountsTool) {
-          execResult = { result: 'error', label: 'Connected account action unavailable', detail: 'The connected account action tool is not registered.' };
-        } else {
-          const toolResult = await connectedAccountsTool.execute(
-            { ...pending.args, approved: true, confirmed: true },
-            { userId, channel: 'appchat', state: { pendingAttachments: [] } } as ToolContext,
-          );
-          execResult = {
-            result: toolResult.ok ? 'success' : 'error',
-            label: toolResult.label ?? 'Connected account action',
-            detail: toolResult.content ?? toolResult.detail ?? '',
-          };
-        }
-      } else {
-        execResult = await executeCoachTool(pending.tool, pending.args, userId);
-      }
-      return res.json({ result: execResult.result, label: execResult.label, detail: execResult.detail });
-    } catch (error) {
-      console.error('Error in execute-confirmed:', error);
-      return res.status(500).json({ error: 'Failed to execute confirmed action' });
-    }
-  });
+  registerCoachSessionRoutes(app, openai);
 
-  app.post("/api/coach/decline-action", async (req: Request, res: Response) => {
-    try {
-      const { token } = req.body;
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: 'Unauthorized' });
-      let tool = 'unknown';
-      let preview: Record<string, string> = {};
-      if (token) {
-        const pending = pendingConfirmations.get(token);
-        if (pending && pending.userId === userId) {
-          tool = pending.tool;
-          const a = pending.args;
-          if (tool === 'send_email') preview = { to: a.to || '', subject: a.subject || '' };
-          else if (tool === 'connected_accounts_execute') preview = { action: a.tool_slug || a.toolSlug || '', platform: a.platform || '' };
-          else preview = { action: a.action || '', cmd: a.cmd || '', path: a.path || '' };
-          pendingConfirmations.delete(token);
-        }
-      }
-      const toolLabel = tool === 'send_email'
-        ? `sending an email to ${preview.to || 'the recipient'}`
-        : tool === 'connected_accounts_execute'
-          ? `running the Composio ${preview.platform || 'connected account'} action ${preview.action || ''}`.trim()
-        : `running a terminal command (${preview.cmd || preview.action || 'shell'})`;
-      const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence — do not re-propose the action. Stay in your coaching persona.`;
-      const resp = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'user', content: prompt }],
-        max_completion_tokens: 80,
-      });
-      const content = resp.choices[0]?.message?.content || 'Got it — I won\'t proceed with that action.';
-      return res.json({ content });
-    } catch (error) {
-      console.error('Error in decline-action:', error);
-      return res.json({ content: 'Got it — I\'ll leave that for now.' });
-    }
-  });
+  registerCoachActionConfirmationRoutes(app, { pendingConfirmations, executeCoachTool, openai });
 
-  app.post("/api/coach/suggestions", async (req: Request, res: Response) => {
-    let deterministicReminder: ReturnType<typeof extractReminderSuggestion> = null;
-    try {
-      const { lastAssistantMessage, lastUserMessage, goals, coachingMode } = req.body;
-      if (!lastAssistantMessage) {
-        return res.json({ actions: [], followups: [] });
-      }
-      deterministicReminder = extractReminderSuggestion(lastUserMessage);
-
-      const prompt = `Analyze this coaching message and extract structured suggestions.
-
-User's latest message:
-"${typeof lastUserMessage === "string" ? lastUserMessage : ""}"
-
-Coaching message:
-"${lastAssistantMessage}"
-
-User's active goals:
-${(goals || []).map((g: any) => `- ${g.title} (${g.category})`).join('\n') || 'None set'}
-
-Return a JSON object with:
-1. "actions": array of 0-2 actionable suggestions. Four action types are supported:
-   - { "type": "task", "title": string (verb phrase), "category": "fitness"/"finance"/"career"/"personal"/"social", "priority": "high"/"medium"/"low", "description": one-line context }
-   - { "type": "goal", "title": string, "category": "fitness"/"finance"/"career"/"personal"/"social", "description": one-line context }
-   - { "type": "reminder", "title": string, "category": "personal", "priority": "medium", "description": one-line context, "scheduledAt": string, "recurrence": optional string } - Use when the user asked for a reminder or future follow-up. scheduledAt may be natural language like "in an hour", "tomorrow at 9am", or "next Monday at 10am" if that is exactly what the user said.
-   - { "type": "link", "title": string, "buttonLabel": string (short CTA ≤4 words), "url": string (use "profile://connections" to open connection settings, or a full https:// URL), "category": "personal" } — Use ONLY when the message explicitly suggests connecting/reconnecting Google, Microsoft, Outlook, or Gmail.
-   Only include actions that are specific and actionable. Return empty array for purely conversational messages.
-2. "followups": array of exactly 3 short follow-up questions (max 7 words each) the user would naturally ask next.
-
-Return ONLY the JSON object.`;
-
-      const response = await routeModelTurn({
-        tier: "cheap",
-        messages: [{ role: "user", content: prompt }],
-        maxCompletionTokens: 600,
-        userId: req.userId ?? undefined,
-        logPrefix: "[CoachSuggestions]",
-      });
-
-      const content = response.textContent || '{"actions":[],"followups":[]}';
-      try {
-        const parsed = JSON.parse(content);
-        const parsedActions = Array.isArray(parsed.actions) ? parsed.actions.slice(0, 2) : [];
-        const actions = deterministicReminder
-          ? [
-              deterministicReminder,
-              ...parsedActions.filter((action: any) => action?.type !== "reminder").slice(0, 1),
-            ]
-          : parsedActions;
-        res.json({
-          actions,
-          followups: Array.isArray(parsed.followups) ? parsed.followups.slice(0, 3) : [],
-        });
-      } catch {
-        res.json({ actions: deterministicReminder ? [deterministicReminder] : [], followups: [] });
-      }
-    } catch (error) {
-      if (isRetriableProviderError(error)) {
-        const msg = error instanceof Error ? error.message : String(error);
-        console.warn(`[CoachSuggestions] optional suggestions skipped: provider backpressure (${msg.slice(0, 180)})`);
-      } else {
-        console.error("Error generating suggestions:", error);
-      }
-      res.json({ actions: deterministicReminder ? [deterministicReminder] : [], followups: [] });
-    }
-  });
+  registerCoachInsightRoutes(app, openai);
 
   registerBrainDumpRoutes(app, openai);
 
-  app.post("/api/coach/checkin", async (req: Request, res: Response) => {
-    try {
-      const { goals, stats, history, lifeContext, coachingMode } = req.body;
-      const userId = req.userId;
-
-      const completedHistory = (history || []).filter((h: any) => h.completed);
-      const skippedHistory = (history || []).filter((h: any) => !h.completed);
-      const completionRate = history?.length > 0
-        ? Math.round((completedHistory.length / history.length) * 100)
-        : 0;
-      const goalsText = (goals || []).length > 0
-        ? (goals as any[]).map((g: any) => `${g.title}: ${g.current}/${g.target} ${g.unit}`).join(', ')
-        : 'no goals set';
-
-      const lifeCtxText = lifeContext
-        ? `\n- Priority: ${lifeContext.priorityGoal || 'not set'}` +
-          (lifeContext.currentBlocker ? `\n- Known blocker: ${lifeContext.currentBlocker}` : '') +
-          (lifeContext.improvementArea ? `\n- Wants to improve: ${lifeContext.improvementArea}` : '')
-        : '';
-
-      const persona = getPersonaBlock(coachingMode);
-
-      const prompt = `You are a personal productivity coach. Write a 1-2 sentence daily coaching note for this person.
-
-${persona}
-
-Their profile:
-- Streak: ${stats?.streak || 0} days, ${completionRate}% task completion this week
-- Goals: ${goalsText}
-- Recently completed: ${completedHistory.slice(0, 4).map((h: any) => h.title).join(', ') || 'nothing yet'}
-- Recently skipped: ${skippedHistory.slice(0, 3).map((h: any) => h.title).join(', ') || 'nothing'}${lifeCtxText}
-
-Write ONE short, specific coaching observation. Be direct — name what's working or what to fix. If they have a clear priority or blocker, reference it specifically. No greeting, no sign-off.
-
-Return JSON: { "note": "your 1-2 sentence note here" }`;
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 200,
-      });
-
-      const content = response.choices[0]?.message?.content || '{"note":""}';
-      try {
-        const parsed = JSON.parse(content);
-        res.json({ note: parsed.note || '' });
-      } catch {
-        res.json({ note: '' });
-      }
-    } catch (error) {
-      console.error("Error generating check-in:", error);
-      res.json({ note: '' });
-    }
-  });
-
   registerIntegrationRoutes(app);
 
-  app.post("/api/coach/transcribe", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
-      const { audio } = req.body;
-      if (!audio || typeof audio !== 'string') {
-        return res.status(400).json({ error: "audio (base64) is required" });
-      }
-
-      const { speechToText, detectAudioFormat } = await import('./integrations/audioClient');
-      const rawBuffer = Buffer.from(audio, 'base64');
-
-      // Size guards: skip silent/empty clips, reject huge files
-      if (rawBuffer.length < 1024) {
-        return res.json({ text: "" });
-      }
-      if (rawBuffer.length > 20 * 1024 * 1024) {
-        return res.status(400).json({ error: "Audio file is too large (max 20 MB). Please send a shorter recording." });
-      }
-
-      const format = detectAudioFormat(rawBuffer);
-      const text = await speechToText(rawBuffer, format);
-      res.json({ text });
-    } catch (error) {
-      console.error("Error transcribing audio:", error);
-      res.status(500).json({ error: "Failed to transcribe audio" });
-    }
-  });
-
-  app.post("/api/coach/speak", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
-      const { text, voice: voiceParam } = req.body;
-      if (!text || typeof text !== 'string') {
-        return res.status(400).json({ error: "text is required" });
-      }
-
-      let trimmedText = text.slice(0, 4000);
-      if (text.length > 4000) {
-        const lastSentence = trimmedText.lastIndexOf('.');
-        if (lastSentence > 0) {
-          trimmedText = trimmedText.slice(0, lastSentence + 1);
-        }
-      }
-
-      // Resolve voice: explicit param → user's saved preference → default 'nova'
-      let resolvedVoice = voiceParam && typeof voiceParam === 'string' ? voiceParam : null;
-      if (!resolvedVoice) {
-        const { getUserTtsPrefs } = await import('./agent/tools/tts');
-        const prefs = await getUserTtsPrefs(userId);
-        // Fallback only supports OpenAI MP3; map ElevenLabs voices to closest OpenAI voice
-        const OPENAI_VOICES = new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]);
-        resolvedVoice = OPENAI_VOICES.has(prefs.voice) ? prefs.voice : 'nova';
-      }
-
-      const { textToSpeech } = await import('./integrations/audioClient');
-      const audioBuffer = await textToSpeech(trimmedText, (resolvedVoice ?? "nova") as "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer", 'mp3');
-      res.json({ audio: audioBuffer.toString('base64') });
-    } catch (error) {
-      console.error("Error generating speech:", error);
-      res.status(500).json({ error: "Failed to generate speech" });
-    }
-  });
+  registerCoachAudioRoutes(app);
 
   /**
    * Streaming TTS endpoint — streams PCM16 chunks (24 kHz, mono, 16-bit LE) as
@@ -3711,166 +2857,17 @@ Return JSON: { "note": "your 1-2 sentence note here" }`;
 
   registerCommitmentRoutes(app, openai);
 
-  app.post("/api/coach/proactive", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { context, goals, stats, history, lifeContext } = req.body;
-      if (!context) return res.status(400).json({ error: "context is required" });
-
-      let userCommitments: any[] = [];
-      try {
-        userCommitments = await db
-          .select()
-          .from(schema.commitments)
-          .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-          .orderBy(desc(schema.commitments.extractedAt))
-          .limit(10);
-      } catch {}
-
-      const soulBlock = buildUntrustedSoulContext(
-        await getSoulPromptBlock(userId ?? ""),
-        "User context from JARVIS Soul",
-        BUDGET_PRESETS.coachTurn.soul,
-      );
-      const systemPrompt = buildCoachSystemPrompt(goals || [], stats || {}, history || [], [], lifeContext || null, [], false, [], false, userCommitments, undefined, [], [], false, undefined, undefined, undefined, soulBlock);
-
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache, no-transform');
-      res.setHeader('X-Accel-Buffering', 'no');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.flushHeaders();
-
-      const stream = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: systemPrompt + `\n\nIMPORTANT: You are initiating the conversation proactively — the user hasn't said anything yet. Address the following accountability context directly. Be brief (2-3 sentences max). Don't greet — get right to the point.\n\nAccountability context:\n${context}` },
-          { role: "user", content: "[Jarvis is checking in proactively — no user message. Address the accountability context above.]" },
-        ],
-        stream: true,
-        max_completion_tokens: 300,
-      });
-
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || '';
-        if (content) {
-          res.write(`data: ${JSON.stringify({ content })}\n\n`);
-        }
-      }
-
-      res.write('data: [DONE]\n\n');
-      res.end();
-    } catch (error) {
-      console.error("Error in proactive coach:", error);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Failed to generate proactive message" });
-      } else {
-        res.end();
-      }
-    }
-  });
 
   // Returns today's morning brief if one was generated and stored by the
   // proactive scheduler. The frontend uses this to show the exact same text
   // in the Insights chat that was already sent to Telegram/daemon — no re-generation.
-  app.get("/api/coach/morning-brief", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const today = new Date().toISOString().slice(0, 10);
-      const rows = await db
-        .select({ data: userPreferences.data })
-        .from(userPreferences)
-        .where(eq(userPreferences.userId, userId));
-      const prefs = (rows[0]?.data as any) || {};
-      const brief = prefs.morningBrief;
-      if (brief && brief.date === today && brief.text) {
-        return res.json({ text: brief.text, date: brief.date });
-      }
-      return res.json({ text: null });
-    } catch (err) {
-      console.error('Error fetching morning brief:', err);
-      return res.json({ text: null });
-    }
-  });
+  registerCoachMorningBriefRoute(app);
 
   registerAuthenticatedCoachRuntimeRoutes(app);
   registerRuntimeDiagnosticsRoutes(app);
   registerInboxRoutes(app);
 
-  app.post("/api/coach/weekly-review", async (req: Request, res: Response) => {
-    try {
-      const userId = req.userId;
-      if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const { goals, stats, history } = req.body;
-
-      let weekCommitments: any[] = [];
-      try {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-        weekCommitments = await db
-          .select()
-          .from(schema.commitments)
-          .where(eq(schema.commitments.userId, userId))
-          .orderBy(desc(schema.commitments.extractedAt))
-          .limit(30);
-        weekCommitments = weekCommitments.filter((c: any) =>
-          new Date(c.extractedAt).getTime() >= sevenDaysAgo.getTime()
-        );
-      } catch {}
-
-      const completedHistory = (history || []).filter((h: any) => h.completed);
-      const skippedHistory = (history || []).filter((h: any) => !h.completed);
-      const doneCommitments = weekCommitments.filter((c: any) => c.status === 'done');
-      const pendingCommitments = weekCommitments.filter((c: any) => c.status === 'pending');
-
-      const prompt = `Generate a weekly productivity review. Be specific and direct.
-
-This week's data:
-- Tasks completed: ${completedHistory.length} (${completedHistory.slice(0, 10).map((h: any) => h.title).join(', ') || 'none'})
-- Tasks skipped/incomplete: ${skippedHistory.length} (${skippedHistory.slice(0, 10).map((h: any) => h.title).join(', ') || 'none'})
-- Commitments made: ${weekCommitments.length}
-- Commitments fulfilled: ${doneCommitments.length} (${doneCommitments.map((c: any) => c.content).join(', ') || 'none'})
-- Commitments still pending: ${pendingCommitments.length} (${pendingCommitments.map((c: any) => c.content).join(', ') || 'none'})
-- Goals: ${(goals || []).map((g: any) => `${g.title} (${g.current}/${g.target} ${g.unit})`).join(', ') || 'none'}
-- Current streak: ${stats?.streak || 0} days
-
-Return JSON:
-{
-  "headline": "One punchy sentence summarizing the week (max 10 words)",
-  "wins": ["specific win 1", "specific win 2"],
-  "patterns": ["pattern or observation 1", "pattern 2"],
-  "avoided": ["thing they avoided or skipped consistently"],
-  "nextWeekFocus": "One specific thing to focus on next week"
-}
-
-Return ONLY the JSON object.`;
-
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [{ role: "user", content: prompt }],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 500,
-      });
-
-      const content = response.choices[0]?.message?.content || '{}';
-      try {
-        const parsed = JSON.parse(content);
-        res.json({
-          headline: parsed.headline || 'Week in review',
-          wins: Array.isArray(parsed.wins) ? parsed.wins : [],
-          patterns: Array.isArray(parsed.patterns) ? parsed.patterns : [],
-          avoided: Array.isArray(parsed.avoided) ? parsed.avoided : [],
-          nextWeekFocus: parsed.nextWeekFocus || '',
-        });
-      } catch {
-        res.json({ headline: 'Week in review', wins: [], patterns: [], avoided: [], nextWeekFocus: '' });
-      }
-    } catch (error) {
-      console.error("Error generating weekly review:", error);
-      res.status(500).json({ error: "Failed to generate weekly review" });
-    }
-  });
+  registerCoachWeeklyReviewRoute(app, openai);
 
   registerProfileMemoryRoutes(app);
   registerPredictionRoutes(app);
@@ -3906,47 +2903,9 @@ Return ONLY the JSON object.`;
 
   registerChatGptImportRoutes(app, openai);
 
-  // ── Jarvis Build History — Config ────────────────────────────────────────
-
-  app.get("/api/jarvis/builds", async (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    try {
-      const rows = await db
-        .select()
-        .from(schema.agentBuildLog)
-        .where(eq(schema.agentBuildLog.userId, userId))
-        .orderBy(desc(schema.agentBuildLog.createdAt))
-        .limit(50);
-      res.json({ builds: rows });
-    } catch (err) {
-      console.error("[jarvis] GET builds failed:", err);
-      res.status(500).json({ error: "Failed to load build log" });
-    }
-  });
-
   // ── Nervous System — Watch Topics ────────────────────────────────────────
 
   registerNervousSystemWatchRoutes(app);
-
-  app.get("/api/nervous-system/signals", async (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-    const parsedLimit = parseInt((req.query.limit as string) || "20", 10);
-    const limit = Math.min(50, Number.isNaN(parsedLimit) || parsedLimit < 1 ? 20 : parsedLimit);
-    try {
-      const signals = await db
-        .select()
-        .from(schema.nervousSystemSignals)
-        .where(eq(schema.nervousSystemSignals.userId, userId))
-        .orderBy(sql`${schema.nervousSystemSignals.createdAt} DESC`)
-        .limit(limit);
-      res.json(signals);
-    } catch (err) {
-      console.error("[NervousSystem] signals fetch failed:", err);
-      res.status(500).json({ error: "Failed to fetch signals" });
-    }
-  });
 
   // ── Jarvis Gut — Reflexive Anomaly Detection ────────────────────────────────
 
