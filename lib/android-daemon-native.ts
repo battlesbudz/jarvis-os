@@ -20,7 +20,7 @@ const unavailableStatus: AndroidDaemonStatus = {
 const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
   | {
       getStatus(): Promise<AndroidDaemonStatus>;
-      connect(serverUrl: string, pairCode: string): Promise<AndroidDaemonStatus>;
+      enable(serverUrl: string, bootstrapToken: string): Promise<AndroidDaemonStatus>;
       disconnect(): Promise<AndroidDaemonStatus>;
       openAccessibilitySettings(): Promise<void>;
       openNotificationListenerSettings(): Promise<void>;

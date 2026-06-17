@@ -219,7 +219,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
     // ── Android actions ────────────────────────────────────────────────────
     if (isAndroidAction(rawAction)) {
       if (!androidActive) {
-        return { ok: false, content: jsonErrorContent("No Android device control connection is active. Ask the user to open the main Jarvis Android app, go to Profile -> Android Device, get a pairing code, and connect device control there.") };
+        return { ok: false, content: jsonErrorContent("No Android device control connection is active. Ask the user to open the main Jarvis Android app, go to Profile -> Android Device, and tap Enable Device Control.") };
       }
       const permKey = androidPermKey(rawAction);
       if (permKey && !(await isAndroidDaemonActionAllowed(ctx.userId, permKey))) {

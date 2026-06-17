@@ -43,6 +43,7 @@ import {
 } from '@/lib/storage';
 import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
 import { getApiUrl, apiRequest } from '@/lib/query-client';
+import { AndroidDaemonNative, getAndroidDaemonStatus } from '@/lib/android-daemon-native';
 import { useAuth, authFetch } from '@/lib/auth-context';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
@@ -186,8 +187,9 @@ export default function SettingsScreen() {
   const [integrationHealth, setIntegrationHealth] = useState<Record<string, string>>({});
   const [integrationErrors, setIntegrationErrors] = useState<Record<string, string | null>>({});
   const [loadingStatus, setLoadingStatus] = useState(true);
-  const [androidDaemonCode, setAndroidDaemonCode] = useState<string | null>(null);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
+  const [androidDaemonBusy, setAndroidDaemonBusy] = useState(false);
+  const [androidDaemonError, setAndroidDaemonError] = useState<string | null>(null);
   const [connectionsStatus, setConnectionsStatus] = useState<ConnectionsStatus | null>(null);
   const [connectionBusyApp, setConnectionBusyApp] = useState<string | null>(null);
   const [connectionTestSummary, setConnectionTestSummary] = useState<string | null>(null);
@@ -1021,9 +1023,10 @@ export default function SettingsScreen() {
       configured: telegramRes.configured ?? false,
       botUsername: telegramRes.botUsername ?? null,
     });
-    setAndroidDaemonConnected(
-      channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false
-    );
+    const serverAndroidDaemonConnected =
+      channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false;
+    const nativeAndroidDaemonStatus = await getAndroidDaemonStatus().catch(() => null);
+    setAndroidDaemonConnected(serverAndroidDaemonConnected || nativeAndroidDaemonStatus?.connected === true);
     if (connectionsRes) setConnectionsStatus(normalizeConnectionsStatus(connectionsRes));
     if (integrationRes && typeof integrationRes === 'object') {
       const health: Record<string, string> = {};
@@ -1384,13 +1387,31 @@ export default function SettingsScreen() {
 
   // ── Android Daemon ──
   const handleAndroidDaemon = useCallback(async () => {
-    if (androidDaemonCode) { setAndroidDaemonCode(null); return; }
+    if (androidDaemonConnected || androidDaemonBusy) return;
+    setAndroidDaemonBusy(true);
+    setAndroidDaemonError(null);
     try {
-      const res = await apiRequest('POST', '/api/channels/daemon/code');
+      if (Platform.OS !== 'android' || !AndroidDaemonNative) {
+        const baseUrl = getApiUrl().replace(/\/+$/, '');
+        await Linking.openURL(`${baseUrl}/api/download/android`);
+        return;
+      }
+      const res = await apiRequest('POST', '/api/channels/android-daemon/bootstrap');
       const data = await res.json();
-      setAndroidDaemonCode(data.code ?? null);
-    } catch {}
-  }, [androidDaemonCode]);
+      const bootstrapToken = String(data.bootstrapToken ?? '');
+      if (!bootstrapToken) throw new Error('Android device bootstrap token was not returned.');
+      const status = await AndroidDaemonNative.enable(getApiUrl(), bootstrapToken);
+      setAndroidDaemonConnected(status.connected);
+      await loadConnections();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to enable Android device control.';
+      setAndroidDaemonError(message);
+      Alert.alert('Android Device Control', message);
+    } finally {
+      setAndroidDaemonBusy(false);
+    }
+  }, [androidDaemonBusy, androidDaemonConnected, loadConnections]);
 
   const saveWakeSettings = useCallback(async (
     updates: { wakeWordEnabled?: boolean; talkModeEnabled?: boolean; wakeWords?: string[] }
@@ -1910,30 +1931,34 @@ export default function SettingsScreen() {
 
 
 
-          {/* Android Daemon */}
+          {/* Android Device Control */}
           <View style={[styles.connRow, styles.connRowBorder]}>
             <View style={[styles.connIconWrap, { backgroundColor: Colors.successDim }]}>
               <Ionicons name="phone-portrait-outline" size={18} color={Colors.success} />
             </View>
             <View style={styles.connInfo}>
-              <Text style={styles.connName}>Android Daemon</Text>
+              <Text style={styles.connName}>Jarvis OS Device Control</Text>
               <Text style={styles.connSub}>
-                {androidDaemonConnected ? 'Connected' : 'Not connected'}
+                {androidDaemonConnected
+                  ? 'Connected'
+                  : Platform.OS === 'android'
+                    ? 'Enable phone control in this app'
+                    : 'Open Jarvis OS on Android to enable'}
               </Text>
             </View>
             <Pressable
-              style={[styles.connBtn, androidDaemonConnected ? styles.connBtnConnected : (androidDaemonCode ? styles.connBtnConnected : styles.connBtnDisconnected)]}
+              style={[styles.connBtn, androidDaemonConnected ? styles.connBtnConnected : styles.connBtnDisconnected]}
               onPress={handleAndroidDaemon}
+              disabled={androidDaemonConnected || androidDaemonBusy}
             >
-              <Text style={[styles.connBtnText, (androidDaemonConnected || androidDaemonCode) && styles.connBtnTextConnected]}>
-                {androidDaemonCode ? 'Hide' : 'Set Up'}
+              <Text style={[styles.connBtnText, androidDaemonConnected && styles.connBtnTextConnected]}>
+                {androidDaemonConnected ? 'Ready' : androidDaemonBusy ? '...' : Platform.OS === 'android' ? 'Enable' : 'Install'}
               </Text>
             </Pressable>
           </View>
-          {androidDaemonCode && (
+          {androidDaemonError && (
             <View style={styles.linkCodeBlock}>
-              <Text style={styles.linkCodeLabel}>Enter this code in the GamePlan Daemon app:</Text>
-              <Text style={styles.linkCode}>{androidDaemonCode}</Text>
+              <Text style={styles.linkCodeLabel}>{androidDaemonError}</Text>
             </View>
           )}
         </View>

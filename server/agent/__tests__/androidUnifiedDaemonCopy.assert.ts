@@ -4,6 +4,7 @@ import path from "node:path";
 
 const projectRoot = process.cwd();
 const profileSource = fs.readFileSync(path.join(projectRoot, "app/(tabs)/profile.tsx"), "utf8");
+const settingsSource = fs.readFileSync(path.join(projectRoot, "app/(tabs)/settings.tsx"), "utf8");
 const coachAgentSource = fs.readFileSync(path.join(projectRoot, "server/channels/coachAgent.ts"), "utf8");
 const daemonToolSource = fs.readFileSync(path.join(projectRoot, "server/agent/tools/daemon.ts"), "utf8");
 const routesSource = fs.readFileSync(path.join(projectRoot, "server/routes.ts"), "utf8");
@@ -111,26 +112,46 @@ assert.match(
 
 assert.match(
   androidControlCardSource,
+  /\/api\/channels\/android-daemon\/bootstrap/,
+  "Android control card should request an authenticated in-app bootstrap token.",
+);
+
+assert.match(
+  androidControlCardSource,
+  /AndroidDaemonNative\.enable/,
+  "Android control card should enable the local daemon through the native bootstrap bridge.",
+);
+
+assert.match(
+  androidControlCardSource,
+  /Enable Device Control/,
+  "Android control card should present a one-device enable action instead of a self-pairing code.",
+);
+
+assert.match(
+  androidControlCardSource,
   /await onUnpair\?\.\(\)/,
   "Android control card should call the server-side unpair callback during disconnect.",
 );
 
 assert.match(
   routesSource,
-  /tap Code[\s\S]*tap Connect/,
-  "Runtime guidance should match the unified Android card Code -> Connect pairing flow.",
+  /tap Enable Device Control/,
+  "Runtime guidance should match the unified Android card native enable flow.",
 );
 
 assert.match(
   coachAgentSource,
-  /Tap Code[\s\S]*tap Connect/,
-  "Channel guidance should match the unified Android card Code -> Connect pairing flow.",
+  /Tap Enable Device Control/,
+  "Channel guidance should match the unified Android card native enable flow.",
 );
 
 for (const staleGuidance of [
   "Get Pairing Code",
   "Server URL is https://gameplanjarvisai.up.railway.app",
   "tap Pair",
+  "tap Code",
+  "tap Connect",
   "navigates the phone back to the Jarvis chat in the browser",
 ]) {
   assert.equal(
@@ -142,6 +163,24 @@ for (const staleGuidance of [
     coachAgentSource.includes(staleGuidance),
     false,
     `Channel guidance should not include stale Android setup copy: ${staleGuidance}`,
+  );
+}
+
+for (const stalePairingCopy of [
+  "/api/channels/daemon/code",
+  "Pair code",
+  "pairCode",
+  "GamePlan Daemon app",
+]) {
+  assert.equal(
+    androidControlCardSource.includes(stalePairingCopy),
+    false,
+    `Android control card should not expose self-pairing code workflow: ${stalePairingCopy}`,
+  );
+  assert.equal(
+    settingsSource.includes(stalePairingCopy),
+    false,
+    `Settings should not expose self-pairing Android daemon workflow: ${stalePairingCopy}`,
   );
 }
 
@@ -176,7 +215,7 @@ for (const source of [androidAccessibilitySource, pluginAccessibilitySource, leg
 
 for (const method of [
   "getStatus",
-  "connect",
+  "enable",
   "disconnect",
   "openAccessibilitySettings",
   "openNotificationListenerSettings",

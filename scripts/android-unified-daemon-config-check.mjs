@@ -8,6 +8,12 @@ const settingsGradlePath = path.join(projectRoot, "android/settings.gradle");
 const appBuildGradlePath = path.join(projectRoot, "android/app/build.gradle");
 const stringsPath = path.join(projectRoot, "android/app/src/main/res/values/strings.xml");
 const mainApplicationPath = path.join(projectRoot, "android/app/src/main/java/com/gameplan/MainApplication.kt");
+const nativeWrapperPath = path.join(projectRoot, "lib/android-daemon-native.ts");
+const androidControlCardPath = path.join(projectRoot, "components/androidDaemon/AndroidDeviceControlCard.tsx");
+const jarvisDaemonModulePath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/JarvisDaemonModule.kt",
+);
 const webSocketServicePath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/WebSocketService.kt",
@@ -32,6 +38,10 @@ const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
 const pluginTemplateWebSocketPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/WebSocketService.kt",
+);
+const pluginTemplateJarvisDaemonModulePath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisDaemonModule.kt",
 );
 const pluginTemplateScreenRecordPath = path.join(
   projectRoot,
@@ -153,6 +163,9 @@ const [
   appBuildGradle,
   strings,
   mainApplication,
+  nativeWrapper,
+  androidControlCard,
+  jarvisDaemonModule,
   webSocketService,
   screenRecordHandler,
   cameraHandler,
@@ -160,6 +173,7 @@ const [
   opHandler,
   plugin,
   pluginTemplateWebSocket,
+  pluginTemplateJarvisDaemonModule,
   pluginTemplateScreenRecord,
   pluginTemplateCamera,
   pluginTemplateAccessibility,
@@ -173,6 +187,9 @@ const [
   readFile(appBuildGradlePath, "utf8"),
   readFile(stringsPath, "utf8"),
   readFile(mainApplicationPath, "utf8"),
+  readFile(nativeWrapperPath, "utf8"),
+  readFile(androidControlCardPath, "utf8"),
+  readFile(jarvisDaemonModulePath, "utf8"),
   readFile(webSocketServicePath, "utf8"),
   readFile(screenRecordHandlerPath, "utf8"),
   readFile(cameraHandlerPath, "utf8"),
@@ -180,6 +197,7 @@ const [
   readFile(opHandlerPath, "utf8"),
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
+  readFile(pluginTemplateJarvisDaemonModulePath, "utf8"),
   readFile(pluginTemplateScreenRecordPath, "utf8"),
   readFile(pluginTemplateCameraPath, "utf8"),
   readFile(pluginTemplateAccessibilityPath, "utf8"),
@@ -245,18 +263,34 @@ assertIncludes(
   "MainApplication.kt",
 );
 assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
+assertIncludes(nativeWrapper, "enable(serverUrl: string, bootstrapToken: string)", "lib/android-daemon-native.ts");
+assertExcludes(nativeWrapper, "connect(serverUrl: string, pairCode: string)", "lib/android-daemon-native.ts");
+assertIncludes(androidControlCard, "/api/channels/android-daemon/bootstrap", "AndroidDeviceControlCard.tsx");
+assertIncludes(androidControlCard, "AndroidDaemonNative.enable", "AndroidDeviceControlCard.tsx");
+assertIncludes(androidControlCard, "Enable Device Control", "AndroidDeviceControlCard.tsx");
+assertExcludes(androidControlCard, "/api/channels/daemon/code", "AndroidDeviceControlCard.tsx");
+assertExcludes(androidControlCard, "Pair code", "AndroidDeviceControlCard.tsx");
+assertExcludes(androidControlCard, "pairCode", "AndroidDeviceControlCard.tsx");
+assertIncludes(jarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "JarvisDaemonModule.kt");
+assertExcludes(jarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertExcludes(pluginTemplateJarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(webSocketService, 'put("clientKind", "unified_android_app")', "WebSocketService.kt");
 assertIncludes(webSocketService, 'put("appPackage", packageName)', "WebSocketService.kt");
 assertIncludes(webSocketService, "private var currentConnectUsesDaemonId = false", "WebSocketService.kt");
+assertIncludes(webSocketService, "private var currentConnectUsesBootstrapToken = false", "WebSocketService.kt");
+assertIncludes(webSocketService, "ACTION_BOOTSTRAP", "WebSocketService.kt");
+assertIncludes(webSocketService, "EXTRA_BOOTSTRAP_TOKEN", "WebSocketService.kt");
+assertIncludes(webSocketService, '"android_app_bootstrap"', "WebSocketService.kt");
 assertIncludes(webSocketService, "null -> {", "WebSocketService.kt");
 assertIncludes(webSocketService, "Skipping sticky restart reconnect", "WebSocketService.kt");
-assertIncludes(webSocketService, 'pairCode = ""', "WebSocketService.kt");
-assertIncludes(webSocketService, "Pair code rejected", "WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "private var currentConnectUsesDaemonId = false", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "private var currentConnectUsesBootstrapToken = false", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "ACTION_BOOTSTRAP", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "EXTRA_BOOTSTRAP_TOKEN", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, '"android_app_bootstrap"', "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "null -> {", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "Skipping sticky restart reconnect", "plugins/android-daemon-native/WebSocketService.kt");
-assertIncludes(pluginTemplateWebSocket, 'pairCode = ""', "plugins/android-daemon-native/WebSocketService.kt");
-assertIncludes(pluginTemplateWebSocket, "Pair code rejected", "plugins/android-daemon-native/WebSocketService.kt");
 assertExcludes(screenRecordHandler, "Jarvis app app", "ScreenRecordHandler.kt");
 assertExcludes(screenRecordHandler, "Allow Screen Capture", "ScreenRecordHandler.kt");
 assertExcludes(pluginTemplateScreenRecord, "Jarvis app app", "plugins/android-daemon-native/ScreenRecordHandler.kt");

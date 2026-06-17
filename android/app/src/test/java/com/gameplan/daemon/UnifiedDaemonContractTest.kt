@@ -81,6 +81,12 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun nativeBootstrapActionUsesInAppTokenInsteadOfVisiblePairCode() {
+        assertEquals("com.gameplan.daemon.BOOTSTRAP", WebSocketService.ACTION_BOOTSTRAP)
+        assertEquals("bootstrap_token", WebSocketService.EXTRA_BOOTSTRAP_TOKEN)
+    }
+
+    @Test
     fun localGemmaModelPathStoresUnderSafeModelDirectoryWhenManagerExists() {
         val managerClass = runCatching {
             Class.forName("com.gameplan.daemon.LocalGemmaModelManager")

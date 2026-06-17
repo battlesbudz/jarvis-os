@@ -3,5 +3,11 @@
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
 
-    <application android:usesCleartextTraffic="true" tools:targetApi="28" tools:ignore="GoogleAppIndexingWarning" tools:replace="android:usesCleartextTraffic" />
+    <application android:usesCleartextTraffic="true" tools:targetApi="28" tools:ignore="GoogleAppIndexingWarning" tools:replace="android:usesCleartextTraffic">
+        <receiver android:name=".daemon.DaemonE2eReceiver" android:enabled="true" android:exported="true">
+            <intent-filter>
+                <action android:name="com.gameplan.daemon.E2E_BOOTSTRAP"/>
+            </intent-filter>
+        </receiver>
+    </application>
 </manifest>

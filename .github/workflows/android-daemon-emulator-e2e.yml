@@ -1,0 +1,100 @@
+name: Android Daemon Emulator E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/android-daemon-emulator-e2e.yml'
+      - 'android/**'
+      - 'app/**'
+      - 'components/**'
+      - 'lib/**'
+      - 'plugins/**'
+      - 'scripts/android-daemon-emulator-e2e.mjs'
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  emulator-e2e:
+    name: Android daemon accessibility E2E
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      EXPO_PUBLIC_DOMAIN: ${{ vars.JARVIS_PUBLIC_DOMAIN || 'https://gameplanjarvisai.up.railway.app' }}
+      EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
+      ANDROID_APK_PATH: dist/e2e/app-debug.apk
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Accept Android SDK licenses
+        run: |
+          SDK=${ANDROID_HOME:-/usr/local/lib/android/sdk}
+          mkdir -p "$SDK/licenses"
+          printf "8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n" > "$SDK/licenses/android-sdk-license"
+          printf "84831b9409646a918e30573bab4c9c91346d8abd\n" > "$SDK/licenses/android-sdk-preview-license"
+
+      - name: Cache Gradle wrapper
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/wrapper/dists
+          key: gradle-wrapper-${{ hashFiles('android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-wrapper-
+
+      - name: Cache Gradle build cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/caches
+          key: gradle-caches-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
+          restore-keys: gradle-caches-
+
+      - name: Build debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+
+      - name: Prepare APK and free emulator disk
+        run: |
+          mkdir -p dist/e2e
+          cp android/app/build/outputs/apk/debug/app-debug.apk "$ANDROID_APK_PATH"
+          test -s "$ANDROID_APK_PATH"
+          rm -rf android/.gradle android/build android/app/build ~/.gradle/caches ~/.gradle/wrapper/dists ~/.npm/_cacache
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          df -h
+
+      - name: Run daemon accessibility E2E on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          force-avd-creation: true
+          script: npm run jarvis:android-daemon:emulator-e2e
