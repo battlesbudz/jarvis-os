@@ -34,6 +34,10 @@ export type DaemonOp =
   | { type: "android_read_screen" }
   | { type: "android_screen_context" }
   | { type: "android_operator_action"; action: Record<string, unknown> }
+  | { type: "android_local_model_status"; model?: string }
+  | { type: "android_local_model_import"; model?: string; sourcePath?: string; fileName?: string }
+  | { type: "android_local_model_generate"; model: string; prompt: string; maxTokens?: number; temperature?: number }
+  | { type: "android_local_model_cancel"; requestId?: string }
   | { type: "android_tap"; x: number; y: number }
   | { type: "android_type"; text: string; submit?: boolean }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
@@ -384,7 +388,8 @@ export type AndroidDaemonAction =
   | "android_camera"
   | "android_location"
   | "android_sms"
-  | "android_screen_record";
+  | "android_screen_record"
+  | "android_local_model";
 export type AndroidDaemonPermissions = Record<AndroidDaemonAction, boolean>;
 
 export const DEFAULT_ANDROID_DAEMON_PERMISSIONS: AndroidDaemonPermissions = {
@@ -399,6 +404,7 @@ export const DEFAULT_ANDROID_DAEMON_PERMISSIONS: AndroidDaemonPermissions = {
   android_location: true,
   android_sms: false,
   android_screen_record: true,
+  android_local_model: true,
 };
 
 function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
@@ -613,7 +619,7 @@ export async function sendDaemonOp(
     const missing = isPlatformNeutral ? "daemon" : isAndroidOp ? "android daemon" : "desktop daemon";
     console.log(`[daemon] op SKIPPED — ${missing} not connected userId=${userId} op=${op.type}`);
     if (isAndroidOp) {
-      return { ok: false, error: "Android daemon not connected. Ask the user to install the Jarvis Android APK and pair it." };
+      return { ok: false, error: "Jarvis Android app device control is not connected. Open the Jarvis Android app and enable Device Control." };
     }
     if (!isPlatformNeutral) {
       return { ok: false, error: "Desktop daemon not connected. Ask the user to install and pair the desktop daemon." };
@@ -657,6 +663,10 @@ export async function sendDaemonOp(
       android_screen_context: "android_read_screen",
       android_view_hierarchy: "android_read_screen",
       android_pinch:          "android_tap_type",
+      android_local_model_status:   "android_local_model",
+      android_local_model_import:   "android_local_model",
+      android_local_model_generate: "android_local_model",
+      android_local_model_cancel:   "android_local_model",
     };
     const requiredPerm = op.type === "android_operator_action"
       ? operatorActionPermKey(op.action)

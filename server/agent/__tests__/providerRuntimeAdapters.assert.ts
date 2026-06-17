@@ -7,6 +7,10 @@ import {
   _setOpenAICompatibleCredentialResolverForTesting,
   _setOpenAICompatibleProviderClientFactoryForTesting,
 } from "../providers/openaiCompatible";
+import {
+  AndroidLocalGemmaProvider,
+  _setAndroidLocalGemmaDaemonOpForTesting,
+} from "../providers/androidLocalGemma";
 
 async function testAnthropicUsesUserCredential() {
   const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -445,6 +449,50 @@ async function testOpenAICompatibleUsesLocalUserCredential() {
   _setOpenAICompatibleCredentialResolverForTesting(null);
 }
 
+async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: "hello from phone gemma",
+        finishReason: "stop",
+        model: "gemma-4-e4b-it",
+        runtime: "android-local-gemma",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "system", content: "Be concise." },
+        { role: "user", content: "Hello" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "hello from phone gemma");
+    assert.equal(result.finishReason, "stop");
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].userId, "user-phone");
+    assert.equal(requests[0].op.type, "android_local_model_generate");
+    assert.equal(requests[0].op.model, "gemma-4-e4b-it");
+    assert.match(requests[0].op.prompt, /system: Be concise\./);
+    assert.match(requests[0].op.prompt, /user: Hello/);
+    assert.equal(requests[0].op.maxTokens, 128);
+    assert.ok(requests[0].timeoutMs >= 60000);
+    console.log("OK: Android Local Gemma provider sends generation to the Jarvis Android app daemon runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function main() {
   await testAnthropicUsesUserCredential();
   await testAnthropicToolUseFinishReasonIsToolCalls();
@@ -454,6 +502,7 @@ async function main() {
   await testGoogleToolResponseUsesOriginalFunctionName();
   await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();
   await testOpenAICompatibleUsesLocalUserCredential();
+  await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   console.log("\nAll provider runtime adapter assertions passed.");
 }
 

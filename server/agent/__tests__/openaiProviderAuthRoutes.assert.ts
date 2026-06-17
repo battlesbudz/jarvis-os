@@ -109,6 +109,7 @@ async function main() {
     assert.equal(getDefaultModelForProviderAuth("openai", "oauth"), "chatgpt-codex-oauth/auto");
     assert.equal(getDefaultModelForProviderAuth("openai", "api_key"), "openai/gpt-4.1-mini");
     assert.equal(getDefaultModelForProviderAuth("google", "api_key"), "google/gemini-2.5-flash");
+    assert.equal(getDefaultModelForProviderAuth("android-local-gemma", "local"), "android-local-gemma/gemma-4-e4b-it");
 
     const start = await buildOpenAIOAuthStart({
       userId: "user-1",

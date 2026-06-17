@@ -292,6 +292,79 @@ async function runUserSelectedProviderOverridesRuntimeDefaultsAssertion(): Promi
   }
 }
 
+async function runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let captured: ProviderQueryParams | null = null;
+  class CapturingAndroidLocalGemmaProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "local gemma route" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  class UnexpectedCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("selected Android Local Gemma must not route through Codex OAuth");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("android-local-gemma", new CapturingAndroidLocalGemmaProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new UnexpectedCodexProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-selected-android-local-gemma");
+      return "android-local-gemma/gemma-4-e4b-it";
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Use the local phone model for this turn." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-selected-android-local-gemma",
+      logPrefix: "[ModelRouterSelectedAndroidLocalGemmaTest]",
+    });
+
+    const capturedRequest = captured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "android-local-gemma");
+    assert.equal(result.model, "gemma-4-e4b-it");
+    assert.equal(result.textContent, "local gemma route");
+    assert.equal(capturedRequest?.model, "gemma-4-e4b-it");
+    assert.equal(capturedRequest?.userId, "user-selected-android-local-gemma");
+    console.log("OK: selected Android Local Gemma overrides Codex OAuth runtime defaults");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion(): Promise<void> {
   const previousEnv = new Map<string, string | undefined>();
   for (const key of [
@@ -1126,6 +1199,7 @@ async function runRequestedProviderModelOverridesAmbientCodexRouteAssertion(): P
 
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
+  .then(runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion)
   .then(runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion)
   .then(runDefaultProviderProfileOverridesStaleCodexSelectionAssertion)
   .then(runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion)

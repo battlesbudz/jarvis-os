@@ -101,7 +101,7 @@ class UnifiedDaemonContractTest {
         assertTrue("LocalGemmaModelManager exposes a Context/String File path helper", method != null)
 
         val modelFile = method!!.invoke(null, context, modelId) as File
-        val expectedSuffix = File(File(File(context.filesDir, "local_models"), "google_gemma_4_e2b-it"), "model.bin").path
+        val expectedSuffix = File(File(File(context.filesDir, "local_models"), "google_gemma_4_e2b-it"), "model.litertlm").path
         assertTrue(
             "Expected model file to end with $expectedSuffix, got ${modelFile.path}",
             modelFile.path.endsWith(expectedSuffix)

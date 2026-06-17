@@ -17,8 +17,9 @@ import { OpenAICompatibleProvider } from "./openaiCompatible";
 import { CodexOAuthProvider } from "./codexOAuth";
 import { AnthropicProvider } from "./anthropic";
 import { GoogleProvider } from "./google";
+import { AndroidLocalGemmaProvider } from "./androidLocalGemma";
 
-export type ProviderName = "openai" | "openai-compatible" | "chatgpt-codex-oauth" | "anthropic" | "google";
+export type ProviderName = "openai" | "openai-compatible" | "chatgpt-codex-oauth" | "anthropic" | "google" | "android-local-gemma";
 
 type ProviderFactory = () => BaseProvider;
 
@@ -28,6 +29,7 @@ const PROVIDER_FACTORIES: Record<ProviderName, ProviderFactory> = {
   "chatgpt-codex-oauth": () => new CodexOAuthProvider(),
   anthropic: () => new AnthropicProvider(),
   google: () => new GoogleProvider(),
+  "android-local-gemma": () => new AndroidLocalGemmaProvider(),
 };
 
 // Singleton instance cache - one instance per provider name per process.

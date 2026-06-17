@@ -14,6 +14,7 @@ import {
   type ProviderStatus,
 } from "./providers/modelProviderAuthProfiles";
 import { DEFAULT_CODEX_OAUTH_MODEL, getCodexOAuthModel } from "./runtimeModel";
+import { ANDROID_LOCAL_GEMMA_MODEL } from "@shared/modelProviderCatalog";
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
 export type TaskComplexity = "trivial" | "easy" | "medium" | "hard";
@@ -158,11 +159,14 @@ function parseModelSpec(spec: string | undefined): FallbackChainEntry | null {
   if (colonIdx > 0) {
     const provider = raw.slice(0, colonIdx).trim() as ProviderName;
     const model = raw.slice(colonIdx + 1).trim();
-    if ((provider === "openai" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth" || provider === "anthropic" || provider === "google") && model) {
+    if ((provider === "openai" || provider === "openai-compatible" || provider === "chatgpt-codex-oauth" || provider === "anthropic" || provider === "google" || provider === "android-local-gemma") && model) {
       return { providerName: provider, model };
     }
   }
 
+  if (raw.startsWith("android-local-gemma/")) {
+    return { providerName: "android-local-gemma", model: raw.slice("android-local-gemma/".length) };
+  }
   if (raw.startsWith("anthropic/")) {
     return { providerName: "anthropic", model: raw.slice("anthropic/".length) };
   }
@@ -208,13 +212,15 @@ function parseRequestedModelSpec(spec: string | undefined): FallbackChainEntry |
       provider === "openai-compatible" ||
       provider === "chatgpt-codex-oauth" ||
       provider === "anthropic" ||
-      provider === "google"
+      provider === "google" ||
+      provider === "android-local-gemma"
     ) {
       return parseModelSpec(raw);
     }
   }
 
   if (
+    normalized.startsWith("android-local-gemma/") ||
     normalized.startsWith("openai/") ||
     normalized.startsWith("anthropic/") ||
     normalized.startsWith("google/") ||
@@ -638,6 +644,9 @@ function defaultRouteForProviderProfile(
   }
   if (providerId === "local-llama") {
     return { providerName: "openai-compatible", model: "openai-compatible/llama-local" };
+  }
+  if (providerId === "android-local-gemma") {
+    return { providerName: "android-local-gemma", model: ANDROID_LOCAL_GEMMA_MODEL.slice("android-local-gemma/".length) };
   }
   if (providerId === "openai") {
     return { providerName: "openai", model: openAIModelForExecutionTier(tier) };

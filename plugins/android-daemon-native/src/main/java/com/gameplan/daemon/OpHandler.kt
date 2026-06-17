@@ -80,6 +80,10 @@ object OpHandler {
                 "android_clear_field" -> handleClearField()
                 "android_start_training" -> handleStartTraining(op)
                 "android_get_display_size" -> handleGetDisplaySize(context)
+                "android_local_model_status" -> LocalGemmaModelManager.status(context, op)
+                "android_local_model_import" -> LocalGemmaModelManager.importModel(context, op)
+                "android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)
+                "android_local_model_cancel" -> LocalGemmaModelManager.cancel(op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs

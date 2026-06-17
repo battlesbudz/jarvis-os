@@ -77,7 +77,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon --stacktrace
+          ./gradlew :app:assembleDebug --no-daemon --stacktrace -PreactNativeArchitectures=x86_64
 
       - name: Prepare APK and free emulator disk
         run: |

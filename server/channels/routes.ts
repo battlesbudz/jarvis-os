@@ -425,6 +425,7 @@ export function registerChannelRoutes(app: Express): void {
       "android_screenshot", "android_read_screen", "android_open_app", "android_browse",
       "android_file_list", "android_file_read", "android_tap_type",
       "android_camera", "android_location", "android_sms", "android_screen_record",
+      "android_local_model",
     ] as const;
     const sanitized: Partial<AndroidDaemonPermissions> = {};
     for (const k of ANDROID_ACTIONS) {

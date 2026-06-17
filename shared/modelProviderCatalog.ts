@@ -1,5 +1,5 @@
 export type ProviderCredentialKind = "api_key" | "oauth" | "local";
-export type ModelProviderId = "openai" | "anthropic" | "google" | "local-llama";
+export type ModelProviderId = "openai" | "anthropic" | "google" | "local-llama" | "android-local-gemma";
 export type ModelCategory = "chat" | "planning" | "memory" | "research" | "orchestrator";
 
 export interface CatalogModelOption {
@@ -21,6 +21,7 @@ export interface CatalogProvider {
 }
 
 export const CODEX_OAUTH_MODEL = "chatgpt-codex-oauth/auto";
+export const ANDROID_LOCAL_GEMMA_MODEL = "android-local-gemma/gemma-4-e4b-it";
 
 export const MODEL_CATEGORIES: Array<{ key: ModelCategory; label: string; description: string }> = [
   { key: "chat", label: "Chat", description: "Everyday Jarvis replies and agent turns." },
@@ -66,6 +67,14 @@ export const MODEL_PROVIDER_CATALOG: CatalogProvider[] = [
     credentialKinds: ["local", "api_key"],
     apiKeyPlaceholder: "Optional local runtime API key",
     setupHint: "Run a local OpenAI-compatible server, then choose Local Llama below.",
+  },
+  {
+    id: "android-local-gemma",
+    label: "Android Local Gemma",
+    shortLabel: "Phone Gemma",
+    description: "Use a Gemma E4B model stored inside the Jarvis Android app.",
+    credentialKinds: ["local"],
+    setupHint: "Import a LiteRT-LM .litertlm Gemma E4B model into Jarvis on this phone, then choose Phone Gemma.",
   },
 ];
 
@@ -133,6 +142,13 @@ export const MODEL_OPTIONS: CatalogModelOption[] = [
     label: "Jarvis Model Relay",
     description: "Use the fastest available local model relay route.",
     provider: "local-llama",
+    categories: ALL_CATEGORIES,
+  },
+  {
+    value: ANDROID_LOCAL_GEMMA_MODEL,
+    label: "Gemma E4B on Android",
+    description: "On-device Gemma E4B model stored in the Jarvis Android app.",
+    provider: "android-local-gemma",
     categories: ALL_CATEGORIES,
   },
 ];
