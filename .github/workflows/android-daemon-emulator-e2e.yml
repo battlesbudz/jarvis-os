@@ -34,7 +34,6 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      NODE_ENV: production
       EXPO_PUBLIC_DOMAIN: ${{ vars.JARVIS_PUBLIC_DOMAIN || 'https://gameplanjarvisai.up.railway.app' }}
       EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
 
