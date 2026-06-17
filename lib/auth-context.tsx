@@ -228,6 +228,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    await AsyncStorage.removeItem(AUTH_RETURN_ROUTE_KEY);
     await clearAuthStorage();
     queryClient.clear();
     setState({

@@ -23,14 +23,16 @@ import { WakeWordProvider } from "@/lib/wake-word-context";
 import { useAndroidApkUpdateCheck } from "@/lib/app-update";
 import { captureTelegramInitData } from "@/lib/telegram-webapp";
 import { hasDesktopConnectorAuthBridge } from "@/lib/desktop-connector-setup";
+import { shouldRememberRouteForAuthRedirect } from "@/lib/auth-navigation";
 
 SplashScreen.preventAutoHideAsync();
 
 function useProtectedRoute() {
-  const { isAuthenticated, isLoading, consumeReturnRoute } = useAuth();
+  const { isAuthenticated, isLoading, sessionExpired, consumeReturnRoute } = useAuth();
   const segments = useSegments();
   const hasNavigated = useRef(false);
   const lastRouteRef = useRef<string>("/");
+  const previousAuthenticatedRef = useRef(isAuthenticated);
 
   useEffect(() => {
     if (isLoading) return;
@@ -41,7 +43,14 @@ function useProtectedRoute() {
     const currentRoute = "/" + segments.join("/");
 
     if (!isAuthenticated && !onLoginPage && !allowDesktopConnectorBridge) {
-      lastRouteRef.current = currentRoute !== "/" ? currentRoute : "/";
+      if (shouldRememberRouteForAuthRedirect({
+        wasAuthenticated: previousAuthenticatedRef.current,
+        sessionExpired,
+      })) {
+        lastRouteRef.current = currentRoute !== "/" ? currentRoute : "/";
+      } else {
+        lastRouteRef.current = "/";
+      }
       router.replace("/login");
     } else if (isAuthenticated && onLoginPage) {
       hasNavigated.current = false;
@@ -51,7 +60,9 @@ function useProtectedRoute() {
         router.replace(target as any);
       });
     }
-  }, [isAuthenticated, isLoading, segments]);
+
+    previousAuthenticatedRef.current = isAuthenticated;
+  }, [isAuthenticated, isLoading, sessionExpired, segments]);
 
   useEffect(() => {
     if (isLoading || !isAuthenticated || hasNavigated.current) return;
