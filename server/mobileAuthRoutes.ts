@@ -10,6 +10,7 @@ import {
   createMobileAuthSuccessHtml,
   type MobileAuthReturnTarget,
 } from "./auth/mobileAuthHtml";
+import { resolveMobileAuthStartFlow } from "./auth/mobileAuthFlow";
 
 export const mobileAuthRouter = Router();
 
@@ -231,19 +232,24 @@ mobileAuthRouter.get("/start", async (req: Request, res: Response) => {
   });
 
   res.setHeader("Cache-Control", "no-store");
+  const authFlow = resolveMobileAuthStartFlow({
+    requestedFlow: flow,
+    returnTarget,
+    hasPollSecret: Boolean(poll_secret),
+  });
   const callbackUrl = getMobileAuthCallbackUrl(req);
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: callbackUrl,
-    response_type: flow === "implicit" ? "token" : "code",
+    response_type: authFlow === "implicit" ? "token" : "code",
     scope: "openid email profile",
     state: oauthState,
     prompt: "select_account",
   });
-  if (flow !== "implicit") {
+  if (authFlow !== "implicit") {
     params.set("access_type", "offline");
   }
-  if (flow === "implicit") {
+  if (authFlow === "implicit") {
     params.set("include_granted_scopes", "true");
   }
   if (returnTarget === "native") {

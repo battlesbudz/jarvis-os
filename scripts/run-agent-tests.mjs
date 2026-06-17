@@ -16,6 +16,7 @@ const tests = [
   { file: "scripts/__tests__/dashboardProjectsNavigation.test.mjs" },
   { file: "scripts/__tests__/oauthGatewayDoctor.test.mjs" },
   { file: "scripts/__tests__/desktopDaemonWatchdog.test.mjs" },
+  { file: "server/auth/__tests__/mobileAuthFlow.test.ts" },
   { file: "server/auth/__tests__/mobileAuthRedirectHtml.test.ts" },
   { file: "server/auth/__tests__/telegramWebAppAuth.test.ts", requiresDatabase: true },
   { file: "server/diagnostics/__tests__/osReadiness.test.ts" },
