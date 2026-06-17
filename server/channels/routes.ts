@@ -4,7 +4,7 @@ import { eq, and } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, telegramLinks, NOTIFICATION_TYPES, CHANNEL_NAMES, userPreferences, type ChannelName, type NotificationType } from "@shared/schema";
 import { authMiddleware } from "../auth";
 import { getAllPreferences, setPreference, getChannel, listChannels, MUTE_SENTINEL } from "./registry";
-import { createDaemonPairingCode, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, isDesktopDaemonActive, sendDaemonOp, subscribeWakeWordTrigger, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
+import { createDaemonPairingCode, createAndroidDaemonBootstrapToken, isUserPaired, closeUserDaemon, getDaemonPermissions, setDaemonPermissions, isDaemonActionAllowed, DEFAULT_DAEMON_PERMISSIONS, getAndroidDaemonPermissions, setAndroidDaemonPermissions, DEFAULT_ANDROID_DAEMON_PERMISSIONS, isAndroidDaemonActive, isDesktopDaemonActive, sendDaemonOp, subscribeWakeWordTrigger, type DaemonAction, type DaemonPermissions, type AndroidDaemonAction, type AndroidDaemonPermissions } from "../daemon/bridge";
 import { startUserBot, stopUserBot, getBotStatus, completePairing, getGuildsForUser, getChannelsForGuild, setupDiscordWorkspace, type AllowlistedGuild, type DiscordLinkMeta, WORKSPACE_TOPICS } from "../discord/manager";
 import { saveUserToken, getUserToken, deleteUserToken } from "../userTokenStore";
 import { createSchedule, listSchedules, deleteSchedule, toggleSchedule, parseCronExpression, SCHEDULE_TEMPLATES, nextRunTime } from "../discord/schedules";
@@ -368,6 +368,18 @@ export function registerChannelRoutes(app: Express): void {
     } catch (err) {
       console.error("[channels] daemon code failed:", err);
       res.status(500).json({ error: "failed to generate pairing code" });
+    }
+  });
+
+  // POST /api/channels/android-daemon/bootstrap — authenticated in-app token for this phone
+  app.post("/api/channels/android-daemon/bootstrap", authMiddleware, async (req: Request, res: Response) => {
+    const userId = req.userId!;
+    try {
+      const bootstrapToken = await createAndroidDaemonBootstrapToken(userId);
+      res.json({ bootstrapToken, expiresInSec: 5 * 60 });
+    } catch (err) {
+      console.error("[channels] android daemon bootstrap failed:", err);
+      res.status(500).json({ error: "failed to create Android daemon bootstrap token" });
     }
   });
 

@@ -52,10 +52,12 @@ class WebSocketService : Service() {
 
     companion object {
         const val ACTION_CONNECT = "com.gameplan.daemon.CONNECT"
+        const val ACTION_BOOTSTRAP = "com.gameplan.daemon.BOOTSTRAP"
         const val ACTION_RECONNECT = "com.gameplan.daemon.RECONNECT"
         const val ACTION_DISCONNECT = "com.gameplan.daemon.DISCONNECT"
         const val EXTRA_SERVER_URL = "server_url"
         const val EXTRA_PAIR_CODE = "pair_code"
+        const val EXTRA_BOOTSTRAP_TOKEN = "bootstrap_token"
         const val EXTRA_DAEMON_ID = "daemon_id"
         const val EXTRA_RECONNECT_SECRET = "reconnect_secret"
         private const val TAG = "JarvisWS"
@@ -91,11 +93,13 @@ class WebSocketService : Service() {
     // Connection state
     private var serverUrl: String = ""
     private var pairCode: String = ""
+    private var bootstrapToken: String = ""
     private var daemonId: String = ""
     private var reconnectSecret: String = ""
     private var paired = false
     private var reconnectEnabled = true
     private var currentConnectUsesDaemonId = false
+    private var currentConnectUsesBootstrapToken = false
     private var reconnectAttempts = 0
     private val maxReconnectAttempts = 8
     private var pingFuture: java.util.concurrent.ScheduledFuture<*>? = null
@@ -149,6 +153,20 @@ class WebSocketService : Service() {
                     .edit().putString(PREF_SERVER_URL, url).apply()
                 connect(useDaemonId = false)
             }
+            ACTION_BOOTSTRAP -> {
+                val url = JarvisConfig.normalizeServerUrl(intent.getStringExtra(EXTRA_SERVER_URL))
+                val token = intent.getStringExtra(EXTRA_BOOTSTRAP_TOKEN) ?: return START_STICKY
+                serverUrl = url
+                bootstrapToken = token
+                pairCode = ""
+                paired = false
+                reconnectEnabled = true
+                reconnectAttempts = 0
+                reconnectDelayMs = RECONNECT_DELAY_MS
+                getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit().putString(PREF_SERVER_URL, url).apply()
+                connect(useDaemonId = false, useBootstrapToken = true)
+            }
             ACTION_RECONNECT -> {
                 // Boot or restart reconnect — use persisted credentials
                 val url = JarvisConfig.normalizeServerUrl(intent.getStringExtra(EXTRA_SERVER_URL) ?: serverUrl)
@@ -193,21 +211,28 @@ class WebSocketService : Service() {
         return START_STICKY
     }
 
-    private fun connect(useDaemonId: Boolean) {
+    private fun connect(useDaemonId: Boolean, useBootstrapToken: Boolean = false) {
         disconnect()
         currentConnectUsesDaemonId = useDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty()
+        currentConnectUsesBootstrapToken = !currentConnectUsesDaemonId && useBootstrapToken && bootstrapToken.isNotEmpty()
         val wsUrl = buildWsUrl(serverUrl)
-        val mode = if (currentConnectUsesDaemonId) "reconnect" else "pair"
+        val mode = when {
+            currentConnectUsesDaemonId -> "reconnect"
+            currentConnectUsesBootstrapToken -> "bootstrap"
+            else -> "pair"
+        }
         Log.i(TAG, "Connecting to $wsUrl [$mode]")
         updateStatus("Connecting…", false)
 
         wsClient = object : WebSocketClient(URI(wsUrl)) {
             override fun onOpen(handshakedata: ServerHandshake?) {
                 Log.i(TAG, "WebSocket opened")
-                DaemonLog.add("WS opened → sending ${if (currentConnectUsesDaemonId) "reconnect" else "pair"}")
+                DaemonLog.add("WS opened → sending $mode")
                 if (!paired) {
                     if (currentConnectUsesDaemonId) {
                         sendReconnectMessage()
+                    } else if (currentConnectUsesBootstrapToken) {
+                        sendBootstrapMessage()
                     } else {
                         sendPairMessage()
                     }
@@ -262,6 +287,17 @@ class WebSocketService : Service() {
         }
     }
 
+    private fun sendBootstrapMessage() {
+        val msg = JSONObject().apply {
+            put("type", "android_app_bootstrap")
+            put("bootstrapToken", bootstrapToken)
+            put("platform", "android")
+            put("hostname", Build.MODEL)
+            putUnifiedClientMetadata(this)
+        }
+        send(msg.toString())
+    }
+
     private fun sendPairMessage() {
         val msg = JSONObject().apply {
             put("type", "pair")
@@ -301,6 +337,7 @@ class WebSocketService : Service() {
                 if (json.optBoolean("ok")) {
                     paired = true
                     isConnected = true
+                    bootstrapToken = ""
                     // On first pair, server issues daemonId + reconnectSecret (both server-generated,
                     // high-entropy). Store them securely for future reconnections.
                     val serverDaemonId = json.optString("daemonId", "")
@@ -318,17 +355,17 @@ class WebSocketService : Service() {
                     reconnectAttempts = 0
                     reconnectDelayMs = RECONNECT_DELAY_MS
                     updateStatus("Connected • ${Build.MODEL}", true)
-                    Log.i(TAG, "Paired/reconnected successfully")
+                    Log.i(TAG, "Connected successfully")
                     // Log permission status so the user (and AI via daemon_diagnostic) can see it immediately
                     val a11yEnabled = JarvisAccessibilityService.instance != null
                     val notifEnabled = JarvisNotificationListener.instance != null
-                    DaemonLog.add("paired/reconnected ✓ userId=${json.optString("userId", "?")}")
+                    DaemonLog.add("connected userId=${json.optString("userId", "?")}")
                     DaemonLog.add("accessibility=${if (a11yEnabled) "ENABLED ✓" else "DISABLED ✗ — phone control will not work!"}")
                     DaemonLog.add("notifications=${if (notifEnabled) "ENABLED ✓" else "DISABLED ✗ — notification reading unavailable"}")
                 } else {
-                    val err = json.optString("error", "pairing failed")
-                    DaemonLog.add("pair FAILED: $err")
-                    updateStatus("Pair failed: $err", false)
+                    val err = json.optString("error", "connection failed")
+                    DaemonLog.add("connect FAILED: $err")
+                    updateStatus("Connection failed: $err", false)
                     // Server rejected our credentials — clear them so user must re-pair
                     if (currentConnectUsesDaemonId &&
                         (err.contains("invalid reconnect secret") || err.contains("re-pair") ||
@@ -341,12 +378,16 @@ class WebSocketService : Service() {
                             .apply()
                         reconnectEnabled = false
                         Log.w(TAG, "Credentials invalidated — user must re-pair")
+                    } else if (currentConnectUsesBootstrapToken) {
+                        bootstrapToken = ""
+                        reconnectEnabled = false
+                        Log.w(TAG, "Bootstrap token rejected — user must enable device control again")
                     } else if (!currentConnectUsesDaemonId) {
                         pairCode = ""
                         reconnectEnabled = false
                         Log.w(TAG, "Pair code rejected — user must request a fresh code")
                     }
-                    Log.e(TAG, "Pairing/reconnect failed: $err")
+                    Log.e(TAG, "Daemon connection failed: $err")
                 }
             }
             "op" -> {

@@ -4,6 +4,7 @@ import path from "node:path";
 
 const projectRoot = process.cwd();
 const bridgeSource = fs.readFileSync(path.join(projectRoot, "server/daemon/bridge.ts"), "utf8");
+const channelRoutesSource = fs.readFileSync(path.join(projectRoot, "server/channels/routes.ts"), "utf8");
 const appUpdateSource = fs.readFileSync(path.join(projectRoot, "server/routes/appUpdateRoutes.ts"), "utf8");
 const downloadRoutesSource = fs.readFileSync(path.join(projectRoot, "server/downloadRoutes.ts"), "utf8");
 
@@ -95,6 +96,48 @@ assert.match(
   bridgeSource,
   /const android_client = buildAndroidDaemonClientMetadata\(pairPlatform, m\);[\s\S]*\{ android_client \}/,
   "Pair should record Android client metadata only after platform gating.",
+);
+
+assert.match(
+  channelRoutesSource,
+  /\/api\/channels\/android-daemon\/bootstrap/,
+  "Channel routes should expose an authenticated Android in-app bootstrap endpoint.",
+);
+
+assert.match(
+  channelRoutesSource,
+  /createAndroidDaemonBootstrapToken/,
+  "Android bootstrap route should use the daemon bridge token helper.",
+);
+
+assert.match(
+  bridgeSource,
+  /export async function createAndroidDaemonBootstrapToken/,
+  "Daemon bridge should create short-lived Android app bootstrap tokens.",
+);
+
+assert.match(
+  bridgeSource,
+  /type:\s*"android_app_bootstrap"/,
+  "Daemon bridge should accept Android app bootstrap WebSocket messages.",
+);
+
+assert.match(
+  bridgeSource,
+  /bootstrapToken:\s*string/,
+  "Android app bootstrap messages should carry a native-only bootstrap token.",
+);
+
+assert.match(
+  bridgeSource,
+  /consumeAndroidDaemonBootstrapToken/,
+  "Daemon bridge should consume Android bootstrap tokens exactly once.",
+);
+
+assert.match(
+  bridgeSource,
+  /clientKind:\s*"unified_android_app"/,
+  "Android bootstrap pairing should force unified Android app client metadata.",
 );
 
 assert.match(

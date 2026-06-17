@@ -24,20 +24,20 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
-    fun connect(serverUrl: String, pairCode: String, promise: Promise) {
+    fun enable(serverUrl: String, bootstrapToken: String, promise: Promise) {
         if (serverUrl.isBlank()) {
             promise.reject("E_JARVIS_DAEMON_SERVER_URL", "Server URL is required.")
             return
         }
-        if (pairCode.isBlank()) {
-            promise.reject("E_JARVIS_DAEMON_PAIR_CODE", "Pair code is required.")
+        if (bootstrapToken.isBlank()) {
+            promise.reject("E_JARVIS_DAEMON_BOOTSTRAP_TOKEN", "Bootstrap token is required.")
             return
         }
 
         val intent = Intent(reactApplicationContext, WebSocketService::class.java).apply {
-            action = WebSocketService.ACTION_CONNECT
+            action = WebSocketService.ACTION_BOOTSTRAP
             putExtra(WebSocketService.EXTRA_SERVER_URL, serverUrl)
-            putExtra(WebSocketService.EXTRA_PAIR_CODE, pairCode)
+            putExtra(WebSocketService.EXTRA_BOOTSTRAP_TOKEN, bootstrapToken)
         }
         startServiceCompat(intent)
         promise.resolve(buildStatusMap("Connecting..."))

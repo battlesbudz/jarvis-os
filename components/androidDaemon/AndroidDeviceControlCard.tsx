@@ -37,10 +37,8 @@ export function AndroidDeviceControlCard({
   onRefreshChannels,
   onUnpair,
 }: AndroidDeviceControlCardProps) {
-  const [pairCode, setPairCode] = useState<string | null>(null);
-  const [pairCodeHint, setPairCodeHint] = useState<string>("Valid for 15 minutes.");
   const [status, setStatus] = useState<AndroidDaemonStatus | null>(null);
-  const [busy, setBusy] = useState<"code" | "connect" | "disconnect" | string | null>(null);
+  const [busy, setBusy] = useState<"enable" | "disconnect" | string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refreshNativeStatus = useCallback(async () => {
@@ -66,50 +64,25 @@ export function AndroidDeviceControlCard({
   const alreadyConnected = healthy;
   const canDisconnect = !anyBusy && (nativeAvailable || !!onUnpair);
 
-  useEffect(() => {
-    if (alreadyConnected) {
-      setPairCode(null);
-      setPairCodeHint("Valid for 15 minutes.");
-    }
-  }, [alreadyConnected]);
-
-  const generateCode = useCallback(async () => {
-    if (!nativeAvailable || anyBusy || alreadyConnected) return;
-    setBusy("code");
+  const enableDeviceControl = useCallback(async () => {
+    if (!AndroidDaemonNative || !nativeAvailable || anyBusy || alreadyConnected) return;
+    setBusy("enable");
     setError(null);
     try {
-      const res = await apiRequest("POST", "/api/channels/daemon/code");
+      const res = await apiRequest("POST", "/api/channels/android-daemon/bootstrap");
       const data = await res.json();
-      setPairCode(String(data.code ?? "").slice(0, 8).toUpperCase());
-      const expiresInSec = Number(data.expiresInSec ?? data.expires_in_sec ?? data.ttlSec);
-      setPairCodeHint(Number.isFinite(expiresInSec) && expiresInSec > 0
-        ? `Valid for ${Math.ceil(expiresInSec / 60)} minutes.`
-        : "Valid for 15 minutes.");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to create pair code.";
-      setError(message);
-    } finally {
-      setBusy(null);
-    }
-  }, [alreadyConnected, anyBusy, nativeAvailable]);
-
-  const connect = useCallback(async () => {
-    if (!AndroidDaemonNative || !nativeAvailable || !pairCode || anyBusy || alreadyConnected) return;
-    setBusy("connect");
-    setError(null);
-    try {
-      const next = await AndroidDaemonNative.connect(getApiUrl(), pairCode);
+      const bootstrapToken = String(data.bootstrapToken ?? "");
+      if (!bootstrapToken) throw new Error("Android device bootstrap token was not returned.");
+      const next = await AndroidDaemonNative.enable(getApiUrl(), bootstrapToken);
       setStatus(next);
-      setPairCode(null);
-      setPairCodeHint("Valid for 15 minutes.");
       await onRefreshChannels?.();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to connect Android device control.";
+      const message = err instanceof Error ? err.message : "Unable to enable Android device control.";
       setError(message);
     } finally {
       setBusy(null);
     }
-  }, [alreadyConnected, anyBusy, nativeAvailable, onRefreshChannels, pairCode]);
+  }, [alreadyConnected, anyBusy, nativeAvailable, onRefreshChannels]);
 
   const disconnect = useCallback(async () => {
     if (anyBusy || (!nativeAvailable && !onUnpair)) return;
@@ -119,8 +92,6 @@ export function AndroidDeviceControlCard({
       if (nativeAvailable && AndroidDaemonNative) {
         await AndroidDaemonNative.disconnect();
       }
-      setPairCode(null);
-      setPairCodeHint("Valid for 15 minutes.");
       await onUnpair?.();
       if (nativeAvailable) {
         await refreshNativeStatus();
@@ -229,7 +200,7 @@ export function AndroidDeviceControlCard({
 
       {!nativeAvailable && !alreadyConnected && (
         <View style={styles.notice}>
-          <Text style={styles.noticeText}>Install the Jarvis Android app, then open Profile on Android to pair device control.</Text>
+          <Text style={styles.noticeText}>Install the Jarvis Android app, then open Profile on Android to enable device control.</Text>
           <Pressable style={styles.installButton} onPress={openAndroidDownload}>
             <Ionicons name="download-outline" size={14} color={Colors.warningLight} />
             <Text style={styles.installButtonText}>Install APK</Text>
@@ -238,39 +209,22 @@ export function AndroidDeviceControlCard({
       )}
 
       <View style={styles.setup}>
-        <View style={styles.pairCodeBox}>
-          <Text style={styles.pairCodeLabel}>Pair code</Text>
-          <Text selectable style={styles.pairCode}>
-            {pairCode ?? "--------"}
-          </Text>
-          <Text style={styles.pairCodeHint}>{pairCodeHint}</Text>
+        <View style={styles.enableCopy}>
+          <Text style={styles.enableTitle}>Device control runs inside this app</Text>
+          <Text style={styles.enableDetail}>Jarvis uses your signed-in session to connect this phone locally.</Text>
         </View>
-        <View style={styles.setupActions}>
-          <Pressable
-            style={[styles.secondaryButton, (!nativeAvailable || anyBusy || alreadyConnected) && styles.disabledButton]}
-            onPress={generateCode}
-            disabled={!nativeAvailable || anyBusy || alreadyConnected}
-          >
-            {busy === "code" ? (
-              <ActivityIndicator size="small" color={Colors.text} />
-            ) : (
-              <Ionicons name="refresh-outline" size={15} color={Colors.text} />
-            )}
-            <Text style={styles.secondaryButtonText}>Code</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.primaryButton, (!nativeAvailable || !pairCode || anyBusy || alreadyConnected) && styles.disabledButton]}
-            onPress={connect}
-            disabled={!nativeAvailable || !pairCode || anyBusy || alreadyConnected}
-          >
-            {busy === "connect" ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="link-outline" size={15} color="#fff" />
-            )}
-            <Text style={styles.primaryButtonText}>Connect</Text>
-          </Pressable>
-        </View>
+        <Pressable
+          style={[styles.primaryButton, (!nativeAvailable || anyBusy || alreadyConnected) && styles.disabledButton]}
+          onPress={enableDeviceControl}
+          disabled={!nativeAvailable || anyBusy || alreadyConnected}
+        >
+          {busy === "enable" ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Ionicons name="shield-checkmark-outline" size={15} color="#fff" />
+          )}
+          <Text style={styles.primaryButtonText}>Enable Device Control</Text>
+        </Pressable>
       </View>
 
       <View style={styles.permissionList}>
@@ -422,74 +376,41 @@ const styles = StyleSheet.create({
   },
   setup: {
     flexDirection: "row",
+    alignItems: "center",
     gap: 12,
     paddingHorizontal: 16,
     paddingBottom: 14,
   },
-  pairCodeBox: {
+  enableCopy: {
     flex: 1,
-    minHeight: 64,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.background,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    justifyContent: "center",
+    minWidth: 0,
   },
-  pairCodeLabel: {
-    fontSize: 10,
+  enableTitle: {
+    fontSize: 13,
     fontFamily: "Inter_600SemiBold",
-    color: Colors.textTertiary,
-    textTransform: "uppercase",
+    color: Colors.text,
   },
-  pairCode: {
-    marginTop: 4,
-    fontSize: 24,
-    fontFamily: "Inter_700Bold",
-    color: "#34A853",
-    letterSpacing: 3,
-  },
-  pairCodeHint: {
+  enableDetail: {
     marginTop: 2,
-    fontSize: 10,
+    fontSize: 11,
+    lineHeight: 16,
     fontFamily: "Inter_400Regular",
-    color: Colors.textTertiary,
-  },
-  setupActions: {
-    width: 116,
-    gap: 8,
+    color: Colors.textSecondary,
   },
   primaryButton: {
-    minHeight: 28,
+    minHeight: 34,
     borderRadius: 8,
     backgroundColor: "#34A853",
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
     gap: 5,
-    paddingHorizontal: 10,
+    paddingHorizontal: 12,
   },
   primaryButtonText: {
     fontSize: 12,
     fontFamily: "Inter_600SemiBold",
     color: "#fff",
-  },
-  secondaryButton: {
-    minHeight: 28,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 5,
-    paddingHorizontal: 10,
-  },
-  secondaryButtonText: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.text,
   },
   disabledButton: {
     opacity: 0.55,

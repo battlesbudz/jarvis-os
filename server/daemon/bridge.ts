@@ -11,6 +11,7 @@ type AndroidDaemonClientKind = "unified_android_app" | "standalone_android_daemo
 interface DaemonClientMetadata { clientKind?: DaemonClientKind; appPackage?: string; appVersion?: string }
 interface AndroidDaemonClientMetadata { clientKind?: AndroidDaemonClientKind; appPackage?: string; appVersion?: string }
 interface PairMsg extends DaemonClientMetadata { type: "pair"; code: string; hostname?: string; platform?: string }
+interface AndroidAppBootstrapMsg extends DaemonClientMetadata { type: "android_app_bootstrap"; bootstrapToken: string; hostname?: string; platform?: string }
 interface ReconnectMsg extends DaemonClientMetadata { type: "reconnect"; daemonId: string; reconnectSecret: string; hostname?: string; platform?: string }
 interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; error?: string; [key: string]: unknown }
 interface HelloMsg { type: "hello"; ok: boolean; userId?: string; error?: string }
@@ -96,6 +97,7 @@ interface PendingOp {
 const userSockets = new Map<string, WebSocket>();
 const pendingByUser = new Map<string, Map<string, PendingOp>>();
 const daemonSocketReplacementLocks = new Set<string>();
+const ANDROID_DAEMON_BOOTSTRAP_TOKEN_PREFIX = "android_bootstrap_";
 let opCounter = 0;
 
 // Wake word event subscriptions: userId → set of callbacks
@@ -735,6 +737,15 @@ export async function createDaemonPairingCode(userId: string): Promise<string> {
   return code;
 }
 
+export async function createAndroidDaemonBootstrapToken(userId: string): Promise<string> {
+  const bootstrapToken = `${ANDROID_DAEMON_BOOTSTRAP_TOKEN_PREFIX}${randomBytes(32).toString("hex")}`;
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+  await db.insert(channelLinkCodes).values({
+    code: bootstrapToken, userId, channel: "daemon", expiresAt,
+  });
+  return bootstrapToken;
+}
+
 async function lookupPairingCodeUserId(code: string): Promise<string | null> {
   try {
     const rows = await db.select().from(channelLinkCodes)
@@ -749,6 +760,25 @@ async function lookupPairingCodeUserId(code: string): Promise<string | null> {
     return row.userId;
   } catch (err) {
     console.error("[daemon] lookupPairingCodeUserId failed:", err);
+    return null;
+  }
+}
+
+async function lookupAndroidDaemonBootstrapTokenUserId(bootstrapToken: string): Promise<string | null> {
+  if (!bootstrapToken.startsWith(ANDROID_DAEMON_BOOTSTRAP_TOKEN_PREFIX)) return null;
+  try {
+    const rows = await db.select().from(channelLinkCodes)
+      .where(and(eq(channelLinkCodes.code, bootstrapToken), eq(channelLinkCodes.channel, "daemon")))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
+      await db.delete(channelLinkCodes).where(eq(channelLinkCodes.code, bootstrapToken));
+      return null;
+    }
+    return row.userId;
+  } catch (err) {
+    console.error("[daemon] lookupAndroidDaemonBootstrapTokenUserId failed:", err);
     return null;
   }
 }
@@ -768,6 +798,26 @@ async function consumePairingCode(code: string): Promise<string | null> {
     return row.userId;
   } catch (err) {
     console.error("[daemon] consumePairingCode failed:", err);
+    return null;
+  }
+}
+
+async function consumeAndroidDaemonBootstrapToken(bootstrapToken: string): Promise<string | null> {
+  if (!bootstrapToken.startsWith(ANDROID_DAEMON_BOOTSTRAP_TOKEN_PREFIX)) return null;
+  try {
+    const rows = await db.select().from(channelLinkCodes)
+      .where(and(eq(channelLinkCodes.code, bootstrapToken), eq(channelLinkCodes.channel, "daemon")))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
+      await db.delete(channelLinkCodes).where(eq(channelLinkCodes.code, bootstrapToken));
+      return null;
+    }
+    await db.delete(channelLinkCodes).where(eq(channelLinkCodes.code, bootstrapToken));
+    return row.userId;
+  } catch (err) {
+    console.error("[daemon] consumeAndroidDaemonBootstrapToken failed:", err);
     return null;
   }
 }
@@ -849,7 +899,7 @@ export function startDaemonBridge(server: HttpServer): void {
         return;
       }
       interface WakeWordTriggeredMsg { type: "wake_word_triggered"; phrase?: string; transcript?: string }
-      const m = msg as PairMsg | ReconnectMsg | ResultMsg | PingMsg | NotificationEventMsg | WakeWordTriggeredMsg;
+      const m = msg as PairMsg | AndroidAppBootstrapMsg | ReconnectMsg | ResultMsg | PingMsg | NotificationEventMsg | WakeWordTriggeredMsg;
 
       // Reconnect using stored daemonId + reconnectSecret (proof-of-possession).
       // The secret was issued server-side during pair; we compare sha256(provided) to stored hash.
@@ -939,6 +989,64 @@ export function startDaemonBridge(server: HttpServer): void {
         } catch (err) {
           console.error("[daemon] reconnect lookup failed:", err);
           try { ws.send(JSON.stringify({ type: "hello", ok: false, error: "reconnect failed" })); } catch { /* noop */ }
+        }
+        return;
+      }
+
+      if (m.type === "android_app_bootstrap") {
+        const bm = m as AndroidAppBootstrapMsg;
+        const pairPlatform = "android";
+        const candidateUserId = await lookupAndroidDaemonBootstrapTokenUserId(bm.bootstrapToken);
+        if (!candidateUserId) {
+          const reply: HelloMsg = { type: "hello", ok: false, error: "invalid or expired bootstrap token" };
+          try { ws.send(JSON.stringify(reply)); } catch { /* noop */ }
+          ws.close(4002, "invalid bootstrap token");
+          return;
+        }
+        const pairKey = socketKey(candidateUserId, pairPlatform);
+        const prior = userSockets.get(pairKey);
+        const pendingCount = pendingOpCount(pairKey);
+        if (prior && prior !== ws && shouldProtectPendingDaemonSocket(prior, pendingCount)) {
+          rejectDuplicateDaemonSocket(ws, candidateUserId, pairPlatform, pendingCount);
+          return;
+        }
+        daemonSocketReplacementLocks.add(pairKey);
+        try {
+          const userId = await consumeAndroidDaemonBootstrapToken(bm.bootstrapToken);
+          if (!userId || userId !== candidateUserId) {
+            const reply: HelloMsg = { type: "hello", ok: false, error: "invalid or expired bootstrap token" };
+            try { ws.send(JSON.stringify(reply)); } catch { /* noop */ }
+            ws.close(4002, "invalid bootstrap token");
+            return;
+          }
+          if (pairTimeout) { clearTimeout(pairTimeout); pairTimeout = null; }
+          const daemonId = randomBytes(16).toString("hex");
+          const reconnectSecret = randomBytes(32).toString("hex");
+          const reconnectSecretHash = createHash("sha256").update(reconnectSecret).digest("hex");
+          const bootstrapMsg = { ...bm, clientKind: "unified_android_app" as const };
+          const android_client = buildAndroidDaemonClientMetadata(pairPlatform, bootstrapMsg);
+          await recordDaemonLink(userId, daemonId, {
+            hostname: bm.hostname || "unknown",
+            platform: pairPlatform,
+            ...(android_client ? { android_client } : {}),
+            reconnectSecretHash,
+          });
+          pairedUserId = userId;
+          pairedPlatform = pairPlatform;
+          const currentPrior = userSockets.get(pairKey);
+          const currentPendingCount = pendingOpCount(pairKey);
+          if (currentPrior && currentPrior !== ws && shouldProtectPendingDaemonSocket(currentPrior, currentPendingCount)) {
+            rejectDuplicateDaemonSocket(ws, userId, pairPlatform, currentPendingCount);
+            return;
+          }
+          if (currentPrior && currentPrior !== ws) { try { currentPrior.close(4003, "replaced by new daemon"); } catch { /* noop */ } }
+          userSockets.set(pairKey, ws);
+          const hello = { type: "hello", ok: true, userId, daemonId, reconnectSecret };
+          try { ws.send(JSON.stringify(hello)); } catch { /* noop */ }
+          console.log(`[daemon] Android app bootstrapped userId=${userId} hostname=${bm.hostname || "unknown"}`);
+          setTimeout(() => syncWakeSettingsToDaemon(userId), 1500);
+        } finally {
+          daemonSocketReplacementLocks.delete(pairKey);
         }
         return;
       }
