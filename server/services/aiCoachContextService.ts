@@ -12,6 +12,9 @@ export function providerLabelForModel(model: string): string {
   if (normalized.startsWith("chatgpt-codex-oauth/") || normalized.startsWith("codex-oauth/")) {
     return "chatgpt-codex-oauth";
   }
+  if (normalized.startsWith("android-local-gemma/")) {
+    return "android-local-gemma";
+  }
   if (normalized.startsWith("google/") || normalized.startsWith("gemini-")) {
     return "google";
   }

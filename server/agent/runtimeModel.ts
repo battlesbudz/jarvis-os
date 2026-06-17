@@ -20,6 +20,7 @@ export function isExplicitProviderModel(model: string | undefined | null): boole
   const normalized = String(model ?? "").trim().toLowerCase();
   return (
     normalized.startsWith("anthropic/") ||
+    normalized.startsWith("android-local-gemma/") ||
     normalized.startsWith("google/") ||
     normalized.startsWith("openai/") ||
     normalized.startsWith("openai-compatible/") ||

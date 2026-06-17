@@ -126,6 +126,20 @@ async function waitForSettingsScreenContext(bridge) {
   throw new Error(`Settings accessibility tree did not expose actionable elements: ${JSON.stringify(lastContext)}`);
 }
 
+async function waitForSettingsReadScreenText(bridge) {
+  let lastReadScreen = null;
+  for (let i = 0; i < 15; i++) {
+    const readScreen = await bridge.sendOp({ type: "android_read_screen" }, 30000);
+    const readText = Array.isArray(readScreen.data?.text) ? readScreen.data.text : [];
+    lastReadScreen = readScreen;
+    if (readScreen.ok && readScreen.data?.package === "com.android.settings" && readText.length > 0) {
+      return { readScreen, readText };
+    }
+    await sleep(1000);
+  }
+  throw new Error(`android_read_screen did not return Settings accessibility text: ${JSON.stringify(lastReadScreen)}`);
+}
+
 async function startBridge(port) {
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: "/api/daemon/ws" });
@@ -276,11 +290,7 @@ async function main() {
     throw new Error(`android_operator_action tap_element failed: ${JSON.stringify(tapElement)}`);
   }
 
-  const readScreen = await bridge.sendOp({ type: "android_read_screen" }, 30000);
-  const readText = Array.isArray(readScreen.data?.text) ? readScreen.data.text : [];
-  if (!readScreen.ok || readScreen.data?.package !== "com.android.settings" || readText.length === 0) {
-    throw new Error(`android_read_screen did not return Settings accessibility text: ${JSON.stringify(readScreen)}`);
-  }
+  const { readText } = await waitForSettingsReadScreenText(bridge);
 
   const uiDump = adb(["exec-out", "uiautomator", "dump", "/dev/tty"], { capture: true });
   if (!uiDump.includes("com.android.settings")) {

@@ -67,7 +67,13 @@ import {
   type ConnectionAppId,
   type ConnectionsStatus,
 } from '@/lib/connectionUx';
-import { MODEL_PROVIDER_CATALOG } from '@shared/modelProviderCatalog';
+import { ANDROID_LOCAL_GEMMA_MODEL, MODEL_PROVIDER_CATALOG } from '@shared/modelProviderCatalog';
+import {
+  importLocalGemmaModelFile,
+  LOCAL_GEMMA_EXPECTED_FILE_NAME,
+  readLocalGemmaModelStatus,
+  type LocalGemmaModelStatus,
+} from '@/lib/local-gemma-model-storage';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -113,7 +119,7 @@ interface McpServerInfo {
   envKey?: string | null;
 }
 
-type OpenAIProviderAuthType = 'api_key' | 'oauth';
+type OpenAIProviderAuthType = 'api_key' | 'oauth' | 'local';
 interface OpenAIProviderAuthTypeStatus {
   connected: boolean;
   isDefault: boolean;
@@ -128,14 +134,14 @@ interface OpenAIProviderAuthStatus {
     connected: boolean;
     defaultAuthType: OpenAIProviderAuthType | null;
     fallbackEnabled: boolean;
-    authTypes: Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>;
+    authTypes: Partial<Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>>;
   };
 }
 interface ProviderAuthProviderStatus {
   connected: boolean;
   defaultAuthType: OpenAIProviderAuthType | null;
   fallbackEnabled?: boolean;
-  authTypes: Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>;
+  authTypes: Partial<Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>>;
 }
 interface CatalogProvider {
   id: string;
@@ -162,6 +168,25 @@ const GUT_THREAT_LABEL: Record<string, string> = {
   project_drift: 'Project Drift',
   relationship_anomaly: 'Relationship Signal',
 };
+
+function formatModelSize(bytes?: number | null): string | null {
+  if (!bytes || bytes <= 0) return null;
+  const gb = bytes / (1024 * 1024 * 1024);
+  return `${gb.toFixed(gb >= 10 ? 1 : 2)} GB`;
+}
+
+function extractApiError(error: any, fallback: string): string {
+  const raw = typeof error?.message === 'string' ? error.message : '';
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(raw.slice(jsonStart));
+      if (typeof parsed.error === 'string') return parsed.error;
+      if (typeof parsed.message === 'string') return parsed.message;
+    } catch {}
+  }
+  return raw || fallback;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
@@ -242,6 +267,9 @@ export default function SettingsScreen() {
   const [providerApiKeyVisible, setProviderApiKeyVisible] = useState<Record<string, boolean>>({});
   const [providerApiKeyInputs, setProviderApiKeyInputs] = useState<Record<string, string>>({});
   const [providerAuthMessages, setProviderAuthMessages] = useState<Record<string, string>>({});
+  const [localGemmaStatus, setLocalGemmaStatus] = useState<LocalGemmaModelStatus | null>(null);
+  const [localGemmaStatusLoading, setLocalGemmaStatusLoading] = useState(false);
+  const [localGemmaImporting, setLocalGemmaImporting] = useState(false);
   const [openAIAuthLoading, setOpenAIAuthLoading] = useState(false);
   const [openAIAuthBusy, setOpenAIAuthBusy] = useState(false);
   const [openAIApiKeyVisible, setOpenAIApiKeyVisible] = useState(false);
@@ -1079,6 +1107,22 @@ export default function SettingsScreen() {
     }
   }, []);
 
+  // ── Local Gemma ──
+  const loadLocalGemmaStatus = useCallback(async () => {
+    setLocalGemmaStatusLoading(true);
+    try {
+      setLocalGemmaStatus(await readLocalGemmaModelStatus());
+    } catch (error: any) {
+      setLocalGemmaStatus({
+        ready: false,
+        needsModelImport: true,
+        message: extractApiError(error, `Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} from Downloads to store it inside Jarvis.`),
+      });
+    } finally {
+      setLocalGemmaStatusLoading(false);
+    }
+  }, []);
+
   // ── MCP servers ──
   const loadMcpServers = useCallback(async () => {
     setMcpLoading(true);
@@ -1246,7 +1290,8 @@ export default function SettingsScreen() {
     } catch {}
     await loadModels();
     await loadOpenAIProviderStatus();
-  }, [loadConnections, loadModels, loadOpenAIProviderStatus]);
+    await loadLocalGemmaStatus();
+  }, [loadConnections, loadLocalGemmaStatus, loadModels, loadOpenAIProviderStatus]);
 
   useFocusEffect(useCallback(() => {
     loadAll();
@@ -1543,6 +1588,49 @@ export default function SettingsScreen() {
   const setProviderMessage = useCallback((providerId: string, message: string) => {
     setProviderAuthMessages((prev) => ({ ...prev, [providerId]: message }));
   }, []);
+
+  const selectAndroidLocalGemma = useCallback(async () => {
+    setOpenAIAuthBusy(true);
+    try {
+      const res = await apiRequest('PATCH', '/api/settings/models', {
+        category: 'chat',
+        model: ANDROID_LOCAL_GEMMA_MODEL,
+      });
+      const data = await res.json().catch(() => ({}));
+      applySelectedModel(String(data.selectedModel || ANDROID_LOCAL_GEMMA_MODEL), data.modelPreferences);
+      setProviderMessage('android-local-gemma', localGemmaStatus?.ready
+        ? 'Phone Gemma is selected for Jarvis model routing.'
+        : `Phone Gemma is selected. Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} before chatting.`);
+    } catch (error: any) {
+      const message = extractApiError(error, 'Jarvis could not select Phone Gemma.');
+      setProviderMessage('android-local-gemma', message);
+      Alert.alert('Use Phone Gemma', message);
+    } finally {
+      setOpenAIAuthBusy(false);
+    }
+  }, [applySelectedModel, localGemmaStatus?.ready, setProviderMessage]);
+
+  const importAndroidLocalGemma = useCallback(async () => {
+    setLocalGemmaImporting(true);
+    setProviderMessage('android-local-gemma', `Opening Android file picker for ${LOCAL_GEMMA_EXPECTED_FILE_NAME}.`);
+    try {
+      const status = await importLocalGemmaModelFile();
+      if (!status) {
+        setProviderMessage('android-local-gemma', 'Model import cancelled.');
+        return;
+      }
+      setLocalGemmaStatus(status);
+      const size = formatModelSize(status.sizeBytes);
+      setProviderMessage('android-local-gemma', `Imported ${status.sourceName || LOCAL_GEMMA_EXPECTED_FILE_NAME}${size ? ` (${size})` : ''} into Jarvis app storage.`);
+      await loadLocalGemmaStatus();
+    } catch (error: any) {
+      const message = extractApiError(error, 'Jarvis could not import the selected model file.');
+      setProviderMessage('android-local-gemma', message);
+      Alert.alert('Import model file', message);
+    } finally {
+      setLocalGemmaImporting(false);
+    }
+  }, [loadLocalGemmaStatus, setProviderMessage]);
 
   const saveProviderApiKey = useCallback(async (providerId: string) => {
     const apiKey = (providerApiKeyInputs[providerId] ?? '').trim();
@@ -2612,7 +2700,7 @@ export default function SettingsScreen() {
             <View style={styles.connInfo}>
               <Text style={styles.connName}>Choose a provider</Text>
               <Text style={styles.connSub}>
-                Claude, Gemini, or a local Llama runtime. OpenAI account and API-key setup lives in the OpenAI section below.
+                Claude, Gemini, Local Llama, or Phone Gemma. OpenAI account and API-key setup lives in the OpenAI section below.
               </Text>
             </View>
             <Pressable onPress={loadOpenAIProviderStatus} style={{ padding: 8 }}>
@@ -2630,21 +2718,35 @@ export default function SettingsScreen() {
               const apiStatus = providerStatus?.authTypes?.api_key;
               const oauthStatus = providerStatus?.authTypes?.oauth;
               const isLocal = provider.id === 'local-llama';
+              const isAndroidLocalGemma = provider.id === 'android-local-gemma';
+              const isLocalProvider = isLocal || isAndroidLocalGemma;
               const apiVisible = Boolean(providerApiKeyVisible[provider.id]);
               const apiInput = providerApiKeyInputs[provider.id] ?? '';
               const providerMessage = providerAuthMessages[provider.id];
+              const localGemmaReady = Boolean(localGemmaStatus?.ready);
+              const localGemmaSize = formatModelSize(localGemmaStatus?.sizeBytes);
+              const localGemmaSelected = modelPrefs.chat === ANDROID_LOCAL_GEMMA_MODEL;
+              const localGemmaStatusText = localGemmaStatusLoading
+                ? 'Checking local model storage...'
+                : localGemmaReady
+                  ? `Ready${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
+                  : localGemmaStatus?.message || `Download ${LOCAL_GEMMA_EXPECTED_FILE_NAME}, then import it from Downloads.`;
               const activeLabel =
                 providerStatus?.defaultAuthType === 'oauth'
                   ? `${provider.shortLabel} OAuth connected`
                   : providerStatus?.defaultAuthType === 'api_key'
                     ? 'API key connected'
-                    : isLocal
-                      ? 'Ready when your local runtime is running'
-                      : 'Not connected';
+                    : isAndroidLocalGemma
+                      ? localGemmaSelected
+                        ? localGemmaReady ? 'Selected and model file ready' : 'Selected but model file missing'
+                        : localGemmaReady ? 'Model file ready' : 'Model file not imported'
+                      : isLocal
+                        ? 'Ready when your local runtime is running'
+                        : 'Not connected';
               const iconName =
                 provider.id === 'anthropic' ? 'cube-outline' :
                 provider.id === 'google' ? 'logo-google' :
-                provider.id === 'local-llama' ? 'hardware-chip-outline' :
+                isLocalProvider ? 'hardware-chip-outline' :
                 'sparkles-outline';
 
               return (
@@ -2681,14 +2783,33 @@ export default function SettingsScreen() {
                       </Pressable>
                     ) : null}
 
-                    {isLocal ? (
+                    {isLocalProvider ? (
                       <Pressable
-                        onPress={() => setProviderMessage(provider.id, 'Local Llama is selected from AI Models. Start Ollama, LM Studio, vLLM, or the Jarvis model relay before chatting.')}
+                        onPress={isAndroidLocalGemma
+                          ? selectAndroidLocalGemma
+                          : () => setProviderMessage(provider.id, 'Local Llama is selected from AI Models. Start Ollama, LM Studio, vLLM, or the Jarvis model relay before chatting.')}
                         disabled={openAIAuthBusy}
                         style={[providerAuthStyles.primaryAction, openAIAuthBusy && providerAuthStyles.disabledAction]}
                       >
                         <Ionicons name="hardware-chip-outline" size={16} color="#2563EB" />
-                        <Text style={providerAuthStyles.primaryActionText}>Use Local Llama</Text>
+                        <Text style={providerAuthStyles.primaryActionText}>{isAndroidLocalGemma ? 'Use Phone Gemma' : 'Use Local Llama'}</Text>
+                      </Pressable>
+                    ) : null}
+
+                    {isAndroidLocalGemma ? (
+                      <Pressable
+                        onPress={importAndroidLocalGemma}
+                        disabled={localGemmaImporting}
+                        style={[providerAuthStyles.primaryAction, localGemmaImporting && providerAuthStyles.disabledAction]}
+                      >
+                        {localGemmaImporting ? (
+                          <ActivityIndicator size="small" color="#2563EB" />
+                        ) : (
+                          <Ionicons name="download-outline" size={16} color="#2563EB" />
+                        )}
+                        <Text style={providerAuthStyles.primaryActionText}>
+                          {localGemmaImporting ? 'Importing model file' : 'Import model file'}
+                        </Text>
                       </Pressable>
                     ) : null}
 
@@ -2703,6 +2824,24 @@ export default function SettingsScreen() {
                       </Pressable>
                     ) : null}
                   </View>
+
+                  {isAndroidLocalGemma ? (
+                    <View style={providerAuthStyles.localModelStatusRow}>
+                      <Ionicons
+                        name={localGemmaReady ? 'checkmark-circle-outline' : 'alert-circle-outline'}
+                        size={16}
+                        color={localGemmaReady ? '#10B981' : '#F59E0B'}
+                      />
+                      <Text style={providerAuthStyles.localModelStatusText}>{localGemmaStatusText}</Text>
+                      <Pressable onPress={loadLocalGemmaStatus} disabled={localGemmaStatusLoading} style={providerAuthStyles.localModelRefresh}>
+                        {localGemmaStatusLoading ? (
+                          <ActivityIndicator size="small" color={Colors.textSecondary} />
+                        ) : (
+                          <Ionicons name="refresh-outline" size={15} color={Colors.textSecondary} />
+                        )}
+                      </Pressable>
+                    </View>
+                  ) : null}
 
                   {apiVisible ? (
                     <View style={providerAuthStyles.inputBlock}>
@@ -4240,6 +4379,31 @@ const providerAuthStyles = StyleSheet.create({
   },
   activeActionText: {
     color: '#fff',
+  },
+  localModelStatusRow: {
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  localModelStatusText: {
+    flex: 1,
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontFamily: 'Inter_400Regular',
+    lineHeight: 16,
+  },
+  localModelRefresh: {
+    minWidth: 26,
+    minHeight: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   inputBlock: {
     flexDirection: 'row',

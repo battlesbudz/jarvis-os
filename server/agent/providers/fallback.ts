@@ -29,6 +29,7 @@ import type { ProviderChunk, ProviderQueryParams, ProviderTurnResult } from "./b
 import { accumulateTurn } from "./base";
 import { getProvider } from "./index";
 import type { ProviderName } from "./index";
+import { ANDROID_LOCAL_GEMMA_MODEL } from "@shared/modelProviderCatalog";
 
 /**
  * Default model string used when a fallback chain entry does not specify one.
@@ -41,6 +42,7 @@ export const DEFAULT_PROVIDER_MODELS: Record<ProviderName, string> = {
   "chatgpt-codex-oauth": "chatgpt-codex-oauth/auto",
   anthropic: "claude-sonnet-4-5",
   google: "gemini-2.5-pro",
+  "android-local-gemma": ANDROID_LOCAL_GEMMA_MODEL,
 };
 
 /**
@@ -157,7 +159,7 @@ export function isRetriableProviderError(err: unknown): boolean {
   return false;
 }
 
-const KNOWN_PROVIDERS: ProviderName[] = ["openai", "openai-compatible", "chatgpt-codex-oauth", "anthropic", "google"];
+const KNOWN_PROVIDERS: ProviderName[] = ["openai", "openai-compatible", "chatgpt-codex-oauth", "anthropic", "google", "android-local-gemma"];
 
 /**
  * Reads PROVIDER_FALLBACK_CHAIN from the environment and returns an ordered

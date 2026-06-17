@@ -20,7 +20,7 @@ import {
   DEFAULT_CHATGPT_CODEX_OAUTH_USERINFO_URL,
   DEFAULT_OPENAI_OAUTH_REDIRECT_URI,
 } from "../agent/providers/openaiOAuthDefaults";
-import { CODEX_OAUTH_MODEL, MODEL_OPTIONS, MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
+import { ANDROID_LOCAL_GEMMA_MODEL, CODEX_OAUTH_MODEL, MODEL_OPTIONS, MODEL_PROVIDER_CATALOG, isSupportedModelProvider, type ModelProviderId } from "@shared/modelProviderCatalog";
 
 export const OPENAI_CHATGPT_DESKTOP_CONNECTOR_SETUP_PATH = "/desktop-connector-setup";
 
@@ -365,6 +365,7 @@ export function getDefaultModelForProviderAuth(provider: ModelProviderId, authTy
   if (provider === "anthropic") return "anthropic/claude-sonnet-4-5";
   if (provider === "google") return "google/gemini-2.5-flash";
   if (provider === "local-llama") return "openai-compatible/llama-local";
+  if (provider === "android-local-gemma") return ANDROID_LOCAL_GEMMA_MODEL;
   return CODEX_OAUTH_MODEL;
 }
 

@@ -34,6 +34,10 @@ const opHandlerPath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/OpHandler.kt",
 );
+const localGemmaModelManagerPath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/LocalGemmaModelManager.kt",
+);
 const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
 const pluginTemplateWebSocketPath = path.join(
   projectRoot,
@@ -58,6 +62,10 @@ const pluginTemplateAccessibilityPath = path.join(
 const pluginTemplateOpHandlerPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OpHandler.kt",
+);
+const pluginTemplateLocalGemmaModelManagerPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaModelManager.kt",
 );
 const pluginBlurViewBuildGradlePath = path.join(projectRoot, "plugins/android-blurview-native/build.gradle");
 const pluginBlurViewSourcePath = path.join(
@@ -171,6 +179,7 @@ const [
   cameraHandler,
   accessibilityService,
   opHandler,
+  localGemmaModelManager,
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateJarvisDaemonModule,
@@ -178,6 +187,7 @@ const [
   pluginTemplateCamera,
   pluginTemplateAccessibility,
   pluginTemplateOpHandler,
+  pluginTemplateLocalGemmaModelManager,
   accessibilityConfig,
   apkWorkflow,
 ] = await Promise.all([
@@ -195,6 +205,7 @@ const [
   readFile(cameraHandlerPath, "utf8"),
   readFile(accessibilityServicePath, "utf8"),
   readFile(opHandlerPath, "utf8"),
+  readFile(localGemmaModelManagerPath, "utf8"),
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateJarvisDaemonModulePath, "utf8"),
@@ -202,6 +213,7 @@ const [
   readFile(pluginTemplateCameraPath, "utf8"),
   readFile(pluginTemplateAccessibilityPath, "utf8"),
   readFile(pluginTemplateOpHandlerPath, "utf8"),
+  readFile(pluginTemplateLocalGemmaModelManagerPath, "utf8"),
   readFile(accessibilityConfigPath, "utf8"),
   readFile(apkWorkflowPath, "utf8"),
   assertFileExists(filePathsPath),
@@ -326,7 +338,18 @@ for (const [contents, source] of [
   assertIncludes(contents, '"/data/data/$packageName"', source);
   assertIncludes(contents, "context.applicationInfo.dataDir", source);
   assertIncludes(contents, "File(path).isAbsolute", source);
+  assertIncludes(contents, '"android_local_model_status" -> LocalGemmaModelManager.status(context, op)', source);
+  assertIncludes(contents, '"android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)', source);
   assertExcludes(contents, 'path.startsWith("/") -> path', source);
+}
+for (const [contents, source] of [
+  [localGemmaModelManager, "LocalGemmaModelManager.kt"],
+  [pluginTemplateLocalGemmaModelManager, "plugins/android-daemon-native/LocalGemmaModelManager.kt"],
+]) {
+  assertIncludes(contents, "package com.gameplan.daemon", source);
+  assertIncludes(contents, 'private const val DEFAULT_MODEL = "gemma-4-e4b-it"', source);
+  assertIncludes(contents, "LOCAL_MODEL_ENGINE_NOT_BUNDLED", source);
+  assertIncludes(contents, "context.filesDir", source);
 }
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(
