@@ -463,9 +463,51 @@ object OpHandler {
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis app.")
         return try {
-            val json = JSONObject(svc.readScreenContent())
-            // Return structured data directly so the server gets package/activity/text/clickable fields
-            OpResult(true, data = json)
+            val snapshot = svc.captureScreenContext()
+            val text = JSONArray()
+            val seenText = linkedSetOf<String>()
+            val clickable = JSONArray()
+
+            snapshot.elements.forEach { element ->
+                val label = when {
+                    element.sensitive -> SCREEN_CONTEXT_REDACTED
+                    !element.text.isNullOrBlank() -> element.text
+                    !element.contentDescription.isNullOrBlank() -> element.contentDescription
+                    else -> null
+                }
+                if (!label.isNullOrBlank() && label.length > 1 && seenText.add(label)) {
+                    text.put(label)
+                }
+
+                if (element.traits.contains(ScreenTrait.CLICKABLE)) {
+                    clickable.put(
+                        JSONObject()
+                            .put("label", label ?: "")
+                            .put("x", element.bounds.centerX)
+                            .put("y", element.bounds.centerY)
+                            .put("resource_id", element.viewId ?: "")
+                            .put(
+                                "content_desc",
+                                if (element.sensitive && !element.contentDescription.isNullOrBlank()) {
+                                    SCREEN_CONTEXT_REDACTED
+                                } else {
+                                    element.contentDescription ?: ""
+                                }
+                            )
+                            .put("class_name", element.className ?: "")
+                    )
+                }
+            }
+
+            OpResult(
+                true,
+                data = JSONObject()
+                    .put("package", snapshot.foregroundPackage ?: "")
+                    .put("activity", snapshot.foregroundActivity ?: snapshot.foregroundPackage ?: "")
+                    .put("text", text)
+                    .put("clickable", clickable)
+                    .put("generatedAtMs", snapshot.generatedAtMs)
+            )
         } catch (e: Exception) {
             OpResult(false, error = "Read screen error: ${e.message}")
         }
