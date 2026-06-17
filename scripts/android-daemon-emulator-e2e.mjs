@@ -203,7 +203,17 @@ async function startBridge(port) {
   });
 
   await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
-  return { server, sendOp, waitForEvent };
+  async function close() {
+    for (const waiter of pending.values()) clearTimeout(waiter.timer);
+    pending.clear();
+    for (const client of wss.clients) client.close();
+    await new Promise((resolve) => {
+      wss.close(() => server.close(() => resolve()));
+      setTimeout(resolve, 1000);
+    });
+  }
+
+  return { sendOp, waitForEvent, close };
 }
 
 async function main() {
@@ -286,10 +296,12 @@ async function main() {
     readScreenTextCount: readText.length,
   }, null, 2));
 
-  bridge.server.close();
+  await bridge.close();
 }
 
-main().catch((err) => {
+main().then(() => {
+  process.exit(0);
+}).catch((err) => {
   console.error(err instanceof Error ? err.stack || err.message : String(err));
   console.error("--- logcat tail ---");
   console.error(collectLogcat());
