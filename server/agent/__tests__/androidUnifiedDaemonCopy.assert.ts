@@ -219,6 +219,8 @@ for (const method of [
   "disconnect",
   "openAccessibilitySettings",
   "openNotificationListenerSettings",
+  "openAssistantSettings",
+  "refreshAssistantStatus",
   "openAllFilesAccessSettings",
   "requestCameraPermission",
   "requestMicrophonePermission",

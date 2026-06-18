@@ -63,6 +63,21 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
+    fun openAssistantSettings(promise: Promise) {
+        val intents = mutableListOf(Intent(Settings.ACTION_VOICE_INPUT_SETTINGS))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            intents.add(Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS))
+        }
+        intents.add(Intent(Settings.ACTION_SETTINGS))
+        openFirstAvailableIntent(intents, promise)
+    }
+
+    @ReactMethod
+    fun refreshAssistantStatus(promise: Promise) {
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
     fun openAllFilesAccessSettings(promise: Promise) {
         val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Intent(
@@ -115,6 +130,13 @@ class JarvisDaemonModule(
         openIntent(Intent(action), promise)
     }
 
+    private fun openFirstAvailableIntent(intents: List<Intent>, promise: Promise) {
+        val resolved = intents.firstOrNull { intent ->
+            intent.resolveActivity(reactApplicationContext.packageManager) != null
+        } ?: intents.last()
+        openIntent(resolved, promise)
+    }
+
     private fun openAppDetailsSettings(promise: Promise) {
         val intent = Intent(
             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -139,12 +161,21 @@ class JarvisDaemonModule(
             Context.MODE_PRIVATE,
         )
         val service = WebSocketService.instance
+        val hotwordStatus = JarvisAssistantState.hotwordStatus(reactApplicationContext)
+        val assistantActive = JarvisAssistantState.isActiveAssistant(reactApplicationContext)
         val map = Arguments.createMap()
         map.putBoolean("available", true)
         map.putBoolean("connected", service?.isConnected == true)
         map.putString("status", statusOverride ?: service?.currentStatus ?: "Disconnected")
         map.putBoolean("accessibilityEnabled", JarvisAccessibilityService.instance != null)
         map.putBoolean("notificationListenerActive", JarvisNotificationListener.instance != null)
+        map.putBoolean("assistantActive", assistantActive)
+        map.putString("assistantStatus", if (assistantActive) "Active assistant" else "Not selected")
+        map.putString("hotwordPhrase", hotwordStatus.phrase)
+        map.putString("hotwordAvailability", hotwordStatus.availability)
+        map.putString("hotwordDetail", hotwordStatus.detail)
+        map.putBoolean("hotwordRecognitionActive", hotwordStatus.recognitionActive)
+        map.putString("hotwordLastError", hotwordStatus.lastError)
         map.putString(
             "serverUrl",
             JarvisConfig.normalizeServerUrl(prefs.getString(WebSocketService.PREF_SERVER_URL, "")),

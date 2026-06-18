@@ -19,7 +19,7 @@ import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as Clipboard from 'expo-clipboard';
-import { createAudioPlayer, requestRecordingPermissionsAsync } from '@/lib/audio';
+import { createAudioPlayer } from '@/lib/audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
@@ -43,7 +43,7 @@ import {
 } from '@/lib/storage';
 import { areNotificationsEnabled, setNotificationsEnabled } from '@/lib/notifications';
 import { getApiUrl, apiRequest } from '@/lib/query-client';
-import { AndroidDaemonNative, getAndroidDaemonStatus } from '@/lib/android-daemon-native';
+import { AndroidDaemonNative, getAndroidDaemonStatus, type AndroidDaemonStatus } from '@/lib/android-daemon-native';
 import { useAuth, authFetch } from '@/lib/auth-context';
 import RewardClaimModal from '@/components/RewardClaimModal';
 import LifeContextSheet from '@/components/LifeContextSheet';
@@ -216,6 +216,7 @@ export default function SettingsScreen() {
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
   const [androidDaemonBusy, setAndroidDaemonBusy] = useState(false);
   const [androidDaemonError, setAndroidDaemonError] = useState<string | null>(null);
+  const [androidAssistantStatus, setAndroidAssistantStatus] = useState<AndroidDaemonStatus | null>(null);
   const [connectionsStatus, setConnectionsStatus] = useState<ConnectionsStatus | null>(null);
   const [connectionBusyApp, setConnectionBusyApp] = useState<string | null>(null);
   const [connectionTestSummary, setConnectionTestSummary] = useState<string | null>(null);
@@ -1055,6 +1056,7 @@ export default function SettingsScreen() {
     const serverAndroidDaemonConnected =
       channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false;
     const nativeAndroidDaemonStatus = await getAndroidDaemonStatus().catch(() => null);
+    setAndroidAssistantStatus(nativeAndroidDaemonStatus);
     setAndroidDaemonConnected(serverAndroidDaemonConnected || nativeAndroidDaemonStatus?.connected === true);
     if (connectionsRes) setConnectionsStatus(normalizeConnectionsStatus(connectionsRes));
     if (integrationRes && typeof integrationRes === 'object') {
@@ -1474,36 +1476,33 @@ export default function SettingsScreen() {
   }, []);
 
   const toggleWakeWord = useCallback(async (val: boolean) => {
-    if (val && Platform.OS !== 'web') {
-      const { granted } = await requestRecordingPermissionsAsync();
-      if (!granted) {
-        Alert.alert(
-          'Microphone Required',
-          'Wake Word detection needs microphone access. Please allow microphone access in Settings.',
-          [{ text: 'OK' }]
-        );
-        return;
-      }
-    }
     setWakeWordEnabled(val);
     await saveWakeSettings({ wakeWordEnabled: val });
   }, [saveWakeSettings]);
 
   const toggleTalkMode = useCallback(async (val: boolean) => {
-    if (val && Platform.OS !== 'web') {
-      const { granted } = await requestRecordingPermissionsAsync();
-      if (!granted) {
-        Alert.alert(
-          'Microphone Required',
-          'Talk Mode needs microphone access to listen for your voice. Please allow microphone access in Settings.',
-          [{ text: 'OK' }]
-        );
-        return;
-      }
-    }
     setTalkModeEnabled(val);
     await saveWakeSettings({ talkModeEnabled: val });
   }, [saveWakeSettings]);
+
+  const refreshAndroidAssistantStatus = useCallback(async () => {
+    const next = await getAndroidDaemonStatus();
+    setAndroidAssistantStatus(next);
+    return next;
+  }, []);
+
+  const openAndroidAssistantSettings = useCallback(async () => {
+    if (Platform.OS !== 'android' || !AndroidDaemonNative?.openAssistantSettings) return;
+    try {
+      await AndroidDaemonNative.openAssistantSettings();
+      setTimeout(() => {
+        refreshAndroidAssistantStatus().catch(() => {});
+      }, 1000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to open Android assistant settings.';
+      Alert.alert('Android Assistant', message);
+    }
+  }, [refreshAndroidAssistantStatus]);
 
   const addWakeWord = useCallback(async () => {
     const phrase = newWakeWord.trim().toLowerCase();
@@ -3066,11 +3065,19 @@ export default function SettingsScreen() {
           wakeWords={wakeWords}
           newWakeWord={newWakeWord}
           saving={wakeSettingsSaving}
+          assistantActive={androidAssistantStatus?.assistantActive}
+          assistantStatus={androidAssistantStatus?.assistantStatus}
+          hotwordPhrase={androidAssistantStatus?.hotwordPhrase}
+          hotwordAvailability={androidAssistantStatus?.hotwordAvailability}
+          hotwordDetail={androidAssistantStatus?.hotwordDetail}
+          hotwordRecognitionActive={androidAssistantStatus?.hotwordRecognitionActive}
           onToggleWakeWord={toggleWakeWord}
           onToggleTalkMode={toggleTalkMode}
           onChangeNewWakeWord={setNewWakeWord}
           onAddWakeWord={addWakeWord}
           onRemoveWakeWord={removeWakeWord}
+          onOpenAssistantSettings={openAndroidAssistantSettings}
+          onRefreshAssistantStatus={refreshAndroidAssistantStatus}
         />
         </ErrorBoundary>
 

@@ -1260,11 +1260,27 @@ object OpHandler {
     private fun handleSetWakeWords(context: Context, op: JSONObject): OpResult {
         val enabled = op.optBoolean("enabled", true)
         val talkMode = op.optBoolean("talkMode", false)
+        val allowSoftwareWakeWordFallback = op.optBoolean("allowSoftwareWakeWordFallback", false)
         val wordsArray = op.optJSONArray("words")
         val words: Array<String> = if (wordsArray != null) {
             Array(wordsArray.length()) { i -> wordsArray.optString(i) }.filter { it.isNotBlank() }.toTypedArray()
         } else {
             arrayOf("hey jarvis", "jarvis", "computer")
+        }
+
+        if (enabled && !allowSoftwareWakeWordFallback) {
+            val stopIntent = Intent(context, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_STOP
+            }
+            context.stopService(stopIntent)
+            DaemonLog.add("voice_set_wake_words: system assistant mode; software listener remains off")
+            return OpResult(
+                ok = true,
+                data = JSONObject()
+                    .put("status", "system_assistant")
+                    .put("softwareFallback", false)
+                    .put("talkMode", talkMode)
+            )
         }
 
         if (!enabled) {
@@ -1315,17 +1331,23 @@ object OpHandler {
     private fun handleSetTalkMode(context: Context, op: JSONObject): OpResult {
         val enabled = op.optBoolean("enabled", false)
         val svc = WakeWordService.instance
-        return if (svc != null) {
-            val updateIntent = Intent(context, WakeWordService::class.java).apply {
-                action = WakeWordService.ACTION_UPDATE
-                putExtra(WakeWordService.EXTRA_TALK_MODE, enabled)
-            }
-            context.startService(updateIntent)
-            DaemonLog.add("voice_set_talk_mode: talkMode=$enabled")
-            OpResult(true, data = JSONObject().put("talkMode", enabled))
-        } else {
-            OpResult(false, error = "Wake word service is not running — enable wake words first")
+        if (svc == null) {
+            DaemonLog.add("voice_set_talk_mode: system assistant mode; software listener is off")
+            return OpResult(
+                true,
+                data = JSONObject()
+                    .put("talkMode", enabled)
+                    .put("status", "system_assistant")
+                    .put("softwareFallback", false)
+            )
         }
+        val updateIntent = Intent(context, WakeWordService::class.java).apply {
+            action = WakeWordService.ACTION_UPDATE
+            putExtra(WakeWordService.EXTRA_TALK_MODE, enabled)
+        }
+        context.startService(updateIntent)
+        DaemonLog.add("voice_set_talk_mode: talkMode=$enabled")
+        return OpResult(true, data = JSONObject().put("talkMode", enabled))
     }
 
     /**

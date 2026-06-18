@@ -873,6 +873,7 @@ export function registerChannelRoutes(app: Express): void {
         wakeWordEnabled: prefs.wakeWordEnabled ?? false,
         talkModeEnabled: prefs.talkModeEnabled ?? false,
         wakeWords: prefs.wakeWords ?? ["hey jarvis", "jarvis", "computer"],
+        softwareWakeWordFallbackEnabled: prefs.softwareWakeWordFallbackEnabled === true,
       });
     } catch (err) {
       console.error("[voice] get wake-settings failed:", err);
@@ -904,6 +905,7 @@ export function registerChannelRoutes(app: Express): void {
         wakeWordEnabled: updated.wakeWordEnabled ?? false,
         talkModeEnabled: updated.talkModeEnabled ?? false,
         wakeWords: updated.wakeWords ?? ["hey jarvis", "jarvis", "computer"],
+        softwareWakeWordFallbackEnabled: updated.softwareWakeWordFallbackEnabled === true,
       };
 
       // Sync to Android daemon if connected — fire-and-forget
@@ -911,14 +913,23 @@ export function registerChannelRoutes(app: Express): void {
         if (wakeWordEnabled !== undefined || wakeWords !== undefined) {
           sendDaemonOp(userId, {
             type: "voice_set_wake_words",
-            enabled: result.wakeWordEnabled,
+            enabled: result.wakeWordEnabled && result.softwareWakeWordFallbackEnabled,
             words: result.wakeWords,
             talkMode: result.talkModeEnabled,
+            allowSoftwareWakeWordFallback: result.softwareWakeWordFallbackEnabled,
           }, 5000).catch((e: unknown) => console.error("[voice] daemon sync error:", e));
-        } else if (talkModeEnabled !== undefined) {
+        } else if (talkModeEnabled !== undefined && result.softwareWakeWordFallbackEnabled) {
           sendDaemonOp(userId, {
             type: "voice_set_talk_mode",
             enabled: result.talkModeEnabled,
+          }, 5000).catch((e: unknown) => console.error("[voice] daemon sync error:", e));
+        } else if (talkModeEnabled !== undefined) {
+          sendDaemonOp(userId, {
+            type: "voice_set_wake_words",
+            enabled: false,
+            words: result.wakeWords,
+            talkMode: result.talkModeEnabled,
+            allowSoftwareWakeWordFallback: false,
           }, 5000).catch((e: unknown) => console.error("[voice] daemon sync error:", e));
         }
       }

@@ -10,11 +10,19 @@ type WakeWordSectionProps = {
   wakeWords: string[];
   newWakeWord: string;
   saving: boolean;
+  assistantActive?: boolean;
+  assistantStatus?: string;
+  hotwordPhrase?: string;
+  hotwordAvailability?: string;
+  hotwordDetail?: string;
+  hotwordRecognitionActive?: boolean;
   onToggleWakeWord: (enabled: boolean) => void;
   onToggleTalkMode: (enabled: boolean) => void;
   onChangeNewWakeWord: (phrase: string) => void;
   onAddWakeWord: () => void;
   onRemoveWakeWord: (phrase: string) => void;
+  onOpenAssistantSettings?: () => void;
+  onRefreshAssistantStatus?: () => void;
 };
 
 export function WakeWordSection({
@@ -23,23 +31,73 @@ export function WakeWordSection({
   wakeWords,
   newWakeWord,
   saving,
+  assistantActive = false,
+  assistantStatus = 'Not selected',
+  hotwordPhrase = 'Hey Jarvis',
+  hotwordAvailability = 'not_checked',
+  hotwordDetail = 'Choose Jarvis as the Android assistant, then reopen this screen.',
+  hotwordRecognitionActive = false,
   onToggleWakeWord,
   onToggleTalkMode,
   onChangeNewWakeWord,
   onAddWakeWord,
   onRemoveWakeWord,
+  onOpenAssistantSettings,
+  onRefreshAssistantStatus,
 }: WakeWordSectionProps) {
+  const hotwordReady = hotwordRecognitionActive || hotwordAvailability === 'ready';
+
   return (
     <>
-      <SectionHeader label="WAKE WORD" accent={Colors.primary} />
+      <SectionHeader label="ASSISTANT WAKE" accent={Colors.primary} />
       <View style={s.card}>
         <View style={s.row}>
           <View style={[s.iconWrap, { backgroundColor: '#1E3A5F' }]}>
-            <Ionicons name="mic-outline" size={18} color={Colors.primary} />
+            <Ionicons name="sparkles-outline" size={18} color={Colors.primary} />
+          </View>
+          <View style={s.info}>
+            <Text style={s.name}>Android Assistant</Text>
+            <Text style={s.sub}>{assistantActive ? assistantStatus : 'Not selected'}</Text>
+          </View>
+          <Pressable
+            onPress={onOpenAssistantSettings}
+            disabled={saving || !onOpenAssistantSettings}
+            style={[s.actionButton, (saving || !onOpenAssistantSettings) && s.disabled]}
+          >
+            <Ionicons name="settings-outline" size={14} color={Colors.primary} />
+            <Text style={s.actionText}>{assistantActive ? 'Open' : 'Set'}</Text>
+          </Pressable>
+        </View>
+
+        <View style={[s.row, s.rowBorder]}>
+          <View style={[s.iconWrap, { backgroundColor: hotwordReady ? '#0f2f1a' : '#2f2510' }]}>
+            <Ionicons
+              name={hotwordReady ? 'checkmark-circle-outline' : 'hardware-chip-outline'}
+              size={18}
+              color={hotwordReady ? Colors.success : Colors.warning}
+            />
+          </View>
+          <View style={s.info}>
+            <Text style={s.name}>System Hotword</Text>
+            <Text style={s.sub}>{hotwordDetail}</Text>
+          </View>
+          <Pressable
+            onPress={onRefreshAssistantStatus}
+            disabled={saving || !onRefreshAssistantStatus}
+            style={[s.iconButton, (saving || !onRefreshAssistantStatus) && s.disabled]}
+            hitSlop={8}
+          >
+            <Ionicons name="refresh" size={16} color={Colors.textSecondary} />
+          </Pressable>
+        </View>
+
+        <View style={[s.row, s.rowBorder]}>
+          <View style={[s.iconWrap, { backgroundColor: '#172554' }]}>
+            <Ionicons name="radio-outline" size={18} color={Colors.primary} />
           </View>
           <View style={s.info}>
             <Text style={s.name}>Wake Word</Text>
-            <Text style={s.sub}>Say a phrase to activate Jarvis hands-free (Android only)</Text>
+            <Text style={s.sub}>{hotwordPhrase}</Text>
           </View>
           <Switch
             value={wakeWordEnabled}
@@ -55,7 +113,7 @@ export function WakeWordSection({
           </View>
           <View style={s.info}>
             <Text style={s.name}>Talk Mode</Text>
-            <Text style={s.sub}>Auto re-arm mic after each TTS response for hands-free chat</Text>
+            <Text style={s.sub}>Keep the conversation open after Jarvis launches</Text>
           </View>
           <Switch
             value={talkModeEnabled}
@@ -63,6 +121,19 @@ export function WakeWordSection({
             disabled={saving}
             trackColor={{ false: Colors.border, true: Colors.success }}
           />
+        </View>
+
+        <View style={[s.row, s.rowBorder]}>
+          <View style={[s.iconWrap, { backgroundColor: '#2A1D34' }]}>
+            <Ionicons name="mic-off-outline" size={18} color={Colors.violet} />
+          </View>
+          <View style={s.info}>
+            <Text style={s.name}>Mic Fallback</Text>
+            <Text style={s.sub}>Off</Text>
+          </View>
+          <View style={s.lockPill}>
+            <Ionicons name="lock-closed-outline" size={12} color={Colors.textTertiary} />
+          </View>
         </View>
 
         {wakeWordEnabled && (
@@ -100,12 +171,17 @@ export function WakeWordSection({
 }
 
 const s = StyleSheet.create({
+  actionButton: { minHeight: 32, borderRadius: 8, borderWidth: 1, borderColor: Colors.primary, paddingHorizontal: 10, flexDirection: 'row', gap: 5, alignItems: 'center', justifyContent: 'center' },
+  actionText: { fontSize: 12, color: Colors.primary, fontFamily: 'Inter_600SemiBold' },
   addButton: { backgroundColor: Colors.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   addRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
   card: { backgroundColor: Colors.surface, borderRadius: 12, borderWidth: 1, borderColor: Colors.border },
+  disabled: { opacity: 0.5 },
+  iconButton: { width: 32, height: 32, borderRadius: 8, borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center' },
   iconWrap: { width: 36, height: 36, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  info: { flex: 1 },
+  info: { flex: 1, minWidth: 0 },
   input: { flex: 1, marginTop: 0, backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, color: Colors.text, fontFamily: 'Inter_400Regular', fontSize: 13 },
+  lockPill: { width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.surfaceAlt, borderWidth: 1, borderColor: Colors.border },
   name: { color: Colors.text, fontFamily: 'Inter_600SemiBold', fontSize: 14 },
   phrase: { flex: 1, fontSize: 13, color: Colors.text, fontFamily: 'Inter_400Regular' },
   phraseHeader: { fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_500Medium', marginTop: 6, marginBottom: 8, letterSpacing: 0.5 },

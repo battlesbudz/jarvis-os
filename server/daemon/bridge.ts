@@ -55,7 +55,7 @@ export type DaemonOp =
   | { type: "desktop_read_screen" }
   | { type: "android_notification_reply"; notificationKey: string; replyText: string }
   | { type: "browser_mcp"; tool: string; args: Record<string, unknown> }
-  | { type: "voice_set_wake_words"; enabled: boolean; words?: string[]; talkMode?: boolean }
+  | { type: "voice_set_wake_words"; enabled: boolean; words?: string[]; talkMode?: boolean; allowSoftwareWakeWordFallback?: boolean }
   | { type: "voice_set_talk_mode"; enabled: boolean }
   | { type: "voice_tts_finished" }
   | { type: "voice_speak_audio"; audioBase64: string; format?: string }
@@ -219,14 +219,16 @@ async function syncWakeSettingsToDaemon(userId: string): Promise<void> {
     const wakeWordEnabled: boolean = prefs.wakeWordEnabled ?? false;
     const talkModeEnabled: boolean = prefs.talkModeEnabled ?? false;
     const wakeWords: string[] = prefs.wakeWords ?? ["hey jarvis", "jarvis", "computer"];
-    // Always push authoritative state so a previously-enabled daemon stops if user disabled it
+    const softwareWakeWordFallbackEnabled: boolean = prefs.softwareWakeWordFallbackEnabled === true;
+    // Always push authoritative state. System-assistant mode keeps the old foreground mic listener off.
     await sendDaemonOp(userId, {
       type: "voice_set_wake_words",
-      enabled: wakeWordEnabled,
+      enabled: wakeWordEnabled && softwareWakeWordFallbackEnabled,
       words: wakeWords,
       talkMode: talkModeEnabled,
+      allowSoftwareWakeWordFallback: softwareWakeWordFallbackEnabled,
     }, 5000);
-    console.log(`[daemon] wake settings synced on connect: userId=${userId} enabled=${wakeWordEnabled} talkMode=${talkModeEnabled}`);
+    console.log(`[daemon] wake settings synced on connect: userId=${userId} enabled=${wakeWordEnabled} talkMode=${talkModeEnabled} softwareFallback=${softwareWakeWordFallbackEnabled}`);
   } catch (e) {
     console.error("[daemon] wake settings sync failed:", e);
   }

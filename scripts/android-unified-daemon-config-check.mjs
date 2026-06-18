@@ -84,6 +84,8 @@ const accessibilityConfigPath = path.join(
   projectRoot,
   "android/app/src/main/res/xml/accessibility_service_config.xml",
 );
+const interactionServicePath = path.join(projectRoot, "android/app/src/main/res/xml/interaction_service.xml");
+const recognitionServicePath = path.join(projectRoot, "android/app/src/main/res/xml/jarvis_recognition_service.xml");
 const filePathsPath = path.join(projectRoot, "android/app/src/main/res/xml/file_paths.xml");
 const apkWorkflowPath = path.join(projectRoot, ".github/workflows/build-jarvis-apk.yml");
 
@@ -118,6 +120,14 @@ const requiredManifestSnippets = [
   'android:foregroundServiceType="dataSync"',
   'android:name=".daemon.WakeWordService"',
   'android:foregroundServiceType="microphone"',
+  'android:name=".daemon.JarvisVoiceInteractionService"',
+  "android.service.voice.VoiceInteractionService",
+  'android:name="android.voice_interaction"',
+  'android:resource="@xml/interaction_service"',
+  'android:name=".daemon.JarvisVoiceInteractionSessionService"',
+  'android:name=".daemon.JarvisRecognitionService"',
+  "android.speech.RecognitionService",
+  'android:resource="@xml/jarvis_recognition_service"',
   'android:name=".daemon.JarvisAccessibilityService"',
   "android.accessibilityservice.AccessibilityService",
   'android:name="android.accessibilityservice"',
@@ -144,6 +154,7 @@ const forbiddenManifestSnippets = [
 const requiredStringSnippets = [
   '<string name="accessibility_service_label">',
   '<string name="accessibility_service_description">',
+  '<string name="assistant_service_label">',
 ];
 
 const requiredDependencies = [
@@ -199,6 +210,8 @@ const [
   pluginTemplateLocalGemmaModelManager,
   pluginTemplateLocalGemmaInferenceEngine,
   accessibilityConfig,
+  interactionService,
+  recognitionService,
   apkWorkflow,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
@@ -227,6 +240,8 @@ const [
   readFile(pluginTemplateLocalGemmaModelManagerPath, "utf8"),
   readFile(pluginTemplateLocalGemmaInferenceEnginePath, "utf8"),
   readFile(accessibilityConfigPath, "utf8"),
+  readFile(interactionServicePath, "utf8"),
+  readFile(recognitionServicePath, "utf8"),
   readFile(apkWorkflowPath, "utf8"),
   assertFileExists(filePathsPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
@@ -266,6 +281,11 @@ assertIncludes(
 );
 assertExcludes(accessibilityConfig, "android:packageNames", "accessibility_service_config.xml");
 assertExcludes(plugin, "android:packageNames", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(interactionService, "JarvisVoiceInteractionSessionService", "interaction_service.xml");
+assertIncludes(interactionService, "JarvisRecognitionService", "interaction_service.xml");
+assertIncludes(recognitionService, "recognition-service", "jarvis_recognition_service.xml");
+assertIncludes(plugin, "interaction_service.xml", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "jarvis_recognition_service.xml", "plugins/withJarvisAndroidDaemon.js");
 
 for (const dependency of requiredDependencies) {
   assertIncludes(appBuildGradle, dependency, "android/app/build.gradle");
@@ -292,6 +312,8 @@ assertIncludes(
 );
 assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
 assertIncludes(nativeWrapper, "enable(serverUrl: string, bootstrapToken: string)", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "openAssistantSettings", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "refreshAssistantStatus", "lib/android-daemon-native.ts");
 assertExcludes(nativeWrapper, "connect(serverUrl: string, pairCode: string)", "lib/android-daemon-native.ts");
 assertIncludes(androidControlCard, "/api/channels/android-daemon/bootstrap", "AndroidDeviceControlCard.tsx");
 assertIncludes(androidControlCard, "AndroidDaemonNative.enable", "AndroidDeviceControlCard.tsx");

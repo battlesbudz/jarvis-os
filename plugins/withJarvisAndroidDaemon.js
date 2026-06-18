@@ -30,6 +30,8 @@ const DAEMON_GRADLE_DEPENDENCIES = [
 const DAEMON_XML_RESOURCES = [
   "accessibility_service_config.xml",
   "file_paths.xml",
+  "interaction_service.xml",
+  "jarvis_recognition_service.xml",
 ];
 
 const BLURVIEW_SETTINGS_GRADLE_SNIPPET = [
@@ -64,6 +66,10 @@ const DAEMON_STRING_ITEMS = [
     $: { name: "accessibility_service_description" },
     _: "Allows Jarvis to read screen content, tap, type, swipe, and take screenshots on your behalf - only when you send a command through the Jarvis app or Telegram.",
   },
+  {
+    $: { name: "assistant_service_label" },
+    _: "Jarvis Assistant",
+  },
 ];
 
 const DAEMON_XML_CONTENTS = {
@@ -87,6 +93,21 @@ const DAEMON_XML_CONTENTS = {
     <external-path name="pictures" path="Pictures/" />
     <external-path name="downloads" path="Download/" />
 </paths>
+`,
+  "interaction_service.xml": `<?xml version="1.0" encoding="utf-8"?>
+<voice-interaction-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.gameplan.daemon.JarvisVoiceInteractionSessionService"
+    android:recognitionService="com.gameplan.daemon.JarvisRecognitionService"
+    android:settingsActivity="com.gameplan.MainActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true"
+    android:supportsLocalInteraction="true" />
+`,
+  "jarvis_recognition_service.xml": `<?xml version="1.0" encoding="utf-8"?>
+<recognition-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:settingsActivity="com.gameplan.MainActivity" />
 `,
 };
 
@@ -155,6 +176,77 @@ function getDaemonServices() {
         "android:exported": "false",
         "android:foregroundServiceType": "microphone",
       },
+    },
+    {
+      $: {
+        "android:name": ".daemon.JarvisVoiceInteractionService",
+        "android:enabled": "true",
+        "android:exported": "true",
+        "android:label": "@string/assistant_service_label",
+        "android:permission": "android.permission.BIND_VOICE_INTERACTION",
+      },
+      "intent-filter": [
+        {
+          action: [
+            {
+              $: {
+                "android:name": "android.service.voice.VoiceInteractionService",
+              },
+            },
+          ],
+        },
+      ],
+      "meta-data": [
+        {
+          $: {
+            "android:name": "android.voice_interaction",
+            "android:resource": "@xml/interaction_service",
+          },
+        },
+      ],
+    },
+    {
+      $: {
+        "android:name": ".daemon.JarvisVoiceInteractionSessionService",
+        "android:enabled": "true",
+        "android:exported": "true",
+        "android:permission": "android.permission.BIND_VOICE_INTERACTION",
+      },
+    },
+    {
+      $: {
+        "android:name": ".daemon.JarvisRecognitionService",
+        "android:enabled": "true",
+        "android:exported": "true",
+        "android:label": "@string/assistant_service_label",
+        "android:permission": "android.permission.BIND_SPEECH_RECOGNITION",
+      },
+      "intent-filter": [
+        {
+          action: [
+            {
+              $: {
+                "android:name": "android.speech.RecognitionService",
+              },
+            },
+          ],
+          category: [
+            {
+              $: {
+                "android:name": "android.intent.category.DEFAULT",
+              },
+            },
+          ],
+        },
+      ],
+      "meta-data": [
+        {
+          $: {
+            "android:name": "android.speech",
+            "android:resource": "@xml/jarvis_recognition_service",
+          },
+        },
+      ],
     },
     {
       $: {

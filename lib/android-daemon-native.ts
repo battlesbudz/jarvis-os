@@ -6,6 +6,13 @@ export type AndroidDaemonStatus = {
   status: string;
   accessibilityEnabled: boolean;
   notificationListenerActive: boolean;
+  assistantActive?: boolean;
+  assistantStatus?: string;
+  hotwordPhrase?: string;
+  hotwordAvailability?: string;
+  hotwordDetail?: string;
+  hotwordRecognitionActive?: boolean;
+  hotwordLastError?: string | null;
   serverUrl?: string;
 };
 
@@ -24,6 +31,8 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       disconnect(): Promise<AndroidDaemonStatus>;
       openAccessibilitySettings(): Promise<void>;
       openNotificationListenerSettings(): Promise<void>;
+      openAssistantSettings(): Promise<void>;
+      refreshAssistantStatus(): Promise<AndroidDaemonStatus>;
       openAllFilesAccessSettings(): Promise<void>;
       requestCameraPermission(): Promise<void>;
       requestMicrophonePermission(): Promise<void>;
