@@ -501,6 +501,7 @@ class WebSocketService : Service() {
     override fun onDestroy() {
         instance = null
         reconnectEnabled = false
+        LocalGemmaInferenceEngine.shutdown()
         disconnect()
         executor.shutdownNow()
         super.onDestroy()

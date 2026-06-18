@@ -348,9 +348,13 @@ for (const [contents, source] of [
 ]) {
   assertIncludes(contents, "package com.gameplan.daemon", source);
   assertIncludes(contents, 'private const val DEFAULT_MODEL = "gemma-4-e4b-it"', source);
-  assertIncludes(contents, "LOCAL_MODEL_ENGINE_NOT_BUNDLED", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, op)", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.cancel(op)", source);
   assertIncludes(contents, "context.filesDir", source);
 }
+assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android", "android/app/build.gradle");
+assertIncludes(plugin, "com.google.ai.edge.litertlm:litertlm-android", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(manifest, "libOpenCL.so", "AndroidManifest.xml");
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(
   plugin,

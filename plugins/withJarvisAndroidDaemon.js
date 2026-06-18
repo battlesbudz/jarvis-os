@@ -22,6 +22,8 @@ const DAEMON_GRADLE_DEPENDENCIES = [
   'implementation("org.java-websocket:Java-WebSocket:1.5.4")',
   'implementation("org.json:json:20231013")',
   'implementation("com.google.android.gms:play-services-location:21.2.0")',
+  'implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.1")',
+  'implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")',
 ];
 
 const DAEMON_XML_RESOURCES = [
@@ -262,6 +264,20 @@ async function addDaemonManifestConfigAsync(config) {
 
   mainApplication.provider ||= [];
   upsertByName(mainApplication.provider, getFileProvider());
+
+  mainApplication["uses-native-library"] ||= [];
+  upsertByName(mainApplication["uses-native-library"], {
+    $: {
+      "android:name": "libvndksupport.so",
+      "android:required": "false",
+    },
+  });
+  upsertByName(mainApplication["uses-native-library"], {
+    $: {
+      "android:name": "libOpenCL.so",
+      "android:required": "false",
+    },
+  });
 
   config.modResults = manifest;
   return config;

@@ -3,7 +3,16 @@ import { sql } from "drizzle-orm";
 
 let cachedOwnerId: string | null = null;
 
+const TEST_OWNER_OVERRIDE_KEY = Symbol.for("jarvis.integrationOwner.testOverride");
+
+function getTestOwnerOverride(): string | null | undefined {
+  if (process.env.NODE_ENV === "production") return undefined;
+  return (globalThis as any)[TEST_OWNER_OVERRIDE_KEY] as string | null | undefined;
+}
+
 export async function getIntegrationOwnerId(): Promise<string | null> {
+  const testOverride = getTestOwnerOverride();
+  if (testOverride !== undefined) return testOverride;
   if (cachedOwnerId) return cachedOwnerId;
   try {
     const result = await db.execute(sql`SELECT owner_user_id FROM integration_owner LIMIT 1`);
@@ -63,5 +72,6 @@ export function _setOwnerIdForTest(id: string | null): void {
   if (process.env.NODE_ENV === "production") {
     throw new Error("_setOwnerIdForTest must not be called in production");
   }
+  (globalThis as any)[TEST_OWNER_OVERRIDE_KEY] = id;
   cachedOwnerId = id;
 }

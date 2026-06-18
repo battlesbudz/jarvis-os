@@ -35,10 +35,11 @@ object LocalGemmaModelManager {
                 .put("importedAtMs", metadata?.optLong("importedAtMs", 0L)?.takeIf { it > 0 } ?: JSONObject.NULL)
                 .put("ready", ready)
                 .put("needsModelImport", !ready)
+                .put("inference", LocalGemmaInferenceEngine.status())
                 .put(
                     "message",
                     if (ready) {
-                        "Local Gemma model file is present. LiteRT-LM engine binding is required before generation can run."
+                        "Local Gemma model file is present and ready for LiteRT-LM inference."
                     } else {
                         "Import a .litertlm Gemma model file in Jarvis Android settings before local generation."
                     }
@@ -135,23 +136,11 @@ object LocalGemmaModelManager {
             )
         }
 
-        return OpResult(
-            false,
-            error = "LOCAL_MODEL_ENGINE_NOT_BUNDLED: LiteRT-LM generation is not bundled in this APK yet. The model file is present, but Jarvis cannot run inference until the LiteRT-LM Android dependency is wired."
-        )
+        return LocalGemmaInferenceEngine.generate(context, model, file, op)
     }
 
     fun cancel(op: JSONObject): OpResult {
-        val requestId = op.optString("requestId", "")
-        return OpResult(
-            ok = true,
-            data = JSONObject()
-                .put("provider", "android-local-gemma")
-                .put("runtime", "android-app")
-                .put("requestId", requestId)
-                .put("cancelled", false)
-                .put("message", "No active LiteRT-LM generation request is registered in this build.")
-        )
+        return LocalGemmaInferenceEngine.cancel(op)
     }
 
     private fun normalizeModel(raw: String): String {
