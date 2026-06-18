@@ -223,17 +223,19 @@ object LocalGemmaInferenceEngine {
             var lastFailure: Throwable? = null
 
             for (candidateBackendName in candidateBackends) {
-                val engine = Engine(
-                    EngineConfig(
-                        modelPath = modelPath,
-                        backend = backendFor(candidateBackendName),
-                        maxNumTokens = contextTokens,
-                        cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
-                    )
-                )
+                var engine: Engine? = null
                 try {
-                    engine.initialize()
-                    val nextState = EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, engine)
+                    val initializedEngine = Engine(
+                        EngineConfig(
+                            modelPath = modelPath,
+                            backend = backendFor(candidateBackendName),
+                            maxNumTokens = contextTokens,
+                            cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
+                        )
+                    )
+                    engine = initializedEngine
+                    initializedEngine.initialize()
+                    val nextState = EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, initializedEngine)
                     engineState = nextState
                     lastEngineError = null
                     previousEngine?.let { previous ->
@@ -243,7 +245,9 @@ object LocalGemmaInferenceEngine {
                 } catch (e: Throwable) {
                     lastFailure = e
                     failures.add("$candidateBackendName: ${formatEngineError(e)}")
-                    try { engine.close() } catch (_: Throwable) {}
+                    engine?.let { failedEngine ->
+                        try { failedEngine.close() } catch (_: Throwable) {}
+                    }
                 }
             }
 

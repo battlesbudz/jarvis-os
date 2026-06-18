@@ -408,8 +408,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "engineModelRevision", source);
   assertIncludes(contents, "state.modelRevision == modelRevision", source);
   assertIncludes(contents, "val previousEngine = lockedCurrent?.engine", source);
-  assertIncludes(contents, "try { engine.close() } catch (_: Throwable) {}", source);
-  assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, engine)", source);
+  assertIncludes(contents, "try { failedEngine.close() } catch (_: Throwable) {}", source);
+  assertIncludes(contents, "var engine: Engine? = null", source);
+  assertIncludes(contents, "val initializedEngine = Engine(", source);
+  assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, initializedEngine)", source);
   assertIncludes(contents, "backendCandidates(backendName)", source);
   assertIncludes(contents, 'put("requestedBackend", active.backend)', source);
   assertIncludes(contents, 'put("lastEngineError", lastEngineError ?: JSONObject.NULL)', source);
