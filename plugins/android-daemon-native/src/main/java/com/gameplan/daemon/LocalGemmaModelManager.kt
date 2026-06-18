@@ -136,7 +136,8 @@ object LocalGemmaModelManager {
             )
         }
 
-        return LocalGemmaInferenceEngine.generate(context, model, file, op)
+        val modelRevision = buildModelRevision(context, model, file)
+        return LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)
     }
 
     fun cancel(op: JSONObject): OpResult {
@@ -146,6 +147,18 @@ object LocalGemmaModelManager {
     private fun normalizeModel(raw: String): String {
         val value = raw.ifBlank { DEFAULT_MODEL }.removePrefix("android-local-gemma/")
         return value.replace(Regex("[^A-Za-z0-9._-]"), "_")
+    }
+
+    private fun buildModelRevision(context: Context, model: String, file: File): String {
+        val metadataSha = readMetadata(context, model)
+            ?.optString("sha256")
+            ?.takeIf { it.isNotBlank() }
+        val fileRevision = "bytes=${file.length()};modified=${file.lastModified()}"
+        return if (metadataSha != null) {
+            "sha256=$metadataSha;$fileRevision"
+        } else {
+            fileRevision
+        }
     }
 
     private data class ImportSourceResult(val file: File?, val error: String? = null)

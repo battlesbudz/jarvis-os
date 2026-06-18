@@ -45,6 +45,7 @@ object LocalGemmaInferenceEngine {
         return JSONObject()
             .put("engineLoaded", state != null)
             .put("engineModelPath", state?.modelPath ?: JSONObject.NULL)
+            .put("engineModelRevision", state?.modelRevision ?: JSONObject.NULL)
             .put("engineBackend", state?.backendName ?: JSONObject.NULL)
             .put("engineContextTokens", state?.contextTokens ?: JSONObject.NULL)
             .put("activeRequests", activeRequests.size)
@@ -55,7 +56,7 @@ object LocalGemmaInferenceEngine {
             .put("concurrency", "serialized")
     }
 
-    fun generate(context: Context, model: String, modelFile: File, op: JSONObject): OpResult {
+    fun generate(context: Context, model: String, modelFile: File, modelRevision: String, op: JSONObject): OpResult {
         val prompt = op.optString("prompt", "")
         val requestId = op.optString("requestId", "").ifBlank { UUID.randomUUID().toString() }
         val backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
@@ -72,14 +73,14 @@ object LocalGemmaInferenceEngine {
         }
 
         val job = Job()
-        val active = ActiveRequest(requestId, model, modelFile.absolutePath, backendName, startedAtMs, job)
+        val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, startedAtMs, job)
         activeRequests[requestId] = active
 
         return try {
             var finishReason = "stop"
             val text = runBlocking(job) {
                 generationMutex.withLock {
-                    val engine = ensureEngine(context, modelFile.absolutePath, backendName, contextTokens)
+                    val engine = ensureEngine(context, modelFile.absolutePath, modelRevision, backendName, contextTokens)
                     engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
                         .use { conversation ->
                             active.conversation = conversation
@@ -193,15 +194,29 @@ object LocalGemmaInferenceEngine {
         }
     }
 
-    private suspend fun ensureEngine(context: Context, modelPath: String, backendName: String, contextTokens: Int): Engine {
+    private suspend fun ensureEngine(
+        context: Context,
+        modelPath: String,
+        modelRevision: String,
+        backendName: String,
+        contextTokens: Int,
+    ): Engine {
         val current = engineState
-        if (current != null && current.modelPath == modelPath && current.backendName == backendName && current.contextTokens == contextTokens) {
+        if (current != null &&
+            current.modelPath == modelPath &&
+            current.modelRevision == modelRevision &&
+            current.backendName == backendName &&
+            current.contextTokens == contextTokens) {
             return current.engine
         }
 
         return engineMutex.withLock {
             val lockedCurrent = engineState
-            if (lockedCurrent != null && lockedCurrent.modelPath == modelPath && lockedCurrent.backendName == backendName && lockedCurrent.contextTokens == contextTokens) {
+            if (lockedCurrent != null &&
+                lockedCurrent.modelPath == modelPath &&
+                lockedCurrent.modelRevision == modelRevision &&
+                lockedCurrent.backendName == backendName &&
+                lockedCurrent.contextTokens == contextTokens) {
                 return@withLock lockedCurrent.engine
             }
 
@@ -215,7 +230,7 @@ object LocalGemmaInferenceEngine {
                 )
             )
             engine.initialize()
-            engineState = EngineState(modelPath, backendName, contextTokens, engine)
+            engineState = EngineState(modelPath, modelRevision, backendName, contextTokens, engine)
             engine
         }
     }
@@ -267,6 +282,7 @@ object LocalGemmaInferenceEngine {
 
     private data class EngineState(
         val modelPath: String,
+        val modelRevision: String,
         val backendName: String,
         val contextTokens: Int,
         val engine: Engine,
@@ -276,6 +292,7 @@ object LocalGemmaInferenceEngine {
         val requestId: String,
         val model: String,
         val modelPath: String,
+        val modelRevision: String,
         val backend: String,
         val startedAtMs: Long,
         val job: Job,

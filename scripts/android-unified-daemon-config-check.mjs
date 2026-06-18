@@ -370,7 +370,9 @@ for (const [contents, source] of [
 ]) {
   assertIncludes(contents, "package com.gameplan.daemon", source);
   assertIncludes(contents, 'private const val DEFAULT_MODEL = "gemma-4-e4b-it"', source);
-  assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, op)", source);
+  assertIncludes(contents, "val modelRevision = buildModelRevision(context, model, file)", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)", source);
+  assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.cancel(op)", source);
   assertIncludes(contents, "context.filesDir", source);
 }
@@ -384,6 +386,9 @@ for (const [contents, source] of [
 ]) {
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
   assertIncludes(contents, "maxNumTokens = contextTokens", source);
+  assertIncludes(contents, "engineModelRevision", source);
+  assertIncludes(contents, "current.modelRevision == modelRevision", source);
+  assertIncludes(contents, "EngineState(modelPath, modelRevision, backendName, contextTokens, engine)", source);
   assertIncludes(contents, "hasReachedCompletionLimit(chunks, maxCompletionTokens)", source);
   assertIncludes(contents, 'conversation.cancelProcess()', source);
   assertIncludes(contents, '.put("finishReason", finishReason)', source);
