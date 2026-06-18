@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
@@ -11,6 +12,7 @@ import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,6 +28,7 @@ object LocalGemmaInferenceEngine {
     private const val DEFAULT_BACKEND = "gpu"
     private const val DEFAULT_CONTEXT_TOKENS = 4096
     private const val DEFAULT_MAX_COMPLETION_TOKENS = 512
+    private const val APPROX_CHARS_PER_TOKEN = 4
     private const val DEFAULT_TOP_K = 40
     private const val DEFAULT_TOP_P = 0.95
     private const val DEFAULT_TEMPERATURE = 0.8
@@ -73,6 +76,7 @@ object LocalGemmaInferenceEngine {
         activeRequests[requestId] = active
 
         return try {
+            var finishReason = "stop"
             val text = runBlocking(job) {
                 generationMutex.withLock {
                     val engine = ensureEngine(context, modelFile.absolutePath, backendName, contextTokens)
@@ -80,12 +84,20 @@ object LocalGemmaInferenceEngine {
                         .use { conversation ->
                             active.conversation = conversation
                             val chunks = StringBuilder()
-                            conversation.sendMessageAsync(Message.of(prompt)).collect { message ->
-                                val chunk = message.toString()
-                                chunks.append(chunk)
-                                active.lastChunkAtMs = System.currentTimeMillis()
-                                active.outputChars = chunks.length
-                            }
+                            conversation.sendMessageAsync(Message.user(prompt))
+                                .takeWhile { message ->
+                                    val chunk = message.toString()
+                                    chunks.append(chunk)
+                                    active.lastChunkAtMs = System.currentTimeMillis()
+                                    active.outputChars = chunks.length
+                                    val reachedCompletionLimit = hasReachedCompletionLimit(chunks, maxCompletionTokens)
+                                    if (reachedCompletionLimit) {
+                                        finishReason = "length"
+                                        conversation.cancelProcess()
+                                    }
+                                    !reachedCompletionLimit
+                                }
+                                .collect {}
                             chunks.toString()
                         }
                 }
@@ -102,6 +114,8 @@ object LocalGemmaInferenceEngine {
                     .put("backend", backendName)
                     .put("contextTokens", contextTokens)
                     .put("maxCompletionTokens", maxCompletionTokens)
+                    .put("finishReason", finishReason)
+                    .put("completionLimitEnforced", true)
                     .put("text", text)
                     .put("outputChars", text.length)
                     .put("durationMs", System.currentTimeMillis() - startedAtMs)
@@ -219,7 +233,7 @@ object LocalGemmaInferenceEngine {
         )
         return if (systemInstruction.isNotBlank()) {
             ConversationConfig(
-                systemMessage = Message.of(systemInstruction),
+                systemInstruction = Contents.of(systemInstruction),
                 samplerConfig = samplerConfig,
             )
         } else {
@@ -236,10 +250,19 @@ object LocalGemmaInferenceEngine {
 
     private fun backendFor(backendName: String): Backend {
         return when (backendName) {
-            "cpu" -> Backend.CPU
-            "npu" -> Backend.NPU
-            else -> Backend.GPU
+            "cpu" -> Backend.CPU()
+            "npu" -> Backend.NPU()
+            else -> Backend.GPU()
         }
+    }
+
+    private fun hasReachedCompletionLimit(chunks: StringBuilder, maxCompletionTokens: Int): Boolean {
+        return estimateCompletionTokens(chunks) >= maxCompletionTokens
+    }
+
+    private fun estimateCompletionTokens(text: CharSequence): Int {
+        if (text.isEmpty()) return 0
+        return ((text.length + APPROX_CHARS_PER_TOKEN - 1) / APPROX_CHARS_PER_TOKEN).coerceAtLeast(1)
     }
 
     private data class EngineState(

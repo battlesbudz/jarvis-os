@@ -38,6 +38,10 @@ const localGemmaModelManagerPath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/LocalGemmaModelManager.kt",
 );
+const localGemmaInferenceEnginePath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt",
+);
 const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
 const pluginTemplateWebSocketPath = path.join(
   projectRoot,
@@ -66,6 +70,10 @@ const pluginTemplateOpHandlerPath = path.join(
 const pluginTemplateLocalGemmaModelManagerPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaModelManager.kt",
+);
+const pluginTemplateLocalGemmaInferenceEnginePath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt",
 );
 const pluginBlurViewBuildGradlePath = path.join(projectRoot, "plugins/android-blurview-native/build.gradle");
 const pluginBlurViewSourcePath = path.join(
@@ -180,6 +188,7 @@ const [
   accessibilityService,
   opHandler,
   localGemmaModelManager,
+  localGemmaInferenceEngine,
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateJarvisDaemonModule,
@@ -188,6 +197,7 @@ const [
   pluginTemplateAccessibility,
   pluginTemplateOpHandler,
   pluginTemplateLocalGemmaModelManager,
+  pluginTemplateLocalGemmaInferenceEngine,
   accessibilityConfig,
   apkWorkflow,
 ] = await Promise.all([
@@ -206,6 +216,7 @@ const [
   readFile(accessibilityServicePath, "utf8"),
   readFile(opHandlerPath, "utf8"),
   readFile(localGemmaModelManagerPath, "utf8"),
+  readFile(localGemmaInferenceEnginePath, "utf8"),
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateJarvisDaemonModulePath, "utf8"),
@@ -214,6 +225,7 @@ const [
   readFile(pluginTemplateAccessibilityPath, "utf8"),
   readFile(pluginTemplateOpHandlerPath, "utf8"),
   readFile(pluginTemplateLocalGemmaModelManagerPath, "utf8"),
+  readFile(pluginTemplateLocalGemmaInferenceEnginePath, "utf8"),
   readFile(accessibilityConfigPath, "utf8"),
   readFile(apkWorkflowPath, "utf8"),
   assertFileExists(filePathsPath),
@@ -354,6 +366,19 @@ for (const [contents, source] of [
 }
 assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android", "android/app/build.gradle");
 assertIncludes(plugin, "com.google.ai.edge.litertlm:litertlm-android", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android:0.13.1", "android/app/build.gradle");
+assertIncludes(plugin, "com.google.ai.edge.litertlm:litertlm-android:0.13.1", "plugins/withJarvisAndroidDaemon.js");
+for (const [contents, source] of [
+  [localGemmaInferenceEngine, "LocalGemmaInferenceEngine.kt"],
+  [pluginTemplateLocalGemmaInferenceEngine, "plugins/android-daemon-native/LocalGemmaInferenceEngine.kt"],
+]) {
+  assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
+  assertIncludes(contents, "maxNumTokens = contextTokens", source);
+  assertIncludes(contents, "hasReachedCompletionLimit(chunks, maxCompletionTokens)", source);
+  assertIncludes(contents, 'conversation.cancelProcess()', source);
+  assertIncludes(contents, '.put("finishReason", finishReason)', source);
+  assertIncludes(contents, '.put("completionLimitEnforced", true)', source);
+}
 assertIncludes(manifest, "libOpenCL.so", "AndroidManifest.xml");
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(

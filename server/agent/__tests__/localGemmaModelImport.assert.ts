@@ -13,6 +13,14 @@ const nativeModelManager = fs.readFileSync(
   path.join(repoRoot, "android/app/src/main/java/com/gameplan/daemon/LocalGemmaModelManager.kt"),
   "utf8",
 );
+const nativeInferenceEngine = fs.readFileSync(
+  path.join(repoRoot, "android/app/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt"),
+  "utf8",
+);
+const pluginInferenceEngine = fs.readFileSync(
+  path.join(repoRoot, "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt"),
+  "utf8",
+);
 
 assert.match(settingsScreen, /importLocalGemmaModelFile/);
 assert.match(settingsScreen, /readLocalGemmaModelStatus/);
@@ -28,6 +36,11 @@ assert.match(appStorageHelper, /expo-document-picker/);
 assert.match(nativeOpHandler, /"android_local_model_generate" -> LocalGemmaModelManager\.generate\(context, op\)/);
 assert.match(nativeModelManager, /package com\.gameplan\.daemon/);
 assert.match(nativeModelManager, /context\.filesDir, "local_models\/\$model"/);
-assert.match(nativeModelManager, /LOCAL_MODEL_ENGINE_NOT_BUNDLED/);
+assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.generate\(context, model, file, op\)/);
+assert.match(nativeInferenceEngine, /EngineConfig\(/);
+assert.match(nativeInferenceEngine, /maxNumTokens = contextTokens/);
+assert.match(nativeInferenceEngine, /hasReachedCompletionLimit\(chunks, maxCompletionTokens\)/);
+assert.match(nativeInferenceEngine, /finishReason/);
+assert.equal(nativeInferenceEngine, pluginInferenceEngine);
 
 console.log("OK: Android app Settings imports local Gemma into Jarvis app-private storage and native ops read it");
