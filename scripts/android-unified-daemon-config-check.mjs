@@ -38,6 +38,10 @@ const localGemmaModelManagerPath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/LocalGemmaModelManager.kt",
 );
+const localGemmaInferenceEnginePath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt",
+);
 const pluginPath = path.join(projectRoot, "plugins/withJarvisAndroidDaemon.js");
 const pluginTemplateWebSocketPath = path.join(
   projectRoot,
@@ -66,6 +70,10 @@ const pluginTemplateOpHandlerPath = path.join(
 const pluginTemplateLocalGemmaModelManagerPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaModelManager.kt",
+);
+const pluginTemplateLocalGemmaInferenceEnginePath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt",
 );
 const pluginBlurViewBuildGradlePath = path.join(projectRoot, "plugins/android-blurview-native/build.gradle");
 const pluginBlurViewSourcePath = path.join(
@@ -180,6 +188,7 @@ const [
   accessibilityService,
   opHandler,
   localGemmaModelManager,
+  localGemmaInferenceEngine,
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateJarvisDaemonModule,
@@ -188,6 +197,7 @@ const [
   pluginTemplateAccessibility,
   pluginTemplateOpHandler,
   pluginTemplateLocalGemmaModelManager,
+  pluginTemplateLocalGemmaInferenceEngine,
   accessibilityConfig,
   apkWorkflow,
 ] = await Promise.all([
@@ -206,6 +216,7 @@ const [
   readFile(accessibilityServicePath, "utf8"),
   readFile(opHandlerPath, "utf8"),
   readFile(localGemmaModelManagerPath, "utf8"),
+  readFile(localGemmaInferenceEnginePath, "utf8"),
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateJarvisDaemonModulePath, "utf8"),
@@ -214,6 +225,7 @@ const [
   readFile(pluginTemplateAccessibilityPath, "utf8"),
   readFile(pluginTemplateOpHandlerPath, "utf8"),
   readFile(pluginTemplateLocalGemmaModelManagerPath, "utf8"),
+  readFile(pluginTemplateLocalGemmaInferenceEnginePath, "utf8"),
   readFile(accessibilityConfigPath, "utf8"),
   readFile(apkWorkflowPath, "utf8"),
   assertFileExists(filePathsPath),
@@ -328,6 +340,16 @@ assertExcludes(accessibilityService, '"enter"         -> { pressImeAction(); tru
 assertIncludes(pluginTemplateAccessibility, '"enter"         -> pressImeAction()', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
 assertExcludes(pluginTemplateAccessibility, '"enter"         -> { pressImeAction(); true }', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
 for (const [contents, source] of [
+  [accessibilityService, "JarvisAccessibilityService.kt"],
+  [pluginTemplateAccessibility, "plugins/android-daemon-native/JarvisAccessibilityService.kt"],
+]) {
+  assertIncludes(contents, "ForegroundPackageObservation", source);
+  assertIncludes(contents, "lastForegroundPackage = null", source);
+  assertIncludes(contents, "launchAttemptStartedAtUptimeMs", source);
+  assertIncludes(contents, "observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis()", source);
+  assertIncludes(contents, "it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs", source);
+}
+for (const [contents, source] of [
   [opHandler, "OpHandler.kt"],
   [pluginTemplateOpHandler, "plugins/android-daemon-native/OpHandler.kt"],
 ]) {
@@ -358,13 +380,40 @@ for (const [contents, source] of [
 ]) {
   assertIncludes(contents, "package com.gameplan.daemon", source);
   assertIncludes(contents, 'private const val DEFAULT_MODEL = "gemma-4-e4b-it"', source);
-  assertIncludes(contents, "LOCAL_MODEL_ENGINE_NOT_BUNDLED", source);
+  assertIncludes(contents, "val modelRevision = buildModelRevision(context, model, file)", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)", source);
+  assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.cancel(op)", source);
   assertIncludes(contents, '.put("modelFileReady", modelFileReady)', source);
-  assertIncludes(contents, '.put("engineBundled", false)', source);
-  assertIncludes(contents, '.put("generationReady", false)', source);
-  assertIncludes(contents, '.put("needsEngineBundle", modelFileReady)', source);
+  assertIncludes(contents, '.put("engineBundled", true)', source);
+  assertIncludes(contents, '.put("generationReady", generationReady)', source);
+  assertIncludes(contents, '.put("needsEngineBundle", false)', source);
+  assertExcludes(contents, "ENGINE_NOT_BUNDLED_MESSAGE", source);
   assertIncludes(contents, "context.filesDir", source);
 }
+assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android", "android/app/build.gradle");
+assertIncludes(plugin, "com.google.ai.edge.litertlm:litertlm-android", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android:0.13.1", "android/app/build.gradle");
+assertIncludes(plugin, "com.google.ai.edge.litertlm:litertlm-android:0.13.1", "plugins/withJarvisAndroidDaemon.js");
+for (const [contents, source] of [
+  [localGemmaInferenceEngine, "LocalGemmaInferenceEngine.kt"],
+  [pluginTemplateLocalGemmaInferenceEngine, "plugins/android-daemon-native/LocalGemmaInferenceEngine.kt"],
+]) {
+  assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
+  assertIncludes(contents, "maxNumTokens = contextTokens", source);
+  assertIncludes(contents, "engineModelRevision", source);
+  assertIncludes(contents, "current.modelRevision == modelRevision", source);
+  assertIncludes(contents, "val previousEngine = lockedCurrent?.engine", source);
+  assertIncludes(contents, "try { engine.close() } catch (_: Throwable) {}", source);
+  assertIncludes(contents, "EngineState(modelPath, modelRevision, backendName, contextTokens, engine)", source);
+  assertIncludes(contents, "previousEngine?.let { previous ->", source);
+  assertExcludes(contents, "lockedCurrent?.engine?.close()", source);
+  assertIncludes(contents, "hasReachedCompletionLimit(chunks, maxCompletionTokens)", source);
+  assertIncludes(contents, 'conversation.cancelProcess()', source);
+  assertIncludes(contents, '.put("finishReason", finishReason)', source);
+  assertIncludes(contents, '.put("completionLimitEnforced", true)', source);
+}
+assertIncludes(manifest, "libOpenCL.so", "AndroidManifest.xml");
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(
   plugin,

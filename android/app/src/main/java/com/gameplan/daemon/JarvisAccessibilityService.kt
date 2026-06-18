@@ -36,6 +36,14 @@ class JarvisAccessibilityService : AccessibilityService() {
         @Volatile var trainingModeActive: Boolean = false
         /** Human-readable label for the element being trained (used as fallback name). */
         @Volatile var trainingLabel: String = ""
+
+        /** Last app package observed from accessibility events, used when rootInActiveWindow lags. */
+        @Volatile private var lastForegroundPackage: ForegroundPackageObservation? = null
+
+        private data class ForegroundPackageObservation(
+            val packageName: String,
+            val observedAtUptimeMs: Long,
+        )
     }
 
     override fun onServiceConnected() {
@@ -45,6 +53,18 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event != null &&
+            (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
+                event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)) {
+            event.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { packageName ->
+                lastForegroundPackage = ForegroundPackageObservation(
+                    packageName = packageName,
+                    observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
+                )
+            }
+        }
+
         // Intercept user taps when training mode is active
         if (trainingModeActive && event != null &&
             event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
@@ -127,7 +147,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     //
     // Samsung OneUI issue: startActivity() doesn't throw even when OneUI silently
     // swallows the intent. We therefore verify the app actually came to foreground
-    // by polling rootInActiveWindow.packageName for up to 3 seconds after dispatch.
+    // by polling accessibility foreground signals after dispatch.
     fun launchApp(packageName: String): Boolean {
         val pm = packageManager
         val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
@@ -136,11 +156,17 @@ class JarvisAccessibilityService : AccessibilityService() {
             Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
             Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
-        val dispatched = postAndWaitForDispatch { startActivity(intent) }
+        lastForegroundPackage = null
+        var launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
+        val dispatched = postAndWaitForDispatch {
+            launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
+            startActivity(intent)
+        }
         if (!dispatched) return false
         // Verify the target package actually came to foreground.
-        // Samsung Galaxy Fold devices have longer animation transitions — use a generous timeout.
-        return waitForForeground(packageName, timeoutMs = 6000)
+        // Emulator system apps and Samsung Galaxy Fold devices can publish accessibility roots late,
+        // so wait long enough and consult multiple accessibility foreground signals.
+        return waitForForeground(packageName, timeoutMs = 12_000, launchAttemptStartedAtUptimeMs)
     }
 
     fun browseUrl(url: String): Boolean {
@@ -154,7 +180,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         return postAndWaitForDispatch { startActivity(intent) }
     }
 
-    // Dispatch a startActivity() to the main thread and wait up to 3 s for the call to complete.
+    // Dispatch a startActivity() to the main thread and wait for the call to complete.
     // Returns true only if the call completed without throwing an exception.
     private fun postAndWaitForDispatch(block: () -> Unit): Boolean {
         val latch = java.util.concurrent.CountDownLatch(1)
@@ -177,16 +203,31 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
     }
 
-    // Poll rootInActiveWindow.packageName until it matches targetPackage or timeout.
+    // Poll accessibility foreground signals until one matches targetPackage or timeout.
     // Returns false (not launched) if the package never comes to foreground.
-    private fun waitForForeground(targetPackage: String, timeoutMs: Long): Boolean {
+    private fun waitForForeground(
+        targetPackage: String,
+        timeoutMs: Long,
+        launchAttemptStartedAtUptimeMs: Long,
+    ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
+        var lastSeen: String? = null
         while (System.currentTimeMillis() < deadline) {
-            val fg = rootInActiveWindow?.packageName?.toString()
-            if (fg == targetPackage) return true
+            val rootPackage = try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
+            val focusedWindowPackage = try {
+                windows?.firstOrNull { it.isFocused }?.root?.packageName?.toString()
+            } catch (_: Exception) { null }
+            val eventPackage = lastForegroundPackage
+                ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
+                ?.packageName
+
+            lastSeen = rootPackage ?: focusedWindowPackage ?: eventPackage ?: lastSeen
+            if (rootPackage == targetPackage || focusedWindowPackage == targetPackage || eventPackage == targetPackage) {
+                return true
+            }
             Thread.sleep(200)
         }
-        Log.w(TAG, "launchApp: $targetPackage never came to foreground (Samsung block?)")
+        Log.w(TAG, "launchApp: $targetPackage never came to foreground; lastSeen=$lastSeen")
         return false
     }
 

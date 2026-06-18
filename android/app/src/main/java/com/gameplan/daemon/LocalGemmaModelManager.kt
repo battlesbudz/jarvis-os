@@ -14,13 +14,12 @@ object LocalGemmaModelManager {
     private const val ENGINE = "litert-lm"
     private const val DEFAULT_DOWNLOAD_FILE = "gemma-4-E4B-it.litertlm"
     private const val COPY_BUFFER_BYTES = 1024 * 1024
-    private const val ENGINE_NOT_BUNDLED_MESSAGE =
-        "Phone Gemma's model file is imported, but this APK does not bundle LiteRT-LM generation yet."
 
     fun status(context: Context, op: JSONObject): OpResult {
         val model = normalizeModel(op.optString("model", DEFAULT_MODEL))
         val file = modelFile(context, model)
         val modelFileReady = file.exists() && file.isFile && file.length() > 0
+        val generationReady = modelFileReady
         val metadata = readMetadata(context, model)
         return OpResult(
             ok = true,
@@ -35,16 +34,17 @@ object LocalGemmaModelManager {
                 .put("sourceName", metadata?.optString("sourceName")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
                 .put("sha256", metadata?.optString("sha256")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
                 .put("importedAtMs", metadata?.optLong("importedAtMs", 0L)?.takeIf { it > 0 } ?: JSONObject.NULL)
-                .put("ready", false)
+                .put("ready", generationReady)
                 .put("modelFileReady", modelFileReady)
-                .put("engineBundled", false)
-                .put("generationReady", false)
+                .put("engineBundled", true)
+                .put("generationReady", generationReady)
                 .put("needsModelImport", !modelFileReady)
-                .put("needsEngineBundle", modelFileReady)
+                .put("needsEngineBundle", false)
+                .put("inference", LocalGemmaInferenceEngine.status())
                 .put(
                     "message",
-                    if (modelFileReady) {
-                        ENGINE_NOT_BUNDLED_MESSAGE
+                    if (generationReady) {
+                        "Local Gemma model file is present and ready for LiteRT-LM inference."
                     } else {
                         "Import a .litertlm Gemma model file in Jarvis Android settings before local generation."
                     }
@@ -110,13 +110,13 @@ object LocalGemmaModelManager {
                     .put("modelPath", target.absolutePath)
                     .put("sizeBytes", target.length())
                     .put("sha256", sha256)
-                    .put("ready", false)
+                    .put("ready", true)
                     .put("modelFileReady", true)
-                    .put("engineBundled", false)
-                    .put("generationReady", false)
+                    .put("engineBundled", true)
+                    .put("generationReady", true)
                     .put("needsModelImport", false)
-                    .put("needsEngineBundle", true)
-                    .put("message", ENGINE_NOT_BUNDLED_MESSAGE)
+                    .put("needsEngineBundle", false)
+                    .put("message", "Imported ${source.name} into Jarvis local model storage.")
             )
         } catch (se: SecurityException) {
             tmp.delete()
@@ -145,28 +145,29 @@ object LocalGemmaModelManager {
             )
         }
 
-        return OpResult(
-            false,
-            error = "LOCAL_MODEL_ENGINE_NOT_BUNDLED: LiteRT-LM generation is not bundled in this APK yet. The model file is present, but Jarvis cannot run inference until the LiteRT-LM Android dependency is wired."
-        )
+        val modelRevision = buildModelRevision(context, model, file)
+        return LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)
     }
 
     fun cancel(op: JSONObject): OpResult {
-        val requestId = op.optString("requestId", "")
-        return OpResult(
-            ok = true,
-            data = JSONObject()
-                .put("provider", "android-local-gemma")
-                .put("runtime", "android-app")
-                .put("requestId", requestId)
-                .put("cancelled", false)
-                .put("message", "No active LiteRT-LM generation request is registered in this build.")
-        )
+        return LocalGemmaInferenceEngine.cancel(op)
     }
 
     private fun normalizeModel(raw: String): String {
         val value = raw.ifBlank { DEFAULT_MODEL }.removePrefix("android-local-gemma/")
         return value.replace(Regex("[^A-Za-z0-9._-]"), "_")
+    }
+
+    private fun buildModelRevision(context: Context, model: String, file: File): String {
+        val metadataSha = readMetadata(context, model)
+            ?.optString("sha256")
+            ?.takeIf { it.isNotBlank() }
+        val fileRevision = "bytes=${file.length()};modified=${file.lastModified()}"
+        return if (metadataSha != null) {
+            "sha256=$metadataSha;$fileRevision"
+        } else {
+            fileRevision
+        }
     }
 
     private data class ImportSourceResult(val file: File?, val error: String? = null)

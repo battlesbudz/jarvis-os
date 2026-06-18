@@ -13,6 +13,14 @@ const nativeModelManager = fs.readFileSync(
   path.join(repoRoot, "android/app/src/main/java/com/gameplan/daemon/LocalGemmaModelManager.kt"),
   "utf8",
 );
+const nativeInferenceEngine = fs.readFileSync(
+  path.join(repoRoot, "android/app/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt"),
+  "utf8",
+);
+const pluginInferenceEngine = fs.readFileSync(
+  path.join(repoRoot, "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt"),
+  "utf8",
+);
 
 assert.match(settingsScreen, /importLocalGemmaModelFile/);
 assert.match(settingsScreen, /readLocalGemmaModelStatus/);
@@ -36,10 +44,19 @@ assert.doesNotMatch(appStorageHelper, /ready:\s*true,[\s\S]{0,220}message:\s*"Lo
 assert.match(nativeOpHandler, /"android_local_model_generate" -> LocalGemmaModelManager\.generate\(context, op\)/);
 assert.match(nativeModelManager, /package com\.gameplan\.daemon/);
 assert.match(nativeModelManager, /context\.filesDir, "local_models\/\$model"/);
-assert.match(nativeModelManager, /LOCAL_MODEL_ENGINE_NOT_BUNDLED/);
+assert.match(nativeModelManager, /val modelRevision = buildModelRevision\(context, model, file\)/);
+assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.generate\(context, model, file, modelRevision, op\)/);
 assert.match(nativeModelManager, /\.put\("modelFileReady", modelFileReady\)/);
-assert.match(nativeModelManager, /\.put\("engineBundled", false\)/);
-assert.match(nativeModelManager, /\.put\("generationReady", false\)/);
-assert.match(nativeModelManager, /\.put\("needsEngineBundle", modelFileReady\)/);
+assert.match(nativeModelManager, /\.put\("engineBundled", true\)/);
+assert.match(nativeModelManager, /\.put\("generationReady", generationReady\)/);
+assert.match(nativeModelManager, /\.put\("needsEngineBundle", false\)/);
+assert.doesNotMatch(nativeModelManager, /ENGINE_NOT_BUNDLED_MESSAGE/);
+assert.match(nativeInferenceEngine, /EngineConfig\(/);
+assert.match(nativeInferenceEngine, /maxNumTokens = contextTokens/);
+assert.match(nativeInferenceEngine, /current\.modelRevision == modelRevision/);
+assert.match(nativeInferenceEngine, /val previousEngine = lockedCurrent\?\.engine/);
+assert.match(nativeInferenceEngine, /hasReachedCompletionLimit\(chunks, maxCompletionTokens\)/);
+assert.match(nativeInferenceEngine, /finishReason/);
+assert.equal(nativeInferenceEngine, pluginInferenceEngine);
 
-console.log("OK: Android app imports local Gemma without exposing unbundled LiteRT-LM generation as ready");
+console.log("OK: Android app imports local Gemma and native ops read it with bundled LiteRT-LM generation");
