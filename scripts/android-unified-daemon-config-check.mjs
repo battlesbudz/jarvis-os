@@ -330,6 +330,16 @@ assertExcludes(accessibilityService, '"enter"         -> { pressImeAction(); tru
 assertIncludes(pluginTemplateAccessibility, '"enter"         -> pressImeAction()', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
 assertExcludes(pluginTemplateAccessibility, '"enter"         -> { pressImeAction(); true }', "plugins/android-daemon-native/JarvisAccessibilityService.kt");
 for (const [contents, source] of [
+  [accessibilityService, "JarvisAccessibilityService.kt"],
+  [pluginTemplateAccessibility, "plugins/android-daemon-native/JarvisAccessibilityService.kt"],
+]) {
+  assertIncludes(contents, "ForegroundPackageObservation", source);
+  assertIncludes(contents, "lastForegroundPackage = null", source);
+  assertIncludes(contents, "launchAttemptStartedAtUptimeMs", source);
+  assertIncludes(contents, "observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis()", source);
+  assertIncludes(contents, "it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs", source);
+}
+for (const [contents, source] of [
   [opHandler, "OpHandler.kt"],
   [pluginTemplateOpHandler, "plugins/android-daemon-native/OpHandler.kt"],
 ]) {

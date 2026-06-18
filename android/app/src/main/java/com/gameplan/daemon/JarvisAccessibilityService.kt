@@ -38,7 +38,12 @@ class JarvisAccessibilityService : AccessibilityService() {
         @Volatile var trainingLabel: String = ""
 
         /** Last app package observed from accessibility events, used when rootInActiveWindow lags. */
-        @Volatile private var lastForegroundPackage: String? = null
+        @Volatile private var lastForegroundPackage: ForegroundPackageObservation? = null
+
+        private data class ForegroundPackageObservation(
+            val packageName: String,
+            val observedAtUptimeMs: Long,
+        )
     }
 
     override fun onServiceConnected() {
@@ -52,7 +57,12 @@ class JarvisAccessibilityService : AccessibilityService() {
             (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED ||
                 event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)) {
-            event.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { lastForegroundPackage = it }
+            event.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { packageName ->
+                lastForegroundPackage = ForegroundPackageObservation(
+                    packageName = packageName,
+                    observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
+                )
+            }
         }
 
         // Intercept user taps when training mode is active
@@ -146,12 +156,17 @@ class JarvisAccessibilityService : AccessibilityService() {
             Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
             Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
-        val dispatched = postAndWaitForDispatch { startActivity(intent) }
+        lastForegroundPackage = null
+        var launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
+        val dispatched = postAndWaitForDispatch {
+            launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
+            startActivity(intent)
+        }
         if (!dispatched) return false
         // Verify the target package actually came to foreground.
         // Emulator system apps and Samsung Galaxy Fold devices can publish accessibility roots late,
         // so wait long enough and consult multiple accessibility foreground signals.
-        return waitForForeground(packageName, timeoutMs = 12_000)
+        return waitForForeground(packageName, timeoutMs = 12_000, launchAttemptStartedAtUptimeMs)
     }
 
     fun browseUrl(url: String): Boolean {
@@ -190,7 +205,11 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     // Poll accessibility foreground signals until one matches targetPackage or timeout.
     // Returns false (not launched) if the package never comes to foreground.
-    private fun waitForForeground(targetPackage: String, timeoutMs: Long): Boolean {
+    private fun waitForForeground(
+        targetPackage: String,
+        timeoutMs: Long,
+        launchAttemptStartedAtUptimeMs: Long,
+    ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         var lastSeen: String? = null
         while (System.currentTimeMillis() < deadline) {
@@ -199,6 +218,8 @@ class JarvisAccessibilityService : AccessibilityService() {
                 windows?.firstOrNull { it.isFocused }?.root?.packageName?.toString()
             } catch (_: Exception) { null }
             val eventPackage = lastForegroundPackage
+                ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
+                ?.packageName
 
             lastSeen = rootPackage ?: focusedWindowPackage ?: eventPackage ?: lastSeen
             if (rootPackage == targetPackage || focusedWindowPackage == targetPackage || eventPackage == targetPackage) {
