@@ -106,6 +106,65 @@ function findUsefulElement(snapshot) {
   });
 }
 
+function elementText(element) {
+  return [element?.label, element?.text, element?.contentDescription].filter(Boolean).join(" ");
+}
+
+function findBlockingSystemDialog(snapshot) {
+  const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
+  const title = elements.find((element) => /isn't responding|is not responding|keeps stopping|has stopped/i.test(
+    elementText(element),
+  ));
+  if (!title) return null;
+
+  const action = elements.find((element) => element.viewId === "android:id/aerr_close") ||
+    elements.find((element) => /^close app$/i.test(elementText(element))) ||
+    elements.find((element) => element.viewId === "android:id/aerr_wait") ||
+    elements.find((element) => /^wait$/i.test(elementText(element))) ||
+    elements.find((element) => /^ok$/i.test(elementText(element)));
+  return { title, action };
+}
+
+function tapElementCenter(element) {
+  const bounds = element?.bounds;
+  const x = Number.isFinite(bounds?.centerX)
+    ? bounds.centerX
+    : Number.isFinite(bounds?.left) && Number.isFinite(bounds?.right)
+      ? (bounds.left + bounds.right) / 2
+      : null;
+  const y = Number.isFinite(bounds?.centerY)
+    ? bounds.centerY
+    : Number.isFinite(bounds?.top) && Number.isFinite(bounds?.bottom)
+      ? (bounds.top + bounds.bottom) / 2
+      : null;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  adbShell(`input tap ${Math.round(x)} ${Math.round(y)}`);
+  return true;
+}
+
+async function reopenSettingsAfterSystemDialog(bridge, snapshot) {
+  const dialog = findBlockingSystemDialog(snapshot);
+  if (!dialog?.action || !tapElementCenter(dialog.action)) return false;
+
+  console.warn(`Dismissed blocking Android system dialog: ${elementText(dialog.title)}`);
+  await sleep(1500);
+  try {
+    const openSettings = await bridge.sendOp({
+      type: "android_operator_action",
+      action: { type: "open_app", packageName: "com.android.settings" },
+    }, 30000);
+    if (!openSettings.ok || openSettings.data?.result?.ok !== true) {
+      console.warn(`Retry open Settings returned non-ok result: ${JSON.stringify(openSettings)}`);
+      adbShell("am start -a android.settings.SETTINGS || true");
+    }
+  } catch (err) {
+    console.warn(`Retry open Settings via daemon failed: ${err instanceof Error ? err.message : String(err)}`);
+    adbShell("am start -a android.settings.SETTINGS || true");
+  }
+  await sleep(1500);
+  return true;
+}
+
 async function waitForSettingsScreenContext(bridge) {
   let lastContext = null;
   for (let i = 0; i < 15; i++) {
@@ -120,6 +179,9 @@ async function waitForSettingsScreenContext(bridge) {
       usefulElement
     ) {
       return { screenContext, elements, usefulElement };
+    }
+    if (screenContext.ok && await reopenSettingsAfterSystemDialog(bridge, screenContext.data)) {
+      continue;
     }
     await sleep(1000);
   }
