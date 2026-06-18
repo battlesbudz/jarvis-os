@@ -117,11 +117,16 @@ function findBlockingSystemDialog(snapshot) {
   ));
   if (!title) return null;
 
-  const action = elements.find((element) => element.viewId === "android:id/aerr_close") ||
-    elements.find((element) => /^close app$/i.test(elementText(element))) ||
-    elements.find((element) => element.viewId === "android:id/aerr_wait") ||
+  const nonDestructiveAction = elements.find((element) => element.viewId === "android:id/aerr_wait") ||
     elements.find((element) => /^wait$/i.test(elementText(element))) ||
     elements.find((element) => /^ok$/i.test(elementText(element)));
+  if (nonDestructiveAction) return { title, action: nonDestructiveAction };
+
+  const ownAppDialog = /gameplan|jarvis|com\.gameplan/i.test(elementText(title));
+  const action = ownAppDialog
+    ? null
+    : elements.find((element) => element.viewId === "android:id/aerr_close") ||
+      elements.find((element) => /^close app$/i.test(elementText(element)));
   return { title, action };
 }
 
