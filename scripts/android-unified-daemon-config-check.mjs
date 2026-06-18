@@ -296,9 +296,16 @@ assertExcludes(androidControlCard, "/api/channels/daemon/code", "AndroidDeviceCo
 assertExcludes(androidControlCard, "Pair code", "AndroidDeviceControlCard.tsx");
 assertExcludes(androidControlCard, "pairCode", "AndroidDeviceControlCard.tsx");
 assertIncludes(jarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "E_JARVIS_DAEMON_START", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "private fun startServiceCompat(intent: Intent, promise: Promise): Boolean", "JarvisDaemonModule.kt");
 assertExcludes(jarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "E_JARVIS_DAEMON_START", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "private fun startServiceCompat(intent: Intent, promise: Promise): Boolean", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertExcludes(pluginTemplateJarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(webSocketService, "private fun startForegroundCompat(): Boolean", "WebSocketService.kt");
+assertIncludes(webSocketService, "Failed to start foreground daemon service", "WebSocketService.kt");
+assertIncludes(webSocketService, "return START_NOT_STICKY", "WebSocketService.kt");
 assertIncludes(webSocketService, 'put("clientKind", "unified_android_app")', "WebSocketService.kt");
 assertIncludes(webSocketService, 'put("appPackage", packageName)', "WebSocketService.kt");
 assertIncludes(webSocketService, "private var currentConnectUsesDaemonId = false", "WebSocketService.kt");
@@ -310,6 +317,9 @@ assertIncludes(webSocketService, "null -> {", "WebSocketService.kt");
 assertIncludes(webSocketService, "Skipping sticky restart reconnect", "WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "private var currentConnectUsesDaemonId = false", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "private var currentConnectUsesBootstrapToken = false", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "private fun startForegroundCompat(): Boolean", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "Failed to start foreground daemon service", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "return START_NOT_STICKY", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "ACTION_BOOTSTRAP", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "EXTRA_BOOTSTRAP_TOKEN", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, '"android_app_bootstrap"', "plugins/android-daemon-native/WebSocketService.kt");
@@ -374,6 +384,11 @@ for (const [contents, source] of [
   assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)", source);
   assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.cancel(op)", source);
+  assertIncludes(contents, '.put("modelFileReady", modelFileReady)', source);
+  assertIncludes(contents, '.put("engineBundled", true)', source);
+  assertIncludes(contents, '.put("generationReady", generationReady)', source);
+  assertIncludes(contents, '.put("needsEngineBundle", false)', source);
+  assertExcludes(contents, "ENGINE_NOT_BUNDLED_MESSAGE", source);
   assertIncludes(contents, "context.filesDir", source);
 }
 assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android", "android/app/build.gradle");

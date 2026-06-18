@@ -493,6 +493,29 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
   }
 }
 
+async function testAndroidLocalGemmaExplainsUnbundledEngine() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_ENGINE_NOT_BUNDLED: LiteRT-LM generation is not bundled in this APK yet.",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        stream: false,
+        userId: "user-phone",
+      })),
+      /Phone Gemma is selected, but this APK cannot run LiteRT-LM generation yet/,
+    );
+    console.log("OK: Android Local Gemma reports unbundled LiteRT-LM as an actionable routing error");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function main() {
   await testAnthropicUsesUserCredential();
   await testAnthropicToolUseFinishReasonIsToolCalls();
@@ -503,6 +526,7 @@ async function main() {
   await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
+  await testAndroidLocalGemmaExplainsUnbundledEngine();
   console.log("\nAll provider runtime adapter assertions passed.");
 }
 
