@@ -22,7 +22,7 @@ const DAEMON_GRADLE_DEPENDENCIES = [
   'implementation("org.java-websocket:Java-WebSocket:1.5.4")',
   'implementation("org.json:json:20231013")',
   'implementation("com.google.android.gms:play-services-location:21.2.0")',
-  'implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.1")',
+  'implementation("com.google.ai.edge.litertlm:litertlm-android:0.8.0")',
   'implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")',
 ];
 

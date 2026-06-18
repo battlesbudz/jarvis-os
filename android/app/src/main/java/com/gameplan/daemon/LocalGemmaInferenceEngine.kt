@@ -2,12 +2,11 @@ package com.gameplan.daemon
 
 import android.content.Context
 import com.google.ai.edge.litertlm.Backend
-import com.google.ai.edge.litertlm.Contents
+import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.ExperimentalApi
-import com.google.ai.edge.litertlm.ExperimentalFlags
+import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -20,18 +19,19 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
-import com.google.ai.edge.litertlm.Conversation
 
 object LocalGemmaInferenceEngine {
     private const val PROVIDER = "android-local-gemma"
     private const val RUNTIME = "android-app"
     private const val DEFAULT_BACKEND = "gpu"
-    private const val DEFAULT_MAX_TOKENS = 512
+    private const val DEFAULT_CONTEXT_TOKENS = 4096
+    private const val DEFAULT_MAX_COMPLETION_TOKENS = 512
     private const val DEFAULT_TOP_K = 40
-    private const val DEFAULT_TOP_P = 0.95f
-    private const val DEFAULT_TEMPERATURE = 0.8f
+    private const val DEFAULT_TOP_P = 0.95
+    private const val DEFAULT_TEMPERATURE = 0.8
 
     private val engineMutex = Mutex()
+    private val generationMutex = Mutex()
     private val activeRequests = ConcurrentHashMap<String, ActiveRequest>()
     private val completedRequests = AtomicLong(0)
 
@@ -43,21 +43,24 @@ object LocalGemmaInferenceEngine {
             .put("engineLoaded", state != null)
             .put("engineModelPath", state?.modelPath ?: JSONObject.NULL)
             .put("engineBackend", state?.backendName ?: JSONObject.NULL)
+            .put("engineContextTokens", state?.contextTokens ?: JSONObject.NULL)
             .put("activeRequests", activeRequests.size)
             .put("completedRequests", completedRequests.get())
             .put("supportsCancellation", true)
             .put("supportsStreaming", true)
             .put("streamDelivery", "buffered_result")
+            .put("concurrency", "serialized")
     }
 
     fun generate(context: Context, model: String, modelFile: File, op: JSONObject): OpResult {
         val prompt = op.optString("prompt", "")
         val requestId = op.optString("requestId", "").ifBlank { UUID.randomUUID().toString() }
-        val backendName = op.optString("backend", DEFAULT_BACKEND).lowercase()
-        val maxTokens = op.optInt("maxTokens", DEFAULT_MAX_TOKENS).coerceIn(1, 8192)
+        val backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
+        val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
+        val maxCompletionTokens = op.optInt("maxTokens", DEFAULT_MAX_COMPLETION_TOKENS).coerceIn(1, 8192)
         val topK = op.optInt("topK", DEFAULT_TOP_K).coerceAtLeast(1)
-        val topP = op.optDouble("topP", DEFAULT_TOP_P.toDouble()).toFloat().coerceIn(0.0f, 1.0f)
-        val temperature = op.optDouble("temperature", DEFAULT_TEMPERATURE.toDouble()).toFloat().coerceIn(0.0f, 2.0f)
+        val topP = op.optDouble("topP", DEFAULT_TOP_P).coerceIn(0.0, 1.0)
+        val temperature = op.optDouble("temperature", DEFAULT_TEMPERATURE).coerceIn(0.0, 2.0)
         val systemInstruction = op.optString("systemInstruction", "").trim()
         val startedAtMs = System.currentTimeMillis()
 
@@ -71,19 +74,21 @@ object LocalGemmaInferenceEngine {
 
         return try {
             val text = runBlocking(job) {
-                ensureEngine(context, modelFile.absolutePath, backendName, maxTokens)
-                    .createConversation(buildConversationConfig(systemInstruction, maxTokens, topK, topP, temperature))
-                    .use { conversation ->
-                        active.conversation = conversation
-                        val chunks = StringBuilder()
-                        conversation.sendMessageAsync(prompt).collect { message ->
-                            val chunk = message.toString()
-                            chunks.append(chunk)
-                            active.lastChunkAtMs = System.currentTimeMillis()
-                            active.outputChars = chunks.length
+                generationMutex.withLock {
+                    val engine = ensureEngine(context, modelFile.absolutePath, backendName, contextTokens)
+                    engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
+                        .use { conversation ->
+                            active.conversation = conversation
+                            val chunks = StringBuilder()
+                            conversation.sendMessageAsync(Message.of(prompt)).collect { message ->
+                                val chunk = message.toString()
+                                chunks.append(chunk)
+                                active.lastChunkAtMs = System.currentTimeMillis()
+                                active.outputChars = chunks.length
+                            }
+                            chunks.toString()
                         }
-                        chunks.toString()
-                    }
+                }
             }
             completedRequests.incrementAndGet()
             OpResult(
@@ -95,17 +100,21 @@ object LocalGemmaInferenceEngine {
                     .put("model", model)
                     .put("requestId", requestId)
                     .put("backend", backendName)
+                    .put("contextTokens", contextTokens)
+                    .put("maxCompletionTokens", maxCompletionTokens)
                     .put("text", text)
                     .put("outputChars", text.length)
                     .put("durationMs", System.currentTimeMillis() - startedAtMs)
                     .put("streamed", true)
                     .put("streamDelivery", "buffered_result")
+                    .put("concurrency", "serialized")
             )
         } catch (e: CancellationException) {
             OpResult(false, error = "LOCAL_MODEL_CANCELLED: request $requestId was cancelled.")
         } catch (e: Throwable) {
             OpResult(false, error = "LOCAL_MODEL_GENERATION_FAILED: ${e.message ?: e.javaClass.simpleName}")
         } finally {
+            active.conversation = null
             activeRequests.remove(requestId)
         }
     }
@@ -113,9 +122,9 @@ object LocalGemmaInferenceEngine {
     fun cancel(op: JSONObject): OpResult {
         val requestId = op.optString("requestId", "")
         if (requestId.isBlank()) {
-            val cancelled = activeRequests.values.toList().onEach {
-                it.conversation?.cancelProcess()
-                it.job.cancel()
+            val cancelled = activeRequests.values.toList().onEach { request ->
+                request.conversation?.cancelProcess()
+                request.job.cancel()
             }.size
             return OpResult(
                 ok = true,
@@ -156,24 +165,29 @@ object LocalGemmaInferenceEngine {
 
     fun shutdown() {
         runBlocking {
+            activeRequests.values.toList().forEach { request ->
+                request.conversation?.cancelProcess()
+                request.job.cancel()
+            }
             activeRequests.values.toList().forEach { it.job.cancelAndJoin() }
-            engineMutex.withLock {
-                engineState?.engine?.close()
-                engineState = null
+            generationMutex.withLock {
+                engineMutex.withLock {
+                    engineState?.engine?.close()
+                    engineState = null
+                }
             }
         }
     }
 
-    private suspend fun ensureEngine(context: Context, modelPath: String, backendName: String, maxTokens: Int): Engine {
-        val requestedBackend = normalizeBackend(backendName)
+    private suspend fun ensureEngine(context: Context, modelPath: String, backendName: String, contextTokens: Int): Engine {
         val current = engineState
-        if (current != null && current.modelPath == modelPath && current.backendName == requestedBackend && current.maxTokens == maxTokens) {
+        if (current != null && current.modelPath == modelPath && current.backendName == backendName && current.contextTokens == contextTokens) {
             return current.engine
         }
 
         return engineMutex.withLock {
             val lockedCurrent = engineState
-            if (lockedCurrent != null && lockedCurrent.modelPath == modelPath && lockedCurrent.backendName == requestedBackend && lockedCurrent.maxTokens == maxTokens) {
+            if (lockedCurrent != null && lockedCurrent.modelPath == modelPath && lockedCurrent.backendName == backendName && lockedCurrent.contextTokens == contextTokens) {
                 return@withLock lockedCurrent.engine
             }
 
@@ -181,35 +195,31 @@ object LocalGemmaInferenceEngine {
             val engine = Engine(
                 EngineConfig(
                     modelPath = modelPath,
-                    backend = backendFor(context, requestedBackend),
-                    maxNumTokens = maxTokens,
+                    backend = backendFor(backendName),
+                    maxNumTokens = contextTokens,
                     cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
                 )
             )
-            if (requestedBackend == "gpu") {
-                enableSpeculativeDecoding()
-            }
             engine.initialize()
-            engineState = EngineState(modelPath, requestedBackend, maxTokens, engine)
+            engineState = EngineState(modelPath, backendName, contextTokens, engine)
             engine
         }
     }
 
     private fun buildConversationConfig(
         systemInstruction: String,
-        maxTokens: Int,
         topK: Int,
-        topP: Float,
-        temperature: Float,
+        topP: Double,
+        temperature: Double,
     ): ConversationConfig {
         val samplerConfig = SamplerConfig(
             topK = topK,
-            topP = topP.toDouble(),
-            temperature = temperature.toDouble(),
+            topP = topP,
+            temperature = temperature,
         )
         return if (systemInstruction.isNotBlank()) {
             ConversationConfig(
-                systemInstruction = Contents.of(systemInstruction),
+                systemMessage = Message.of(systemInstruction),
                 samplerConfig = samplerConfig,
             )
         } else {
@@ -224,23 +234,18 @@ object LocalGemmaInferenceEngine {
         }
     }
 
-    private fun backendFor(context: Context, backendName: String): Backend {
+    private fun backendFor(backendName: String): Backend {
         return when (backendName) {
-            "cpu" -> Backend.CPU()
-            "npu" -> Backend.NPU(nativeLibraryDir = context.applicationInfo.nativeLibraryDir)
-            else -> Backend.GPU()
+            "cpu" -> Backend.CPU
+            "npu" -> Backend.NPU
+            else -> Backend.GPU
         }
-    }
-
-    @OptIn(ExperimentalApi::class)
-    private fun enableSpeculativeDecoding() {
-        ExperimentalFlags.enableSpeculativeDecoding = true
     }
 
     private data class EngineState(
         val modelPath: String,
         val backendName: String,
-        val maxTokens: Int,
+        val contextTokens: Int,
         val engine: Engine,
     )
 
