@@ -31,6 +31,8 @@ const DAEMON_XML_RESOURCES = [
   "accessibility_service_config.xml",
   "file_paths.xml",
   "interaction_service.xml",
+];
+const STALE_DAEMON_XML_RESOURCES = [
   "jarvis_recognition_service.xml",
 ];
 
@@ -98,16 +100,10 @@ const DAEMON_XML_CONTENTS = {
 <voice-interaction-service
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:sessionService="com.gameplan.daemon.JarvisVoiceInteractionSessionService"
-    android:recognitionService="com.gameplan.daemon.JarvisRecognitionService"
     android:settingsActivity="com.gameplan.MainActivity"
     android:supportsAssist="true"
     android:supportsLaunchVoiceAssistFromKeyguard="true"
     android:supportsLocalInteraction="true" />
-`,
-  "jarvis_recognition_service.xml": `<?xml version="1.0" encoding="utf-8"?>
-<recognition-service
-    xmlns:android="http://schemas.android.com/apk/res/android"
-    android:settingsActivity="com.gameplan.MainActivity" />
 `,
 };
 
@@ -116,6 +112,7 @@ const LEGACY_DAEMON_SERVICE_NAMES = [
   ".WakeWordService",
   ".JarvisAccessibilityService",
   ".JarvisNotificationListener",
+  ".daemon.JarvisRecognitionService",
 ];
 
 const LEGACY_DAEMON_RECEIVER_NAMES = [
@@ -212,41 +209,6 @@ function getDaemonServices() {
         "android:exported": "true",
         "android:permission": "android.permission.BIND_VOICE_INTERACTION",
       },
-    },
-    {
-      $: {
-        "android:name": ".daemon.JarvisRecognitionService",
-        "android:enabled": "true",
-        "android:exported": "true",
-        "android:label": "@string/assistant_service_label",
-        "android:permission": "android.permission.BIND_SPEECH_RECOGNITION",
-      },
-      "intent-filter": [
-        {
-          action: [
-            {
-              $: {
-                "android:name": "android.speech.RecognitionService",
-              },
-            },
-          ],
-          category: [
-            {
-              $: {
-                "android:name": "android.intent.category.DEFAULT",
-              },
-            },
-          ],
-        },
-      ],
-      "meta-data": [
-        {
-          $: {
-            "android:name": "android.speech",
-            "android:resource": "@xml/jarvis_recognition_service",
-          },
-        },
-      ],
     },
     {
       $: {
@@ -528,6 +490,10 @@ async function copyDaemonXmlResourcesAsync(platformProjectRoot) {
 
   await fs.mkdir(destinationDir, { recursive: true });
 
+  for (const fileName of STALE_DAEMON_XML_RESOURCES) {
+    await fs.rm(path.join(destinationDir, fileName), { force: true });
+  }
+
   for (const fileName of DAEMON_XML_RESOURCES) {
     await fs.writeFile(path.join(destinationDir, fileName), DAEMON_XML_CONTENTS[fileName], "utf8");
   }
@@ -552,6 +518,50 @@ async function patchMainApplicationAsync(platformProjectRoot) {
   }
 
   await fs.writeFile(mainApplicationPath, contents, "utf8");
+}
+
+async function patchMainActivityAsync(platformProjectRoot) {
+  const mainActivityPath = path.join(platformProjectRoot, "app/src/main/java/com/gameplan/MainActivity.kt");
+  let contents = await fs.readFile(mainActivityPath, "utf8");
+
+  if (!contents.includes("import android.content.Intent")) {
+    contents = contents.replace(
+      "import expo.modules.splashscreen.SplashScreenManager\n\n",
+      "import expo.modules.splashscreen.SplashScreenManager\n\nimport android.content.Intent\n",
+    );
+  }
+  if (!contents.includes("import android.view.WindowManager")) {
+    contents = contents.replace(
+      "import android.os.Bundle\n",
+      "import android.os.Bundle\nimport android.view.WindowManager\n",
+    );
+  }
+  if (!contents.includes("import com.gameplan.daemon.JarvisAssistantLauncher")) {
+    contents = contents.replace(
+      "import com.facebook.react.defaults.DefaultReactActivityDelegate\n",
+      "import com.facebook.react.defaults.DefaultReactActivityDelegate\nimport com.gameplan.daemon.JarvisAssistantLauncher\n",
+    );
+  }
+  if (!contents.includes("applyAssistantKeyguardVisibility(intent)")) {
+    contents = contents.replace(
+      "    SplashScreenManager.registerOnActivity(this)\n    // @generated end expo-splashscreen\n    super.onCreate(null)\n",
+      "    SplashScreenManager.registerOnActivity(this)\n    // @generated end expo-splashscreen\n    applyAssistantKeyguardVisibility(intent)\n    super.onCreate(null)\n",
+    );
+  }
+  if (!contents.includes("override fun onNewIntent(intent: Intent?)")) {
+    contents = contents.replace(
+      /(  }\r?\n)(\r?\n  \/\*\*\r?\n   \* Returns the name of the main component)/,
+      "$1\n  override fun onNewIntent(intent: Intent?) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n$2",
+    );
+  }
+  if (!contents.includes("private fun applyAssistantKeyguardVisibility(intent: Intent?)")) {
+    contents = contents.replace(
+      /\r?\n}\s*$/,
+      `\n\n  private fun applyAssistantKeyguardVisibility(intent: Intent?) {\n      val showWhenLocked =\n          intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||\n          intent?.data?.getQueryParameter("source") == "keyguard"\n\n      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {\n          setShowWhenLocked(showWhenLocked)\n          setTurnScreenOn(showWhenLocked)\n      } else if (showWhenLocked) {\n          window.addFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      } else {\n          window.clearFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      }\n  }\n}\n`,
+    );
+  }
+
+  await fs.writeFile(mainActivityPath, contents, "utf8");
 }
 
 const withJarvisAndroidDaemon = (config) => {
@@ -594,6 +604,7 @@ const withJarvisAndroidDaemon = (config) => {
       await copyDaemonKotlinSourcesAsync(__dirname, config.modRequest.platformProjectRoot);
       await copyDaemonXmlResourcesAsync(config.modRequest.platformProjectRoot);
       await patchMainApplicationAsync(config.modRequest.platformProjectRoot);
+      await patchMainActivityAsync(config.modRequest.platformProjectRoot);
       return config;
     },
   ]);

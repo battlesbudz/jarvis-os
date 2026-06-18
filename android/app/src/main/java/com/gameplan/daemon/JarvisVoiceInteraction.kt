@@ -8,8 +8,6 @@ import android.os.Bundle
 import android.service.voice.VoiceInteractionService
 import android.service.voice.VoiceInteractionSession
 import android.service.voice.VoiceInteractionSessionService
-import android.speech.RecognitionService
-import android.speech.SpeechRecognizer
 import android.util.Log
 import com.gameplan.MainActivity
 
@@ -73,12 +71,17 @@ data class AssistantHotwordStatus(
 )
 
 object JarvisAssistantLauncher {
+    const val EXTRA_SHOW_WHEN_LOCKED = "com.gameplan.daemon.SHOW_WHEN_LOCKED"
+
     fun voiceIntent(context: Context, source: String): Intent {
         val uri = Uri.parse("jarvis://voice-realtime?source=$source")
         return Intent(Intent.ACTION_VIEW, uri).apply {
             setPackage(context.packageName)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra("source", source)
+            if (source == "keyguard") {
+                putExtra(EXTRA_SHOW_WHEN_LOCKED, true)
+            }
         }
     }
 
@@ -88,6 +91,9 @@ object JarvisAssistantLauncher {
             data = Uri.parse("jarvis://voice-realtime?source=$source")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra("source", source)
+            if (source == "keyguard") {
+                putExtra(EXTRA_SHOW_WHEN_LOCKED, true)
+            }
         }
     }
 }
@@ -233,18 +239,5 @@ class JarvisVoiceInteractionSession(context: Context) : VoiceInteractionSession(
         } finally {
             finish()
         }
-    }
-}
-
-class JarvisRecognitionService : RecognitionService() {
-    override fun onStartListening(recognizerIntent: Intent?, listener: Callback?) {
-        listener?.error(SpeechRecognizer.ERROR_CLIENT)
-    }
-
-    override fun onCancel(listener: Callback?) {
-    }
-
-    override fun onStopListening(listener: Callback?) {
-        listener?.error(SpeechRecognizer.ERROR_CLIENT)
     }
 }

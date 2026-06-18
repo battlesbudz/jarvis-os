@@ -2,7 +2,6 @@
 <voice-interaction-service
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:sessionService="com.gameplan.daemon.JarvisVoiceInteractionSessionService"
-    android:recognitionService="com.gameplan.daemon.JarvisRecognitionService"
     android:settingsActivity="com.gameplan.MainActivity"
     android:supportsAssist="true"
     android:supportsLaunchVoiceAssistFromKeyguard="true"

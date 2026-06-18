@@ -1,13 +1,16 @@
 package com.gameplan
 import expo.modules.splashscreen.SplashScreenManager
 
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
+import com.gameplan.daemon.JarvisAssistantLauncher
 
 import expo.modules.ReactActivityDelegateWrapper
 
@@ -20,7 +23,14 @@ class MainActivity : ReactActivity() {
     // @generated begin expo-splashscreen - expo prebuild (DO NOT MODIFY) sync-f3ff59a738c56c9a6119210cb55f0b613eb8b6af
     SplashScreenManager.registerOnActivity(this)
     // @generated end expo-splashscreen
+    applyAssistantKeyguardVisibility(intent)
     super.onCreate(null)
+  }
+
+  override fun onNewIntent(intent: Intent?) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    applyAssistantKeyguardVisibility(intent)
   }
 
   /**
@@ -61,5 +71,26 @@ class MainActivity : ReactActivity() {
       // Use the default back button implementation on Android S
       // because it's doing more than [Activity.moveTaskToBack] in fact.
       super.invokeDefaultOnBackPressed()
+  }
+
+  private fun applyAssistantKeyguardVisibility(intent: Intent?) {
+      val showWhenLocked =
+          intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||
+          intent?.data?.getQueryParameter("source") == "keyguard"
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+          setShowWhenLocked(showWhenLocked)
+          setTurnScreenOn(showWhenLocked)
+      } else if (showWhenLocked) {
+          window.addFlags(
+              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+          )
+      } else {
+          window.clearFlags(
+              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+          )
+      }
   }
 }
