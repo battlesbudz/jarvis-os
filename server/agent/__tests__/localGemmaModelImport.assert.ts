@@ -62,6 +62,8 @@ assert.match(nativeInferenceEngine, /state\.modelRevision == modelRevision/);
 assert.match(nativeInferenceEngine, /val previousEngine = lockedCurrent\?\.engine/);
 assert.match(nativeInferenceEngine, /DEFAULT_BACKEND = "auto"/);
 assert.match(nativeInferenceEngine, /backendCandidates\(backendName\)/);
+assert.match(nativeInferenceEngine, /reusableBackendsFor\(backendName, candidateBackends\)/);
+assert.match(nativeInferenceEngine, /listOf\(candidateBackendName\)/);
 assert.match(nativeInferenceEngine, /var engine: Engine\? = null/);
 assert.match(nativeInferenceEngine, /val initializedEngine = Engine\(/);
 assert.match(nativeInferenceEngine, /EngineState\(modelPath, modelRevision, candidateBackendName, contextTokens, initializedEngine\)/);

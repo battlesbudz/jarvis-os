@@ -413,6 +413,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "val initializedEngine = Engine(", source);
   assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, initializedEngine)", source);
   assertIncludes(contents, "backendCandidates(backendName)", source);
+  assertIncludes(contents, "reusableBackendsFor(backendName, candidateBackends)", source);
+  assertIncludes(contents, "listOf(candidateBackendName)", source);
   assertIncludes(contents, 'put("requestedBackend", active.backend)', source);
   assertIncludes(contents, 'put("lastEngineError", lastEngineError ?: JSONObject.NULL)', source);
   assertIncludes(contents, "previousEngine?.let { previous ->", source);

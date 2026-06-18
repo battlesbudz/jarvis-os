@@ -207,14 +207,15 @@ object LocalGemmaInferenceEngine {
         contextTokens: Int,
     ): EngineState {
         val candidateBackends = backendCandidates(backendName)
+        val reusableBackends = reusableBackendsFor(backendName, candidateBackends)
         val current = engineState
-        if (current != null && canReuseEngine(current, modelPath, modelRevision, candidateBackends, contextTokens)) {
+        if (current != null && canReuseEngine(current, modelPath, modelRevision, reusableBackends, contextTokens)) {
             return current
         }
 
         return engineMutex.withLock {
             val lockedCurrent = engineState
-            if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, candidateBackends, contextTokens)) {
+            if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, reusableBackends, contextTokens)) {
                 return@withLock lockedCurrent
             }
 
@@ -223,6 +224,11 @@ object LocalGemmaInferenceEngine {
             var lastFailure: Throwable? = null
 
             for (candidateBackendName in candidateBackends) {
+                if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, listOf(candidateBackendName), contextTokens)) {
+                    lastEngineError = null
+                    return@withLock lockedCurrent
+                }
+
                 var engine: Engine? = null
                 try {
                     val initializedEngine = Engine(
@@ -261,12 +267,12 @@ object LocalGemmaInferenceEngine {
         state: EngineState,
         modelPath: String,
         modelRevision: String,
-        candidateBackends: List<String>,
+        reusableBackends: List<String>,
         contextTokens: Int,
     ): Boolean {
         return state.modelPath == modelPath &&
             state.modelRevision == modelRevision &&
-            candidateBackends.contains(state.backendName) &&
+            reusableBackends.contains(state.backendName) &&
             state.contextTokens == contextTokens
     }
 
@@ -305,6 +311,10 @@ object LocalGemmaInferenceEngine {
             "gpu" -> listOf("gpu", "cpu")
             else -> listOf("gpu", "cpu")
         }
+    }
+
+    private fun reusableBackendsFor(backendName: String, candidateBackends: List<String>): List<String> {
+        return if (backendName == "auto") candidateBackends else listOf(backendName)
     }
 
     private fun backendFor(backendName: String): Backend {
