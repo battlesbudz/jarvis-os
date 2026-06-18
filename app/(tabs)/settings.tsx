@@ -2758,8 +2758,8 @@ export default function SettingsScreen() {
                     ? 'API key connected'
                     : isAndroidLocalGemma
                       ? localGemmaSelected
-                        ? localGemmaGenerationReady ? 'Selected and ready' : localGemmaNeedsEngine ? 'Selected but engine not bundled' : 'Selected but model file missing'
-                        : localGemmaGenerationReady ? 'Ready to generate' : localGemmaNeedsEngine ? 'Model imported, engine not bundled' : 'Model file not imported'
+                        ? localGemmaGenerationReady ? 'Selected and ready' : localGemmaNeedsEngine ? 'Selected but engine not ready' : 'Selected but model file missing'
+                        : localGemmaGenerationReady ? 'Ready to generate' : localGemmaNeedsEngine ? 'Model imported, engine not ready' : 'Model file not imported'
                       : isLocal
                         ? 'Ready when your local runtime is running'
                         : 'Not connected';

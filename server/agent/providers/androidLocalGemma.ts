@@ -84,6 +84,12 @@ function normalizeAndroidLocalGemmaError(error: string | undefined): string {
   if (error?.includes("LOCAL_MODEL_ENGINE_NOT_BUNDLED")) {
     return "Phone Gemma is selected, but this APK cannot run LiteRT-LM generation yet. Choose ChatGPT/Codex, OpenAI, Gemini, Claude, or Local Llama in Settings > AI Models until a LiteRT-LM-enabled APK is installed.";
   }
+  if (
+    error?.includes("LOCAL_MODEL_GENERATION_FAILED") &&
+    (error.includes("Failed to create LiteRT-LM engine") || error.includes("llm_litert_compiled_model_executor"))
+  ) {
+    return `Phone Gemma could not start the LiteRT-LM engine for the imported .litertlm model. Jarvis tried the device accelerator and CPU fallback; reimport ${ANDROID_LOCAL_GEMMA_MODEL.replace("android-local-gemma/", "")} as the official .litertlm file if this keeps happening. Details: ${error}`;
+  }
   return error || "Android Local Gemma generation failed.";
 }
 

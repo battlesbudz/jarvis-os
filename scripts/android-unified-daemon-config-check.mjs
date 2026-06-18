@@ -115,7 +115,7 @@ const requiredPermissions = [
 const requiredManifestSnippets = [
   'android:allowBackup="false"',
   'android:name=".daemon.WebSocketService"',
-  'android:foregroundServiceType="dataSync|camera|mediaProjection"',
+  'android:foregroundServiceType="dataSync"',
   'android:name=".daemon.WakeWordService"',
   'android:foregroundServiceType="microphone"',
   'android:name=".daemon.JarvisAccessibilityService"',
@@ -251,6 +251,8 @@ for (const snippet of requiredManifestSnippets) {
 for (const snippet of forbiddenManifestSnippets) {
   assertExcludes(manifest, snippet, "AndroidManifest.xml");
 }
+assertExcludes(manifest, 'android:foregroundServiceType="dataSync|camera|mediaProjection"', "AndroidManifest.xml");
+assertExcludes(plugin, '"android:foregroundServiceType": "dataSync|camera|mediaProjection"', "plugins/withJarvisAndroidDaemon.js");
 
 for (const snippet of requiredStringSnippets) {
   assertIncludes(strings, snippet, "strings.xml");
@@ -404,10 +406,13 @@ for (const [contents, source] of [
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
   assertIncludes(contents, "maxNumTokens = contextTokens", source);
   assertIncludes(contents, "engineModelRevision", source);
-  assertIncludes(contents, "current.modelRevision == modelRevision", source);
+  assertIncludes(contents, "state.modelRevision == modelRevision", source);
   assertIncludes(contents, "val previousEngine = lockedCurrent?.engine", source);
   assertIncludes(contents, "try { engine.close() } catch (_: Throwable) {}", source);
-  assertIncludes(contents, "EngineState(modelPath, modelRevision, backendName, contextTokens, engine)", source);
+  assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, engine)", source);
+  assertIncludes(contents, "backendCandidates(backendName)", source);
+  assertIncludes(contents, 'put("requestedBackend", active.backend)', source);
+  assertIncludes(contents, 'put("lastEngineError", lastEngineError ?: JSONObject.NULL)', source);
   assertIncludes(contents, "previousEngine?.let { previous ->", source);
   assertExcludes(contents, "lockedCurrent?.engine?.close()", source);
   assertIncludes(contents, "hasReachedCompletionLimit(chunks, maxCompletionTokens)", source);

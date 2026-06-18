@@ -145,7 +145,7 @@ function getDaemonServices() {
         "android:name": ".daemon.WebSocketService",
         "android:enabled": "true",
         "android:exported": "false",
-        "android:foregroundServiceType": "dataSync|camera|mediaProjection",
+        "android:foregroundServiceType": "dataSync",
       },
     },
     {

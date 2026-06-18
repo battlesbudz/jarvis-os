@@ -3,9 +3,11 @@ import * as FileSystem from "expo-file-system/legacy";
 export const LOCAL_GEMMA_MODEL_ID = "gemma-4-e4b-it";
 export const LOCAL_GEMMA_EXPECTED_FILE_NAME = "gemma-4-E4B-it.litertlm";
 export const LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE =
-  "Phone Gemma's model file is imported, but this APK does not bundle LiteRT-LM generation yet.";
+  "Phone Gemma's model file is imported, but Jarvis needs to validate LiteRT-LM on this device before using it for chat.";
 
 const LOCAL_GEMMA_ENGINE = "litert-lm";
+const LOCAL_GEMMA_READY_MESSAGE =
+  "Phone Gemma's model file is imported and LiteRT-LM is bundled in this APK.";
 const LOCAL_GEMMA_DIR = `local_models/${LOCAL_GEMMA_MODEL_ID}`;
 const LOCAL_GEMMA_MODEL_FILE = "model.litertlm";
 const LOCAL_GEMMA_METADATA_FILE = "metadata.json";
@@ -86,7 +88,7 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
     return {
       ready: false,
       modelFileReady: false,
-      engineBundled: false,
+      engineBundled: true,
       generationReady: false,
       needsModelImport: true,
       needsEngineBundle: false,
@@ -105,7 +107,7 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
     return {
       ready: false,
       modelFileReady: false,
-      engineBundled: false,
+      engineBundled: true,
       generationReady: false,
       needsModelImport: true,
       needsEngineBundle: false,
@@ -121,12 +123,12 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
 
   return {
     ...metadata,
-    ready: false,
+    ready: true,
     modelFileReady: true,
-    engineBundled: false,
-    generationReady: false,
+    engineBundled: true,
+    generationReady: true,
     needsModelImport: false,
-    needsEngineBundle: true,
+    needsEngineBundle: false,
     provider: "android-local-gemma",
     runtime: "android-app",
     storageOwner: "jarvis-android-app",
@@ -136,7 +138,7 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
     sizeBytes: sizeBytes ?? metadata?.sizeBytes ?? null,
     sourceName: metadata?.sourceName,
     importedAtMs: metadata?.importedAtMs,
-    message: LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
+    message: LOCAL_GEMMA_READY_MESSAGE,
   };
 }
 
@@ -215,13 +217,13 @@ export async function importLocalGemmaModelFile(): Promise<LocalGemmaModelStatus
     modelPath: paths.modelPath,
     sizeBytes: copiedSize,
     importedAtMs: Date.now(),
-    ready: false,
+    ready: true,
     modelFileReady: true,
-    engineBundled: false,
-    generationReady: false,
+    engineBundled: true,
+    generationReady: true,
     needsModelImport: false,
-    needsEngineBundle: true,
-    message: LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
+    needsEngineBundle: false,
+    message: LOCAL_GEMMA_READY_MESSAGE,
   };
   await FileSystem.writeAsStringAsync(paths.metadataPath, JSON.stringify(metadata, null, 2));
   await deletePickerCacheFile(asset.uri);
