@@ -39,7 +39,7 @@ class JarvisDaemonModule(
             putExtra(WebSocketService.EXTRA_SERVER_URL, serverUrl)
             putExtra(WebSocketService.EXTRA_BOOTSTRAP_TOKEN, bootstrapToken)
         }
-        startServiceCompat(intent)
+        if (!startServiceCompat(intent, promise)) return
         promise.resolve(buildStatusMap("Connecting..."))
     }
 
@@ -48,7 +48,7 @@ class JarvisDaemonModule(
         val intent = Intent(reactApplicationContext, WebSocketService::class.java).apply {
             action = WebSocketService.ACTION_DISCONNECT
         }
-        startServiceCompat(intent)
+        if (!startServiceCompat(intent, promise)) return
         promise.resolve(buildStatusMap("Disconnected"))
     }
 
@@ -93,11 +93,21 @@ class JarvisDaemonModule(
         )
     }
 
-    private fun startServiceCompat(intent: Intent) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            reactApplicationContext.startForegroundService(intent)
-        } else {
-            reactApplicationContext.startService(intent)
+    private fun startServiceCompat(intent: Intent, promise: Promise): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                reactApplicationContext.startForegroundService(intent)
+            } else {
+                reactApplicationContext.startService(intent)
+            }
+            true
+        } catch (err: Exception) {
+            promise.reject(
+                "E_JARVIS_DAEMON_START",
+                "Jarvis could not start Android Device Control. Check app permissions, then try again. ${err.message ?: ""}".trim(),
+                err,
+            )
+            false
         }
     }
 

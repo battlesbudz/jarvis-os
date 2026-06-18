@@ -70,6 +70,7 @@ import {
 import { ANDROID_LOCAL_GEMMA_MODEL, MODEL_PROVIDER_CATALOG } from '@shared/modelProviderCatalog';
 import {
   importLocalGemmaModelFile,
+  LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
   LOCAL_GEMMA_EXPECTED_FILE_NAME,
   readLocalGemmaModelStatus,
   type LocalGemmaModelStatus,
@@ -1115,7 +1116,11 @@ export default function SettingsScreen() {
     } catch (error: any) {
       setLocalGemmaStatus({
         ready: false,
+        modelFileReady: false,
+        engineBundled: false,
+        generationReady: false,
         needsModelImport: true,
+        needsEngineBundle: false,
         message: extractApiError(error, `Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} from Downloads to store it inside Jarvis.`),
       });
     } finally {
@@ -1590,6 +1595,17 @@ export default function SettingsScreen() {
   }, []);
 
   const selectAndroidLocalGemma = useCallback(async () => {
+    const localGemmaModelFileReady = Boolean(localGemmaStatus?.modelFileReady ?? (localGemmaStatus?.ready && !localGemmaStatus?.needsModelImport));
+    const localGemmaGenerationReady = Boolean(localGemmaStatus?.generationReady);
+    if (!localGemmaGenerationReady) {
+      const message = localGemmaModelFileReady
+        ? LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE
+        : `Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} before using Phone Gemma for Jarvis chat.`;
+      setProviderMessage('android-local-gemma', message);
+      Alert.alert('Use Phone Gemma', message);
+      return;
+    }
+
     setOpenAIAuthBusy(true);
     try {
       const res = await apiRequest('PATCH', '/api/settings/models', {
@@ -1598,9 +1614,7 @@ export default function SettingsScreen() {
       });
       const data = await res.json().catch(() => ({}));
       applySelectedModel(String(data.selectedModel || ANDROID_LOCAL_GEMMA_MODEL), data.modelPreferences);
-      setProviderMessage('android-local-gemma', localGemmaStatus?.ready
-        ? 'Phone Gemma is selected for Jarvis model routing.'
-        : `Phone Gemma is selected. Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} before chatting.`);
+      setProviderMessage('android-local-gemma', 'Phone Gemma is selected for Jarvis model routing.');
     } catch (error: any) {
       const message = extractApiError(error, 'Jarvis could not select Phone Gemma.');
       setProviderMessage('android-local-gemma', message);
@@ -1608,7 +1622,7 @@ export default function SettingsScreen() {
     } finally {
       setOpenAIAuthBusy(false);
     }
-  }, [applySelectedModel, localGemmaStatus?.ready, setProviderMessage]);
+  }, [applySelectedModel, localGemmaStatus?.generationReady, localGemmaStatus?.modelFileReady, localGemmaStatus?.needsModelImport, localGemmaStatus?.ready, setProviderMessage]);
 
   const importAndroidLocalGemma = useCallback(async () => {
     setLocalGemmaImporting(true);
@@ -1621,7 +1635,9 @@ export default function SettingsScreen() {
       }
       setLocalGemmaStatus(status);
       const size = formatModelSize(status.sizeBytes);
-      setProviderMessage('android-local-gemma', `Imported ${status.sourceName || LOCAL_GEMMA_EXPECTED_FILE_NAME}${size ? ` (${size})` : ''} into Jarvis app storage.`);
+      setProviderMessage('android-local-gemma', status.generationReady
+        ? `Imported ${status.sourceName || LOCAL_GEMMA_EXPECTED_FILE_NAME}${size ? ` (${size})` : ''} into Jarvis app storage.`
+        : `${status.message || LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE}${size ? ` (${size})` : ''}`);
       await loadLocalGemmaStatus();
     } catch (error: any) {
       const message = extractApiError(error, 'Jarvis could not import the selected model file.');
@@ -2723,13 +2739,17 @@ export default function SettingsScreen() {
               const apiVisible = Boolean(providerApiKeyVisible[provider.id]);
               const apiInput = providerApiKeyInputs[provider.id] ?? '';
               const providerMessage = providerAuthMessages[provider.id];
-              const localGemmaReady = Boolean(localGemmaStatus?.ready);
+              const localGemmaModelFileReady = Boolean(localGemmaStatus?.modelFileReady ?? (localGemmaStatus?.ready && !localGemmaStatus?.needsModelImport));
+              const localGemmaGenerationReady = Boolean(localGemmaStatus?.generationReady);
+              const localGemmaNeedsEngine = Boolean(localGemmaStatus?.needsEngineBundle || (localGemmaModelFileReady && !localGemmaGenerationReady));
               const localGemmaSize = formatModelSize(localGemmaStatus?.sizeBytes);
               const localGemmaSelected = modelPrefs.chat === ANDROID_LOCAL_GEMMA_MODEL;
               const localGemmaStatusText = localGemmaStatusLoading
                 ? 'Checking local model storage...'
-                : localGemmaReady
-                  ? `Ready${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
+                : localGemmaGenerationReady
+                  ? `Ready to generate${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
+                  : localGemmaNeedsEngine
+                    ? `${LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE}${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
                   : localGemmaStatus?.message || `Download ${LOCAL_GEMMA_EXPECTED_FILE_NAME}, then import it from Downloads.`;
               const activeLabel =
                 providerStatus?.defaultAuthType === 'oauth'
@@ -2738,8 +2758,8 @@ export default function SettingsScreen() {
                     ? 'API key connected'
                     : isAndroidLocalGemma
                       ? localGemmaSelected
-                        ? localGemmaReady ? 'Selected and model file ready' : 'Selected but model file missing'
-                        : localGemmaReady ? 'Model file ready' : 'Model file not imported'
+                        ? localGemmaGenerationReady ? 'Selected and ready' : localGemmaNeedsEngine ? 'Selected but engine not bundled' : 'Selected but model file missing'
+                        : localGemmaGenerationReady ? 'Ready to generate' : localGemmaNeedsEngine ? 'Model imported, engine not bundled' : 'Model file not imported'
                       : isLocal
                         ? 'Ready when your local runtime is running'
                         : 'Not connected';
@@ -2828,9 +2848,9 @@ export default function SettingsScreen() {
                   {isAndroidLocalGemma ? (
                     <View style={providerAuthStyles.localModelStatusRow}>
                       <Ionicons
-                        name={localGemmaReady ? 'checkmark-circle-outline' : 'alert-circle-outline'}
+                        name={localGemmaGenerationReady ? 'checkmark-circle-outline' : localGemmaModelFileReady ? 'warning-outline' : 'alert-circle-outline'}
                         size={16}
-                        color={localGemmaReady ? '#10B981' : '#F59E0B'}
+                        color={localGemmaGenerationReady ? '#10B981' : '#F59E0B'}
                       />
                       <Text style={providerAuthStyles.localModelStatusText}>{localGemmaStatusText}</Text>
                       <Pressable onPress={loadLocalGemmaStatus} disabled={localGemmaStatusLoading} style={providerAuthStyles.localModelRefresh}>

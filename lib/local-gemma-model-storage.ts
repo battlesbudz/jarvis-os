@@ -2,6 +2,8 @@ import * as FileSystem from "expo-file-system/legacy";
 
 export const LOCAL_GEMMA_MODEL_ID = "gemma-4-e4b-it";
 export const LOCAL_GEMMA_EXPECTED_FILE_NAME = "gemma-4-E4B-it.litertlm";
+export const LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE =
+  "Phone Gemma's model file is imported, but this APK does not bundle LiteRT-LM generation yet.";
 
 const LOCAL_GEMMA_ENGINE = "litert-lm";
 const LOCAL_GEMMA_DIR = `local_models/${LOCAL_GEMMA_MODEL_ID}`;
@@ -10,7 +12,11 @@ const LOCAL_GEMMA_METADATA_FILE = "metadata.json";
 
 export interface LocalGemmaModelStatus {
   ready?: boolean;
+  modelFileReady?: boolean;
+  engineBundled?: boolean;
+  generationReady?: boolean;
   needsModelImport?: boolean;
+  needsEngineBundle?: boolean;
   message?: string;
   provider?: "android-local-gemma";
   runtime?: "android-app";
@@ -79,7 +85,11 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
   if (!paths) {
     return {
       ready: false,
+      modelFileReady: false,
+      engineBundled: false,
+      generationReady: false,
       needsModelImport: true,
+      needsEngineBundle: false,
       model: LOCAL_GEMMA_MODEL_ID,
       message: "Jarvis app storage is not available on this device.",
     };
@@ -94,7 +104,11 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
   if (!modelInfo.exists || !sizeBytes) {
     return {
       ready: false,
+      modelFileReady: false,
+      engineBundled: false,
+      generationReady: false,
       needsModelImport: true,
+      needsEngineBundle: false,
       provider: "android-local-gemma",
       runtime: "android-app",
       storageOwner: "jarvis-android-app",
@@ -107,8 +121,12 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
 
   return {
     ...metadata,
-    ready: true,
+    ready: false,
+    modelFileReady: true,
+    engineBundled: false,
+    generationReady: false,
     needsModelImport: false,
+    needsEngineBundle: true,
     provider: "android-local-gemma",
     runtime: "android-app",
     storageOwner: "jarvis-android-app",
@@ -118,7 +136,7 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
     sizeBytes: sizeBytes ?? metadata?.sizeBytes ?? null,
     sourceName: metadata?.sourceName,
     importedAtMs: metadata?.importedAtMs,
-    message: "Local Gemma model file is stored inside the Jarvis Android app.",
+    message: LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
   };
 }
 
@@ -197,9 +215,13 @@ export async function importLocalGemmaModelFile(): Promise<LocalGemmaModelStatus
     modelPath: paths.modelPath,
     sizeBytes: copiedSize,
     importedAtMs: Date.now(),
-    ready: true,
+    ready: false,
+    modelFileReady: true,
+    engineBundled: false,
+    generationReady: false,
     needsModelImport: false,
-    message: "Local Gemma model file is stored inside the Jarvis Android app.",
+    needsEngineBundle: true,
+    message: LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
   };
   await FileSystem.writeAsStringAsync(paths.metadataPath, JSON.stringify(metadata, null, 2));
   await deletePickerCacheFile(asset.uri);

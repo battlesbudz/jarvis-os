@@ -128,17 +128,30 @@ class WebSocketService : Service() {
         reconnectSecret = prefs.getString(PREF_RECONNECT_SECRET, "") ?: ""
     }
 
-    private fun startForegroundCompat() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    private fun startForegroundCompat(): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification("Starting…"),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
+            } else {
             startForeground(NOTIFICATION_ID, buildNotification("Starting…"))
+        }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start foreground daemon service", e)
+            DaemonLog.add("Device Control start failed: ${e.message ?: "foreground service denied"}")
+            currentStatus = "Device Control start failed: ${e.message ?: "foreground service denied"}"
+            isConnected = false
+            mainHandler.post { onStatusChanged?.invoke(currentStatus, false) }
+            false
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForegroundCompat()
+        if (!startForegroundCompat()) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_CONNECT -> {
                 val url = JarvisConfig.normalizeServerUrl(intent.getStringExtra(EXTRA_SERVER_URL))
@@ -494,8 +507,12 @@ class WebSocketService : Service() {
     }
 
     private fun updateNotification(status: String) {
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.notify(NOTIFICATION_ID, buildNotification(status))
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.notify(NOTIFICATION_ID, buildNotification(status))
+        } catch (e: Exception) {
+            Log.w(TAG, "Notification update failed", e)
+        }
     }
 
     override fun onDestroy() {

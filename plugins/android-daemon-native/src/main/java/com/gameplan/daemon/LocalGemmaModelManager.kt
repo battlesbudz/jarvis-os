@@ -14,11 +14,13 @@ object LocalGemmaModelManager {
     private const val ENGINE = "litert-lm"
     private const val DEFAULT_DOWNLOAD_FILE = "gemma-4-E4B-it.litertlm"
     private const val COPY_BUFFER_BYTES = 1024 * 1024
+    private const val ENGINE_NOT_BUNDLED_MESSAGE =
+        "Phone Gemma's model file is imported, but this APK does not bundle LiteRT-LM generation yet."
 
     fun status(context: Context, op: JSONObject): OpResult {
         val model = normalizeModel(op.optString("model", DEFAULT_MODEL))
         val file = modelFile(context, model)
-        val ready = file.exists() && file.isFile && file.length() > 0
+        val modelFileReady = file.exists() && file.isFile && file.length() > 0
         val metadata = readMetadata(context, model)
         return OpResult(
             ok = true,
@@ -29,16 +31,20 @@ object LocalGemmaModelManager {
                 .put("engine", ENGINE)
                 .put("model", model)
                 .put("modelPath", file.absolutePath)
-                .put("sizeBytes", if (ready) file.length() else 0L)
+                .put("sizeBytes", if (modelFileReady) file.length() else 0L)
                 .put("sourceName", metadata?.optString("sourceName")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
                 .put("sha256", metadata?.optString("sha256")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
                 .put("importedAtMs", metadata?.optLong("importedAtMs", 0L)?.takeIf { it > 0 } ?: JSONObject.NULL)
-                .put("ready", ready)
-                .put("needsModelImport", !ready)
+                .put("ready", false)
+                .put("modelFileReady", modelFileReady)
+                .put("engineBundled", false)
+                .put("generationReady", false)
+                .put("needsModelImport", !modelFileReady)
+                .put("needsEngineBundle", modelFileReady)
                 .put(
                     "message",
-                    if (ready) {
-                        "Local Gemma model file is present. LiteRT-LM engine binding is required before generation can run."
+                    if (modelFileReady) {
+                        ENGINE_NOT_BUNDLED_MESSAGE
                     } else {
                         "Import a .litertlm Gemma model file in Jarvis Android settings before local generation."
                     }
@@ -104,9 +110,13 @@ object LocalGemmaModelManager {
                     .put("modelPath", target.absolutePath)
                     .put("sizeBytes", target.length())
                     .put("sha256", sha256)
-                    .put("ready", true)
+                    .put("ready", false)
+                    .put("modelFileReady", true)
+                    .put("engineBundled", false)
+                    .put("generationReady", false)
                     .put("needsModelImport", false)
-                    .put("message", "Imported ${source.name} into Jarvis local model storage.")
+                    .put("needsEngineBundle", true)
+                    .put("message", ENGINE_NOT_BUNDLED_MESSAGE)
             )
         } catch (se: SecurityException) {
             tmp.delete()

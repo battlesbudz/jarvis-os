@@ -80,6 +80,13 @@ function finishReasonFromDaemonData(data: unknown): string | null {
   return reason === "length" || reason === "tool_calls" || reason === "stop" ? reason : "stop";
 }
 
+function normalizeAndroidLocalGemmaError(error: string | undefined): string {
+  if (error?.includes("LOCAL_MODEL_ENGINE_NOT_BUNDLED")) {
+    return "Phone Gemma is selected, but this APK cannot run LiteRT-LM generation yet. Choose ChatGPT/Codex, OpenAI, Gemini, Claude, or Local Llama in Settings > AI Models until a LiteRT-LM-enabled APK is installed.";
+  }
+  return error || "Android Local Gemma generation failed.";
+}
+
 async function sendAndroidLocalGemmaOp(
   userId: string,
   op: Parameters<AndroidLocalGemmaDaemonOp>[1],
@@ -119,7 +126,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     );
 
     if (!result.ok) {
-      throw new Error(result.error || "Android Local Gemma generation failed.");
+      throw new Error(normalizeAndroidLocalGemmaError(result.error));
     }
 
     const text = textFromDaemonData(result.data);
