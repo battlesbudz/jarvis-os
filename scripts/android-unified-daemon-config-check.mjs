@@ -270,9 +270,11 @@ for (const dependency of requiredDependencies) {
 }
 
 assertIncludes(rootBuildGradle, "substitute module('com.github.Dimezis:BlurView') using project(':blurview')", "android/build.gradle");
+assertIncludes(rootBuildGradle, "-Xskip-metadata-version-check", "android/build.gradle");
 assertIncludes(settingsGradle, "include ':blurview'", "android/settings.gradle");
 assertIncludes(settingsGradle, "project(':blurview').projectDir = new File(rootDir, 'third-party/blurview')", "android/settings.gradle");
 assertIncludes(plugin, "withProjectBuildGradle", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "-Xskip-metadata-version-check", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "withSettingsGradle", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "android-blurview-native", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "third-party/blurview", "plugins/withJarvisAndroidDaemon.js");

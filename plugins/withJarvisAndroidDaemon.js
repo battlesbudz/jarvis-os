@@ -13,6 +13,7 @@ const {
 } = require("@expo/config-plugins");
 
 const GENERATED_TAG = "jarvis-android-daemon-dependencies";
+const KOTLIN_METADATA_COMPAT_TAG = "jarvis-kotlin-metadata-compat";
 const BLURVIEW_PROJECT_GRADLE_TAG = "jarvis-blurview-dependency-substitution";
 const BLURVIEW_SETTINGS_GRADLE_TAG = "jarvis-blurview-project-include";
 const DAEMON_SOURCE_TEMPLATE_DIR = "android-daemon-native/src/main/java/com/gameplan/daemon";
@@ -42,6 +43,16 @@ const BLURVIEW_PROJECT_GRADLE_SNIPPET = [
   "      substitute module('com.github.Dimezis:BlurView') using project(':blurview')",
   "    }",
   "  }",
+].join("\n");
+
+const KOTLIN_METADATA_COMPAT_SNIPPET = [
+  "subprojects {",
+  "  tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {",
+  "    kotlinOptions {",
+  "      freeCompilerArgs += [\"-Xskip-metadata-version-check\"]",
+  "    }",
+  "  }",
+  "}",
 ].join("\n");
 
 const DAEMON_STRING_ITEMS = [
@@ -336,6 +347,23 @@ function addBlurViewDependencySubstitution(buildGradle) {
   return mergeResult.contents;
 }
 
+function addKotlinMetadataCompatibility(buildGradle) {
+  if (buildGradle.includes("-Xskip-metadata-version-check")) {
+    return buildGradle;
+  }
+
+  const mergeResult = CodeGenerator.mergeContents({
+    tag: KOTLIN_METADATA_COMPAT_TAG,
+    src: buildGradle,
+    newSrc: KOTLIN_METADATA_COMPAT_SNIPPET,
+    anchor: /apply plugin: "expo-root-project"/,
+    offset: 0,
+    comment: "//",
+  });
+
+  return mergeResult.contents;
+}
+
 function getDaemonPermissions() {
   return [
     "android.permission.FOREGROUND_SERVICE",
@@ -452,7 +480,9 @@ const withJarvisAndroidDaemon = (config) => {
       throw new Error("Jarvis Android daemon config requires a Groovy android/build.gradle file.");
     }
 
-    config.modResults.contents = addBlurViewDependencySubstitution(config.modResults.contents);
+    config.modResults.contents = addKotlinMetadataCompatibility(
+      addBlurViewDependencySubstitution(config.modResults.contents),
+    );
     return config;
   });
 
