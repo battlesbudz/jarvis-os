@@ -110,7 +110,7 @@ function elementText(element) {
   return [element?.label, element?.text, element?.contentDescription].filter(Boolean).join(" ");
 }
 
-function findBlockingSystemDialog(snapshot) {
+function findBlockingSystemDialog(snapshot, options = {}) {
   const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
   const title = elements.find((element) => /isn't responding|is not responding|keeps stopping|has stopped/i.test(
     elementText(element),
@@ -120,13 +120,13 @@ function findBlockingSystemDialog(snapshot) {
   const nonDestructiveAction = elements.find((element) => element.viewId === "android:id/aerr_wait") ||
     elements.find((element) => /^wait$/i.test(elementText(element))) ||
     elements.find((element) => /^ok$/i.test(elementText(element)));
-  if (nonDestructiveAction) return { title, action: nonDestructiveAction };
+  const closeAction = elements.find((element) => element.viewId === "android:id/aerr_close") ||
+    elements.find((element) => /^close app$/i.test(elementText(element)));
 
   const ownAppDialog = /gameplan|jarvis|com\.gameplan/i.test(elementText(title));
-  const action = ownAppDialog
-    ? null
-    : elements.find((element) => element.viewId === "android:id/aerr_close") ||
-      elements.find((element) => /^close app$/i.test(elementText(element)));
+  const action = !ownAppDialog && closeAction && (options.allowClose || !nonDestructiveAction)
+    ? closeAction
+    : nonDestructiveAction;
   return { title, action };
 }
 
@@ -147,8 +147,8 @@ function tapElementCenter(element) {
   return true;
 }
 
-async function reopenSettingsAfterSystemDialog(bridge, snapshot) {
-  const dialog = findBlockingSystemDialog(snapshot);
+async function reopenSettingsAfterSystemDialog(bridge, snapshot, options = {}) {
+  const dialog = findBlockingSystemDialog(snapshot, options);
   if (!dialog?.action || !tapElementCenter(dialog.action)) return false;
 
   console.warn(`Dismissed blocking Android system dialog: ${elementText(dialog.title)}`);
@@ -168,6 +168,11 @@ async function reopenSettingsAfterSystemDialog(bridge, snapshot) {
   }
   await sleep(1500);
   return true;
+}
+
+function readScreenHasBlockingSystemDialog(readScreen) {
+  const text = Array.isArray(readScreen?.data?.text) ? readScreen.data.text.join(" ") : "";
+  return /isn't responding|is not responding|keeps stopping|has stopped/i.test(text);
 }
 
 async function waitForSettingsScreenContext(bridge) {
@@ -201,6 +206,12 @@ async function waitForSettingsReadScreenText(bridge) {
     lastReadScreen = readScreen;
     if (readScreen.ok && readScreen.data?.package === "com.android.settings" && readText.length > 0) {
       return { readScreen, readText };
+    }
+    if (readScreen.ok && readScreenHasBlockingSystemDialog(readScreen)) {
+      const screenContext = await bridge.sendOp({ type: "android_screen_context" }, 30000);
+      if (screenContext.ok && await reopenSettingsAfterSystemDialog(bridge, screenContext.data, { allowClose: true })) {
+        continue;
+      }
     }
     await sleep(1000);
   }
