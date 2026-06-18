@@ -207,6 +207,18 @@ async function waitForSettingsReadScreenText(bridge) {
   throw new Error(`android_read_screen did not return Settings accessibility text: ${JSON.stringify(lastReadScreen)}`);
 }
 
+async function waitForDaemonAccessibilityPing(bridge) {
+  let lastPing = null;
+  for (let i = 0; i < 20; i++) {
+    lastPing = await bridge.sendOp({ type: "ping" }, 30000);
+    if (lastPing.ok && lastPing.data?.accessibilityEnabled === true) {
+      return lastPing;
+    }
+    await sleep(1000);
+  }
+  throw new Error(`Ping did not confirm accessibility service: ${JSON.stringify(lastPing)}`);
+}
+
 async function startBridge(port) {
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: "/api/daemon/ws" });
@@ -334,10 +346,7 @@ async function main() {
     throw new Error(`Expected appPackage ${PACKAGE_NAME}, got ${bootstrap.msg.appPackage}`);
   }
 
-  const ping = await bridge.sendOp({ type: "ping" }, 30000);
-  if (!ping.ok || ping.data?.accessibilityEnabled !== true) {
-    throw new Error(`Ping did not confirm accessibility service: ${JSON.stringify(ping)}`);
-  }
+  await waitForDaemonAccessibilityPing(bridge);
 
   const openSettings = await bridge.sendOp({
     type: "android_operator_action",
