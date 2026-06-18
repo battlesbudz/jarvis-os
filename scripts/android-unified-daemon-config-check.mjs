@@ -388,7 +388,11 @@ for (const [contents, source] of [
   assertIncludes(contents, "maxNumTokens = contextTokens", source);
   assertIncludes(contents, "engineModelRevision", source);
   assertIncludes(contents, "current.modelRevision == modelRevision", source);
+  assertIncludes(contents, "val previousEngine = lockedCurrent?.engine", source);
+  assertIncludes(contents, "try { engine.close() } catch (_: Throwable) {}", source);
   assertIncludes(contents, "EngineState(modelPath, modelRevision, backendName, contextTokens, engine)", source);
+  assertIncludes(contents, "previousEngine?.let { previous ->", source);
+  assertExcludes(contents, "lockedCurrent?.engine?.close()", source);
   assertIncludes(contents, "hasReachedCompletionLimit(chunks, maxCompletionTokens)", source);
   assertIncludes(contents, 'conversation.cancelProcess()', source);
   assertIncludes(contents, '.put("finishReason", finishReason)', source);

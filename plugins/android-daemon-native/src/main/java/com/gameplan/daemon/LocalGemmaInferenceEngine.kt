@@ -220,7 +220,7 @@ object LocalGemmaInferenceEngine {
                 return@withLock lockedCurrent.engine
             }
 
-            lockedCurrent?.engine?.close()
+            val previousEngine = lockedCurrent?.engine
             val engine = Engine(
                 EngineConfig(
                     modelPath = modelPath,
@@ -229,8 +229,16 @@ object LocalGemmaInferenceEngine {
                     cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
                 )
             )
-            engine.initialize()
+            try {
+                engine.initialize()
+            } catch (e: Throwable) {
+                try { engine.close() } catch (_: Throwable) {}
+                throw e
+            }
             engineState = EngineState(modelPath, modelRevision, backendName, contextTokens, engine)
+            previousEngine?.let { previous ->
+                try { previous.close() } catch (_: Throwable) {}
+            }
             engine
         }
     }
