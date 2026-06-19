@@ -548,16 +548,11 @@ async function patchMainActivityAsync(platformProjectRoot) {
   );
   contents = contents.replace(
     /      val showWhenLocked =\r?\n          intent\?\.getBooleanExtra\(JarvisAssistantLauncher\.EXTRA_SHOW_WHEN_LOCKED, false\) == true \|\|\r?\n          intent\?\.data\?\.getQueryParameter\("source"\) == "keyguard"/g,
-    `      val uri = intent?.data
-      val isKeyguardDeepLink =
-          if (uri == null || !uri.isHierarchical) {
-              false
-          } else {
-              uri.getQueryParameter("source") == "keyguard"
-          }
-      val showWhenLocked =
-          intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||
-          isKeyguardDeepLink`,
+    "      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)",
+  );
+  contents = contents.replace(
+    /      val uri = intent\?\.data\r?\n      val isKeyguardDeepLink =\r?\n          if \(uri == null \|\| !uri\.isHierarchical\) \{\r?\n              false\r?\n          \} else \{\r?\n              uri\.getQueryParameter\("source"\) == "keyguard"\r?\n          \}\r?\n      val showWhenLocked =\r?\n          intent\?\.getBooleanExtra\(JarvisAssistantLauncher\.EXTRA_SHOW_WHEN_LOCKED, false\) == true \|\|\r?\n          isKeyguardDeepLink/g,
+    "      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)",
   );
   if (!contents.includes("applyAssistantKeyguardVisibility(intent)")) {
     contents = contents.replace(
@@ -574,7 +569,7 @@ async function patchMainActivityAsync(platformProjectRoot) {
   if (!contents.includes("private fun applyAssistantKeyguardVisibility(intent: Intent?)")) {
     contents = contents.replace(
       /\r?\n}\s*$/,
-      `\n\n  private fun applyAssistantKeyguardVisibility(intent: Intent?) {\n      val uri = intent?.data\n      val isKeyguardDeepLink =\n          if (uri == null || !uri.isHierarchical) {\n              false\n          } else {\n              uri.getQueryParameter("source") == "keyguard"\n          }\n      val showWhenLocked =\n          intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||\n          isKeyguardDeepLink\n\n      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {\n          setShowWhenLocked(showWhenLocked)\n          setTurnScreenOn(showWhenLocked)\n      } else if (showWhenLocked) {\n          window.addFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      } else {\n          window.clearFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      }\n  }\n}\n`,
+      `\n\n  private fun applyAssistantKeyguardVisibility(intent: Intent?) {\n      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)\n\n      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {\n          setShowWhenLocked(showWhenLocked)\n          setTurnScreenOn(showWhenLocked)\n      } else if (showWhenLocked) {\n          window.addFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      } else {\n          window.clearFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      }\n  }\n}\n`,
     );
   }
 

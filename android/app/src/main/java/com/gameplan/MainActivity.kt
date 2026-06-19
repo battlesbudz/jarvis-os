@@ -74,16 +74,7 @@ class MainActivity : ReactActivity() {
   }
 
   private fun applyAssistantKeyguardVisibility(intent: Intent?) {
-      val uri = intent?.data
-      val isKeyguardDeepLink =
-          if (uri == null || !uri.isHierarchical) {
-              false
-          } else {
-              uri.getQueryParameter("source") == "keyguard"
-          }
-      val showWhenLocked =
-          intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||
-          isKeyguardDeepLink
+      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)
 
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
           setShowWhenLocked(showWhenLocked)

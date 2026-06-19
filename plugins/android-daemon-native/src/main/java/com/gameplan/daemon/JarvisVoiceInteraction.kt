@@ -10,6 +10,7 @@ import android.service.voice.VoiceInteractionSession
 import android.service.voice.VoiceInteractionSessionService
 import android.util.Log
 import com.gameplan.MainActivity
+import java.util.UUID
 
 object JarvisAssistantState {
     private const val PREF_ASSISTANT_HOTWORD_STATUS = "assistant_hotword_status"
@@ -72,29 +73,78 @@ data class AssistantHotwordStatus(
 
 object JarvisAssistantLauncher {
     const val EXTRA_SHOW_WHEN_LOCKED = "com.gameplan.daemon.SHOW_WHEN_LOCKED"
+    private const val EXTRA_SHOW_WHEN_LOCKED_TOKEN = "com.gameplan.daemon.SHOW_WHEN_LOCKED_TOKEN"
+    private const val PREF_KEYGUARD_TOKEN = "assistant_keyguard_launch_token"
+    private const val PREF_KEYGUARD_TOKEN_EXPIRES_AT = "assistant_keyguard_launch_token_expires_at"
+    private const val KEYGUARD_TOKEN_TTL_MS = 60_000L
 
     fun voiceIntent(context: Context, source: String): Intent {
         val uri = Uri.parse("jarvis://voice-realtime?source=$source")
+        val keyguardToken = keyguardLaunchToken(context, source)
         return Intent(Intent.ACTION_VIEW, uri).apply {
             setPackage(context.packageName)
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra("source", source)
-            if (source == "keyguard") {
+            if (keyguardToken != null) {
                 putExtra(EXTRA_SHOW_WHEN_LOCKED, true)
+                putExtra(EXTRA_SHOW_WHEN_LOCKED_TOKEN, keyguardToken)
             }
         }
     }
 
     fun fallbackMainIntent(context: Context, source: String): Intent {
+        val keyguardToken = keyguardLaunchToken(context, source)
         return Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             data = Uri.parse("jarvis://voice-realtime?source=$source")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
             putExtra("source", source)
-            if (source == "keyguard") {
+            if (keyguardToken != null) {
                 putExtra(EXTRA_SHOW_WHEN_LOCKED, true)
+                putExtra(EXTRA_SHOW_WHEN_LOCKED_TOKEN, keyguardToken)
             }
         }
+    }
+
+    fun shouldShowWhenLocked(context: Context, intent: Intent?): Boolean {
+        val launchIntent = intent ?: return false
+        if (!launchIntent.getBooleanExtra(EXTRA_SHOW_WHEN_LOCKED, false)) {
+            return false
+        }
+        val suppliedToken = launchIntent.getStringExtra(EXTRA_SHOW_WHEN_LOCKED_TOKEN) ?: return false
+        val prefs = context.getSharedPreferences(WebSocketService.PREFS_NAME, Context.MODE_PRIVATE)
+        val expectedToken = prefs.getString(PREF_KEYGUARD_TOKEN, null) ?: return false
+        val expiresAt = prefs.getLong(PREF_KEYGUARD_TOKEN_EXPIRES_AT, 0L)
+        if (System.currentTimeMillis() > expiresAt) {
+            clearKeyguardLaunchToken(context)
+            return false
+        }
+        if (suppliedToken != expectedToken) {
+            return false
+        }
+        clearKeyguardLaunchToken(context)
+        return true
+    }
+
+    private fun keyguardLaunchToken(context: Context, source: String): String? {
+        if (source != "keyguard") {
+            return null
+        }
+        val token = UUID.randomUUID().toString()
+        context.getSharedPreferences(WebSocketService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(PREF_KEYGUARD_TOKEN, token)
+            .putLong(PREF_KEYGUARD_TOKEN_EXPIRES_AT, System.currentTimeMillis() + KEYGUARD_TOKEN_TTL_MS)
+            .apply()
+        return token
+    }
+
+    private fun clearKeyguardLaunchToken(context: Context) {
+        context.getSharedPreferences(WebSocketService.PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(PREF_KEYGUARD_TOKEN)
+            .remove(PREF_KEYGUARD_TOKEN_EXPIRES_AT)
+            .apply()
     }
 }
 

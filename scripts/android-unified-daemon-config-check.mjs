@@ -9,6 +9,10 @@ const appBuildGradlePath = path.join(projectRoot, "android/app/build.gradle");
 const stringsPath = path.join(projectRoot, "android/app/src/main/res/values/strings.xml");
 const mainApplicationPath = path.join(projectRoot, "android/app/src/main/java/com/gameplan/MainApplication.kt");
 const mainActivityPath = path.join(projectRoot, "android/app/src/main/java/com/gameplan/MainActivity.kt");
+const jarvisVoiceInteractionPath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/JarvisVoiceInteraction.kt",
+);
 const nativeWrapperPath = path.join(projectRoot, "lib/android-daemon-native.ts");
 const androidControlCardPath = path.join(projectRoot, "components/androidDaemon/AndroidDeviceControlCard.tsx");
 const jarvisDaemonModulePath = path.join(
@@ -51,6 +55,10 @@ const pluginTemplateWebSocketPath = path.join(
 const pluginTemplateJarvisDaemonModulePath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisDaemonModule.kt",
+);
+const pluginTemplateJarvisVoiceInteractionPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisVoiceInteraction.kt",
 );
 const pluginTemplateScreenRecordPath = path.join(
   projectRoot,
@@ -191,6 +199,7 @@ const [
   strings,
   mainApplication,
   mainActivity,
+  jarvisVoiceInteraction,
   nativeWrapper,
   androidControlCard,
   jarvisDaemonModule,
@@ -204,6 +213,7 @@ const [
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateJarvisDaemonModule,
+  pluginTemplateJarvisVoiceInteraction,
   pluginTemplateScreenRecord,
   pluginTemplateCamera,
   pluginTemplateAccessibility,
@@ -221,6 +231,7 @@ const [
   readFile(stringsPath, "utf8"),
   readFile(mainApplicationPath, "utf8"),
   readFile(mainActivityPath, "utf8"),
+  readFile(jarvisVoiceInteractionPath, "utf8"),
   readFile(nativeWrapperPath, "utf8"),
   readFile(androidControlCardPath, "utf8"),
   readFile(jarvisDaemonModulePath, "utf8"),
@@ -234,6 +245,7 @@ const [
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateJarvisDaemonModulePath, "utf8"),
+  readFile(pluginTemplateJarvisVoiceInteractionPath, "utf8"),
   readFile(pluginTemplateScreenRecordPath, "utf8"),
   readFile(pluginTemplateCameraPath, "utf8"),
   readFile(pluginTemplateAccessibilityPath, "utf8"),
@@ -314,13 +326,24 @@ assertIncludes(
 assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
 assertIncludes(mainActivity, "applyAssistantKeyguardVisibility(intent)", "MainActivity.kt");
 assertIncludes(mainActivity, "override fun onNewIntent(intent: Intent)", "MainActivity.kt");
-assertIncludes(mainActivity, "JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED", "MainActivity.kt");
-assertIncludes(mainActivity, "!uri.isHierarchical", "MainActivity.kt");
+assertIncludes(mainActivity, "JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)", "MainActivity.kt");
+assertExcludes(mainActivity, 'getQueryParameter("source")', "MainActivity.kt");
 assertIncludes(mainActivity, "setShowWhenLocked(showWhenLocked)", "MainActivity.kt");
 assertIncludes(mainActivity, "setTurnScreenOn(showWhenLocked)", "MainActivity.kt");
+assertIncludes(jarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "JarvisVoiceInteraction.kt");
+assertIncludes(jarvisVoiceInteraction, "UUID.randomUUID()", "JarvisVoiceInteraction.kt");
+assertIncludes(jarvisVoiceInteraction, "fun shouldShowWhenLocked(context: Context, intent: Intent?)", "JarvisVoiceInteraction.kt");
+assertIncludes(jarvisVoiceInteraction, "suppliedToken != expectedToken", "JarvisVoiceInteraction.kt");
+assertIncludes(pluginTemplateJarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
+assertIncludes(pluginTemplateJarvisVoiceInteraction, "UUID.randomUUID()", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
+assertIncludes(
+  pluginTemplateJarvisVoiceInteraction,
+  "fun shouldShowWhenLocked(context: Context, intent: Intent?)",
+  "plugins/android-daemon-native/JarvisVoiceInteraction.kt",
+);
 assertIncludes(plugin, "patchMainActivityAsync", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "override fun onNewIntent(intent: Intent)", "plugins/withJarvisAndroidDaemon.js");
-assertIncludes(plugin, "!uri.isHierarchical", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "setShowWhenLocked(showWhenLocked)", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(nativeWrapper, "enable(serverUrl: string, bootstrapToken: string)", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "openAssistantSettings", "lib/android-daemon-native.ts");
