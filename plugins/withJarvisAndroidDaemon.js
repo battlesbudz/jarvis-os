@@ -584,10 +584,11 @@ async function patchMainActivityAsync(platformProjectRoot) {
     /      val uri = intent\?\.data\r?\n      val isKeyguardDeepLink =\r?\n          if \(uri == null \|\| !uri\.isHierarchical\) \{\r?\n              false\r?\n          \} else \{\r?\n              uri\.getQueryParameter\("source"\) == "keyguard"\r?\n          \}\r?\n      val showWhenLocked =\r?\n          intent\?\.getBooleanExtra\(JarvisAssistantLauncher\.EXTRA_SHOW_WHEN_LOCKED, false\) == true \|\|\r?\n          isKeyguardDeepLink/g,
     "      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)",
   );
-  if (!contents.includes("applyAssistantKeyguardVisibility(intent)")) {
+  const onCreateMatch = contents.match(/^([ \t]*)override fun onCreate\(savedInstanceState: Bundle\?\) \{[\s\S]*?^\1\}/m);
+  if (!onCreateMatch?.[0].includes("applyAssistantKeyguardVisibility(intent)")) {
     contents = contents.replace(
-      "    SplashScreenManager.registerOnActivity(this)\n    // @generated end expo-splashscreen\n    super.onCreate(null)\n",
-      "    SplashScreenManager.registerOnActivity(this)\n    // @generated end expo-splashscreen\n    applyAssistantKeyguardVisibility(intent)\n    super.onCreate(null)\n",
+      /(\n[ \t]*)super\.onCreate\(null\)/,
+      "$1applyAssistantKeyguardVisibility(intent)$1super.onCreate(null)",
     );
   }
   const onNewIntentFunction = "  override fun onNewIntent(intent: Intent) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n";

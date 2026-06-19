@@ -346,6 +346,7 @@ assertIncludes(
   "plugins/android-daemon-native/JarvisVoiceInteraction.kt",
 );
 assertIncludes(plugin, "patchMainActivityAsync", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "onCreateMatch", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "override fun onNewIntent(intent: Intent)", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "keyguardSetIntentLine", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "keyguardApplyLine", "plugins/withJarvisAndroidDaemon.js");
