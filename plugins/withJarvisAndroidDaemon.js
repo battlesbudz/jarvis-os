@@ -596,16 +596,54 @@ async function patchMainActivityAsync(platformProjectRoot) {
       "$1\n  override fun onNewIntent(intent: Intent) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n$2",
     );
   }
+  const onResumeFunction = "  override fun onResume() {\n    super.onResume()\n    clearAssistantKeyguardVisibilityIfUnlocked()\n  }\n";
+  const onDestroyFunction = "  override fun onDestroy() {\n    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n    super.onDestroy()\n  }\n";
+  contents = contents.replace(
+    /^  override fun onResume\(\) \{[\s\S]*?^  \}/m,
+    (method) => {
+      if (method.includes("clearAssistantKeyguardVisibilityIfUnlocked()")) {
+        return method;
+      }
+      if (method.includes("super.onResume()")) {
+        return method.replace(
+          /(super\.onResume\(\)\r?\n)/,
+          "$1    clearAssistantKeyguardVisibilityIfUnlocked()\n",
+        );
+      }
+      return method.replace(
+        /(override fun onResume\(\) \{\r?\n)/,
+        "$1    clearAssistantKeyguardVisibilityIfUnlocked()\n",
+      );
+    },
+  );
   if (!contents.includes("override fun onResume()")) {
     contents = contents.replace(
-      /(  override fun onNewIntent\(intent: Intent\) \{\r?\n    super\.onNewIntent\(intent\)\r?\n    setIntent\(intent\)\r?\n    applyAssistantKeyguardVisibility\(intent\)\r?\n  \}\r?\n)/,
-      "$1\n  override fun onResume() {\n    super.onResume()\n    clearAssistantKeyguardVisibilityIfUnlocked()\n  }\n",
+      /(\r?\n  \/\*\*\r?\n   \* Returns the name of the main component)/,
+      `\n${onResumeFunction}$1`,
     );
   }
+  contents = contents.replace(
+    /^  override fun onDestroy\(\) \{[\s\S]*?^  \}/m,
+    (method) => {
+      if (method.includes("assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)")) {
+        return method;
+      }
+      if (method.includes("super.onDestroy()")) {
+        return method.replace(
+          /(super\.onDestroy\(\)\r?\n)/,
+          "    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n$1",
+        );
+      }
+      return method.replace(
+        /(override fun onDestroy\(\) \{\r?\n)/,
+        "$1    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n",
+      );
+    },
+  );
   if (!contents.includes("override fun onDestroy()")) {
     contents = contents.replace(
-      /(  override fun onResume\(\) \{\r?\n    super\.onResume\(\)\r?\n    clearAssistantKeyguardVisibilityIfUnlocked\(\)\r?\n  \}\r?\n)/,
-      "$1\n  override fun onDestroy() {\n    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n    super.onDestroy()\n  }\n",
+      /(\r?\n  \/\*\*\r?\n   \* Returns the name of the main component)/,
+      `\n${onDestroyFunction}$1`,
     );
   }
   const assistantKeyguardApplyFunction = `  private fun applyAssistantKeyguardVisibility(intent: Intent?) {
