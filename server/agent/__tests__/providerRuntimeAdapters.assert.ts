@@ -495,6 +495,124 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
   }
 }
 
+async function testAndroidLocalGemmaEmitsLocalHarnessToolCalls() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "daemon_action", arguments: { action: "screenshot" } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Can you screenshot my phone?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"screenshot"}');
+    assert.match(requests[0].op.prompt, /running entirely through Android Local Gemma/);
+    assert.match(requests[0].op.prompt, /Available tools/);
+    assert.match(requests[0].op.prompt, /daemon_action/);
+    console.log("OK: Android Local Gemma can emit local harness tool calls");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I cannot take a screenshot." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Can you screenshot my phone?" }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "daemon_action",
+            description: "Perform an Android daemon action.",
+            parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /local harness required a tool call[\s\S]*No cloud model was used/,
+    );
+    console.log("OK: Android Local Gemma does not satisfy required local tools with a final answer");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesToolFinalLengthFinishReason() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "This local response was cut off" }),
+      finishReason: "length",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Summarize what is on my phone." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "This local response was cut off");
+    assert.equal(result.finishReason, "length");
+    console.log("OK: Android Local Gemma preserves length finish reason for tool-enabled final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCancelsTimedOutGeneration() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -618,6 +736,30 @@ async function testAndroidLocalGemmaExplainsEngineCreationFailure() {
   }
 }
 
+async function testAndroidLocalGemmaExplainsCompiledModelInvokeFailure() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_GENERATION_FAILED: Status Code: 13. Message: ERROR: [third_party/odml/litert_lm/runtime/executor/llm_litert_compiled_model_executor.cc:755] Failed to invoke the compiled model",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "What can you do?" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /Phone Gemma could not finish local inference/,
+    );
+    console.log("OK: Android Local Gemma explains compiled-model invoke failures");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function main() {
   await testAnthropicUsesUserCredential();
   await testAnthropicToolUseFinishReasonIsToolCalls();
@@ -628,10 +770,14 @@ async function main() {
   await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
+  await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
+  await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
+  await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
   await testAndroidLocalGemmaExplainsUnbundledEngine();
   await testAndroidLocalGemmaExplainsPhoneResourceFailures();
   await testAndroidLocalGemmaExplainsEngineCreationFailure();
+  await testAndroidLocalGemmaExplainsCompiledModelInvokeFailure();
   console.log("\nAll provider runtime adapter assertions passed.");
 }
 

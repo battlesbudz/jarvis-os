@@ -365,6 +365,89 @@ async function runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion():
   }
 }
 
+async function runSelectedAndroidLocalGemmaKeepsToolRequiredTurnsLocalAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let androidCaptured: ProviderQueryParams | null = null;
+  class CapturingAndroidLocalGemmaProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      androidCaptured = params;
+      yield { type: "tool_call_start", index: 0, id: "local_tool_0", name: "daemon_action" };
+      yield { type: "tool_call_args", index: 0, args: '{"action":"screenshot"}' };
+      yield { type: "finish", reason: "tool_calls" };
+    }
+  }
+
+  class UnexpectedCodexProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("selected Android Local Gemma tool turns must not route through Codex OAuth");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("android-local-gemma", new CapturingAndroidLocalGemmaProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new UnexpectedCodexProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-selected-android-local-gemma-tools");
+      return "android-local-gemma/gemma-4-e4b-it";
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Can you screenshot my phone?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Control the Android device.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 64,
+      userId: "user-selected-android-local-gemma-tools",
+      logPrefix: "[ModelRouterAndroidLocalGemmaToolLocalTest]",
+    });
+
+    const capturedRequest = androidCaptured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "android-local-gemma");
+    assert.equal(result.model, "gemma-4-e4b-it");
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList[0]?.function.name, "daemon_action");
+    assert.equal(result.toolCallList[0]?.function.arguments, '{"action":"screenshot"}');
+    assert.equal(capturedRequest?.toolChoice, "required");
+    assert.equal(capturedRequest?.tools?.[0]?.function.name, "daemon_action");
+    console.log("OK: selected Android Local Gemma keeps tool-required turns local");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion(): Promise<void> {
   const previousEnv = new Map<string, string | undefined>();
   for (const key of [
@@ -1200,6 +1283,7 @@ async function runRequestedProviderModelOverridesAmbientCodexRouteAssertion(): P
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
   .then(runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion)
+  .then(runSelectedAndroidLocalGemmaKeepsToolRequiredTurnsLocalAssertion)
   .then(runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion)
   .then(runDefaultProviderProfileOverridesStaleCodexSelectionAssertion)
   .then(runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion)

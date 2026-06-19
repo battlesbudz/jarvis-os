@@ -12,6 +12,7 @@ import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.runBlocking
@@ -91,60 +92,74 @@ object LocalGemmaInferenceEngine {
         )
 
         return try {
-            var finishReason = "stop"
-            val text = runBlocking(job) {
-                generationMutex.withLock {
-                    val resolvedEngine = ensureEngine(context, modelFile.absolutePath, modelRevision, backendName, contextTokens)
-                    backendName = resolvedEngine.backendName
-                    resolvedEngine.engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
-                        .use { conversation ->
-                            active.conversation = conversation
-                            val chunks = StringBuilder()
-                            conversation.sendMessageAsync(Message.user(prompt))
-                                .takeWhile { message ->
-                                    val chunk = message.toString()
-                                    chunks.append(chunk)
-                                    active.lastChunkAtMs = System.currentTimeMillis()
-                                    active.outputChars = chunks.length
-                                    val reachedCompletionLimit = hasReachedCompletionLimit(chunks, maxCompletionTokens)
-                                    if (reachedCompletionLimit) {
-                                        finishReason = "length"
-                                        conversation.cancelProcess()
-                                    }
-                                    !reachedCompletionLimit
-                                }
-                                .collect {}
-                            chunks.toString()
-                        }
+            var requestedAttemptBackend = backendName
+            var generationRetries = 0
+            var generationResult: OpResult? = null
+            while (generationResult == null) {
+                var resolvedAttemptBackend = requestedAttemptBackend
+                try {
+                    val attempt = runGenerationAttempt(
+                        context = context,
+                        modelPath = modelFile.absolutePath,
+                        modelRevision = modelRevision,
+                        backendName = requestedAttemptBackend,
+                        contextTokens = contextTokens,
+                        systemInstruction = systemInstruction,
+                        topK = topK,
+                        topP = topP,
+                        temperature = temperature,
+                        active = active,
+                        job = job,
+                        prompt = prompt,
+                        maxCompletionTokens = maxCompletionTokens,
+                        onBackendResolved = { resolvedAttemptBackend = it },
+                    )
+                    backendName = attempt.backendName
+                    completedRequests.incrementAndGet()
+                    generationResult = OpResult(
+                        ok = true,
+                        data = JSONObject()
+                            .put("provider", PROVIDER)
+                            .put("runtime", RUNTIME)
+                            .put("engine", "litert-lm")
+                            .put("model", model)
+                            .put("requestId", requestId)
+                            .put("backend", backendName)
+                            .put("requestedBackend", active.backend)
+                            .put("contextTokens", contextTokens)
+                            .put("maxCompletionTokens", maxCompletionTokens)
+                            .put("engineKeptWarm", keepEngineWarm)
+                            .put("generationRetries", generationRetries)
+                            .put("finishReason", attempt.finishReason)
+                            .put("completionLimitEnforced", true)
+                            .put("text", attempt.text)
+                            .put("outputChars", attempt.text.length)
+                            .put("durationMs", System.currentTimeMillis() - startedAtMs)
+                            .put("streamed", true)
+                            .put("streamDelivery", "buffered_result")
+                            .put("concurrency", "serialized")
+                    ).also {
+                        DaemonLog.add(
+                            "local_gemma: done request=${shortRequestId(requestId)} backend=$backendName chars=${attempt.text.length} retries=$generationRetries durationMs=${System.currentTimeMillis() - startedAtMs}"
+                        )
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    if (shouldRetryGenerationOnCpu(requestedAttemptBackend, resolvedAttemptBackend)) {
+                        generationRetries += 1
+                        DaemonLog.add(
+                            "local_gemma: retry_cpu request=${shortRequestId(requestId)} after backend=$resolvedAttemptBackend failure=${formatEngineError(e).take(120)}"
+                        )
+                        releaseEngine(clearLastError = false)
+                        active.conversation = null
+                        requestedAttemptBackend = "cpu"
+                        continue
+                    }
+                    throw e
                 }
             }
-            completedRequests.incrementAndGet()
-            OpResult(
-                ok = true,
-                data = JSONObject()
-                    .put("provider", PROVIDER)
-                    .put("runtime", RUNTIME)
-                    .put("engine", "litert-lm")
-                    .put("model", model)
-                    .put("requestId", requestId)
-                    .put("backend", backendName)
-                    .put("requestedBackend", active.backend)
-                    .put("contextTokens", contextTokens)
-                    .put("maxCompletionTokens", maxCompletionTokens)
-                    .put("engineKeptWarm", keepEngineWarm)
-                    .put("finishReason", finishReason)
-                    .put("completionLimitEnforced", true)
-                    .put("text", text)
-                    .put("outputChars", text.length)
-                    .put("durationMs", System.currentTimeMillis() - startedAtMs)
-                    .put("streamed", true)
-                    .put("streamDelivery", "buffered_result")
-                    .put("concurrency", "serialized")
-            ).also {
-                DaemonLog.add(
-                    "local_gemma: done request=${shortRequestId(requestId)} backend=$backendName chars=${text.length} durationMs=${System.currentTimeMillis() - startedAtMs}"
-                )
-            }
+            generationResult
         } catch (e: CancellationException) {
             DaemonLog.add("local_gemma: cancelled request=${shortRequestId(requestId)}")
             OpResult(false, error = "LOCAL_MODEL_CANCELLED: request $requestId was cancelled.")
@@ -223,6 +238,63 @@ object LocalGemmaInferenceEngine {
                 }
             }
         }
+    }
+
+    private fun runGenerationAttempt(
+        context: Context,
+        modelPath: String,
+        modelRevision: String,
+        backendName: String,
+        contextTokens: Int,
+        systemInstruction: String,
+        topK: Int,
+        topP: Double,
+        temperature: Double,
+        active: ActiveRequest,
+        job: Job,
+        prompt: String,
+        maxCompletionTokens: Int,
+        onBackendResolved: (String) -> Unit,
+    ): GenerationAttemptResult {
+        var finishReason = "stop"
+        var resolvedBackendName = backendName
+        val attemptJob = SupervisorJob(job)
+        val text = try {
+            runBlocking(attemptJob) {
+                generationMutex.withLock {
+                    val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, contextTokens)
+                    resolvedBackendName = resolvedEngine.backendName
+                    onBackendResolved(resolvedBackendName)
+                    resolvedEngine.engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
+                        .use { conversation ->
+                            active.conversation = conversation
+                            val chunks = StringBuilder()
+                            conversation.sendMessageAsync(Message.user(prompt))
+                                .takeWhile { message ->
+                                    val chunk = message.toString()
+                                    chunks.append(chunk)
+                                    active.lastChunkAtMs = System.currentTimeMillis()
+                                    active.outputChars = chunks.length
+                                    val reachedCompletionLimit = hasReachedCompletionLimit(chunks, maxCompletionTokens)
+                                    if (reachedCompletionLimit) {
+                                        finishReason = "length"
+                                        conversation.cancelProcess()
+                                    }
+                                    !reachedCompletionLimit
+                                }
+                                .collect {}
+                            chunks.toString()
+                        }
+                }
+            }
+        } finally {
+            attemptJob.cancel()
+        }
+        return GenerationAttemptResult(text, resolvedBackendName, finishReason)
+    }
+
+    private fun shouldRetryGenerationOnCpu(requestedBackendName: String, resolvedBackendName: String): Boolean {
+        return requestedBackendName != "cpu" && resolvedBackendName != "cpu"
     }
 
     private fun registerActiveRequest(active: ActiveRequest): OpResult? {
@@ -423,6 +495,12 @@ object LocalGemmaInferenceEngine {
         val availableBytes: Long,
         val thresholdBytes: Long,
         val lowMemory: Boolean,
+    )
+
+    private data class GenerationAttemptResult(
+        val text: String,
+        val backendName: String,
+        val finishReason: String,
     )
 
     private data class ActiveRequest(
