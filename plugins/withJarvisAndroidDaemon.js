@@ -595,24 +595,22 @@ async function patchMainActivityAsync(platformProjectRoot) {
     /^([ \t]*)override fun onNewIntent\(intent: Intent\) \{[\s\S]*?^\1\}/m,
     (method, indent) => {
       const bodyIndent = `${indent}    `;
-      const keyguardIntentBlock = `${bodyIndent}setIntent(intent)\n${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`;
-      let nextMethod = method;
-      if (!nextMethod.includes("applyAssistantKeyguardVisibility(intent)")) {
-        if (nextMethod.includes("super.onNewIntent(intent)")) {
-          nextMethod = nextMethod.replace(
-            /(super\.onNewIntent\(intent\)\r?\n)/,
-            `$1${keyguardIntentBlock}`,
-          );
-        } else {
-          nextMethod = nextMethod.replace(
-            /(override fun onNewIntent\(intent: Intent\) \{\r?\n)/,
-            `$1${keyguardIntentBlock}`,
-          );
-        }
-      } else if (!nextMethod.includes("setIntent(intent)")) {
+      const keyguardSetIntentLine = `${bodyIndent}setIntent(intent)\n`;
+      const keyguardApplyLine = `${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`;
+      let nextMethod = method
+        .replace(/^[ \t]*setIntent\(intent\)\r?\n[ \t]*applyAssistantKeyguardVisibility\(intent\)\r?\n/gm, "")
+        .replace(/^[ \t]*applyAssistantKeyguardVisibility\(intent\)\r?\n/gm, "");
+      const insertKeyguardBlock = (_match, prefix, existingSetIntent = "") =>
+        `${prefix}${existingSetIntent || keyguardSetIntentLine}${keyguardApplyLine}`;
+      if (nextMethod.includes("super.onNewIntent(intent)")) {
         nextMethod = nextMethod.replace(
-          /(applyAssistantKeyguardVisibility\(intent\)\r?\n)/,
-          `${bodyIndent}setIntent(intent)\n$1`,
+          /(super\.onNewIntent\(intent\)\r?\n)([ \t]*setIntent\(intent\)\r?\n)?/,
+          insertKeyguardBlock,
+        );
+      } else {
+        nextMethod = nextMethod.replace(
+          /(override fun onNewIntent\(intent: Intent\) \{\r?\n)([ \t]*setIntent\(intent\)\r?\n)?/,
+          insertKeyguardBlock,
         );
       }
       return nextMethod;
