@@ -595,37 +595,25 @@ async function patchMainActivityAsync(platformProjectRoot) {
     /^([ \t]*)override fun onNewIntent\(intent: Intent\) \{[\s\S]*?^\1\}/m,
     (method, indent) => {
       const bodyIndent = `${indent}    `;
+      const keyguardIntentBlock = `${bodyIndent}setIntent(intent)\n${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`;
       let nextMethod = method;
-      if (!nextMethod.includes("setIntent(intent)")) {
+      if (!nextMethod.includes("applyAssistantKeyguardVisibility(intent)")) {
         if (nextMethod.includes("super.onNewIntent(intent)")) {
           nextMethod = nextMethod.replace(
             /(super\.onNewIntent\(intent\)\r?\n)/,
-            `$1${bodyIndent}setIntent(intent)\n`,
+            `$1${keyguardIntentBlock}`,
           );
         } else {
           nextMethod = nextMethod.replace(
             /(override fun onNewIntent\(intent: Intent\) \{\r?\n)/,
-            `$1${bodyIndent}setIntent(intent)\n`,
+            `$1${keyguardIntentBlock}`,
           );
         }
-      }
-      if (!nextMethod.includes("applyAssistantKeyguardVisibility(intent)")) {
-        if (nextMethod.includes("setIntent(intent)")) {
-          nextMethod = nextMethod.replace(
-            /(setIntent\(intent\)\r?\n)/,
-            `$1${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`,
-          );
-        } else if (nextMethod.includes("super.onNewIntent(intent)")) {
-          nextMethod = nextMethod.replace(
-            /(super\.onNewIntent\(intent\)\r?\n)/,
-            `$1${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`,
-          );
-        } else {
-          nextMethod = nextMethod.replace(
-            /(override fun onNewIntent\(intent: Intent\) \{\r?\n)/,
-            `$1${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`,
-          );
-        }
+      } else if (!nextMethod.includes("setIntent(intent)")) {
+        nextMethod = nextMethod.replace(
+          /(applyAssistantKeyguardVisibility\(intent\)\r?\n)/,
+          `${bodyIndent}setIntent(intent)\n$1`,
+        );
       }
       return nextMethod;
     },
