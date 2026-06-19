@@ -530,16 +530,46 @@ async function patchMainActivityAsync(platformProjectRoot) {
       "import expo.modules.splashscreen.SplashScreenManager\n\nimport android.content.Intent\n",
     );
   }
+  if (!contents.includes("import android.app.KeyguardManager")) {
+    contents = contents.replace(
+      "import android.content.Intent\n",
+      "import android.app.KeyguardManager\nimport android.content.Intent\n",
+    );
+  }
+  if (!contents.includes("import android.content.Context")) {
+    contents = contents.replace(
+      "import android.content.Intent\n",
+      "import android.content.Context\nimport android.content.Intent\n",
+    );
+  }
   if (!contents.includes("import android.view.WindowManager")) {
     contents = contents.replace(
       "import android.os.Bundle\n",
       "import android.os.Bundle\nimport android.view.WindowManager\n",
     );
   }
+  if (!contents.includes("import android.os.Handler")) {
+    contents = contents.replace(
+      "import android.os.Bundle\n",
+      "import android.os.Bundle\nimport android.os.Handler\n",
+    );
+  }
+  if (!contents.includes("import android.os.Looper")) {
+    contents = contents.replace(
+      "import android.os.Handler\n",
+      "import android.os.Handler\nimport android.os.Looper\n",
+    );
+  }
   if (!contents.includes("import com.gameplan.daemon.JarvisAssistantLauncher")) {
     contents = contents.replace(
       "import com.facebook.react.defaults.DefaultReactActivityDelegate\n",
       "import com.facebook.react.defaults.DefaultReactActivityDelegate\nimport com.gameplan.daemon.JarvisAssistantLauncher\n",
+    );
+  }
+  if (!contents.includes("assistantKeyguardVisibilityHandler")) {
+    contents = contents.replace(
+      /class MainActivity : ReactActivity\(\) \{\r?\n/,
+      "class MainActivity : ReactActivity() {\n  private val assistantKeyguardVisibilityHandler = Handler(Looper.getMainLooper())\n  private val clearAssistantKeyguardVisibilityWhenUnlocked = object : Runnable {\n      override fun run() {\n          clearAssistantKeyguardVisibilityIfUnlocked()\n      }\n  }\n  private var assistantKeyguardVisibilityActive = false\n\n",
     );
   }
   contents = contents.replace(
@@ -566,10 +596,79 @@ async function patchMainActivityAsync(platformProjectRoot) {
       "$1\n  override fun onNewIntent(intent: Intent) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n$2",
     );
   }
+  if (!contents.includes("override fun onResume()")) {
+    contents = contents.replace(
+      /(  override fun onNewIntent\(intent: Intent\) \{\r?\n    super\.onNewIntent\(intent\)\r?\n    setIntent\(intent\)\r?\n    applyAssistantKeyguardVisibility\(intent\)\r?\n  \}\r?\n)/,
+      "$1\n  override fun onResume() {\n    super.onResume()\n    clearAssistantKeyguardVisibilityIfUnlocked()\n  }\n",
+    );
+  }
+  if (!contents.includes("override fun onDestroy()")) {
+    contents = contents.replace(
+      /(  override fun onResume\(\) \{\r?\n    super\.onResume\(\)\r?\n    clearAssistantKeyguardVisibilityIfUnlocked\(\)\r?\n  \}\r?\n)/,
+      "$1\n  override fun onDestroy() {\n    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n    super.onDestroy()\n  }\n",
+    );
+  }
+  const assistantKeyguardApplyFunction = `  private fun applyAssistantKeyguardVisibility(intent: Intent?) {
+      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)
+      setAssistantKeyguardVisibility(showWhenLocked)
+      if (showWhenLocked) {
+          scheduleKeyguardVisibilityClear()
+      } else {
+          assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      }
+  }`;
+  const assistantKeyguardHelperFunctions = `  private fun setAssistantKeyguardVisibility(showWhenLocked: Boolean) {
+      assistantKeyguardVisibilityActive = showWhenLocked
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+          setShowWhenLocked(showWhenLocked)
+          setTurnScreenOn(showWhenLocked)
+      } else if (showWhenLocked) {
+          window.addFlags(
+              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+          )
+      } else {
+          window.clearFlags(
+              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+          )
+      }
+  }
+
+  private fun scheduleKeyguardVisibilityClear() {
+      assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      assistantKeyguardVisibilityHandler.postDelayed(clearAssistantKeyguardVisibilityWhenUnlocked, 1_000L)
+  }
+
+  private fun clearAssistantKeyguardVisibilityIfUnlocked() {
+      if (!assistantKeyguardVisibilityActive) {
+          return
+      }
+      if (isDeviceKeyguardLocked()) {
+          scheduleKeyguardVisibilityClear()
+          return
+      }
+      assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      setAssistantKeyguardVisibility(false)
+  }
+
+  private fun isDeviceKeyguardLocked(): Boolean {
+      val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+      return keyguardManager?.isKeyguardLocked == true
+  }`;
+  contents = contents.replace(
+    /^  private fun applyAssistantKeyguardVisibility\(intent: Intent\?\) \{[\s\S]*?^  \}/m,
+    assistantKeyguardApplyFunction,
+  );
   if (!contents.includes("private fun applyAssistantKeyguardVisibility(intent: Intent?)")) {
     contents = contents.replace(
       /\r?\n}\s*$/,
-      `\n\n  private fun applyAssistantKeyguardVisibility(intent: Intent?) {\n      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)\n\n      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {\n          setShowWhenLocked(showWhenLocked)\n          setTurnScreenOn(showWhenLocked)\n      } else if (showWhenLocked) {\n          window.addFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      } else {\n          window.clearFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      }\n  }\n}\n`,
+      `\n\n${assistantKeyguardApplyFunction}\n\n${assistantKeyguardHelperFunctions}\n}\n`,
+    );
+  } else if (!contents.includes("private fun setAssistantKeyguardVisibility(showWhenLocked: Boolean)")) {
+    contents = contents.replace(
+      /\r?\n}\s*$/,
+      `\n\n${assistantKeyguardHelperFunctions}\n}\n`,
     );
   }
 

@@ -326,8 +326,12 @@ assertIncludes(
 assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
 assertIncludes(mainActivity, "applyAssistantKeyguardVisibility(intent)", "MainActivity.kt");
 assertIncludes(mainActivity, "override fun onNewIntent(intent: Intent)", "MainActivity.kt");
+assertIncludes(mainActivity, "override fun onDestroy()", "MainActivity.kt");
 assertIncludes(mainActivity, "JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)", "MainActivity.kt");
 assertExcludes(mainActivity, 'getQueryParameter("source")', "MainActivity.kt");
+assertIncludes(mainActivity, "assistantKeyguardVisibilityHandler", "MainActivity.kt");
+assertIncludes(mainActivity, "private fun clearAssistantKeyguardVisibilityIfUnlocked()", "MainActivity.kt");
+assertIncludes(mainActivity, "private fun isDeviceKeyguardLocked()", "MainActivity.kt");
 assertIncludes(mainActivity, "setShowWhenLocked(showWhenLocked)", "MainActivity.kt");
 assertIncludes(mainActivity, "setTurnScreenOn(showWhenLocked)", "MainActivity.kt");
 assertIncludes(jarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "JarvisVoiceInteraction.kt");
@@ -343,7 +347,11 @@ assertIncludes(
 );
 assertIncludes(plugin, "patchMainActivityAsync", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "override fun onNewIntent(intent: Intent)", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "override fun onDestroy()", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "assistantKeyguardVisibilityHandler", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "private fun clearAssistantKeyguardVisibilityIfUnlocked()", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "private fun isDeviceKeyguardLocked()", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "setShowWhenLocked(showWhenLocked)", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(nativeWrapper, "enable(serverUrl: string, bootstrapToken: string)", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "openAssistantSettings", "lib/android-daemon-native.ts");

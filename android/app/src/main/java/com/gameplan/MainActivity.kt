@@ -1,9 +1,13 @@
 package com.gameplan
 import expo.modules.splashscreen.SplashScreenManager
 
+import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.WindowManager
 
 import com.facebook.react.ReactActivity
@@ -15,6 +19,14 @@ import com.gameplan.daemon.JarvisAssistantLauncher
 import expo.modules.ReactActivityDelegateWrapper
 
 class MainActivity : ReactActivity() {
+  private val assistantKeyguardVisibilityHandler = Handler(Looper.getMainLooper())
+  private val clearAssistantKeyguardVisibilityWhenUnlocked = object : Runnable {
+      override fun run() {
+          clearAssistantKeyguardVisibilityIfUnlocked()
+      }
+  }
+  private var assistantKeyguardVisibilityActive = false
+
   override fun onCreate(savedInstanceState: Bundle?) {
     // Set the theme to AppTheme BEFORE onCreate to support
     // coloring the background, status bar, and navigation bar.
@@ -31,6 +43,16 @@ class MainActivity : ReactActivity() {
     super.onNewIntent(intent)
     setIntent(intent)
     applyAssistantKeyguardVisibility(intent)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    clearAssistantKeyguardVisibilityIfUnlocked()
+  }
+
+  override fun onDestroy() {
+    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+    super.onDestroy()
   }
 
   /**
@@ -75,7 +97,16 @@ class MainActivity : ReactActivity() {
 
   private fun applyAssistantKeyguardVisibility(intent: Intent?) {
       val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)
+      setAssistantKeyguardVisibility(showWhenLocked)
+      if (showWhenLocked) {
+          scheduleKeyguardVisibilityClear()
+      } else {
+          assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      }
+  }
 
+  private fun setAssistantKeyguardVisibility(showWhenLocked: Boolean) {
+      assistantKeyguardVisibilityActive = showWhenLocked
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
           setShowWhenLocked(showWhenLocked)
           setTurnScreenOn(showWhenLocked)
@@ -90,5 +121,27 @@ class MainActivity : ReactActivity() {
               WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
           )
       }
+  }
+
+  private fun scheduleKeyguardVisibilityClear() {
+      assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      assistantKeyguardVisibilityHandler.postDelayed(clearAssistantKeyguardVisibilityWhenUnlocked, 1_000L)
+  }
+
+  private fun clearAssistantKeyguardVisibilityIfUnlocked() {
+      if (!assistantKeyguardVisibilityActive) {
+          return
+      }
+      if (isDeviceKeyguardLocked()) {
+          scheduleKeyguardVisibilityClear()
+          return
+      }
+      assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      setAssistantKeyguardVisibility(false)
+  }
+
+  private fun isDeviceKeyguardLocked(): Boolean {
+      val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+      return keyguardManager?.isKeyguardLocked == true
   }
 }
