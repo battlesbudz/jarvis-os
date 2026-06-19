@@ -418,6 +418,28 @@ function addKotlinMetadataCompatibility(buildGradle) {
   return mergeResult.contents;
 }
 
+function ensureKotlinImport(contents, importName) {
+  const importLine = `import ${importName}`;
+  if (contents.includes(importLine)) {
+    return contents;
+  }
+
+  const lineEnding = contents.includes("\r\n") ? "\r\n" : "\n";
+  const packageMatch = contents.match(/^package\s+[^\r\n]+(?:\r?\n)/);
+  if (!packageMatch) {
+    throw new Error("MainActivity.kt is missing a Kotlin package declaration.");
+  }
+
+  const importMatches = [...contents.matchAll(/^import\s+[^\r\n]+(?:\r?\n)/gm)];
+  const lastImportMatch = importMatches.at(-1);
+  const insertAt = lastImportMatch
+    ? lastImportMatch.index + lastImportMatch[0].length
+    : packageMatch[0].length;
+  const insertion = lastImportMatch ? `${importLine}${lineEnding}` : `${lineEnding}${importLine}${lineEnding}`;
+
+  return `${contents.slice(0, insertAt)}${insertion}${contents.slice(insertAt)}`;
+}
+
 function getDaemonPermissions() {
   return [
     "android.permission.FOREGROUND_SERVICE",
@@ -524,47 +546,16 @@ async function patchMainActivityAsync(platformProjectRoot) {
   const mainActivityPath = path.join(platformProjectRoot, "app/src/main/java/com/gameplan/MainActivity.kt");
   let contents = await fs.readFile(mainActivityPath, "utf8");
 
-  if (!contents.includes("import android.content.Intent")) {
-    contents = contents.replace(
-      "import expo.modules.splashscreen.SplashScreenManager\n\n",
-      "import expo.modules.splashscreen.SplashScreenManager\n\nimport android.content.Intent\n",
-    );
-  }
-  if (!contents.includes("import android.app.KeyguardManager")) {
-    contents = contents.replace(
-      "import android.content.Intent\n",
-      "import android.app.KeyguardManager\nimport android.content.Intent\n",
-    );
-  }
-  if (!contents.includes("import android.content.Context")) {
-    contents = contents.replace(
-      "import android.content.Intent\n",
-      "import android.content.Context\nimport android.content.Intent\n",
-    );
-  }
-  if (!contents.includes("import android.view.WindowManager")) {
-    contents = contents.replace(
-      "import android.os.Bundle\n",
-      "import android.os.Bundle\nimport android.view.WindowManager\n",
-    );
-  }
-  if (!contents.includes("import android.os.Handler")) {
-    contents = contents.replace(
-      "import android.os.Bundle\n",
-      "import android.os.Bundle\nimport android.os.Handler\n",
-    );
-  }
-  if (!contents.includes("import android.os.Looper")) {
-    contents = contents.replace(
-      "import android.os.Handler\n",
-      "import android.os.Handler\nimport android.os.Looper\n",
-    );
-  }
-  if (!contents.includes("import com.gameplan.daemon.JarvisAssistantLauncher")) {
-    contents = contents.replace(
-      "import com.facebook.react.defaults.DefaultReactActivityDelegate\n",
-      "import com.facebook.react.defaults.DefaultReactActivityDelegate\nimport com.gameplan.daemon.JarvisAssistantLauncher\n",
-    );
+  for (const importName of [
+    "android.app.KeyguardManager",
+    "android.content.Context",
+    "android.content.Intent",
+    "android.os.Handler",
+    "android.os.Looper",
+    "android.view.WindowManager",
+    "com.gameplan.daemon.JarvisAssistantLauncher",
+  ]) {
+    contents = ensureKotlinImport(contents, importName);
   }
   if (!contents.includes("assistantKeyguardVisibilityHandler")) {
     contents = contents.replace(

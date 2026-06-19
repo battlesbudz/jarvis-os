@@ -346,6 +346,10 @@ assertIncludes(
   "plugins/android-daemon-native/JarvisVoiceInteraction.kt",
 );
 assertIncludes(plugin, "patchMainActivityAsync", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "function ensureKotlinImport", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "MainActivity.kt is missing a Kotlin package declaration.", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, 'contents = ensureKotlinImport(contents, importName)', "plugins/withJarvisAndroidDaemon.js");
+assertExcludes(plugin, "import expo.modules.splashscreen.SplashScreenManager\\n\\n", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "onCreateMatch", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "override fun onNewIntent(intent: Intent)", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "keyguardSetIntentLine", "plugins/withJarvisAndroidDaemon.js");
