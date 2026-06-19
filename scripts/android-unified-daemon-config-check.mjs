@@ -476,6 +476,13 @@ for (const [contents, source] of [
   [pluginTemplateLocalGemmaInferenceEngine, "plugins/android-daemon-native/LocalGemmaInferenceEngine.kt"],
 ]) {
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
+  assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS = 1024", source);
+  assertIncludes(contents, "DEFAULT_MAX_COMPLETION_TOKENS = 128", source);
+  assertIncludes(contents, "MIN_AVAILABLE_MEMORY_BYTES", source);
+  assertIncludes(contents, "LOCAL_MODEL_BUSY", source);
+  assertIncludes(contents, "LOCAL_MODEL_DEVICE_MEMORY_LOW", source);
+  assertIncludes(contents, "keepEngineWarm", source);
+  assertIncludes(contents, "releaseEngine(clearLastError = false)", source);
   assertIncludes(contents, "maxNumTokens = contextTokens", source);
   assertIncludes(contents, "engineModelRevision", source);
   assertIncludes(contents, "state.modelRevision == modelRevision", source);

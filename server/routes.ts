@@ -2650,6 +2650,33 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       stopKeepalive();
       if (!fullStreamedReply && finalTurn.textContent) fullStreamedReply = finalTurn.textContent;
       let streamedModel = finalTurn.model ?? coachChatSelectedModel ?? "gpt-4o-mini";
+      if (!signal.aborted && fullStreamedReply.trim().length === 0) {
+        const noReplyError = new Error("Jarvis did not return a final response. If Phone Gemma is selected, the phone-local model may be busy, low on memory, or interrupted; try once more or switch to a cloud model.");
+        if (userId) {
+          void recordModelUsage({
+            userId,
+            provider: finalTurn.providerName ?? providerLabelForModel(streamedModel),
+            model: streamedModel,
+            source: "app_chat",
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            durationMs: Date.now() - streamStartedAt,
+            success: false,
+            metadata: {
+              phase: "final_stream",
+              emptyReply: true,
+              actionCount: actionResults.length,
+              attachmentCount: allMcpAttachments.length,
+            },
+          });
+        }
+        cleanupRun();
+        if (!clientDisconnected) {
+          writeCoachStreamError(res, noReplyError);
+        }
+        return;
+      }
 
       // Persist if daemon actions ran — response survives connection drops
       const streamUsage = estimateModelUsage({
