@@ -590,10 +590,50 @@ async function patchMainActivityAsync(platformProjectRoot) {
       "    SplashScreenManager.registerOnActivity(this)\n    // @generated end expo-splashscreen\n    applyAssistantKeyguardVisibility(intent)\n    super.onCreate(null)\n",
     );
   }
+  const onNewIntentFunction = "  override fun onNewIntent(intent: Intent) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n";
+  contents = contents.replace(
+    /^([ \t]*)override fun onNewIntent\(intent: Intent\) \{[\s\S]*?^\1\}/m,
+    (method, indent) => {
+      const bodyIndent = `${indent}    `;
+      let nextMethod = method;
+      if (!nextMethod.includes("setIntent(intent)")) {
+        if (nextMethod.includes("super.onNewIntent(intent)")) {
+          nextMethod = nextMethod.replace(
+            /(super\.onNewIntent\(intent\)\r?\n)/,
+            `$1${bodyIndent}setIntent(intent)\n`,
+          );
+        } else {
+          nextMethod = nextMethod.replace(
+            /(override fun onNewIntent\(intent: Intent\) \{\r?\n)/,
+            `$1${bodyIndent}setIntent(intent)\n`,
+          );
+        }
+      }
+      if (!nextMethod.includes("applyAssistantKeyguardVisibility(intent)")) {
+        if (nextMethod.includes("setIntent(intent)")) {
+          nextMethod = nextMethod.replace(
+            /(setIntent\(intent\)\r?\n)/,
+            `$1${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`,
+          );
+        } else if (nextMethod.includes("super.onNewIntent(intent)")) {
+          nextMethod = nextMethod.replace(
+            /(super\.onNewIntent\(intent\)\r?\n)/,
+            `$1${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`,
+          );
+        } else {
+          nextMethod = nextMethod.replace(
+            /(override fun onNewIntent\(intent: Intent\) \{\r?\n)/,
+            `$1${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`,
+          );
+        }
+      }
+      return nextMethod;
+    },
+  );
   if (!contents.includes("override fun onNewIntent(intent: Intent)")) {
     contents = contents.replace(
       /(  }\r?\n)(\r?\n  \/\*\*\r?\n   \* Returns the name of the main component)/,
-      "$1\n  override fun onNewIntent(intent: Intent) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n$2",
+      `$1\n${onNewIntentFunction}$2`,
     );
   }
   const onResumeFunction = "  override fun onResume() {\n    super.onResume()\n    clearAssistantKeyguardVisibilityIfUnlocked()\n  }\n";

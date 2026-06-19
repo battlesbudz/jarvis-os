@@ -234,6 +234,7 @@ async function startBridge(port) {
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: "/api/daemon/ws" });
   const pending = new Map();
+  const socketWaiters = new Set();
   const events = [];
   let activeSocket = null;
   let opCounter = 0;
@@ -260,13 +261,33 @@ async function startBridge(port) {
     }
   }
 
-  function sendOp(op, timeoutMs = 30000) {
-    if (!activeSocket || activeSocket.readyState !== 1) {
-      throw new Error("Daemon socket is not connected.");
+  function waitForSocket(timeoutMs = 30000) {
+    if (activeSocket?.readyState === 1) return Promise.resolve(activeSocket);
+    return new Promise((resolve, reject) => {
+      let waiter;
+      const timer = setTimeout(() => {
+        socketWaiters.delete(waiter);
+        reject(new Error("Timed out waiting for daemon socket to reconnect."));
+      }, timeoutMs);
+      waiter = { resolve, reject, timer };
+      socketWaiters.add(waiter);
+    });
+  }
+
+  function recordSocket(ws) {
+    activeSocket = ws;
+    for (const waiter of socketWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(ws);
     }
+    socketWaiters.clear();
+  }
+
+  async function sendOp(op, timeoutMs = 30000) {
+    const socket = await waitForSocket(timeoutMs);
     const id = `e2e_${++opCounter}`;
     const payload = { type: "op", id, op };
-    activeSocket.send(JSON.stringify(payload));
+    socket.send(JSON.stringify(payload));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -277,7 +298,9 @@ async function startBridge(port) {
   }
 
   wss.on("connection", (ws) => {
-    activeSocket = ws;
+    ws.on("close", () => {
+      if (activeSocket === ws) activeSocket = null;
+    });
     ws.on("message", (raw) => {
       const msg = JSON.parse(raw.toString());
       if (msg.type === "android_app_bootstrap") {
@@ -285,7 +308,24 @@ async function startBridge(port) {
           ws.send(JSON.stringify({ type: "hello", ok: false, error: "bad bootstrap token" }));
           return;
         }
+        recordSocket(ws);
         recordEvent({ type: "bootstrap", msg });
+        ws.send(JSON.stringify({
+          type: "hello",
+          ok: true,
+          userId: "emulator-e2e-user",
+          daemonId: "emulator-e2e-daemon",
+          reconnectSecret: "emulator-e2e-secret",
+        }));
+        return;
+      }
+      if (msg.type === "reconnect") {
+        if (msg.daemonId !== "emulator-e2e-daemon" || msg.reconnectSecret !== "emulator-e2e-secret") {
+          ws.send(JSON.stringify({ type: "hello", ok: false, error: "bad reconnect secret" }));
+          return;
+        }
+        recordSocket(ws);
+        recordEvent({ type: "reconnect", msg });
         ws.send(JSON.stringify({
           type: "hello",
           ok: true,
@@ -310,6 +350,11 @@ async function startBridge(port) {
   async function close() {
     for (const waiter of pending.values()) clearTimeout(waiter.timer);
     pending.clear();
+    for (const waiter of socketWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("Bridge closed before daemon socket connected."));
+    }
+    socketWaiters.clear();
     for (const client of wss.clients) client.close();
     await new Promise((resolve) => {
       wss.close(() => server.close(() => resolve()));

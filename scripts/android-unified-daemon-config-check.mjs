@@ -347,6 +347,8 @@ assertIncludes(
 );
 assertIncludes(plugin, "patchMainActivityAsync", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "override fun onNewIntent(intent: Intent)", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, 'nextMethod.includes("setIntent(intent)")', "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, 'nextMethod.includes("applyAssistantKeyguardVisibility(intent)")', "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "override fun onDestroy()", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "assistantKeyguardVisibilityHandler", "plugins/withJarvisAndroidDaemon.js");
