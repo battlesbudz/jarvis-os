@@ -599,20 +599,21 @@ async function patchMainActivityAsync(platformProjectRoot) {
   const onResumeFunction = "  override fun onResume() {\n    super.onResume()\n    clearAssistantKeyguardVisibilityIfUnlocked()\n  }\n";
   const onDestroyFunction = "  override fun onDestroy() {\n    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n    super.onDestroy()\n  }\n";
   contents = contents.replace(
-    /^  override fun onResume\(\) \{[\s\S]*?^  \}/m,
-    (method) => {
+    /^([ \t]*)override fun onResume\(\) \{[\s\S]*?^\1\}/m,
+    (method, indent) => {
+      const bodyIndent = `${indent}    `;
       if (method.includes("clearAssistantKeyguardVisibilityIfUnlocked()")) {
         return method;
       }
       if (method.includes("super.onResume()")) {
         return method.replace(
           /(super\.onResume\(\)\r?\n)/,
-          "$1    clearAssistantKeyguardVisibilityIfUnlocked()\n",
+          `$1${bodyIndent}clearAssistantKeyguardVisibilityIfUnlocked()\n`,
         );
       }
       return method.replace(
         /(override fun onResume\(\) \{\r?\n)/,
-        "$1    clearAssistantKeyguardVisibilityIfUnlocked()\n",
+        `$1${bodyIndent}clearAssistantKeyguardVisibilityIfUnlocked()\n`,
       );
     },
   );
@@ -623,20 +624,21 @@ async function patchMainActivityAsync(platformProjectRoot) {
     );
   }
   contents = contents.replace(
-    /^  override fun onDestroy\(\) \{[\s\S]*?^  \}/m,
-    (method) => {
+    /^([ \t]*)override fun onDestroy\(\) \{[\s\S]*?^\1\}/m,
+    (method, indent) => {
+      const bodyIndent = `${indent}    `;
       if (method.includes("assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)")) {
         return method;
       }
       if (method.includes("super.onDestroy()")) {
         return method.replace(
           /(super\.onDestroy\(\)\r?\n)/,
-          "    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n$1",
+          `${bodyIndent}assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n$1`,
         );
       }
       return method.replace(
         /(override fun onDestroy\(\) \{\r?\n)/,
-        "$1    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n",
+        `$1${bodyIndent}assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n`,
       );
     },
   );
