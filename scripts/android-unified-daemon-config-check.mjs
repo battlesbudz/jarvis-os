@@ -313,10 +313,14 @@ assertIncludes(
 );
 assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
 assertIncludes(mainActivity, "applyAssistantKeyguardVisibility(intent)", "MainActivity.kt");
+assertIncludes(mainActivity, "override fun onNewIntent(intent: Intent)", "MainActivity.kt");
 assertIncludes(mainActivity, "JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED", "MainActivity.kt");
+assertIncludes(mainActivity, "!uri.isHierarchical", "MainActivity.kt");
 assertIncludes(mainActivity, "setShowWhenLocked(showWhenLocked)", "MainActivity.kt");
 assertIncludes(mainActivity, "setTurnScreenOn(showWhenLocked)", "MainActivity.kt");
 assertIncludes(plugin, "patchMainActivityAsync", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "override fun onNewIntent(intent: Intent)", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "!uri.isHierarchical", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "setShowWhenLocked(showWhenLocked)", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(nativeWrapper, "enable(serverUrl: string, bootstrapToken: string)", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "openAssistantSettings", "lib/android-daemon-native.ts");

@@ -27,7 +27,7 @@ class MainActivity : ReactActivity() {
     super.onCreate(null)
   }
 
-  override fun onNewIntent(intent: Intent?) {
+  override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
     applyAssistantKeyguardVisibility(intent)
@@ -74,9 +74,16 @@ class MainActivity : ReactActivity() {
   }
 
   private fun applyAssistantKeyguardVisibility(intent: Intent?) {
+      val uri = intent?.data
+      val isKeyguardDeepLink =
+          if (uri == null || !uri.isHierarchical) {
+              false
+          } else {
+              uri.getQueryParameter("source") == "keyguard"
+          }
       val showWhenLocked =
           intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||
-          intent?.data?.getQueryParameter("source") == "keyguard"
+          isKeyguardDeepLink
 
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
           setShowWhenLocked(showWhenLocked)

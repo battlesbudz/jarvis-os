@@ -542,22 +542,39 @@ async function patchMainActivityAsync(platformProjectRoot) {
       "import com.facebook.react.defaults.DefaultReactActivityDelegate\nimport com.gameplan.daemon.JarvisAssistantLauncher\n",
     );
   }
+  contents = contents.replace(
+    /override fun onNewIntent\(intent: Intent\?\)/g,
+    "override fun onNewIntent(intent: Intent)",
+  );
+  contents = contents.replace(
+    /      val showWhenLocked =\r?\n          intent\?\.getBooleanExtra\(JarvisAssistantLauncher\.EXTRA_SHOW_WHEN_LOCKED, false\) == true \|\|\r?\n          intent\?\.data\?\.getQueryParameter\("source"\) == "keyguard"/g,
+    `      val uri = intent?.data
+      val isKeyguardDeepLink =
+          if (uri == null || !uri.isHierarchical) {
+              false
+          } else {
+              uri.getQueryParameter("source") == "keyguard"
+          }
+      val showWhenLocked =
+          intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||
+          isKeyguardDeepLink`,
+  );
   if (!contents.includes("applyAssistantKeyguardVisibility(intent)")) {
     contents = contents.replace(
       "    SplashScreenManager.registerOnActivity(this)\n    // @generated end expo-splashscreen\n    super.onCreate(null)\n",
       "    SplashScreenManager.registerOnActivity(this)\n    // @generated end expo-splashscreen\n    applyAssistantKeyguardVisibility(intent)\n    super.onCreate(null)\n",
     );
   }
-  if (!contents.includes("override fun onNewIntent(intent: Intent?)")) {
+  if (!contents.includes("override fun onNewIntent(intent: Intent)")) {
     contents = contents.replace(
       /(  }\r?\n)(\r?\n  \/\*\*\r?\n   \* Returns the name of the main component)/,
-      "$1\n  override fun onNewIntent(intent: Intent?) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n$2",
+      "$1\n  override fun onNewIntent(intent: Intent) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n$2",
     );
   }
   if (!contents.includes("private fun applyAssistantKeyguardVisibility(intent: Intent?)")) {
     contents = contents.replace(
       /\r?\n}\s*$/,
-      `\n\n  private fun applyAssistantKeyguardVisibility(intent: Intent?) {\n      val showWhenLocked =\n          intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||\n          intent?.data?.getQueryParameter("source") == "keyguard"\n\n      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {\n          setShowWhenLocked(showWhenLocked)\n          setTurnScreenOn(showWhenLocked)\n      } else if (showWhenLocked) {\n          window.addFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      } else {\n          window.clearFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      }\n  }\n}\n`,
+      `\n\n  private fun applyAssistantKeyguardVisibility(intent: Intent?) {\n      val uri = intent?.data\n      val isKeyguardDeepLink =\n          if (uri == null || !uri.isHierarchical) {\n              false\n          } else {\n              uri.getQueryParameter("source") == "keyguard"\n          }\n      val showWhenLocked =\n          intent?.getBooleanExtra(JarvisAssistantLauncher.EXTRA_SHOW_WHEN_LOCKED, false) == true ||\n          isKeyguardDeepLink\n\n      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {\n          setShowWhenLocked(showWhenLocked)\n          setTurnScreenOn(showWhenLocked)\n      } else if (showWhenLocked) {\n          window.addFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      } else {\n          window.clearFlags(\n              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or\n              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON\n          )\n      }\n  }\n}\n`,
     );
   }
 
