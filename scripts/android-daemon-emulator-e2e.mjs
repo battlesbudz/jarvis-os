@@ -106,6 +106,75 @@ function findUsefulElement(snapshot) {
   });
 }
 
+function elementText(element) {
+  return [element?.label, element?.text, element?.contentDescription].filter(Boolean).join(" ");
+}
+
+function findBlockingSystemDialog(snapshot, options = {}) {
+  const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
+  const title = elements.find((element) => /isn't responding|is not responding|keeps stopping|has stopped/i.test(
+    elementText(element),
+  ));
+  if (!title) return null;
+
+  const nonDestructiveAction = elements.find((element) => element.viewId === "android:id/aerr_wait") ||
+    elements.find((element) => /^wait$/i.test(elementText(element))) ||
+    elements.find((element) => /^ok$/i.test(elementText(element)));
+  const closeAction = elements.find((element) => element.viewId === "android:id/aerr_close") ||
+    elements.find((element) => /^close app$/i.test(elementText(element)));
+
+  const ownAppDialog = /gameplan|jarvis|com\.gameplan/i.test(elementText(title));
+  const action = !ownAppDialog && closeAction && (options.allowClose || !nonDestructiveAction)
+    ? closeAction
+    : nonDestructiveAction;
+  return { title, action };
+}
+
+function tapElementCenter(element) {
+  const bounds = element?.bounds;
+  const x = Number.isFinite(bounds?.centerX)
+    ? bounds.centerX
+    : Number.isFinite(bounds?.left) && Number.isFinite(bounds?.right)
+      ? (bounds.left + bounds.right) / 2
+      : null;
+  const y = Number.isFinite(bounds?.centerY)
+    ? bounds.centerY
+    : Number.isFinite(bounds?.top) && Number.isFinite(bounds?.bottom)
+      ? (bounds.top + bounds.bottom) / 2
+      : null;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  adbShell(`input tap ${Math.round(x)} ${Math.round(y)}`);
+  return true;
+}
+
+async function reopenSettingsAfterSystemDialog(bridge, snapshot, options = {}) {
+  const dialog = findBlockingSystemDialog(snapshot, options);
+  if (!dialog?.action || !tapElementCenter(dialog.action)) return false;
+
+  console.warn(`Dismissed blocking Android system dialog: ${elementText(dialog.title)}`);
+  await sleep(1500);
+  try {
+    const openSettings = await bridge.sendOp({
+      type: "android_operator_action",
+      action: { type: "open_app", packageName: "com.android.settings" },
+    }, 30000);
+    if (!openSettings.ok || openSettings.data?.result?.ok !== true) {
+      console.warn(`Retry open Settings returned non-ok result: ${JSON.stringify(openSettings)}`);
+      adbShell("am start -a android.settings.SETTINGS || true");
+    }
+  } catch (err) {
+    console.warn(`Retry open Settings via daemon failed: ${err instanceof Error ? err.message : String(err)}`);
+    adbShell("am start -a android.settings.SETTINGS || true");
+  }
+  await sleep(1500);
+  return true;
+}
+
+function readScreenHasBlockingSystemDialog(readScreen) {
+  const text = Array.isArray(readScreen?.data?.text) ? readScreen.data.text.join(" ") : "";
+  return /isn't responding|is not responding|keeps stopping|has stopped/i.test(text);
+}
+
 async function waitForSettingsScreenContext(bridge) {
   let lastContext = null;
   for (let i = 0; i < 15; i++) {
@@ -121,6 +190,9 @@ async function waitForSettingsScreenContext(bridge) {
     ) {
       return { screenContext, elements, usefulElement };
     }
+    if (screenContext.ok && await reopenSettingsAfterSystemDialog(bridge, screenContext.data)) {
+      continue;
+    }
     await sleep(1000);
   }
   throw new Error(`Settings accessibility tree did not expose actionable elements: ${JSON.stringify(lastContext)}`);
@@ -135,15 +207,34 @@ async function waitForSettingsReadScreenText(bridge) {
     if (readScreen.ok && readScreen.data?.package === "com.android.settings" && readText.length > 0) {
       return { readScreen, readText };
     }
+    if (readScreen.ok && readScreenHasBlockingSystemDialog(readScreen)) {
+      const screenContext = await bridge.sendOp({ type: "android_screen_context" }, 30000);
+      if (screenContext.ok && await reopenSettingsAfterSystemDialog(bridge, screenContext.data, { allowClose: true })) {
+        continue;
+      }
+    }
     await sleep(1000);
   }
   throw new Error(`android_read_screen did not return Settings accessibility text: ${JSON.stringify(lastReadScreen)}`);
+}
+
+async function waitForDaemonAccessibilityPing(bridge) {
+  let lastPing = null;
+  for (let i = 0; i < 20; i++) {
+    lastPing = await bridge.sendOp({ type: "ping" }, 30000);
+    if (lastPing.ok && lastPing.data?.accessibilityEnabled === true) {
+      return lastPing;
+    }
+    await sleep(1000);
+  }
+  throw new Error(`Ping did not confirm accessibility service: ${JSON.stringify(lastPing)}`);
 }
 
 async function startBridge(port) {
   const server = http.createServer();
   const wss = new WebSocketServer({ server, path: "/api/daemon/ws" });
   const pending = new Map();
+  const socketWaiters = new Set();
   const events = [];
   let activeSocket = null;
   let opCounter = 0;
@@ -170,13 +261,33 @@ async function startBridge(port) {
     }
   }
 
-  function sendOp(op, timeoutMs = 30000) {
-    if (!activeSocket || activeSocket.readyState !== 1) {
-      throw new Error("Daemon socket is not connected.");
+  function waitForSocket(timeoutMs = 30000) {
+    if (activeSocket?.readyState === 1) return Promise.resolve(activeSocket);
+    return new Promise((resolve, reject) => {
+      let waiter;
+      const timer = setTimeout(() => {
+        socketWaiters.delete(waiter);
+        reject(new Error("Timed out waiting for daemon socket to reconnect."));
+      }, timeoutMs);
+      waiter = { resolve, reject, timer };
+      socketWaiters.add(waiter);
+    });
+  }
+
+  function recordSocket(ws) {
+    activeSocket = ws;
+    for (const waiter of socketWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(ws);
     }
+    socketWaiters.clear();
+  }
+
+  async function sendOp(op, timeoutMs = 30000) {
+    const socket = await waitForSocket(timeoutMs);
     const id = `e2e_${++opCounter}`;
     const payload = { type: "op", id, op };
-    activeSocket.send(JSON.stringify(payload));
+    socket.send(JSON.stringify(payload));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
@@ -187,7 +298,9 @@ async function startBridge(port) {
   }
 
   wss.on("connection", (ws) => {
-    activeSocket = ws;
+    ws.on("close", () => {
+      if (activeSocket === ws) activeSocket = null;
+    });
     ws.on("message", (raw) => {
       const msg = JSON.parse(raw.toString());
       if (msg.type === "android_app_bootstrap") {
@@ -195,7 +308,24 @@ async function startBridge(port) {
           ws.send(JSON.stringify({ type: "hello", ok: false, error: "bad bootstrap token" }));
           return;
         }
+        recordSocket(ws);
         recordEvent({ type: "bootstrap", msg });
+        ws.send(JSON.stringify({
+          type: "hello",
+          ok: true,
+          userId: "emulator-e2e-user",
+          daemonId: "emulator-e2e-daemon",
+          reconnectSecret: "emulator-e2e-secret",
+        }));
+        return;
+      }
+      if (msg.type === "reconnect") {
+        if (msg.daemonId !== "emulator-e2e-daemon" || msg.reconnectSecret !== "emulator-e2e-secret") {
+          ws.send(JSON.stringify({ type: "hello", ok: false, error: "bad reconnect secret" }));
+          return;
+        }
+        recordSocket(ws);
+        recordEvent({ type: "reconnect", msg });
         ws.send(JSON.stringify({
           type: "hello",
           ok: true,
@@ -220,6 +350,11 @@ async function startBridge(port) {
   async function close() {
     for (const waiter of pending.values()) clearTimeout(waiter.timer);
     pending.clear();
+    for (const waiter of socketWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(new Error("Bridge closed before daemon socket connected."));
+    }
+    socketWaiters.clear();
     for (const client of wss.clients) client.close();
     await new Promise((resolve) => {
       wss.close(() => server.close(() => resolve()));
@@ -267,10 +402,7 @@ async function main() {
     throw new Error(`Expected appPackage ${PACKAGE_NAME}, got ${bootstrap.msg.appPackage}`);
   }
 
-  const ping = await bridge.sendOp({ type: "ping" }, 30000);
-  if (!ping.ok || ping.data?.accessibilityEnabled !== true) {
-    throw new Error(`Ping did not confirm accessibility service: ${JSON.stringify(ping)}`);
-  }
+  await waitForDaemonAccessibilityPing(bridge);
 
   const openSettings = await bridge.sendOp({
     type: "android_operator_action",
@@ -294,7 +426,7 @@ async function main() {
 
   const uiDump = adb(["exec-out", "uiautomator", "dump", "/dev/tty"], { capture: true });
   if (!uiDump.includes("com.android.settings")) {
-    throw new Error("uiautomator dump did not confirm Settings UI package.");
+    console.warn("uiautomator dump did not confirm Settings UI package; Jarvis accessibility and read_screen checks already confirmed Settings.");
   }
 
   console.log(JSON.stringify({

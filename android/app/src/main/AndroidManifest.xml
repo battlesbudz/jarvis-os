@@ -37,8 +37,15 @@
     <meta-data android:name="expo.modules.updates.ENABLED" android:value="false"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_CHECK_ON_LAUNCH" android:value="ALWAYS"/>
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
-    <service android:name=".daemon.WebSocketService" android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync|camera|mediaProjection"/>
+    <service android:name=".daemon.WebSocketService" android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync"/>
     <service android:name=".daemon.WakeWordService" android:enabled="true" android:exported="false" android:foregroundServiceType="microphone"/>
+    <service android:name=".daemon.JarvisVoiceInteractionService" android:enabled="true" android:exported="true" android:label="@string/assistant_service_label" android:permission="android.permission.BIND_VOICE_INTERACTION">
+      <intent-filter>
+        <action android:name="android.service.voice.VoiceInteractionService"/>
+      </intent-filter>
+      <meta-data android:name="android.voice_interaction" android:resource="@xml/interaction_service"/>
+    </service>
+    <service android:name=".daemon.JarvisVoiceInteractionSessionService" android:enabled="true" android:exported="true" android:permission="android.permission.BIND_VOICE_INTERACTION"/>
     <service android:name=".daemon.JarvisAccessibilityService" android:enabled="true" android:exported="true" android:label="@string/accessibility_service_label" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
       <intent-filter>
         <action android:name="android.accessibilityservice.AccessibilityService"/>

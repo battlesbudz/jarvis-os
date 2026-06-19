@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong
 object LocalGemmaInferenceEngine {
     private const val PROVIDER = "android-local-gemma"
     private const val RUNTIME = "android-app"
-    private const val DEFAULT_BACKEND = "gpu"
+    private const val DEFAULT_BACKEND = "auto"
     private const val DEFAULT_CONTEXT_TOKENS = 4096
     private const val DEFAULT_MAX_COMPLETION_TOKENS = 512
     private const val APPROX_CHARS_PER_TOKEN = 4
@@ -39,6 +39,7 @@ object LocalGemmaInferenceEngine {
     private val completedRequests = AtomicLong(0)
 
     @Volatile private var engineState: EngineState? = null
+    @Volatile private var lastEngineError: String? = null
 
     fun status(): JSONObject {
         val state = engineState
@@ -48,6 +49,7 @@ object LocalGemmaInferenceEngine {
             .put("engineModelRevision", state?.modelRevision ?: JSONObject.NULL)
             .put("engineBackend", state?.backendName ?: JSONObject.NULL)
             .put("engineContextTokens", state?.contextTokens ?: JSONObject.NULL)
+            .put("lastEngineError", lastEngineError ?: JSONObject.NULL)
             .put("activeRequests", activeRequests.size)
             .put("completedRequests", completedRequests.get())
             .put("supportsCancellation", true)
@@ -59,7 +61,7 @@ object LocalGemmaInferenceEngine {
     fun generate(context: Context, model: String, modelFile: File, modelRevision: String, op: JSONObject): OpResult {
         val prompt = op.optString("prompt", "")
         val requestId = op.optString("requestId", "").ifBlank { UUID.randomUUID().toString() }
-        val backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
+        var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val maxCompletionTokens = op.optInt("maxTokens", DEFAULT_MAX_COMPLETION_TOKENS).coerceIn(1, 8192)
         val topK = op.optInt("topK", DEFAULT_TOP_K).coerceAtLeast(1)
@@ -80,8 +82,9 @@ object LocalGemmaInferenceEngine {
             var finishReason = "stop"
             val text = runBlocking(job) {
                 generationMutex.withLock {
-                    val engine = ensureEngine(context, modelFile.absolutePath, modelRevision, backendName, contextTokens)
-                    engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
+                    val resolvedEngine = ensureEngine(context, modelFile.absolutePath, modelRevision, backendName, contextTokens)
+                    backendName = resolvedEngine.backendName
+                    resolvedEngine.engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
                         .use { conversation ->
                             active.conversation = conversation
                             val chunks = StringBuilder()
@@ -113,6 +116,7 @@ object LocalGemmaInferenceEngine {
                     .put("model", model)
                     .put("requestId", requestId)
                     .put("backend", backendName)
+                    .put("requestedBackend", active.backend)
                     .put("contextTokens", contextTokens)
                     .put("maxCompletionTokens", maxCompletionTokens)
                     .put("finishReason", finishReason)
@@ -189,6 +193,7 @@ object LocalGemmaInferenceEngine {
                 engineMutex.withLock {
                     engineState?.engine?.close()
                     engineState = null
+                    lastEngineError = null
                 }
             }
         }
@@ -200,47 +205,75 @@ object LocalGemmaInferenceEngine {
         modelRevision: String,
         backendName: String,
         contextTokens: Int,
-    ): Engine {
+    ): EngineState {
+        val candidateBackends = backendCandidates(backendName)
+        val reusableBackends = reusableBackendsFor(backendName, candidateBackends)
         val current = engineState
-        if (current != null &&
-            current.modelPath == modelPath &&
-            current.modelRevision == modelRevision &&
-            current.backendName == backendName &&
-            current.contextTokens == contextTokens) {
-            return current.engine
+        if (current != null && canReuseEngine(current, modelPath, modelRevision, reusableBackends, contextTokens)) {
+            return current
         }
 
         return engineMutex.withLock {
             val lockedCurrent = engineState
-            if (lockedCurrent != null &&
-                lockedCurrent.modelPath == modelPath &&
-                lockedCurrent.modelRevision == modelRevision &&
-                lockedCurrent.backendName == backendName &&
-                lockedCurrent.contextTokens == contextTokens) {
-                return@withLock lockedCurrent.engine
+            if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, reusableBackends, contextTokens)) {
+                return@withLock lockedCurrent
             }
 
             val previousEngine = lockedCurrent?.engine
-            val engine = Engine(
-                EngineConfig(
-                    modelPath = modelPath,
-                    backend = backendFor(backendName),
-                    maxNumTokens = contextTokens,
-                    cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
-                )
-            )
-            try {
-                engine.initialize()
-            } catch (e: Throwable) {
-                try { engine.close() } catch (_: Throwable) {}
-                throw e
+            val failures = mutableListOf<String>()
+            var lastFailure: Throwable? = null
+
+            for (candidateBackendName in candidateBackends) {
+                if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, listOf(candidateBackendName), contextTokens)) {
+                    lastEngineError = null
+                    return@withLock lockedCurrent
+                }
+
+                var engine: Engine? = null
+                try {
+                    val initializedEngine = Engine(
+                        EngineConfig(
+                            modelPath = modelPath,
+                            backend = backendFor(candidateBackendName),
+                            maxNumTokens = contextTokens,
+                            cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
+                        )
+                    )
+                    engine = initializedEngine
+                    initializedEngine.initialize()
+                    val nextState = EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, initializedEngine)
+                    engineState = nextState
+                    lastEngineError = null
+                    previousEngine?.let { previous ->
+                        try { previous.close() } catch (_: Throwable) {}
+                    }
+                    return@withLock nextState
+                } catch (e: Throwable) {
+                    lastFailure = e
+                    failures.add("$candidateBackendName: ${formatEngineError(e)}")
+                    engine?.let { failedEngine ->
+                        try { failedEngine.close() } catch (_: Throwable) {}
+                    }
+                }
             }
-            engineState = EngineState(modelPath, modelRevision, backendName, contextTokens, engine)
-            previousEngine?.let { previous ->
-                try { previous.close() } catch (_: Throwable) {}
-            }
-            engine
+
+            val message = "Failed to create LiteRT-LM engine after trying ${candidateBackends.joinToString(", ")} backend(s): ${failures.joinToString("; ")}"
+            lastEngineError = message
+            throw IllegalStateException(message, lastFailure)
         }
+    }
+
+    private fun canReuseEngine(
+        state: EngineState,
+        modelPath: String,
+        modelRevision: String,
+        reusableBackends: List<String>,
+        contextTokens: Int,
+    ): Boolean {
+        return state.modelPath == modelPath &&
+            state.modelRevision == modelRevision &&
+            reusableBackends.contains(state.backendName) &&
+            state.contextTokens == contextTokens
     }
 
     private fun buildConversationConfig(
@@ -266,9 +299,22 @@ object LocalGemmaInferenceEngine {
 
     private fun normalizeBackend(raw: String): String {
         return when (raw.lowercase()) {
-            "cpu", "gpu", "npu" -> raw.lowercase()
+            "auto", "cpu", "gpu", "npu" -> raw.lowercase()
             else -> DEFAULT_BACKEND
         }
+    }
+
+    private fun backendCandidates(backendName: String): List<String> {
+        return when (backendName) {
+            "cpu" -> listOf("cpu")
+            "npu" -> listOf("npu", "cpu")
+            "gpu" -> listOf("gpu", "cpu")
+            else -> listOf("gpu", "cpu")
+        }
+    }
+
+    private fun reusableBackendsFor(backendName: String, candidateBackends: List<String>): List<String> {
+        return if (backendName == "auto") candidateBackends else listOf(backendName)
     }
 
     private fun backendFor(backendName: String): Backend {
@@ -277,6 +323,10 @@ object LocalGemmaInferenceEngine {
             "npu" -> Backend.NPU()
             else -> Backend.GPU()
         }
+    }
+
+    private fun formatEngineError(error: Throwable): String {
+        return error.message?.takeIf { it.isNotBlank() } ?: error.javaClass.simpleName
     }
 
     private fun hasReachedCompletionLimit(chunks: StringBuilder, maxCompletionTokens: Int): Boolean {

@@ -8,6 +8,11 @@ const settingsGradlePath = path.join(projectRoot, "android/settings.gradle");
 const appBuildGradlePath = path.join(projectRoot, "android/app/build.gradle");
 const stringsPath = path.join(projectRoot, "android/app/src/main/res/values/strings.xml");
 const mainApplicationPath = path.join(projectRoot, "android/app/src/main/java/com/gameplan/MainApplication.kt");
+const mainActivityPath = path.join(projectRoot, "android/app/src/main/java/com/gameplan/MainActivity.kt");
+const jarvisVoiceInteractionPath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/JarvisVoiceInteraction.kt",
+);
 const nativeWrapperPath = path.join(projectRoot, "lib/android-daemon-native.ts");
 const androidControlCardPath = path.join(projectRoot, "components/androidDaemon/AndroidDeviceControlCard.tsx");
 const jarvisDaemonModulePath = path.join(
@@ -51,6 +56,10 @@ const pluginTemplateJarvisDaemonModulePath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisDaemonModule.kt",
 );
+const pluginTemplateJarvisVoiceInteractionPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisVoiceInteraction.kt",
+);
 const pluginTemplateScreenRecordPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/ScreenRecordHandler.kt",
@@ -84,6 +93,7 @@ const accessibilityConfigPath = path.join(
   projectRoot,
   "android/app/src/main/res/xml/accessibility_service_config.xml",
 );
+const interactionServicePath = path.join(projectRoot, "android/app/src/main/res/xml/interaction_service.xml");
 const filePathsPath = path.join(projectRoot, "android/app/src/main/res/xml/file_paths.xml");
 const apkWorkflowPath = path.join(projectRoot, ".github/workflows/build-jarvis-apk.yml");
 
@@ -115,9 +125,14 @@ const requiredPermissions = [
 const requiredManifestSnippets = [
   'android:allowBackup="false"',
   'android:name=".daemon.WebSocketService"',
-  'android:foregroundServiceType="dataSync|camera|mediaProjection"',
+  'android:foregroundServiceType="dataSync"',
   'android:name=".daemon.WakeWordService"',
   'android:foregroundServiceType="microphone"',
+  'android:name=".daemon.JarvisVoiceInteractionService"',
+  "android.service.voice.VoiceInteractionService",
+  'android:name="android.voice_interaction"',
+  'android:resource="@xml/interaction_service"',
+  'android:name=".daemon.JarvisVoiceInteractionSessionService"',
   'android:name=".daemon.JarvisAccessibilityService"',
   "android.accessibilityservice.AccessibilityService",
   'android:name="android.accessibilityservice"',
@@ -139,11 +154,15 @@ const forbiddenManifestSnippets = [
   'android:name=".JarvisAccessibilityService"',
   'android:name=".JarvisNotificationListener"',
   'android:name=".BootReceiver"',
+  'android:name=".daemon.JarvisRecognitionService"',
+  "android.speech.RecognitionService",
+  '@xml/jarvis_recognition_service',
 ];
 
 const requiredStringSnippets = [
   '<string name="accessibility_service_label">',
   '<string name="accessibility_service_description">',
+  '<string name="assistant_service_label">',
 ];
 
 const requiredDependencies = [
@@ -179,6 +198,8 @@ const [
   appBuildGradle,
   strings,
   mainApplication,
+  mainActivity,
+  jarvisVoiceInteraction,
   nativeWrapper,
   androidControlCard,
   jarvisDaemonModule,
@@ -192,6 +213,7 @@ const [
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateJarvisDaemonModule,
+  pluginTemplateJarvisVoiceInteraction,
   pluginTemplateScreenRecord,
   pluginTemplateCamera,
   pluginTemplateAccessibility,
@@ -199,6 +221,7 @@ const [
   pluginTemplateLocalGemmaModelManager,
   pluginTemplateLocalGemmaInferenceEngine,
   accessibilityConfig,
+  interactionService,
   apkWorkflow,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
@@ -207,6 +230,8 @@ const [
   readFile(appBuildGradlePath, "utf8"),
   readFile(stringsPath, "utf8"),
   readFile(mainApplicationPath, "utf8"),
+  readFile(mainActivityPath, "utf8"),
+  readFile(jarvisVoiceInteractionPath, "utf8"),
   readFile(nativeWrapperPath, "utf8"),
   readFile(androidControlCardPath, "utf8"),
   readFile(jarvisDaemonModulePath, "utf8"),
@@ -220,6 +245,7 @@ const [
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateJarvisDaemonModulePath, "utf8"),
+  readFile(pluginTemplateJarvisVoiceInteractionPath, "utf8"),
   readFile(pluginTemplateScreenRecordPath, "utf8"),
   readFile(pluginTemplateCameraPath, "utf8"),
   readFile(pluginTemplateAccessibilityPath, "utf8"),
@@ -227,6 +253,7 @@ const [
   readFile(pluginTemplateLocalGemmaModelManagerPath, "utf8"),
   readFile(pluginTemplateLocalGemmaInferenceEnginePath, "utf8"),
   readFile(accessibilityConfigPath, "utf8"),
+  readFile(interactionServicePath, "utf8"),
   readFile(apkWorkflowPath, "utf8"),
   assertFileExists(filePathsPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
@@ -251,6 +278,8 @@ for (const snippet of requiredManifestSnippets) {
 for (const snippet of forbiddenManifestSnippets) {
   assertExcludes(manifest, snippet, "AndroidManifest.xml");
 }
+assertExcludes(manifest, 'android:foregroundServiceType="dataSync|camera|mediaProjection"', "AndroidManifest.xml");
+assertExcludes(plugin, '"android:foregroundServiceType": "dataSync|camera|mediaProjection"', "plugins/withJarvisAndroidDaemon.js");
 
 for (const snippet of requiredStringSnippets) {
   assertIncludes(strings, snippet, "strings.xml");
@@ -264,15 +293,23 @@ assertIncludes(
 );
 assertExcludes(accessibilityConfig, "android:packageNames", "accessibility_service_config.xml");
 assertExcludes(plugin, "android:packageNames", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(interactionService, "JarvisVoiceInteractionSessionService", "interaction_service.xml");
+assertExcludes(interactionService, "JarvisRecognitionService", "interaction_service.xml");
+assertIncludes(plugin, "interaction_service.xml", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "STALE_DAEMON_XML_RESOURCES", "plugins/withJarvisAndroidDaemon.js");
+assertExcludes(plugin, '"android:name": ".daemon.JarvisRecognitionService"', "plugins/withJarvisAndroidDaemon.js");
+assertExcludes(plugin, '"android:name": "android.speech.RecognitionService"', "plugins/withJarvisAndroidDaemon.js");
 
 for (const dependency of requiredDependencies) {
   assertIncludes(appBuildGradle, dependency, "android/app/build.gradle");
 }
 
 assertIncludes(rootBuildGradle, "substitute module('com.github.Dimezis:BlurView') using project(':blurview')", "android/build.gradle");
+assertIncludes(rootBuildGradle, "-Xskip-metadata-version-check", "android/build.gradle");
 assertIncludes(settingsGradle, "include ':blurview'", "android/settings.gradle");
 assertIncludes(settingsGradle, "project(':blurview').projectDir = new File(rootDir, 'third-party/blurview')", "android/settings.gradle");
 assertIncludes(plugin, "withProjectBuildGradle", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "-Xskip-metadata-version-check", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "withSettingsGradle", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "android-blurview-native", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, "third-party/blurview", "plugins/withJarvisAndroidDaemon.js");
@@ -287,7 +324,42 @@ assertIncludes(
   "MainApplication.kt",
 );
 assertIncludes(mainApplication, "add(JarvisDaemonPackage())", "MainApplication.kt");
+assertIncludes(mainActivity, "applyAssistantKeyguardVisibility(intent)", "MainActivity.kt");
+assertIncludes(mainActivity, "override fun onNewIntent(intent: Intent)", "MainActivity.kt");
+assertIncludes(mainActivity, "override fun onDestroy()", "MainActivity.kt");
+assertIncludes(mainActivity, "JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)", "MainActivity.kt");
+assertExcludes(mainActivity, 'getQueryParameter("source")', "MainActivity.kt");
+assertIncludes(mainActivity, "assistantKeyguardVisibilityHandler", "MainActivity.kt");
+assertIncludes(mainActivity, "private fun clearAssistantKeyguardVisibilityIfUnlocked()", "MainActivity.kt");
+assertIncludes(mainActivity, "private fun isDeviceKeyguardLocked()", "MainActivity.kt");
+assertIncludes(mainActivity, "setShowWhenLocked(showWhenLocked)", "MainActivity.kt");
+assertIncludes(mainActivity, "setTurnScreenOn(showWhenLocked)", "MainActivity.kt");
+assertIncludes(jarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "JarvisVoiceInteraction.kt");
+assertIncludes(jarvisVoiceInteraction, "UUID.randomUUID()", "JarvisVoiceInteraction.kt");
+assertIncludes(jarvisVoiceInteraction, "fun shouldShowWhenLocked(context: Context, intent: Intent?)", "JarvisVoiceInteraction.kt");
+assertIncludes(jarvisVoiceInteraction, "suppliedToken != expectedToken", "JarvisVoiceInteraction.kt");
+assertIncludes(pluginTemplateJarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
+assertIncludes(pluginTemplateJarvisVoiceInteraction, "UUID.randomUUID()", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
+assertIncludes(
+  pluginTemplateJarvisVoiceInteraction,
+  "fun shouldShowWhenLocked(context: Context, intent: Intent?)",
+  "plugins/android-daemon-native/JarvisVoiceInteraction.kt",
+);
+assertIncludes(plugin, "patchMainActivityAsync", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "onCreateMatch", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "override fun onNewIntent(intent: Intent)", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "keyguardSetIntentLine", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "keyguardApplyLine", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "insertKeyguardBlock", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "override fun onDestroy()", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "assistantKeyguardVisibilityHandler", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "private fun clearAssistantKeyguardVisibilityIfUnlocked()", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "private fun isDeviceKeyguardLocked()", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "setShowWhenLocked(showWhenLocked)", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(nativeWrapper, "enable(serverUrl: string, bootstrapToken: string)", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "openAssistantSettings", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "refreshAssistantStatus", "lib/android-daemon-native.ts");
 assertExcludes(nativeWrapper, "connect(serverUrl: string, pairCode: string)", "lib/android-daemon-native.ts");
 assertIncludes(androidControlCard, "/api/channels/android-daemon/bootstrap", "AndroidDeviceControlCard.tsx");
 assertIncludes(androidControlCard, "AndroidDaemonNative.enable", "AndroidDeviceControlCard.tsx");
@@ -402,10 +474,17 @@ for (const [contents, source] of [
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
   assertIncludes(contents, "maxNumTokens = contextTokens", source);
   assertIncludes(contents, "engineModelRevision", source);
-  assertIncludes(contents, "current.modelRevision == modelRevision", source);
+  assertIncludes(contents, "state.modelRevision == modelRevision", source);
   assertIncludes(contents, "val previousEngine = lockedCurrent?.engine", source);
-  assertIncludes(contents, "try { engine.close() } catch (_: Throwable) {}", source);
-  assertIncludes(contents, "EngineState(modelPath, modelRevision, backendName, contextTokens, engine)", source);
+  assertIncludes(contents, "try { failedEngine.close() } catch (_: Throwable) {}", source);
+  assertIncludes(contents, "var engine: Engine? = null", source);
+  assertIncludes(contents, "val initializedEngine = Engine(", source);
+  assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, initializedEngine)", source);
+  assertIncludes(contents, "backendCandidates(backendName)", source);
+  assertIncludes(contents, "reusableBackendsFor(backendName, candidateBackends)", source);
+  assertIncludes(contents, "listOf(candidateBackendName)", source);
+  assertIncludes(contents, 'put("requestedBackend", active.backend)', source);
+  assertIncludes(contents, 'put("lastEngineError", lastEngineError ?: JSONObject.NULL)', source);
   assertIncludes(contents, "previousEngine?.let { previous ->", source);
   assertExcludes(contents, "lockedCurrent?.engine?.close()", source);
   assertIncludes(contents, "hasReachedCompletionLimit(chunks, maxCompletionTokens)", source);

@@ -26,5 +26,15 @@ allprojects {
   }
 }
 
+// @generated begin jarvis-kotlin-metadata-compat - expo prebuild (DO NOT MODIFY) sync-580876390d5560f4e962497b09859f3b86be98cc
+subprojects {
+  tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    kotlinOptions {
+      freeCompilerArgs += ["-Xskip-metadata-version-check"]
+    }
+  }
+}
+// @generated end jarvis-kotlin-metadata-compat
+
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"

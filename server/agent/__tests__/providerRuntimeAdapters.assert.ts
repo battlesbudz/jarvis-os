@@ -516,6 +516,29 @@ async function testAndroidLocalGemmaExplainsUnbundledEngine() {
   }
 }
 
+async function testAndroidLocalGemmaExplainsEngineCreationFailure() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_GENERATION_FAILED: Failed to create LiteRT-LM engine after trying gpu, cpu backend(s): gpu: INTERNAL: ERROR: [third_party/odml/litert_lm/runtime/executor/llm_litert_compiled_model_executor.cc:1951]; cpu: INTERNAL",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        stream: false,
+        userId: "user-phone",
+      })),
+      /Phone Gemma could not start the LiteRT-LM engine[\s\S]*CPU fallback/,
+    );
+    console.log("OK: Android Local Gemma explains LiteRT-LM engine creation failures");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function main() {
   await testAnthropicUsesUserCredential();
   await testAnthropicToolUseFinishReasonIsToolCalls();
@@ -527,6 +550,7 @@ async function main() {
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   await testAndroidLocalGemmaExplainsUnbundledEngine();
+  await testAndroidLocalGemmaExplainsEngineCreationFailure();
   console.log("\nAll provider runtime adapter assertions passed.");
 }
 

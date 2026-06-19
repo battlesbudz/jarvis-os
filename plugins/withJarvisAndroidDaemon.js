@@ -13,6 +13,7 @@ const {
 } = require("@expo/config-plugins");
 
 const GENERATED_TAG = "jarvis-android-daemon-dependencies";
+const KOTLIN_METADATA_COMPAT_TAG = "jarvis-kotlin-metadata-compat";
 const BLURVIEW_PROJECT_GRADLE_TAG = "jarvis-blurview-dependency-substitution";
 const BLURVIEW_SETTINGS_GRADLE_TAG = "jarvis-blurview-project-include";
 const DAEMON_SOURCE_TEMPLATE_DIR = "android-daemon-native/src/main/java/com/gameplan/daemon";
@@ -29,6 +30,10 @@ const DAEMON_GRADLE_DEPENDENCIES = [
 const DAEMON_XML_RESOURCES = [
   "accessibility_service_config.xml",
   "file_paths.xml",
+  "interaction_service.xml",
+];
+const STALE_DAEMON_XML_RESOURCES = [
+  "jarvis_recognition_service.xml",
 ];
 
 const BLURVIEW_SETTINGS_GRADLE_SNIPPET = [
@@ -44,6 +49,16 @@ const BLURVIEW_PROJECT_GRADLE_SNIPPET = [
   "  }",
 ].join("\n");
 
+const KOTLIN_METADATA_COMPAT_SNIPPET = [
+  "subprojects {",
+  "  tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {",
+  "    kotlinOptions {",
+  "      freeCompilerArgs += [\"-Xskip-metadata-version-check\"]",
+  "    }",
+  "  }",
+  "}",
+].join("\n");
+
 const DAEMON_STRING_ITEMS = [
   {
     $: { name: "accessibility_service_label" },
@@ -52,6 +67,10 @@ const DAEMON_STRING_ITEMS = [
   {
     $: { name: "accessibility_service_description" },
     _: "Allows Jarvis to read screen content, tap, type, swipe, and take screenshots on your behalf - only when you send a command through the Jarvis app or Telegram.",
+  },
+  {
+    $: { name: "assistant_service_label" },
+    _: "Jarvis Assistant",
   },
 ];
 
@@ -77,6 +96,15 @@ const DAEMON_XML_CONTENTS = {
     <external-path name="downloads" path="Download/" />
 </paths>
 `,
+  "interaction_service.xml": `<?xml version="1.0" encoding="utf-8"?>
+<voice-interaction-service
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:sessionService="com.gameplan.daemon.JarvisVoiceInteractionSessionService"
+    android:settingsActivity="com.gameplan.MainActivity"
+    android:supportsAssist="true"
+    android:supportsLaunchVoiceAssistFromKeyguard="true"
+    android:supportsLocalInteraction="true" />
+`,
 };
 
 const LEGACY_DAEMON_SERVICE_NAMES = [
@@ -84,6 +112,7 @@ const LEGACY_DAEMON_SERVICE_NAMES = [
   ".WakeWordService",
   ".JarvisAccessibilityService",
   ".JarvisNotificationListener",
+  ".daemon.JarvisRecognitionService",
 ];
 
 const LEGACY_DAEMON_RECEIVER_NAMES = [
@@ -134,7 +163,7 @@ function getDaemonServices() {
         "android:name": ".daemon.WebSocketService",
         "android:enabled": "true",
         "android:exported": "false",
-        "android:foregroundServiceType": "dataSync|camera|mediaProjection",
+        "android:foregroundServiceType": "dataSync",
       },
     },
     {
@@ -143,6 +172,42 @@ function getDaemonServices() {
         "android:enabled": "true",
         "android:exported": "false",
         "android:foregroundServiceType": "microphone",
+      },
+    },
+    {
+      $: {
+        "android:name": ".daemon.JarvisVoiceInteractionService",
+        "android:enabled": "true",
+        "android:exported": "true",
+        "android:label": "@string/assistant_service_label",
+        "android:permission": "android.permission.BIND_VOICE_INTERACTION",
+      },
+      "intent-filter": [
+        {
+          action: [
+            {
+              $: {
+                "android:name": "android.service.voice.VoiceInteractionService",
+              },
+            },
+          ],
+        },
+      ],
+      "meta-data": [
+        {
+          $: {
+            "android:name": "android.voice_interaction",
+            "android:resource": "@xml/interaction_service",
+          },
+        },
+      ],
+    },
+    {
+      $: {
+        "android:name": ".daemon.JarvisVoiceInteractionSessionService",
+        "android:enabled": "true",
+        "android:exported": "true",
+        "android:permission": "android.permission.BIND_VOICE_INTERACTION",
       },
     },
     {
@@ -336,6 +401,23 @@ function addBlurViewDependencySubstitution(buildGradle) {
   return mergeResult.contents;
 }
 
+function addKotlinMetadataCompatibility(buildGradle) {
+  if (buildGradle.includes("-Xskip-metadata-version-check")) {
+    return buildGradle;
+  }
+
+  const mergeResult = CodeGenerator.mergeContents({
+    tag: KOTLIN_METADATA_COMPAT_TAG,
+    src: buildGradle,
+    newSrc: KOTLIN_METADATA_COMPAT_SNIPPET,
+    anchor: /apply plugin: "expo-root-project"/,
+    offset: 0,
+    comment: "//",
+  });
+
+  return mergeResult.contents;
+}
+
 function getDaemonPermissions() {
   return [
     "android.permission.FOREGROUND_SERVICE",
@@ -408,6 +490,10 @@ async function copyDaemonXmlResourcesAsync(platformProjectRoot) {
 
   await fs.mkdir(destinationDir, { recursive: true });
 
+  for (const fileName of STALE_DAEMON_XML_RESOURCES) {
+    await fs.rm(path.join(destinationDir, fileName), { force: true });
+  }
+
   for (const fileName of DAEMON_XML_RESOURCES) {
     await fs.writeFile(path.join(destinationDir, fileName), DAEMON_XML_CONTENTS[fileName], "utf8");
   }
@@ -434,6 +520,228 @@ async function patchMainApplicationAsync(platformProjectRoot) {
   await fs.writeFile(mainApplicationPath, contents, "utf8");
 }
 
+async function patchMainActivityAsync(platformProjectRoot) {
+  const mainActivityPath = path.join(platformProjectRoot, "app/src/main/java/com/gameplan/MainActivity.kt");
+  let contents = await fs.readFile(mainActivityPath, "utf8");
+
+  if (!contents.includes("import android.content.Intent")) {
+    contents = contents.replace(
+      "import expo.modules.splashscreen.SplashScreenManager\n\n",
+      "import expo.modules.splashscreen.SplashScreenManager\n\nimport android.content.Intent\n",
+    );
+  }
+  if (!contents.includes("import android.app.KeyguardManager")) {
+    contents = contents.replace(
+      "import android.content.Intent\n",
+      "import android.app.KeyguardManager\nimport android.content.Intent\n",
+    );
+  }
+  if (!contents.includes("import android.content.Context")) {
+    contents = contents.replace(
+      "import android.content.Intent\n",
+      "import android.content.Context\nimport android.content.Intent\n",
+    );
+  }
+  if (!contents.includes("import android.view.WindowManager")) {
+    contents = contents.replace(
+      "import android.os.Bundle\n",
+      "import android.os.Bundle\nimport android.view.WindowManager\n",
+    );
+  }
+  if (!contents.includes("import android.os.Handler")) {
+    contents = contents.replace(
+      "import android.os.Bundle\n",
+      "import android.os.Bundle\nimport android.os.Handler\n",
+    );
+  }
+  if (!contents.includes("import android.os.Looper")) {
+    contents = contents.replace(
+      "import android.os.Handler\n",
+      "import android.os.Handler\nimport android.os.Looper\n",
+    );
+  }
+  if (!contents.includes("import com.gameplan.daemon.JarvisAssistantLauncher")) {
+    contents = contents.replace(
+      "import com.facebook.react.defaults.DefaultReactActivityDelegate\n",
+      "import com.facebook.react.defaults.DefaultReactActivityDelegate\nimport com.gameplan.daemon.JarvisAssistantLauncher\n",
+    );
+  }
+  if (!contents.includes("assistantKeyguardVisibilityHandler")) {
+    contents = contents.replace(
+      /class MainActivity : ReactActivity\(\) \{\r?\n/,
+      "class MainActivity : ReactActivity() {\n  private val assistantKeyguardVisibilityHandler = Handler(Looper.getMainLooper())\n  private val clearAssistantKeyguardVisibilityWhenUnlocked = object : Runnable {\n      override fun run() {\n          clearAssistantKeyguardVisibilityIfUnlocked()\n      }\n  }\n  private var assistantKeyguardVisibilityActive = false\n\n",
+    );
+  }
+  contents = contents.replace(
+    /override fun onNewIntent\(intent: Intent\?\)/g,
+    "override fun onNewIntent(intent: Intent)",
+  );
+  contents = contents.replace(
+    /      val showWhenLocked =\r?\n          intent\?\.getBooleanExtra\(JarvisAssistantLauncher\.EXTRA_SHOW_WHEN_LOCKED, false\) == true \|\|\r?\n          intent\?\.data\?\.getQueryParameter\("source"\) == "keyguard"/g,
+    "      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)",
+  );
+  contents = contents.replace(
+    /      val uri = intent\?\.data\r?\n      val isKeyguardDeepLink =\r?\n          if \(uri == null \|\| !uri\.isHierarchical\) \{\r?\n              false\r?\n          \} else \{\r?\n              uri\.getQueryParameter\("source"\) == "keyguard"\r?\n          \}\r?\n      val showWhenLocked =\r?\n          intent\?\.getBooleanExtra\(JarvisAssistantLauncher\.EXTRA_SHOW_WHEN_LOCKED, false\) == true \|\|\r?\n          isKeyguardDeepLink/g,
+    "      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)",
+  );
+  const onCreateMatch = contents.match(/^([ \t]*)override fun onCreate\(savedInstanceState: Bundle\?\) \{[\s\S]*?^\1\}/m);
+  if (!onCreateMatch?.[0].includes("applyAssistantKeyguardVisibility(intent)")) {
+    contents = contents.replace(
+      /(\n[ \t]*)super\.onCreate\(null\)/,
+      "$1applyAssistantKeyguardVisibility(intent)$1super.onCreate(null)",
+    );
+  }
+  const onNewIntentFunction = "  override fun onNewIntent(intent: Intent) {\n    super.onNewIntent(intent)\n    setIntent(intent)\n    applyAssistantKeyguardVisibility(intent)\n  }\n";
+  contents = contents.replace(
+    /^([ \t]*)override fun onNewIntent\(intent: Intent\) \{[\s\S]*?^\1\}/m,
+    (method, indent) => {
+      const bodyIndent = `${indent}    `;
+      const keyguardSetIntentLine = `${bodyIndent}setIntent(intent)\n`;
+      const keyguardApplyLine = `${bodyIndent}applyAssistantKeyguardVisibility(intent)\n`;
+      let nextMethod = method
+        .replace(/^[ \t]*setIntent\(intent\)\r?\n[ \t]*applyAssistantKeyguardVisibility\(intent\)\r?\n/gm, "")
+        .replace(/^[ \t]*applyAssistantKeyguardVisibility\(intent\)\r?\n/gm, "");
+      const insertKeyguardBlock = (_match, prefix, existingSetIntent = "") =>
+        `${prefix}${existingSetIntent || keyguardSetIntentLine}${keyguardApplyLine}`;
+      if (nextMethod.includes("super.onNewIntent(intent)")) {
+        nextMethod = nextMethod.replace(
+          /(super\.onNewIntent\(intent\)\r?\n)([ \t]*setIntent\(intent\)\r?\n)?/,
+          insertKeyguardBlock,
+        );
+      } else {
+        nextMethod = nextMethod.replace(
+          /(override fun onNewIntent\(intent: Intent\) \{\r?\n)([ \t]*setIntent\(intent\)\r?\n)?/,
+          insertKeyguardBlock,
+        );
+      }
+      return nextMethod;
+    },
+  );
+  if (!contents.includes("override fun onNewIntent(intent: Intent)")) {
+    contents = contents.replace(
+      /(  }\r?\n)(\r?\n  \/\*\*\r?\n   \* Returns the name of the main component)/,
+      `$1\n${onNewIntentFunction}$2`,
+    );
+  }
+  const onResumeFunction = "  override fun onResume() {\n    super.onResume()\n    clearAssistantKeyguardVisibilityIfUnlocked()\n  }\n";
+  const onDestroyFunction = "  override fun onDestroy() {\n    assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n    super.onDestroy()\n  }\n";
+  contents = contents.replace(
+    /^([ \t]*)override fun onResume\(\) \{[\s\S]*?^\1\}/m,
+    (method, indent) => {
+      const bodyIndent = `${indent}    `;
+      if (method.includes("clearAssistantKeyguardVisibilityIfUnlocked()")) {
+        return method;
+      }
+      if (method.includes("super.onResume()")) {
+        return method.replace(
+          /(super\.onResume\(\)\r?\n)/,
+          `$1${bodyIndent}clearAssistantKeyguardVisibilityIfUnlocked()\n`,
+        );
+      }
+      return method.replace(
+        /(override fun onResume\(\) \{\r?\n)/,
+        `$1${bodyIndent}clearAssistantKeyguardVisibilityIfUnlocked()\n`,
+      );
+    },
+  );
+  if (!contents.includes("override fun onResume()")) {
+    contents = contents.replace(
+      /(\r?\n  \/\*\*\r?\n   \* Returns the name of the main component)/,
+      `\n${onResumeFunction}$1`,
+    );
+  }
+  contents = contents.replace(
+    /^([ \t]*)override fun onDestroy\(\) \{[\s\S]*?^\1\}/m,
+    (method, indent) => {
+      const bodyIndent = `${indent}    `;
+      if (method.includes("assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)")) {
+        return method;
+      }
+      if (method.includes("super.onDestroy()")) {
+        return method.replace(
+          /(super\.onDestroy\(\)\r?\n)/,
+          `${bodyIndent}assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n$1`,
+        );
+      }
+      return method.replace(
+        /(override fun onDestroy\(\) \{\r?\n)/,
+        `$1${bodyIndent}assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)\n`,
+      );
+    },
+  );
+  if (!contents.includes("override fun onDestroy()")) {
+    contents = contents.replace(
+      /(\r?\n  \/\*\*\r?\n   \* Returns the name of the main component)/,
+      `\n${onDestroyFunction}$1`,
+    );
+  }
+  const assistantKeyguardApplyFunction = `  private fun applyAssistantKeyguardVisibility(intent: Intent?) {
+      val showWhenLocked = JarvisAssistantLauncher.shouldShowWhenLocked(this, intent)
+      setAssistantKeyguardVisibility(showWhenLocked)
+      if (showWhenLocked) {
+          scheduleKeyguardVisibilityClear()
+      } else {
+          assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      }
+  }`;
+  const assistantKeyguardHelperFunctions = `  private fun setAssistantKeyguardVisibility(showWhenLocked: Boolean) {
+      assistantKeyguardVisibilityActive = showWhenLocked
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+          setShowWhenLocked(showWhenLocked)
+          setTurnScreenOn(showWhenLocked)
+      } else if (showWhenLocked) {
+          window.addFlags(
+              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+          )
+      } else {
+          window.clearFlags(
+              WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+              WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+          )
+      }
+  }
+
+  private fun scheduleKeyguardVisibilityClear() {
+      assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      assistantKeyguardVisibilityHandler.postDelayed(clearAssistantKeyguardVisibilityWhenUnlocked, 1_000L)
+  }
+
+  private fun clearAssistantKeyguardVisibilityIfUnlocked() {
+      if (!assistantKeyguardVisibilityActive) {
+          return
+      }
+      if (isDeviceKeyguardLocked()) {
+          scheduleKeyguardVisibilityClear()
+          return
+      }
+      assistantKeyguardVisibilityHandler.removeCallbacks(clearAssistantKeyguardVisibilityWhenUnlocked)
+      setAssistantKeyguardVisibility(false)
+  }
+
+  private fun isDeviceKeyguardLocked(): Boolean {
+      val keyguardManager = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+      return keyguardManager?.isKeyguardLocked == true
+  }`;
+  contents = contents.replace(
+    /^  private fun applyAssistantKeyguardVisibility\(intent: Intent\?\) \{[\s\S]*?^  \}/m,
+    assistantKeyguardApplyFunction,
+  );
+  if (!contents.includes("private fun applyAssistantKeyguardVisibility(intent: Intent?)")) {
+    contents = contents.replace(
+      /\r?\n}\s*$/,
+      `\n\n${assistantKeyguardApplyFunction}\n\n${assistantKeyguardHelperFunctions}\n}\n`,
+    );
+  } else if (!contents.includes("private fun setAssistantKeyguardVisibility(showWhenLocked: Boolean)")) {
+    contents = contents.replace(
+      /\r?\n}\s*$/,
+      `\n\n${assistantKeyguardHelperFunctions}\n}\n`,
+    );
+  }
+
+  await fs.writeFile(mainActivityPath, contents, "utf8");
+}
+
 const withJarvisAndroidDaemon = (config) => {
   config = withAndroidManifest(config, addDaemonManifestConfigAsync);
   config = withStringsXml(config, addDaemonStringResourcesAsync);
@@ -452,7 +760,9 @@ const withJarvisAndroidDaemon = (config) => {
       throw new Error("Jarvis Android daemon config requires a Groovy android/build.gradle file.");
     }
 
-    config.modResults.contents = addBlurViewDependencySubstitution(config.modResults.contents);
+    config.modResults.contents = addKotlinMetadataCompatibility(
+      addBlurViewDependencySubstitution(config.modResults.contents),
+    );
     return config;
   });
 
@@ -472,6 +782,7 @@ const withJarvisAndroidDaemon = (config) => {
       await copyDaemonKotlinSourcesAsync(__dirname, config.modRequest.platformProjectRoot);
       await copyDaemonXmlResourcesAsync(config.modRequest.platformProjectRoot);
       await patchMainApplicationAsync(config.modRequest.platformProjectRoot);
+      await patchMainActivityAsync(config.modRequest.platformProjectRoot);
       return config;
     },
   ]);
