@@ -79,6 +79,7 @@ assert.match(insightsScreen, /Error: \$\{streamErrorMessage\}/);
 assert.match(routes, /type:\s*['"]error['"],\s*message:/);
 assert.doesNotMatch(routes, /JSON\.stringify\(\{\s*error:\s*["']Stream interrupted["']/);
 assert.match(routes, /writeCoachStreamError\(res,\s*error\)/);
+assert.match(routes, /Jarvis did not return a final response/);
 assert.match(routes, /getExplicitCoachRequestedModel\(userId\)/);
 assert.match(routes, /requestedModel:\s*coachChatSelectedModel/);
 assert.match(routes, /preferRequestedModel:\s*Boolean\(coachChatSelectedModel\)/);

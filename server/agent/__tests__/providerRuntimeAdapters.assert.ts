@@ -472,7 +472,7 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
         { role: "user", content: "Hello" },
       ],
       toolChoice: "none",
-      maxCompletionTokens: 128,
+      maxCompletionTokens: 8192,
       stream: false,
       userId: "user-phone",
     }));
@@ -482,12 +482,44 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
     assert.equal(requests.length, 1);
     assert.equal(requests[0].userId, "user-phone");
     assert.equal(requests[0].op.type, "android_local_model_generate");
+    assert.match(requests[0].op.requestId, /^phone-gemma-/);
     assert.equal(requests[0].op.model, "gemma-4-e4b-it");
     assert.match(requests[0].op.prompt, /system: Be concise\./);
     assert.match(requests[0].op.prompt, /user: Hello/);
+    assert.equal(requests[0].op.contextTokens, 1024);
     assert.equal(requests[0].op.maxTokens, 128);
     assert.ok(requests[0].timeoutMs >= 60000);
     console.log("OK: Android Local Gemma provider sends generation to the Jarvis Android app daemon runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaCancelsTimedOutGeneration() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_cancel") return { ok: true, data: { cancelled: true } };
+    return { ok: false, error: "daemon timeout" };
+  });
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /Phone Gemma timed out[\s\S]*cancel/,
+    );
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].op.type, "android_local_model_generate");
+    assert.equal(requests[1].op.type, "android_local_model_cancel");
+    assert.equal(requests[1].op.requestId, requests[0].op.requestId);
+    console.log("OK: Android Local Gemma provider cancels phone generation after daemon timeout");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -505,12 +537,58 @@ async function testAndroidLocalGemmaExplainsUnbundledEngine() {
         model: "android-local-gemma/gemma-4-e4b-it",
         messages: [{ role: "user", content: "Hello" }],
         toolChoice: "none",
+        maxCompletionTokens: 128,
         stream: false,
         userId: "user-phone",
       })),
       /Phone Gemma is selected, but this APK cannot run LiteRT-LM generation yet/,
     );
     console.log("OK: Android Local Gemma reports unbundled LiteRT-LM as an actionable routing error");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaExplainsPhoneResourceFailures() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_DEVICE_MEMORY_LOW: available=640MB threshold=384MB minimum=1800MB lowMemory=true",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /low available memory/,
+    );
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_BUSY: Phone Gemma is already generating.",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello again" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /still working on the previous message/,
+    );
+    console.log("OK: Android Local Gemma explains phone memory and busy failures");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -528,6 +606,7 @@ async function testAndroidLocalGemmaExplainsEngineCreationFailure() {
         model: "android-local-gemma/gemma-4-e4b-it",
         messages: [{ role: "user", content: "Hello" }],
         toolChoice: "none",
+        maxCompletionTokens: 128,
         stream: false,
         userId: "user-phone",
       })),
@@ -549,7 +628,9 @@ async function main() {
   await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
+  await testAndroidLocalGemmaCancelsTimedOutGeneration();
   await testAndroidLocalGemmaExplainsUnbundledEngine();
+  await testAndroidLocalGemmaExplainsPhoneResourceFailures();
   await testAndroidLocalGemmaExplainsEngineCreationFailure();
   console.log("\nAll provider runtime adapter assertions passed.");
 }

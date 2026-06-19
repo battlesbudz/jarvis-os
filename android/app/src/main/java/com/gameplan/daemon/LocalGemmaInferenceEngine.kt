@@ -1,5 +1,6 @@
 package com.gameplan.daemon
 
+import android.app.ActivityManager
 import android.content.Context
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Conversation
@@ -26,8 +27,9 @@ object LocalGemmaInferenceEngine {
     private const val PROVIDER = "android-local-gemma"
     private const val RUNTIME = "android-app"
     private const val DEFAULT_BACKEND = "auto"
-    private const val DEFAULT_CONTEXT_TOKENS = 4096
-    private const val DEFAULT_MAX_COMPLETION_TOKENS = 512
+    private const val DEFAULT_CONTEXT_TOKENS = 1024
+    private const val DEFAULT_MAX_COMPLETION_TOKENS = 128
+    private const val MIN_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
     private const val APPROX_CHARS_PER_TOKEN = 4
     private const val DEFAULT_TOP_K = 40
     private const val DEFAULT_TOP_P = 0.95
@@ -35,6 +37,7 @@ object LocalGemmaInferenceEngine {
 
     private val engineMutex = Mutex()
     private val generationMutex = Mutex()
+    private val activeRequestLock = Any()
     private val activeRequests = ConcurrentHashMap<String, ActiveRequest>()
     private val completedRequests = AtomicLong(0)
 
@@ -64,19 +67,28 @@ object LocalGemmaInferenceEngine {
         var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val maxCompletionTokens = op.optInt("maxTokens", DEFAULT_MAX_COMPLETION_TOKENS).coerceIn(1, 8192)
+        val keepEngineWarm = op.optBoolean("keepEngineWarm", false)
         val topK = op.optInt("topK", DEFAULT_TOP_K).coerceAtLeast(1)
         val topP = op.optDouble("topP", DEFAULT_TOP_P).coerceIn(0.0, 1.0)
         val temperature = op.optDouble("temperature", DEFAULT_TEMPERATURE).coerceIn(0.0, 2.0)
         val systemInstruction = op.optString("systemInstruction", "").trim()
         val startedAtMs = System.currentTimeMillis()
+        val memory = memorySnapshot(context)
 
         if (activeRequests.containsKey(requestId)) {
             return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
         }
+        lowMemoryError(memory)?.let { error ->
+            DaemonLog.add("local_gemma: memory low request=${shortRequestId(requestId)} $error")
+            return OpResult(false, error = error)
+        }
 
         val job = Job()
         val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, startedAtMs, job)
-        activeRequests[requestId] = active
+        registerActiveRequest(active)?.let { return it }
+        DaemonLog.add(
+            "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName context=$contextTokens max=$maxCompletionTokens availMem=${formatMiB(memory.availableBytes)}MB"
+        )
 
         return try {
             var finishReason = "stop"
@@ -119,6 +131,7 @@ object LocalGemmaInferenceEngine {
                     .put("requestedBackend", active.backend)
                     .put("contextTokens", contextTokens)
                     .put("maxCompletionTokens", maxCompletionTokens)
+                    .put("engineKeptWarm", keepEngineWarm)
                     .put("finishReason", finishReason)
                     .put("completionLimitEnforced", true)
                     .put("text", text)
@@ -127,14 +140,27 @@ object LocalGemmaInferenceEngine {
                     .put("streamed", true)
                     .put("streamDelivery", "buffered_result")
                     .put("concurrency", "serialized")
-            )
+            ).also {
+                DaemonLog.add(
+                    "local_gemma: done request=${shortRequestId(requestId)} backend=$backendName chars=${text.length} durationMs=${System.currentTimeMillis() - startedAtMs}"
+                )
+            }
         } catch (e: CancellationException) {
+            DaemonLog.add("local_gemma: cancelled request=${shortRequestId(requestId)}")
             OpResult(false, error = "LOCAL_MODEL_CANCELLED: request $requestId was cancelled.")
         } catch (e: Throwable) {
-            OpResult(false, error = "LOCAL_MODEL_GENERATION_FAILED: ${e.message ?: e.javaClass.simpleName}")
+            val detail = e.message ?: e.javaClass.simpleName
+            DaemonLog.add("local_gemma: failed request=${shortRequestId(requestId)} $detail")
+            OpResult(false, error = "LOCAL_MODEL_GENERATION_FAILED: $detail")
         } finally {
             active.conversation = null
-            activeRequests.remove(requestId)
+            try {
+                if (!keepEngineWarm) {
+                    releaseEngine(clearLastError = false)
+                }
+            } finally {
+                activeRequests.remove(requestId)
+            }
         }
     }
 
@@ -195,6 +221,53 @@ object LocalGemmaInferenceEngine {
                     engineState = null
                     lastEngineError = null
                 }
+            }
+        }
+    }
+
+    private fun registerActiveRequest(active: ActiveRequest): OpResult? {
+        synchronized(activeRequestLock) {
+            if (activeRequests.containsKey(active.requestId)) {
+                return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
+            }
+            if (activeRequests.isNotEmpty()) {
+                return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating. Wait for it to finish or cancel it before sending another message.")
+            }
+            activeRequests[active.requestId] = active
+        }
+        return null
+    }
+
+    private fun memorySnapshot(context: Context): MemorySnapshot {
+        val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            ?: return MemorySnapshot(Long.MAX_VALUE, 0L, false)
+        val info = ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(info)
+        return MemorySnapshot(info.availMem, info.threshold, info.lowMemory)
+    }
+
+    private fun lowMemoryError(memory: MemorySnapshot): String? {
+        val underMinimum = memory.availableBytes != Long.MAX_VALUE && memory.availableBytes < MIN_AVAILABLE_MEMORY_BYTES
+        if (!memory.lowMemory && !underMinimum) return null
+        return "LOCAL_MODEL_DEVICE_MEMORY_LOW: available=${formatMiB(memory.availableBytes)}MB threshold=${formatMiB(memory.thresholdBytes)}MB minimum=${formatMiB(MIN_AVAILABLE_MEMORY_BYTES)}MB lowMemory=${memory.lowMemory}"
+    }
+
+    private fun formatMiB(bytes: Long): Long {
+        return if (bytes == Long.MAX_VALUE) -1L else bytes / (1024L * 1024L)
+    }
+
+    private fun shortRequestId(requestId: String): String {
+        return requestId.take(12)
+    }
+
+    private fun releaseEngine(clearLastError: Boolean) {
+        runBlocking {
+            engineMutex.withLock {
+                engineState?.let { state ->
+                    try { state.engine.close() } catch (_: Throwable) {}
+                }
+                engineState = null
+                if (clearLastError) lastEngineError = null
             }
         }
     }
@@ -344,6 +417,12 @@ object LocalGemmaInferenceEngine {
         val backendName: String,
         val contextTokens: Int,
         val engine: Engine,
+    )
+
+    private data class MemorySnapshot(
+        val availableBytes: Long,
+        val thresholdBytes: Long,
+        val lowMemory: Boolean,
     )
 
     private data class ActiveRequest(
