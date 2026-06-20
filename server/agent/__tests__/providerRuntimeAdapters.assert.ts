@@ -743,7 +743,7 @@ async function testAndroidLocalGemmaKeepsToolProtocolForConfirmationTurns() {
       messages: [
         { role: "user", content: "Please send an SMS to Justin." },
         { role: "assistant", content: "Should I proceed?" },
-        { role: "user", content: "yes" },
+        { role: "user", content: "yes, go ahead" },
       ],
       tools: [{
         type: "function",

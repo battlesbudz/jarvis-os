@@ -165,7 +165,7 @@ function looksLikeUrlToolRequest(text: string): boolean {
 
 function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
   const latest = latestUserText(messages).trim();
-  if (!/^(?:yes|yeah|yep|ok|okay|sure|do it|go ahead|please do)$/i.test(latest)) return false;
+  if (!looksLikeApprovalConfirmation(latest)) return false;
   let assistantIndex = -1;
   for (let index = messages.length - 2; index >= 0; index -= 1) {
     const message = messages[index];
@@ -189,6 +189,16 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     }
   }
   return false;
+}
+
+function looksLikeApprovalConfirmation(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /^(?:yes|yeah|yep|ok|okay|sure)(?: please)?(?: go ahead| do it| proceed| continue)?$/.test(normalized) ||
+    /^(?:go ahead|do it|please do|please do it|please proceed|proceed|continue)$/.test(normalized);
 }
 
 function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
