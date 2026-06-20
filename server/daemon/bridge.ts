@@ -670,6 +670,7 @@ export async function sendDaemonOp(
       android_local_model_status:   "android_local_model",
       android_local_model_import:   "android_local_model",
       android_local_model_validate: "android_local_model",
+      android_local_model_smoke_test: "android_local_model",
       android_local_model_generate: "android_local_model",
       android_local_model_cancel:   "android_local_model",
     };

@@ -96,6 +96,7 @@ const accessibilityConfigPath = path.join(
 const interactionServicePath = path.join(projectRoot, "android/app/src/main/res/xml/interaction_service.xml");
 const filePathsPath = path.join(projectRoot, "android/app/src/main/res/xml/file_paths.xml");
 const apkWorkflowPath = path.join(projectRoot, ".github/workflows/build-jarvis-apk.yml");
+const serverBridgePath = path.join(projectRoot, "server/daemon/bridge.ts");
 
 const requiredPermissions = [
   "android.permission.FOREGROUND_SERVICE",
@@ -223,6 +224,7 @@ const [
   accessibilityConfig,
   interactionService,
   apkWorkflow,
+  serverBridge,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
   readFile(rootBuildGradlePath, "utf8"),
@@ -255,10 +257,13 @@ const [
   readFile(accessibilityConfigPath, "utf8"),
   readFile(interactionServicePath, "utf8"),
   readFile(apkWorkflowPath, "utf8"),
+  readFile(serverBridgePath, "utf8"),
   assertFileExists(filePathsPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
   assertFileExists(pluginBlurViewSourcePath),
 ]);
+
+assertIncludes(serverBridge, 'android_local_model_smoke_test: "android_local_model"', "server/daemon/bridge.ts");
 
 for (const permission of requiredPermissions) {
   assertIncludes(manifest, `android:name="${permission}"`, "AndroidManifest.xml");
