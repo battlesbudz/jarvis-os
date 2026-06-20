@@ -488,6 +488,7 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
     assert.match(requests[0].op.prompt, /user: Hello/);
     assert.equal(requests[0].op.contextTokens, 2048);
     assert.equal(requests[0].op.maxTokens, 128);
+    assert.equal(requests[0].op.allowCpuFallback, false);
     assert.ok(requests[0].timeoutMs >= 60000);
     console.log("OK: Android Local Gemma provider sends generation to the Jarvis Android app daemon runtime");
   } finally {
@@ -1292,6 +1293,36 @@ async function testAndroidLocalGemmaDoesNotClaimSkippedCpuFallback() {
   }
 }
 
+async function testAndroidLocalGemmaExplainsDisabledCpuFallbackPolicy() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_GENERATION_FAILED: Failed to create LiteRT-LM engine after trying gpu backend(s): gpu: INTERNAL: ERROR: [third_party/odml/litert_lm/runtime/executor/llm_litert_compiled_model_executor.cc:1951]; cpu fallback skipped: disabled by default to avoid Android low-memory kills",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.match(error.message, /CPU fallback is disabled by default/);
+        assert.doesNotMatch(error.message, /enough memory headroom/);
+        assert.doesNotMatch(error.message, /tried the device accelerator and CPU fallback/);
+        return true;
+      },
+    );
+    console.log("OK: Android Local Gemma explains disabled CPU fallback policy");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaExplainsCompiledModelInvokeFailure() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: false,
@@ -1344,6 +1375,7 @@ async function main() {
   await testAndroidLocalGemmaExplainsPhoneResourceFailures();
   await testAndroidLocalGemmaExplainsEngineCreationFailure();
   await testAndroidLocalGemmaDoesNotClaimSkippedCpuFallback();
+  await testAndroidLocalGemmaExplainsDisabledCpuFallbackPolicy();
   await testAndroidLocalGemmaExplainsCompiledModelInvokeFailure();
   console.log("\nAll provider runtime adapter assertions passed.");
 }

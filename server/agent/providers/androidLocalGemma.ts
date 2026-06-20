@@ -16,6 +16,7 @@ type AndroidLocalGemmaDaemonOp = (
     contextTokens?: number;
     maxTokens?: number;
     backend?: string;
+    allowCpuFallback?: boolean;
     temperature?: number;
   } | {
     type: "android_local_model_cancel";
@@ -29,6 +30,7 @@ let daemonOpForTesting: AndroidLocalGemmaDaemonOp | null = null;
 const DEFAULT_PHONE_GEMMA_TIMEOUT_MS = 60_000;
 const DEFAULT_PHONE_GEMMA_CONTEXT_TOKENS = 2048;
 const DEFAULT_PHONE_GEMMA_MAX_COMPLETION_TOKENS = 128;
+const DEFAULT_PHONE_GEMMA_ALLOW_CPU_FALLBACK = false;
 const DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET = 3_600;
 const DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET = 1_600;
 const MAX_TOOL_DESCRIPTION_CHARS = 180;
@@ -53,6 +55,12 @@ function intEnv(name: string, fallback: number, min: number, max: number): numbe
   return Math.min(max, Math.max(min, parsed));
 }
 
+function boolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  return /^(?:1|true|yes|on)$/i.test(raw.trim());
+}
+
 function phoneGemmaTimeoutMs(): number {
   return intEnv("ANDROID_LOCAL_GEMMA_TIMEOUT_MS", DEFAULT_PHONE_GEMMA_TIMEOUT_MS, 10_000, 120_000);
 }
@@ -65,6 +73,10 @@ function phoneGemmaMaxCompletionTokens(requested: number | undefined): number {
   const ceiling = intEnv("ANDROID_LOCAL_GEMMA_MAX_COMPLETION_TOKENS", DEFAULT_PHONE_GEMMA_MAX_COMPLETION_TOKENS, 16, 512);
   const wanted = typeof requested === "number" && Number.isFinite(requested) ? Math.floor(requested) : ceiling;
   return Math.min(ceiling, Math.max(1, wanted));
+}
+
+function phoneGemmaAllowCpuFallback(): boolean {
+  return boolEnv("ANDROID_LOCAL_GEMMA_ALLOW_CPU_FALLBACK", DEFAULT_PHONE_GEMMA_ALLOW_CPU_FALLBACK);
 }
 
 function phoneGemmaPromptCharBudget(): number {
@@ -576,9 +588,12 @@ function normalizeAndroidLocalGemmaError(error: string | undefined): string {
     (error.includes("Failed to create LiteRT-LM engine") || error.includes("llm_litert_compiled_model_executor"))
   ) {
     const cpuFallbackAttempted = /\bcpu:/i.test(error);
+    const cpuFallbackDisabled = /cpu fallback skipped:\s*disabled/i.test(error);
     const recoveryPath = cpuFallbackAttempted
       ? "Jarvis tried the device accelerator and CPU fallback"
-      : "Jarvis tried the device accelerator; CPU fallback was skipped unless the phone has enough memory headroom";
+      : cpuFallbackDisabled
+        ? "Jarvis tried the device accelerator; CPU fallback is disabled by default to avoid Android low-memory kills"
+        : "Jarvis tried the device accelerator; CPU fallback was skipped unless the phone has enough memory headroom";
     return `Phone Gemma could not start the LiteRT-LM engine for the imported .litertlm model. ${recoveryPath}; reimport ${ANDROID_LOCAL_GEMMA_MODEL.replace("android-local-gemma/", "")} as the official .litertlm file if this keeps happening. Details: ${error}`;
   }
   if (error?.includes("LOCAL_MODEL_DEVICE_MEMORY_LOW")) {
@@ -631,6 +646,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
         prompt,
         contextTokens: phoneGemmaContextTokens(),
         maxTokens: phoneGemmaMaxCompletionTokens(params.maxCompletionTokens),
+        allowCpuFallback: phoneGemmaAllowCpuFallback(),
       },
       phoneGemmaTimeoutMs(),
     );

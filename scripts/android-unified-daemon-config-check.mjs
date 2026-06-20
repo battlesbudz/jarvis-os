@@ -476,6 +476,7 @@ for (const [contents, source] of [
   [pluginTemplateLocalGemmaInferenceEngine, "plugins/android-daemon-native/LocalGemmaInferenceEngine.kt"],
 ]) {
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
+  assertIncludes(contents, "DEFAULT_ALLOW_CPU_FALLBACK = false", source);
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS = 2048", source);
   assertIncludes(contents, "DEFAULT_MAX_COMPLETION_TOKENS = 128", source);
   assertIncludes(contents, "MIN_GPU_AVAILABLE_MEMORY_BYTES", source);
@@ -483,6 +484,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 2800L * 1024L * 1024L", source);
   assertIncludes(contents, "trimPromptForContext", source);
   assertIncludes(contents, 'put("inputTrimmed", prompt.length != rawPrompt.length)', source);
+  assertIncludes(contents, 'put("defaultCpuFallbackAllowed", DEFAULT_ALLOW_CPU_FALLBACK)', source);
+  assertIncludes(contents, 'put("cpuFallbackAllowed", allowCpuFallback)', source);
+  assertIncludes(contents, "backendCandidates(backendName, memory, allowCpuFallback)", source);
+  assertIncludes(contents, "disabled by default to avoid Android low-memory kills", source);
   assertIncludes(contents, "speculativeDecodingCandidates(preference: Boolean?): List<Boolean>", source);
   assertIncludes(contents, "ExperimentalFlags.enableSpeculativeDecoding = enableSpeculativeDecoding", source);
   assertIncludes(contents, "decodingModeName(speculativeDecodingEnabled)", source);
@@ -508,7 +513,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "configureExperimentalFlags(speculativeDecodingEnabled)", source);
   assertIncludes(contents, "val initializedEngine = Engine(", source);
   assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, initializedEngine)", source);
-  assertIncludes(contents, "backendCandidates(backendName, memory)", source);
+  assertIncludes(contents, "backendCandidates(backendName, memory, allowCpuFallback)", source);
   assertIncludes(contents, "reusableBackendsFor(backendName, candidateBackends)", source);
   assertIncludes(contents, "listOf(candidateBackendName)", source);
   assertIncludes(contents, 'put("requestedBackend", active.backend)', source);
