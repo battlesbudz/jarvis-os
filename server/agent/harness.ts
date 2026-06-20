@@ -936,6 +936,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // sends a model ID the receiving provider understands.
   const effectiveFallbackChain: FallbackChainEntry[] | null = (() => {
     if (primaryProviderName === "chatgpt-codex-oauth") return null;
+    if (primaryProviderName === "android-local-gemma") return null;
 
     // Resolve the tail: per-run option takes priority over the global env chain.
     // opts.providerFallbackChain is ProviderName[]; env chain is already

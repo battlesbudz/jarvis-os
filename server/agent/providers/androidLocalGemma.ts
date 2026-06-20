@@ -30,6 +30,10 @@ const DEFAULT_PHONE_GEMMA_TIMEOUT_MS = 60_000;
 const DEFAULT_PHONE_GEMMA_CONTEXT_TOKENS = 1024;
 const DEFAULT_PHONE_GEMMA_MAX_COMPLETION_TOKENS = 128;
 
+type LocalGemmaStructuredOutput =
+  | { type: "final"; content: string }
+  | { type: "tool_calls"; toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] };
+
 function intEnv(name: string, fallback: number, min: number, max: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -80,24 +84,146 @@ function textFromContent(content: OpenAI.Chat.Completions.ChatCompletionMessageP
     .join("\n");
 }
 
+function messageForPrompt(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): string {
+  if (message.role === "tool") {
+    return `tool(${message.tool_call_id}): ${textFromContent(message.content)}`;
+  }
+  const content = textFromContent(message.content);
+  if (message.role === "assistant" && message.tool_calls?.length) {
+    const calls = message.tool_calls
+      .filter((call): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => call.type === "function")
+      .map((call) => `${call.function.name}(${call.function.arguments || "{}"})`)
+      .join("\n");
+    return `assistant: ${content}\nassistant tool calls:\n${calls}`.trim();
+  }
+  return `${message.role}: ${content}`;
+}
+
 function promptFromMessages(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string {
   return messages
-    .map((message) => {
-      if (message.role === "tool") {
-        return `tool(${message.tool_call_id}): ${textFromContent(message.content)}`;
-      }
-      const content = textFromContent(message.content);
-      if (message.role === "assistant" && message.tool_calls?.length) {
-        const calls = message.tool_calls
-          .filter((call): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => call.type === "function")
-          .map((call) => `${call.function.name}(${call.function.arguments || "{}"})`)
-          .join("\n");
-        return `assistant: ${content}\nassistant tool calls:\n${calls}`.trim();
-      }
-      return `${message.role}: ${content}`;
-    })
+    .map(messageForPrompt)
     .filter((line) => line.trim().length > 0)
     .join("\n\n");
+}
+
+function extractJsonObject(raw: string): unknown | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const candidate = fenced?.[1]?.trim() || trimmed;
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    const start = candidate.indexOf("{");
+    const end = candidate.lastIndexOf("}");
+    if (start < 0 || end <= start) return null;
+    try {
+      return JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+      return null;
+    }
+  }
+}
+
+function normalizeToolArguments(value: unknown): string {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "{}";
+    try {
+      return JSON.stringify(JSON.parse(trimmed));
+    } catch {
+      return trimmed;
+    }
+  }
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return "{}";
+}
+
+function generatedToolCallId(index: number): string {
+  return `phone_gemma_call_${Date.now().toString(36)}_${index}`;
+}
+
+function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutput {
+  const parsed = extractJsonObject(raw);
+  if (!parsed || typeof parsed !== "object") {
+    return { type: "final", content: raw.trim() };
+  }
+
+  const data = parsed as Record<string, unknown>;
+  const type = typeof data.type === "string" ? data.type : "";
+  if (type === "final") {
+    return { type: "final", content: String(data.content ?? data.text ?? "").trim() };
+  }
+
+  const rawToolCalls = Array.isArray(data.tool_calls)
+    ? data.tool_calls
+    : Array.isArray(data.toolCalls)
+      ? data.toolCalls
+      : [];
+  if (type === "tool_calls" || rawToolCalls.length > 0) {
+    const toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] = rawToolCalls
+      .map((toolCall, index) => {
+        if (!toolCall || typeof toolCall !== "object") return null;
+        const item = toolCall as Record<string, unknown>;
+        const functionData = item.function && typeof item.function === "object"
+          ? item.function as Record<string, unknown>
+          : item;
+        const name = typeof functionData.name === "string" ? functionData.name.trim() : "";
+        if (!name) return null;
+        return {
+          id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : generatedToolCallId(index),
+          type: "function" as const,
+          function: {
+            name,
+            arguments: normalizeToolArguments(functionData.arguments),
+          },
+        };
+      })
+      .filter((toolCall): toolCall is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => !!toolCall);
+
+    return { type: "tool_calls", toolCalls };
+  }
+
+  return { type: "final", content: raw.trim() };
+}
+
+function toolSpecsForPrompt(tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined): Array<Record<string, unknown>> {
+  return tools?.flatMap((tool) => {
+    if (tool.type !== "function") return [];
+    return [{
+      name: tool.function.name,
+      description: tool.function.description,
+      parameters: tool.function.parameters,
+    }];
+  }) ?? [];
+}
+
+function toolPromptFromParams(params: ProviderQueryParams): string {
+  const sections = params.messages.map((message, index) => {
+    const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
+    return `Message ${index + 1} [${message.role}${name}]\n${messageForPrompt(message)}`;
+  });
+
+  return [
+    "You are Jarvis running entirely through Android Local Gemma on the user's phone.",
+    "You decide whether Jarvis should answer directly or request a local harness tool call.",
+    "You do not execute tools yourself. Jarvis executes any tool call you request and sends the result back in the next message.",
+    "Tool result messages are authoritative observations from Jarvis. Use them directly.",
+    "Return ONLY one JSON object. Do not use markdown, code fences, or extra text.",
+    "For tool use, return exactly:",
+    `{"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
+    "For a final answer, return exactly:",
+    `{"type":"final","content":"your reply to the user"}`,
+    params.toolChoice === "required"
+      ? "A tool call is required for this turn. Do not return a final answer."
+      : "Use tools only when they are necessary to satisfy the user's request.",
+    "Available tools:",
+    JSON.stringify(toolSpecsForPrompt(params.tools), null, 2),
+    "",
+    "Conversation:",
+    sections.join("\n\n---\n\n"),
+  ].join("\n");
 }
 
 function textFromDaemonData(data: unknown): string {
@@ -119,7 +245,13 @@ function finishReasonFromDaemonData(data: unknown): string | null {
 
 function normalizeAndroidLocalGemmaError(error: string | undefined): string {
   if (error?.includes("LOCAL_MODEL_ENGINE_NOT_BUNDLED")) {
-    return "Phone Gemma is selected, but this APK cannot run LiteRT-LM generation yet. Choose ChatGPT/Codex, OpenAI, Gemini, Claude, or Local Llama in Settings > AI Models until a LiteRT-LM-enabled APK is installed.";
+    return "Phone Gemma is selected, but this APK cannot run LiteRT-LM generation yet. Install a LiteRT-LM-enabled APK before using Android Local Gemma.";
+  }
+  if (
+    error?.includes("LOCAL_MODEL_GENERATION_FAILED") &&
+    (error.includes("Failed to invoke the compiled model") || error.includes("llm_litert_compiled_model_executor.cc:755"))
+  ) {
+    return `Phone Gemma could not finish local inference on this device. Jarvis stayed on the local phone model and did not use any other model. Details: ${error}`;
   }
   if (
     error?.includes("LOCAL_MODEL_GENERATION_FAILED") &&
@@ -128,7 +260,7 @@ function normalizeAndroidLocalGemmaError(error: string | undefined): string {
     return `Phone Gemma could not start the LiteRT-LM engine for the imported .litertlm model. Jarvis tried the device accelerator and CPU fallback; reimport ${ANDROID_LOCAL_GEMMA_MODEL.replace("android-local-gemma/", "")} as the official .litertlm file if this keeps happening. Details: ${error}`;
   }
   if (error?.includes("LOCAL_MODEL_DEVICE_MEMORY_LOW")) {
-    return `Phone Gemma did not start because Android reported low available memory. Close other heavy apps or choose a cloud model, then try again. Details: ${error}`;
+    return `Phone Gemma did not start because Android reported low available memory. Close other heavy apps, then try again. Details: ${error}`;
   }
   if (error?.includes("LOCAL_MODEL_BUSY")) {
     return "Phone Gemma is still working on the previous message. Wait for it to finish or tap Stop before sending another local-model message.";
@@ -160,11 +292,9 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     if (!params.userId) {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
-    if (params.toolChoice === "required") {
-      throw new Error("Android Local Gemma does not support required tool calls yet.");
-    }
 
-    const prompt = promptFromMessages(params.messages).trim();
+    const hasTools = !!params.tools?.length && params.toolChoice !== "none";
+    const prompt = (hasTools ? toolPromptFromParams(params) : promptFromMessages(params.messages)).trim();
     if (!prompt) {
       throw new Error("Android Local Gemma received an empty prompt.");
     }
@@ -197,7 +327,41 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
 
     const text = textFromDaemonData(result.data);
     if (!text.trim()) {
-      throw new Error("Phone Gemma finished without response text. The phone-local model may have been interrupted or run out of memory; retry once or switch to a cloud model.");
+      throw new Error("Phone Gemma finished without response text. The phone-local model may have been interrupted or run out of memory; retry after closing other apps.");
+    }
+
+    if (hasTools) {
+      const parsed = parseLocalGemmaStructuredOutput(text);
+      if (parsed.type === "tool_calls") {
+        if (parsed.toolCalls.length === 0) {
+          throw new Error("Phone Gemma returned a tool-call response without a valid local tool call.");
+        }
+        for (const [index, toolCall] of parsed.toolCalls.entries()) {
+          yield {
+            type: "tool_call_start",
+            index,
+            id: toolCall.id,
+            name: toolCall.function.name,
+          };
+          yield {
+            type: "tool_call_args",
+            index,
+            args: toolCall.function.arguments,
+          };
+        }
+        yield { type: "finish", reason: "tool_calls" };
+        return;
+      }
+
+      if (params.toolChoice === "required") {
+        throw new Error("Phone Gemma returned a final answer when the local harness required a tool call. No cloud model was used.");
+      }
+
+      if (parsed.content.trim()) {
+        yield { type: "text", delta: parsed.content };
+        yield { type: "finish", reason: finishReasonFromDaemonData(result.data) };
+        return;
+      }
     }
 
     yield { type: "text", delta: text };

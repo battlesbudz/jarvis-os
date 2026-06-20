@@ -26,6 +26,12 @@ import {
 import type { ProviderQueryParams, ProviderChunk } from "../providers/base";
 import type { AgentTool, ToolContext } from "../types";
 
+process.env.DATABASE_URL ||= "postgres://test:test@localhost:5432/test";
+process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+delete process.env.JARVIS_MODEL_PROVIDER;
+delete process.env.JARVIS_AI_PROVIDER;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 let passed = 0;
@@ -170,7 +176,7 @@ async function run(): Promise<void> {
     _overrideProviderForTesting("openai", provider);
 
     await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [{ role: "system", content: "You are a helpful assistant." }],
       tools: [androidTapTool],
       context: { ...minimalContext },
@@ -194,7 +200,7 @@ async function run(): Promise<void> {
     _overrideProviderForTesting("openai", provider);
 
     await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [{ role: "system", content: "You are a helpful assistant." }],
       tools: [genericSearchTool],
       context: { ...minimalContext },
@@ -207,6 +213,62 @@ async function run(): Promise<void> {
     );
 
     _clearProviderCacheForTesting();
+  }
+
+  // Android Local Gemma must remain local even if a global provider fallback
+  // chain is configured. Local runtime failures should surface honestly rather
+  // than being silently answered by a cloud model.
+  {
+    const previousFallbackChain = process.env.PROVIDER_FALLBACK_CHAIN;
+    let cloudCalls = 0;
+
+    class FailingAndroidLocalGemmaProvider extends BaseProvider {
+      async initialize(): Promise<void> {}
+      async cleanup(): Promise<void> {}
+
+      async *query(): AsyncGenerator<ProviderChunk> {
+        throw Object.assign(new Error("503 local phone inference failed"), { status: 503 });
+      }
+    }
+
+    class UnexpectedCloudProvider extends BaseProvider {
+      async initialize(): Promise<void> {}
+      async cleanup(): Promise<void> {}
+
+      async *query(): AsyncGenerator<ProviderChunk> {
+        cloudCalls++;
+        yield { type: "text", delta: "cloud fallback should not run" };
+        yield { type: "finish", reason: "stop" };
+      }
+    }
+
+    try {
+      process.env.PROVIDER_FALLBACK_CHAIN = "openai:gpt-4.1-mini,google:gemini-2.5-flash";
+      _overrideProviderForTesting("android-local-gemma", new FailingAndroidLocalGemmaProvider());
+      _overrideProviderForTesting("openai", new UnexpectedCloudProvider());
+
+      let failedLocally = false;
+      try {
+        await runAgent({
+          model: "android-local-gemma/gemma-4-e4b-it",
+          messages: [{ role: "system", content: "Base prompt." }, { role: "user", content: "Hello" }],
+          tools: [],
+          context: { ...minimalContext },
+          maxTurns: 1,
+        });
+      } catch {
+        failedLocally = true;
+      }
+
+      assert(
+        failedLocally && cloudCalls === 0,
+        `HA-2b: android-local-gemma did not use cloud fallback when local inference failed (cloudCalls=${cloudCalls})`,
+      );
+    } finally {
+      if (previousFallbackChain == null) delete process.env.PROVIDER_FALLBACK_CHAIN;
+      else process.env.PROVIDER_FALLBACK_CHAIN = previousFallbackChain;
+      _clearProviderCacheForTesting();
+    }
   }
 
   // ── HA-3: Sequential-execution rule injected into system message ─────────
@@ -235,7 +297,7 @@ async function run(): Promise<void> {
     _overrideProviderForTesting("openai", new CapturingMockProvider());
 
     await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [{ role: "system", content: "Base prompt." }],
       tools: [androidTapTool],
       context: { ...minimalContext },
@@ -291,7 +353,7 @@ async function run(): Promise<void> {
     _overrideProviderForTesting("openai", provider);
 
     await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [{ role: "system", content: "You are an android agent." }],
       tools: [androidTapTool],
       context: { ...minimalContext },
@@ -353,7 +415,7 @@ async function run(): Promise<void> {
     const receivedTokens: string[] = [];
 
     await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [
         { role: "system", content: "You are an android agent." },
         { role: "user", content: "Open YouTube and tap the first trending video." },
@@ -415,7 +477,7 @@ async function run(): Promise<void> {
     const receivedTokens: string[] = [];
 
     await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [
         { role: "system", content: "You are an android agent." },
         { role: "user", content: "Open YouTube and tap the first trending video." },
@@ -481,7 +543,7 @@ async function run(): Promise<void> {
     _overrideProviderForTesting("openai", new NonStreamingAnnounceMockProvider());
 
     const result = await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [
         { role: "system", content: "You are an android agent." },
         { role: "user", content: "Open YouTube and tap the first trending video." },
@@ -511,7 +573,7 @@ async function run(): Promise<void> {
     _overrideProviderForTesting("openai", provider);
 
     await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [{ role: "system", content: "You are a helpful assistant." }],
       tools: [daemonActionTool],
       context: { ...minimalContext },
@@ -534,7 +596,7 @@ async function run(): Promise<void> {
     _overrideProviderForTesting("openai", provider);
 
     await runAgent({
-      model: "gpt-4o",
+      model: "openai/gpt-4o",
       messages: [{ role: "system", content: "You are a helpful assistant." }],
       tools: [runDaemonShellTool],
       context: { ...minimalContext },

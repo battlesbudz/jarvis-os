@@ -483,6 +483,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "LOCAL_MODEL_DEVICE_MEMORY_LOW", source);
   assertIncludes(contents, "keepEngineWarm", source);
   assertIncludes(contents, "releaseEngine(clearLastError = false)", source);
+  assertIncludes(contents, "retry_cpu", source);
+  assertIncludes(contents, "generationRetries", source);
+  assertIncludes(contents, "shouldRetryGenerationOnCpu", source);
+  assertIncludes(contents, "SupervisorJob(job)", source);
   assertIncludes(contents, "maxNumTokens = contextTokens", source);
   assertIncludes(contents, "engineModelRevision", source);
   assertIncludes(contents, "state.modelRevision == modelRevision", source);
@@ -500,7 +504,7 @@ for (const [contents, source] of [
   assertExcludes(contents, "lockedCurrent?.engine?.close()", source);
   assertIncludes(contents, "hasReachedCompletionLimit(chunks, maxCompletionTokens)", source);
   assertIncludes(contents, 'conversation.cancelProcess()', source);
-  assertIncludes(contents, '.put("finishReason", finishReason)', source);
+  assertIncludes(contents, '.put("finishReason", attempt.finishReason)', source);
   assertIncludes(contents, '.put("completionLimitEnforced", true)', source);
 }
 assertIncludes(manifest, "libOpenCL.so", "AndroidManifest.xml");
