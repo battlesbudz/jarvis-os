@@ -543,6 +543,100 @@ async function testAndroidLocalGemmaEmitsLocalHarnessToolCalls() {
   }
 }
 
+async function testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  const largeSchema = Object.fromEntries(
+    Array.from({ length: 60 }, (_, index) => [`field_${index}`, { type: "string", description: `oversized schema field ${index}` }]),
+  );
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "Hi - I am running locally on your phone.", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Hi" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: `Perform an Android daemon action. ${"oversized_description_marker ".repeat(200)}`,
+          parameters: { type: "object", properties: largeSchema, required: ["field_0"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "Hi - I am running locally on your phone.");
+    assert.equal(requests.length, 1);
+    assert.doesNotMatch(requests[0].op.prompt, /Available tools/);
+    assert.doesNotMatch(requests[0].op.prompt, /oversized_description_marker/);
+    assert.ok(requests[0].op.prompt.length <= 3600);
+    console.log("OK: Android Local Gemma keeps plain auto-tool chat off the local tool protocol");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  const largeSchema = Object.fromEntries(
+    Array.from({ length: 80 }, (_, index) => [`action_field_${index}`, { type: "string", description: `large nested schema field ${index}` }]),
+  );
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "daemon_action", arguments: { action_field_0: "screenshot" } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Can you screenshot my phone?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: `Perform an Android daemon action. ${"safe compact description ".repeat(20)} large_description_tail ${"extra ".repeat(200)}`,
+          parameters: { type: "object", properties: largeSchema, required: ["action_field_0"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.match(requests[0].op.prompt, /Available tools/);
+    assert.match(requests[0].op.prompt, /Args: action_field_0/);
+    assert.doesNotMatch(requests[0].op.prompt, /"properties"/);
+    assert.doesNotMatch(requests[0].op.prompt, /large_description_tail/);
+    assert.ok(requests[0].op.prompt.length <= 3600);
+    console.log("OK: Android Local Gemma compacts local tool prompts for phone inference");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -800,6 +894,8 @@ async function main() {
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
+  await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
+  await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
