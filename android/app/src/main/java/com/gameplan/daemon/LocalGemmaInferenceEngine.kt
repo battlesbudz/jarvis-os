@@ -106,6 +106,7 @@ object LocalGemmaInferenceEngine {
             "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName cpuFallback=$allowCpuFallback context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
         )
 
+        var generationSucceeded = false
         return try {
             var requestedAttemptBackend = backendName
             var requestedSpeculativeDecoding = speculativeDecodingPreference
@@ -138,6 +139,7 @@ object LocalGemmaInferenceEngine {
                     )
                     backendName = attempt.backendName
                     completedRequests.incrementAndGet()
+                    generationSucceeded = true
                     generationResult = OpResult(
                         ok = true,
                         data = JSONObject()
@@ -217,7 +219,7 @@ object LocalGemmaInferenceEngine {
         } finally {
             active.conversation = null
             try {
-                if (!keepEngineWarm) {
+                if (!keepEngineWarm || !generationSucceeded) {
                     releaseEngine(clearLastError = false)
                 }
             } finally {
@@ -359,6 +361,7 @@ object LocalGemmaInferenceEngine {
     }
 
     fun releaseWarmEngine() {
+        if (activeRequests.isNotEmpty()) return
         releaseEngine(clearLastError = false)
     }
 

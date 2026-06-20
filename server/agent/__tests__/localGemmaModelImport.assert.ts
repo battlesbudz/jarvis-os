@@ -124,6 +124,8 @@ assert.match(nativeInferenceEngine, /EngineState\(modelPath, modelRevision, cand
 assert.match(nativeInferenceEngine, /\.put\("requestedBackend", active\.backend\)/);
 assert.match(nativeInferenceEngine, /\.put\("lastEngineError", lastEngineError \?: JSONObject\.NULL\)/);
 assert.match(nativeInferenceEngine, /fun releaseWarmEngine\(\)/);
+assert.match(nativeInferenceEngine, /if \(activeRequests\.isNotEmpty\(\)\) return/);
+assert.match(nativeInferenceEngine, /if \(!keepEngineWarm \|\| !generationSucceeded\)/);
 assert.match(nativeInferenceEngine, /hasReachedCompletionLimit\(chunks, maxCompletionTokens\)/);
 assert.match(nativeInferenceEngine, /finishReason/);
 assert.equal(nativeInferenceEngine.replace(/\r\n/g, "\n"), pluginInferenceEngine.replace(/\r\n/g, "\n"));

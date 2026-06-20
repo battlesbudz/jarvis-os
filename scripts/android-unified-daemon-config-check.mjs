@@ -524,6 +524,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "keepEngineWarm", source);
   assertIncludes(contents, "releaseEngine(clearLastError = false)", source);
   assertIncludes(contents, "fun releaseWarmEngine()", source);
+  assertIncludes(contents, "if (activeRequests.isNotEmpty()) return", source);
+  assertIncludes(contents, "if (!keepEngineWarm || !generationSucceeded)", source);
   assertIncludes(contents, "retry_cpu", source);
   assertIncludes(contents, "generationRetries", source);
   assertIncludes(contents, "shouldRetryGenerationOnCpu", source);
