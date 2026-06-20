@@ -33,8 +33,13 @@ const DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET = 3_600;
 const DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET = 1_600;
 const MAX_TOOL_DESCRIPTION_CHARS = 180;
 const MAX_TOOL_ARGUMENT_NAMES = 12;
-const MAX_DAEMON_TOOL_ARGUMENT_NAMES = 64;
 const MIN_REQUIRED_PROMPT_SECTION_CHARS = 80;
+const MIN_TAIL_PROMPT_SECTION_CHARS = 24;
+const DAEMON_TOOL_ARGUMENT_HINTS = [
+  "packageName", "url", "x", "y", "x1", "y1", "x2", "y2", "durationMs", "key", "text",
+  "path", "query", "root", "fileType", "notificationKey", "replyText", "approved",
+  "facing", "audio", "accuracy", "to", "message", "operatorAction",
+];
 
 type LocalGemmaStructuredOutput =
   | { type: "final"; content: string }
@@ -138,11 +143,8 @@ function latestUserText(messages: OpenAI.Chat.Completions.ChatCompletionMessageP
   return "";
 }
 
-function hasToolTrace(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
-  return messages.some((message) => (
-    message.role === "tool" ||
-    (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0)
-  ));
+function hasActiveToolContinuation(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
+  return messages[messages.length - 1]?.role === "tool";
 }
 
 function looksLikeLocalToolRequest(text: string): boolean {
@@ -152,7 +154,7 @@ function looksLikeLocalToolRequest(text: string): boolean {
 function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
   if (!params.tools?.length || params.toolChoice === "none") return false;
   if (params.toolChoice === "required") return true;
-  return hasToolTrace(params.messages) || looksLikeLocalToolRequest(latestUserText(params.messages));
+  return hasActiveToolContinuation(params.messages) || looksLikeLocalToolRequest(latestUserText(params.messages));
 }
 
 function formatPromptSections(
@@ -195,16 +197,13 @@ function formatPromptSections(
 
   const kept: string[] = [];
   let omittedNonSystem = 0;
-  const remainingBudget = Math.max(300, budgetChars - systemUsed - (keptSystem.length > 0 ? 10 : 0));
+  const remainingBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, budgetChars - systemUsed - (keptSystem.length > 0 ? 10 : 0));
   const tailStartIndex = requiredTailStartIndex(nonSystemSections);
   const tailSections = tailStartIndex >= 0 ? nonSystemSections.slice(tailStartIndex) : [];
   let used = 0;
   if (tailSections.length > 0) {
     const separatorChars = Math.max(0, tailSections.length - 1) * 10;
-    const perSectionBudget = Math.max(
-      MIN_REQUIRED_PROMPT_SECTION_CHARS,
-      Math.floor((remainingBudget - separatorChars) / tailSections.length),
-    );
+    const perSectionBudget = Math.max(MIN_TAIL_PROMPT_SECTION_CHARS, Math.floor((remainingBudget - separatorChars) / tailSections.length));
     const renderedTail = tailSections.map((section) => truncateTextMiddle(section.text, perSectionBudget));
     kept.push(...renderedTail);
     used = renderedTail.join("\n\n---\n\n").length;
@@ -327,13 +326,11 @@ function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutpu
 
 function parameterNames(
   parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"],
-  toolName: string,
 ): string[] {
   if (!parameters || typeof parameters !== "object") return [];
   const properties = (parameters as { properties?: unknown }).properties;
   if (!properties || typeof properties !== "object" || Array.isArray(properties)) return [];
-  const limit = toolName === "daemon_action" ? MAX_DAEMON_TOOL_ARGUMENT_NAMES : MAX_TOOL_ARGUMENT_NAMES;
-  return Object.keys(properties).slice(0, limit);
+  return Object.keys(properties).slice(0, MAX_TOOL_ARGUMENT_NAMES);
 }
 
 function requiredParameterNames(parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]): string[] {
@@ -370,6 +367,24 @@ function requiredEnumSummaries(parameters: OpenAI.Chat.Completions.ChatCompletio
     });
 }
 
+function argumentTextForTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): string {
+  const required = requiredParameterNames(tool.function.parameters);
+  const enumSummaries = requiredEnumSummaries(tool.function.parameters);
+  if (tool.function.name === "daemon_action") {
+    return [
+      " Args: action",
+      `Android args include: ${DAEMON_TOOL_ARGUMENT_HINTS.join(", ")}`,
+      required.length ? `required: ${required.join(", ")}` : "",
+      enumSummaries.join("; "),
+    ].filter(Boolean).join("; ") + ".";
+  }
+
+  const args = parameterNames(tool.function.parameters);
+  return args.length
+    ? ` Args: ${args.join(", ")}${required.length ? `; required: ${required.join(", ")}` : ""}${enumSummaries.length ? `; ${enumSummaries.join("; ")}` : ""}.`
+    : " Args: none or tool-defined JSON.";
+}
+
 function toolRelevanceScore(tool: OpenAI.Chat.Completions.ChatCompletionTool, requestText: string): number {
   if (tool.type !== "function") return 0;
   const normalizedRequest = requestText.toLowerCase();
@@ -397,12 +412,7 @@ function toolSpecsForPrompt(
   let used = 0;
   let omitted = 0;
   for (const tool of toolList) {
-    const args = parameterNames(tool.function.parameters, tool.function.name);
-    const required = requiredParameterNames(tool.function.parameters);
-    const enumSummaries = requiredEnumSummaries(tool.function.parameters);
-    const argumentText = args.length
-      ? ` Args: ${args.join(", ")}${required.length ? `; required: ${required.join(", ")}` : ""}${enumSummaries.length ? `; ${enumSummaries.join("; ")}` : ""}.`
-      : " Args: none or tool-defined JSON.";
+    const argumentText = argumentTextForTool(tool);
     const description = truncateText(tool.function.description, MAX_TOOL_DESCRIPTION_CHARS);
     const line = `- ${tool.function.name}: ${description || "Local Jarvis tool."}${argumentText}`;
     const separatorChars = lines.length > 0 ? 1 : 0;
@@ -426,13 +436,11 @@ function toolPromptFromParams(params: ProviderQueryParams): string {
   const toolSpecs = toolSpecsForPrompt(params.tools, requestText);
   const intro = [
     "You are Jarvis running entirely through Android Local Gemma on the user's phone.",
-    "You decide whether Jarvis should answer directly or request a local harness tool call.",
-    "You do not execute tools yourself. Jarvis executes any tool call you request and sends the result back in the next message.",
-    "Tool result messages are authoritative observations from Jarvis. Use them directly.",
-    "Return ONLY one JSON object. Do not use markdown, code fences, or extra text.",
-    "For tool use, return exactly:",
+    "Return ONLY one JSON object, with no markdown or extra text.",
+    "Jarvis executes requested local tools and sends tool results back; tool results are authoritative.",
+    "Tool use shape:",
     `{"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
-    "For a final answer, return exactly:",
+    "Final answer shape:",
     `{"type":"final","content":"your reply to the user"}`,
     params.toolChoice === "required"
       ? "A tool call is required for this turn. Do not return a final answer."
@@ -442,7 +450,7 @@ function toolPromptFromParams(params: ProviderQueryParams): string {
   ].join("\n");
 
   const promptBudget = phoneGemmaPromptCharBudget();
-  const conversationBudget = Math.max(600, promptBudget - intro.length - 32);
+  const conversationBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, promptBudget - intro.length - 32);
 
   return [
     intro,
@@ -462,7 +470,7 @@ function chatPromptFromParams(params: ProviderQueryParams): string {
     `Local model: ${normalizeAndroidLocalGemmaModel(params.model)}.`,
   ].filter(Boolean).join("\n");
   const promptBudget = phoneGemmaPromptCharBudget();
-  const conversationBudget = Math.max(600, promptBudget - intro.length - 16);
+  const conversationBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, promptBudget - intro.length - 16);
   return [
     intro,
     "",
