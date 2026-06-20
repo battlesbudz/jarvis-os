@@ -26,12 +26,11 @@ object LocalGemmaModelManager {
         val inference = LocalGemmaInferenceEngine.status()
         val engineLastValidationError = optionalString(metadata, "engineLastValidationError")
         val lastEngineError = optionalString(inference, "lastEngineError")
-        val validationError = lastEngineError ?: engineLastValidationError
         val engineValidatedRevision = optionalString(metadata, "engineValidatedRevision")
         val engineValidated = modelFileReady &&
             modelRevision != null &&
-            engineValidatedRevision == modelRevision &&
-            validationError == null
+            engineValidatedRevision == modelRevision
+        val validationError = if (engineValidated) null else lastEngineError ?: engineLastValidationError
         val needsEngineValidation = modelFileReady && !engineValidated
         val generationReady = engineValidated
         val sizeBytes = if (modelFileReady) file.length() else 0L
@@ -380,33 +379,37 @@ object LocalGemmaModelManager {
 
     private fun markValidationError(context: Context, model: String, modelRevision: String, op: JSONObject, error: String) {
         val metadata = readMetadata(context, model) ?: JSONObject()
+        val existingValidationStillMatches = optionalString(metadata, "engineValidatedRevision") == modelRevision
         metadata
             .put("provider", "android-local-gemma")
             .put("runtime", "android-app")
             .put("storageOwner", "jarvis-android-app")
             .put("engine", ENGINE)
             .put("model", model)
-            .put("ready", false)
+            .put("ready", existingValidationStillMatches)
             .put("engineBundled", true)
-            .put("generationReady", false)
+            .put("generationReady", existingValidationStillMatches)
             .put("needsModelImport", false)
             .put("needsEngineBundle", false)
-            .put("needsEngineValidation", true)
-            .put("engineValidated", false)
-            .put("engineValidatedRevision", JSONObject.NULL)
-            .put("engineValidatedAtMs", JSONObject.NULL)
-            .put("engineValidatedBackend", JSONObject.NULL)
-            .put("engineValidatedSpeculativeDecoding", JSONObject.NULL)
-            .put("engineValidatedDecodingMode", JSONObject.NULL)
-            .put("engineValidatedContextTokens", JSONObject.NULL)
-            .put("engineValidatedCpuFallbackAllowed", JSONObject.NULL)
-            .put("engineValidatedProfileId", JSONObject.NULL)
-            .put("engineValidatedProfileLabel", JSONObject.NULL)
+            .put("needsEngineValidation", !existingValidationStillMatches)
             .put("engineLastValidationError", error)
             .put("engineLastValidationRevision", modelRevision)
             .put("engineLastValidationAtMs", System.currentTimeMillis())
             .put("engineLastValidationProfileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineLastValidationProfileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+        if (!existingValidationStillMatches) {
+            metadata
+                .put("engineValidated", false)
+                .put("engineValidatedRevision", JSONObject.NULL)
+                .put("engineValidatedAtMs", JSONObject.NULL)
+                .put("engineValidatedBackend", JSONObject.NULL)
+                .put("engineValidatedSpeculativeDecoding", JSONObject.NULL)
+                .put("engineValidatedDecodingMode", JSONObject.NULL)
+                .put("engineValidatedContextTokens", JSONObject.NULL)
+                .put("engineValidatedCpuFallbackAllowed", JSONObject.NULL)
+                .put("engineValidatedProfileId", JSONObject.NULL)
+                .put("engineValidatedProfileLabel", JSONObject.NULL)
+        }
         writeMetadata(context, model, metadata)
     }
 
