@@ -474,6 +474,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, generationOpForValidatedProfile(op, metadata))", source);
   assertIncludes(contents, "generationOpForValidatedProfile", source);
   assertIncludes(contents, "fun smokeTest(context: Context, op: JSONObject): OpResult", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.releaseWarmEngine()", source);
   assertIncludes(contents, "val validationError = if (engineValidated) null else lastEngineError ?: engineLastValidationError", source);
   assertIncludes(contents, "preserveExistingValidation", source);
   assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
@@ -522,6 +523,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "LOCAL_MODEL_DEVICE_MEMORY_LOW", source);
   assertIncludes(contents, "keepEngineWarm", source);
   assertIncludes(contents, "releaseEngine(clearLastError = false)", source);
+  assertIncludes(contents, "fun releaseWarmEngine()", source);
   assertIncludes(contents, "retry_cpu", source);
   assertIncludes(contents, "generationRetries", source);
   assertIncludes(contents, "shouldRetryGenerationOnCpu", source);

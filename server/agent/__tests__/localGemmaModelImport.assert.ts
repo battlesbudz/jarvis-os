@@ -67,6 +67,7 @@ assert.match(nativeModelManager, /val modelRevision = buildModelRevision\(contex
 assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.validate\(context, model, file, modelRevision, op\)/);
 assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.generate\(context, model, file, modelRevision, generationOpForValidatedProfile\(op, metadata\)\)/);
 assert.match(nativeModelManager, /fun smokeTest\(context: Context, op: JSONObject\): OpResult/);
+assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.releaseWarmEngine\(\)/);
 assert.match(nativeModelManager, /val validationError = if \(engineValidated\) null else lastEngineError \?: engineLastValidationError/);
 assert.match(nativeModelManager, /preserveExistingValidation/);
 assert.match(nativeModelManager, /\.put\("modelFileReady", modelFileReady\)/);
@@ -122,6 +123,7 @@ assert.match(nativeInferenceEngine, /val initializedEngine = Engine\(/);
 assert.match(nativeInferenceEngine, /EngineState\(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, initializedEngine\)/);
 assert.match(nativeInferenceEngine, /\.put\("requestedBackend", active\.backend\)/);
 assert.match(nativeInferenceEngine, /\.put\("lastEngineError", lastEngineError \?: JSONObject\.NULL\)/);
+assert.match(nativeInferenceEngine, /fun releaseWarmEngine\(\)/);
 assert.match(nativeInferenceEngine, /hasReachedCompletionLimit\(chunks, maxCompletionTokens\)/);
 assert.match(nativeInferenceEngine, /finishReason/);
 assert.equal(nativeInferenceEngine.replace(/\r\n/g, "\n"), pluginInferenceEngine.replace(/\r\n/g, "\n"));

@@ -358,6 +358,10 @@ object LocalGemmaInferenceEngine {
         }
     }
 
+    fun releaseWarmEngine() {
+        releaseEngine(clearLastError = false)
+    }
+
     private fun runGenerationAttempt(
         context: Context,
         modelPath: String,

@@ -249,32 +249,36 @@ object LocalGemmaModelManager {
         var failed = 0
         val startedAtMs = System.currentTimeMillis()
 
-        prompts.forEachIndexed { index, prompt ->
-            val promptOp = generationOpForValidatedProfile(
-                JSONObject()
-                    .put("model", model)
-                    .put("requestId", "phone-gemma-smoke-${prompt.first}-${System.currentTimeMillis()}")
-                    .put("prompt", prompt.second)
-                    .put("maxTokens", if (prompt.first == "ready") 16 else 48)
-                    .put("keepEngineWarm", index < prompts.lastIndex),
-                metadata,
-            )
-            val result = LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, promptOp)
-            val data = result.data as? JSONObject
-            if (!result.ok) failed += 1
-            runs.put(
-                JSONObject()
-                    .put("id", prompt.first)
-                    .put("ok", result.ok)
-                    .put("backend", data?.optString("backend")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                    .put("decodingMode", data?.optString("decodingMode")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                    .put("contextTokens", data?.optInt("contextTokens") ?: JSONObject.NULL)
-                    .put("durationMs", data?.optLong("durationMs") ?: JSONObject.NULL)
-                    .put("outputChars", data?.optInt("outputChars") ?: JSONObject.NULL)
-                    .put("text", data?.optString("text")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                    .put("error", result.error ?: JSONObject.NULL)
-                    .put("order", index + 1)
-            )
+        try {
+            prompts.forEachIndexed { index, prompt ->
+                val promptOp = generationOpForValidatedProfile(
+                    JSONObject()
+                        .put("model", model)
+                        .put("requestId", "phone-gemma-smoke-${prompt.first}-${System.currentTimeMillis()}")
+                        .put("prompt", prompt.second)
+                        .put("maxTokens", if (prompt.first == "ready") 16 else 48)
+                        .put("keepEngineWarm", index < prompts.lastIndex),
+                    metadata,
+                )
+                val result = LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, promptOp)
+                val data = result.data as? JSONObject
+                if (!result.ok) failed += 1
+                runs.put(
+                    JSONObject()
+                        .put("id", prompt.first)
+                        .put("ok", result.ok)
+                        .put("backend", data?.optString("backend")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                        .put("decodingMode", data?.optString("decodingMode")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                        .put("contextTokens", data?.optInt("contextTokens") ?: JSONObject.NULL)
+                        .put("durationMs", data?.optLong("durationMs") ?: JSONObject.NULL)
+                        .put("outputChars", data?.optInt("outputChars") ?: JSONObject.NULL)
+                        .put("text", data?.optString("text")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                        .put("error", result.error ?: JSONObject.NULL)
+                        .put("order", index + 1)
+                )
+            }
+        } finally {
+            LocalGemmaInferenceEngine.releaseWarmEngine()
         }
 
         return OpResult(
