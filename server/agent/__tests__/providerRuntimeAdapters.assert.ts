@@ -637,6 +637,51 @@ async function testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat() {
   }
 }
 
+async function testAndroidLocalGemmaUsesToolProtocolForUrlTools() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "get_youtube_transcript", arguments: { url: "https://youtu.be/example" } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "summarize https://youtu.be/example" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList[0].function.name, "get_youtube_transcript");
+    assert.match(requests[0].op.prompt, /Available tools/);
+    assert.match(requests[0].op.prompt, /get_youtube_transcript/);
+    console.log("OK: Android Local Gemma keeps tool protocol for URL-backed local tools");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   const largeSchema = {
@@ -1178,6 +1223,7 @@ async function main() {
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
   await testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat();
+  await testAndroidLocalGemmaUsesToolProtocolForUrlTools();
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaHonorsReducedToolPromptBudget();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();

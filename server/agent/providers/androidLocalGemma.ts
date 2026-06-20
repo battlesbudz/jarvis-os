@@ -151,10 +151,31 @@ function looksLikeLocalToolRequest(text: string): boolean {
   return /\b(screenshot|screen shot|photo|picture|camera|microphone|mic|record|open|launch|tap|click|press|swipe|scroll|type|enter|back|home|settings|permission|bluetooth|wifi|wi-fi|call|text|sms|message|location|map|maps|navigate|alarm|timer|reminder|calendar|volume|brightness|flashlight|read|show|look at|what'?s on|what is on|phone|device|app|apps|control|enable|disable|turn on|turn off)\b/i.test(text);
 }
 
+function looksLikeUrlToolRequest(text: string): boolean {
+  return /\b(?:https?:\/\/|www\.|youtu\.be\/|youtube\.com\/)/i.test(text);
+}
+
+function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
+  const latest = latestUserText(messages).trim();
+  if (!/^(?:yes|yeah|yep|ok|okay|sure|do it|go ahead|please do)$/i.test(latest)) return false;
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    const text = textFromContent(message.content);
+    return /\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead)\b/i.test(text) &&
+      (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text));
+  }
+  return false;
+}
+
 function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
   if (!params.tools?.length || params.toolChoice === "none") return false;
   if (params.toolChoice === "required") return true;
-  return hasActiveToolContinuation(params.messages) || looksLikeLocalToolRequest(latestUserText(params.messages));
+  const latest = latestUserText(params.messages);
+  return hasActiveToolContinuation(params.messages) ||
+    looksLikeLocalToolRequest(latest) ||
+    looksLikeUrlToolRequest(latest) ||
+    isToolConfirmationTurn(params.messages);
 }
 
 function formatPromptSections(
