@@ -30,11 +30,14 @@ object LocalGemmaInferenceEngine {
     private const val PROVIDER = "android-local-gemma"
     private const val RUNTIME = "android-app"
     private const val DEFAULT_BACKEND = "auto"
-    private const val DEFAULT_CONTEXT_TOKENS = 1024
+    private const val DEFAULT_CONTEXT_TOKENS = 2048
     private const val DEFAULT_MAX_COMPLETION_TOKENS = 128
     private const val MIN_GPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
-    private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 3200L * 1024L * 1024L
+    private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 2800L * 1024L * 1024L
     private const val APPROX_CHARS_PER_TOKEN = 4
+    private const val PROMPT_CHARS_PER_CONTEXT_TOKEN = 3
+    private const val MIN_PROMPT_CONTEXT_RESERVE_TOKENS = 64
+    private const val MIN_TRIMMED_PROMPT_HEAD_CHARS = 256
     private const val DEFAULT_TOP_K = 40
     private const val DEFAULT_TOP_P = 0.95
     private const val DEFAULT_TEMPERATURE = 0.8
@@ -67,11 +70,12 @@ object LocalGemmaInferenceEngine {
     }
 
     fun generate(context: Context, model: String, modelFile: File, modelRevision: String, op: JSONObject): OpResult {
-        val prompt = op.optString("prompt", "")
+        val rawPrompt = op.optString("prompt", "")
         val requestId = op.optString("requestId", "").ifBlank { UUID.randomUUID().toString() }
         var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val maxCompletionTokens = op.optInt("maxTokens", DEFAULT_MAX_COMPLETION_TOKENS).coerceIn(1, 8192)
+        val prompt = trimPromptForContext(rawPrompt, contextTokens, maxCompletionTokens)
         val keepEngineWarm = op.optBoolean("keepEngineWarm", false)
         val topK = op.optInt("topK", DEFAULT_TOP_K).coerceAtLeast(1)
         val topP = op.optDouble("topP", DEFAULT_TOP_P).coerceIn(0.0, 1.0)
@@ -83,6 +87,9 @@ object LocalGemmaInferenceEngine {
         if (activeRequests.containsKey(requestId)) {
             return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
         }
+        if (prompt.length != rawPrompt.length) {
+            DaemonLog.add("local_gemma: trimmed prompt request=${shortRequestId(requestId)} chars=${rawPrompt.length}->${prompt.length} context=$contextTokens max=$maxCompletionTokens")
+        }
         lowMemoryError(memory, backendName)?.let { error ->
             DaemonLog.add("local_gemma: memory low request=${shortRequestId(requestId)} $error")
             return OpResult(false, error = error)
@@ -92,7 +99,7 @@ object LocalGemmaInferenceEngine {
         val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, startedAtMs, job)
         registerActiveRequest(active)?.let { return it }
         DaemonLog.add(
-            "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName context=$contextTokens max=$maxCompletionTokens availMem=${formatMiB(memory.availableBytes)}MB"
+            "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
         )
 
         return try {
@@ -138,6 +145,8 @@ object LocalGemmaInferenceEngine {
                             .put("requestedBackend", active.backend)
                             .put("contextTokens", contextTokens)
                             .put("maxCompletionTokens", maxCompletionTokens)
+                            .put("inputChars", prompt.length)
+                            .put("inputTrimmed", prompt.length != rawPrompt.length)
                             .put("engineKeptWarm", keepEngineWarm)
                             .put("generationRetries", generationRetries)
                             .put("finishReason", attempt.finishReason)
@@ -360,6 +369,25 @@ object LocalGemmaInferenceEngine {
         val underMinimum = memory.availableBytes != Long.MAX_VALUE && memory.availableBytes < minimumBytes
         if (!memory.lowMemory && !underMinimum) return null
         return "LOCAL_MODEL_DEVICE_MEMORY_LOW: backend=$backendName available=${formatMiB(memory.availableBytes)}MB threshold=${formatMiB(memory.thresholdBytes)}MB minimum=${formatMiB(minimumBytes)}MB lowMemory=${memory.lowMemory}"
+    }
+
+    private fun trimPromptForContext(prompt: String, contextTokens: Int, maxCompletionTokens: Int): String {
+        val promptTokens = (contextTokens - maxCompletionTokens - MIN_PROMPT_CONTEXT_RESERVE_TOKENS).coerceAtLeast(128)
+        val maxPromptChars = promptTokens * PROMPT_CHARS_PER_CONTEXT_TOKEN
+        if (prompt.length <= maxPromptChars) return prompt
+
+        val marker = "\n\n[Earlier local prompt text omitted by Jarvis Android to fit the Phone Gemma context window.]\n\n"
+        val bodyBudget = maxPromptChars - marker.length
+        if (bodyBudget <= MIN_TRIMMED_PROMPT_HEAD_CHARS * 2) {
+            return prompt.takeLast(maxPromptChars).trimStart()
+        }
+
+        val headChars = (bodyBudget * 0.4)
+            .toInt()
+            .coerceAtLeast(MIN_TRIMMED_PROMPT_HEAD_CHARS)
+            .coerceAtMost(bodyBudget - MIN_TRIMMED_PROMPT_HEAD_CHARS)
+        val tailChars = bodyBudget - headChars
+        return prompt.take(headChars).trimEnd() + marker + prompt.takeLast(tailChars).trimStart()
     }
 
     private fun minimumAvailableMemoryBytes(backendName: String): Long {

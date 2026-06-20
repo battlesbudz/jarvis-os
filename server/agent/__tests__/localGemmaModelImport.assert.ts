@@ -57,11 +57,13 @@ assert.match(nativeModelManager, /\.put\("generationReady", generationReady\)/);
 assert.match(nativeModelManager, /\.put\("needsEngineBundle", false\)/);
 assert.doesNotMatch(nativeModelManager, /ENGINE_NOT_BUNDLED_MESSAGE/);
 assert.match(nativeInferenceEngine, /EngineConfig\(/);
-assert.match(nativeInferenceEngine, /DEFAULT_CONTEXT_TOKENS = 1024/);
+assert.match(nativeInferenceEngine, /DEFAULT_CONTEXT_TOKENS = 2048/);
 assert.match(nativeInferenceEngine, /DEFAULT_MAX_COMPLETION_TOKENS = 128/);
 assert.match(nativeInferenceEngine, /MIN_GPU_AVAILABLE_MEMORY_BYTES/);
 assert.match(nativeInferenceEngine, /MIN_CPU_AVAILABLE_MEMORY_BYTES/);
-assert.match(nativeInferenceEngine, /MIN_CPU_AVAILABLE_MEMORY_BYTES = 3200L \* 1024L \* 1024L/);
+assert.match(nativeInferenceEngine, /MIN_CPU_AVAILABLE_MEMORY_BYTES = 2800L \* 1024L \* 1024L/);
+assert.match(nativeInferenceEngine, /trimPromptForContext/);
+assert.match(nativeInferenceEngine, /\.put\("inputTrimmed", prompt\.length != rawPrompt\.length\)/);
 assert.match(nativeInferenceEngine, /speculativeDecodingCandidates\(preference: Boolean\?\): List<Boolean>/);
 assert.match(nativeInferenceEngine, /ExperimentalFlags\.enableSpeculativeDecoding = enableSpeculativeDecoding/);
 assert.match(nativeInferenceEngine, /decodingModeName\(speculativeDecodingEnabled\)/);
@@ -93,6 +95,6 @@ assert.match(nativeInferenceEngine, /\.put\("requestedBackend", active\.backend\
 assert.match(nativeInferenceEngine, /\.put\("lastEngineError", lastEngineError \?: JSONObject\.NULL\)/);
 assert.match(nativeInferenceEngine, /hasReachedCompletionLimit\(chunks, maxCompletionTokens\)/);
 assert.match(nativeInferenceEngine, /finishReason/);
-assert.equal(nativeInferenceEngine, pluginInferenceEngine);
+assert.equal(nativeInferenceEngine.replace(/\r\n/g, "\n"), pluginInferenceEngine.replace(/\r\n/g, "\n"));
 
 console.log("OK: Android app imports local Gemma and native ops read it with bundled LiteRT-LM generation");

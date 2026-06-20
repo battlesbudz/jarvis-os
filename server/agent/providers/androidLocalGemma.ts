@@ -27,8 +27,19 @@ type AndroidLocalGemmaDaemonOp = (
 let daemonOpForTesting: AndroidLocalGemmaDaemonOp | null = null;
 
 const DEFAULT_PHONE_GEMMA_TIMEOUT_MS = 60_000;
-const DEFAULT_PHONE_GEMMA_CONTEXT_TOKENS = 1024;
+const DEFAULT_PHONE_GEMMA_CONTEXT_TOKENS = 2048;
 const DEFAULT_PHONE_GEMMA_MAX_COMPLETION_TOKENS = 128;
+const DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET = 3_600;
+const DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET = 1_600;
+const MAX_TOOL_DESCRIPTION_CHARS = 180;
+const MAX_TOOL_ARGUMENT_NAMES = 12;
+const MIN_REQUIRED_PROMPT_SECTION_CHARS = 80;
+const MIN_TAIL_PROMPT_SECTION_CHARS = 24;
+const DAEMON_TOOL_ARGUMENT_HINTS = [
+  "packageName", "url", "x", "y", "x1", "y1", "x2", "y2", "durationMs", "key", "text",
+  "path", "query", "root", "fileType", "notificationKey", "replyText", "approved",
+  "facing", "audio", "accuracy", "to", "message", "operatorAction",
+];
 
 type LocalGemmaStructuredOutput =
   | { type: "final"; content: string }
@@ -54,6 +65,14 @@ function phoneGemmaMaxCompletionTokens(requested: number | undefined): number {
   const ceiling = intEnv("ANDROID_LOCAL_GEMMA_MAX_COMPLETION_TOKENS", DEFAULT_PHONE_GEMMA_MAX_COMPLETION_TOKENS, 16, 512);
   const wanted = typeof requested === "number" && Number.isFinite(requested) ? Math.floor(requested) : ceiling;
   return Math.min(ceiling, Math.max(1, wanted));
+}
+
+function phoneGemmaPromptCharBudget(): number {
+  return intEnv("ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET", DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET, 1_200, 12_000);
+}
+
+function phoneGemmaToolListCharBudget(): number {
+  return intEnv("ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET", DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET, 500, 6_000);
 }
 
 function shouldCancelTimedOutGeneration(result: DaemonOpResult): boolean {
@@ -99,11 +118,184 @@ function messageForPrompt(message: OpenAI.Chat.Completions.ChatCompletionMessage
   return `${message.role}: ${content}`;
 }
 
-function promptFromMessages(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string {
-  return messages
-    .map(messageForPrompt)
-    .filter((line) => line.trim().length > 0)
-    .join("\n\n");
+function truncateText(value: string | undefined, maxChars: number): string {
+  const text = (value || "").replace(/\s+/g, " ").trim();
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
+}
+
+function truncateTextMiddle(value: string, maxChars: number): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 12) return truncateText(text, maxChars);
+  const marker = " ... ";
+  const available = maxChars - marker.length;
+  const headChars = Math.ceil(available * 0.55);
+  const tailChars = Math.max(0, available - headChars);
+  return `${text.slice(0, headChars).trimEnd()}${marker}${text.slice(text.length - tailChars).trimStart()}`;
+}
+
+function latestUserText(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "user") return textFromContent(message.content);
+  }
+  return "";
+}
+
+function shouldOmitLocalRuntimeErrorMessage(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): boolean {
+  if (message.role !== "assistant" || message.tool_calls?.length) return false;
+  const text = textFromContent(message.content).trim();
+  return /^Error:\s*(?:LOCAL_MODEL_|Phone Gemma|Android Local Gemma|Jarvis Android app device control)/i.test(text) ||
+    /\bLOCAL_MODEL_(?:GENERATION_FAILED|DEVICE_MEMORY_LOW|BUSY|CANCELLED|ENGINE_NOT_BUNDLED)\b/i.test(text) ||
+    /^Phone Gemma (?:could not|finished without|timed out|is still working)/i.test(text);
+}
+
+function hasActiveToolContinuation(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
+  return messages[messages.length - 1]?.role === "tool";
+}
+
+function looksLikeLocalToolRequest(text: string): boolean {
+  return /\b(screenshot|screen shot|photo|picture|camera|microphone|mic|record|open|launch|tap|click|press|swipe|scroll|type|enter|back|home|settings|permission|bluetooth|wifi|wi-fi|call|text|sms|message|location|map|maps|navigate|alarm|timer|reminder|calendar|volume|brightness|flashlight|read|show|look at|what'?s on|what is on|phone|device|app|apps|control|enable|disable|turn on|turn off)\b/i.test(text);
+}
+
+function looksLikeUrlToolRequest(text: string): boolean {
+  return /\b(?:https?:\/\/|www\.|youtu\.be\/|youtube\.com\/)/i.test(text);
+}
+
+function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
+  const latest = latestUserText(messages).trim();
+  if (!looksLikeApprovalConfirmation(latest)) return false;
+  let assistantIndex = -1;
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    assistantIndex = index;
+    const text = textFromContent(message.content);
+    if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(text)) return false;
+    if (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text)) return true;
+    break;
+  }
+
+  if (assistantIndex < 0) return false;
+  const scanStart = Math.max(0, assistantIndex - 4);
+  for (let index = assistantIndex - 1; index >= scanStart; index -= 1) {
+    const message = messages[index];
+    if (message.role === "tool") return true;
+    if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
+    if (message.role === "user") {
+      const text = textFromContent(message.content);
+      if (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text)) return true;
+    }
+  }
+  return false;
+}
+
+function looksLikeApprovalConfirmation(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /^(?:yes|yeah|yep|ok|okay|sure)(?: please)?(?: go ahead| do it| proceed| continue)?$/.test(normalized) ||
+    /^(?:go ahead|do it|please do|please do it|please proceed|proceed|continue)$/.test(normalized);
+}
+
+function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
+  if (!params.tools?.length || params.toolChoice === "none") return false;
+  if (params.toolChoice === "required") return true;
+  const latest = latestUserText(params.messages);
+  return hasActiveToolContinuation(params.messages) ||
+    looksLikeLocalToolRequest(latest) ||
+    looksLikeUrlToolRequest(latest) ||
+    isToolConfirmationTurn(params.messages);
+}
+
+function formatPromptSections(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  budgetChars: number,
+  includeIndexes: boolean,
+): string {
+  const promptMessages = messages.filter((message) => !shouldOmitLocalRuntimeErrorMessage(message));
+  const omittedRuntimeErrors = messages.length - promptMessages.length;
+  const sections = promptMessages
+    .map((message, index) => {
+      const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
+      const heading = includeIndexes ? `Message ${index + 1} [${message.role}${name}]` : "";
+      return {
+        role: message.role,
+        hasToolCalls: message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0,
+        text: [heading, messageForPrompt(message)].filter(Boolean).join("\n").trim(),
+      };
+    })
+    .filter((section) => section.text.length > 0);
+
+  const systemSections = sections.filter((section) => section.role === "system");
+  const nonSystemSections = sections.filter((section) => section.role !== "system");
+
+  const keptSystem: string[] = [];
+  let systemUsed = 0;
+  let omittedSystem = 0;
+  if (systemSections.length > 0) {
+    const systemBudget = Math.min(Math.max(400, Math.floor(budgetChars * 0.35)), Math.max(250, budgetChars - 300));
+    for (const section of systemSections) {
+      const separatorChars = keptSystem.length > 0 ? 10 : 0;
+      const available = systemBudget - systemUsed - separatorChars;
+      if (available < 120) {
+        omittedSystem += 1;
+        continue;
+      }
+      const text = truncateTextMiddle(section.text, available);
+      keptSystem.push(text);
+      systemUsed += separatorChars + text.length;
+    }
+  }
+
+  const kept: string[] = [];
+  let omittedNonSystem = 0;
+  const remainingBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, budgetChars - systemUsed - (keptSystem.length > 0 ? 10 : 0));
+  const tailStartIndex = requiredTailStartIndex(nonSystemSections);
+  const tailSections = tailStartIndex >= 0 ? nonSystemSections.slice(tailStartIndex) : [];
+  let used = 0;
+  if (tailSections.length > 0) {
+    const separatorChars = Math.max(0, tailSections.length - 1) * 10;
+    const perSectionBudget = Math.max(MIN_TAIL_PROMPT_SECTION_CHARS, Math.floor((remainingBudget - separatorChars) / tailSections.length));
+    const renderedTail = tailSections.map((section) => truncateTextMiddle(section.text, perSectionBudget));
+    kept.push(...renderedTail);
+    used = renderedTail.join("\n\n---\n\n").length;
+  }
+
+  for (let index = tailStartIndex - 1; index >= 0; index -= 1) {
+    const section = nonSystemSections[index].text;
+    const separatorChars = kept.length > 0 ? 10 : 0;
+    if (used + separatorChars + section.length <= remainingBudget) {
+      kept.unshift(section);
+      used += separatorChars + section.length;
+      continue;
+    }
+    omittedNonSystem += 1;
+  }
+
+  const omitted = omittedSystem + omittedNonSystem + omittedRuntimeErrors;
+  const prefix = omitted > 0 ? [`[${omitted} earlier message${omitted === 1 ? "" : "s"} omitted to keep Phone Gemma inside its local context budget.]`] : [];
+  return [...prefix, ...keptSystem, ...kept].join("\n\n---\n\n");
+}
+
+function requiredTailStartIndex<TSection extends { role: string; hasToolCalls?: boolean }>(sections: TSection[]): number {
+  if (sections.length === 0) return -1;
+  let index = sections.length - 1;
+  if (sections[index].role !== "tool") return index;
+
+  while (index > 0 && sections[index - 1].role === "tool") {
+    index -= 1;
+  }
+  if (index > 0 && sections[index - 1].role === "assistant") {
+    index -= 1;
+  }
+  if (index > 0 && sections[index - 1].role === "user") {
+    index -= 1;
+  }
+  return index;
 }
 
 function extractJsonObject(raw: string): unknown | null {
@@ -188,41 +380,167 @@ function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutpu
   return { type: "final", content: raw.trim() };
 }
 
-function toolSpecsForPrompt(tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined): Array<Record<string, unknown>> {
-  return tools?.flatMap((tool) => {
-    if (tool.type !== "function") return [];
-    return [{
-      name: tool.function.name,
-      description: tool.function.description,
-      parameters: tool.function.parameters,
-    }];
-  }) ?? [];
+function parameterNames(
+  parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"],
+): string[] {
+  if (!parameters || typeof parameters !== "object") return [];
+  const properties = (parameters as { properties?: unknown }).properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return [];
+  return Object.keys(properties).slice(0, MAX_TOOL_ARGUMENT_NAMES);
+}
+
+function requiredParameterNames(parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]): string[] {
+  if (!parameters || typeof parameters !== "object") return [];
+  const required = (parameters as { required?: unknown }).required;
+  return Array.isArray(required)
+    ? required.filter((item): item is string => typeof item === "string").slice(0, MAX_TOOL_ARGUMENT_NAMES)
+    : [];
+}
+
+function enumValuesForParameter(
+  parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"],
+  name: string,
+): string[] {
+  if (!parameters || typeof parameters !== "object") return [];
+  const properties = (parameters as { properties?: unknown }).properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return [];
+  const property = (properties as Record<string, unknown>)[name];
+  if (!property || typeof property !== "object" || Array.isArray(property)) return [];
+  const enumValues = (property as { enum?: unknown }).enum;
+  if (!Array.isArray(enumValues)) return [];
+  return enumValues
+    .filter((value): value is string | number | boolean => (
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ))
+    .map((value) => String(value));
+}
+
+function requiredEnumSummaries(parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]): string[] {
+  return requiredParameterNames(parameters)
+    .flatMap((name) => {
+      const values = enumValuesForParameter(parameters, name);
+      return values.length ? [`${name} enum: ${values.join(", ")}`] : [];
+    });
+}
+
+function argumentTextForTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): string {
+  const required = requiredParameterNames(tool.function.parameters);
+  const enumSummaries = requiredEnumSummaries(tool.function.parameters);
+  if (tool.function.name === "daemon_action") {
+    return [
+      " Args: action",
+      `Android args include: ${DAEMON_TOOL_ARGUMENT_HINTS.join(", ")}`,
+      required.length ? `required: ${required.join(", ")}` : "",
+      enumSummaries.join("; "),
+    ].filter(Boolean).join("; ") + ".";
+  }
+
+  const args = parameterNames(tool.function.parameters);
+  return args.length
+    ? ` Args: ${args.join(", ")}${required.length ? `; required: ${required.join(", ")}` : ""}${enumSummaries.length ? `; ${enumSummaries.join("; ")}` : ""}.`
+    : " Args: none or tool-defined JSON.";
+}
+
+function toolRelevanceScore(tool: OpenAI.Chat.Completions.ChatCompletionTool, requestText: string): number {
+  if (tool.type !== "function") return 0;
+  const normalizedRequest = requestText.toLowerCase();
+  const searchable = `${tool.function.name} ${tool.function.description || ""}`.toLowerCase();
+  let score = 0;
+  for (const token of normalizedRequest.match(/[a-z0-9_]{3,}/g) || []) {
+    if (searchable.includes(token)) score += 1;
+  }
+  if (/android|phone|device|screen|screenshot|tap|open|app|permission|bluetooth|wifi|location/.test(normalizedRequest)) {
+    if (/android|daemon|device|phone|screen|app|control|automation/.test(searchable)) score += 5;
+  }
+  return score;
+}
+
+function toolSpecsForPrompt(
+  tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+  requestText: string,
+  budgetLimit: number = phoneGemmaToolListCharBudget(),
+): string {
+  const toolList = (tools || [])
+    .filter((tool) => tool.type === "function")
+    .sort((a, b) => toolRelevanceScore(b, requestText) - toolRelevanceScore(a, requestText));
+
+  const budget = Math.max(160, Math.min(phoneGemmaToolListCharBudget(), budgetLimit));
+  const lines: string[] = [];
+  let used = 0;
+  let omitted = 0;
+  for (const tool of toolList) {
+    const argumentText = argumentTextForTool(tool);
+    const description = truncateText(tool.function.description, MAX_TOOL_DESCRIPTION_CHARS);
+    const line = `- ${tool.function.name}: ${description || "Local Jarvis tool."}${argumentText}`;
+    const separatorChars = lines.length > 0 ? 1 : 0;
+    if (used + separatorChars + line.length > budget) {
+      if (lines.length === 0) {
+        lines.push(truncateText(line, budget));
+        used = lines[0].length;
+        continue;
+      }
+      omitted += 1;
+      continue;
+    }
+    lines.push(line);
+    used += separatorChars + line.length;
+  }
+
+  if (omitted > 0) {
+    lines.push(`- ${omitted} lower-relevance tool${omitted === 1 ? "" : "s"} omitted to keep the phone-local prompt small.`);
+  }
+
+  return lines.join("\n");
 }
 
 function toolPromptFromParams(params: ProviderQueryParams): string {
-  const sections = params.messages.map((message, index) => {
-    const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
-    return `Message ${index + 1} [${message.role}${name}]\n${messageForPrompt(message)}`;
-  });
-
-  return [
+  const requestText = latestUserText(params.messages);
+  const promptBudget = phoneGemmaPromptCharBudget();
+  const baseIntro = [
     "You are Jarvis running entirely through Android Local Gemma on the user's phone.",
-    "You decide whether Jarvis should answer directly or request a local harness tool call.",
-    "You do not execute tools yourself. Jarvis executes any tool call you request and sends the result back in the next message.",
-    "Tool result messages are authoritative observations from Jarvis. Use them directly.",
-    "Return ONLY one JSON object. Do not use markdown, code fences, or extra text.",
-    "For tool use, return exactly:",
+    "Return ONLY one JSON object, with no markdown or extra text.",
+    "Jarvis executes requested local tools and sends tool results back; tool results are authoritative.",
+    "Tool use shape:",
     `{"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
-    "For a final answer, return exactly:",
+    "Final answer shape:",
     `{"type":"final","content":"your reply to the user"}`,
     params.toolChoice === "required"
       ? "A tool call is required for this turn. Do not return a final answer."
       : "Use tools only when they are necessary to satisfy the user's request.",
+  ].join("\n");
+  const toolListBudget = promptBudget - baseIntro.length - MIN_REQUIRED_PROMPT_SECTION_CHARS - 48;
+  const toolSpecs = toolSpecsForPrompt(params.tools, requestText, toolListBudget);
+  const intro = [
+    baseIntro,
     "Available tools:",
-    JSON.stringify(toolSpecsForPrompt(params.tools), null, 2),
+    toolSpecs || "- No callable local tools were provided.",
+  ].join("\n");
+
+  const conversationBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, promptBudget - intro.length - 32);
+
+  return [
+    intro,
     "",
     "Conversation:",
-    sections.join("\n\n---\n\n"),
+    formatPromptSections(params.messages, conversationBudget, true),
+  ].join("\n");
+}
+
+function chatPromptFromParams(params: ProviderQueryParams): string {
+  const intro = [
+    "You are Jarvis running entirely through Android Local Gemma on the user's phone.",
+    "Answer directly and keep the response useful. Do not claim that a cloud model handled this turn.",
+    params.tools?.length && params.toolChoice !== "none"
+      ? "Local Jarvis tools are available for explicit device-control requests, but this turn should be answered normally unless a tool is actually needed."
+      : "",
+    `Local model: ${normalizeAndroidLocalGemmaModel(params.model)}.`,
+  ].filter(Boolean).join("\n");
+  const promptBudget = phoneGemmaPromptCharBudget();
+  const conversationBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, promptBudget - intro.length - 16);
+  return [
+    intro,
+    "",
+    formatPromptSections(params.messages, conversationBudget, false),
   ].join("\n");
 }
 
@@ -297,8 +615,8 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
 
-    const hasTools = !!params.tools?.length && params.toolChoice !== "none";
-    const prompt = (hasTools ? toolPromptFromParams(params) : promptFromMessages(params.messages)).trim();
+    const useToolProtocol = shouldUseLocalToolProtocol(params);
+    const prompt = (useToolProtocol ? toolPromptFromParams(params) : chatPromptFromParams(params)).trim();
     if (!prompt) {
       throw new Error("Android Local Gemma received an empty prompt.");
     }
@@ -334,7 +652,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Phone Gemma finished without response text. The phone-local model may have been interrupted or run out of memory; retry after closing other apps.");
     }
 
-    if (hasTools) {
+    if (useToolProtocol) {
       const parsed = parseLocalGemmaStructuredOutput(text);
       if (parsed.type === "tool_calls") {
         if (parsed.toolCalls.length === 0) {

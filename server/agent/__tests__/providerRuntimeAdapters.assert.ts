@@ -486,7 +486,7 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
     assert.equal(requests[0].op.model, "gemma-4-e4b-it");
     assert.match(requests[0].op.prompt, /system: Be concise\./);
     assert.match(requests[0].op.prompt, /user: Hello/);
-    assert.equal(requests[0].op.contextTokens, 1024);
+    assert.equal(requests[0].op.contextTokens, 2048);
     assert.equal(requests[0].op.maxTokens, 128);
     assert.ok(requests[0].timeoutMs >= 60000);
     console.log("OK: Android Local Gemma provider sends generation to the Jarvis Android app daemon runtime");
@@ -539,6 +539,533 @@ async function testAndroidLocalGemmaEmitsLocalHarnessToolCalls() {
     assert.match(requests[0].op.prompt, /daemon_action/);
     console.log("OK: Android Local Gemma can emit local harness tool calls");
   } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  const largeSchema = Object.fromEntries(
+    Array.from({ length: 60 }, (_, index) => [`field_${index}`, { type: "string", description: `oversized schema field ${index}` }]),
+  );
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "Hi - I am running locally on your phone.", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Hi" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: `Perform an Android daemon action. ${"oversized_description_marker ".repeat(200)}`,
+          parameters: { type: "object", properties: largeSchema, required: ["field_0"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "Hi - I am running locally on your phone.");
+    assert.equal(requests.length, 1);
+    assert.doesNotMatch(requests[0].op.prompt, /Available tools/);
+    assert.doesNotMatch(requests[0].op.prompt, /oversized_description_marker/);
+    assert.ok(requests[0].op.prompt.length <= 3600);
+    console.log("OK: Android Local Gemma keeps plain auto-tool chat off the local tool protocol");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaOmitsPriorLocalRuntimeErrors() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "Still here, running locally.", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "What can you do?" },
+        {
+          role: "assistant",
+          content: `Error: LOCAL_MODEL_GENERATION_FAILED: ${"llm_litert_compiled_model_executor.cc:755 Failed to invoke ".repeat(40)}`,
+        },
+        { role: "user", content: "Hi" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "Still here, running locally.");
+    assert.match(requests[0].op.prompt, /user: Hi/);
+    assert.doesNotMatch(requests[0].op.prompt, /LOCAL_MODEL_GENERATION_FAILED/);
+    assert.doesNotMatch(requests[0].op.prompt, /llm_litert_compiled_model_executor/);
+    console.log("OK: Android Local Gemma omits prior local runtime errors from retry prompts");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "You got it.", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Can you read my screen?" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_read_screen",
+            type: "function",
+            function: { name: "daemon_action", arguments: "{\"action\":\"android_read_screen\"}" },
+          }],
+        },
+        { role: "tool", tool_call_id: "call_read_screen", content: "{\"ok\":true,\"text\":\"Home screen\"}" },
+        { role: "assistant", content: "Your home screen is visible." },
+        { role: "user", content: "thanks" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string", enum: ["android_read_screen"] } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "You got it.");
+    assert.doesNotMatch(requests[0].op.prompt, /Available tools/);
+    console.log("OK: Android Local Gemma ignores old tool traces for plain auto-tool chat");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaUsesToolProtocolForUrlTools() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "get_youtube_transcript", arguments: { url: "https://youtu.be/example" } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "summarize https://youtu.be/example" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList[0].function.name, "get_youtube_transcript");
+    assert.match(requests[0].op.prompt, /Available tools/);
+    assert.match(requests[0].op.prompt, /get_youtube_transcript/);
+    console.log("OK: Android Local Gemma keeps tool protocol for URL-backed local tools");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaKeepsToolProtocolForConfirmationTurns() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "daemon_action", arguments: { action: "android_sms_send", approved: true } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Please send an SMS to Justin." },
+        { role: "assistant", content: "Should I proceed?" },
+        { role: "user", content: "yes, go ahead" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["android_sms_send"] },
+              approved: { type: "boolean" },
+            },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.match(requests[0].op.prompt, /Available tools/);
+    console.log("OK: Android Local Gemma keeps tool protocol for confirmation turns");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  const largeSchema = {
+    action: { type: "string", enum: ["android_read_screen", "android_screenshot", "android_tap"] },
+    cmd: { type: "string" },
+    cwd: { type: "string" },
+    title: { type: "string" },
+    body: { type: "string" },
+    path: { type: "string" },
+    content: { type: "string" },
+    timeoutMs: { type: "number" },
+    packageName: { type: "string" },
+    url: { type: "string" },
+    x: { type: "number" },
+    y: { type: "number" },
+    x1: { type: "number" },
+    y1: { type: "number" },
+    x2: { type: "number" },
+    y2: { type: "number" },
+    key: { type: "string", enum: ["back", "home", "enter"] },
+    operatorAction: { type: "object" },
+  };
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "daemon_action", arguments: { action: "android_screenshot" } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Can you screenshot my phone?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: `Perform an Android daemon action. ${"safe compact description ".repeat(20)} large_description_tail ${"extra ".repeat(200)}`,
+          parameters: { type: "object", properties: largeSchema, required: ["action"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.match(requests[0].op.prompt, /Available tools/);
+    assert.match(requests[0].op.prompt, /Args: action/);
+    assert.match(requests[0].op.prompt, /action enum: android_read_screen, android_screenshot, android_tap/);
+    assert.match(requests[0].op.prompt, /x1/);
+    assert.match(requests[0].op.prompt, /y2/);
+    assert.match(requests[0].op.prompt, /key/);
+    assert.match(requests[0].op.prompt, /operatorAction/);
+    assert.doesNotMatch(requests[0].op.prompt, /"properties"/);
+    assert.doesNotMatch(requests[0].op.prompt, /large_description_tail/);
+    assert.ok(requests[0].op.prompt.length <= 3600);
+    console.log("OK: Android Local Gemma compacts local tool prompts for phone inference");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaHonorsReducedToolPromptBudget() {
+  const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+  process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: JSON.stringify({ type: "final", content: "I can use local Android tools." }), finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Can you screenshot my phone?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["android_read_screen", "android_screenshot", "android_tap"] },
+              x1: { type: "number" },
+              y1: { type: "number" },
+              x2: { type: "number" },
+              y2: { type: "number" },
+              key: { type: "string" },
+              operatorAction: { type: "object" },
+            },
+            required: ["action"],
+          },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "lookup_memory",
+          description: "Look up a local memory entry.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I can use local Android tools.");
+    assert.ok(requests[0].op.prompt.length <= 1200, `prompt length ${requests[0].op.prompt.length} should fit reduced budget`);
+    console.log("OK: Android Local Gemma honors reduced local tool prompt budget");
+  } finally {
+    if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+    else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming() {
+  const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+  process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: JSON.stringify({ type: "final", content: "I can use local Android tools when needed." }), finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        {
+          role: "system",
+          content: `System rules start. ${"long workspace context ".repeat(120)} MUST_PREFER_ANDROID_READ_SCREEN_BEFORE_SCREENSHOT`,
+        },
+        { role: "user", content: "Can you screenshot my phone?" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["android_read_screen", "android_screenshot"] },
+            },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I can use local Android tools when needed.");
+    assert.match(requests[0].op.prompt, /MUST_PREFER_ANDROID_READ_SCREEN_BEFORE_SCREENSHOT/);
+    assert.match(requests[0].op.prompt, /user: Can you screenshot my phone\?/);
+    console.log("OK: Android Local Gemma preserves system guardrails when trimming prompt context");
+  } finally {
+    if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+    else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
+  const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+  process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: JSON.stringify({ type: "final", content: "I read the local tool result." }), finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "CURRENT_TOOL_REQUEST: read my Android screen and tell me what is visible." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_android_read_screen",
+            type: "function",
+            function: { name: "daemon_action", arguments: "{\"action\":\"android_read_screen\"}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_android_read_screen",
+          content: `${"large Android read screen observation ".repeat(160)} TOOL_RESULT_TAIL_MARKER`,
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["android_read_screen"] },
+            },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I read the local tool result.");
+    assert.match(requests[0].op.prompt, /CURRENT_TOOL_REQUEST/);
+    assert.match(requests[0].op.prompt, /daemon_action/);
+    assert.match(requests[0].op.prompt, /TOOL_RESULT_TAIL_MARKER/);
+    console.log("OK: Android Local Gemma preserves tool continuation context when trimming");
+  } finally {
+    if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+    else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesNewestTurnWhenTrimming() {
+  const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+  process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "latest turn preserved", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "STALE_OLDER_TURN_THAT_WOULD_FIT" },
+        { role: "assistant", content: "Old answer." },
+        { role: "user", content: `${"very long current request ".repeat(180)} CURRENT_REQUEST_TAIL_MARKER` },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "latest turn preserved");
+    assert.match(requests[0].op.prompt, /CURRENT_REQUEST_TAIL_MARKER/);
+    console.log("OK: Android Local Gemma preserves the newest turn when trimming prompt context");
+  } finally {
+    if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+    else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
 }
@@ -800,6 +1327,16 @@ async function main() {
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
+  await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
+  await testAndroidLocalGemmaOmitsPriorLocalRuntimeErrors();
+  await testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat();
+  await testAndroidLocalGemmaUsesToolProtocolForUrlTools();
+  await testAndroidLocalGemmaKeepsToolProtocolForConfirmationTurns();
+  await testAndroidLocalGemmaCompactsLocalToolPrompt();
+  await testAndroidLocalGemmaHonorsReducedToolPromptBudget();
+  await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
+  await testAndroidLocalGemmaPreservesToolContinuationWhenTrimming();
+  await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();

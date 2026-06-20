@@ -476,11 +476,13 @@ for (const [contents, source] of [
   [pluginTemplateLocalGemmaInferenceEngine, "plugins/android-daemon-native/LocalGemmaInferenceEngine.kt"],
 ]) {
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
-  assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS = 1024", source);
+  assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS = 2048", source);
   assertIncludes(contents, "DEFAULT_MAX_COMPLETION_TOKENS = 128", source);
   assertIncludes(contents, "MIN_GPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES", source);
-  assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 3200L * 1024L * 1024L", source);
+  assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 2800L * 1024L * 1024L", source);
+  assertIncludes(contents, "trimPromptForContext", source);
+  assertIncludes(contents, 'put("inputTrimmed", prompt.length != rawPrompt.length)', source);
   assertIncludes(contents, "speculativeDecodingCandidates(preference: Boolean?): List<Boolean>", source);
   assertIncludes(contents, "ExperimentalFlags.enableSpeculativeDecoding = enableSpeculativeDecoding", source);
   assertIncludes(contents, "decodingModeName(speculativeDecodingEnabled)", source);
