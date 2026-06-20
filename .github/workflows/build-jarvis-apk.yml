@@ -152,6 +152,9 @@ jobs:
             "platform": "android",
             "versionCode": ${{ github.run_number }},
             "versionName": "1.0.${{ github.run_number }}",
+            "commitSha": "${{ github.sha }}",
+            "runId": "${{ github.run_id }}",
+            "runNumber": ${{ github.run_number }},
             "apkUrl": "https://github.com/${{ github.repository }}/releases/download/jarvis-app-latest/jarvis-app.apk",
             "releaseUrl": "https://github.com/${{ github.repository }}/releases/tag/jarvis-app-latest",
             "sha256": "$SHA256",
@@ -174,8 +177,11 @@ jobs:
         with:
           tag_name: jarvis-app-latest
           name: "Jarvis App v1.0.${{ github.run_number }}"
+          target_commitish: ${{ github.sha }}
           body: |
             Pre-built APK for the Jarvis OS mobile app - build ${{ github.run_number }}.
+
+            Build commit: `${{ github.sha }}`
 
             Connects to the configured Jarvis OS server at **${{ env.JARVIS_PUBLIC_DOMAIN }}**. No Expo Go required.
 
@@ -192,3 +198,8 @@ jobs:
           make_latest: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Move latest release tag to this build
+        run: |
+          git tag -f jarvis-app-latest "$GITHUB_SHA"
+          git push origin refs/tags/jarvis-app-latest --force
