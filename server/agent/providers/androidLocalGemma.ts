@@ -588,9 +588,12 @@ function normalizeAndroidLocalGemmaError(error: string | undefined): string {
     (error.includes("Failed to create LiteRT-LM engine") || error.includes("llm_litert_compiled_model_executor"))
   ) {
     const cpuFallbackAttempted = /\bcpu:/i.test(error);
+    const cpuFallbackDisabled = /cpu fallback skipped:\s*disabled/i.test(error);
     const recoveryPath = cpuFallbackAttempted
       ? "Jarvis tried the device accelerator and CPU fallback"
-      : "Jarvis tried the device accelerator; CPU fallback was skipped unless the phone has enough memory headroom";
+      : cpuFallbackDisabled
+        ? "Jarvis tried the device accelerator; CPU fallback is disabled by default to avoid Android low-memory kills"
+        : "Jarvis tried the device accelerator; CPU fallback was skipped unless the phone has enough memory headroom";
     return `Phone Gemma could not start the LiteRT-LM engine for the imported .litertlm model. ${recoveryPath}; reimport ${ANDROID_LOCAL_GEMMA_MODEL.replace("android-local-gemma/", "")} as the official .litertlm file if this keeps happening. Details: ${error}`;
   }
   if (error?.includes("LOCAL_MODEL_DEVICE_MEMORY_LOW")) {
