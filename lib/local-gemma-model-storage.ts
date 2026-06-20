@@ -1,5 +1,10 @@
 import * as FileSystem from "expo-file-system/legacy";
-import { getAndroidLocalGemmaStatus, validateAndroidLocalGemmaModel } from "./android-daemon-native";
+import {
+  getAndroidLocalGemmaStatus,
+  smokeTestAndroidLocalGemmaModel,
+  validateAndroidLocalGemmaModel,
+  type AndroidLocalGemmaValidationOptions,
+} from "./android-daemon-native";
 
 export const LOCAL_GEMMA_MODEL_ID = "gemma-4-e4b-it";
 export const LOCAL_GEMMA_EXPECTED_FILE_NAME = "gemma-4-E4B-it.litertlm";
@@ -23,7 +28,14 @@ export interface LocalGemmaModelStatus {
   engineValidatedAtMs?: number | null;
   engineValidatedBackend?: string | null;
   engineValidatedSpeculativeDecoding?: boolean | null;
+  engineValidatedDecodingMode?: string | null;
+  engineValidatedContextTokens?: number | null;
+  engineValidatedCpuFallbackAllowed?: boolean | null;
+  engineValidatedProfileId?: string | null;
+  engineValidatedProfileLabel?: string | null;
   engineLastValidationError?: string | null;
+  engineLastValidationProfileId?: string | null;
+  engineLastValidationProfileLabel?: string | null;
   lastEngineError?: string | null;
   modelRevision?: string | null;
   inference?: Record<string, unknown>;
@@ -42,6 +54,33 @@ export interface LocalGemmaModelStatus {
   sha256?: string;
   sizeBytes?: number | null;
   importedAtMs?: number;
+}
+
+export interface LocalGemmaSmokeTestRun {
+  id: string;
+  ok: boolean;
+  backend?: string | null;
+  decodingMode?: string | null;
+  contextTokens?: number | null;
+  durationMs?: number | null;
+  outputChars?: number | null;
+  text?: string | null;
+  error?: string | null;
+  order?: number | null;
+}
+
+export interface LocalGemmaSmokeTestResult {
+  passed: boolean;
+  failedCount: number;
+  totalCount: number;
+  durationMs?: number | null;
+  profileId?: string | null;
+  profileLabel?: string | null;
+  backend?: string | null;
+  decodingMode?: string | null;
+  contextTokens?: number | null;
+  runs: LocalGemmaSmokeTestRun[];
+  message?: string;
 }
 
 interface LocalGemmaStoragePaths {
@@ -113,7 +152,14 @@ function normalizeLocalGemmaStatus(raw: Record<string, unknown>): LocalGemmaMode
     engineValidatedAtMs: numberValue(raw.engineValidatedAtMs),
     engineValidatedBackend: stringValue(raw.engineValidatedBackend) ?? null,
     engineValidatedSpeculativeDecoding: booleanValue(raw.engineValidatedSpeculativeDecoding) ?? null,
+    engineValidatedDecodingMode: stringValue(raw.engineValidatedDecodingMode) ?? null,
+    engineValidatedContextTokens: numberValue(raw.engineValidatedContextTokens),
+    engineValidatedCpuFallbackAllowed: booleanValue(raw.engineValidatedCpuFallbackAllowed) ?? null,
+    engineValidatedProfileId: stringValue(raw.engineValidatedProfileId) ?? null,
+    engineValidatedProfileLabel: stringValue(raw.engineValidatedProfileLabel) ?? null,
     engineLastValidationError: stringValue(raw.engineLastValidationError) ?? null,
+    engineLastValidationProfileId: stringValue(raw.engineLastValidationProfileId) ?? null,
+    engineLastValidationProfileLabel: stringValue(raw.engineLastValidationProfileLabel) ?? null,
     lastEngineError: stringValue(raw.lastEngineError) ?? null,
     modelRevision: stringValue(raw.modelRevision) ?? null,
     inference,
@@ -300,6 +346,11 @@ export async function importLocalGemmaModelFile(): Promise<LocalGemmaModelStatus
     engineValidatedAtMs: null,
     engineValidatedBackend: null,
     engineValidatedSpeculativeDecoding: null,
+    engineValidatedDecodingMode: null,
+    engineValidatedContextTokens: null,
+    engineValidatedCpuFallbackAllowed: null,
+    engineValidatedProfileId: null,
+    engineValidatedProfileLabel: null,
     engineLastValidationError: null,
     message: "Phone Gemma's model file is imported. Validate the LiteRT-LM engine before using it for chat.",
   };
@@ -309,7 +360,43 @@ export async function importLocalGemmaModelFile(): Promise<LocalGemmaModelStatus
   return readLocalGemmaModelStatus();
 }
 
-export async function validateLocalGemmaModel(): Promise<LocalGemmaModelStatus> {
-  const status = await validateAndroidLocalGemmaModel(LOCAL_GEMMA_MODEL_ID);
+function normalizeSmokeTestResult(raw: Record<string, unknown>): LocalGemmaSmokeTestResult {
+  const runs = Array.isArray(raw.runs) ? raw.runs : [];
+  return {
+    passed: raw.passed === true,
+    failedCount: numberValue(raw.failedCount) ?? 0,
+    totalCount: numberValue(raw.totalCount) ?? runs.length,
+    durationMs: numberValue(raw.durationMs),
+    profileId: stringValue(raw.profileId) ?? null,
+    profileLabel: stringValue(raw.profileLabel) ?? null,
+    backend: stringValue(raw.backend) ?? null,
+    decodingMode: stringValue(raw.decodingMode) ?? null,
+    contextTokens: numberValue(raw.contextTokens),
+    runs: runs
+      .map((item) => asRecord(item))
+      .filter((item): item is Record<string, unknown> => Boolean(item))
+      .map((item) => ({
+        id: stringValue(item.id) || "run",
+        ok: item.ok === true,
+        backend: stringValue(item.backend) ?? null,
+        decodingMode: stringValue(item.decodingMode) ?? null,
+        contextTokens: numberValue(item.contextTokens),
+        durationMs: numberValue(item.durationMs),
+        outputChars: numberValue(item.outputChars),
+        text: stringValue(item.text) ?? null,
+        error: stringValue(item.error) ?? null,
+        order: numberValue(item.order),
+      })),
+    message: stringValue(raw.message),
+  };
+}
+
+export async function validateLocalGemmaModel(options: AndroidLocalGemmaValidationOptions = {}): Promise<LocalGemmaModelStatus> {
+  const status = await validateAndroidLocalGemmaModel(LOCAL_GEMMA_MODEL_ID, options);
   return normalizeLocalGemmaStatus(status);
+}
+
+export async function smokeTestLocalGemmaModel(options: AndroidLocalGemmaValidationOptions = {}): Promise<LocalGemmaSmokeTestResult> {
+  const result = await smokeTestAndroidLocalGemmaModel(LOCAL_GEMMA_MODEL_ID, options);
+  return normalizeSmokeTestResult(result);
 }

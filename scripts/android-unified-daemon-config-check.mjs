@@ -96,6 +96,7 @@ const accessibilityConfigPath = path.join(
 const interactionServicePath = path.join(projectRoot, "android/app/src/main/res/xml/interaction_service.xml");
 const filePathsPath = path.join(projectRoot, "android/app/src/main/res/xml/file_paths.xml");
 const apkWorkflowPath = path.join(projectRoot, ".github/workflows/build-jarvis-apk.yml");
+const serverBridgePath = path.join(projectRoot, "server/daemon/bridge.ts");
 
 const requiredPermissions = [
   "android.permission.FOREGROUND_SERVICE",
@@ -223,6 +224,7 @@ const [
   accessibilityConfig,
   interactionService,
   apkWorkflow,
+  serverBridge,
 ] = await Promise.all([
   readFile(manifestPath, "utf8"),
   readFile(rootBuildGradlePath, "utf8"),
@@ -255,10 +257,13 @@ const [
   readFile(accessibilityConfigPath, "utf8"),
   readFile(interactionServicePath, "utf8"),
   readFile(apkWorkflowPath, "utf8"),
+  readFile(serverBridgePath, "utf8"),
   assertFileExists(filePathsPath),
   assertFileExists(pluginBlurViewBuildGradlePath),
   assertFileExists(pluginBlurViewSourcePath),
 ]);
+
+assertIncludes(serverBridge, 'android_local_model_smoke_test: "android_local_model"', "server/daemon/bridge.ts");
 
 for (const permission of requiredPermissions) {
   assertIncludes(manifest, `android:name="${permission}"`, "AndroidManifest.xml");
@@ -454,6 +459,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "File(path).isAbsolute", source);
   assertIncludes(contents, '"android_local_model_status" -> LocalGemmaModelManager.status(context, op)', source);
   assertIncludes(contents, '"android_local_model_validate" -> LocalGemmaModelManager.validate(context, op)', source);
+  assertIncludes(contents, '"android_local_model_smoke_test" -> LocalGemmaModelManager.smokeTest(context, op)', source);
   assertIncludes(contents, '"android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)', source);
   assertExcludes(contents, 'path.startsWith("/") -> path', source);
 }
@@ -465,7 +471,12 @@ for (const [contents, source] of [
   assertIncludes(contents, 'private const val DEFAULT_MODEL = "gemma-4-e4b-it"', source);
   assertIncludes(contents, "val modelRevision = buildModelRevision(context, model, file)", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.validate(context, model, file, modelRevision, op)", source);
-  assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, generationOpForValidatedProfile(op, metadata))", source);
+  assertIncludes(contents, "generationOpForValidatedProfile", source);
+  assertIncludes(contents, "fun smokeTest(context: Context, op: JSONObject): OpResult", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.releaseWarmEngine()", source);
+  assertIncludes(contents, "val validationError = if (engineValidated) null else lastEngineError ?: engineLastValidationError", source);
+  assertIncludes(contents, "preserveExistingValidation", source);
   assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.cancel(op)", source);
   assertIncludes(contents, '.put("modelFileReady", modelFileReady)', source);
@@ -512,6 +523,9 @@ for (const [contents, source] of [
   assertIncludes(contents, "LOCAL_MODEL_DEVICE_MEMORY_LOW", source);
   assertIncludes(contents, "keepEngineWarm", source);
   assertIncludes(contents, "releaseEngine(clearLastError = false)", source);
+  assertIncludes(contents, "fun releaseWarmEngine()", source);
+  assertIncludes(contents, "if (activeRequests.isNotEmpty()) return", source);
+  assertIncludes(contents, "if (!keepEngineWarm || !generationSucceeded)", source);
   assertIncludes(contents, "retry_cpu", source);
   assertIncludes(contents, "generationRetries", source);
   assertIncludes(contents, "shouldRetryGenerationOnCpu", source);

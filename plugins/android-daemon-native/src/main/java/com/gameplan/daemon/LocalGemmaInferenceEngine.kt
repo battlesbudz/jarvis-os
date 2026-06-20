@@ -76,6 +76,7 @@ object LocalGemmaInferenceEngine {
         val requestId = op.optString("requestId", "").ifBlank { UUID.randomUUID().toString() }
         var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
         val allowCpuFallback = op.optBoolean("allowCpuFallback", DEFAULT_ALLOW_CPU_FALLBACK)
+        val speculativeDecodingPreference = optionalBoolean(op, "speculativeDecoding")
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val maxCompletionTokens = op.optInt("maxTokens", DEFAULT_MAX_COMPLETION_TOKENS).coerceIn(1, 8192)
         val prompt = trimPromptForContext(rawPrompt, contextTokens, maxCompletionTokens)
@@ -105,9 +106,10 @@ object LocalGemmaInferenceEngine {
             "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName cpuFallback=$allowCpuFallback context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
         )
 
+        var generationSucceeded = false
         return try {
             var requestedAttemptBackend = backendName
-            var requestedSpeculativeDecoding: Boolean? = null
+            var requestedSpeculativeDecoding = speculativeDecodingPreference
             var generationRetries = 0
             var generationResult: OpResult? = null
             while (generationResult == null) {
@@ -137,6 +139,7 @@ object LocalGemmaInferenceEngine {
                     )
                     backendName = attempt.backendName
                     completedRequests.incrementAndGet()
+                    generationSucceeded = true
                     generationResult = OpResult(
                         ok = true,
                         data = JSONObject()
@@ -147,6 +150,8 @@ object LocalGemmaInferenceEngine {
                             .put("requestId", requestId)
                             .put("backend", backendName)
                             .put("requestedBackend", active.backend)
+                            .put("speculativeDecoding", attempt.speculativeDecodingEnabled)
+                            .put("decodingMode", decodingModeName(attempt.speculativeDecodingEnabled))
                             .put("cpuFallbackAllowed", allowCpuFallback)
                             .put("contextTokens", contextTokens)
                             .put("maxCompletionTokens", maxCompletionTokens)
@@ -154,6 +159,8 @@ object LocalGemmaInferenceEngine {
                             .put("inputTrimmed", prompt.length != rawPrompt.length)
                             .put("engineKeptWarm", keepEngineWarm)
                             .put("generationRetries", generationRetries)
+                            .put("memoryBefore", memory.toJson())
+                            .put("memoryAfter", memorySnapshot(context).toJson())
                             .put("finishReason", attempt.finishReason)
                             .put("completionLimitEnforced", true)
                             .put("text", attempt.text)
@@ -212,7 +219,7 @@ object LocalGemmaInferenceEngine {
         } finally {
             active.conversation = null
             try {
-                if (!keepEngineWarm) {
+                if (!keepEngineWarm || !generationSucceeded) {
                     releaseEngine(clearLastError = false)
                 }
             } finally {
@@ -224,6 +231,7 @@ object LocalGemmaInferenceEngine {
     fun validate(context: Context, model: String, modelFile: File, modelRevision: String, op: JSONObject): OpResult {
         var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
         val allowCpuFallback = op.optBoolean("allowCpuFallback", DEFAULT_ALLOW_CPU_FALLBACK)
+        val speculativeDecodingPreference = optionalBoolean(op, "speculativeDecoding")
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val keepEngineWarm = op.optBoolean("keepEngineWarm", false)
         val memory = memorySnapshot(context)
@@ -248,7 +256,7 @@ object LocalGemmaInferenceEngine {
                         modelRevision = modelRevision,
                         backendName = backendName,
                         allowCpuFallback = allowCpuFallback,
-                        speculativeDecodingPreference = null,
+                        speculativeDecodingPreference = speculativeDecodingPreference,
                         contextTokens = contextTokens,
                         memory = memorySnapshot(context),
                     )
@@ -270,9 +278,14 @@ object LocalGemmaInferenceEngine {
                     .put("backend", resolvedBackend)
                     .put("requestedBackend", backendName)
                     .put("speculativeDecoding", resolvedSpeculativeDecoding)
+                    .put("speculativeDecodingPreference", speculativeDecodingPreference ?: JSONObject.NULL)
                     .put("decodingMode", decodingModeName(resolvedSpeculativeDecoding))
                     .put("contextTokens", contextTokens)
                     .put("cpuFallbackAllowed", allowCpuFallback)
+                    .put("profileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                    .put("profileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                    .put("memoryBefore", memory.toJson())
+                    .put("memoryAfter", memorySnapshot(context).toJson())
                     .put("engineKeptWarm", keepEngineWarm)
                     .put("durationMs", System.currentTimeMillis() - startedAtMs)
                     .put("message", "Phone Gemma LiteRT-LM engine validated on this device.")
@@ -347,6 +360,11 @@ object LocalGemmaInferenceEngine {
         }
     }
 
+    fun releaseWarmEngine() {
+        if (activeRequests.isNotEmpty()) return
+        releaseEngine(clearLastError = false)
+    }
+
     private fun runGenerationAttempt(
         context: Context,
         modelPath: String,
@@ -399,7 +417,8 @@ object LocalGemmaInferenceEngine {
         } finally {
             attemptJob.cancel()
         }
-        return GenerationAttemptResult(text, resolvedBackendName, finishReason)
+        val state = engineState
+        return GenerationAttemptResult(text, resolvedBackendName, state?.speculativeDecodingEnabled ?: false, finishReason)
     }
 
     private fun shouldRetryGenerationOnCpu(
@@ -474,6 +493,11 @@ object LocalGemmaInferenceEngine {
 
     private fun formatMiB(bytes: Long): Long {
         return if (bytes == Long.MAX_VALUE) -1L else bytes / (1024L * 1024L)
+    }
+
+    private fun optionalBoolean(json: JSONObject, key: String): Boolean? {
+        if (!json.has(key) || json.isNull(key)) return null
+        return json.optBoolean(key)
     }
 
     private fun shortRequestId(requestId: String): String {
@@ -676,11 +700,21 @@ object LocalGemmaInferenceEngine {
         val availableBytes: Long,
         val thresholdBytes: Long,
         val lowMemory: Boolean,
-    )
+    ) {
+        fun toJson(): JSONObject {
+            return JSONObject()
+                .put("availableBytes", availableBytes)
+                .put("availableMiB", formatMiB(availableBytes))
+                .put("thresholdBytes", thresholdBytes)
+                .put("thresholdMiB", formatMiB(thresholdBytes))
+                .put("lowMemory", lowMemory)
+        }
+    }
 
     private data class GenerationAttemptResult(
         val text: String,
         val backendName: String,
+        val speculativeDecodingEnabled: Boolean,
         val finishReason: String,
     )
 

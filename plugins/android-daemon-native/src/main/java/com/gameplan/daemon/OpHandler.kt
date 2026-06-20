@@ -83,6 +83,7 @@ object OpHandler {
                 "android_local_model_status" -> LocalGemmaModelManager.status(context, op)
                 "android_local_model_import" -> LocalGemmaModelManager.importModel(context, op)
                 "android_local_model_validate" -> LocalGemmaModelManager.validate(context, op)
+                "android_local_model_smoke_test" -> LocalGemmaModelManager.smokeTest(context, op)
                 "android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)
                 "android_local_model_cancel" -> LocalGemmaModelManager.cancel(op)
                 else -> OpResult(false, error = "Unknown op type: $type")
