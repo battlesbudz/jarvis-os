@@ -736,6 +736,35 @@ async function testAndroidLocalGemmaExplainsEngineCreationFailure() {
   }
 }
 
+async function testAndroidLocalGemmaDoesNotClaimSkippedCpuFallback() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_GENERATION_FAILED: Failed to create LiteRT-LM engine after trying gpu backend(s): gpu: INTERNAL: ERROR: [third_party/odml/litert_lm/runtime/executor/llm_litert_compiled_model_executor.cc:1951]",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.match(error.message, /CPU fallback was skipped/);
+        assert.doesNotMatch(error.message, /tried the device accelerator and CPU fallback/);
+        return true;
+      },
+    );
+    console.log("OK: Android Local Gemma does not claim CPU fallback when memory gate skipped it");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaExplainsCompiledModelInvokeFailure() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: false,
@@ -777,6 +806,7 @@ async function main() {
   await testAndroidLocalGemmaExplainsUnbundledEngine();
   await testAndroidLocalGemmaExplainsPhoneResourceFailures();
   await testAndroidLocalGemmaExplainsEngineCreationFailure();
+  await testAndroidLocalGemmaDoesNotClaimSkippedCpuFallback();
   await testAndroidLocalGemmaExplainsCompiledModelInvokeFailure();
   console.log("\nAll provider runtime adapter assertions passed.");
 }

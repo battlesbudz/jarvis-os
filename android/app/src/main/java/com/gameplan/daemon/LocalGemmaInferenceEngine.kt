@@ -30,7 +30,8 @@ object LocalGemmaInferenceEngine {
     private const val DEFAULT_BACKEND = "auto"
     private const val DEFAULT_CONTEXT_TOKENS = 1024
     private const val DEFAULT_MAX_COMPLETION_TOKENS = 128
-    private const val MIN_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
+    private const val MIN_GPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
+    private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 4200L * 1024L * 1024L
     private const val APPROX_CHARS_PER_TOKEN = 4
     private const val DEFAULT_TOP_K = 40
     private const val DEFAULT_TOP_P = 0.95
@@ -79,7 +80,7 @@ object LocalGemmaInferenceEngine {
         if (activeRequests.containsKey(requestId)) {
             return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
         }
-        lowMemoryError(memory)?.let { error ->
+        lowMemoryError(memory, backendName)?.let { error ->
             DaemonLog.add("local_gemma: memory low request=${shortRequestId(requestId)} $error")
             return OpResult(false, error = error)
         }
@@ -146,15 +147,21 @@ object LocalGemmaInferenceEngine {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
-                    if (shouldRetryGenerationOnCpu(requestedAttemptBackend, resolvedAttemptBackend)) {
-                        generationRetries += 1
-                        DaemonLog.add(
-                            "local_gemma: retry_cpu request=${shortRequestId(requestId)} after backend=$resolvedAttemptBackend failure=${formatEngineError(e).take(120)}"
-                        )
+                    if (isCpuFallbackCandidate(requestedAttemptBackend, resolvedAttemptBackend)) {
                         releaseEngine(clearLastError = false)
                         active.conversation = null
-                        requestedAttemptBackend = "cpu"
-                        continue
+                        val retryMemory = memorySnapshot(context)
+                        if (shouldRetryGenerationOnCpu(requestedAttemptBackend, resolvedAttemptBackend, retryMemory)) {
+                            generationRetries += 1
+                            DaemonLog.add(
+                                "local_gemma: retry_cpu request=${shortRequestId(requestId)} after backend=$resolvedAttemptBackend failure=${formatEngineError(e).take(120)}"
+                            )
+                            requestedAttemptBackend = "cpu"
+                            continue
+                        }
+                        DaemonLog.add(
+                            "local_gemma: skip_cpu_retry request=${shortRequestId(requestId)} availMem=${formatMiB(retryMemory.availableBytes)}MB minimum=${formatMiB(MIN_CPU_AVAILABLE_MEMORY_BYTES)}MB lowMemory=${retryMemory.lowMemory}"
+                        )
                     }
                     throw e
                 }
@@ -262,7 +269,7 @@ object LocalGemmaInferenceEngine {
         val text = try {
             runBlocking(attemptJob) {
                 generationMutex.withLock {
-                    val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, contextTokens)
+                    val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, contextTokens, memorySnapshot(context))
                     resolvedBackendName = resolvedEngine.backendName
                     onBackendResolved(resolvedBackendName)
                     resolvedEngine.engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
@@ -293,7 +300,15 @@ object LocalGemmaInferenceEngine {
         return GenerationAttemptResult(text, resolvedBackendName, finishReason)
     }
 
-    private fun shouldRetryGenerationOnCpu(requestedBackendName: String, resolvedBackendName: String): Boolean {
+    private fun shouldRetryGenerationOnCpu(
+        requestedBackendName: String,
+        resolvedBackendName: String,
+        memory: MemorySnapshot,
+    ): Boolean {
+        return isCpuFallbackCandidate(requestedBackendName, resolvedBackendName) && canUseCpuBackend(memory)
+    }
+
+    private fun isCpuFallbackCandidate(requestedBackendName: String, resolvedBackendName: String): Boolean {
         return requestedBackendName != "cpu" && resolvedBackendName != "cpu"
     }
 
@@ -318,10 +333,21 @@ object LocalGemmaInferenceEngine {
         return MemorySnapshot(info.availMem, info.threshold, info.lowMemory)
     }
 
-    private fun lowMemoryError(memory: MemorySnapshot): String? {
-        val underMinimum = memory.availableBytes != Long.MAX_VALUE && memory.availableBytes < MIN_AVAILABLE_MEMORY_BYTES
+    private fun lowMemoryError(memory: MemorySnapshot, backendName: String): String? {
+        val minimumBytes = minimumAvailableMemoryBytes(backendName)
+        val underMinimum = memory.availableBytes != Long.MAX_VALUE && memory.availableBytes < minimumBytes
         if (!memory.lowMemory && !underMinimum) return null
-        return "LOCAL_MODEL_DEVICE_MEMORY_LOW: available=${formatMiB(memory.availableBytes)}MB threshold=${formatMiB(memory.thresholdBytes)}MB minimum=${formatMiB(MIN_AVAILABLE_MEMORY_BYTES)}MB lowMemory=${memory.lowMemory}"
+        return "LOCAL_MODEL_DEVICE_MEMORY_LOW: backend=$backendName available=${formatMiB(memory.availableBytes)}MB threshold=${formatMiB(memory.thresholdBytes)}MB minimum=${formatMiB(minimumBytes)}MB lowMemory=${memory.lowMemory}"
+    }
+
+    private fun minimumAvailableMemoryBytes(backendName: String): Long {
+        return if (backendName == "cpu") MIN_CPU_AVAILABLE_MEMORY_BYTES else MIN_GPU_AVAILABLE_MEMORY_BYTES
+    }
+
+    private fun canUseCpuBackend(memory: MemorySnapshot): Boolean {
+        return !memory.lowMemory &&
+            memory.availableBytes != Long.MAX_VALUE &&
+            memory.availableBytes >= MIN_CPU_AVAILABLE_MEMORY_BYTES
     }
 
     private fun formatMiB(bytes: Long): Long {
@@ -350,8 +376,9 @@ object LocalGemmaInferenceEngine {
         modelRevision: String,
         backendName: String,
         contextTokens: Int,
+        memory: MemorySnapshot,
     ): EngineState {
-        val candidateBackends = backendCandidates(backendName)
+        val candidateBackends = backendCandidates(backendName, memory)
         val reusableBackends = reusableBackendsFor(backendName, candidateBackends)
         val current = engineState
         if (current != null && canReuseEngine(current, modelPath, modelRevision, reusableBackends, contextTokens)) {
@@ -449,12 +476,13 @@ object LocalGemmaInferenceEngine {
         }
     }
 
-    private fun backendCandidates(backendName: String): List<String> {
+    private fun backendCandidates(backendName: String, memory: MemorySnapshot): List<String> {
+        val allowCpuFallback = canUseCpuBackend(memory)
         return when (backendName) {
             "cpu" -> listOf("cpu")
-            "npu" -> listOf("npu", "cpu")
-            "gpu" -> listOf("gpu", "cpu")
-            else -> listOf("gpu", "cpu")
+            "npu" -> if (allowCpuFallback) listOf("npu", "cpu") else listOf("npu")
+            "gpu" -> if (allowCpuFallback) listOf("gpu", "cpu") else listOf("gpu")
+            else -> if (allowCpuFallback) listOf("gpu", "cpu") else listOf("gpu")
         }
     }
 

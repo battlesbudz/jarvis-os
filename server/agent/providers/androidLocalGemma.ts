@@ -251,13 +251,17 @@ function normalizeAndroidLocalGemmaError(error: string | undefined): string {
     error?.includes("LOCAL_MODEL_GENERATION_FAILED") &&
     (error.includes("Failed to invoke the compiled model") || error.includes("llm_litert_compiled_model_executor.cc:755"))
   ) {
-    return `Phone Gemma could not finish local inference on this device. Jarvis stayed on the local phone model and did not use any other model. Details: ${error}`;
+    return `Phone Gemma could not finish local inference on this device, usually because the phone-local Gemma runtime hit memory or accelerator pressure. Jarvis stayed on the local phone model and did not use any other model. Close heavy apps, let the phone cool down, then retry with the official E4B .litertlm model imported. Details: ${error}`;
   }
   if (
     error?.includes("LOCAL_MODEL_GENERATION_FAILED") &&
     (error.includes("Failed to create LiteRT-LM engine") || error.includes("llm_litert_compiled_model_executor"))
   ) {
-    return `Phone Gemma could not start the LiteRT-LM engine for the imported .litertlm model. Jarvis tried the device accelerator and CPU fallback; reimport ${ANDROID_LOCAL_GEMMA_MODEL.replace("android-local-gemma/", "")} as the official .litertlm file if this keeps happening. Details: ${error}`;
+    const cpuFallbackAttempted = /\bcpu:/i.test(error);
+    const recoveryPath = cpuFallbackAttempted
+      ? "Jarvis tried the device accelerator and CPU fallback"
+      : "Jarvis tried the device accelerator; CPU fallback was skipped unless the phone has enough memory headroom";
+    return `Phone Gemma could not start the LiteRT-LM engine for the imported .litertlm model. ${recoveryPath}; reimport ${ANDROID_LOCAL_GEMMA_MODEL.replace("android-local-gemma/", "")} as the official .litertlm file if this keeps happening. Details: ${error}`;
   }
   if (error?.includes("LOCAL_MODEL_DEVICE_MEMORY_LOW")) {
     return `Phone Gemma did not start because Android reported low available memory. Close other heavy apps, then try again. Details: ${error}`;

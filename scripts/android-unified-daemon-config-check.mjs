@@ -478,7 +478,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS", source);
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS = 1024", source);
   assertIncludes(contents, "DEFAULT_MAX_COMPLETION_TOKENS = 128", source);
-  assertIncludes(contents, "MIN_AVAILABLE_MEMORY_BYTES", source);
+  assertIncludes(contents, "MIN_GPU_AVAILABLE_MEMORY_BYTES", source);
+  assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "LOCAL_MODEL_BUSY", source);
   assertIncludes(contents, "LOCAL_MODEL_DEVICE_MEMORY_LOW", source);
   assertIncludes(contents, "keepEngineWarm", source);
@@ -495,7 +496,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "var engine: Engine? = null", source);
   assertIncludes(contents, "val initializedEngine = Engine(", source);
   assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, initializedEngine)", source);
-  assertIncludes(contents, "backendCandidates(backendName)", source);
+  assertIncludes(contents, "backendCandidates(backendName, memory)", source);
   assertIncludes(contents, "reusableBackendsFor(backendName, candidateBackends)", source);
   assertIncludes(contents, "listOf(candidateBackendName)", source);
   assertIncludes(contents, 'put("requestedBackend", active.backend)', source);
@@ -516,6 +517,8 @@ assertIncludes(
 );
 assertIncludes(apkWorkflow, "https://github.com/${{ github.repository }}/releases/download/jarvis-app-latest/jarvis-app.apk", "build-jarvis-apk.yml");
 assertIncludes(apkWorkflow, "https://github.com/${{ github.repository }}/releases/tag/jarvis-app-latest", "build-jarvis-apk.yml");
+assertIncludes(apkWorkflow, '"commitSha": "${{ github.sha }}"', "build-jarvis-apk.yml");
+assertIncludes(apkWorkflow, "Move latest release tag to this build", "build-jarvis-apk.yml");
 assertExcludes(apkWorkflow, "battlesbudz/Gameplanjarvisai/releases", "build-jarvis-apk.yml");
 
 console.log("OK: unified Android daemon native config is present");
