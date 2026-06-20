@@ -1,15 +1,11 @@
 import type { AndroidLocalGemmaValidationOptions } from "./android-daemon-native";
 import {
-  importLocalGemmaModelFile,
   LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
   LOCAL_GEMMA_EXPECTED_FILE_NAME,
   LOCAL_GEMMA_MODEL_ID,
-  readLocalGemmaModelStatus,
-  smokeTestLocalGemmaModel,
-  validateLocalGemmaModel,
   type LocalGemmaModelStatus,
   type LocalGemmaSmokeTestResult,
-} from "./local-gemma-model-storage";
+} from "./phone-gemma-runtime-contract";
 
 export type PhoneGemmaValidationProfile = {
   id: string;
@@ -170,21 +166,25 @@ export function summarizePhoneGemmaSmokeTest(result: LocalGemmaSmokeTestResult):
 }
 
 export async function readPhoneGemmaStatus(): Promise<LocalGemmaModelStatus> {
+  const { readLocalGemmaModelStatus } = await import("./local-gemma-model-storage");
   return normalizePhoneGemmaStatus(await readLocalGemmaModelStatus())!;
 }
 
 export async function importPhoneGemmaModelFile(): Promise<LocalGemmaModelStatus | null> {
+  const { importLocalGemmaModelFile } = await import("./local-gemma-model-storage");
   return normalizePhoneGemmaStatus(await importLocalGemmaModelFile());
 }
 
 export async function validatePhoneGemmaRuntime(
   profile: PhoneGemmaValidationProfile = PHONE_GEMMA_RECOMMENDED_PROFILE,
 ): Promise<LocalGemmaModelStatus> {
+  const { validateLocalGemmaModel } = await import("./local-gemma-model-storage");
   return normalizePhoneGemmaStatus(await validateLocalGemmaModel(phoneGemmaProfileOptions(profile)))!;
 }
 
 export async function smokeTestPhoneGemmaRuntime(
   options: AndroidLocalGemmaValidationOptions = {},
 ): Promise<LocalGemmaSmokeTestResult> {
+  const { smokeTestLocalGemmaModel } = await import("./local-gemma-model-storage");
   return smokeTestLocalGemmaModel(options);
 }
