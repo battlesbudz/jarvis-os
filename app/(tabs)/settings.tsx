@@ -73,6 +73,7 @@ import {
   LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
   LOCAL_GEMMA_EXPECTED_FILE_NAME,
   readLocalGemmaModelStatus,
+  validateLocalGemmaModel,
   type LocalGemmaModelStatus,
 } from '@/lib/local-gemma-model-storage';
 
@@ -272,6 +273,7 @@ export default function SettingsScreen() {
   const [localGemmaStatus, setLocalGemmaStatus] = useState<LocalGemmaModelStatus | null>(null);
   const [localGemmaStatusLoading, setLocalGemmaStatusLoading] = useState(false);
   const [localGemmaImporting, setLocalGemmaImporting] = useState(false);
+  const [localGemmaValidating, setLocalGemmaValidating] = useState(false);
   const [openAIAuthLoading, setOpenAIAuthLoading] = useState(false);
   const [openAIAuthBusy, setOpenAIAuthBusy] = useState(false);
   const [openAIApiKeyVisible, setOpenAIApiKeyVisible] = useState(false);
@@ -1123,6 +1125,7 @@ export default function SettingsScreen() {
         generationReady: false,
         needsModelImport: true,
         needsEngineBundle: false,
+        needsEngineValidation: false,
         message: extractApiError(error, `Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} from Downloads to store it inside Jarvis.`),
       });
     } finally {
@@ -1593,12 +1596,46 @@ export default function SettingsScreen() {
     setProviderAuthMessages((prev) => ({ ...prev, [providerId]: message }));
   }, []);
 
+  const validateAndroidLocalGemma = useCallback(async (): Promise<LocalGemmaModelStatus | null> => {
+    setLocalGemmaValidating(true);
+    setProviderMessage('android-local-gemma', 'Validating Phone Gemma LiteRT-LM on this device...');
+    try {
+      const status = await validateLocalGemmaModel();
+      setLocalGemmaStatus(status);
+      const size = formatModelSize(status.sizeBytes);
+      const backend = status.engineValidatedBackend ? ` via ${status.engineValidatedBackend.toUpperCase()}` : '';
+      const message = status.generationReady
+        ? `Phone Gemma validated${backend}${size ? ` (${size})` : ''}.`
+        : `${status.message || LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE}${size ? ` (${size})` : ''}`;
+      setProviderMessage('android-local-gemma', message);
+      return status;
+    } catch (error: any) {
+      const message = extractApiError(error, 'Phone Gemma could not validate the LiteRT-LM engine on this device.');
+      setProviderMessage('android-local-gemma', message);
+      Alert.alert('Validate Phone Gemma', message);
+      await loadLocalGemmaStatus();
+      return null;
+    } finally {
+      setLocalGemmaValidating(false);
+    }
+  }, [loadLocalGemmaStatus, setProviderMessage]);
+
   const selectAndroidLocalGemma = useCallback(async () => {
-    const localGemmaModelFileReady = Boolean(localGemmaStatus?.modelFileReady ?? (localGemmaStatus?.ready && !localGemmaStatus?.needsModelImport));
-    const localGemmaGenerationReady = Boolean(localGemmaStatus?.generationReady);
+    let status = localGemmaStatus;
+    const localGemmaModelFileReady = Boolean(status?.modelFileReady ?? (status?.ready && !status?.needsModelImport));
+    if (localGemmaModelFileReady && !status?.generationReady) {
+      const validated = await validateAndroidLocalGemma();
+      if (validated?.generationReady) {
+        status = validated;
+      } else {
+        return;
+      }
+    }
+
+    const localGemmaGenerationReady = Boolean(status?.generationReady);
     if (!localGemmaGenerationReady) {
       const message = localGemmaModelFileReady
-        ? LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE
+        ? status?.message || LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE
         : `Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} before using Phone Gemma for Jarvis chat.`;
       setProviderMessage('android-local-gemma', message);
       Alert.alert('Use Phone Gemma', message);
@@ -1621,7 +1658,7 @@ export default function SettingsScreen() {
     } finally {
       setOpenAIAuthBusy(false);
     }
-  }, [applySelectedModel, localGemmaStatus?.generationReady, localGemmaStatus?.modelFileReady, localGemmaStatus?.needsModelImport, localGemmaStatus?.ready, setProviderMessage]);
+  }, [applySelectedModel, localGemmaStatus, setProviderMessage, validateAndroidLocalGemma]);
 
   const importAndroidLocalGemma = useCallback(async () => {
     setLocalGemmaImporting(true);
@@ -2740,15 +2777,17 @@ export default function SettingsScreen() {
               const providerMessage = providerAuthMessages[provider.id];
               const localGemmaModelFileReady = Boolean(localGemmaStatus?.modelFileReady ?? (localGemmaStatus?.ready && !localGemmaStatus?.needsModelImport));
               const localGemmaGenerationReady = Boolean(localGemmaStatus?.generationReady);
-              const localGemmaNeedsEngine = Boolean(localGemmaStatus?.needsEngineBundle || (localGemmaModelFileReady && !localGemmaGenerationReady));
+              const localGemmaNeedsEngine = Boolean(localGemmaStatus?.needsEngineBundle || localGemmaStatus?.needsEngineValidation || (localGemmaModelFileReady && !localGemmaGenerationReady));
               const localGemmaSize = formatModelSize(localGemmaStatus?.sizeBytes);
               const localGemmaSelected = modelPrefs.chat === ANDROID_LOCAL_GEMMA_MODEL;
               const localGemmaStatusText = localGemmaStatusLoading
                 ? 'Checking local model storage...'
+                : localGemmaValidating
+                  ? 'Validating LiteRT-LM engine on this device...'
                 : localGemmaGenerationReady
                   ? `Ready to generate${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
                   : localGemmaNeedsEngine
-                    ? `${LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE}${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
+                    ? `${localGemmaStatus?.message || LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE}${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
                   : localGemmaStatus?.message || `Download ${LOCAL_GEMMA_EXPECTED_FILE_NAME}, then import it from Downloads.`;
               const activeLabel =
                 providerStatus?.defaultAuthType === 'oauth'
@@ -2807,10 +2846,14 @@ export default function SettingsScreen() {
                         onPress={isAndroidLocalGemma
                           ? selectAndroidLocalGemma
                           : () => setProviderMessage(provider.id, 'Local Llama is selected from AI Models. Start Ollama, LM Studio, vLLM, or the Jarvis model relay before chatting.')}
-                        disabled={openAIAuthBusy}
-                        style={[providerAuthStyles.primaryAction, openAIAuthBusy && providerAuthStyles.disabledAction]}
+                        disabled={openAIAuthBusy || (isAndroidLocalGemma && localGemmaValidating)}
+                        style={[providerAuthStyles.primaryAction, (openAIAuthBusy || (isAndroidLocalGemma && localGemmaValidating)) && providerAuthStyles.disabledAction]}
                       >
-                        <Ionicons name="hardware-chip-outline" size={16} color="#2563EB" />
+                        {isAndroidLocalGemma && localGemmaValidating ? (
+                          <ActivityIndicator size="small" color="#2563EB" />
+                        ) : (
+                          <Ionicons name="hardware-chip-outline" size={16} color="#2563EB" />
+                        )}
                         <Text style={providerAuthStyles.primaryActionText}>{isAndroidLocalGemma ? 'Use Phone Gemma' : 'Use Local Llama'}</Text>
                       </Pressable>
                     ) : null}
@@ -2818,8 +2861,8 @@ export default function SettingsScreen() {
                     {isAndroidLocalGemma ? (
                       <Pressable
                         onPress={importAndroidLocalGemma}
-                        disabled={localGemmaImporting}
-                        style={[providerAuthStyles.primaryAction, localGemmaImporting && providerAuthStyles.disabledAction]}
+                        disabled={localGemmaImporting || localGemmaValidating}
+                        style={[providerAuthStyles.primaryAction, (localGemmaImporting || localGemmaValidating) && providerAuthStyles.disabledAction]}
                       >
                         {localGemmaImporting ? (
                           <ActivityIndicator size="small" color="#2563EB" />
@@ -2828,6 +2871,23 @@ export default function SettingsScreen() {
                         )}
                         <Text style={providerAuthStyles.primaryActionText}>
                           {localGemmaImporting ? 'Importing model file' : 'Import model file'}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+
+                    {isAndroidLocalGemma && localGemmaModelFileReady ? (
+                      <Pressable
+                        onPress={validateAndroidLocalGemma}
+                        disabled={localGemmaValidating || localGemmaImporting}
+                        style={[providerAuthStyles.primaryAction, (localGemmaValidating || localGemmaImporting) && providerAuthStyles.disabledAction]}
+                      >
+                        {localGemmaValidating ? (
+                          <ActivityIndicator size="small" color="#2563EB" />
+                        ) : (
+                          <Ionicons name="pulse-outline" size={16} color="#2563EB" />
+                        )}
+                        <Text style={providerAuthStyles.primaryActionText}>
+                          {localGemmaValidating ? 'Validating engine' : 'Validate engine'}
                         </Text>
                       </Pressable>
                     ) : null}
@@ -2852,8 +2912,8 @@ export default function SettingsScreen() {
                         color={localGemmaGenerationReady ? '#10B981' : '#F59E0B'}
                       />
                       <Text style={providerAuthStyles.localModelStatusText}>{localGemmaStatusText}</Text>
-                      <Pressable onPress={loadLocalGemmaStatus} disabled={localGemmaStatusLoading} style={providerAuthStyles.localModelRefresh}>
-                        {localGemmaStatusLoading ? (
+                      <Pressable onPress={loadLocalGemmaStatus} disabled={localGemmaStatusLoading || localGemmaValidating} style={providerAuthStyles.localModelRefresh}>
+                        {localGemmaStatusLoading || localGemmaValidating ? (
                           <ActivityIndicator size="small" color={Colors.textSecondary} />
                         ) : (
                           <Ionicons name="refresh-outline" size={15} color={Colors.textSecondary} />

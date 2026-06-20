@@ -11,6 +11,7 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
+import org.json.JSONObject
 
 class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
@@ -106,6 +107,32 @@ class JarvisDaemonModule(
             "E_JARVIS_DAEMON_SCREEN_RECORD_SETUP",
             "Screen recording requires a foreground Activity result flow and is not available from this bridge yet.",
         )
+    }
+
+    @ReactMethod
+    fun getLocalGemmaStatus(model: String, promise: Promise) {
+        val result = LocalGemmaModelManager.status(
+            reactApplicationContext,
+            JSONObject().put("model", model),
+        )
+        if (result.ok) {
+            promise.resolve((result.data as? JSONObject)?.toString() ?: JSONObject().toString())
+        } else {
+            promise.reject("E_LOCAL_GEMMA_STATUS", result.error ?: "Could not read Phone Gemma status.")
+        }
+    }
+
+    @ReactMethod
+    fun validateLocalGemmaModel(model: String, promise: Promise) {
+        val result = LocalGemmaModelManager.validate(
+            reactApplicationContext,
+            JSONObject().put("model", model),
+        )
+        if (result.ok) {
+            promise.resolve((result.data as? JSONObject)?.toString() ?: JSONObject().toString())
+        } else {
+            promise.reject("E_LOCAL_GEMMA_VALIDATE", result.error ?: "Phone Gemma validation failed.")
+        }
     }
 
     private fun startServiceCompat(intent: Intent, promise: Promise): Boolean {

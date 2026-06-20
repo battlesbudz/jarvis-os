@@ -364,6 +364,8 @@ assertIncludes(plugin, "setShowWhenLocked(showWhenLocked)", "plugins/withJarvisA
 assertIncludes(nativeWrapper, "enable(serverUrl: string, bootstrapToken: string)", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "openAssistantSettings", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "refreshAssistantStatus", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "getAndroidLocalGemmaStatus", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "validateAndroidLocalGemmaModel", "lib/android-daemon-native.ts");
 assertExcludes(nativeWrapper, "connect(serverUrl: string, pairCode: string)", "lib/android-daemon-native.ts");
 assertIncludes(androidControlCard, "/api/channels/android-daemon/bootstrap", "AndroidDeviceControlCard.tsx");
 assertIncludes(androidControlCard, "AndroidDaemonNative.enable", "AndroidDeviceControlCard.tsx");
@@ -374,10 +376,14 @@ assertExcludes(androidControlCard, "pairCode", "AndroidDeviceControlCard.tsx");
 assertIncludes(jarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "E_JARVIS_DAEMON_START", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "private fun startServiceCompat(intent: Intent, promise: Promise): Boolean", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "fun getLocalGemmaStatus(model: String, promise: Promise)", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "fun validateLocalGemmaModel(model: String, promise: Promise)", "JarvisDaemonModule.kt");
 assertExcludes(jarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "E_JARVIS_DAEMON_START", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "private fun startServiceCompat(intent: Intent, promise: Promise): Boolean", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun getLocalGemmaStatus(model: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun validateLocalGemmaModel(model: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertExcludes(pluginTemplateJarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(webSocketService, "private fun startForegroundCompat(): Boolean", "WebSocketService.kt");
 assertIncludes(webSocketService, "Failed to start foreground daemon service", "WebSocketService.kt");
@@ -447,6 +453,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "context.applicationInfo.dataDir", source);
   assertIncludes(contents, "File(path).isAbsolute", source);
   assertIncludes(contents, '"android_local_model_status" -> LocalGemmaModelManager.status(context, op)', source);
+  assertIncludes(contents, '"android_local_model_validate" -> LocalGemmaModelManager.validate(context, op)', source);
   assertIncludes(contents, '"android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)', source);
   assertExcludes(contents, 'path.startsWith("/") -> path', source);
 }
@@ -457,12 +464,17 @@ for (const [contents, source] of [
   assertIncludes(contents, "package com.gameplan.daemon", source);
   assertIncludes(contents, 'private const val DEFAULT_MODEL = "gemma-4-e4b-it"', source);
   assertIncludes(contents, "val modelRevision = buildModelRevision(context, model, file)", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.validate(context, model, file, modelRevision, op)", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)", source);
   assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.cancel(op)", source);
   assertIncludes(contents, '.put("modelFileReady", modelFileReady)', source);
   assertIncludes(contents, '.put("engineBundled", true)', source);
   assertIncludes(contents, '.put("generationReady", generationReady)', source);
+  assertIncludes(contents, '.put("needsEngineValidation", needsEngineValidation)', source);
+  assertIncludes(contents, '.put("engineValidated", engineValidated)', source);
+  assertIncludes(contents, "LOCAL_MODEL_VALIDATION_REQUIRED", source);
+  assertIncludes(contents, "shouldPreserveExistingValidation(error)", source);
   assertIncludes(contents, '.put("needsEngineBundle", false)', source);
   assertExcludes(contents, "ENGINE_NOT_BUNDLED_MESSAGE", source);
   assertIncludes(contents, "context.filesDir", source);
@@ -479,6 +491,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "DEFAULT_ALLOW_CPU_FALLBACK = false", source);
   assertIncludes(contents, "DEFAULT_CONTEXT_TOKENS = 2048", source);
   assertIncludes(contents, "DEFAULT_MAX_COMPLETION_TOKENS = 128", source);
+  assertIncludes(contents, "fun validate(context: Context, model: String, modelFile: File, modelRevision: String, op: JSONObject): OpResult", source);
+  assertIncludes(contents, "LOCAL_MODEL_VALIDATION_FAILED", source);
   assertIncludes(contents, "MIN_GPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 2800L * 1024L * 1024L", source);

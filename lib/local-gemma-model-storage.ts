@@ -1,4 +1,5 @@
 import * as FileSystem from "expo-file-system/legacy";
+import { getAndroidLocalGemmaStatus, validateAndroidLocalGemmaModel } from "./android-daemon-native";
 
 export const LOCAL_GEMMA_MODEL_ID = "gemma-4-e4b-it";
 export const LOCAL_GEMMA_EXPECTED_FILE_NAME = "gemma-4-E4B-it.litertlm";
@@ -6,8 +7,6 @@ export const LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE =
   "Phone Gemma's model file is imported, but Jarvis needs to validate LiteRT-LM on this device before using it for chat.";
 
 const LOCAL_GEMMA_ENGINE = "litert-lm";
-const LOCAL_GEMMA_READY_MESSAGE =
-  "Phone Gemma's model file is imported and LiteRT-LM is bundled in this APK.";
 const LOCAL_GEMMA_DIR = `local_models/${LOCAL_GEMMA_MODEL_ID}`;
 const LOCAL_GEMMA_MODEL_FILE = "model.litertlm";
 const LOCAL_GEMMA_METADATA_FILE = "metadata.json";
@@ -19,6 +18,18 @@ export interface LocalGemmaModelStatus {
   generationReady?: boolean;
   needsModelImport?: boolean;
   needsEngineBundle?: boolean;
+  needsEngineValidation?: boolean;
+  engineValidated?: boolean;
+  engineValidatedAtMs?: number | null;
+  engineValidatedBackend?: string | null;
+  engineValidatedSpeculativeDecoding?: boolean | null;
+  engineLastValidationError?: string | null;
+  lastEngineError?: string | null;
+  modelRevision?: string | null;
+  inference?: Record<string, unknown>;
+  expectedMinSizeBytes?: number | null;
+  expectedMaxSizeBytes?: number | null;
+  modelFileSizeLooksPlausible?: boolean;
   message?: string;
   provider?: "android-local-gemma";
   runtime?: "android-app";
@@ -70,6 +81,60 @@ function sizeFromInfo(info: Awaited<ReturnType<typeof FileSystem.getInfoAsync>>)
   return size && size > 0 ? size : null;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function normalizeLocalGemmaStatus(raw: Record<string, unknown>): LocalGemmaModelStatus {
+  const inference = asRecord(raw.inference) ?? undefined;
+  return {
+    ready: raw.ready === true,
+    modelFileReady: raw.modelFileReady === true,
+    engineBundled: raw.engineBundled !== false,
+    generationReady: raw.generationReady === true,
+    needsModelImport: raw.needsModelImport === true,
+    needsEngineBundle: raw.needsEngineBundle === true,
+    needsEngineValidation: raw.needsEngineValidation === true,
+    engineValidated: raw.engineValidated === true,
+    engineValidatedAtMs: numberValue(raw.engineValidatedAtMs),
+    engineValidatedBackend: stringValue(raw.engineValidatedBackend) ?? null,
+    engineValidatedSpeculativeDecoding: booleanValue(raw.engineValidatedSpeculativeDecoding) ?? null,
+    engineLastValidationError: stringValue(raw.engineLastValidationError) ?? null,
+    lastEngineError: stringValue(raw.lastEngineError) ?? null,
+    modelRevision: stringValue(raw.modelRevision) ?? null,
+    inference,
+    expectedMinSizeBytes: numberValue(raw.expectedMinSizeBytes),
+    expectedMaxSizeBytes: numberValue(raw.expectedMaxSizeBytes),
+    modelFileSizeLooksPlausible: booleanValue(raw.modelFileSizeLooksPlausible),
+    message: stringValue(raw.message),
+    provider: "android-local-gemma",
+    runtime: "android-app",
+    storageOwner: "jarvis-android-app",
+    engine: LOCAL_GEMMA_ENGINE,
+    model: stringValue(raw.model) || LOCAL_GEMMA_MODEL_ID,
+    modelPath: stringValue(raw.modelPath),
+    sourceName: stringValue(raw.sourceName),
+    sourceSizeBytes: numberValue(raw.sourceSizeBytes),
+    sha256: stringValue(raw.sha256),
+    sizeBytes: numberValue(raw.sizeBytes),
+    importedAtMs: numberValue(raw.importedAtMs) ?? undefined,
+  };
+}
+
 async function readMetadata(metadataPath: string): Promise<Partial<LocalGemmaModelStatus> | null> {
   const info = await FileSystem.getInfoAsync(metadataPath);
   if (!info.exists) return null;
@@ -83,6 +148,9 @@ async function readMetadata(metadataPath: string): Promise<Partial<LocalGemmaMod
 }
 
 export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus> {
+  const nativeStatus = await getAndroidLocalGemmaStatus(LOCAL_GEMMA_MODEL_ID).catch(() => null);
+  if (nativeStatus) return normalizeLocalGemmaStatus(nativeStatus);
+
   const paths = getLocalGemmaStoragePaths();
   if (!paths) {
     return {
@@ -92,6 +160,7 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
       generationReady: false,
       needsModelImport: true,
       needsEngineBundle: false,
+      needsEngineValidation: false,
       model: LOCAL_GEMMA_MODEL_ID,
       message: "Jarvis app storage is not available on this device.",
     };
@@ -111,6 +180,7 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
       generationReady: false,
       needsModelImport: true,
       needsEngineBundle: false,
+      needsEngineValidation: false,
       provider: "android-local-gemma",
       runtime: "android-app",
       storageOwner: "jarvis-android-app",
@@ -123,12 +193,14 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
 
   return {
     ...metadata,
-    ready: true,
+    ready: false,
     modelFileReady: true,
     engineBundled: true,
-    generationReady: true,
+    generationReady: false,
     needsModelImport: false,
     needsEngineBundle: false,
+    needsEngineValidation: true,
+    engineValidated: false,
     provider: "android-local-gemma",
     runtime: "android-app",
     storageOwner: "jarvis-android-app",
@@ -138,7 +210,7 @@ export async function readLocalGemmaModelStatus(): Promise<LocalGemmaModelStatus
     sizeBytes: sizeBytes ?? metadata?.sizeBytes ?? null,
     sourceName: metadata?.sourceName,
     importedAtMs: metadata?.importedAtMs,
-    message: LOCAL_GEMMA_READY_MESSAGE,
+    message: LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
   };
 }
 
@@ -217,16 +289,27 @@ export async function importLocalGemmaModelFile(): Promise<LocalGemmaModelStatus
     modelPath: paths.modelPath,
     sizeBytes: copiedSize,
     importedAtMs: Date.now(),
-    ready: true,
+    ready: false,
     modelFileReady: true,
     engineBundled: true,
-    generationReady: true,
+    generationReady: false,
     needsModelImport: false,
     needsEngineBundle: false,
-    message: LOCAL_GEMMA_READY_MESSAGE,
+    needsEngineValidation: true,
+    engineValidated: false,
+    engineValidatedAtMs: null,
+    engineValidatedBackend: null,
+    engineValidatedSpeculativeDecoding: null,
+    engineLastValidationError: null,
+    message: "Phone Gemma's model file is imported. Validate the LiteRT-LM engine before using it for chat.",
   };
   await FileSystem.writeAsStringAsync(paths.metadataPath, JSON.stringify(metadata, null, 2));
   await deletePickerCacheFile(asset.uri);
 
   return readLocalGemmaModelStatus();
+}
+
+export async function validateLocalGemmaModel(): Promise<LocalGemmaModelStatus> {
+  const status = await validateAndroidLocalGemmaModel(LOCAL_GEMMA_MODEL_ID);
+  return normalizeLocalGemmaStatus(status);
 }

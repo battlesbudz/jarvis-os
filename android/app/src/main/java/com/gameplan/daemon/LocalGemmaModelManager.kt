@@ -14,13 +14,30 @@ object LocalGemmaModelManager {
     private const val ENGINE = "litert-lm"
     private const val DEFAULT_DOWNLOAD_FILE = "gemma-4-E4B-it.litertlm"
     private const val COPY_BUFFER_BYTES = 1024 * 1024
+    private const val EXPECTED_E4B_MIN_BYTES = 3_400_000_000L
+    private const val EXPECTED_E4B_MAX_BYTES = 3_900_000_000L
 
     fun status(context: Context, op: JSONObject): OpResult {
         val model = normalizeModel(op.optString("model", DEFAULT_MODEL))
         val file = modelFile(context, model)
         val modelFileReady = file.exists() && file.isFile && file.length() > 0
-        val generationReady = modelFileReady
         val metadata = readMetadata(context, model)
+        val modelRevision = if (modelFileReady) buildModelRevision(context, model, file) else null
+        val inference = LocalGemmaInferenceEngine.status()
+        val engineLastValidationError = optionalString(metadata, "engineLastValidationError")
+        val lastEngineError = optionalString(inference, "lastEngineError")
+        val validationError = lastEngineError ?: engineLastValidationError
+        val engineValidatedRevision = optionalString(metadata, "engineValidatedRevision")
+        val engineValidated = modelFileReady &&
+            modelRevision != null &&
+            engineValidatedRevision == modelRevision &&
+            validationError == null
+        val needsEngineValidation = modelFileReady && !engineValidated
+        val generationReady = engineValidated
+        val sizeBytes = if (modelFileReady) file.length() else 0L
+        val sizeLooksPlausible = !modelFileReady || model != DEFAULT_MODEL ||
+            sizeBytes in EXPECTED_E4B_MIN_BYTES..EXPECTED_E4B_MAX_BYTES
+
         return OpResult(
             ok = true,
             data = JSONObject()
@@ -30,24 +47,38 @@ object LocalGemmaModelManager {
                 .put("engine", ENGINE)
                 .put("model", model)
                 .put("modelPath", file.absolutePath)
-                .put("sizeBytes", if (modelFileReady) file.length() else 0L)
-                .put("sourceName", metadata?.optString("sourceName")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                .put("sha256", metadata?.optString("sha256")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                .put("importedAtMs", metadata?.optLong("importedAtMs", 0L)?.takeIf { it > 0 } ?: JSONObject.NULL)
+                .put("sizeBytes", sizeBytes)
+                .put("sourceName", optionalString(metadata, "sourceName") ?: JSONObject.NULL)
+                .put("sha256", optionalString(metadata, "sha256") ?: JSONObject.NULL)
+                .put("importedAtMs", optionalLong(metadata, "importedAtMs") ?: JSONObject.NULL)
+                .put("modelRevision", modelRevision ?: JSONObject.NULL)
                 .put("ready", generationReady)
                 .put("modelFileReady", modelFileReady)
                 .put("engineBundled", true)
                 .put("generationReady", generationReady)
                 .put("needsModelImport", !modelFileReady)
                 .put("needsEngineBundle", false)
-                .put("inference", LocalGemmaInferenceEngine.status())
+                .put("needsEngineValidation", needsEngineValidation)
+                .put("engineValidated", engineValidated)
+                .put("engineValidatedRevision", engineValidatedRevision ?: JSONObject.NULL)
+                .put("engineValidatedAtMs", optionalLong(metadata, "engineValidatedAtMs") ?: JSONObject.NULL)
+                .put("engineValidatedBackend", optionalString(metadata, "engineValidatedBackend") ?: JSONObject.NULL)
+                .put("engineValidatedSpeculativeDecoding", optionalBoolean(metadata, "engineValidatedSpeculativeDecoding") ?: JSONObject.NULL)
+                .put("engineLastValidationError", engineLastValidationError ?: JSONObject.NULL)
+                .put("lastEngineError", lastEngineError ?: JSONObject.NULL)
+                .put("expectedMinSizeBytes", if (model == DEFAULT_MODEL) EXPECTED_E4B_MIN_BYTES else JSONObject.NULL)
+                .put("expectedMaxSizeBytes", if (model == DEFAULT_MODEL) EXPECTED_E4B_MAX_BYTES else JSONObject.NULL)
+                .put("modelFileSizeLooksPlausible", sizeLooksPlausible)
+                .put("inference", inference)
                 .put(
                     "message",
-                    if (generationReady) {
-                        "Local Gemma model file is present and ready for LiteRT-LM inference."
-                    } else {
-                        "Import a .litertlm Gemma model file in Jarvis Android settings before local generation."
-                    }
+                    statusMessage(
+                        modelFileReady = modelFileReady,
+                        generationReady = generationReady,
+                        needsEngineValidation = needsEngineValidation,
+                        sizeLooksPlausible = sizeLooksPlausible,
+                        validationError = validationError,
+                    )
                 )
         )
     }
@@ -74,6 +105,7 @@ object LocalGemmaModelManager {
 
         val tmp = File(targetDir, "model.litertlm.tmp")
         return try {
+            LocalGemmaInferenceEngine.shutdown()
             if (tmp.exists()) tmp.delete()
             val sha256 = copyWithSha256(source, tmp)
             if (target.exists() && !target.delete()) {
@@ -96,28 +128,22 @@ object LocalGemmaModelManager {
                 .put("sizeBytes", target.length())
                 .put("sha256", sha256)
                 .put("importedAtMs", System.currentTimeMillis())
+                .put("ready", false)
+                .put("modelFileReady", true)
+                .put("engineBundled", true)
+                .put("generationReady", false)
+                .put("needsModelImport", false)
+                .put("needsEngineBundle", false)
+                .put("needsEngineValidation", true)
+                .put("engineValidated", false)
+                .put("engineValidatedRevision", JSONObject.NULL)
+                .put("engineValidatedAtMs", JSONObject.NULL)
+                .put("engineValidatedBackend", JSONObject.NULL)
+                .put("engineValidatedSpeculativeDecoding", JSONObject.NULL)
+                .put("engineLastValidationError", JSONObject.NULL)
             metadataFile(context, model).writeText(metadata.toString(2))
 
-            OpResult(
-                ok = true,
-                data = JSONObject()
-                    .put("provider", "android-local-gemma")
-                    .put("runtime", "android-app")
-                    .put("storageOwner", "jarvis-android-app")
-                    .put("engine", ENGINE)
-                    .put("model", model)
-                    .put("sourcePath", source.absolutePath)
-                    .put("modelPath", target.absolutePath)
-                    .put("sizeBytes", target.length())
-                    .put("sha256", sha256)
-                    .put("ready", true)
-                    .put("modelFileReady", true)
-                    .put("engineBundled", true)
-                    .put("generationReady", true)
-                    .put("needsModelImport", false)
-                    .put("needsEngineBundle", false)
-                    .put("message", "Imported ${source.name} into Jarvis local model storage.")
-            )
+            status(context, JSONObject().put("model", model))
         } catch (se: SecurityException) {
             tmp.delete()
             OpResult(
@@ -146,7 +172,42 @@ object LocalGemmaModelManager {
         }
 
         val modelRevision = buildModelRevision(context, model, file)
+        val metadata = readMetadata(context, model)
+        val validatedRevision = optionalString(metadata, "engineValidatedRevision")
+        val validationError = optionalString(metadata, "engineLastValidationError")
+        if (validatedRevision != modelRevision) {
+            val lastError = validationError?.let { " Last validation error: $it" } ?: ""
+            return OpResult(
+                false,
+                error = "LOCAL_MODEL_VALIDATION_REQUIRED: Validate Phone Gemma in Android settings before using it for chat.$lastError"
+            )
+        }
+
         return LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)
+    }
+
+    fun validate(context: Context, op: JSONObject): OpResult {
+        val model = normalizeModel(op.optString("model", DEFAULT_MODEL))
+        val file = modelFile(context, model)
+        if (!file.exists() || !file.isFile || file.length() == 0L) {
+            return OpResult(
+                false,
+                error = "LOCAL_MODEL_NOT_READY: Import $model as a .litertlm file in Jarvis Android settings."
+            )
+        }
+
+        val modelRevision = buildModelRevision(context, model, file)
+        val result = LocalGemmaInferenceEngine.validate(context, model, file, modelRevision, op)
+        return if (result.ok) {
+            markValidationSuccess(context, model, modelRevision, result.data as? JSONObject)
+            status(context, JSONObject().put("model", model))
+        } else {
+            val error = result.error ?: "Phone Gemma LiteRT-LM validation failed."
+            if (!shouldPreserveExistingValidation(error)) {
+                markValidationError(context, model, modelRevision, error)
+            }
+            result
+        }
     }
 
     fun cancel(op: JSONObject): OpResult {
@@ -168,6 +229,108 @@ object LocalGemmaModelManager {
         } else {
             fileRevision
         }
+    }
+
+    private fun statusMessage(
+        modelFileReady: Boolean,
+        generationReady: Boolean,
+        needsEngineValidation: Boolean,
+        sizeLooksPlausible: Boolean,
+        validationError: String?,
+    ): String {
+        if (!modelFileReady) {
+            return "Import a .litertlm Gemma model file in Jarvis Android settings before local generation."
+        }
+        if (!sizeLooksPlausible) {
+            return "Phone Gemma's model file is imported, but its size does not match the expected Gemma 4 E4B LiteRT-LM file. Reimport the official Android .litertlm file."
+        }
+        if (generationReady) {
+            return "Phone Gemma's model file is imported and LiteRT-LM validated on this device."
+        }
+        if (validationError != null) {
+            return "Phone Gemma's model file is imported, but LiteRT-LM could not validate it on this device. Reimport the official Android Gemma 4 E4B .litertlm file, or try a smaller Phone Gemma model if GPU validation keeps failing. Last error: $validationError"
+        }
+        if (needsEngineValidation) {
+            return "Phone Gemma's model file is imported. Validate the LiteRT-LM engine before using it for chat."
+        }
+        return "Phone Gemma is not ready for local generation yet."
+    }
+
+    private fun markValidationSuccess(context: Context, model: String, modelRevision: String, validationData: JSONObject?) {
+        val metadata = readMetadata(context, model) ?: JSONObject()
+        metadata
+            .put("provider", "android-local-gemma")
+            .put("runtime", "android-app")
+            .put("storageOwner", "jarvis-android-app")
+            .put("engine", ENGINE)
+            .put("model", model)
+            .put("ready", true)
+            .put("modelFileReady", true)
+            .put("engineBundled", true)
+            .put("generationReady", true)
+            .put("needsModelImport", false)
+            .put("needsEngineBundle", false)
+            .put("needsEngineValidation", false)
+            .put("engineValidated", true)
+            .put("engineValidatedRevision", modelRevision)
+            .put("engineValidatedAtMs", System.currentTimeMillis())
+            .put("engineValidatedBackend", validationData?.optString("backend")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            .put("engineValidatedSpeculativeDecoding", validationData?.optBoolean("speculativeDecoding") ?: JSONObject.NULL)
+            .put("engineLastValidationError", JSONObject.NULL)
+            .put("engineLastValidationRevision", JSONObject.NULL)
+            .put("engineLastValidationAtMs", JSONObject.NULL)
+        writeMetadata(context, model, metadata)
+    }
+
+    private fun markValidationError(context: Context, model: String, modelRevision: String, error: String) {
+        val metadata = readMetadata(context, model) ?: JSONObject()
+        metadata
+            .put("provider", "android-local-gemma")
+            .put("runtime", "android-app")
+            .put("storageOwner", "jarvis-android-app")
+            .put("engine", ENGINE)
+            .put("model", model)
+            .put("ready", false)
+            .put("engineBundled", true)
+            .put("generationReady", false)
+            .put("needsModelImport", false)
+            .put("needsEngineBundle", false)
+            .put("needsEngineValidation", true)
+            .put("engineValidated", false)
+            .put("engineValidatedRevision", JSONObject.NULL)
+            .put("engineValidatedAtMs", JSONObject.NULL)
+            .put("engineValidatedBackend", JSONObject.NULL)
+            .put("engineValidatedSpeculativeDecoding", JSONObject.NULL)
+            .put("engineLastValidationError", error)
+            .put("engineLastValidationRevision", modelRevision)
+            .put("engineLastValidationAtMs", System.currentTimeMillis())
+        writeMetadata(context, model, metadata)
+    }
+
+    private fun writeMetadata(context: Context, model: String, metadata: JSONObject) {
+        val file = metadataFile(context, model)
+        file.parentFile?.mkdirs()
+        file.writeText(metadata.toString(2))
+    }
+
+    private fun optionalString(json: JSONObject?, key: String): String? {
+        if (json == null || !json.has(key) || json.isNull(key)) return null
+        return json.optString(key).takeIf { it.isNotBlank() && it != "null" }
+    }
+
+    private fun optionalLong(json: JSONObject?, key: String): Long? {
+        if (json == null || !json.has(key) || json.isNull(key)) return null
+        return json.optLong(key, 0L).takeIf { it > 0L }
+    }
+
+    private fun optionalBoolean(json: JSONObject?, key: String): Boolean? {
+        if (json == null || !json.has(key) || json.isNull(key)) return null
+        return json.optBoolean(key)
+    }
+
+    private fun shouldPreserveExistingValidation(error: String): Boolean {
+        return error.contains("LOCAL_MODEL_BUSY") ||
+            error.contains("LOCAL_MODEL_DEVICE_MEMORY_LOW")
     }
 
     private data class ImportSourceResult(val file: File?, val error: String? = null)

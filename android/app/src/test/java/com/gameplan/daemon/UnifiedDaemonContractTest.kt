@@ -107,4 +107,30 @@ class UnifiedDaemonContractTest {
             modelFile.path.endsWith(expectedSuffix)
         )
     }
+
+    @Test
+    fun localGemmaStatusRequiresEngineValidationBeforeGenerationReady() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val modelFile = LocalGemmaModelManager.modelFile(context, "gemma-4-e4b-it")
+        modelFile.parentFile?.mkdirs()
+        modelFile.writeText("not a real litert model")
+
+        try {
+            val result = OpHandler.handle(
+                context,
+                JSONObject()
+                    .put("type", "android_local_model_status")
+                    .put("model", "gemma-4-e4b-it")
+            )
+
+            assertTrue(result.ok)
+            val data = result.data as JSONObject
+            assertTrue(data.getBoolean("modelFileReady"))
+            assertFalse(data.getBoolean("generationReady"))
+            assertTrue(data.getBoolean("needsEngineValidation"))
+            assertFalse(data.getBoolean("engineValidated"))
+        } finally {
+            modelFile.parentFile?.deleteRecursively()
+        }
+    }
 }

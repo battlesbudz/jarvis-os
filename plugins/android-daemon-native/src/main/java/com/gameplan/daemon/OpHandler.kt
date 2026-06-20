@@ -82,6 +82,7 @@ object OpHandler {
                 "android_get_display_size" -> handleGetDisplaySize(context)
                 "android_local_model_status" -> LocalGemmaModelManager.status(context, op)
                 "android_local_model_import" -> LocalGemmaModelManager.importModel(context, op)
+                "android_local_model_validate" -> LocalGemmaModelManager.validate(context, op)
                 "android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)
                 "android_local_model_cancel" -> LocalGemmaModelManager.cancel(op)
                 else -> OpResult(false, error = "Unknown op type: $type")

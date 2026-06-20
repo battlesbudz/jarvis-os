@@ -1195,6 +1195,30 @@ async function testAndroidLocalGemmaExplainsUnbundledEngine() {
   }
 }
 
+async function testAndroidLocalGemmaExplainsValidationRequired() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_VALIDATION_REQUIRED: Validate Phone Gemma in Android settings before using it for chat.",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /tap Validate engine/,
+    );
+    console.log("OK: Android Local Gemma reports unvalidated Phone Gemma as an actionable routing error");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaExplainsPhoneResourceFailures() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: false,
@@ -1372,6 +1396,7 @@ async function main() {
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
   await testAndroidLocalGemmaExplainsUnbundledEngine();
+  await testAndroidLocalGemmaExplainsValidationRequired();
   await testAndroidLocalGemmaExplainsPhoneResourceFailures();
   await testAndroidLocalGemmaExplainsEngineCreationFailure();
   await testAndroidLocalGemmaDoesNotClaimSkippedCpuFallback();
