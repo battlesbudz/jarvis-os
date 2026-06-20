@@ -488,6 +488,7 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
     assert.match(requests[0].op.prompt, /user: Hello/);
     assert.equal(requests[0].op.contextTokens, 2048);
     assert.equal(requests[0].op.maxTokens, 128);
+    assert.equal(requests[0].op.allowCpuFallback, false);
     assert.ok(requests[0].timeoutMs >= 60000);
     console.log("OK: Android Local Gemma provider sends generation to the Jarvis Android app daemon runtime");
   } finally {
