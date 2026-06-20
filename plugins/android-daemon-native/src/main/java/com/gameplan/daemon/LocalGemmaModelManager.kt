@@ -202,7 +202,10 @@ object LocalGemmaModelManager {
             markValidationSuccess(context, model, modelRevision, result.data as? JSONObject)
             status(context, JSONObject().put("model", model))
         } else {
-            markValidationError(context, model, modelRevision, result.error ?: "Phone Gemma LiteRT-LM validation failed.")
+            val error = result.error ?: "Phone Gemma LiteRT-LM validation failed."
+            if (!shouldPreserveExistingValidation(error)) {
+                markValidationError(context, model, modelRevision, error)
+            }
             result
         }
     }
@@ -323,6 +326,11 @@ object LocalGemmaModelManager {
     private fun optionalBoolean(json: JSONObject?, key: String): Boolean? {
         if (json == null || !json.has(key) || json.isNull(key)) return null
         return json.optBoolean(key)
+    }
+
+    private fun shouldPreserveExistingValidation(error: String): Boolean {
+        return error.contains("LOCAL_MODEL_BUSY") ||
+            error.contains("LOCAL_MODEL_DEVICE_MEMORY_LOW")
     }
 
     private data class ImportSourceResult(val file: File?, val error: String? = null)

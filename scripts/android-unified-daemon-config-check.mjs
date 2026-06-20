@@ -474,6 +474,7 @@ for (const [contents, source] of [
   assertIncludes(contents, '.put("needsEngineValidation", needsEngineValidation)', source);
   assertIncludes(contents, '.put("engineValidated", engineValidated)', source);
   assertIncludes(contents, "LOCAL_MODEL_VALIDATION_REQUIRED", source);
+  assertIncludes(contents, "shouldPreserveExistingValidation(error)", source);
   assertIncludes(contents, '.put("needsEngineBundle", false)', source);
   assertExcludes(contents, "ENGINE_NOT_BUNDLED_MESSAGE", source);
   assertIncludes(contents, "context.filesDir", source);

@@ -67,6 +67,7 @@ assert.match(nativeModelManager, /\.put\("generationReady", generationReady\)/);
 assert.match(nativeModelManager, /\.put\("needsEngineValidation", needsEngineValidation\)/);
 assert.match(nativeModelManager, /\.put\("engineValidated", engineValidated\)/);
 assert.match(nativeModelManager, /LOCAL_MODEL_VALIDATION_REQUIRED/);
+assert.match(nativeModelManager, /shouldPreserveExistingValidation\(error\)/);
 assert.match(nativeModelManager, /\.put\("needsEngineBundle", false\)/);
 assert.doesNotMatch(nativeModelManager, /ENGINE_NOT_BUNDLED_MESSAGE/);
 assert.match(nativeInferenceEngine, /EngineConfig\(/);
