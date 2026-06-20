@@ -158,12 +158,27 @@ function looksLikeUrlToolRequest(text: string): boolean {
 function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
   const latest = latestUserText(messages).trim();
   if (!/^(?:yes|yeah|yep|ok|okay|sure|do it|go ahead|please do)$/i.test(latest)) return false;
+  let assistantIndex = -1;
   for (let index = messages.length - 2; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role !== "assistant") continue;
+    assistantIndex = index;
     const text = textFromContent(message.content);
-    return /\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead)\b/i.test(text) &&
-      (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text));
+    if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(text)) return false;
+    if (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text)) return true;
+    break;
+  }
+
+  if (assistantIndex < 0) return false;
+  const scanStart = Math.max(0, assistantIndex - 4);
+  for (let index = assistantIndex - 1; index >= scanStart; index -= 1) {
+    const message = messages[index];
+    if (message.role === "tool") return true;
+    if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
+    if (message.role === "user") {
+      const text = textFromContent(message.content);
+      if (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text)) return true;
+    }
   }
   return false;
 }
@@ -423,12 +438,13 @@ function toolRelevanceScore(tool: OpenAI.Chat.Completions.ChatCompletionTool, re
 function toolSpecsForPrompt(
   tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
   requestText: string,
+  budgetLimit: number = phoneGemmaToolListCharBudget(),
 ): string {
   const toolList = (tools || [])
     .filter((tool) => tool.type === "function")
     .sort((a, b) => toolRelevanceScore(b, requestText) - toolRelevanceScore(a, requestText));
 
-  const budget = phoneGemmaToolListCharBudget();
+  const budget = Math.max(160, Math.min(phoneGemmaToolListCharBudget(), budgetLimit));
   const lines: string[] = [];
   let used = 0;
   let omitted = 0;
@@ -438,6 +454,11 @@ function toolSpecsForPrompt(
     const line = `- ${tool.function.name}: ${description || "Local Jarvis tool."}${argumentText}`;
     const separatorChars = lines.length > 0 ? 1 : 0;
     if (used + separatorChars + line.length > budget) {
+      if (lines.length === 0) {
+        lines.push(truncateText(line, budget));
+        used = lines[0].length;
+        continue;
+      }
       omitted += 1;
       continue;
     }
@@ -454,8 +475,8 @@ function toolSpecsForPrompt(
 
 function toolPromptFromParams(params: ProviderQueryParams): string {
   const requestText = latestUserText(params.messages);
-  const toolSpecs = toolSpecsForPrompt(params.tools, requestText);
-  const intro = [
+  const promptBudget = phoneGemmaPromptCharBudget();
+  const baseIntro = [
     "You are Jarvis running entirely through Android Local Gemma on the user's phone.",
     "Return ONLY one JSON object, with no markdown or extra text.",
     "Jarvis executes requested local tools and sends tool results back; tool results are authoritative.",
@@ -466,11 +487,15 @@ function toolPromptFromParams(params: ProviderQueryParams): string {
     params.toolChoice === "required"
       ? "A tool call is required for this turn. Do not return a final answer."
       : "Use tools only when they are necessary to satisfy the user's request.",
+  ].join("\n");
+  const toolListBudget = promptBudget - baseIntro.length - MIN_REQUIRED_PROMPT_SECTION_CHARS - 48;
+  const toolSpecs = toolSpecsForPrompt(params.tools, requestText, toolListBudget);
+  const intro = [
+    baseIntro,
     "Available tools:",
     toolSpecs || "- No callable local tools were provided.",
   ].join("\n");
 
-  const promptBudget = phoneGemmaPromptCharBudget();
   const conversationBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, promptBudget - intro.length - 32);
 
   return [

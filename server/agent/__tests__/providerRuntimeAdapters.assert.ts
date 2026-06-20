@@ -682,6 +682,60 @@ async function testAndroidLocalGemmaUsesToolProtocolForUrlTools() {
   }
 }
 
+async function testAndroidLocalGemmaKeepsToolProtocolForConfirmationTurns() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "daemon_action", arguments: { action: "android_sms_send", approved: true } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Please send an SMS to Justin." },
+        { role: "assistant", content: "Should I proceed?" },
+        { role: "user", content: "yes" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["android_sms_send"] },
+              approved: { type: "boolean" },
+            },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.match(requests[0].op.prompt, /Available tools/);
+    console.log("OK: Android Local Gemma keeps tool protocol for confirmation turns");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   const largeSchema = {
@@ -790,6 +844,20 @@ async function testAndroidLocalGemmaHonorsReducedToolPromptBudget() {
             },
             required: ["action"],
           },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "lookup_memory",
+          description: "Look up a local memory entry.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
         },
       }],
       toolChoice: "auto",
@@ -1224,6 +1292,7 @@ async function main() {
   await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
   await testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat();
   await testAndroidLocalGemmaUsesToolProtocolForUrlTools();
+  await testAndroidLocalGemmaKeepsToolProtocolForConfirmationTurns();
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaHonorsReducedToolPromptBudget();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
