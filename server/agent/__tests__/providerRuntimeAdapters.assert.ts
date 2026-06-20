@@ -695,6 +695,43 @@ async function testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming() {
   }
 }
 
+async function testAndroidLocalGemmaPreservesNewestTurnWhenTrimming() {
+  const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+  process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "latest turn preserved", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "STALE_OLDER_TURN_THAT_WOULD_FIT" },
+        { role: "assistant", content: "Old answer." },
+        { role: "user", content: `${"very long current request ".repeat(180)} CURRENT_REQUEST_TAIL_MARKER` },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "latest turn preserved");
+    assert.match(requests[0].op.prompt, /CURRENT_REQUEST_TAIL_MARKER/);
+    console.log("OK: Android Local Gemma preserves the newest turn when trimming prompt context");
+  } finally {
+    if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+    else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -955,6 +992,7 @@ async function main() {
   await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
+  await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();

@@ -191,10 +191,17 @@ function formatPromptSections(
   }
 
   const kept: string[] = [];
-  let used = 0;
   let omittedNonSystem = 0;
   const remainingBudget = Math.max(300, budgetChars - systemUsed - (keptSystem.length > 0 ? 10 : 0));
-  for (let index = nonSystemSections.length - 1; index >= 0; index -= 1) {
+  const latestNonSystemSection = nonSystemSections[nonSystemSections.length - 1]?.text;
+  let used = 0;
+  if (latestNonSystemSection) {
+    const latest = truncateTextMiddle(latestNonSystemSection, remainingBudget);
+    kept.push(latest);
+    used = latest.length;
+  }
+
+  for (let index = nonSystemSections.length - 2; index >= 0; index -= 1) {
     const section = nonSystemSections[index].text;
     const separatorChars = kept.length > 0 ? 10 : 0;
     if (used + separatorChars + section.length <= remainingBudget) {
@@ -203,12 +210,6 @@ function formatPromptSections(
       continue;
     }
     omittedNonSystem += 1;
-  }
-
-  if (kept.length === 0 && nonSystemSections.length > 0) {
-    const latest = nonSystemSections[nonSystemSections.length - 1].text;
-    kept.push(truncateTextMiddle(latest, remainingBudget));
-    omittedNonSystem = Math.max(0, nonSystemSections.length - 1);
   }
 
   const omitted = omittedSystem + omittedNonSystem;
