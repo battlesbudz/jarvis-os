@@ -159,7 +159,7 @@ function shouldOmitLocalRuntimeErrorMessage(message: OpenAI.Chat.Completions.Cha
   if (message.role !== "assistant" || message.tool_calls?.length) return false;
   const text = textFromContent(message.content).trim();
   return /^Error:\s*(?:LOCAL_MODEL_|Phone Gemma|Android Local Gemma|Jarvis Android app device control)/i.test(text) ||
-    /\bLOCAL_MODEL_(?:GENERATION_FAILED|DEVICE_MEMORY_LOW|BUSY|CANCELLED|ENGINE_NOT_BUNDLED)\b/i.test(text) ||
+    /\bLOCAL_MODEL_(?:GENERATION_FAILED|DEVICE_MEMORY_LOW|BUSY|CANCELLED|ENGINE_NOT_BUNDLED|VALIDATION_REQUIRED|VALIDATION_FAILED)\b/i.test(text) ||
     /^Phone Gemma (?:could not|finished without|timed out|is still working)/i.test(text);
 }
 
@@ -576,6 +576,12 @@ function finishReasonFromDaemonData(data: unknown): string | null {
 function normalizeAndroidLocalGemmaError(error: string | undefined): string {
   if (error?.includes("LOCAL_MODEL_ENGINE_NOT_BUNDLED")) {
     return "Phone Gemma is selected, but this APK cannot run LiteRT-LM generation yet. Install a LiteRT-LM-enabled APK before using Android Local Gemma.";
+  }
+  if (error?.includes("LOCAL_MODEL_VALIDATION_REQUIRED")) {
+    return `Phone Gemma's model file is imported, but Jarvis has not validated the LiteRT-LM engine for this exact file on your phone yet. Open Settings -> AI Models -> Phone Gemma and tap Validate engine before chatting locally. Details: ${error}`;
+  }
+  if (error?.includes("LOCAL_MODEL_VALIDATION_FAILED")) {
+    return `Phone Gemma could not validate the LiteRT-LM engine for the imported .litertlm model on this device. Reimport the official Android Gemma 4 E4B .litertlm file, then validate again. Details: ${error}`;
   }
   if (
     error?.includes("LOCAL_MODEL_GENERATION_FAILED") &&

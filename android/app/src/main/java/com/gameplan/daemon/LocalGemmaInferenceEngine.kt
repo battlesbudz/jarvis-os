@@ -221,6 +221,71 @@ object LocalGemmaInferenceEngine {
         }
     }
 
+    fun validate(context: Context, model: String, modelFile: File, modelRevision: String, op: JSONObject): OpResult {
+        var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
+        val allowCpuFallback = op.optBoolean("allowCpuFallback", DEFAULT_ALLOW_CPU_FALLBACK)
+        val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
+        val keepEngineWarm = op.optBoolean("keepEngineWarm", false)
+        val memory = memorySnapshot(context)
+        val startedAtMs = System.currentTimeMillis()
+
+        if (activeRequests.isNotEmpty()) {
+            return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating. Wait for it to finish or cancel it before validating the local engine.")
+        }
+        lowMemoryError(memory, backendName)?.let { error ->
+            DaemonLog.add("local_gemma: validation memory low $error")
+            return OpResult(false, error = error)
+        }
+
+        return try {
+            var resolvedBackend = backendName
+            var resolvedSpeculativeDecoding = false
+            runBlocking {
+                generationMutex.withLock {
+                    val state = ensureEngine(
+                        context = context,
+                        modelPath = modelFile.absolutePath,
+                        modelRevision = modelRevision,
+                        backendName = backendName,
+                        allowCpuFallback = allowCpuFallback,
+                        speculativeDecodingPreference = null,
+                        contextTokens = contextTokens,
+                        memory = memorySnapshot(context),
+                    )
+                    resolvedBackend = state.backendName
+                    resolvedSpeculativeDecoding = state.speculativeDecodingEnabled
+                }
+            }
+            if (!keepEngineWarm) {
+                releaseEngine(clearLastError = false)
+            }
+            OpResult(
+                ok = true,
+                data = JSONObject()
+                    .put("provider", PROVIDER)
+                    .put("runtime", RUNTIME)
+                    .put("engine", "litert-lm")
+                    .put("model", model)
+                    .put("modelRevision", modelRevision)
+                    .put("backend", resolvedBackend)
+                    .put("requestedBackend", backendName)
+                    .put("speculativeDecoding", resolvedSpeculativeDecoding)
+                    .put("decodingMode", decodingModeName(resolvedSpeculativeDecoding))
+                    .put("contextTokens", contextTokens)
+                    .put("cpuFallbackAllowed", allowCpuFallback)
+                    .put("engineKeptWarm", keepEngineWarm)
+                    .put("durationMs", System.currentTimeMillis() - startedAtMs)
+                    .put("message", "Phone Gemma LiteRT-LM engine validated on this device.")
+            ).also {
+                DaemonLog.add("local_gemma: validation OK backend=$resolvedBackend mode=${decodingModeName(resolvedSpeculativeDecoding)} durationMs=${System.currentTimeMillis() - startedAtMs}")
+            }
+        } catch (e: Throwable) {
+            val detail = e.message ?: e.javaClass.simpleName
+            DaemonLog.add("local_gemma: validation failed $detail")
+            OpResult(false, error = "LOCAL_MODEL_VALIDATION_FAILED: $detail")
+        }
+    }
+
     fun cancel(op: JSONObject): OpResult {
         val requestId = op.optString("requestId", "")
         if (requestId.isBlank()) {
