@@ -8,6 +8,8 @@ import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.ExperimentalApi
+import com.google.ai.edge.litertlm.ExperimentalFlags
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.CancellationException
@@ -31,7 +33,7 @@ object LocalGemmaInferenceEngine {
     private const val DEFAULT_CONTEXT_TOKENS = 1024
     private const val DEFAULT_MAX_COMPLETION_TOKENS = 128
     private const val MIN_GPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
-    private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 4200L * 1024L * 1024L
+    private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 3200L * 1024L * 1024L
     private const val APPROX_CHARS_PER_TOKEN = 4
     private const val DEFAULT_TOP_K = 40
     private const val DEFAULT_TOP_P = 0.95
@@ -53,6 +55,7 @@ object LocalGemmaInferenceEngine {
             .put("engineModelPath", state?.modelPath ?: JSONObject.NULL)
             .put("engineModelRevision", state?.modelRevision ?: JSONObject.NULL)
             .put("engineBackend", state?.backendName ?: JSONObject.NULL)
+            .put("engineSpeculativeDecoding", state?.speculativeDecodingEnabled ?: JSONObject.NULL)
             .put("engineContextTokens", state?.contextTokens ?: JSONObject.NULL)
             .put("lastEngineError", lastEngineError ?: JSONObject.NULL)
             .put("activeRequests", activeRequests.size)
@@ -94,16 +97,19 @@ object LocalGemmaInferenceEngine {
 
         return try {
             var requestedAttemptBackend = backendName
+            var requestedSpeculativeDecoding: Boolean? = null
             var generationRetries = 0
             var generationResult: OpResult? = null
             while (generationResult == null) {
                 var resolvedAttemptBackend = requestedAttemptBackend
+                var resolvedAttemptSpeculativeDecoding = false
                 try {
                     val attempt = runGenerationAttempt(
                         context = context,
                         modelPath = modelFile.absolutePath,
                         modelRevision = modelRevision,
                         backendName = requestedAttemptBackend,
+                        speculativeDecodingPreference = requestedSpeculativeDecoding,
                         contextTokens = contextTokens,
                         systemInstruction = systemInstruction,
                         topK = topK,
@@ -113,7 +119,10 @@ object LocalGemmaInferenceEngine {
                         job = job,
                         prompt = prompt,
                         maxCompletionTokens = maxCompletionTokens,
-                        onBackendResolved = { resolvedAttemptBackend = it },
+                        onEngineResolved = { resolvedBackend, speculativeDecodingEnabled ->
+                            resolvedAttemptBackend = resolvedBackend
+                            resolvedAttemptSpeculativeDecoding = speculativeDecodingEnabled
+                        },
                     )
                     backendName = attempt.backendName
                     completedRequests.incrementAndGet()
@@ -147,6 +156,17 @@ object LocalGemmaInferenceEngine {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
+                    if (resolvedAttemptSpeculativeDecoding) {
+                        releaseEngine(clearLastError = false)
+                        active.conversation = null
+                        generationRetries += 1
+                        DaemonLog.add(
+                            "local_gemma: retry_standard request=${shortRequestId(requestId)} backend=$resolvedAttemptBackend failure=${formatEngineError(e).take(120)}"
+                        )
+                        requestedAttemptBackend = resolvedAttemptBackend
+                        requestedSpeculativeDecoding = false
+                        continue
+                    }
                     if (isCpuFallbackCandidate(requestedAttemptBackend, resolvedAttemptBackend)) {
                         releaseEngine(clearLastError = false)
                         active.conversation = null
@@ -157,6 +177,7 @@ object LocalGemmaInferenceEngine {
                                 "local_gemma: retry_cpu request=${shortRequestId(requestId)} after backend=$resolvedAttemptBackend failure=${formatEngineError(e).take(120)}"
                             )
                             requestedAttemptBackend = "cpu"
+                            requestedSpeculativeDecoding = null
                             continue
                         }
                         DaemonLog.add(
@@ -252,6 +273,7 @@ object LocalGemmaInferenceEngine {
         modelPath: String,
         modelRevision: String,
         backendName: String,
+        speculativeDecodingPreference: Boolean?,
         contextTokens: Int,
         systemInstruction: String,
         topK: Int,
@@ -261,7 +283,7 @@ object LocalGemmaInferenceEngine {
         job: Job,
         prompt: String,
         maxCompletionTokens: Int,
-        onBackendResolved: (String) -> Unit,
+        onEngineResolved: (String, Boolean) -> Unit,
     ): GenerationAttemptResult {
         var finishReason = "stop"
         var resolvedBackendName = backendName
@@ -269,9 +291,9 @@ object LocalGemmaInferenceEngine {
         val text = try {
             runBlocking(attemptJob) {
                 generationMutex.withLock {
-                    val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, contextTokens, memorySnapshot(context))
+                    val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, speculativeDecodingPreference, contextTokens, memorySnapshot(context))
                     resolvedBackendName = resolvedEngine.backendName
-                    onBackendResolved(resolvedBackendName)
+                    onEngineResolved(resolvedBackendName, resolvedEngine.speculativeDecodingEnabled)
                     resolvedEngine.engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
                         .use { conversation ->
                             active.conversation = conversation
@@ -375,19 +397,20 @@ object LocalGemmaInferenceEngine {
         modelPath: String,
         modelRevision: String,
         backendName: String,
+        speculativeDecodingPreference: Boolean?,
         contextTokens: Int,
         memory: MemorySnapshot,
     ): EngineState {
         val candidateBackends = backendCandidates(backendName, memory)
         val reusableBackends = reusableBackendsFor(backendName, candidateBackends)
         val current = engineState
-        if (current != null && canReuseEngine(current, modelPath, modelRevision, reusableBackends, contextTokens)) {
+        if (current != null && canReuseEngine(current, modelPath, modelRevision, reusableBackends, speculativeDecodingPreference, contextTokens)) {
             return current
         }
 
         return engineMutex.withLock {
             val lockedCurrent = engineState
-            if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, reusableBackends, contextTokens)) {
+            if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, reusableBackends, speculativeDecodingPreference, contextTokens)) {
                 return@withLock lockedCurrent
             }
 
@@ -396,40 +419,49 @@ object LocalGemmaInferenceEngine {
             var lastFailure: Throwable? = null
 
             for (candidateBackendName in candidateBackends) {
-                if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, listOf(candidateBackendName), contextTokens)) {
+                if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, listOf(candidateBackendName), speculativeDecodingPreference, contextTokens)) {
                     lastEngineError = null
                     return@withLock lockedCurrent
                 }
 
-                var engine: Engine? = null
-                try {
-                    val initializedEngine = Engine(
-                        EngineConfig(
-                            modelPath = modelPath,
-                            backend = backendFor(candidateBackendName),
-                            maxNumTokens = contextTokens,
-                            cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
+                for (speculativeDecodingEnabled in speculativeDecodingCandidates(speculativeDecodingPreference)) {
+                    var engine: Engine? = null
+                    try {
+                        configureExperimentalFlags(speculativeDecodingEnabled)
+                        val initializedEngine = Engine(
+                            EngineConfig(
+                                modelPath = modelPath,
+                                backend = backendFor(candidateBackendName),
+                                maxNumTokens = contextTokens,
+                                cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
+                            )
                         )
-                    )
-                    engine = initializedEngine
-                    initializedEngine.initialize()
-                    val nextState = EngineState(modelPath, modelRevision, candidateBackendName, contextTokens, initializedEngine)
-                    engineState = nextState
-                    lastEngineError = null
-                    previousEngine?.let { previous ->
-                        try { previous.close() } catch (_: Throwable) {}
-                    }
-                    return@withLock nextState
-                } catch (e: Throwable) {
-                    lastFailure = e
-                    failures.add("$candidateBackendName: ${formatEngineError(e)}")
-                    engine?.let { failedEngine ->
-                        try { failedEngine.close() } catch (_: Throwable) {}
+                        engine = initializedEngine
+                        initializedEngine.initialize()
+                        val nextState = EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, initializedEngine)
+                        engineState = nextState
+                        lastEngineError = null
+                        previousEngine?.let { previous ->
+                            try { previous.close() } catch (_: Throwable) {}
+                        }
+                        return@withLock nextState
+                    } catch (e: Throwable) {
+                        lastFailure = e
+                        failures.add("$candidateBackendName: ${decodingModeName(speculativeDecodingEnabled)}: ${formatEngineError(e)}")
+                        engine?.let { failedEngine ->
+                            try { failedEngine.close() } catch (_: Throwable) {}
+                        }
                     }
                 }
             }
 
-            val message = "Failed to create LiteRT-LM engine after trying ${candidateBackends.joinToString(", ")} backend(s): ${failures.joinToString("; ")}"
+            val skippedCpuFallback = backendName != "cpu" && !candidateBackends.contains("cpu")
+            val cpuSkippedDetail = if (skippedCpuFallback) {
+                "; cpu fallback skipped: available=${formatMiB(memory.availableBytes)}MB minimum=${formatMiB(MIN_CPU_AVAILABLE_MEMORY_BYTES)}MB lowMemory=${memory.lowMemory}"
+            } else {
+                ""
+            }
+            val message = "Failed to create LiteRT-LM engine after trying ${candidateBackends.joinToString(", ")} backend(s): ${failures.joinToString("; ")}$cpuSkippedDetail"
             lastEngineError = message
             throw IllegalStateException(message, lastFailure)
         }
@@ -440,11 +472,13 @@ object LocalGemmaInferenceEngine {
         modelPath: String,
         modelRevision: String,
         reusableBackends: List<String>,
+        speculativeDecodingPreference: Boolean?,
         contextTokens: Int,
     ): Boolean {
         return state.modelPath == modelPath &&
             state.modelRevision == modelRevision &&
             reusableBackends.contains(state.backendName) &&
+            (speculativeDecodingPreference == null || state.speculativeDecodingEnabled == speculativeDecodingPreference) &&
             state.contextTokens == contextTokens
     }
 
@@ -490,6 +524,19 @@ object LocalGemmaInferenceEngine {
         return if (backendName == "auto") candidateBackends else listOf(backendName)
     }
 
+    private fun speculativeDecodingCandidates(preference: Boolean?): List<Boolean> {
+        return if (preference == false) listOf(false) else listOf(true, false)
+    }
+
+    @OptIn(ExperimentalApi::class)
+    private fun configureExperimentalFlags(enableSpeculativeDecoding: Boolean) {
+        ExperimentalFlags.enableSpeculativeDecoding = enableSpeculativeDecoding
+    }
+
+    private fun decodingModeName(enableSpeculativeDecoding: Boolean): String {
+        return if (enableSpeculativeDecoding) "mtp" else "standard"
+    }
+
     private fun backendFor(backendName: String): Backend {
         return when (backendName) {
             "cpu" -> Backend.CPU()
@@ -515,6 +562,7 @@ object LocalGemmaInferenceEngine {
         val modelPath: String,
         val modelRevision: String,
         val backendName: String,
+        val speculativeDecodingEnabled: Boolean,
         val contextTokens: Int,
         val engine: Engine,
     )
