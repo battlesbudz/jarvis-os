@@ -590,9 +590,23 @@ async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   const largeSchema = {
     action: { type: "string", enum: ["android_read_screen", "android_screenshot", "android_tap"] },
-    ...Object.fromEntries(
-      Array.from({ length: 80 }, (_, index) => [`action_field_${index}`, { type: "string", description: `large nested schema field ${index}` }]),
-    ),
+    cmd: { type: "string" },
+    cwd: { type: "string" },
+    title: { type: "string" },
+    body: { type: "string" },
+    path: { type: "string" },
+    content: { type: "string" },
+    timeoutMs: { type: "number" },
+    packageName: { type: "string" },
+    url: { type: "string" },
+    x: { type: "number" },
+    y: { type: "number" },
+    x1: { type: "number" },
+    y1: { type: "number" },
+    x2: { type: "number" },
+    y2: { type: "number" },
+    key: { type: "string", enum: ["back", "home", "enter"] },
+    operatorAction: { type: "object" },
   };
 
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -632,6 +646,10 @@ async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
     assert.match(requests[0].op.prompt, /Available tools/);
     assert.match(requests[0].op.prompt, /Args: action/);
     assert.match(requests[0].op.prompt, /action enum: android_read_screen, android_screenshot, android_tap/);
+    assert.match(requests[0].op.prompt, /x1/);
+    assert.match(requests[0].op.prompt, /y2/);
+    assert.match(requests[0].op.prompt, /key/);
+    assert.match(requests[0].op.prompt, /operatorAction/);
     assert.doesNotMatch(requests[0].op.prompt, /"properties"/);
     assert.doesNotMatch(requests[0].op.prompt, /large_description_tail/);
     assert.ok(requests[0].op.prompt.length <= 3600);
@@ -688,6 +706,71 @@ async function testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming() {
     assert.match(requests[0].op.prompt, /MUST_PREFER_ANDROID_READ_SCREEN_BEFORE_SCREENSHOT/);
     assert.match(requests[0].op.prompt, /user: Can you screenshot my phone\?/);
     console.log("OK: Android Local Gemma preserves system guardrails when trimming prompt context");
+  } finally {
+    if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+    else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
+  const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+  process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: JSON.stringify({ type: "final", content: "I read the local tool result." }), finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "CURRENT_TOOL_REQUEST: read my Android screen and tell me what is visible." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_android_read_screen",
+            type: "function",
+            function: { name: "daemon_action", arguments: "{\"action\":\"android_read_screen\"}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_android_read_screen",
+          content: `${"large Android read screen observation ".repeat(160)} TOOL_RESULT_TAIL_MARKER`,
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["android_read_screen"] },
+            },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I read the local tool result.");
+    assert.match(requests[0].op.prompt, /CURRENT_TOOL_REQUEST/);
+    assert.match(requests[0].op.prompt, /daemon_action/);
+    assert.match(requests[0].op.prompt, /TOOL_RESULT_TAIL_MARKER/);
+    console.log("OK: Android Local Gemma preserves tool continuation context when trimming");
   } finally {
     if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
     else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
@@ -992,6 +1075,7 @@ async function main() {
   await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
+  await testAndroidLocalGemmaPreservesToolContinuationWhenTrimming();
   await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();

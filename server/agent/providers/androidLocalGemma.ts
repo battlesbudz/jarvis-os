@@ -33,6 +33,8 @@ const DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET = 3_600;
 const DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET = 1_600;
 const MAX_TOOL_DESCRIPTION_CHARS = 180;
 const MAX_TOOL_ARGUMENT_NAMES = 12;
+const MAX_DAEMON_TOOL_ARGUMENT_NAMES = 64;
+const MIN_REQUIRED_PROMPT_SECTION_CHARS = 80;
 
 type LocalGemmaStructuredOutput =
   | { type: "final"; content: string }
@@ -164,6 +166,7 @@ function formatPromptSections(
       const heading = includeIndexes ? `Message ${index + 1} [${message.role}${name}]` : "";
       return {
         role: message.role,
+        hasToolCalls: message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0,
         text: [heading, messageForPrompt(message)].filter(Boolean).join("\n").trim(),
       };
     })
@@ -193,15 +196,21 @@ function formatPromptSections(
   const kept: string[] = [];
   let omittedNonSystem = 0;
   const remainingBudget = Math.max(300, budgetChars - systemUsed - (keptSystem.length > 0 ? 10 : 0));
-  const latestNonSystemSection = nonSystemSections[nonSystemSections.length - 1]?.text;
+  const tailStartIndex = requiredTailStartIndex(nonSystemSections);
+  const tailSections = tailStartIndex >= 0 ? nonSystemSections.slice(tailStartIndex) : [];
   let used = 0;
-  if (latestNonSystemSection) {
-    const latest = truncateTextMiddle(latestNonSystemSection, remainingBudget);
-    kept.push(latest);
-    used = latest.length;
+  if (tailSections.length > 0) {
+    const separatorChars = Math.max(0, tailSections.length - 1) * 10;
+    const perSectionBudget = Math.max(
+      MIN_REQUIRED_PROMPT_SECTION_CHARS,
+      Math.floor((remainingBudget - separatorChars) / tailSections.length),
+    );
+    const renderedTail = tailSections.map((section) => truncateTextMiddle(section.text, perSectionBudget));
+    kept.push(...renderedTail);
+    used = renderedTail.join("\n\n---\n\n").length;
   }
 
-  for (let index = nonSystemSections.length - 2; index >= 0; index -= 1) {
+  for (let index = tailStartIndex - 1; index >= 0; index -= 1) {
     const section = nonSystemSections[index].text;
     const separatorChars = kept.length > 0 ? 10 : 0;
     if (used + separatorChars + section.length <= remainingBudget) {
@@ -215,6 +224,23 @@ function formatPromptSections(
   const omitted = omittedSystem + omittedNonSystem;
   const prefix = omitted > 0 ? [`[${omitted} earlier message${omitted === 1 ? "" : "s"} omitted to keep Phone Gemma inside its local context budget.]`] : [];
   return [...prefix, ...keptSystem, ...kept].join("\n\n---\n\n");
+}
+
+function requiredTailStartIndex<TSection extends { role: string; hasToolCalls?: boolean }>(sections: TSection[]): number {
+  if (sections.length === 0) return -1;
+  let index = sections.length - 1;
+  if (sections[index].role !== "tool") return index;
+
+  while (index > 0 && sections[index - 1].role === "tool") {
+    index -= 1;
+  }
+  if (index > 0 && sections[index - 1].role === "assistant") {
+    index -= 1;
+  }
+  if (index > 0 && sections[index - 1].role === "user") {
+    index -= 1;
+  }
+  return index;
 }
 
 function extractJsonObject(raw: string): unknown | null {
@@ -299,11 +325,15 @@ function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutpu
   return { type: "final", content: raw.trim() };
 }
 
-function parameterNames(parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]): string[] {
+function parameterNames(
+  parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"],
+  toolName: string,
+): string[] {
   if (!parameters || typeof parameters !== "object") return [];
   const properties = (parameters as { properties?: unknown }).properties;
   if (!properties || typeof properties !== "object" || Array.isArray(properties)) return [];
-  return Object.keys(properties).slice(0, MAX_TOOL_ARGUMENT_NAMES);
+  const limit = toolName === "daemon_action" ? MAX_DAEMON_TOOL_ARGUMENT_NAMES : MAX_TOOL_ARGUMENT_NAMES;
+  return Object.keys(properties).slice(0, limit);
 }
 
 function requiredParameterNames(parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]): string[] {
@@ -367,7 +397,7 @@ function toolSpecsForPrompt(
   let used = 0;
   let omitted = 0;
   for (const tool of toolList) {
-    const args = parameterNames(tool.function.parameters);
+    const args = parameterNames(tool.function.parameters, tool.function.name);
     const required = requiredParameterNames(tool.function.parameters);
     const enumSummaries = requiredEnumSummaries(tool.function.parameters);
     const argumentText = args.length
