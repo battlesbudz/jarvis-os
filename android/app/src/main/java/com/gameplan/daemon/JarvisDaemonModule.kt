@@ -124,14 +124,42 @@ class JarvisDaemonModule(
 
     @ReactMethod
     fun validateLocalGemmaModel(model: String, promise: Promise) {
+        validateLocalGemmaModelWithOptions(model, JSONObject().toString(), promise)
+    }
+
+    @ReactMethod
+    fun validateLocalGemmaModelWithOptions(model: String, optionsJson: String, promise: Promise) {
+        val op = parseOptionsJson(optionsJson)
+            .put("model", model)
         val result = LocalGemmaModelManager.validate(
             reactApplicationContext,
-            JSONObject().put("model", model),
+            op,
         )
         if (result.ok) {
             promise.resolve((result.data as? JSONObject)?.toString() ?: JSONObject().toString())
         } else {
             promise.reject("E_LOCAL_GEMMA_VALIDATE", result.error ?: "Phone Gemma validation failed.")
+        }
+    }
+
+    @ReactMethod
+    fun smokeTestLocalGemmaModel(model: String, optionsJson: String, promise: Promise) {
+        val op = parseOptionsJson(optionsJson)
+            .put("model", model)
+        val result = LocalGemmaModelManager.smokeTest(reactApplicationContext, op)
+        if (result.ok) {
+            promise.resolve((result.data as? JSONObject)?.toString() ?: JSONObject().toString())
+        } else {
+            promise.reject("E_LOCAL_GEMMA_SMOKE_TEST", result.error ?: "Phone Gemma smoke test failed.")
+        }
+    }
+
+    private fun parseOptionsJson(optionsJson: String): JSONObject {
+        if (optionsJson.isBlank()) return JSONObject()
+        return try {
+            JSONObject(optionsJson)
+        } catch (_: Exception) {
+            JSONObject()
         }
     }
 

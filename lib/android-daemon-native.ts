@@ -16,6 +16,16 @@ export type AndroidDaemonStatus = {
   serverUrl?: string;
 };
 
+export type AndroidLocalGemmaValidationOptions = {
+  backend?: "auto" | "gpu" | "cpu" | "npu";
+  contextTokens?: number;
+  keepEngineWarm?: boolean;
+  allowCpuFallback?: boolean;
+  speculativeDecoding?: boolean;
+  profileId?: string;
+  profileLabel?: string;
+};
+
 const unavailableStatus: AndroidDaemonStatus = {
   available: false,
   connected: false,
@@ -39,6 +49,8 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       requestScreenRecordPermission(): Promise<void>;
       getLocalGemmaStatus?(model: string): Promise<string | Record<string, unknown>>;
       validateLocalGemmaModel?(model: string): Promise<string | Record<string, unknown>>;
+      validateLocalGemmaModelWithOptions?(model: string, optionsJson: string): Promise<string | Record<string, unknown>>;
+      smokeTestLocalGemmaModel?(model: string, optionsJson: string): Promise<string | Record<string, unknown>>;
     }
   | undefined;
 
@@ -69,12 +81,24 @@ export async function getAndroidLocalGemmaStatus(model: string): Promise<Record<
   return parseNativeJsonResult(await NativeJarvisDaemon.getLocalGemmaStatus(model));
 }
 
-export async function validateAndroidLocalGemmaModel(model: string): Promise<Record<string, unknown>> {
+export async function validateAndroidLocalGemmaModel(model: string, options: AndroidLocalGemmaValidationOptions = {}): Promise<Record<string, unknown>> {
   if (Platform.OS !== "android" || !NativeJarvisDaemon?.validateLocalGemmaModel) {
     throw new Error("Phone Gemma validation is only available in the Android app.");
   }
-  const parsed = parseNativeJsonResult(await NativeJarvisDaemon.validateLocalGemmaModel(model));
+  const result = NativeJarvisDaemon.validateLocalGemmaModelWithOptions
+    ? await NativeJarvisDaemon.validateLocalGemmaModelWithOptions(model, JSON.stringify(options))
+    : await NativeJarvisDaemon.validateLocalGemmaModel(model);
+  const parsed = parseNativeJsonResult(result);
   if (!parsed) throw new Error("Phone Gemma validation returned an empty status.");
+  return parsed;
+}
+
+export async function smokeTestAndroidLocalGemmaModel(model: string, options: AndroidLocalGemmaValidationOptions = {}): Promise<Record<string, unknown>> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.smokeTestLocalGemmaModel) {
+    throw new Error("Phone Gemma smoke test is only available in the Android app.");
+  }
+  const parsed = parseNativeJsonResult(await NativeJarvisDaemon.smokeTestLocalGemmaModel(model, JSON.stringify(options)));
+  if (!parsed) throw new Error("Phone Gemma smoke test returned an empty result.");
   return parsed;
 }
 

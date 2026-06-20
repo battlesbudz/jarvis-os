@@ -36,8 +36,9 @@ export type DaemonOp =
   | { type: "android_operator_action"; action: Record<string, unknown> }
   | { type: "android_local_model_status"; model?: string }
   | { type: "android_local_model_import"; model?: string; sourcePath?: string; fileName?: string }
-  | { type: "android_local_model_validate"; model?: string; backend?: string; contextTokens?: number; keepEngineWarm?: boolean; allowCpuFallback?: boolean }
-  | { type: "android_local_model_generate"; requestId?: string; model: string; prompt: string; contextTokens?: number; maxTokens?: number; backend?: string; allowCpuFallback?: boolean; temperature?: number }
+  | { type: "android_local_model_validate"; model?: string; backend?: string; contextTokens?: number; keepEngineWarm?: boolean; allowCpuFallback?: boolean; speculativeDecoding?: boolean; profileId?: string; profileLabel?: string }
+  | { type: "android_local_model_smoke_test"; model?: string }
+  | { type: "android_local_model_generate"; requestId?: string; model: string; prompt: string; contextTokens?: number; maxTokens?: number; backend?: string; allowCpuFallback?: boolean; speculativeDecoding?: boolean; temperature?: number }
   | { type: "android_local_model_cancel"; requestId?: string }
   | { type: "android_tap"; x: number; y: number }
   | { type: "android_type"; text: string; submit?: boolean }

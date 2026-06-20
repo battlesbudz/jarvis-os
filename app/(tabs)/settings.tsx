@@ -73,7 +73,9 @@ import {
   LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
   LOCAL_GEMMA_EXPECTED_FILE_NAME,
   readLocalGemmaModelStatus,
+  smokeTestLocalGemmaModel,
   validateLocalGemmaModel,
+  type LocalGemmaSmokeTestResult,
   type LocalGemmaModelStatus,
 } from '@/lib/local-gemma-model-storage';
 
@@ -177,6 +179,88 @@ function formatModelSize(bytes?: number | null): string | null {
   return `${gb.toFixed(gb >= 10 ? 1 : 2)} GB`;
 }
 
+type LocalGemmaValidationProfile = {
+  id: string;
+  label: string;
+  backend: 'auto' | 'gpu' | 'cpu' | 'npu';
+  contextTokens: number;
+  allowCpuFallback: boolean;
+  speculativeDecoding?: boolean;
+};
+
+const LOCAL_GEMMA_VALIDATION_PROFILES: LocalGemmaValidationProfile[] = [
+  {
+    id: 'gpu-standard-1024',
+    label: 'GPU standard 1024',
+    backend: 'gpu',
+    contextTokens: 1024,
+    allowCpuFallback: false,
+    speculativeDecoding: false,
+  },
+  {
+    id: 'gpu-standard-512',
+    label: 'GPU standard 512',
+    backend: 'gpu',
+    contextTokens: 512,
+    allowCpuFallback: false,
+    speculativeDecoding: false,
+  },
+  {
+    id: 'gpu-auto-2048',
+    label: 'GPU auto 2048',
+    backend: 'gpu',
+    contextTokens: 2048,
+    allowCpuFallback: false,
+  },
+  {
+    id: 'cpu-standard-1024',
+    label: 'CPU standard 1024',
+    backend: 'cpu',
+    contextTokens: 1024,
+    allowCpuFallback: false,
+    speculativeDecoding: false,
+  },
+  {
+    id: 'cpu-standard-512',
+    label: 'CPU standard 512',
+    backend: 'cpu',
+    contextTokens: 512,
+    allowCpuFallback: false,
+    speculativeDecoding: false,
+  },
+];
+const LOCAL_GEMMA_RECOMMENDED_PROFILE = LOCAL_GEMMA_VALIDATION_PROFILES[0];
+
+function localGemmaProfileOptions(profile: LocalGemmaValidationProfile) {
+  return {
+    backend: profile.backend,
+    contextTokens: profile.contextTokens,
+    allowCpuFallback: profile.allowCpuFallback,
+    speculativeDecoding: profile.speculativeDecoding,
+    profileId: profile.id,
+    profileLabel: profile.label,
+  };
+}
+
+function localGemmaRuntimeDetails(status?: LocalGemmaModelStatus | null): string | null {
+  if (!status?.engineValidated) return null;
+  const parts = [
+    status.engineValidatedProfileLabel,
+    status.engineValidatedBackend ? status.engineValidatedBackend.toUpperCase() : null,
+    status.engineValidatedDecodingMode,
+    status.engineValidatedContextTokens ? `${status.engineValidatedContextTokens} tokens` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(' - ') : null;
+}
+
+function summarizeSmokeTest(result: LocalGemmaSmokeTestResult): string {
+  const profile = result.profileLabel ? `${result.profileLabel}: ` : '';
+  const runs = result.runs
+    .map((run) => `${run.id} ${run.ok ? 'OK' : 'FAILED'}${run.backend ? `/${run.backend}` : ''}${run.decodingMode ? `/${run.decodingMode}` : ''}`)
+    .join(', ');
+  return `${profile}${result.passed ? 'passed' : `${result.failedCount} failed`} (${runs}).`;
+}
+
 function extractApiError(error: any, fallback: string): string {
   const raw = typeof error?.message === 'string' ? error.message : '';
   const jsonStart = raw.indexOf('{');
@@ -274,6 +358,8 @@ export default function SettingsScreen() {
   const [localGemmaStatusLoading, setLocalGemmaStatusLoading] = useState(false);
   const [localGemmaImporting, setLocalGemmaImporting] = useState(false);
   const [localGemmaValidating, setLocalGemmaValidating] = useState(false);
+  const [localGemmaSmokeTesting, setLocalGemmaSmokeTesting] = useState(false);
+  const [localGemmaActiveProfileId, setLocalGemmaActiveProfileId] = useState<string | null>(null);
   const [openAIAuthLoading, setOpenAIAuthLoading] = useState(false);
   const [openAIAuthBusy, setOpenAIAuthBusy] = useState(false);
   const [openAIApiKeyVisible, setOpenAIApiKeyVisible] = useState(false);
@@ -1596,16 +1682,17 @@ export default function SettingsScreen() {
     setProviderAuthMessages((prev) => ({ ...prev, [providerId]: message }));
   }, []);
 
-  const validateAndroidLocalGemma = useCallback(async (): Promise<LocalGemmaModelStatus | null> => {
+  const validateAndroidLocalGemma = useCallback(async (profile = LOCAL_GEMMA_RECOMMENDED_PROFILE): Promise<LocalGemmaModelStatus | null> => {
     setLocalGemmaValidating(true);
-    setProviderMessage('android-local-gemma', 'Validating Phone Gemma LiteRT-LM on this device...');
+    setLocalGemmaActiveProfileId(profile.id);
+    setProviderMessage('android-local-gemma', `Validating Phone Gemma with ${profile.label}...`);
     try {
-      const status = await validateLocalGemmaModel();
+      const status = await validateLocalGemmaModel(localGemmaProfileOptions(profile));
       setLocalGemmaStatus(status);
       const size = formatModelSize(status.sizeBytes);
-      const backend = status.engineValidatedBackend ? ` via ${status.engineValidatedBackend.toUpperCase()}` : '';
+      const details = localGemmaRuntimeDetails(status);
       const message = status.generationReady
-        ? `Phone Gemma validated${backend}${size ? ` (${size})` : ''}.`
+        ? `Phone Gemma validated${details ? ` via ${details}` : ''}${size ? ` (${size})` : ''}.`
         : `${status.message || LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE}${size ? ` (${size})` : ''}`;
       setProviderMessage('android-local-gemma', message);
       return status;
@@ -1617,6 +1704,26 @@ export default function SettingsScreen() {
       return null;
     } finally {
       setLocalGemmaValidating(false);
+      setLocalGemmaActiveProfileId(null);
+    }
+  }, [loadLocalGemmaStatus, setProviderMessage]);
+
+  const runAndroidLocalGemmaSmokeTest = useCallback(async () => {
+    setLocalGemmaSmokeTesting(true);
+    setProviderMessage('android-local-gemma', 'Running Phone Gemma local smoke test...');
+    try {
+      const result = await smokeTestLocalGemmaModel();
+      const message = summarizeSmokeTest(result);
+      setProviderMessage('android-local-gemma', message);
+      Alert.alert('Phone Gemma smoke test', message);
+      await loadLocalGemmaStatus();
+    } catch (error: any) {
+      const message = extractApiError(error, 'Phone Gemma smoke test could not run.');
+      setProviderMessage('android-local-gemma', message);
+      Alert.alert('Phone Gemma smoke test', message);
+      await loadLocalGemmaStatus();
+    } finally {
+      setLocalGemmaSmokeTesting(false);
     }
   }, [loadLocalGemmaStatus, setProviderMessage]);
 
@@ -2779,13 +2886,14 @@ export default function SettingsScreen() {
               const localGemmaGenerationReady = Boolean(localGemmaStatus?.generationReady);
               const localGemmaNeedsEngine = Boolean(localGemmaStatus?.needsEngineBundle || localGemmaStatus?.needsEngineValidation || (localGemmaModelFileReady && !localGemmaGenerationReady));
               const localGemmaSize = formatModelSize(localGemmaStatus?.sizeBytes);
+              const localGemmaDetails = localGemmaRuntimeDetails(localGemmaStatus);
               const localGemmaSelected = modelPrefs.chat === ANDROID_LOCAL_GEMMA_MODEL;
               const localGemmaStatusText = localGemmaStatusLoading
                 ? 'Checking local model storage...'
                 : localGemmaValidating
-                  ? 'Validating LiteRT-LM engine on this device...'
+                  ? `Validating ${LOCAL_GEMMA_VALIDATION_PROFILES.find((profile) => profile.id === localGemmaActiveProfileId)?.label || 'LiteRT-LM engine'}...`
                 : localGemmaGenerationReady
-                  ? `Ready to generate${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
+                  ? `Ready${localGemmaDetails ? ` - ${localGemmaDetails}` : ''}${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
                   : localGemmaNeedsEngine
                     ? `${localGemmaStatus?.message || LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE}${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
                   : localGemmaStatus?.message || `Download ${LOCAL_GEMMA_EXPECTED_FILE_NAME}, then import it from Downloads.`;
@@ -2846,8 +2954,8 @@ export default function SettingsScreen() {
                         onPress={isAndroidLocalGemma
                           ? selectAndroidLocalGemma
                           : () => setProviderMessage(provider.id, 'Local Llama is selected from AI Models. Start Ollama, LM Studio, vLLM, or the Jarvis model relay before chatting.')}
-                        disabled={openAIAuthBusy || (isAndroidLocalGemma && localGemmaValidating)}
-                        style={[providerAuthStyles.primaryAction, (openAIAuthBusy || (isAndroidLocalGemma && localGemmaValidating)) && providerAuthStyles.disabledAction]}
+                        disabled={openAIAuthBusy || (isAndroidLocalGemma && (localGemmaValidating || localGemmaSmokeTesting))}
+                        style={[providerAuthStyles.primaryAction, (openAIAuthBusy || (isAndroidLocalGemma && (localGemmaValidating || localGemmaSmokeTesting))) && providerAuthStyles.disabledAction]}
                       >
                         {isAndroidLocalGemma && localGemmaValidating ? (
                           <ActivityIndicator size="small" color="#2563EB" />
@@ -2861,8 +2969,8 @@ export default function SettingsScreen() {
                     {isAndroidLocalGemma ? (
                       <Pressable
                         onPress={importAndroidLocalGemma}
-                        disabled={localGemmaImporting || localGemmaValidating}
-                        style={[providerAuthStyles.primaryAction, (localGemmaImporting || localGemmaValidating) && providerAuthStyles.disabledAction]}
+                        disabled={localGemmaImporting || localGemmaValidating || localGemmaSmokeTesting}
+                        style={[providerAuthStyles.primaryAction, (localGemmaImporting || localGemmaValidating || localGemmaSmokeTesting) && providerAuthStyles.disabledAction]}
                       >
                         {localGemmaImporting ? (
                           <ActivityIndicator size="small" color="#2563EB" />
@@ -2877,9 +2985,9 @@ export default function SettingsScreen() {
 
                     {isAndroidLocalGemma && localGemmaModelFileReady ? (
                       <Pressable
-                        onPress={validateAndroidLocalGemma}
-                        disabled={localGemmaValidating || localGemmaImporting}
-                        style={[providerAuthStyles.primaryAction, (localGemmaValidating || localGemmaImporting) && providerAuthStyles.disabledAction]}
+                        onPress={() => validateAndroidLocalGemma()}
+                        disabled={localGemmaValidating || localGemmaImporting || localGemmaSmokeTesting}
+                        style={[providerAuthStyles.primaryAction, (localGemmaValidating || localGemmaImporting || localGemmaSmokeTesting) && providerAuthStyles.disabledAction]}
                       >
                         {localGemmaValidating ? (
                           <ActivityIndicator size="small" color="#2563EB" />
@@ -2888,6 +2996,57 @@ export default function SettingsScreen() {
                         )}
                         <Text style={providerAuthStyles.primaryActionText}>
                           {localGemmaValidating ? 'Validating engine' : 'Validate engine'}
+                        </Text>
+                      </Pressable>
+                    ) : null}
+
+                    {isAndroidLocalGemma && localGemmaModelFileReady ? (
+                      <View style={providerAuthStyles.profileGrid}>
+                        {LOCAL_GEMMA_VALIDATION_PROFILES.map((profile) => {
+                          const activeProfile = localGemmaActiveProfileId === profile.id;
+                          const validatedProfile = localGemmaStatus?.engineValidatedProfileId === profile.id;
+                          return (
+                            <Pressable
+                              key={profile.id}
+                              onPress={() => validateAndroidLocalGemma(profile)}
+                              disabled={localGemmaValidating || localGemmaImporting || localGemmaSmokeTesting}
+                              style={[
+                                providerAuthStyles.profileAction,
+                                validatedProfile && providerAuthStyles.profileActionActive,
+                                (localGemmaValidating || localGemmaImporting || localGemmaSmokeTesting) && providerAuthStyles.disabledAction,
+                              ]}
+                            >
+                              {activeProfile && localGemmaValidating ? (
+                                <ActivityIndicator size="small" color="#2563EB" />
+                              ) : (
+                                <Ionicons
+                                  name={profile.backend === 'cpu' ? 'server-outline' : 'hardware-chip-outline'}
+                                  size={14}
+                                  color={validatedProfile ? '#fff' : '#2563EB'}
+                                />
+                              )}
+                              <Text style={[providerAuthStyles.profileActionText, validatedProfile && providerAuthStyles.profileActionTextActive]}>
+                                {profile.label}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    ) : null}
+
+                    {isAndroidLocalGemma && localGemmaGenerationReady ? (
+                      <Pressable
+                        onPress={runAndroidLocalGemmaSmokeTest}
+                        disabled={localGemmaSmokeTesting || localGemmaValidating || localGemmaImporting}
+                        style={[providerAuthStyles.primaryAction, (localGemmaSmokeTesting || localGemmaValidating || localGemmaImporting) && providerAuthStyles.disabledAction]}
+                      >
+                        {localGemmaSmokeTesting ? (
+                          <ActivityIndicator size="small" color="#2563EB" />
+                        ) : (
+                          <Ionicons name="checkmark-done-outline" size={16} color="#2563EB" />
+                        )}
+                        <Text style={providerAuthStyles.primaryActionText}>
+                          {localGemmaSmokeTesting ? 'Testing Phone Gemma' : 'Run smoke test'}
                         </Text>
                       </Pressable>
                     ) : null}
@@ -2912,8 +3071,8 @@ export default function SettingsScreen() {
                         color={localGemmaGenerationReady ? '#10B981' : '#F59E0B'}
                       />
                       <Text style={providerAuthStyles.localModelStatusText}>{localGemmaStatusText}</Text>
-                      <Pressable onPress={loadLocalGemmaStatus} disabled={localGemmaStatusLoading || localGemmaValidating} style={providerAuthStyles.localModelRefresh}>
-                        {localGemmaStatusLoading || localGemmaValidating ? (
+                      <Pressable onPress={loadLocalGemmaStatus} disabled={localGemmaStatusLoading || localGemmaValidating || localGemmaSmokeTesting} style={providerAuthStyles.localModelRefresh}>
+                        {localGemmaStatusLoading || localGemmaValidating || localGemmaSmokeTesting ? (
                           <ActivityIndicator size="small" color={Colors.textSecondary} />
                         ) : (
                           <Ionicons name="refresh-outline" size={15} color={Colors.textSecondary} />
@@ -4428,6 +4587,41 @@ const providerAuthStyles = StyleSheet.create({
   },
   actionGrid: {
     gap: 8,
+  },
+  profileGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  profileAction: {
+    minHeight: 38,
+    minWidth: '47%',
+    flexGrow: 1,
+    flexBasis: '47%',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  profileActionActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  profileActionText: {
+    color: Colors.text,
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+    textAlign: 'center',
+    flexShrink: 1,
+  },
+  profileActionTextActive: {
+    color: '#fff',
   },
   primaryAction: {
     minHeight: 42,

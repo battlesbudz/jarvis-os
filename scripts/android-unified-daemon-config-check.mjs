@@ -454,6 +454,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "File(path).isAbsolute", source);
   assertIncludes(contents, '"android_local_model_status" -> LocalGemmaModelManager.status(context, op)', source);
   assertIncludes(contents, '"android_local_model_validate" -> LocalGemmaModelManager.validate(context, op)', source);
+  assertIncludes(contents, '"android_local_model_smoke_test" -> LocalGemmaModelManager.smokeTest(context, op)', source);
   assertIncludes(contents, '"android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)', source);
   assertExcludes(contents, 'path.startsWith("/") -> path', source);
 }
@@ -465,7 +466,9 @@ for (const [contents, source] of [
   assertIncludes(contents, 'private const val DEFAULT_MODEL = "gemma-4-e4b-it"', source);
   assertIncludes(contents, "val modelRevision = buildModelRevision(context, model, file)", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.validate(context, model, file, modelRevision, op)", source);
-  assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, generationOpForValidatedProfile(op, metadata))", source);
+  assertIncludes(contents, "generationOpForValidatedProfile", source);
+  assertIncludes(contents, "fun smokeTest(context: Context, op: JSONObject): OpResult", source);
   assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.cancel(op)", source);
   assertIncludes(contents, '.put("modelFileReady", modelFileReady)', source);

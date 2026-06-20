@@ -64,7 +64,14 @@ object LocalGemmaModelManager {
                 .put("engineValidatedAtMs", optionalLong(metadata, "engineValidatedAtMs") ?: JSONObject.NULL)
                 .put("engineValidatedBackend", optionalString(metadata, "engineValidatedBackend") ?: JSONObject.NULL)
                 .put("engineValidatedSpeculativeDecoding", optionalBoolean(metadata, "engineValidatedSpeculativeDecoding") ?: JSONObject.NULL)
+                .put("engineValidatedDecodingMode", optionalString(metadata, "engineValidatedDecodingMode") ?: JSONObject.NULL)
+                .put("engineValidatedContextTokens", optionalLong(metadata, "engineValidatedContextTokens") ?: JSONObject.NULL)
+                .put("engineValidatedCpuFallbackAllowed", optionalBoolean(metadata, "engineValidatedCpuFallbackAllowed") ?: JSONObject.NULL)
+                .put("engineValidatedProfileId", optionalString(metadata, "engineValidatedProfileId") ?: JSONObject.NULL)
+                .put("engineValidatedProfileLabel", optionalString(metadata, "engineValidatedProfileLabel") ?: JSONObject.NULL)
                 .put("engineLastValidationError", engineLastValidationError ?: JSONObject.NULL)
+                .put("engineLastValidationProfileId", optionalString(metadata, "engineLastValidationProfileId") ?: JSONObject.NULL)
+                .put("engineLastValidationProfileLabel", optionalString(metadata, "engineLastValidationProfileLabel") ?: JSONObject.NULL)
                 .put("lastEngineError", lastEngineError ?: JSONObject.NULL)
                 .put("expectedMinSizeBytes", if (model == DEFAULT_MODEL) EXPECTED_E4B_MIN_BYTES else JSONObject.NULL)
                 .put("expectedMaxSizeBytes", if (model == DEFAULT_MODEL) EXPECTED_E4B_MAX_BYTES else JSONObject.NULL)
@@ -140,6 +147,11 @@ object LocalGemmaModelManager {
                 .put("engineValidatedAtMs", JSONObject.NULL)
                 .put("engineValidatedBackend", JSONObject.NULL)
                 .put("engineValidatedSpeculativeDecoding", JSONObject.NULL)
+                .put("engineValidatedDecodingMode", JSONObject.NULL)
+                .put("engineValidatedContextTokens", JSONObject.NULL)
+                .put("engineValidatedCpuFallbackAllowed", JSONObject.NULL)
+                .put("engineValidatedProfileId", JSONObject.NULL)
+                .put("engineValidatedProfileLabel", JSONObject.NULL)
                 .put("engineLastValidationError", JSONObject.NULL)
             metadataFile(context, model).writeText(metadata.toString(2))
 
@@ -183,7 +195,7 @@ object LocalGemmaModelManager {
             )
         }
 
-        return LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, op)
+        return LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, generationOpForValidatedProfile(op, metadata))
     }
 
     fun validate(context: Context, op: JSONObject): OpResult {
@@ -204,10 +216,87 @@ object LocalGemmaModelManager {
         } else {
             val error = result.error ?: "Phone Gemma LiteRT-LM validation failed."
             if (!shouldPreserveExistingValidation(error)) {
-                markValidationError(context, model, modelRevision, error)
+                markValidationError(context, model, modelRevision, op, error)
             }
             result
         }
+    }
+
+    fun smokeTest(context: Context, op: JSONObject): OpResult {
+        val model = normalizeModel(op.optString("model", DEFAULT_MODEL))
+        val file = modelFile(context, model)
+        if (!file.exists() || !file.isFile || file.length() == 0L) {
+            return OpResult(
+                false,
+                error = "LOCAL_MODEL_NOT_READY: Import $model as a .litertlm file in Jarvis Android settings."
+            )
+        }
+
+        val modelRevision = buildModelRevision(context, model, file)
+        val metadata = readMetadata(context, model)
+        if (optionalString(metadata, "engineValidatedRevision") != modelRevision) {
+            return OpResult(
+                false,
+                error = "LOCAL_MODEL_VALIDATION_REQUIRED: Validate a Phone Gemma profile before running the smoke test."
+            )
+        }
+
+        val prompts = listOf(
+            Pair("ready", "Say exactly READY."),
+            Pair("joke", "Tell me a one sentence joke."),
+            Pair("tool-check", "In one sentence, say whether opening YouTube requires an Android device tool."),
+        )
+        val runs = org.json.JSONArray()
+        var failed = 0
+        val startedAtMs = System.currentTimeMillis()
+
+        prompts.forEachIndexed { index, prompt ->
+            val promptOp = generationOpForValidatedProfile(
+                JSONObject()
+                    .put("model", model)
+                    .put("requestId", "phone-gemma-smoke-${prompt.first}-${System.currentTimeMillis()}")
+                    .put("prompt", prompt.second)
+                    .put("maxTokens", if (prompt.first == "ready") 16 else 48)
+                    .put("keepEngineWarm", index < prompts.lastIndex),
+                metadata,
+            )
+            val result = LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, promptOp)
+            val data = result.data as? JSONObject
+            if (!result.ok) failed += 1
+            runs.put(
+                JSONObject()
+                    .put("id", prompt.first)
+                    .put("ok", result.ok)
+                    .put("backend", data?.optString("backend")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                    .put("decodingMode", data?.optString("decodingMode")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                    .put("contextTokens", data?.optInt("contextTokens") ?: JSONObject.NULL)
+                    .put("durationMs", data?.optLong("durationMs") ?: JSONObject.NULL)
+                    .put("outputChars", data?.optInt("outputChars") ?: JSONObject.NULL)
+                    .put("text", data?.optString("text")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                    .put("error", result.error ?: JSONObject.NULL)
+                    .put("order", index + 1)
+            )
+        }
+
+        return OpResult(
+            ok = true,
+            data = JSONObject()
+                .put("provider", "android-local-gemma")
+                .put("runtime", "android-app")
+                .put("engine", ENGINE)
+                .put("model", model)
+                .put("passed", failed == 0)
+                .put("failedCount", failed)
+                .put("totalCount", prompts.size)
+                .put("durationMs", System.currentTimeMillis() - startedAtMs)
+                .put("profileId", optionalString(metadata, "engineValidatedProfileId") ?: JSONObject.NULL)
+                .put("profileLabel", optionalString(metadata, "engineValidatedProfileLabel") ?: JSONObject.NULL)
+                .put("backend", optionalString(metadata, "engineValidatedBackend") ?: JSONObject.NULL)
+                .put("decodingMode", optionalString(metadata, "engineValidatedDecodingMode") ?: JSONObject.NULL)
+                .put("contextTokens", optionalLong(metadata, "engineValidatedContextTokens") ?: JSONObject.NULL)
+                .put("runs", runs)
+                .put("message", if (failed == 0) "Phone Gemma smoke test passed." else "Phone Gemma smoke test finished with $failed failed run(s).")
+        )
     }
 
     fun cancel(op: JSONObject): OpResult {
@@ -276,13 +365,20 @@ object LocalGemmaModelManager {
             .put("engineValidatedAtMs", System.currentTimeMillis())
             .put("engineValidatedBackend", validationData?.optString("backend")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineValidatedSpeculativeDecoding", validationData?.optBoolean("speculativeDecoding") ?: JSONObject.NULL)
+            .put("engineValidatedDecodingMode", validationData?.optString("decodingMode")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            .put("engineValidatedContextTokens", validationData?.optInt("contextTokens")?.takeIf { it > 0 } ?: JSONObject.NULL)
+            .put("engineValidatedCpuFallbackAllowed", validationData?.optBoolean("cpuFallbackAllowed") ?: JSONObject.NULL)
+            .put("engineValidatedProfileId", validationData?.optString("profileId")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            .put("engineValidatedProfileLabel", validationData?.optString("profileLabel")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineLastValidationError", JSONObject.NULL)
             .put("engineLastValidationRevision", JSONObject.NULL)
             .put("engineLastValidationAtMs", JSONObject.NULL)
+            .put("engineLastValidationProfileId", JSONObject.NULL)
+            .put("engineLastValidationProfileLabel", JSONObject.NULL)
         writeMetadata(context, model, metadata)
     }
 
-    private fun markValidationError(context: Context, model: String, modelRevision: String, error: String) {
+    private fun markValidationError(context: Context, model: String, modelRevision: String, op: JSONObject, error: String) {
         val metadata = readMetadata(context, model) ?: JSONObject()
         metadata
             .put("provider", "android-local-gemma")
@@ -301,10 +397,28 @@ object LocalGemmaModelManager {
             .put("engineValidatedAtMs", JSONObject.NULL)
             .put("engineValidatedBackend", JSONObject.NULL)
             .put("engineValidatedSpeculativeDecoding", JSONObject.NULL)
+            .put("engineValidatedDecodingMode", JSONObject.NULL)
+            .put("engineValidatedContextTokens", JSONObject.NULL)
+            .put("engineValidatedCpuFallbackAllowed", JSONObject.NULL)
+            .put("engineValidatedProfileId", JSONObject.NULL)
+            .put("engineValidatedProfileLabel", JSONObject.NULL)
             .put("engineLastValidationError", error)
             .put("engineLastValidationRevision", modelRevision)
             .put("engineLastValidationAtMs", System.currentTimeMillis())
+            .put("engineLastValidationProfileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            .put("engineLastValidationProfileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
         writeMetadata(context, model, metadata)
+    }
+
+    private fun generationOpForValidatedProfile(op: JSONObject, metadata: JSONObject?): JSONObject {
+        val next = JSONObject(op.toString())
+        optionalString(metadata, "engineValidatedBackend")?.let { next.put("backend", it) }
+        optionalLong(metadata, "engineValidatedContextTokens")?.let { next.put("contextTokens", it.toInt()) }
+        optionalBoolean(metadata, "engineValidatedSpeculativeDecoding")?.let { next.put("speculativeDecoding", it) }
+        optionalBoolean(metadata, "engineValidatedCpuFallbackAllowed")?.let { next.put("allowCpuFallback", it) }
+        optionalString(metadata, "engineValidatedProfileId")?.let { next.put("validatedProfileId", it) }
+        optionalString(metadata, "engineValidatedProfileLabel")?.let { next.put("validatedProfileLabel", it) }
+        return next
     }
 
     private fun writeMetadata(context: Context, model: String, metadata: JSONObject) {
