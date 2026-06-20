@@ -117,6 +117,17 @@ function truncateText(value: string | undefined, maxChars: number): string {
   return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
 }
 
+function truncateTextMiddle(value: string, maxChars: number): string {
+  const text = value.replace(/\s+/g, " ").trim();
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 12) return truncateText(text, maxChars);
+  const marker = " ... ";
+  const available = maxChars - marker.length;
+  const headChars = Math.ceil(available * 0.55);
+  const tailChars = Math.max(0, available - headChars);
+  return `${text.slice(0, headChars).trimEnd()}${marker}${text.slice(text.length - tailChars).trimStart()}`;
+}
+
 function latestUserText(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -151,32 +162,58 @@ function formatPromptSections(
     .map((message, index) => {
       const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
       const heading = includeIndexes ? `Message ${index + 1} [${message.role}${name}]` : "";
-      return [heading, messageForPrompt(message)].filter(Boolean).join("\n").trim();
+      return {
+        role: message.role,
+        text: [heading, messageForPrompt(message)].filter(Boolean).join("\n").trim(),
+      };
     })
-    .filter(Boolean);
+    .filter((section) => section.text.length > 0);
+
+  const systemSections = sections.filter((section) => section.role === "system");
+  const nonSystemSections = sections.filter((section) => section.role !== "system");
+
+  const keptSystem: string[] = [];
+  let systemUsed = 0;
+  let omittedSystem = 0;
+  if (systemSections.length > 0) {
+    const systemBudget = Math.min(Math.max(400, Math.floor(budgetChars * 0.35)), Math.max(250, budgetChars - 300));
+    for (const section of systemSections) {
+      const separatorChars = keptSystem.length > 0 ? 10 : 0;
+      const available = systemBudget - systemUsed - separatorChars;
+      if (available < 120) {
+        omittedSystem += 1;
+        continue;
+      }
+      const text = truncateTextMiddle(section.text, available);
+      keptSystem.push(text);
+      systemUsed += separatorChars + text.length;
+    }
+  }
 
   const kept: string[] = [];
   let used = 0;
-  let omitted = 0;
-  for (let index = sections.length - 1; index >= 0; index -= 1) {
-    const section = sections[index];
+  let omittedNonSystem = 0;
+  const remainingBudget = Math.max(300, budgetChars - systemUsed - (keptSystem.length > 0 ? 10 : 0));
+  for (let index = nonSystemSections.length - 1; index >= 0; index -= 1) {
+    const section = nonSystemSections[index].text;
     const separatorChars = kept.length > 0 ? 10 : 0;
-    if (used + separatorChars + section.length <= budgetChars) {
+    if (used + separatorChars + section.length <= remainingBudget) {
       kept.unshift(section);
       used += separatorChars + section.length;
       continue;
     }
-    omitted += 1;
+    omittedNonSystem += 1;
   }
 
-  if (kept.length === 0 && sections.length > 0) {
-    const latest = sections[sections.length - 1];
-    kept.push(truncateText(latest, budgetChars));
-    omitted = sections.length - 1;
+  if (kept.length === 0 && nonSystemSections.length > 0) {
+    const latest = nonSystemSections[nonSystemSections.length - 1].text;
+    kept.push(truncateTextMiddle(latest, remainingBudget));
+    omittedNonSystem = Math.max(0, nonSystemSections.length - 1);
   }
 
+  const omitted = omittedSystem + omittedNonSystem;
   const prefix = omitted > 0 ? [`[${omitted} earlier message${omitted === 1 ? "" : "s"} omitted to keep Phone Gemma inside its local context budget.]`] : [];
-  return [...prefix, ...kept].join("\n\n---\n\n");
+  return [...prefix, ...keptSystem, ...kept].join("\n\n---\n\n");
 }
 
 function extractJsonObject(raw: string): unknown | null {
@@ -276,6 +313,32 @@ function requiredParameterNames(parameters: OpenAI.Chat.Completions.ChatCompleti
     : [];
 }
 
+function enumValuesForParameter(
+  parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"],
+  name: string,
+): string[] {
+  if (!parameters || typeof parameters !== "object") return [];
+  const properties = (parameters as { properties?: unknown }).properties;
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) return [];
+  const property = (properties as Record<string, unknown>)[name];
+  if (!property || typeof property !== "object" || Array.isArray(property)) return [];
+  const enumValues = (property as { enum?: unknown }).enum;
+  if (!Array.isArray(enumValues)) return [];
+  return enumValues
+    .filter((value): value is string | number | boolean => (
+      typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+    ))
+    .map((value) => String(value));
+}
+
+function requiredEnumSummaries(parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]): string[] {
+  return requiredParameterNames(parameters)
+    .flatMap((name) => {
+      const values = enumValuesForParameter(parameters, name);
+      return values.length ? [`${name} enum: ${values.join(", ")}`] : [];
+    });
+}
+
 function toolRelevanceScore(tool: OpenAI.Chat.Completions.ChatCompletionTool, requestText: string): number {
   if (tool.type !== "function") return 0;
   const normalizedRequest = requestText.toLowerCase();
@@ -305,8 +368,9 @@ function toolSpecsForPrompt(
   for (const tool of toolList) {
     const args = parameterNames(tool.function.parameters);
     const required = requiredParameterNames(tool.function.parameters);
+    const enumSummaries = requiredEnumSummaries(tool.function.parameters);
     const argumentText = args.length
-      ? ` Args: ${args.join(", ")}${required.length ? `; required: ${required.join(", ")}` : ""}.`
+      ? ` Args: ${args.join(", ")}${required.length ? `; required: ${required.join(", ")}` : ""}${enumSummaries.length ? `; ${enumSummaries.join("; ")}` : ""}.`
       : " Args: none or tool-defined JSON.";
     const description = truncateText(tool.function.description, MAX_TOOL_DESCRIPTION_CHARS);
     const line = `- ${tool.function.name}: ${description || "Local Jarvis tool."}${argumentText}`;
