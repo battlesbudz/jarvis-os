@@ -27,7 +27,7 @@ type AndroidLocalGemmaDaemonOp = (
 let daemonOpForTesting: AndroidLocalGemmaDaemonOp | null = null;
 
 const DEFAULT_PHONE_GEMMA_TIMEOUT_MS = 60_000;
-const DEFAULT_PHONE_GEMMA_CONTEXT_TOKENS = 1024;
+const DEFAULT_PHONE_GEMMA_CONTEXT_TOKENS = 2048;
 const DEFAULT_PHONE_GEMMA_MAX_COMPLETION_TOKENS = 128;
 const DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET = 3_600;
 const DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET = 1_600;
@@ -143,6 +143,14 @@ function latestUserText(messages: OpenAI.Chat.Completions.ChatCompletionMessageP
   return "";
 }
 
+function shouldOmitLocalRuntimeErrorMessage(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): boolean {
+  if (message.role !== "assistant" || message.tool_calls?.length) return false;
+  const text = textFromContent(message.content).trim();
+  return /^Error:\s*(?:LOCAL_MODEL_|Phone Gemma|Android Local Gemma|Jarvis Android app device control)/i.test(text) ||
+    /\bLOCAL_MODEL_(?:GENERATION_FAILED|DEVICE_MEMORY_LOW|BUSY|CANCELLED|ENGINE_NOT_BUNDLED)\b/i.test(text) ||
+    /^Phone Gemma (?:could not|finished without|timed out|is still working)/i.test(text);
+}
+
 function hasActiveToolContinuation(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
   return messages[messages.length - 1]?.role === "tool";
 }
@@ -198,7 +206,9 @@ function formatPromptSections(
   budgetChars: number,
   includeIndexes: boolean,
 ): string {
-  const sections = messages
+  const promptMessages = messages.filter((message) => !shouldOmitLocalRuntimeErrorMessage(message));
+  const omittedRuntimeErrors = messages.length - promptMessages.length;
+  const sections = promptMessages
     .map((message, index) => {
       const name = "name" in message && typeof message.name === "string" ? ` (${message.name})` : "";
       const heading = includeIndexes ? `Message ${index + 1} [${message.role}${name}]` : "";
@@ -256,7 +266,7 @@ function formatPromptSections(
     omittedNonSystem += 1;
   }
 
-  const omitted = omittedSystem + omittedNonSystem;
+  const omitted = omittedSystem + omittedNonSystem + omittedRuntimeErrors;
   const prefix = omitted > 0 ? [`[${omitted} earlier message${omitted === 1 ? "" : "s"} omitted to keep Phone Gemma inside its local context budget.]`] : [];
   return [...prefix, ...keptSystem, ...kept].join("\n\n---\n\n");
 }

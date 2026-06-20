@@ -486,7 +486,7 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
     assert.equal(requests[0].op.model, "gemma-4-e4b-it");
     assert.match(requests[0].op.prompt, /system: Be concise\./);
     assert.match(requests[0].op.prompt, /user: Hello/);
-    assert.equal(requests[0].op.contextTokens, 1024);
+    assert.equal(requests[0].op.contextTokens, 2048);
     assert.equal(requests[0].op.maxTokens, 128);
     assert.ok(requests[0].timeoutMs >= 60000);
     console.log("OK: Android Local Gemma provider sends generation to the Jarvis Android app daemon runtime");
@@ -581,6 +581,44 @@ async function testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol() {
     assert.doesNotMatch(requests[0].op.prompt, /oversized_description_marker/);
     assert.ok(requests[0].op.prompt.length <= 3600);
     console.log("OK: Android Local Gemma keeps plain auto-tool chat off the local tool protocol");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaOmitsPriorLocalRuntimeErrors() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "Still here, running locally.", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "What can you do?" },
+        {
+          role: "assistant",
+          content: `Error: LOCAL_MODEL_GENERATION_FAILED: ${"llm_litert_compiled_model_executor.cc:755 Failed to invoke ".repeat(40)}`,
+        },
+        { role: "user", content: "Hi" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "Still here, running locally.");
+    assert.match(requests[0].op.prompt, /user: Hi/);
+    assert.doesNotMatch(requests[0].op.prompt, /LOCAL_MODEL_GENERATION_FAILED/);
+    assert.doesNotMatch(requests[0].op.prompt, /llm_litert_compiled_model_executor/);
+    console.log("OK: Android Local Gemma omits prior local runtime errors from retry prompts");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -1290,6 +1328,7 @@ async function main() {
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
+  await testAndroidLocalGemmaOmitsPriorLocalRuntimeErrors();
   await testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat();
   await testAndroidLocalGemmaUsesToolProtocolForUrlTools();
   await testAndroidLocalGemmaKeepsToolProtocolForConfirmationTurns();
