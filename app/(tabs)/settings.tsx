@@ -69,15 +69,24 @@ import {
 } from '@/lib/connectionUx';
 import { ANDROID_LOCAL_GEMMA_MODEL, MODEL_PROVIDER_CATALOG } from '@shared/modelProviderCatalog';
 import {
-  importLocalGemmaModelFile,
+  createPhoneGemmaUnavailableStatus,
+  importPhoneGemmaModelFile,
+  isPhoneGemmaGenerationReady,
+  isPhoneGemmaModelFileReady,
   LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE,
   LOCAL_GEMMA_EXPECTED_FILE_NAME,
-  readLocalGemmaModelStatus,
-  smokeTestLocalGemmaModel,
-  validateLocalGemmaModel,
-  type LocalGemmaSmokeTestResult,
+  PHONE_GEMMA_RECOMMENDED_PROFILE,
+  PHONE_GEMMA_VALIDATION_PROFILES,
+  phoneGemmaNeedsEngine,
+  phoneGemmaProfileLabel,
+  phoneGemmaRuntimeDetails,
+  readPhoneGemmaStatus,
+  smokeTestPhoneGemmaRuntime,
+  summarizePhoneGemmaSmokeTest,
+  validatePhoneGemmaRuntime,
   type LocalGemmaModelStatus,
-} from '@/lib/local-gemma-model-storage';
+  type PhoneGemmaValidationProfile,
+} from '@/lib/phone-gemma-runtime';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -177,88 +186,6 @@ function formatModelSize(bytes?: number | null): string | null {
   if (!bytes || bytes <= 0) return null;
   const gb = bytes / (1024 * 1024 * 1024);
   return `${gb.toFixed(gb >= 10 ? 1 : 2)} GB`;
-}
-
-type LocalGemmaValidationProfile = {
-  id: string;
-  label: string;
-  backend: 'auto' | 'gpu' | 'cpu' | 'npu';
-  contextTokens: number;
-  allowCpuFallback: boolean;
-  speculativeDecoding?: boolean;
-};
-
-const LOCAL_GEMMA_VALIDATION_PROFILES: LocalGemmaValidationProfile[] = [
-  {
-    id: 'gpu-standard-1024',
-    label: 'GPU standard 1024',
-    backend: 'gpu',
-    contextTokens: 1024,
-    allowCpuFallback: false,
-    speculativeDecoding: false,
-  },
-  {
-    id: 'gpu-standard-512',
-    label: 'GPU standard 512',
-    backend: 'gpu',
-    contextTokens: 512,
-    allowCpuFallback: false,
-    speculativeDecoding: false,
-  },
-  {
-    id: 'gpu-auto-2048',
-    label: 'GPU auto 2048',
-    backend: 'gpu',
-    contextTokens: 2048,
-    allowCpuFallback: false,
-  },
-  {
-    id: 'cpu-standard-1024',
-    label: 'CPU standard 1024',
-    backend: 'cpu',
-    contextTokens: 1024,
-    allowCpuFallback: false,
-    speculativeDecoding: false,
-  },
-  {
-    id: 'cpu-standard-512',
-    label: 'CPU standard 512',
-    backend: 'cpu',
-    contextTokens: 512,
-    allowCpuFallback: false,
-    speculativeDecoding: false,
-  },
-];
-const LOCAL_GEMMA_RECOMMENDED_PROFILE = LOCAL_GEMMA_VALIDATION_PROFILES[0];
-
-function localGemmaProfileOptions(profile: LocalGemmaValidationProfile) {
-  return {
-    backend: profile.backend,
-    contextTokens: profile.contextTokens,
-    allowCpuFallback: profile.allowCpuFallback,
-    speculativeDecoding: profile.speculativeDecoding,
-    profileId: profile.id,
-    profileLabel: profile.label,
-  };
-}
-
-function localGemmaRuntimeDetails(status?: LocalGemmaModelStatus | null): string | null {
-  if (!status?.engineValidated) return null;
-  const parts = [
-    status.engineValidatedProfileLabel,
-    status.engineValidatedBackend ? status.engineValidatedBackend.toUpperCase() : null,
-    status.engineValidatedDecodingMode,
-    status.engineValidatedContextTokens ? `${status.engineValidatedContextTokens} tokens` : null,
-  ].filter(Boolean);
-  return parts.length ? parts.join(' - ') : null;
-}
-
-function summarizeSmokeTest(result: LocalGemmaSmokeTestResult): string {
-  const profile = result.profileLabel ? `${result.profileLabel}: ` : '';
-  const runs = result.runs
-    .map((run) => `${run.id} ${run.ok ? 'OK' : 'FAILED'}${run.backend ? `/${run.backend}` : ''}${run.decodingMode ? `/${run.decodingMode}` : ''}`)
-    .join(', ');
-  return `${profile}${result.passed ? 'passed' : `${result.failedCount} failed`} (${runs}).`;
 }
 
 function extractApiError(error: any, fallback: string): string {
@@ -1202,18 +1129,11 @@ export default function SettingsScreen() {
   const loadLocalGemmaStatus = useCallback(async () => {
     setLocalGemmaStatusLoading(true);
     try {
-      setLocalGemmaStatus(await readLocalGemmaModelStatus());
+      setLocalGemmaStatus(await readPhoneGemmaStatus());
     } catch (error: any) {
-      setLocalGemmaStatus({
-        ready: false,
-        modelFileReady: false,
-        engineBundled: false,
-        generationReady: false,
-        needsModelImport: true,
-        needsEngineBundle: false,
-        needsEngineValidation: false,
-        message: extractApiError(error, `Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} from Downloads to store it inside Jarvis.`),
-      });
+      setLocalGemmaStatus(createPhoneGemmaUnavailableStatus(
+        extractApiError(error, `Import ${LOCAL_GEMMA_EXPECTED_FILE_NAME} from Downloads to store it inside Jarvis.`),
+      ));
     } finally {
       setLocalGemmaStatusLoading(false);
     }
@@ -1682,15 +1602,15 @@ export default function SettingsScreen() {
     setProviderAuthMessages((prev) => ({ ...prev, [providerId]: message }));
   }, []);
 
-  const validateAndroidLocalGemma = useCallback(async (profile = LOCAL_GEMMA_RECOMMENDED_PROFILE): Promise<LocalGemmaModelStatus | null> => {
+  const validateAndroidLocalGemma = useCallback(async (profile: PhoneGemmaValidationProfile = PHONE_GEMMA_RECOMMENDED_PROFILE): Promise<LocalGemmaModelStatus | null> => {
     setLocalGemmaValidating(true);
     setLocalGemmaActiveProfileId(profile.id);
     setProviderMessage('android-local-gemma', `Validating Phone Gemma with ${profile.label}...`);
     try {
-      const status = await validateLocalGemmaModel(localGemmaProfileOptions(profile));
+      const status = await validatePhoneGemmaRuntime(profile);
       setLocalGemmaStatus(status);
       const size = formatModelSize(status.sizeBytes);
-      const details = localGemmaRuntimeDetails(status);
+      const details = phoneGemmaRuntimeDetails(status);
       const message = status.generationReady
         ? `Phone Gemma validated${details ? ` via ${details}` : ''}${size ? ` (${size})` : ''}.`
         : `${status.message || LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE}${size ? ` (${size})` : ''}`;
@@ -1712,8 +1632,8 @@ export default function SettingsScreen() {
     setLocalGemmaSmokeTesting(true);
     setProviderMessage('android-local-gemma', 'Running Phone Gemma local smoke test...');
     try {
-      const result = await smokeTestLocalGemmaModel();
-      const message = summarizeSmokeTest(result);
+      const result = await smokeTestPhoneGemmaRuntime();
+      const message = summarizePhoneGemmaSmokeTest(result);
       setProviderMessage('android-local-gemma', message);
       Alert.alert('Phone Gemma smoke test', message);
       await loadLocalGemmaStatus();
@@ -1729,17 +1649,17 @@ export default function SettingsScreen() {
 
   const selectAndroidLocalGemma = useCallback(async () => {
     let status = localGemmaStatus;
-    const localGemmaModelFileReady = Boolean(status?.modelFileReady ?? (status?.ready && !status?.needsModelImport));
-    if (localGemmaModelFileReady && !status?.generationReady) {
+    const localGemmaModelFileReady = isPhoneGemmaModelFileReady(status);
+    if (localGemmaModelFileReady && !isPhoneGemmaGenerationReady(status)) {
       const validated = await validateAndroidLocalGemma();
-      if (validated?.generationReady) {
+      if (isPhoneGemmaGenerationReady(validated)) {
         status = validated;
       } else {
         return;
       }
     }
 
-    const localGemmaGenerationReady = Boolean(status?.generationReady);
+    const localGemmaGenerationReady = isPhoneGemmaGenerationReady(status);
     if (!localGemmaGenerationReady) {
       const message = localGemmaModelFileReady
         ? status?.message || LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE
@@ -1771,7 +1691,7 @@ export default function SettingsScreen() {
     setLocalGemmaImporting(true);
     setProviderMessage('android-local-gemma', `Opening Android file picker for ${LOCAL_GEMMA_EXPECTED_FILE_NAME}.`);
     try {
-      const status = await importLocalGemmaModelFile();
+      const status = await importPhoneGemmaModelFile();
       if (!status) {
         setProviderMessage('android-local-gemma', 'Model import cancelled.');
         return;
@@ -2882,16 +2802,16 @@ export default function SettingsScreen() {
               const apiVisible = Boolean(providerApiKeyVisible[provider.id]);
               const apiInput = providerApiKeyInputs[provider.id] ?? '';
               const providerMessage = providerAuthMessages[provider.id];
-              const localGemmaModelFileReady = Boolean(localGemmaStatus?.modelFileReady ?? (localGemmaStatus?.ready && !localGemmaStatus?.needsModelImport));
-              const localGemmaGenerationReady = Boolean(localGemmaStatus?.generationReady);
-              const localGemmaNeedsEngine = Boolean(localGemmaStatus?.needsEngineBundle || localGemmaStatus?.needsEngineValidation || (localGemmaModelFileReady && !localGemmaGenerationReady));
+              const localGemmaModelFileReady = isPhoneGemmaModelFileReady(localGemmaStatus);
+              const localGemmaGenerationReady = isPhoneGemmaGenerationReady(localGemmaStatus);
+              const localGemmaNeedsEngine = phoneGemmaNeedsEngine(localGemmaStatus);
               const localGemmaSize = formatModelSize(localGemmaStatus?.sizeBytes);
-              const localGemmaDetails = localGemmaRuntimeDetails(localGemmaStatus);
+              const localGemmaDetails = phoneGemmaRuntimeDetails(localGemmaStatus);
               const localGemmaSelected = modelPrefs.chat === ANDROID_LOCAL_GEMMA_MODEL;
               const localGemmaStatusText = localGemmaStatusLoading
                 ? 'Checking local model storage...'
                 : localGemmaValidating
-                  ? `Validating ${LOCAL_GEMMA_VALIDATION_PROFILES.find((profile) => profile.id === localGemmaActiveProfileId)?.label || 'LiteRT-LM engine'}...`
+                  ? `Validating ${phoneGemmaProfileLabel(localGemmaActiveProfileId) || 'LiteRT-LM engine'}...`
                 : localGemmaGenerationReady
                   ? `Ready${localGemmaDetails ? ` - ${localGemmaDetails}` : ''}${localGemmaSize ? ` - ${localGemmaSize}` : ''}${localGemmaStatus?.sourceName ? ` - ${localGemmaStatus.sourceName}` : ''}`
                   : localGemmaNeedsEngine
@@ -3002,7 +2922,7 @@ export default function SettingsScreen() {
 
                     {isAndroidLocalGemma && localGemmaModelFileReady ? (
                       <View style={providerAuthStyles.profileGrid}>
-                        {LOCAL_GEMMA_VALIDATION_PROFILES.map((profile) => {
+                        {PHONE_GEMMA_VALIDATION_PROFILES.map((profile) => {
                           const activeProfile = localGemmaActiveProfileId === profile.id;
                           const validatedProfile = localGemmaStatus?.engineValidatedProfileId === profile.id;
                           return (
