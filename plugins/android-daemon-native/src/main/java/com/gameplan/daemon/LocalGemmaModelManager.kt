@@ -379,25 +379,30 @@ object LocalGemmaModelManager {
 
     private fun markValidationError(context: Context, model: String, modelRevision: String, op: JSONObject, error: String) {
         val metadata = readMetadata(context, model) ?: JSONObject()
-        val existingValidationStillMatches = optionalString(metadata, "engineValidatedRevision") == modelRevision
+        val failedProfileId = op.optString("profileId", "").takeIf { it.isNotBlank() }
+        val validatedProfileId = optionalString(metadata, "engineValidatedProfileId")
+        val preserveExistingValidation = optionalString(metadata, "engineValidatedRevision") == modelRevision &&
+            failedProfileId != null &&
+            validatedProfileId != null &&
+            failedProfileId != validatedProfileId
         metadata
             .put("provider", "android-local-gemma")
             .put("runtime", "android-app")
             .put("storageOwner", "jarvis-android-app")
             .put("engine", ENGINE)
             .put("model", model)
-            .put("ready", existingValidationStillMatches)
+            .put("ready", preserveExistingValidation)
             .put("engineBundled", true)
-            .put("generationReady", existingValidationStillMatches)
+            .put("generationReady", preserveExistingValidation)
             .put("needsModelImport", false)
             .put("needsEngineBundle", false)
-            .put("needsEngineValidation", !existingValidationStillMatches)
+            .put("needsEngineValidation", !preserveExistingValidation)
             .put("engineLastValidationError", error)
             .put("engineLastValidationRevision", modelRevision)
             .put("engineLastValidationAtMs", System.currentTimeMillis())
-            .put("engineLastValidationProfileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+            .put("engineLastValidationProfileId", failedProfileId ?: JSONObject.NULL)
             .put("engineLastValidationProfileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-        if (!existingValidationStillMatches) {
+        if (!preserveExistingValidation) {
             metadata
                 .put("engineValidated", false)
                 .put("engineValidatedRevision", JSONObject.NULL)

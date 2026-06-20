@@ -68,7 +68,7 @@ assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.validate\(context, 
 assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.generate\(context, model, file, modelRevision, generationOpForValidatedProfile\(op, metadata\)\)/);
 assert.match(nativeModelManager, /fun smokeTest\(context: Context, op: JSONObject\): OpResult/);
 assert.match(nativeModelManager, /val validationError = if \(engineValidated\) null else lastEngineError \?: engineLastValidationError/);
-assert.match(nativeModelManager, /existingValidationStillMatches/);
+assert.match(nativeModelManager, /preserveExistingValidation/);
 assert.match(nativeModelManager, /\.put\("modelFileReady", modelFileReady\)/);
 assert.match(nativeModelManager, /\.put\("engineBundled", true\)/);
 assert.match(nativeModelManager, /\.put\("generationReady", generationReady\)/);

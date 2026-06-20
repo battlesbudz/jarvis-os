@@ -475,7 +475,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "generationOpForValidatedProfile", source);
   assertIncludes(contents, "fun smokeTest(context: Context, op: JSONObject): OpResult", source);
   assertIncludes(contents, "val validationError = if (engineValidated) null else lastEngineError ?: engineLastValidationError", source);
-  assertIncludes(contents, "existingValidationStillMatches", source);
+  assertIncludes(contents, "preserveExistingValidation", source);
   assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.cancel(op)", source);
   assertIncludes(contents, '.put("modelFileReady", modelFileReady)', source);
