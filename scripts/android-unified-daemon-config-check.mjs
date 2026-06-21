@@ -35,6 +35,10 @@ const accessibilityServicePath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt",
 );
+const legacyAccessibilityServicePath = path.join(
+  projectRoot,
+  "android-daemon/app/src/main/java/com/jarvis/daemon/JarvisAccessibilityService.kt",
+);
 const opHandlerPath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/OpHandler.kt",
@@ -208,6 +212,7 @@ const [
   screenRecordHandler,
   cameraHandler,
   accessibilityService,
+  legacyAccessibilityService,
   opHandler,
   localGemmaModelManager,
   localGemmaInferenceEngine,
@@ -241,6 +246,7 @@ const [
   readFile(screenRecordHandlerPath, "utf8"),
   readFile(cameraHandlerPath, "utf8"),
   readFile(accessibilityServicePath, "utf8"),
+  readFile(legacyAccessibilityServicePath, "utf8"),
   readFile(opHandlerPath, "utf8"),
   readFile(localGemmaModelManagerPath, "utf8"),
   readFile(localGemmaInferenceEnginePath, "utf8"),
@@ -435,6 +441,12 @@ for (const [contents, source] of [
   assertIncludes(contents, "launchAttemptStartedAtUptimeMs", source);
   assertIncludes(contents, "observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis()", source);
   assertIncludes(contents, "it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs", source);
+}
+for (const [contents, source] of [
+  [accessibilityService, "JarvisAccessibilityService.kt"],
+  [pluginTemplateAccessibility, "plugins/android-daemon-native/JarvisAccessibilityService.kt"],
+  [legacyAccessibilityService, "android-daemon/JarvisAccessibilityService.kt"],
+]) {
   assertIncludes(contents, "private fun isSensitiveCompactNode", source);
   assertIncludes(contents, "node.isPassword", source);
   assertIncludes(contents, "SCREEN_CONTEXT_REDACTED", source);
