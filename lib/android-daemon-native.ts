@@ -22,6 +22,7 @@ export type AndroidLocalGemmaValidationOptions = {
   keepEngineWarm?: boolean;
   allowCpuFallback?: boolean;
   speculativeDecoding?: boolean;
+  cachePolicy?: "default" | "fresh" | "none";
   profileId?: string;
   profileLabel?: string;
 };

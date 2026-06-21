@@ -14,6 +14,8 @@ export type PhoneGemmaValidationProfile = {
   contextTokens: number;
   allowCpuFallback: boolean;
   speculativeDecoding?: boolean;
+  cachePolicy?: NonNullable<AndroidLocalGemmaValidationOptions["cachePolicy"]>;
+  highMemoryRisk?: boolean;
 };
 
 export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
@@ -24,6 +26,7 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     contextTokens: 1024,
     allowCpuFallback: false,
     speculativeDecoding: false,
+    cachePolicy: "none",
   },
   {
     id: "gpu-standard-512",
@@ -32,6 +35,7 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     contextTokens: 512,
     allowCpuFallback: false,
     speculativeDecoding: false,
+    cachePolicy: "none",
   },
   {
     id: "gpu-auto-2048",
@@ -39,6 +43,25 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     backend: "gpu",
     contextTokens: 2048,
     allowCpuFallback: false,
+    cachePolicy: "none",
+  },
+  {
+    id: "npu-standard-1024",
+    label: "NPU standard 1024",
+    backend: "npu",
+    contextTokens: 1024,
+    allowCpuFallback: false,
+    speculativeDecoding: false,
+    cachePolicy: "none",
+  },
+  {
+    id: "npu-standard-512",
+    label: "NPU standard 512",
+    backend: "npu",
+    contextTokens: 512,
+    allowCpuFallback: false,
+    speculativeDecoding: false,
+    cachePolicy: "none",
   },
   {
     id: "cpu-standard-1024",
@@ -47,6 +70,8 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     contextTokens: 1024,
     allowCpuFallback: false,
     speculativeDecoding: false,
+    cachePolicy: "none",
+    highMemoryRisk: true,
   },
   {
     id: "cpu-standard-512",
@@ -55,6 +80,8 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     contextTokens: 512,
     allowCpuFallback: false,
     speculativeDecoding: false,
+    cachePolicy: "none",
+    highMemoryRisk: true,
   },
 ];
 
@@ -73,6 +100,7 @@ export function phoneGemmaProfileOptions(profile: PhoneGemmaValidationProfile): 
     contextTokens: profile.contextTokens,
     allowCpuFallback: profile.allowCpuFallback,
     speculativeDecoding: profile.speculativeDecoding,
+    cachePolicy: profile.cachePolicy,
     profileId: profile.id,
     profileLabel: profile.label,
   };

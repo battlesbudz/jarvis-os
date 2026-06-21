@@ -66,6 +66,7 @@ object LocalGemmaModelManager {
                 .put("engineValidatedDecodingMode", optionalString(metadata, "engineValidatedDecodingMode") ?: JSONObject.NULL)
                 .put("engineValidatedContextTokens", optionalLong(metadata, "engineValidatedContextTokens") ?: JSONObject.NULL)
                 .put("engineValidatedCpuFallbackAllowed", optionalBoolean(metadata, "engineValidatedCpuFallbackAllowed") ?: JSONObject.NULL)
+                .put("engineValidatedCachePolicy", optionalString(metadata, "engineValidatedCachePolicy") ?: JSONObject.NULL)
                 .put("engineValidatedProfileId", optionalString(metadata, "engineValidatedProfileId") ?: JSONObject.NULL)
                 .put("engineValidatedProfileLabel", optionalString(metadata, "engineValidatedProfileLabel") ?: JSONObject.NULL)
                 .put("engineLastValidationError", engineLastValidationError ?: JSONObject.NULL)
@@ -149,6 +150,7 @@ object LocalGemmaModelManager {
                 .put("engineValidatedDecodingMode", JSONObject.NULL)
                 .put("engineValidatedContextTokens", JSONObject.NULL)
                 .put("engineValidatedCpuFallbackAllowed", JSONObject.NULL)
+                .put("engineValidatedCachePolicy", JSONObject.NULL)
                 .put("engineValidatedProfileId", JSONObject.NULL)
                 .put("engineValidatedProfileLabel", JSONObject.NULL)
                 .put("engineLastValidationError", JSONObject.NULL)
@@ -371,6 +373,7 @@ object LocalGemmaModelManager {
             .put("engineValidatedDecodingMode", validationData?.optString("decodingMode")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineValidatedContextTokens", validationData?.optInt("contextTokens")?.takeIf { it > 0 } ?: JSONObject.NULL)
             .put("engineValidatedCpuFallbackAllowed", validationData?.optBoolean("cpuFallbackAllowed") ?: JSONObject.NULL)
+            .put("engineValidatedCachePolicy", validationData?.optString("cachePolicy")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineValidatedProfileId", validationData?.optString("profileId")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineValidatedProfileLabel", validationData?.optString("profileLabel")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineLastValidationError", JSONObject.NULL)
@@ -416,6 +419,7 @@ object LocalGemmaModelManager {
                 .put("engineValidatedDecodingMode", JSONObject.NULL)
                 .put("engineValidatedContextTokens", JSONObject.NULL)
                 .put("engineValidatedCpuFallbackAllowed", JSONObject.NULL)
+                .put("engineValidatedCachePolicy", JSONObject.NULL)
                 .put("engineValidatedProfileId", JSONObject.NULL)
                 .put("engineValidatedProfileLabel", JSONObject.NULL)
         }
@@ -428,6 +432,7 @@ object LocalGemmaModelManager {
         optionalLong(metadata, "engineValidatedContextTokens")?.let { next.put("contextTokens", it.toInt()) }
         optionalBoolean(metadata, "engineValidatedSpeculativeDecoding")?.let { next.put("speculativeDecoding", it) }
         optionalBoolean(metadata, "engineValidatedCpuFallbackAllowed")?.let { next.put("allowCpuFallback", it) }
+        optionalString(metadata, "engineValidatedCachePolicy")?.let { next.put("cachePolicy", it) }
         optionalString(metadata, "engineValidatedProfileId")?.let { next.put("validatedProfileId", it) }
         optionalString(metadata, "engineValidatedProfileLabel")?.let { next.put("validatedProfileLabel", it) }
         return next
