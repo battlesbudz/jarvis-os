@@ -651,6 +651,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     fun readScreenContent(): String {
         val root = rootInActiveWindow
         val packageName = root?.packageName?.toString() ?: ""
+        val activityName = root?.className?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: packageName
 
         val texts = mutableListOf<String>()
         val clickableArr = JSONArray()
@@ -661,7 +662,7 @@ class JarvisAccessibilityService : AccessibilityService() {
 
         return JSONObject()
             .put("package", packageName)
-            .put("activity", packageName)
+            .put("activity", activityName)
             .put("text", textArr)
             .put("clickable", clickableArr)
             .toString()

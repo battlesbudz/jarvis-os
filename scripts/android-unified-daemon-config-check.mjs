@@ -447,6 +447,8 @@ for (const [contents, source] of [
   [pluginTemplateAccessibility, "plugins/android-daemon-native/JarvisAccessibilityService.kt"],
   [legacyAccessibilityService, "android-daemon/JarvisAccessibilityService.kt"],
 ]) {
+  assertIncludes(contents, "val activityName = root?.className?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: packageName", source);
+  assertIncludes(contents, '.put("activity", activityName)', source);
   assertIncludes(contents, "private fun isSensitiveCompactNode", source);
   assertIncludes(contents, "node.isPassword", source);
   assertIncludes(contents, "SCREEN_CONTEXT_REDACTED", source);
