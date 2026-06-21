@@ -534,11 +534,57 @@ async function testAndroidLocalGemmaEmitsLocalHarnessToolCalls() {
     assert.equal(result.textContent, "");
     assert.equal(result.toolCallList.length, 1);
     assert.equal(result.toolCallList[0].function.name, "daemon_action");
-    assert.equal(result.toolCallList[0].function.arguments, '{"action":"screenshot"}');
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_screenshot"}');
     assert.match(requests[0].op.prompt, /running entirely through Android Local Gemma/);
     assert.match(requests[0].op.prompt, /Available tools/);
     assert.match(requests[0].op.prompt, /daemon_action/);
     console.log("OK: Android Local Gemma can emit local harness tool calls");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaNormalizesDaemonAppAliases() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "daemon_action", arguments: { action: "open_youtube" } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" }, packageName: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.youtube"}');
+    assert.match(requests[0].op.prompt, /daemon_action/);
+    console.log("OK: Android Local Gemma normalizes daemon app aliases");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -1382,6 +1428,7 @@ async function main() {
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
+  await testAndroidLocalGemmaNormalizesDaemonAppAliases();
   await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
   await testAndroidLocalGemmaOmitsPriorLocalRuntimeErrors();
   await testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat();
