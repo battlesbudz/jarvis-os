@@ -103,7 +103,11 @@ class WebSocketService : Service() {
     private var reconnectAttempts = 0
     private val maxReconnectAttempts = 8
     private var pingFuture: java.util.concurrent.ScheduledFuture<*>? = null
+    private var reconnectFuture: java.util.concurrent.ScheduledFuture<*>? = null
     private var reconnectDelayMs = RECONNECT_DELAY_MS
+    private var connecting = false
+    private var currentWsUrl = ""
+    private var currentConnectMode = ""
 
     var isConnected = false
     var currentStatus = "Disconnected"
@@ -225,26 +229,48 @@ class WebSocketService : Service() {
     }
 
     private fun connect(useDaemonId: Boolean, useBootstrapToken: Boolean = false) {
-        disconnect()
-        currentConnectUsesDaemonId = useDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty()
-        currentConnectUsesBootstrapToken = !currentConnectUsesDaemonId && useBootstrapToken && bootstrapToken.isNotEmpty()
+        val nextConnectUsesDaemonId = useDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty()
+        val nextConnectUsesBootstrapToken = !nextConnectUsesDaemonId && useBootstrapToken && bootstrapToken.isNotEmpty()
         val wsUrl = buildWsUrl(serverUrl)
         val mode = when {
-            currentConnectUsesDaemonId -> "reconnect"
-            currentConnectUsesBootstrapToken -> "bootstrap"
+            nextConnectUsesDaemonId -> "reconnect"
+            nextConnectUsesBootstrapToken -> "bootstrap"
             else -> "pair"
         }
+        if (wsClient != null && isConnected && currentWsUrl == wsUrl) {
+            paired = true
+            reconnectAttempts = 0
+            reconnectDelayMs = RECONNECT_DELAY_MS
+            DaemonLog.add("WS already connected; ignoring duplicate $mode connect")
+            return
+        }
+        if (wsClient != null && connecting && currentWsUrl == wsUrl && currentConnectMode == mode) {
+            DaemonLog.add("WS connect already in progress; ignoring duplicate $mode connect")
+            return
+        }
+        reconnectFuture?.cancel(false)
+        reconnectFuture = null
+        closeCurrentSocket(scheduleReconnectOnClose = false)
+        currentConnectUsesDaemonId = nextConnectUsesDaemonId
+        currentConnectUsesBootstrapToken = nextConnectUsesBootstrapToken
+        currentWsUrl = wsUrl
+        currentConnectMode = mode
+        connecting = true
         Log.i(TAG, "Connecting to $wsUrl [$mode]")
         updateStatus("Connecting…", false)
 
         wsClient = object : WebSocketClient(URI(wsUrl)) {
             override fun onOpen(handshakedata: ServerHandshake?) {
+                if (wsClient !== this) {
+                    DaemonLog.add("WS stale open ignored")
+                    return
+                }
                 Log.i(TAG, "WebSocket opened")
                 DaemonLog.add("WS opened → sending $mode")
                 if (!paired) {
-                    if (currentConnectUsesDaemonId) {
+                    if (nextConnectUsesDaemonId) {
                         sendReconnectMessage()
-                    } else if (currentConnectUsesBootstrapToken) {
+                    } else if (nextConnectUsesBootstrapToken) {
                         sendBootstrapMessage()
                     } else {
                         sendPairMessage()
@@ -255,6 +281,10 @@ class WebSocketService : Service() {
 
             override fun onMessage(message: String?) {
                 if (message == null) return
+                if (wsClient !== this) {
+                    DaemonLog.add("WS stale message ignored")
+                    return
+                }
                 try {
                     val json = JSONObject(message)
                     handleMessage(json)
@@ -266,17 +296,34 @@ class WebSocketService : Service() {
             override fun onClose(code: Int, reason: String?, remote: Boolean) {
                 Log.w(TAG, "WebSocket closed: code=$code reason=$reason remote=$remote")
                 DaemonLog.add("WS closed: code=$code reason=${reason ?: "none"}")
+                val isCurrentClient = wsClient === this
+                val isIntentionalClose = wsClient == null
+                val shouldReconnect = reconnectEnabled && isCurrentClient
+                if (!isCurrentClient && !isIntentionalClose) {
+                    DaemonLog.add("WS stale close ignored")
+                    return
+                }
+                if (isCurrentClient) {
+                    wsClient = null
+                }
                 pingFuture?.cancel(false)
+                pingFuture = null
+                connecting = false
                 isConnected = false
                 paired = false
                 updateStatus("Disconnected", false)
-                if (reconnectEnabled) {
+                if (shouldReconnect) {
                     scheduleReconnect(preferDaemonId = daemonId.isNotEmpty() && reconnectSecret.isNotEmpty())
                 }
             }
 
             override fun onError(ex: Exception?) {
+                if (wsClient !== this) {
+                    DaemonLog.add("WS stale error ignored")
+                    return
+                }
                 Log.e(TAG, "WebSocket error", ex)
+                connecting = false
                 DaemonLog.add("WS error: ${ex?.message ?: "unknown"}")
                 updateStatus("Error: ${ex?.message ?: "unknown"}", false)
             }
@@ -285,6 +332,7 @@ class WebSocketService : Service() {
             wsClient?.connect()
         } catch (e: Exception) {
             Log.e(TAG, "Connect failed", e)
+            connecting = false
             if (reconnectEnabled) {
                 scheduleReconnect(preferDaemonId = daemonId.isNotEmpty() && reconnectSecret.isNotEmpty())
             }
@@ -348,6 +396,7 @@ class WebSocketService : Service() {
         when (val type = json.optString("type")) {
             "hello" -> {
                 if (json.optBoolean("ok")) {
+                    connecting = false
                     paired = true
                     isConnected = true
                     bootstrapToken = ""
@@ -376,6 +425,7 @@ class WebSocketService : Service() {
                     DaemonLog.add("accessibility=${if (a11yEnabled) "ENABLED ✓" else "DISABLED ✗ — phone control will not work!"}")
                     DaemonLog.add("notifications=${if (notifEnabled) "ENABLED ✓" else "DISABLED ✗ — notification reading unavailable"}")
                 } else {
+                    connecting = false
                     val err = json.optString("error", "connection failed")
                     DaemonLog.add("connect FAILED: $err")
                     updateStatus("Connection failed: $err", false)
@@ -443,6 +493,12 @@ class WebSocketService : Service() {
     }
 
     private fun scheduleReconnect(preferDaemonId: Boolean) {
+        if (!reconnectEnabled) return
+        if (isConnected || connecting) {
+            DaemonLog.add("WS reconnect skipped; connection already active")
+            return
+        }
+        reconnectFuture?.cancel(false)
         reconnectAttempts++
         // Never clear credentials on reconnect failure — keep retrying with exponential backoff
         // capped at RECONNECT_DELAY_MAX_MS (60s). Credentials are only cleared on explicit
@@ -452,20 +508,38 @@ class WebSocketService : Service() {
         val delaySec = delay / 1000
         updateStatus("Reconnecting (attempt $reconnectAttempts, ${delaySec}s)…", false)
         DaemonLog.add("WS reconnect scheduled in ${delaySec}s (attempt $reconnectAttempts)")
-        executor.schedule({
-            if (reconnectEnabled) connect(useDaemonId = preferDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty())
+        reconnectFuture = executor.schedule({
+            if (reconnectEnabled && !isConnected && !connecting) {
+                connect(useDaemonId = preferDaemonId && daemonId.isNotEmpty() && reconnectSecret.isNotEmpty())
+            }
         }, delay, TimeUnit.MILLISECONDS)
     }
 
     private fun disconnect() {
+        reconnectFuture?.cancel(false)
+        reconnectFuture = null
+        closeCurrentSocket(scheduleReconnectOnClose = false)
+        isConnected = false
+        paired = false
+        connecting = false
+    }
+
+    private fun closeCurrentSocket(scheduleReconnectOnClose: Boolean) {
         pingFuture?.cancel(false)
+        pingFuture = null
+        val client = wsClient ?: return
+        if (!scheduleReconnectOnClose) {
+            wsClient = null
+        }
         try {
-            wsClient?.closeBlocking()
+            client.closeBlocking()
         } catch (e: Exception) {
             Log.w(TAG, "Disconnect error", e)
+        } finally {
+            if (wsClient === client) {
+                wsClient = null
+            }
         }
-        wsClient = null
-        isConnected = false
     }
 
     private fun updateStatus(status: String, connected: Boolean) {
