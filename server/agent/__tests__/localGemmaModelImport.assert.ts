@@ -4,6 +4,8 @@ import path from "node:path";
 
 const repoRoot = process.cwd();
 const settingsScreen = fs.readFileSync(path.join(repoRoot, "app/(tabs)/settings.tsx"), "utf8");
+const phoneGemmaRuntime = fs.readFileSync(path.join(repoRoot, "lib/phone-gemma-runtime.ts"), "utf8");
+const phoneGemmaContract = fs.readFileSync(path.join(repoRoot, "lib/phone-gemma-runtime-contract.ts"), "utf8");
 const appStorageHelper = fs.readFileSync(path.join(repoRoot, "lib/local-gemma-model-storage.ts"), "utf8");
 const nativeOpHandler = fs.readFileSync(
   path.join(repoRoot, "android/app/src/main/java/com/gameplan/daemon/OpHandler.kt"),
@@ -22,31 +24,55 @@ const pluginInferenceEngine = fs.readFileSync(
   "utf8",
 );
 
-assert.match(settingsScreen, /importLocalGemmaModelFile/);
-assert.match(settingsScreen, /readLocalGemmaModelStatus/);
-assert.match(settingsScreen, /validateLocalGemmaModel/);
+assert.match(settingsScreen, /@\/lib\/phone-gemma-runtime/);
+assert.match(settingsScreen, /importPhoneGemmaModelFile/);
+assert.match(settingsScreen, /readPhoneGemmaStatus/);
+assert.match(settingsScreen, /validatePhoneGemmaRuntime/);
 assert.match(settingsScreen, /Use Phone Gemma/);
 assert.match(settingsScreen, /Import model file/);
 assert.match(settingsScreen, /Validate engine/);
-assert.match(settingsScreen, /GPU standard 1024/);
 assert.match(settingsScreen, /Run smoke test/);
 assert.match(settingsScreen, /localGemmaGenerationReady/);
 assert.match(settingsScreen, /localGemmaValidating/);
 assert.match(settingsScreen, /LOCAL_GEMMA_ENGINE_NOT_BUNDLED_MESSAGE/);
+assert.doesNotMatch(settingsScreen, /type LocalGemmaValidationProfile/);
+assert.doesNotMatch(settingsScreen, /LOCAL_GEMMA_VALIDATION_PROFILES/);
 assert.doesNotMatch(settingsScreen, /model:\s*ANDROID_LOCAL_GEMMA_MODEL,[\s\S]{0,400}localGemmaStatus\?\.ready/);
 
-assert.match(appStorageHelper, /LOCAL_GEMMA_MODEL_ID = "gemma-4-e4b-it"/);
-assert.match(appStorageHelper, /LOCAL_GEMMA_EXPECTED_FILE_NAME = "gemma-4-E4B-it\.litertlm"/);
+assert.match(phoneGemmaRuntime, /PHONE_GEMMA_VALIDATION_PROFILES/);
+assert.match(phoneGemmaRuntime, /PHONE_GEMMA_RECOMMENDED_PROFILE/);
+assert.match(phoneGemmaRuntime, /GPU standard 1024/);
+assert.match(phoneGemmaRuntime, /CPU standard 512/);
+assert.match(phoneGemmaRuntime, /allowCpuFallback:\s*false/);
+assert.match(phoneGemmaRuntime, /phoneGemmaProfileOptions/);
+assert.match(phoneGemmaRuntime, /normalizePhoneGemmaStatus/);
+assert.match(phoneGemmaRuntime, /isPhoneGemmaModelFileReady/);
+assert.match(phoneGemmaRuntime, /isPhoneGemmaGenerationReady/);
+assert.match(phoneGemmaRuntime, /phoneGemmaNeedsEngine/);
+assert.match(phoneGemmaRuntime, /phoneGemmaRuntimeDetails/);
+assert.match(phoneGemmaRuntime, /summarizePhoneGemmaSmokeTest/);
+assert.match(phoneGemmaRuntime, /readPhoneGemmaStatus/);
+assert.match(phoneGemmaRuntime, /validatePhoneGemmaRuntime/);
+assert.match(phoneGemmaRuntime, /smokeTestPhoneGemmaRuntime/);
+assert.match(phoneGemmaRuntime, /importPhoneGemmaModelFile/);
+assert.match(phoneGemmaRuntime, /readLocalGemmaModelStatus/);
+assert.match(phoneGemmaRuntime, /validateLocalGemmaModel/);
+
+assert.match(phoneGemmaContract, /LOCAL_GEMMA_MODEL_ID = "gemma-4-e4b-it"/);
+assert.match(phoneGemmaContract, /LOCAL_GEMMA_EXPECTED_FILE_NAME = "gemma-4-E4B-it\.litertlm"/);
+assert.match(phoneGemmaContract, /interface LocalGemmaModelStatus/);
+assert.match(phoneGemmaContract, /interface LocalGemmaSmokeTestResult/);
+assert.match(appStorageHelper, /from "\.\/phone-gemma-runtime-contract"/);
 assert.match(appStorageHelper, /local_models\/\$\{LOCAL_GEMMA_MODEL_ID\}/);
 assert.match(appStorageHelper, /storageOwner:\s*"jarvis-android-app"/);
 assert.match(appStorageHelper, /expo-document-picker/);
-assert.match(appStorageHelper, /modelFileReady\?:\s*boolean/);
-assert.match(appStorageHelper, /engineBundled\?:\s*boolean/);
-assert.match(appStorageHelper, /generationReady\?:\s*boolean/);
-assert.match(appStorageHelper, /needsEngineBundle\?:\s*boolean/);
-assert.match(appStorageHelper, /needsEngineValidation\?:\s*boolean/);
-assert.match(appStorageHelper, /engineValidated\?:\s*boolean/);
-assert.match(appStorageHelper, /engineValidatedContextTokens\?:\s*number/);
+assert.match(phoneGemmaContract, /modelFileReady\?:\s*boolean/);
+assert.match(phoneGemmaContract, /engineBundled\?:\s*boolean/);
+assert.match(phoneGemmaContract, /generationReady\?:\s*boolean/);
+assert.match(phoneGemmaContract, /needsEngineBundle\?:\s*boolean/);
+assert.match(phoneGemmaContract, /needsEngineValidation\?:\s*boolean/);
+assert.match(phoneGemmaContract, /engineValidated\?:\s*boolean/);
+assert.match(phoneGemmaContract, /engineValidatedContextTokens\?:\s*number/);
 assert.match(appStorageHelper, /smokeTestLocalGemmaModel/);
 assert.match(appStorageHelper, /getAndroidLocalGemmaStatus/);
 assert.match(appStorageHelper, /validateAndroidLocalGemmaModel/);

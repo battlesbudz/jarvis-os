@@ -89,6 +89,7 @@ const tests = [
   { file: "server/agent/__tests__/composioRouteContract.assert.ts" },
   { file: "app/(tabs)/__tests__/connectionUx.assert.ts" },
   { file: "lib/__tests__/authNavigation.test.ts" },
+  { file: "lib/__tests__/phoneGemmaRuntime.test.ts" },
   { file: "lib/__tests__/runtimeDiagnosticsUx.assert.ts" },
   { file: "src/agent/__tests__/agentSdkHitl.assert.ts" },
   { file: "scripts/agent-sdk-golden-workflows.ts" },

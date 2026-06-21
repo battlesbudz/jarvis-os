@@ -35,6 +35,10 @@ const accessibilityServicePath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt",
 );
+const legacyAccessibilityServicePath = path.join(
+  projectRoot,
+  "android-daemon/app/src/main/java/com/jarvis/daemon/JarvisAccessibilityService.kt",
+);
 const opHandlerPath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/OpHandler.kt",
@@ -208,6 +212,7 @@ const [
   screenRecordHandler,
   cameraHandler,
   accessibilityService,
+  legacyAccessibilityService,
   opHandler,
   localGemmaModelManager,
   localGemmaInferenceEngine,
@@ -241,6 +246,7 @@ const [
   readFile(screenRecordHandlerPath, "utf8"),
   readFile(cameraHandlerPath, "utf8"),
   readFile(accessibilityServicePath, "utf8"),
+  readFile(legacyAccessibilityServicePath, "utf8"),
   readFile(opHandlerPath, "utf8"),
   readFile(localGemmaModelManagerPath, "utf8"),
   readFile(localGemmaInferenceEnginePath, "utf8"),
@@ -437,6 +443,23 @@ for (const [contents, source] of [
   assertIncludes(contents, "it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs", source);
 }
 for (const [contents, source] of [
+  [accessibilityService, "JarvisAccessibilityService.kt"],
+  [pluginTemplateAccessibility, "plugins/android-daemon-native/JarvisAccessibilityService.kt"],
+  [legacyAccessibilityService, "android-daemon/JarvisAccessibilityService.kt"],
+]) {
+  assertIncludes(contents, "val activityName = root?.className?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: packageName", source);
+  assertIncludes(contents, '.put("activity", activityName)', source);
+  assertIncludes(contents, "private fun isSensitiveCompactNode", source);
+  assertIncludes(contents, "node.isPassword", source);
+  assertIncludes(contents, "SCREEN_CONTEXT_REDACTED", source);
+  assertIncludes(contents, '"one time code"', source);
+  assertIncludes(contents, "private fun containsCompactPinToken", source);
+  assertIncludes(contents, "fields.any { containsCompactPinToken(it) }", source);
+  assertIncludes(contents, ".replace('_', ' ')", source);
+  assertIncludes(contents, 'Regex("""(?i)(^|[^a-z])pin($|[^a-z])""")', source);
+  assertIncludes(contents, '.put("content_desc", safeDesc)', source);
+}
+for (const [contents, source] of [
   [opHandler, "OpHandler.kt"],
   [pluginTemplateOpHandler, "plugins/android-daemon-native/OpHandler.kt"],
 ]) {
@@ -461,6 +484,8 @@ for (const [contents, source] of [
   assertIncludes(contents, '"android_local_model_validate" -> LocalGemmaModelManager.validate(context, op)', source);
   assertIncludes(contents, '"android_local_model_smoke_test" -> LocalGemmaModelManager.smokeTest(context, op)', source);
   assertIncludes(contents, '"android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)', source);
+  assertIncludes(contents, "val json = JSONObject(svc.readScreenContent())", source);
+  assertIncludes(contents, "OpResult(true, data = svc.captureScreenContext().toJson())", source);
   assertExcludes(contents, 'path.startsWith("/") -> path', source);
 }
 for (const [contents, source] of [
