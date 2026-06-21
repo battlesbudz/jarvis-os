@@ -2928,7 +2928,24 @@ export default function SettingsScreen() {
                           return (
                             <Pressable
                               key={profile.id}
-                              onPress={() => validateAndroidLocalGemma(profile)}
+                              onPress={() => {
+                                if (profile.highMemoryRisk) {
+                                  Alert.alert(
+                                    'CPU Phone Gemma',
+                                    'CPU validation can make Android close Jarvis and other recent apps on large E4B models. Try a GPU profile first; continue only for diagnostics.',
+                                    [
+                                      { text: 'Cancel', style: 'cancel' },
+                                      {
+                                        text: 'Try CPU',
+                                        style: 'destructive',
+                                        onPress: () => validateAndroidLocalGemma(profile),
+                                      },
+                                    ],
+                                  );
+                                  return;
+                                }
+                                validateAndroidLocalGemma(profile);
+                              }}
                               disabled={localGemmaValidating || localGemmaImporting || localGemmaSmokeTesting}
                               style={[
                                 providerAuthStyles.profileAction,

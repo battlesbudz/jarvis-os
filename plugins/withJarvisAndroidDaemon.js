@@ -343,6 +343,18 @@ async function addDaemonManifestConfigAsync(config) {
       "android:required": "false",
     },
   });
+  upsertByName(mainApplication["uses-native-library"], {
+    $: {
+      "android:name": "libcdsprpc.so",
+      "android:required": "false",
+    },
+  });
+  upsertByName(mainApplication["uses-native-library"], {
+    $: {
+      "android:name": "libedgetpu_litert.so",
+      "android:required": "false",
+    },
+  });
 
   config.modResults = manifest;
   return config;

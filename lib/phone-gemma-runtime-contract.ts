@@ -19,6 +19,7 @@ export interface LocalGemmaModelStatus {
   engineValidatedDecodingMode?: string | null;
   engineValidatedContextTokens?: number | null;
   engineValidatedCpuFallbackAllowed?: boolean | null;
+  engineValidatedCachePolicy?: string | null;
   engineValidatedProfileId?: string | null;
   engineValidatedProfileLabel?: string | null;
   engineLastValidationError?: string | null;

@@ -22,6 +22,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -33,8 +34,11 @@ object LocalGemmaInferenceEngine {
     private const val DEFAULT_ALLOW_CPU_FALLBACK = false
     private const val DEFAULT_CONTEXT_TOKENS = 2048
     private const val DEFAULT_MAX_COMPLETION_TOKENS = 128
+    private const val DEFAULT_CACHE_POLICY = "none"
+    private const val LITERT_NO_CACHE_DIR = ":nocache"
     private const val MIN_GPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
-    private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 2800L * 1024L * 1024L
+    private const val MIN_NPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
+    private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L
     private const val APPROX_CHARS_PER_TOKEN = 4
     private const val PROMPT_CHARS_PER_CONTEXT_TOKEN = 3
     private const val MIN_PROMPT_CONTEXT_RESERVE_TOKENS = 64
@@ -61,8 +65,10 @@ object LocalGemmaInferenceEngine {
             .put("engineBackend", state?.backendName ?: JSONObject.NULL)
             .put("engineSpeculativeDecoding", state?.speculativeDecodingEnabled ?: JSONObject.NULL)
             .put("engineContextTokens", state?.contextTokens ?: JSONObject.NULL)
+            .put("engineCachePolicy", state?.cachePolicy ?: JSONObject.NULL)
             .put("lastEngineError", lastEngineError ?: JSONObject.NULL)
             .put("defaultCpuFallbackAllowed", DEFAULT_ALLOW_CPU_FALLBACK)
+            .put("defaultCachePolicy", DEFAULT_CACHE_POLICY)
             .put("activeRequests", activeRequests.size)
             .put("completedRequests", completedRequests.get())
             .put("supportsCancellation", true)
@@ -77,6 +83,7 @@ object LocalGemmaInferenceEngine {
         var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
         val allowCpuFallback = op.optBoolean("allowCpuFallback", DEFAULT_ALLOW_CPU_FALLBACK)
         val speculativeDecodingPreference = optionalBoolean(op, "speculativeDecoding")
+        val cachePolicy = normalizeCachePolicy(op.optString("cachePolicy", DEFAULT_CACHE_POLICY))
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val maxCompletionTokens = op.optInt("maxTokens", DEFAULT_MAX_COMPLETION_TOKENS).coerceIn(1, 8192)
         val prompt = trimPromptForContext(rawPrompt, contextTokens, maxCompletionTokens)
@@ -100,10 +107,10 @@ object LocalGemmaInferenceEngine {
         }
 
         val job = Job()
-        val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, startedAtMs, job)
+        val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, cachePolicy, startedAtMs, job)
         registerActiveRequest(active)?.let { return it }
         DaemonLog.add(
-            "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName cpuFallback=$allowCpuFallback context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
+            "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName cpuFallback=$allowCpuFallback cache=$cachePolicy context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
         )
 
         var generationSucceeded = false
@@ -123,6 +130,7 @@ object LocalGemmaInferenceEngine {
                         backendName = requestedAttemptBackend,
                         allowCpuFallback = allowCpuFallback,
                         speculativeDecodingPreference = requestedSpeculativeDecoding,
+                        cachePolicy = cachePolicy,
                         contextTokens = contextTokens,
                         systemInstruction = systemInstruction,
                         topK = topK,
@@ -153,6 +161,7 @@ object LocalGemmaInferenceEngine {
                             .put("speculativeDecoding", attempt.speculativeDecodingEnabled)
                             .put("decodingMode", decodingModeName(attempt.speculativeDecodingEnabled))
                             .put("cpuFallbackAllowed", allowCpuFallback)
+                            .put("cachePolicy", cachePolicy)
                             .put("contextTokens", contextTokens)
                             .put("maxCompletionTokens", maxCompletionTokens)
                             .put("inputChars", prompt.length)
@@ -232,6 +241,7 @@ object LocalGemmaInferenceEngine {
         var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
         val allowCpuFallback = op.optBoolean("allowCpuFallback", DEFAULT_ALLOW_CPU_FALLBACK)
         val speculativeDecodingPreference = optionalBoolean(op, "speculativeDecoding")
+        val cachePolicy = normalizeCachePolicy(op.optString("cachePolicy", DEFAULT_CACHE_POLICY))
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val keepEngineWarm = op.optBoolean("keepEngineWarm", false)
         val memory = memorySnapshot(context)
@@ -257,6 +267,7 @@ object LocalGemmaInferenceEngine {
                         backendName = backendName,
                         allowCpuFallback = allowCpuFallback,
                         speculativeDecodingPreference = speculativeDecodingPreference,
+                        cachePolicy = cachePolicy,
                         contextTokens = contextTokens,
                         memory = memorySnapshot(context),
                     )
@@ -282,6 +293,7 @@ object LocalGemmaInferenceEngine {
                     .put("decodingMode", decodingModeName(resolvedSpeculativeDecoding))
                     .put("contextTokens", contextTokens)
                     .put("cpuFallbackAllowed", allowCpuFallback)
+                    .put("cachePolicy", cachePolicy)
                     .put("profileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
                     .put("profileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
                     .put("memoryBefore", memory.toJson())
@@ -290,7 +302,7 @@ object LocalGemmaInferenceEngine {
                     .put("durationMs", System.currentTimeMillis() - startedAtMs)
                     .put("message", "Phone Gemma LiteRT-LM engine validated on this device.")
             ).also {
-                DaemonLog.add("local_gemma: validation OK backend=$resolvedBackend mode=${decodingModeName(resolvedSpeculativeDecoding)} durationMs=${System.currentTimeMillis() - startedAtMs}")
+                DaemonLog.add("local_gemma: validation OK backend=$resolvedBackend mode=${decodingModeName(resolvedSpeculativeDecoding)} cache=$cachePolicy durationMs=${System.currentTimeMillis() - startedAtMs}")
             }
         } catch (e: Throwable) {
             val detail = e.message ?: e.javaClass.simpleName
@@ -372,6 +384,7 @@ object LocalGemmaInferenceEngine {
         backendName: String,
         allowCpuFallback: Boolean,
         speculativeDecodingPreference: Boolean?,
+        cachePolicy: String,
         contextTokens: Int,
         systemInstruction: String,
         topK: Int,
@@ -389,7 +402,7 @@ object LocalGemmaInferenceEngine {
         val text = try {
             runBlocking(attemptJob) {
                 generationMutex.withLock {
-                    val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, allowCpuFallback, speculativeDecodingPreference, contextTokens, memorySnapshot(context))
+                    val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, allowCpuFallback, speculativeDecodingPreference, cachePolicy, contextTokens, memorySnapshot(context))
                     resolvedBackendName = resolvedEngine.backendName
                     onEngineResolved(resolvedBackendName, resolvedEngine.speculativeDecodingEnabled)
                     resolvedEngine.engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
@@ -482,7 +495,11 @@ object LocalGemmaInferenceEngine {
     }
 
     private fun minimumAvailableMemoryBytes(backendName: String): Long {
-        return if (backendName == "cpu") MIN_CPU_AVAILABLE_MEMORY_BYTES else MIN_GPU_AVAILABLE_MEMORY_BYTES
+        return when (backendName) {
+            "cpu" -> MIN_CPU_AVAILABLE_MEMORY_BYTES
+            "npu" -> MIN_NPU_AVAILABLE_MEMORY_BYTES
+            else -> MIN_GPU_AVAILABLE_MEMORY_BYTES
+        }
     }
 
     private fun canUseCpuBackend(memory: MemorySnapshot): Boolean {
@@ -523,19 +540,20 @@ object LocalGemmaInferenceEngine {
         backendName: String,
         allowCpuFallback: Boolean,
         speculativeDecodingPreference: Boolean?,
+        cachePolicy: String,
         contextTokens: Int,
         memory: MemorySnapshot,
     ): EngineState {
         val candidateBackends = backendCandidates(backendName, memory, allowCpuFallback)
         val reusableBackends = reusableBackendsFor(backendName, candidateBackends)
         val current = engineState
-        if (current != null && canReuseEngine(current, modelPath, modelRevision, reusableBackends, speculativeDecodingPreference, contextTokens)) {
+        if (current != null && canReuseEngine(current, modelPath, modelRevision, reusableBackends, speculativeDecodingPreference, cachePolicy, contextTokens)) {
             return current
         }
 
         return engineMutex.withLock {
             val lockedCurrent = engineState
-            if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, reusableBackends, speculativeDecodingPreference, contextTokens)) {
+            if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, reusableBackends, speculativeDecodingPreference, cachePolicy, contextTokens)) {
                 return@withLock lockedCurrent
             }
 
@@ -544,7 +562,7 @@ object LocalGemmaInferenceEngine {
             var lastFailure: Throwable? = null
 
             for (candidateBackendName in candidateBackends) {
-                if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, listOf(candidateBackendName), speculativeDecodingPreference, contextTokens)) {
+                if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, listOf(candidateBackendName), speculativeDecodingPreference, cachePolicy, contextTokens)) {
                     lastEngineError = null
                     return@withLock lockedCurrent
                 }
@@ -556,14 +574,14 @@ object LocalGemmaInferenceEngine {
                         val initializedEngine = Engine(
                             EngineConfig(
                                 modelPath = modelPath,
-                                backend = backendFor(candidateBackendName),
+                                backend = backendFor(context, candidateBackendName),
                                 maxNumTokens = contextTokens,
-                                cacheDir = File(context.cacheDir, "litert-lm-cache").absolutePath,
+                                cacheDir = cacheDirFor(context, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, cachePolicy),
                             )
                         )
                         engine = initializedEngine
                         initializedEngine.initialize()
-                        val nextState = EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, initializedEngine)
+                        val nextState = EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, cachePolicy, contextTokens, initializedEngine)
                         engineState = nextState
                         lastEngineError = null
                         previousEngine?.let { previous ->
@@ -602,12 +620,14 @@ object LocalGemmaInferenceEngine {
         modelRevision: String,
         reusableBackends: List<String>,
         speculativeDecodingPreference: Boolean?,
+        cachePolicy: String,
         contextTokens: Int,
     ): Boolean {
         return state.modelPath == modelPath &&
             state.modelRevision == modelRevision &&
             reusableBackends.contains(state.backendName) &&
             (speculativeDecodingPreference == null || state.speculativeDecodingEnabled == speculativeDecodingPreference) &&
+            state.cachePolicy == cachePolicy &&
             state.contextTokens == contextTokens
     }
 
@@ -639,6 +659,13 @@ object LocalGemmaInferenceEngine {
         }
     }
 
+    private fun normalizeCachePolicy(raw: String): String {
+        return when (raw.lowercase()) {
+            "default", "fresh", "none" -> raw.lowercase()
+            else -> DEFAULT_CACHE_POLICY
+        }
+    }
+
     private fun backendCandidates(backendName: String, memory: MemorySnapshot, allowCpuFallback: Boolean): List<String> {
         val canFallbackToCpu = allowCpuFallback && canUseCpuBackend(memory)
         return when (backendName) {
@@ -666,12 +693,35 @@ object LocalGemmaInferenceEngine {
         return if (enableSpeculativeDecoding) "mtp" else "standard"
     }
 
-    private fun backendFor(backendName: String): Backend {
+    private fun backendFor(context: Context, backendName: String): Backend {
         return when (backendName) {
             "cpu" -> Backend.CPU()
-            "npu" -> Backend.NPU()
+            "npu" -> Backend.NPU(nativeLibraryDir = context.applicationInfo.nativeLibraryDir)
             else -> Backend.GPU()
         }
+    }
+
+    private fun cacheDirFor(
+        context: Context,
+        modelRevision: String,
+        backendName: String,
+        speculativeDecodingEnabled: Boolean,
+        contextTokens: Int,
+        cachePolicy: String,
+    ): String? {
+        if (cachePolicy == "none") return LITERT_NO_CACHE_DIR
+        val key = stableCacheKey("$modelRevision|$backendName|${decodingModeName(speculativeDecodingEnabled)}|$contextTokens")
+        val dir = File(File(context.cacheDir, "litert-lm-cache"), key)
+        if (cachePolicy == "fresh" && dir.exists()) {
+            dir.deleteRecursively()
+        }
+        dir.mkdirs()
+        return dir.absolutePath
+    }
+
+    private fun stableCacheKey(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.take(12).joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
     }
 
     private fun formatEngineError(error: Throwable): String {
@@ -692,6 +742,7 @@ object LocalGemmaInferenceEngine {
         val modelRevision: String,
         val backendName: String,
         val speculativeDecodingEnabled: Boolean,
+        val cachePolicy: String,
         val contextTokens: Int,
         val engine: Engine,
     )
@@ -724,6 +775,7 @@ object LocalGemmaInferenceEngine {
         val modelPath: String,
         val modelRevision: String,
         val backend: String,
+        val cachePolicy: String,
         val startedAtMs: Long,
         val job: Job,
         @Volatile var lastChunkAtMs: Long = 0L,

@@ -16,6 +16,26 @@ object LocalGemmaModelManager {
     private const val COPY_BUFFER_BYTES = 1024 * 1024
     private const val EXPECTED_E4B_MIN_BYTES = 3_400_000_000L
     private const val EXPECTED_E4B_MAX_BYTES = 3_900_000_000L
+    private const val DEFAULT_VALIDATION_PROFILE_ID = "gpu-standard-512"
+    private const val VALIDATION_CACHE_POLICY = "none"
+
+    private data class ValidationProfile(
+        val id: String,
+        val label: String,
+        val backend: String,
+        val contextTokens: Int,
+        val allowCpuFallback: Boolean,
+        val speculativeDecoding: Boolean,
+        val cachePolicy: String,
+    )
+
+    private val currentValidationProfiles = listOf(
+        ValidationProfile("gpu-standard-512", "GPU standard 512", "gpu", 512, false, false, VALIDATION_CACHE_POLICY),
+        ValidationProfile("gpu-standard-1024", "GPU standard 1024", "gpu", 1024, false, false, VALIDATION_CACHE_POLICY),
+        ValidationProfile("cpu-standard-1024", "CPU standard 1024", "cpu", 1024, false, false, VALIDATION_CACHE_POLICY),
+        ValidationProfile("cpu-standard-512", "CPU standard 512", "cpu", 512, false, false, VALIDATION_CACHE_POLICY),
+    )
+    private val currentValidationProfilesById = currentValidationProfiles.associateBy { it.id }
 
     fun status(context: Context, op: JSONObject): OpResult {
         val model = normalizeModel(op.optString("model", DEFAULT_MODEL))
@@ -27,9 +47,16 @@ object LocalGemmaModelManager {
         val engineLastValidationError = optionalString(metadata, "engineLastValidationError")
         val lastEngineError = optionalString(inference, "lastEngineError")
         val engineValidatedRevision = optionalString(metadata, "engineValidatedRevision")
-        val engineValidated = modelFileReady &&
+        val engineRevisionMatches = modelFileReady &&
             modelRevision != null &&
             engineValidatedRevision == modelRevision
+        val currentValidationProfile = currentValidationProfile(metadata)
+        val staleValidationError = if (engineRevisionMatches && currentValidationProfile == null) {
+            "Previous Phone Gemma validation used an older or hidden profile. Revalidate with a current GPU/CPU no-cache profile."
+        } else {
+            null
+        }
+        val engineValidated = engineRevisionMatches && currentValidationProfile != null
         val validationError = if (engineValidated) null else lastEngineError ?: engineLastValidationError
         val needsEngineValidation = modelFileReady && !engineValidated
         val generationReady = engineValidated
@@ -66,6 +93,7 @@ object LocalGemmaModelManager {
                 .put("engineValidatedDecodingMode", optionalString(metadata, "engineValidatedDecodingMode") ?: JSONObject.NULL)
                 .put("engineValidatedContextTokens", optionalLong(metadata, "engineValidatedContextTokens") ?: JSONObject.NULL)
                 .put("engineValidatedCpuFallbackAllowed", optionalBoolean(metadata, "engineValidatedCpuFallbackAllowed") ?: JSONObject.NULL)
+                .put("engineValidatedCachePolicy", optionalString(metadata, "engineValidatedCachePolicy") ?: JSONObject.NULL)
                 .put("engineValidatedProfileId", optionalString(metadata, "engineValidatedProfileId") ?: JSONObject.NULL)
                 .put("engineValidatedProfileLabel", optionalString(metadata, "engineValidatedProfileLabel") ?: JSONObject.NULL)
                 .put("engineLastValidationError", engineLastValidationError ?: JSONObject.NULL)
@@ -83,7 +111,7 @@ object LocalGemmaModelManager {
                         generationReady = generationReady,
                         needsEngineValidation = needsEngineValidation,
                         sizeLooksPlausible = sizeLooksPlausible,
-                        validationError = validationError,
+                        validationError = staleValidationError ?: validationError,
                     )
                 )
         )
@@ -149,6 +177,7 @@ object LocalGemmaModelManager {
                 .put("engineValidatedDecodingMode", JSONObject.NULL)
                 .put("engineValidatedContextTokens", JSONObject.NULL)
                 .put("engineValidatedCpuFallbackAllowed", JSONObject.NULL)
+                .put("engineValidatedCachePolicy", JSONObject.NULL)
                 .put("engineValidatedProfileId", JSONObject.NULL)
                 .put("engineValidatedProfileLabel", JSONObject.NULL)
                 .put("engineLastValidationError", JSONObject.NULL)
@@ -186,11 +215,17 @@ object LocalGemmaModelManager {
         val metadata = readMetadata(context, model)
         val validatedRevision = optionalString(metadata, "engineValidatedRevision")
         val validationError = optionalString(metadata, "engineLastValidationError")
-        if (validatedRevision != modelRevision) {
+        val currentValidationProfile = currentValidationProfile(metadata)
+        if (validatedRevision != modelRevision || currentValidationProfile == null) {
+            val staleProfile = if (validatedRevision == modelRevision && currentValidationProfile == null) {
+                " Previous validation used an older or hidden profile; revalidate with a current GPU/CPU no-cache profile."
+            } else {
+                ""
+            }
             val lastError = validationError?.let { " Last validation error: $it" } ?: ""
             return OpResult(
                 false,
-                error = "LOCAL_MODEL_VALIDATION_REQUIRED: Validate Phone Gemma in Android settings before using it for chat.$lastError"
+                error = "LOCAL_MODEL_VALIDATION_REQUIRED: Validate Phone Gemma in Android settings before using it for chat.$staleProfile$lastError"
             )
         }
 
@@ -208,14 +243,17 @@ object LocalGemmaModelManager {
         }
 
         val modelRevision = buildModelRevision(context, model, file)
-        val result = LocalGemmaInferenceEngine.validate(context, model, file, modelRevision, op)
+        val validationProfile = requestedValidationProfile(op)
+            ?: return OpResult(false, error = "LOCAL_MODEL_VALIDATION_PROFILE_UNSUPPORTED: Choose a current Phone Gemma validation profile.")
+        val validationOp = operationForValidationProfile(op, validationProfile)
+        val result = LocalGemmaInferenceEngine.validate(context, model, file, modelRevision, validationOp)
         return if (result.ok) {
             markValidationSuccess(context, model, modelRevision, result.data as? JSONObject)
             status(context, JSONObject().put("model", model))
         } else {
             val error = result.error ?: "Phone Gemma LiteRT-LM validation failed."
             if (!shouldPreserveExistingValidation(error)) {
-                markValidationError(context, model, modelRevision, op, error)
+                markValidationError(context, model, modelRevision, validationOp, error)
             }
             result
         }
@@ -233,7 +271,7 @@ object LocalGemmaModelManager {
 
         val modelRevision = buildModelRevision(context, model, file)
         val metadata = readMetadata(context, model)
-        if (optionalString(metadata, "engineValidatedRevision") != modelRevision) {
+        if (optionalString(metadata, "engineValidatedRevision") != modelRevision || currentValidationProfile(metadata) == null) {
             return OpResult(
                 false,
                 error = "LOCAL_MODEL_VALIDATION_REQUIRED: Validate a Phone Gemma profile before running the smoke test."
@@ -257,7 +295,7 @@ object LocalGemmaModelManager {
                         .put("requestId", "phone-gemma-smoke-${prompt.first}-${System.currentTimeMillis()}")
                         .put("prompt", prompt.second)
                         .put("maxTokens", if (prompt.first == "ready") 16 else 48)
-                        .put("keepEngineWarm", index < prompts.lastIndex),
+                        .put("keepEngineWarm", false),
                     metadata,
                 )
                 val result = LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, promptOp)
@@ -371,6 +409,7 @@ object LocalGemmaModelManager {
             .put("engineValidatedDecodingMode", validationData?.optString("decodingMode")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineValidatedContextTokens", validationData?.optInt("contextTokens")?.takeIf { it > 0 } ?: JSONObject.NULL)
             .put("engineValidatedCpuFallbackAllowed", validationData?.optBoolean("cpuFallbackAllowed") ?: JSONObject.NULL)
+            .put("engineValidatedCachePolicy", validationData?.optString("cachePolicy")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineValidatedProfileId", validationData?.optString("profileId")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineValidatedProfileLabel", validationData?.optString("profileLabel")?.takeIf { it.isNotBlank() } ?: JSONObject.NULL)
             .put("engineLastValidationError", JSONObject.NULL)
@@ -386,6 +425,7 @@ object LocalGemmaModelManager {
         val failedProfileId = op.optString("profileId", "").takeIf { it.isNotBlank() }
         val validatedProfileId = optionalString(metadata, "engineValidatedProfileId")
         val preserveExistingValidation = optionalString(metadata, "engineValidatedRevision") == modelRevision &&
+            currentValidationProfile(metadata) != null &&
             failedProfileId != null &&
             validatedProfileId != null &&
             failedProfileId != validatedProfileId
@@ -416,6 +456,7 @@ object LocalGemmaModelManager {
                 .put("engineValidatedDecodingMode", JSONObject.NULL)
                 .put("engineValidatedContextTokens", JSONObject.NULL)
                 .put("engineValidatedCpuFallbackAllowed", JSONObject.NULL)
+                .put("engineValidatedCachePolicy", JSONObject.NULL)
                 .put("engineValidatedProfileId", JSONObject.NULL)
                 .put("engineValidatedProfileLabel", JSONObject.NULL)
         }
@@ -428,9 +469,37 @@ object LocalGemmaModelManager {
         optionalLong(metadata, "engineValidatedContextTokens")?.let { next.put("contextTokens", it.toInt()) }
         optionalBoolean(metadata, "engineValidatedSpeculativeDecoding")?.let { next.put("speculativeDecoding", it) }
         optionalBoolean(metadata, "engineValidatedCpuFallbackAllowed")?.let { next.put("allowCpuFallback", it) }
+        optionalString(metadata, "engineValidatedCachePolicy")?.let { next.put("cachePolicy", it) }
         optionalString(metadata, "engineValidatedProfileId")?.let { next.put("validatedProfileId", it) }
         optionalString(metadata, "engineValidatedProfileLabel")?.let { next.put("validatedProfileLabel", it) }
         return next
+    }
+
+    private fun requestedValidationProfile(op: JSONObject): ValidationProfile? {
+        val profileId = op.optString("profileId", "").takeIf { it.isNotBlank() } ?: DEFAULT_VALIDATION_PROFILE_ID
+        return currentValidationProfilesById[profileId]
+    }
+
+    private fun operationForValidationProfile(op: JSONObject, profile: ValidationProfile): JSONObject {
+        return JSONObject(op.toString())
+            .put("backend", profile.backend)
+            .put("contextTokens", profile.contextTokens)
+            .put("allowCpuFallback", profile.allowCpuFallback)
+            .put("speculativeDecoding", profile.speculativeDecoding)
+            .put("cachePolicy", profile.cachePolicy)
+            .put("profileId", profile.id)
+            .put("profileLabel", profile.label)
+    }
+
+    private fun currentValidationProfile(metadata: JSONObject?): ValidationProfile? {
+        val profileId = optionalString(metadata, "engineValidatedProfileId") ?: return null
+        val profile = currentValidationProfilesById[profileId] ?: return null
+        if (optionalString(metadata, "engineValidatedBackend") != profile.backend) return null
+        if (optionalLong(metadata, "engineValidatedContextTokens")?.toInt() != profile.contextTokens) return null
+        if (optionalBoolean(metadata, "engineValidatedCpuFallbackAllowed") != profile.allowCpuFallback) return null
+        if (optionalBoolean(metadata, "engineValidatedSpeculativeDecoding") != profile.speculativeDecoding) return null
+        if (optionalString(metadata, "engineValidatedCachePolicy") != profile.cachePolicy) return null
+        return profile
     }
 
     private fun writeMetadata(context: Context, model: String, metadata: JSONObject) {

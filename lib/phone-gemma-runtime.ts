@@ -14,17 +14,11 @@ export type PhoneGemmaValidationProfile = {
   contextTokens: number;
   allowCpuFallback: boolean;
   speculativeDecoding?: boolean;
+  cachePolicy?: NonNullable<AndroidLocalGemmaValidationOptions["cachePolicy"]>;
+  highMemoryRisk?: boolean;
 };
 
 export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
-  {
-    id: "gpu-standard-1024",
-    label: "GPU standard 1024",
-    backend: "gpu",
-    contextTokens: 1024,
-    allowCpuFallback: false,
-    speculativeDecoding: false,
-  },
   {
     id: "gpu-standard-512",
     label: "GPU standard 512",
@@ -32,13 +26,16 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     contextTokens: 512,
     allowCpuFallback: false,
     speculativeDecoding: false,
+    cachePolicy: "none",
   },
   {
-    id: "gpu-auto-2048",
-    label: "GPU auto 2048",
+    id: "gpu-standard-1024",
+    label: "GPU standard 1024",
     backend: "gpu",
-    contextTokens: 2048,
+    contextTokens: 1024,
     allowCpuFallback: false,
+    speculativeDecoding: false,
+    cachePolicy: "none",
   },
   {
     id: "cpu-standard-1024",
@@ -47,6 +44,8 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     contextTokens: 1024,
     allowCpuFallback: false,
     speculativeDecoding: false,
+    cachePolicy: "none",
+    highMemoryRisk: true,
   },
   {
     id: "cpu-standard-512",
@@ -55,6 +54,8 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     contextTokens: 512,
     allowCpuFallback: false,
     speculativeDecoding: false,
+    cachePolicy: "none",
+    highMemoryRisk: true,
   },
 ];
 
@@ -73,6 +74,7 @@ export function phoneGemmaProfileOptions(profile: PhoneGemmaValidationProfile): 
     contextTokens: profile.contextTokens,
     allowCpuFallback: profile.allowCpuFallback,
     speculativeDecoding: profile.speculativeDecoding,
+    cachePolicy: profile.cachePolicy,
     profileId: profile.id,
     profileLabel: profile.label,
   };
@@ -82,8 +84,21 @@ export function isPhoneGemmaModelFileReady(status?: LocalGemmaModelStatus | null
   return Boolean(status?.modelFileReady ?? (status?.ready && !status?.needsModelImport));
 }
 
+export function isCurrentPhoneGemmaValidationProfile(status?: LocalGemmaModelStatus | null): boolean {
+  if (!status?.engineValidatedProfileId) return false;
+  const profile = PHONE_GEMMA_VALIDATION_PROFILES.find((candidate) => candidate.id === status.engineValidatedProfileId);
+  if (!profile) return false;
+  return (
+    status.engineValidatedBackend === profile.backend &&
+    status.engineValidatedContextTokens === profile.contextTokens &&
+    status.engineValidatedCpuFallbackAllowed === profile.allowCpuFallback &&
+    status.engineValidatedSpeculativeDecoding === (profile.speculativeDecoding ?? false) &&
+    (status.engineValidatedCachePolicy ?? null) === (profile.cachePolicy ?? null)
+  );
+}
+
 export function isPhoneGemmaGenerationReady(status?: LocalGemmaModelStatus | null): boolean {
-  return status?.generationReady === true;
+  return status?.generationReady === true && isCurrentPhoneGemmaValidationProfile(status);
 }
 
 export function phoneGemmaNeedsEngine(status?: LocalGemmaModelStatus | null): boolean {
@@ -104,15 +119,15 @@ export function normalizePhoneGemmaStatus(status?: LocalGemmaModelStatus | null)
 
   return {
     ...status,
-    ready: status.ready === true || generationReady,
+    ready: generationReady,
     modelFileReady,
     engineBundled: status.engineBundled !== false,
     generationReady,
     needsModelImport,
     needsEngineBundle: status.needsEngineBundle ?? false,
     needsEngineValidation:
-      generationReady ? false : status.needsEngineValidation ?? modelFileReady,
-    engineValidated: status.engineValidated === true || generationReady,
+      generationReady ? false : modelFileReady || status.needsEngineValidation === true,
+    engineValidated: generationReady,
     provider: "android-local-gemma",
     runtime: "android-app",
     storageOwner: "jarvis-android-app",
