@@ -676,32 +676,61 @@ class JarvisAccessibilityService : AccessibilityService() {
         if (node == null || depth > 25) return
         val text = node.text?.toString()?.trim()
         val desc = node.contentDescription?.toString()?.trim()
+        val resourceId = node.viewIdResourceName?.toString()?.trim() ?: ""
+        val className = node.className?.toString()?.trim() ?: ""
+        val sensitive = isSensitiveCompactNode(node, text, desc, resourceId, className)
 
         val label = when {
             !text.isNullOrEmpty() -> text
             !desc.isNullOrEmpty() -> desc
             else -> null
         }
-        if (label != null && label.length > 1 && !texts.contains(label)) {
-            texts.add(label)
+        val safeLabel = if (sensitive && !label.isNullOrBlank()) SCREEN_CONTEXT_REDACTED else label
+        val safeDesc = if (sensitive && !desc.isNullOrBlank()) SCREEN_CONTEXT_REDACTED else (desc ?: "")
+        if (safeLabel != null && safeLabel.length > 1 && !texts.contains(safeLabel)) {
+            texts.add(safeLabel)
         }
-        val resourceId = node.viewIdResourceName?.toString()?.trim() ?: ""
-        val className = node.className?.toString()?.trim() ?: ""
-        if (node.isClickable && (label != null || resourceId.isNotEmpty() || className.isNotEmpty())) {
+        if (node.isClickable && (safeLabel != null || resourceId.isNotEmpty() || className.isNotEmpty())) {
             val bounds = Rect()
             node.getBoundsInScreen(bounds)
             val obj = JSONObject()
-                .put("label", label ?: "")
+                .put("label", safeLabel ?: "")
                 .put("x", bounds.centerX())
                 .put("y", bounds.centerY())
                 .put("resource_id", resourceId)
-                .put("content_desc", desc ?: "")
+                .put("content_desc", safeDesc)
                 .put("class_name", className)
             clickable.put(obj)
         }
         for (i in 0 until node.childCount) {
             collectNodes(node.getChild(i), texts, clickable, depth + 1)
         }
+    }
+
+    private fun isSensitiveCompactNode(
+        node: AccessibilityNodeInfo,
+        text: String?,
+        desc: String?,
+        resourceId: String?,
+        className: String?
+    ): Boolean {
+        if (node.isPassword) return true
+        val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) node.hintText?.toString() else null
+        val haystack = listOfNotNull(text, desc, resourceId, className, hint)
+            .joinToString(" ")
+            .lowercase()
+        return listOf(
+            "password",
+            "passcode",
+            "pin",
+            "one time code",
+            "otp",
+            "security code",
+            "ssn",
+            "social security",
+            "card number",
+            "credit card"
+        ).any { haystack.contains(it) }
     }
 
     // ── Tap ─────────────────────────────────────────────────────────────────

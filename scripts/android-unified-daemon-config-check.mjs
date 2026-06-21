@@ -435,6 +435,11 @@ for (const [contents, source] of [
   assertIncludes(contents, "launchAttemptStartedAtUptimeMs", source);
   assertIncludes(contents, "observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis()", source);
   assertIncludes(contents, "it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs", source);
+  assertIncludes(contents, "private fun isSensitiveCompactNode", source);
+  assertIncludes(contents, "node.isPassword", source);
+  assertIncludes(contents, "SCREEN_CONTEXT_REDACTED", source);
+  assertIncludes(contents, '"one time code"', source);
+  assertIncludes(contents, '.put("content_desc", safeDesc)', source);
 }
 for (const [contents, source] of [
   [opHandler, "OpHandler.kt"],
