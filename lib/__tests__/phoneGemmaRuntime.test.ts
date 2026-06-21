@@ -52,16 +52,24 @@ assert.equal(phoneGemmaNeedsEngine(diagnosticOnlyStatus), true);
 const recommendedOptions = phoneGemmaProfileOptions(PHONE_GEMMA_RECOMMENDED_PROFILE);
 assert.equal(recommendedOptions.backend, "gpu");
 assert.equal(recommendedOptions.allowCpuFallback, false);
-assert.equal(recommendedOptions.profileId, "gpu-standard-1024");
+assert.equal(recommendedOptions.profileId, "gpu-standard-512");
+assert.equal(recommendedOptions.contextTokens, 512);
 assert.equal(recommendedOptions.cachePolicy, "none");
 
-const explicitNpuProfile = PHONE_GEMMA_VALIDATION_PROFILES.find((profile) => profile.id === "npu-standard-512");
-assert.ok(explicitNpuProfile);
-const explicitNpuOptions = phoneGemmaProfileOptions(explicitNpuProfile);
-assert.equal(explicitNpuOptions.backend, "npu");
-assert.equal(explicitNpuOptions.allowCpuFallback, false);
-assert.equal(explicitNpuOptions.profileId, "npu-standard-512");
-assert.equal(explicitNpuOptions.cachePolicy, "none");
+const explicitGpuProfile = PHONE_GEMMA_VALIDATION_PROFILES.find((profile) => profile.id === "gpu-standard-1024");
+assert.ok(explicitGpuProfile);
+assert.equal(phoneGemmaProfileOptions(explicitGpuProfile).contextTokens, 1024);
+
+assert.equal(
+  PHONE_GEMMA_VALIDATION_PROFILES.some((profile) => profile.backend === "npu"),
+  false,
+  "NPU profiles stay hidden until the APK bundles the required LiteRT dispatch libraries",
+);
+assert.equal(
+  PHONE_GEMMA_VALIDATION_PROFILES.some((profile) => profile.contextTokens > 1024),
+  false,
+  "High-context E4B profiles stay hidden until phone memory behavior is stable",
+);
 
 const explicitCpuProfile = PHONE_GEMMA_VALIDATION_PROFILES.find((profile) => profile.id === "cpu-standard-512");
 assert.ok(explicitCpuProfile);

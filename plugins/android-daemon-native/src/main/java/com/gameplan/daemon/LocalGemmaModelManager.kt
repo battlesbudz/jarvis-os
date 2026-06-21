@@ -259,7 +259,7 @@ object LocalGemmaModelManager {
                         .put("requestId", "phone-gemma-smoke-${prompt.first}-${System.currentTimeMillis()}")
                         .put("prompt", prompt.second)
                         .put("maxTokens", if (prompt.first == "ready") 16 else 48)
-                        .put("keepEngineWarm", index < prompts.lastIndex),
+                        .put("keepEngineWarm", false),
                     metadata,
                 )
                 val result = LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, promptOp)

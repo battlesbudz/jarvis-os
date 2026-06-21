@@ -2932,7 +2932,7 @@ export default function SettingsScreen() {
                                 if (profile.highMemoryRisk) {
                                   Alert.alert(
                                     'CPU Phone Gemma',
-                                    'CPU validation can make Android close Jarvis and other recent apps on large E4B models. Try GPU or NPU first; continue only for diagnostics.',
+                                    'CPU validation can make Android close Jarvis and other recent apps on large E4B models. Try a GPU profile first; continue only for diagnostics.',
                                     [
                                       { text: 'Cancel', style: 'cancel' },
                                       {

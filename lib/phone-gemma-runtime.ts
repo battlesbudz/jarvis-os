@@ -20,15 +20,6 @@ export type PhoneGemmaValidationProfile = {
 
 export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
   {
-    id: "gpu-standard-1024",
-    label: "GPU standard 1024",
-    backend: "gpu",
-    contextTokens: 1024,
-    allowCpuFallback: false,
-    speculativeDecoding: false,
-    cachePolicy: "none",
-  },
-  {
     id: "gpu-standard-512",
     label: "GPU standard 512",
     backend: "gpu",
@@ -38,27 +29,10 @@ export const PHONE_GEMMA_VALIDATION_PROFILES: PhoneGemmaValidationProfile[] = [
     cachePolicy: "none",
   },
   {
-    id: "gpu-auto-2048",
-    label: "GPU auto 2048",
+    id: "gpu-standard-1024",
+    label: "GPU standard 1024",
     backend: "gpu",
-    contextTokens: 2048,
-    allowCpuFallback: false,
-    cachePolicy: "none",
-  },
-  {
-    id: "npu-standard-1024",
-    label: "NPU standard 1024",
-    backend: "npu",
     contextTokens: 1024,
-    allowCpuFallback: false,
-    speculativeDecoding: false,
-    cachePolicy: "none",
-  },
-  {
-    id: "npu-standard-512",
-    label: "NPU standard 512",
-    backend: "npu",
-    contextTokens: 512,
     allowCpuFallback: false,
     speculativeDecoding: false,
     cachePolicy: "none",
