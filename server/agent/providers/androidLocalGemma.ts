@@ -42,6 +42,57 @@ const DAEMON_TOOL_ARGUMENT_HINTS = [
   "path", "query", "root", "fileType", "notificationKey", "replyText", "approved",
   "facing", "audio", "accuracy", "to", "message", "operatorAction",
 ];
+const ANDROID_DAEMON_ACTION_ALIASES: Record<string, string> = {
+  screenshot: "android_screenshot",
+  screen_shot: "android_screenshot",
+  take_screenshot: "android_screenshot",
+  capture_screen: "android_screenshot",
+  read_screen: "android_read_screen",
+  screen_reader: "android_read_screen",
+  inspect_screen: "android_read_screen",
+  screen_context: "android_screen_context",
+  operator_action: "android_operator_action",
+  open_app: "android_open_app",
+  launch_app: "android_open_app",
+  start_app: "android_open_app",
+  open_url: "android_browse",
+  browse: "android_browse",
+  browser: "android_browse",
+  tap: "android_tap",
+  click: "android_tap",
+  type: "android_type",
+  type_text: "android_type",
+  enter_text: "android_type",
+  input_text: "android_type",
+  swipe: "android_swipe",
+  press_key: "android_press_key",
+  key: "android_press_key",
+  wait: "android_wait",
+  return_to_jarvis: "android_return_to_jarvis",
+  open_youtube: "android_open_app",
+  launch_youtube: "android_open_app",
+  youtube: "android_open_app",
+};
+const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
+  youtube: "com.google.android.youtube",
+  yt: "com.google.android.youtube",
+  you_tube: "com.google.android.youtube",
+  chrome: "com.android.chrome",
+  browser: "com.android.chrome",
+  maps: "com.google.android.apps.maps",
+  google_maps: "com.google.android.apps.maps",
+  gmail: "com.google.android.gm",
+  settings: "com.android.settings",
+  spotify: "com.spotify.music",
+  reddit: "com.reddit.frontpage",
+  facebook: "com.facebook.katana",
+  instagram: "com.instagram.android",
+  messenger: "com.facebook.orca",
+  whatsapp: "com.whatsapp",
+  tiktok: "com.ss.android.ugc.trill",
+  discord: "com.discord",
+};
+const ANDROID_KEY_ACTION_ALIASES = new Set(["back", "home", "recents", "enter", "volume_up", "volume_down"]);
 
 type LocalGemmaStructuredOutput =
   | { type: "final"; content: string }
@@ -344,6 +395,79 @@ function normalizeToolArguments(value: unknown): string {
   return "{}";
 }
 
+function toolArgumentsObject(value: unknown): Record<string, unknown> | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return {};
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : null;
+    } catch {
+      return null;
+    }
+  }
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return { ...(value as Record<string, unknown>) };
+  }
+  return null;
+}
+
+function aliasToken(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+function packageNameFromAlias(value: unknown): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw) return null;
+  if (raw.includes(".")) return raw;
+  return ANDROID_APP_PACKAGE_ALIASES[aliasToken(raw)] || null;
+}
+
+function inferPackageNameForAction(actionToken: string, args: Record<string, unknown>): string | null {
+  const explicit = packageNameFromAlias(args.packageName);
+  if (explicit) return explicit;
+
+  for (const field of ["app", "appName", "application", "package", "target"]) {
+    const inferred = packageNameFromAlias(args[field]);
+    if (inferred) return inferred;
+  }
+
+  const appFromAction = actionToken
+    .replace(/^(?:android_)?(?:open|launch|start)_/, "")
+    .replace(/^app_/, "");
+  return packageNameFromAlias(appFromAction);
+}
+
+function normalizeDaemonActionArguments(args: Record<string, unknown>): Record<string, unknown> {
+  const actionToken = aliasToken(args.action);
+  if (!actionToken) return args;
+
+  if (ANDROID_KEY_ACTION_ALIASES.has(actionToken)) {
+    return { ...args, action: "android_press_key", key: String(args.key || actionToken) };
+  }
+
+  const action = ANDROID_DAEMON_ACTION_ALIASES[actionToken] || String(args.action || "").trim();
+  const normalized = { ...args, action };
+  if (action === "android_open_app") {
+    const packageName = inferPackageNameForAction(actionToken, args);
+    if (packageName) normalized.packageName = packageName;
+  }
+  return normalized;
+}
+
+function normalizeToolArgumentsForTool(toolName: string, value: unknown): string {
+  if (toolName !== "daemon_action") return normalizeToolArguments(value);
+  const args = toolArgumentsObject(value);
+  if (!args) return normalizeToolArguments(value);
+  return JSON.stringify(normalizeDaemonActionArguments(args));
+}
+
 function generatedToolCallId(index: number): string {
   return `phone_gemma_call_${Date.now().toString(36)}_${index}`;
 }
@@ -380,7 +504,7 @@ function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutpu
           type: "function" as const,
           function: {
             name,
-            arguments: normalizeToolArguments(functionData.arguments),
+            arguments: normalizeToolArgumentsForTool(name, functionData.arguments),
           },
         };
       })
@@ -441,6 +565,7 @@ function argumentTextForTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): 
   if (tool.function.name === "daemon_action") {
     return [
       " Args: action",
+      "aliases: screenshot=android_screenshot, YouTube=android_open_app+packageName",
       `Android args include: ${DAEMON_TOOL_ARGUMENT_HINTS.join(", ")}`,
       required.length ? `required: ${required.join(", ")}` : "",
       enumSummaries.join("; "),

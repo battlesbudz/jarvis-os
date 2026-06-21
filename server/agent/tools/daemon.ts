@@ -26,6 +26,8 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_press_key",
   "android_file_list",
   "android_file_read",
+  "android_wait",
+  "android_return_to_jarvis",
   "android_file_search",
   "android_open_file",
   "android_copy_to_clipboard",
@@ -118,6 +120,8 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_press_key: press a system key — "back", "home", "recents", "volume_up", "volume_down"
 - android_file_list: list files in any path on the device (gallery, downloads, any folder)
 - android_file_read: read any file on the device
+- android_wait: pause server-side for a short UI-settle delay between Android actions
+- android_return_to_jarvis: return the phone to the Jarvis app/chat surface
 - android_file_search: recursively search for files by name across the device storage — accepts query (substring match), optional root path (defaults to external storage root), optional type filter (image/video/audio/document/any), optional maxDepth (default 4, max 8); returns up to 100 matches with name/path/size/lastModified
 - android_open_file: open a file in its native app (e.g. gallery for images) using an ACTION_VIEW Intent — accepts an absolute file path
 - android_copy_to_clipboard: copy an image file to the Android clipboard so it can be pasted into Telegram, WhatsApp, or any app that supports image paste — accepts an absolute image file path; falls back gracefully if the target app doesn't support paste
@@ -162,6 +166,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           "android_screen_context", "android_operator_action",
           "android_tap", "android_type", "android_swipe", "android_press_key",
           "android_file_list", "android_file_read",
+          "android_wait", "android_return_to_jarvis",
           "android_file_search", "android_open_file", "android_copy_to_clipboard",
           "android_notification_reply",
           "android_camera_snap", "android_camera_clip",
@@ -187,6 +192,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       x2: { type: "number", description: "Swipe end X (when action is 'android_swipe')" },
       y2: { type: "number", description: "Swipe end Y (when action is 'android_swipe')" },
       durationMs: { type: "number", description: "Swipe duration in ms (when action is 'android_swipe', default 300)" },
+      ms: { type: "number", description: "Milliseconds to pause (when action is 'android_wait', default 1500, max 10000)" },
       key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down", "enter"], description: "System key (when action is 'android_press_key'). 'enter' presses the IME action key (Search/Go/Done)." },
       query: { type: "string", description: "Search term — substring match against filename (when action is 'android_file_search')" },
       root: { type: "string", description: "Root path to start search from (when action is 'android_file_search', defaults to external storage root)" },
@@ -340,6 +346,23 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         };
       } else if (rawAction === "android_get_focused_field") {
         op = { type: "android_get_focused_field" };
+      } else if (rawAction === "android_return_to_jarvis") {
+        op = { type: "android_return_to_jarvis" };
+      } else if (rawAction === "android_wait") {
+        const rawMs = typeof args.ms === "number" ? args.ms : typeof args.durationMs === "number" ? args.durationMs : 1500;
+        const ms = Math.min(Math.max(rawMs, 200), 10000);
+        await new Promise((resolve) => setTimeout(resolve, ms));
+        return {
+          ok: true,
+          content: JSON.stringify({
+            ok: true,
+            data: {
+              result: "success",
+              label: `Waited ${ms}ms`,
+              detail: `Paused ${ms}ms to let the phone UI settle.`,
+            },
+          }),
+        };
       } else {
         return { ok: false, content: jsonErrorContent(`unknown android action ${rawAction}`) };
       }
