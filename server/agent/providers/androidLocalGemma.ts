@@ -473,6 +473,72 @@ function inferPackageNameForAction(actionToken: string, args: Record<string, unk
   return packageNameFromAlias(appFromAction);
 }
 
+function inferPackageNameFromText(text: string): string | null {
+  const requestToken = aliasToken(text);
+  if (!requestToken) return null;
+  for (const [alias, packageName] of Object.entries(ANDROID_APP_PACKAGE_ALIASES)) {
+    const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(?:^|_)${escapedAlias}(?:_|$)`).test(requestToken)) {
+      return packageName;
+    }
+  }
+  return null;
+}
+
+function urlFromText(text: string): string | null {
+  const match = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\byoutu\.be\/[^\s<>"']+|\byoutube\.com\/[^\s<>"']+/i);
+  if (!match) return null;
+  const raw = match[0].replace(/[),.;]+$/g, "");
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://${raw}`;
+}
+
+function isYouTubeUrl(url: string): boolean {
+  return /(?:^https?:\/\/)?(?:www\.)?(?:youtube\.com|youtu\.be)\//i.test(url);
+}
+
+function hasProhibitedDeviceActionRequest(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) return false;
+  const deviceActionPattern = /\b(?:screenshot|screen shot|capture|snap|open|launch|start|browse|tap|click|press|swipe|scroll|type|read|show|inspect|look at|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/;
+  return (
+    /\b(?:do not|don['’]?t|can['’]?t|cannot|cant|never|please don['’]?t|won['’]?t|wont|unable to|avoid|without)\b/.test(normalized) &&
+    deviceActionPattern.test(normalized)
+  ) || (
+    deviceActionPattern.test(normalized) &&
+    /\b(?:not|never)\b/.test(normalized)
+  );
+}
+
+function completedDaemonActions(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string[] {
+  const pendingActions = new Map<string, string>();
+  const completed: string[] = [];
+  let currentTurnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      currentTurnStart = index + 1;
+      break;
+    }
+  }
+
+  for (const message of messages.slice(currentTurnStart)) {
+    if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+      for (const toolCall of message.tool_calls) {
+        if (toolCall.function?.name !== "daemon_action") continue;
+        const args = toolArgumentsObject(toolCall.function.arguments);
+        const action = typeof args?.action === "string" ? args.action : "";
+        if (toolCall.id && action) pendingActions.set(toolCall.id, action);
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      const action = pendingActions.get(message.tool_call_id);
+      if (action) completed.push(action);
+    }
+  }
+  return completed;
+}
+
 function normalizeDaemonActionArguments(args: Record<string, unknown>): Record<string, unknown> {
   const actionToken = aliasToken(args.action);
   if (!actionToken) return args;
@@ -533,6 +599,79 @@ function normalizeToolCallFunction(
 
 function generatedToolCallId(index: number): string {
   return `phone_gemma_call_${Date.now().toString(36)}_${index}`;
+}
+
+function hasFunctionTool(tools: ProviderQueryParams["tools"], name: string): boolean {
+  return !!tools?.some((tool) => tool.type === "function" && tool.function?.name === name);
+}
+
+function hasDaemonActionTool(tools: ProviderQueryParams["tools"]): boolean {
+  return hasFunctionTool(tools, "daemon_action");
+}
+
+function recoverRequiredDaemonActionFromRequest(
+  params: ProviderQueryParams,
+  finalContent = "",
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  if (params.toolChoice !== "required" || !hasDaemonActionTool(params.tools)) return null;
+
+  const requestText = latestUserText(params.messages).trim();
+  if (!requestText) return null;
+  if (hasProhibitedDeviceActionRequest(requestText)) return null;
+  if (hasProhibitedDeviceActionRequest(finalContent)) return null;
+
+  let args: Record<string, unknown> | null = null;
+  const requestToken = aliasToken(requestText);
+  const url = urlFromText(requestText);
+  const packageName = inferPackageNameFromText(requestText);
+  const wantsScreenshot = /\b(?:screenshot|screen shot|screen capture)\b/i.test(requestText) ||
+    /\b(?:capture|snap)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(requestText) ||
+    /\btake\b[\s\S]{0,16}\b(?:screenshot|screen shot|screen capture)\b/i.test(requestText);
+  const completedActions = completedDaemonActions(params.messages);
+  const completedNavigation = completedActions.some((action) => action === "android_open_app" || action === "android_browse");
+  const completedReadScreen = completedActions.includes("android_read_screen");
+  const preserveYouTubeTranscript = !!url &&
+    isYouTubeUrl(url) &&
+    hasFunctionTool(params.tools, "get_youtube_transcript") &&
+    /\b(?:summari[sz]e|transcript|caption|captions|what\b[\s\S]{0,24}\b(?:say|said)|video)\b/i.test(requestText);
+
+  if (preserveYouTubeTranscript) {
+    return null;
+  }
+
+  if (wantsScreenshot && completedNavigation && !completedReadScreen) {
+    args = { action: "android_read_screen" };
+  } else if (wantsScreenshot && completedNavigation) {
+    args = { action: "android_screenshot" };
+  } else if (url) {
+    args = { action: "android_browse", url };
+  } else if (/\b(?:open|launch|start)\b/i.test(requestText) && packageName) {
+    args = { action: "android_open_app", packageName };
+  } else if (wantsScreenshot) {
+    args = { action: "android_screenshot" };
+  } else if (
+    /\b(?:what(?:'s| is)|read|show|inspect|look at)\b[\s\S]{0,48}\b(?:screen|display|phone|device)\b/i.test(requestText) ||
+    /\b(?:screen|phone|device)\b[\s\S]{0,32}\b(?:says|shows|visible)\b/i.test(requestText)
+  ) {
+    args = { action: "android_read_screen" };
+  } else if (ANDROID_KEY_ACTION_ALIASES.has(requestToken)) {
+    args = { action: "android_press_key", key: requestToken };
+  } else if (/\b(?:press|tap)\b[\s\S]{0,16}\b(?:back|home|recents|enter)\b/i.test(requestText)) {
+    const key = requestText.match(/\b(back|home|recents|enter)\b/i)?.[1]?.toLowerCase();
+    if (key) args = { action: "android_press_key", key };
+  }
+
+  if (!args) return null;
+  if (typeof args.action === "string" && completedActions.includes(args.action)) return null;
+
+  return {
+    id: generatedToolCallId(0),
+    type: "function",
+    function: {
+      name: "daemon_action",
+      arguments: JSON.stringify(normalizeDaemonActionArguments(args)),
+    },
+  };
 }
 
 function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutput {
@@ -884,6 +1023,22 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       }
 
       if (params.toolChoice === "required") {
+        const recoveredToolCall = recoverRequiredDaemonActionFromRequest(params, parsed.content);
+        if (recoveredToolCall) {
+          yield {
+            type: "tool_call_start",
+            index: 0,
+            id: recoveredToolCall.id,
+            name: recoveredToolCall.function.name,
+          };
+          yield {
+            type: "tool_call_args",
+            index: 0,
+            args: recoveredToolCall.function.arguments,
+          };
+          yield { type: "finish", reason: "tool_calls" };
+          return;
+        }
         throw new Error("Phone Gemma returned a final answer when the local harness required a tool call. No cloud model was used.");
       }
 
