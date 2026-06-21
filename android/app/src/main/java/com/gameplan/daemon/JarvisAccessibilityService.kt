@@ -719,10 +719,9 @@ class JarvisAccessibilityService : AccessibilityService() {
         val haystack = listOfNotNull(text, desc, resourceId, className, hint)
             .joinToString(" ")
             .lowercase()
-        return listOf(
+        val sensitivePhrases = listOf(
             "password",
             "passcode",
-            "pin",
             "one time code",
             "otp",
             "security code",
@@ -730,7 +729,9 @@ class JarvisAccessibilityService : AccessibilityService() {
             "social security",
             "card number",
             "credit card"
-        ).any { haystack.contains(it) }
+        )
+        return sensitivePhrases.any { haystack.contains(it) } ||
+            Regex("""\bpin\b""").containsMatchIn(haystack)
     }
 
     // ── Tap ─────────────────────────────────────────────────────────────────

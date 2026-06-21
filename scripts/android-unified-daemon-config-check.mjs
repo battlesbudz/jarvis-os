@@ -439,6 +439,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "node.isPassword", source);
   assertIncludes(contents, "SCREEN_CONTEXT_REDACTED", source);
   assertIncludes(contents, '"one time code"', source);
+  assertIncludes(contents, 'Regex("""\\bpin\\b""")', source);
   assertIncludes(contents, '.put("content_desc", safeDesc)', source);
 }
 for (const [contents, source] of [
