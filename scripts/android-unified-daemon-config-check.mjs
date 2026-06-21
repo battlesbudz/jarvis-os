@@ -461,6 +461,8 @@ for (const [contents, source] of [
   assertIncludes(contents, '"android_local_model_validate" -> LocalGemmaModelManager.validate(context, op)', source);
   assertIncludes(contents, '"android_local_model_smoke_test" -> LocalGemmaModelManager.smokeTest(context, op)', source);
   assertIncludes(contents, '"android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)', source);
+  assertIncludes(contents, "val json = JSONObject(svc.readScreenContent())", source);
+  assertIncludes(contents, "OpResult(true, data = svc.captureScreenContext().toJson())", source);
   assertExcludes(contents, 'path.startsWith("/") -> path', source);
 }
 for (const [contents, source] of [
