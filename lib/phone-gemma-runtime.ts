@@ -84,8 +84,21 @@ export function isPhoneGemmaModelFileReady(status?: LocalGemmaModelStatus | null
   return Boolean(status?.modelFileReady ?? (status?.ready && !status?.needsModelImport));
 }
 
+export function isCurrentPhoneGemmaValidationProfile(status?: LocalGemmaModelStatus | null): boolean {
+  if (!status?.engineValidatedProfileId) return false;
+  const profile = PHONE_GEMMA_VALIDATION_PROFILES.find((candidate) => candidate.id === status.engineValidatedProfileId);
+  if (!profile) return false;
+  return (
+    status.engineValidatedBackend === profile.backend &&
+    status.engineValidatedContextTokens === profile.contextTokens &&
+    status.engineValidatedCpuFallbackAllowed === profile.allowCpuFallback &&
+    status.engineValidatedSpeculativeDecoding === (profile.speculativeDecoding ?? false) &&
+    (status.engineValidatedCachePolicy ?? null) === (profile.cachePolicy ?? null)
+  );
+}
+
 export function isPhoneGemmaGenerationReady(status?: LocalGemmaModelStatus | null): boolean {
-  return status?.generationReady === true;
+  return status?.generationReady === true && isCurrentPhoneGemmaValidationProfile(status);
 }
 
 export function phoneGemmaNeedsEngine(status?: LocalGemmaModelStatus | null): boolean {
@@ -106,15 +119,15 @@ export function normalizePhoneGemmaStatus(status?: LocalGemmaModelStatus | null)
 
   return {
     ...status,
-    ready: status.ready === true || generationReady,
+    ready: generationReady,
     modelFileReady,
     engineBundled: status.engineBundled !== false,
     generationReady,
     needsModelImport,
     needsEngineBundle: status.needsEngineBundle ?? false,
     needsEngineValidation:
-      generationReady ? false : status.needsEngineValidation ?? modelFileReady,
-    engineValidated: status.engineValidated === true || generationReady,
+      generationReady ? false : modelFileReady || status.needsEngineValidation === true,
+    engineValidated: generationReady,
     provider: "android-local-gemma",
     runtime: "android-app",
     storageOwner: "jarvis-android-app",

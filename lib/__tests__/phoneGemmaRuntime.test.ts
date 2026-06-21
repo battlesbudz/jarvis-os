@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   PHONE_GEMMA_RECOMMENDED_PROFILE,
   PHONE_GEMMA_VALIDATION_PROFILES,
+  isCurrentPhoneGemmaValidationProfile,
   isPhoneGemmaGenerationReady,
   isPhoneGemmaModelFileReady,
   normalizePhoneGemmaStatus,
@@ -15,8 +16,10 @@ const nativeReadyStatus = normalizePhoneGemmaStatus({
   modelFileReady: true,
   engineValidated: true,
   engineValidatedBackend: "gpu",
+  engineValidatedSpeculativeDecoding: false,
   engineValidatedDecodingMode: "standard",
   engineValidatedContextTokens: 1024,
+  engineValidatedCpuFallbackAllowed: false,
   engineValidatedCachePolicy: "none",
   engineValidatedProfileId: "gpu-standard-1024",
   engineValidatedProfileLabel: "GPU standard 1024",
@@ -28,6 +31,7 @@ const nativeReadyStatus = normalizePhoneGemmaStatus({
 assert.equal(nativeReadyStatus?.ready, true);
 assert.equal(isPhoneGemmaModelFileReady(nativeReadyStatus), true);
 assert.equal(isPhoneGemmaGenerationReady(nativeReadyStatus), true);
+assert.equal(isCurrentPhoneGemmaValidationProfile(nativeReadyStatus), true);
 assert.equal(nativeReadyStatus?.needsEngineValidation, false);
 assert.equal(phoneGemmaNeedsEngine(nativeReadyStatus), false);
 assert.equal(nativeReadyStatus?.engineValidatedCachePolicy, "none");
@@ -36,6 +40,33 @@ assert.equal(
   phoneGemmaRuntimeDetails(nativeReadyStatus),
   "GPU standard 1024 - GPU - standard - 1024 tokens",
 );
+
+const staleHiddenProfileStatus = normalizePhoneGemmaStatus({
+  ...nativeReadyStatus,
+  ready: true,
+  generationReady: true,
+  engineValidated: true,
+  engineValidatedContextTokens: 2048,
+  engineValidatedProfileId: "gpu-auto-2048",
+  engineValidatedProfileLabel: "GPU auto 2048",
+});
+assert.equal(staleHiddenProfileStatus?.ready, false);
+assert.equal(staleHiddenProfileStatus?.engineValidated, false);
+assert.equal(staleHiddenProfileStatus?.needsEngineValidation, true);
+assert.equal(isPhoneGemmaGenerationReady(staleHiddenProfileStatus), false);
+assert.equal(isCurrentPhoneGemmaValidationProfile(staleHiddenProfileStatus), false);
+
+const staleMissingCacheStatus = normalizePhoneGemmaStatus({
+  ...nativeReadyStatus,
+  ready: true,
+  generationReady: true,
+  engineValidated: true,
+  engineValidatedCachePolicy: null,
+});
+assert.equal(staleMissingCacheStatus?.ready, false);
+assert.equal(staleMissingCacheStatus?.engineValidated, false);
+assert.equal(staleMissingCacheStatus?.needsEngineValidation, true);
+assert.equal(isCurrentPhoneGemmaValidationProfile(staleMissingCacheStatus), false);
 
 const diagnosticOnlyStatus = normalizePhoneGemmaStatus({
   modelFileReady: true,

@@ -494,10 +494,19 @@ for (const [contents, source] of [
 ]) {
   assertIncludes(contents, "package com.gameplan.daemon", source);
   assertIncludes(contents, 'private const val DEFAULT_MODEL = "gemma-4-e4b-it"', source);
+  assertIncludes(contents, 'private const val DEFAULT_VALIDATION_PROFILE_ID = "gpu-standard-512"', source);
+  assertIncludes(contents, 'private const val VALIDATION_CACHE_POLICY = "none"', source);
+  assertIncludes(contents, "currentValidationProfilesById", source);
+  assertIncludes(contents, 'ValidationProfile("gpu-standard-512", "GPU standard 512", "gpu", 512, false, false, VALIDATION_CACHE_POLICY)', source);
   assertIncludes(contents, "val modelRevision = buildModelRevision(context, model, file)", source);
-  assertIncludes(contents, "LocalGemmaInferenceEngine.validate(context, model, file, modelRevision, op)", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.validate(context, model, file, modelRevision, validationOp)", source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.generate(context, model, file, modelRevision, generationOpForValidatedProfile(op, metadata))", source);
   assertIncludes(contents, "generationOpForValidatedProfile", source);
+  assertIncludes(contents, "requestedValidationProfile", source);
+  assertIncludes(contents, "operationForValidationProfile", source);
+  assertIncludes(contents, "currentValidationProfile(metadata) != null", source);
+  assertIncludes(contents, "LOCAL_MODEL_VALIDATION_PROFILE_UNSUPPORTED", source);
+  assertIncludes(contents, "Previous Phone Gemma validation used an older or hidden profile", source);
   assertIncludes(contents, "fun smokeTest(context: Context, op: JSONObject): OpResult", source);
   assertIncludes(contents, '.put("keepEngineWarm", false)', source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.releaseWarmEngine()", source);
