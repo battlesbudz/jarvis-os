@@ -35,6 +35,7 @@ object LocalGemmaInferenceEngine {
     private const val DEFAULT_CONTEXT_TOKENS = 2048
     private const val DEFAULT_MAX_COMPLETION_TOKENS = 128
     private const val DEFAULT_CACHE_POLICY = "none"
+    private const val LITERT_NO_CACHE_DIR = ":nocache"
     private const val MIN_GPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
     private const val MIN_NPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
     private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L
@@ -575,7 +576,7 @@ object LocalGemmaInferenceEngine {
                                 modelPath = modelPath,
                                 backend = backendFor(context, candidateBackendName),
                                 maxNumTokens = contextTokens,
-                                cacheDir = cacheDirFor(context, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, cachePolicy)?.absolutePath,
+                                cacheDir = cacheDirFor(context, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, cachePolicy),
                             )
                         )
                         engine = initializedEngine
@@ -707,15 +708,15 @@ object LocalGemmaInferenceEngine {
         speculativeDecodingEnabled: Boolean,
         contextTokens: Int,
         cachePolicy: String,
-    ): File? {
-        if (cachePolicy == "none") return null
+    ): String? {
+        if (cachePolicy == "none") return LITERT_NO_CACHE_DIR
         val key = stableCacheKey("$modelRevision|$backendName|${decodingModeName(speculativeDecodingEnabled)}|$contextTokens")
         val dir = File(File(context.cacheDir, "litert-lm-cache"), key)
         if (cachePolicy == "fresh" && dir.exists()) {
             dir.deleteRecursively()
         }
         dir.mkdirs()
-        return dir
+        return dir.absolutePath
     }
 
     private fun stableCacheKey(value: String): String {

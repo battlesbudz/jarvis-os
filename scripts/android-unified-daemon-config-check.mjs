@@ -534,6 +534,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L", source);
   assertIncludes(contents, 'DEFAULT_CACHE_POLICY = "none"', source);
+  assertIncludes(contents, 'LITERT_NO_CACHE_DIR = ":nocache"', source);
   assertIncludes(contents, "trimPromptForContext", source);
   assertIncludes(contents, 'put("inputTrimmed", prompt.length != rawPrompt.length)', source);
   assertIncludes(contents, 'put("defaultCpuFallbackAllowed", DEFAULT_ALLOW_CPU_FALLBACK)', source);
@@ -570,7 +571,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "configureExperimentalFlags(speculativeDecodingEnabled)", source);
   assertIncludes(contents, "val initializedEngine = Engine(", source);
   assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, cachePolicy, contextTokens, initializedEngine)", source);
-  assertIncludes(contents, "cacheDirFor(context, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, cachePolicy)?.absolutePath", source);
+  assertIncludes(contents, "cacheDirFor(context, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, cachePolicy)", source);
+  assertIncludes(contents, 'if (cachePolicy == "none") return LITERT_NO_CACHE_DIR', source);
   assertIncludes(contents, "Backend.NPU(nativeLibraryDir = context.applicationInfo.nativeLibraryDir)", source);
   assertIncludes(contents, "backendCandidates(backendName, memory, allowCpuFallback)", source);
   assertIncludes(contents, "reusableBackendsFor(backendName, candidateBackends)", source);
