@@ -590,6 +590,222 @@ async function testAndroidLocalGemmaNormalizesDaemonAppAliases() {
   }
 }
 
+async function testAndroidLocalGemmaNormalizesDirectDaemonActionToolNames() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "android_screenshot", arguments: {} }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Take a screenshot." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_screenshot"}');
+    assert.match(requests[0].op.prompt, /daemon_action/);
+    console.log("OK: Android Local Gemma normalizes direct daemon action tool names");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaNormalizesDirectAppAliasToolNames() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "open_youtube", arguments: {} }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" }, packageName: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.youtube"}');
+    assert.match(requests[0].op.prompt, /daemon_action/);
+    console.log("OK: Android Local Gemma normalizes direct app alias tool names");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaNormalizesDirectNotificationToolNames() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "android_notifications_list", arguments: { limit: 5 } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Read my notifications" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" }, limit: { type: "number" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"limit":5,"action":"android_notifications_list"}');
+    assert.match(requests[0].op.prompt, /daemon_action/);
+    console.log("OK: Android Local Gemma normalizes direct notification tool names");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaNormalizesEveryDirectDaemonActionName() {
+  const cases = [
+    {
+      name: "android_sms_send",
+      arguments: { to: "+15551234567", message: "Running late", approved: true },
+      expected: '{"to":"+15551234567","message":"Running late","approved":true,"action":"android_sms_send"}',
+    },
+    {
+      name: "android_camera_snap",
+      arguments: { facing: "front" },
+      expected: '{"facing":"front","action":"android_camera_snap"}',
+    },
+    {
+      name: "android_notification_reply",
+      arguments: { notificationKey: "notif-key-1", replyText: "On my way", approved: true },
+      expected: '{"notificationKey":"notif-key-1","replyText":"On my way","approved":true,"action":"android_notification_reply"}',
+    },
+  ];
+
+  try {
+    for (const testCase of cases) {
+      const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+      _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+        requests.push({ userId, op, timeoutMs });
+        return {
+          ok: true,
+          data: {
+            text: JSON.stringify({
+              type: "tool_calls",
+              tool_calls: [{ name: testCase.name, arguments: testCase.arguments }],
+            }),
+            finishReason: "stop",
+          },
+        };
+      });
+
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: `Use ${testCase.name}` }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "daemon_action",
+            description: "Perform an Android daemon action.",
+            parameters: {
+              type: "object",
+              properties: {
+                action: { type: "string" },
+                to: { type: "string" },
+                message: { type: "string" },
+                approved: { type: "boolean" },
+                facing: { type: "string" },
+                notificationKey: { type: "string" },
+                replyText: { type: "string" },
+              },
+              required: ["action"],
+            },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "tool_calls");
+      assert.equal(result.textContent, "");
+      assert.equal(result.toolCallList.length, 1);
+      assert.equal(result.toolCallList[0].function.name, "daemon_action");
+      assert.equal(result.toolCallList[0].function.arguments, testCase.expected);
+      assert.match(requests[0].op.prompt, /daemon_action/);
+    }
+    console.log("OK: Android Local Gemma normalizes every direct daemon action name");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   const largeSchema = Object.fromEntries(
@@ -1429,6 +1645,10 @@ async function main() {
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaNormalizesDaemonAppAliases();
+  await testAndroidLocalGemmaNormalizesDirectDaemonActionToolNames();
+  await testAndroidLocalGemmaNormalizesDirectAppAliasToolNames();
+  await testAndroidLocalGemmaNormalizesDirectNotificationToolNames();
+  await testAndroidLocalGemmaNormalizesEveryDirectDaemonActionName();
   await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
   await testAndroidLocalGemmaOmitsPriorLocalRuntimeErrors();
   await testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat();

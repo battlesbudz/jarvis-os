@@ -73,6 +73,35 @@ const ANDROID_DAEMON_ACTION_ALIASES: Record<string, string> = {
   launch_youtube: "android_open_app",
   youtube: "android_open_app",
 };
+const DIRECT_ANDROID_DAEMON_ACTION_NAMES = new Set([
+  "android_open_app",
+  "android_browse",
+  "android_screenshot",
+  "android_read_screen",
+  "android_screen_context",
+  "android_operator_action",
+  "android_tap",
+  "android_type",
+  "android_swipe",
+  "android_press_key",
+  "android_file_list",
+  "android_file_read",
+  "android_notifications_list",
+  "android_wait",
+  "android_return_to_jarvis",
+  "android_file_search",
+  "android_open_file",
+  "android_copy_to_clipboard",
+  "android_notification_reply",
+  "android_camera_snap",
+  "android_camera_clip",
+  "android_location_get",
+  "android_sms_send",
+  "android_screen_record",
+  "android_view_hierarchy",
+  "android_paste_text",
+  "android_get_focused_field",
+]);
 const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
   youtube: "com.google.android.youtube",
   yt: "com.google.android.youtube",
@@ -468,6 +497,40 @@ function normalizeToolArgumentsForTool(toolName: string, value: unknown): string
   return JSON.stringify(normalizeDaemonActionArguments(args));
 }
 
+function daemonActionArgsFromToolName(toolName: string, value: unknown): Record<string, unknown> | null {
+  if (toolName === "daemon_action") return null;
+  const token = aliasToken(toolName);
+  if (!token) return null;
+
+  const actionAlias = ANDROID_DAEMON_ACTION_ALIASES[token];
+  const action = actionAlias || (DIRECT_ANDROID_DAEMON_ACTION_NAMES.has(token) ? token : "");
+  if (!action) return null;
+
+  const args = toolArgumentsObject(value) || {};
+  return normalizeDaemonActionArguments({
+    ...args,
+    action: actionAlias ? token : action,
+  });
+}
+
+function normalizeToolCallFunction(
+  name: string,
+  value: unknown,
+): { name: string; arguments: string } {
+  const daemonActionArgs = daemonActionArgsFromToolName(name, value);
+  if (daemonActionArgs) {
+    return {
+      name: "daemon_action",
+      arguments: JSON.stringify(daemonActionArgs),
+    };
+  }
+
+  return {
+    name,
+    arguments: normalizeToolArgumentsForTool(name, value),
+  };
+}
+
 function generatedToolCallId(index: number): string {
   return `phone_gemma_call_${Date.now().toString(36)}_${index}`;
 }
@@ -499,13 +562,11 @@ function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutpu
           : item;
         const name = typeof functionData.name === "string" ? functionData.name.trim() : "";
         if (!name) return null;
+        const normalizedFunction = normalizeToolCallFunction(name, functionData.arguments);
         return {
           id: typeof item.id === "string" && item.id.trim() ? item.id.trim() : generatedToolCallId(index),
           type: "function" as const,
-          function: {
-            name,
-            arguments: normalizeToolArgumentsForTool(name, functionData.arguments),
-          },
+          function: normalizedFunction,
         };
       })
       .filter((toolCall): toolCall is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => !!toolCall);

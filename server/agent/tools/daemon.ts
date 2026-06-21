@@ -26,6 +26,7 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_press_key",
   "android_file_list",
   "android_file_read",
+  "android_notifications_list",
   "android_wait",
   "android_return_to_jarvis",
   "android_file_search",
@@ -120,6 +121,7 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_press_key: press a system key — "back", "home", "recents", "volume_up", "volume_down"
 - android_file_list: list files in any path on the device (gallery, downloads, any folder)
 - android_file_read: read any file on the device
+- android_notifications_list: read current phone notifications, falling back to the notification shade if listener access is disabled
 - android_wait: pause server-side for a short UI-settle delay between Android actions
 - android_return_to_jarvis: return the phone to the Jarvis app/chat surface
 - android_file_search: recursively search for files by name across the device storage — accepts query (substring match), optional root path (defaults to external storage root), optional type filter (image/video/audio/document/any), optional maxDepth (default 4, max 8); returns up to 100 matches with name/path/size/lastModified
@@ -165,7 +167,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           "android_open_app", "android_browse", "android_screenshot", "android_read_screen",
           "android_screen_context", "android_operator_action",
           "android_tap", "android_type", "android_swipe", "android_press_key",
-          "android_file_list", "android_file_read",
+          "android_file_list", "android_file_read", "android_notifications_list",
           "android_wait", "android_return_to_jarvis",
           "android_file_search", "android_open_file", "android_copy_to_clipboard",
           "android_notification_reply",
@@ -198,6 +200,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       root: { type: "string", description: "Root path to start search from (when action is 'android_file_search', defaults to external storage root)" },
       fileType: { type: "string", enum: ["image", "video", "audio", "document", "any"], description: "File type filter (when action is 'android_file_search', default 'any')" },
       maxDepth: { type: "number", description: "Maximum directory depth to recurse (when action is 'android_file_search', default 4, max 8)" },
+      limit: { type: "number", description: "Maximum notifications to return (when action is 'android_notifications_list')" },
       notificationKey: { type: "string", description: "Notification status-bar key from android_notifications_list (when action is 'android_notification_reply')" },
       replyText: { type: "string", description: "The reply text to send inline (when action is 'android_notification_reply')" },
       approved: { type: "boolean", description: "Must be true for android_notification_reply and android_sms_send — set only after the user has explicitly confirmed in the conversation" },
@@ -284,6 +287,140 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       } else if (rawAction === "android_file_read") {
         if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
         op = { type: "android_file_read", path: String(args.path) };
+      } else if (rawAction === "android_notifications_list") {
+        const limit = typeof args.limit === "number" ? Math.min(args.limit, 60) : 20;
+        const daemonNotifResult = await sendDaemonOp(ctx.userId, { type: "android_notifications_list", limit }, 10000);
+
+        if (daemonNotifResult.ok) {
+          const data = daemonNotifResult.data as Record<string, unknown> | null;
+          const listenerEnabled = !!data?.listenerEnabled;
+          const notificationsValue = data?.notifications;
+          const rawNotifications = Array.isArray(notificationsValue)
+            ? notificationsValue as Record<string, unknown>[]
+            : [];
+          const count = rawNotifications.length;
+
+          if (listenerEnabled && count > 0) {
+            const relativeTime = (tsMs: number): string => {
+              const diffMs = Date.now() - tsMs;
+              const diffMins = Math.round(diffMs / 60000);
+              if (diffMins < 1) return "just now";
+              if (diffMins < 60) return `${diffMins}m ago`;
+              const diffHours = Math.floor(diffMins / 60);
+              if (diffHours < 24) return `${diffHours}h ${diffMins % 60}m ago`;
+              return `${Math.floor(diffHours / 24)}d ago`;
+            };
+            const formatted = rawNotifications.map((notification) => {
+              const ago = typeof notification.ts === "number" ? relativeTime(notification.ts) : "?";
+              const app = String(notification.app || notification.pkg || "Unknown");
+              const title = String(notification.title || "");
+              const text = notification.text ? `: ${String(notification.text).slice(0, 120)}` : "";
+              const key = String(notification.key || notification.notificationKey || "");
+              const hasReplyAction = notification.hasReplyAction === true;
+              const replyMeta = key
+                ? ` [key: ${key}${hasReplyAction ? ", replyable" : ""}]`
+                : hasReplyAction
+                  ? " [replyable, missing key]"
+                  : "";
+              return `- ${app} (${ago}) - ${title}${text}${replyMeta}`;
+            }).join("\n");
+
+            return {
+              ok: true,
+              content: JSON.stringify({
+                ok: true,
+                data: {
+                  result: "success",
+                  label: `${count} notification${count !== 1 ? "s" : ""} from phone`,
+                  detail: `PHONE NOTIFICATIONS (${count} total) - report the relative ages as shown, without converting them to clock times.\n\n${formatted}`,
+                  notifications: rawNotifications.map((notification) => ({
+                    key: notification.key || notification.notificationKey || null,
+                    app: notification.app || notification.pkg || "Unknown",
+                    title: notification.title || "",
+                    text: notification.text || "",
+                    ts: typeof notification.ts === "number" ? notification.ts : null,
+                    hasReplyAction: notification.hasReplyAction === true,
+                  })),
+                },
+              }),
+            };
+          }
+
+          if (listenerEnabled && count === 0) {
+            return {
+              ok: true,
+              content: JSON.stringify({
+                ok: true,
+                data: {
+                  result: "success",
+                  label: "No notifications",
+                  detail: "The notification listener is active on the phone and reports zero current notifications. The tray is clear.",
+                },
+              }),
+            };
+          }
+        }
+
+        const [canTapType, canReadScreen] = await Promise.all([
+          isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+          isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+        ]);
+        if (!canTapType || !canReadScreen) {
+          return {
+            ok: false,
+            content: jsonErrorContent(
+              `Notification Access is not enabled, and the notification-shade fallback requires ${!canTapType && !canReadScreen ? "tap/swipe and screen-read permissions" : !canTapType ? "tap/swipe permission" : "screen-read permission"}. Ask the user to enable Android Device permissions for ${!canTapType && !canReadScreen ? "Tap/Type and Read Screen" : !canTapType ? "Tap/Type" : "Read Screen"}, or enable Android Notification Access for Jarvis.`,
+            ),
+          };
+        }
+
+        const swipeOp = await sendDaemonOp(ctx.userId, {
+          type: "android_swipe",
+          x1: 540,
+          y1: 10,
+          x2: 540,
+          y2: 1200,
+          durationMs: 400,
+        }, 8000);
+
+        if (!swipeOp.ok) {
+          return {
+            ok: false,
+            content: jsonErrorContent(`The Notification Access permission is not granted to Jarvis, and the shade-opening fallback also failed: ${swipeOp.error || "swipe failed"}`),
+          };
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 700));
+        const shadeReadOp = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 10000);
+        sendDaemonOp(ctx.userId, { type: "android_press_key", key: "back" }, 5000).catch(() => {});
+
+        if (!shadeReadOp.ok) {
+          return {
+            ok: false,
+            content: jsonErrorContent(`Could not read notification shade: ${shadeReadOp.error || "unknown"}. Ensure the Accessibility Service is enabled.`),
+          };
+        }
+
+        const shadeData = shadeReadOp.data;
+        const shadeText = typeof shadeData === "string" ? shadeData : JSON.stringify(shadeData || "");
+        const emptyShade = !shadeText || shadeText === "{}" || shadeText === "\"\"" || shadeText === "null";
+        return {
+          ok: true,
+          content: JSON.stringify({
+            ok: true,
+            data: emptyShade
+              ? {
+                  result: "success",
+                  label: "Notification shade appears empty",
+                  detail: "No text was detected in the notification shade. Your notification tray may be empty.",
+                }
+              : {
+                  result: "success",
+                  label: "Notification shade content read from screen",
+                  detail: `SCREEN CONTENT (verbatim from phone - report ONLY what is shown here, do NOT add or infer any details):\n${shadeText}`,
+                },
+          }),
+        };
       } else if (rawAction === "android_file_search") {
         if (!args.query) return { ok: false, content: jsonErrorContent("query required") };
         // Accept both "fileType" (canonical) and legacy "type" alias for compatibility
