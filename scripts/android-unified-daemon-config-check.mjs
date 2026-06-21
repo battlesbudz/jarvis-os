@@ -439,7 +439,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "node.isPassword", source);
   assertIncludes(contents, "SCREEN_CONTEXT_REDACTED", source);
   assertIncludes(contents, '"one time code"', source);
-  assertIncludes(contents, 'Regex("""\\bpin\\b""")', source);
+  assertIncludes(contents, "private fun containsCompactPinToken", source);
+  assertIncludes(contents, "fields.any { containsCompactPinToken(it) }", source);
+  assertIncludes(contents, ".replace('_', ' ')", source);
+  assertIncludes(contents, 'Regex("""(?i)(^|[^a-z])pin($|[^a-z])""")', source);
   assertIncludes(contents, '.put("content_desc", safeDesc)', source);
 }
 for (const [contents, source] of [

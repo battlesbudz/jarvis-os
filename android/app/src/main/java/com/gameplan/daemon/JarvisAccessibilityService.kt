@@ -716,7 +716,8 @@ class JarvisAccessibilityService : AccessibilityService() {
     ): Boolean {
         if (node.isPassword) return true
         val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) node.hintText?.toString() else null
-        val haystack = listOfNotNull(text, desc, resourceId, className, hint)
+        val fields = listOfNotNull(text, desc, resourceId, className, hint)
+        val haystack = fields
             .joinToString(" ")
             .lowercase()
         val sensitivePhrases = listOf(
@@ -731,7 +732,19 @@ class JarvisAccessibilityService : AccessibilityService() {
             "credit card"
         )
         return sensitivePhrases.any { haystack.contains(it) } ||
-            Regex("""\bpin\b""").containsMatchIn(haystack)
+            fields.any { containsCompactPinToken(it) }
+    }
+
+    private fun containsCompactPinToken(value: String): Boolean {
+        val tokenized = value
+            .replace(Regex("""([A-Z]+)([A-Z][a-z])"""), "\$1 \$2")
+            .replace(Regex("""([a-z0-9])([A-Z])"""), "\$1 \$2")
+            .replace('_', ' ')
+            .replace('-', ' ')
+            .replace('.', ' ')
+            .replace('/', ' ')
+            .replace(':', ' ')
+        return Regex("""(?i)(^|[^a-z])pin($|[^a-z])""").containsMatchIn(tokenized)
     }
 
     // ── Tap ─────────────────────────────────────────────────────────────────
