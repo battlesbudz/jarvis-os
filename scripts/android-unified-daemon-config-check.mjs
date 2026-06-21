@@ -530,11 +530,15 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun validate(context: Context, model: String, modelFile: File, modelRevision: String, op: JSONObject): OpResult", source);
   assertIncludes(contents, "LOCAL_MODEL_VALIDATION_FAILED", source);
   assertIncludes(contents, "MIN_GPU_AVAILABLE_MEMORY_BYTES", source);
+  assertIncludes(contents, "MIN_NPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES", source);
-  assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 2800L * 1024L * 1024L", source);
+  assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L", source);
+  assertIncludes(contents, 'DEFAULT_CACHE_POLICY = "none"', source);
   assertIncludes(contents, "trimPromptForContext", source);
   assertIncludes(contents, 'put("inputTrimmed", prompt.length != rawPrompt.length)', source);
   assertIncludes(contents, 'put("defaultCpuFallbackAllowed", DEFAULT_ALLOW_CPU_FALLBACK)', source);
+  assertIncludes(contents, 'put("defaultCachePolicy", DEFAULT_CACHE_POLICY)', source);
+  assertIncludes(contents, 'put("cachePolicy", cachePolicy)', source);
   assertIncludes(contents, 'put("cpuFallbackAllowed", allowCpuFallback)', source);
   assertIncludes(contents, "backendCandidates(backendName, memory, allowCpuFallback)", source);
   assertIncludes(contents, "disabled by default to avoid Android low-memory kills", source);
@@ -565,12 +569,15 @@ for (const [contents, source] of [
   assertIncludes(contents, "var engine: Engine? = null", source);
   assertIncludes(contents, "configureExperimentalFlags(speculativeDecodingEnabled)", source);
   assertIncludes(contents, "val initializedEngine = Engine(", source);
-  assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, initializedEngine)", source);
+  assertIncludes(contents, "EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, cachePolicy, contextTokens, initializedEngine)", source);
+  assertIncludes(contents, "cacheDirFor(context, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, cachePolicy)?.absolutePath", source);
+  assertIncludes(contents, "Backend.NPU(nativeLibraryDir = context.applicationInfo.nativeLibraryDir)", source);
   assertIncludes(contents, "backendCandidates(backendName, memory, allowCpuFallback)", source);
   assertIncludes(contents, "reusableBackendsFor(backendName, candidateBackends)", source);
   assertIncludes(contents, "listOf(candidateBackendName)", source);
   assertIncludes(contents, 'put("requestedBackend", active.backend)', source);
   assertIncludes(contents, 'put("lastEngineError", lastEngineError ?: JSONObject.NULL)', source);
+  assertIncludes(contents, 'put("engineCachePolicy", state?.cachePolicy ?: JSONObject.NULL)', source);
   assertIncludes(contents, "previousEngine?.let { previous ->", source);
   assertExcludes(contents, "lockedCurrent?.engine?.close()", source);
   assertIncludes(contents, "hasReachedCompletionLimit(chunks, maxCompletionTokens)", source);
@@ -579,6 +586,11 @@ for (const [contents, source] of [
   assertIncludes(contents, '.put("completionLimitEnforced", true)', source);
 }
 assertIncludes(manifest, "libOpenCL.so", "AndroidManifest.xml");
+assertIncludes(manifest, "libcdsprpc.so", "AndroidManifest.xml");
+assertIncludes(manifest, "libedgetpu_litert.so", "AndroidManifest.xml");
+assertIncludes(plugin, "libOpenCL.so", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "libcdsprpc.so", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, "libedgetpu_litert.so", "plugins/withJarvisAndroidDaemon.js");
 assertExcludes(plugin, "android-daemon/app", "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(
   plugin,
